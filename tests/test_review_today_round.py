@@ -259,6 +259,8 @@ def test_lifespan_runs_the_worker_shutdown_even_when_mcp_stop_fails(monkeypatch)
     for name in ("_seed_shipped_sources", "_seed_shipped_layouts", "_apply_keep_awake",
                  "_start_mcp_if_enabled"):
         monkeypatch.setattr(app_mod, name, noop)
+    monkeypatch.setattr(app_mod, "_update_loop", idle)  # no network from the lifespan
+    monkeypatch.setattr(app_mod, "_mark_update_seen", noop)
     monkeypatch.setattr(app_mod, "_rebuild_generated_sources", rebuild)
     monkeypatch.setattr(app_mod, "_graceful_worker_shutdown", graceful)
     monkeypatch.setattr(runtime, "stop", bad_stop)

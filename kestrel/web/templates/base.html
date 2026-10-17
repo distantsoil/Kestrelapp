@@ -170,6 +170,10 @@
       {% endif %}
     </header>
     <main class="container">
+      {# Update banner (D-UPD-3): empty unless a newer version is known; the dialog lands in #update-modal. #}
+      <div id="update-banner" hx-get="/updates/banner" hx-trigger="load, every 300s, updates-changed from:body"
+           hx-swap="innerHTML"></div>
+      <div id="update-modal"></div>
       {# A one-line notice carried by a redirect (?msg=), e.g. a refused or partial reset.
          Autoescaped: the text comes from the URL. #}
       {% set flash = request.query_params.get('msg') if request is defined else None %}

@@ -1,0 +1,14 @@
+<div class="card" data-testid="whats-new-card" style="margin-bottom:12px">
+  <h3>You're on {{ current }}. Here's what changed.</h3>
+  {% for n in notes %}
+    <h4 style="margin:.6rem 0 .2rem">{{ n.version }} <span class="muted">{{ n.date }}</span></h4>
+    {{ n.html }}
+  {% else %}
+    {% if download_page %}
+      <p class="muted">The release notes are on the <a href="{{ download_page }}" target="_blank"
+         rel="noopener noreferrer">download page</a>.</p>
+    {% endif %}
+  {% endfor %}
+  <p style="margin:.6rem 0 0"><button class="btn" type="button" hx-post="/updates/whats-new/dismiss"
+     hx-target="#whats-new-slot" hx-swap="innerHTML">Dismiss</button></p>
+</div>

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import config as config_mod
 from kestrel.db.models import Setting
+from kestrel.services.updater import STATE_KEY as UPDATE_STATE_KEY
 
 # Keys that must never be overridden from the DB (chicken-and-egg with paths/logging).
 BOOTSTRAP_KEYS = frozenset({"log_level"})
@@ -31,9 +32,11 @@ EMBED_SWEPT_MODEL_KEY = "embed_swept_model"
 # page (services/hosted_models.py). State about the llm.hosted_tiers rows, not configuration.
 HOSTED_MODEL_DEFAULTS_KEY = "hosted_model_defaults"
 HOSTED_MODEL_OVERRIDES_KEY = "hosted_model_overrides"
+# The update checker's state (etag, last answer, skipped version; services/updater.py STATE_KEY).
+# State, not configuration: it must never be read back as a Settings override.
 TRANSIENT_KEYS = frozenset({
     PENDING_RUN_MODE_KEY, EMBED_SWEPT_MODEL_KEY, HOSTED_MODEL_DEFAULTS_KEY,
-    HOSTED_MODEL_OVERRIDES_KEY,
+    HOSTED_MODEL_OVERRIDES_KEY, UPDATE_STATE_KEY,
 })
 
 

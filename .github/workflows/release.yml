@@ -1,7 +1,8 @@
 name: Release
 
-# Pushing a tag `vX.Y.Z` builds the three installers and publishes them to a GitHub Release with
-# generated notes. `workflow_dispatch` is the dry run: the same builds, uploaded as workflow
+# Pushing a tag `vX.Y.Z` builds the three installers and publishes them to a GitHub Release whose
+# notes are the matching CHANGELOG.md section (scripts/changelog_section.py), then a `website` job
+# publishes latest.json to the website repo (scripts/build_latest_json.py). `workflow_dispatch` is the dry run: the same builds, uploaded as workflow
 # artifacts only, no release; its `platform` choice builds all three or just one. Signing runs
 # only when the matching secrets exist; without them the build scripts say so and produce unsigned installers (docs/RELEASING.md). Every build job writes
 # a SIGNING-<platform>.txt marker ("signed" or "unsigned: add <secrets> to sign") next to its
@@ -23,14 +24,46 @@ on:
         default: all
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   KESTREL_HEADLESS: "1"
 
 jobs:
+  preflight:
+    name: Preflight
+    # Cheap checks that would otherwise fail only after the three installers are built: the
+    # changelog section for this version, and (real stable tag only) the website token.
+    runs-on: ubuntu-latest
+    env:
+      # A boolean, never the secret itself, so the token value cannot reach this job's environment.
+      HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Changelog section exists
+        # Tag push: the version is the tag. Dry run: kestrel.__version__. A prerelease may fall
+        # back to [Unreleased] (scripts/changelog_section.py --allow-unreleased); a stable
+        # version needs its own section.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('kestrel/__init__.py').read())[1])")"
+          fi
+          ALLOW=""
+          case "$VERSION" in *-*) ALLOW="--allow-unreleased" ;; esac
+          python3 scripts/changelog_section.py "$VERSION" $ALLOW > /dev/null
+      - name: Website token is set
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        run: |
+          if [ "$HAS_WEBSITE_TOKEN" != "true" ]; then
+            echo "::error::WEBSITE_TOKEN is empty. Add a token with write access to the website repo as the WEBSITE_TOKEN secret (docs/RELEASING.md), then re-run."
+            exit 1
+          fi
+
   linux:
     name: Linux AppImage
+    needs: [preflight]
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux'
     runs-on: ubuntu-latest
     steps:
@@ -67,6 +100,7 @@ jobs:
 
   macos:
     name: macOS dmg
+    needs: [preflight]
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos'
     runs-on: macos-latest
     env:
@@ -126,6 +160,7 @@ jobs:
 
   windows:
     name: Windows installer
+    needs: [preflight]
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows'
     runs-on: windows-latest
     env:
@@ -181,7 +216,10 @@ jobs:
     needs: [linux, macos, windows]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
         with:
           path: artifacts
@@ -191,17 +229,31 @@ jobs:
           cd artifacts
           sha256sum Kestrel-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - name: Signing status
-        # One SIGNING.txt from the three per-platform markers, and the same lines at the top of
-        # the release body, so nobody downloads an unsigned installer without being told.
+      - name: Release notes and signing status
+        # One SIGNING.txt from the three per-platform markers. RELEASE_BODY.md is the CHANGELOG
+        # section for this tag (the step fails if it is missing or empty) followed by the same
+        # signing lines, so nobody downloads an unsigned installer without being told.
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ALLOW=""
+          case "$VERSION" in *-*) ALLOW="--allow-unreleased" ;; esac
+          python3 scripts/changelog_section.py "$VERSION" $ALLOW > artifacts/RELEASE_NOTES.md
           cd artifacts
           cat SIGNING-windows.txt SIGNING-macos.txt SIGNING-linux.txt > SIGNING.txt
-          { echo "## Code signing"; echo; sed 's/^/- /' SIGNING.txt; echo; } > RELEASE_BODY.md
+          {
+            cat RELEASE_NOTES.md
+            echo
+            echo "## Code signing"
+            echo
+            sed 's/^/- /' SIGNING.txt
+            echo
+          } > RELEASE_BODY.md
+          rm RELEASE_NOTES.md
           cat RELEASE_BODY.md
       - uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
+          generate_release_notes: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: artifacts/RELEASE_BODY.md
           files: |
             artifacts/Kestrel-Setup-*.exe
@@ -209,3 +261,54 @@ jobs:
             artifacts/Kestrel-*-x86_64.AppImage
             artifacts/SHA256SUMS.txt
             artifacts/SIGNING.txt
+
+  website:
+    name: Publish latest.json
+    needs: [release]
+    # A real tag push only (never a dry run), and never a prerelease: the feed is what installed
+    # apps offer as an update.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # WEBSITE_TOKEN is only ever checked for (preflight) and handed to the site checkout below,
+      # which persists it for the push. It is never an env: value.
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install
+        run: |
+          uv python install 3.12
+          uv sync --extra dev
+      - name: Fetch checksums and signing status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$GITHUB_REF_NAME" --pattern SHA256SUMS.txt --pattern SIGNING.txt
+      - name: Build latest.json
+        run: |
+          uv run python scripts/build_latest_json.py \
+            --version "${GITHUB_REF_NAME#v}" \
+            --changelog CHANGELOG.md \
+            --sums SHA256SUMS.txt \
+            --signing SIGNING.txt \
+            --assets-base "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}" \
+            --out latest.json
+          cat latest.json
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.WEBSITE_REPO || 'distantsoil/kestrelapp-site' }}
+          token: ${{ secrets.WEBSITE_TOKEN }}
+          path: site
+      - name: Commit and push
+        run: |
+          cp latest.json "site/${{ vars.WEBSITE_LATEST_PATH || 'latest.json' }}"
+          cd site
+          git add -A
+          if git diff --cached --quiet; then
+            echo "latest.json is already current; nothing to push"
+            exit 0
+          fi
+          git config user.name "kestrel-release-bot"
+          git config user.email "kestrel-release-bot@users.noreply.github.com"
+          git commit -m "release: $GITHUB_REF_NAME"
+          git push

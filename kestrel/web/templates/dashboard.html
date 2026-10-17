@@ -6,6 +6,8 @@
    of kestrel.css, scoped under #today, on theme variables only. #}
 <div id="today">
   {% set w = words(track) %}{% set consulting = (track == 'consulting') %}
+  <div id="disclosure-slot" hx-get="/updates/disclosure-card" hx-trigger="load" hx-swap="innerHTML"></div>
+  <div id="whats-new-slot" hx-get="/updates/whats-new-card" hx-trigger="load" hx-swap="innerHTML"></div>
   {% if first_run %}
     <div class="banner">
       <b>Welcome to Kestrel.</b> Nothing has been scanned yet. Add a source, build the models, and

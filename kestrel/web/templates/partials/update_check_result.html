@@ -1,0 +1,10 @@
+{% if outcome == 'available' %}
+<div class="warnbox" data-testid="update-result">Kestrel {{ version }} is available.
+  <button class="btn primary" type="button" hx-get="/updates/details" hx-target="#update-modal"
+          hx-swap="innerHTML">What's new</button></div>
+{% elif outcome == 'current' %}
+<div class="muted" data-testid="update-result">Up to date (running {{ current }}).</div>
+{% else %}
+<div class="muted" data-testid="update-result">Couldn't reach kestrelapp.co. Kestrel will try again later.</div>
+{% endif %}
+<span id="update-last-checked" hx-swap-oob="true">Last checked: {{ last_checked }}</span>

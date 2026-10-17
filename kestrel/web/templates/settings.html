@@ -60,6 +60,19 @@
       <span id="appearance-saved" class="muted"></span></p>
     </form>
 
+    <h3 style="margin-top:1.5rem" id="updates">Updates</h3>
+    <form hx-post="/settings/updates" hx-target="#updates-saved" hx-swap="innerHTML" hx-trigger="change">
+      <label><input type="hidden" name="updates_enabled" value="off"><input type="checkbox" name="updates_enabled" value="on" {% if settings.updates.enabled %}checked{% endif %}>
+        Check for updates automatically</label>
+      <p class="muted" style="margin:.3rem 0 0">Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent. Kestrel never downloads or installs anything; you choose if and when to update.
+        <span id="updates-saved"></span></p>
+    </form>
+    <p style="margin:.6rem 0 0">
+      <button class="btn" type="button" hx-post="/updates/check" hx-target="#update-result" hx-swap="innerHTML">Check now</button>
+      <span id="update-last-checked" class="muted">Last checked: {{ update_last_checked }}</span>
+    </p>
+    <div id="update-result" style="margin-top:.6rem"></div>
+
     <h3 style="margin-top:1.5rem" id="desktop-window">Desktop window</h3>
     <form hx-post="/settings/desktop" hx-target="#desktop-saved" hx-swap="innerHTML" hx-trigger="change">
       <label><input type="hidden" name="close_to_tray" value="off"><input type="checkbox" name="close_to_tray" value="on" {% if close_to_tray %}checked{% endif %}>

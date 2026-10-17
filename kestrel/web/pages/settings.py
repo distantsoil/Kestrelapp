@@ -127,6 +127,10 @@ async def settings_page(request: Request):
         # confidential mode hides, so they can see what it does and change it.
         employers = await current_employers(s) if settings.confidential_mode else []
         employer_choose_href = await choose_href(s)
+        from kestrel.services import updater
+        from kestrel.web.pages.updates import format_last_checked
+
+        update_last_checked = format_last_checked((await updater.load_state(s)).last_checked_at)
     lan_secret = secret_row.value if secret_row and isinstance(secret_row.value, str) else None
     ctx = {
         "title": "Settings",
@@ -140,6 +144,7 @@ async def settings_page(request: Request):
         "confidential_employers": [e for e in employers if not e["inferred"]],
         "employer_banner": [e for e in employers if e["inferred"]],
         "employer_choose_href": employer_choose_href,
+        "update_last_checked": update_last_checked,
         **_appearance_ctx(settings),
     }
     if request.headers.get("HX-Request"):
@@ -226,6 +231,17 @@ async def save_desktop(request: Request):
         if on
         else "Saved. Closing the window now quits Kestrel and stops the worker."
     )
+
+
+@router.post("/settings/updates", response_class=HTMLResponse)
+async def save_updates(request: Request):
+    """Store `updates.enabled`. The update loop re-reads it every pass, so no restart is needed."""
+    form = await request.form()
+    on = "on" in form.getlist("updates_enabled")
+    async with sessionmaker()() as s:
+        await _set(s, "updates.enabled", on)
+        await s.commit()
+    return HTMLResponse("Saved." if on else "Saved. Kestrel will not check for updates.")
 
 
 @router.post("/settings/appearance", response_class=HTMLResponse)

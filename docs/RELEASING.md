@@ -29,7 +29,7 @@ signing secrets exist.
 
    Each job smoke-tests the frozen CLI (`version`, `doctor --quick`) before uploading. The release
    job attaches the three files plus `SHA256SUMS.txt` to a GitHub Release named after the tag, with
-   release notes generated from the merged pull requests and commits since the previous tag.
+   the CHANGELOG section for that version as its body (see "Release notes and the website").
 
 5. Check the Release page, download one installer and launch it on a machine that is not the build
    machine. The window opening and `<kestrel> doctor` running are the acceptance test.
@@ -54,6 +54,60 @@ PYTHON=.venv/bin/python packaging/build_appimage.sh      # Linux
 PYTHON=.venv/bin/python packaging/build_dmg.sh           # macOS
 $env:PYTHON=".venv\Scripts\python.exe"; packaging\build_windows.ps1   # Windows, needs Inno Setup 6
 ```
+
+## Release notes and the website
+
+The release notes are the operator-facing CHANGELOG section, not a list generated from pull
+requests. The same text feeds the update checker's "What's new" dialog (SPEC-INTERFACES 1.5).
+
+For each release:
+
+1. Write the section in `CHANGELOG.md` before tagging: a heading `## [X.Y.Z] - YYYY-MM-DD` with
+   `### New`, `### Fixed` and `### Changed` bullets, plain and operator-facing. No pull request
+   numbers, commit hashes, branch names or repository paths.
+2. Check the section: `uv run python scripts/changelog_section.py X.Y.Z` must print its body (the
+   `### New`, `### Fixed` and `### Changed` parts, without the version heading).
+   A prerelease version (one containing `-`, such as `0.5.0-rc.1`) may have no section of its own:
+   the `preflight` job and the release body then use the `[Unreleased]` section
+   (`scripts/changelog_section.py X.Y.Z-rc.1 --allow-unreleased`). A stable version always needs
+   its own section.
+3. Tag and push (step 3 above). Add the `WEBSITE_TOKEN` secret before the first tag (see "One-time
+   setup" below): the `preflight` job runs before any installer is built and fails a stable tag
+   push with a clear error if the secret is empty.
+4. The release job publishes the GitHub Release with that section as its body.
+5. The `website` job commits `latest.json` to `distantsoil/kestrelapp-site` with the
+   `WEBSITE_TOKEN` secret. Cloudflare Pages rebuilds on push. The feed holds the last 10 sections,
+   newest first. A tag with a prerelease suffix (for example `v0.4.0-rc.1`) is never written.
+
+Installers stay on GitHub Releases. The site's download buttons link to the GitHub asset URLs,
+because Cloudflare Pages caps each file at 25 MiB. Kestrel never downloads or installs anything;
+the operator downloads the installer from the site.
+
+### One-time setup on the public repository
+
+Settings, Secrets and variables, Actions, on `distantsoil/Kestrelapp`:
+
+| Name | Kind | Value |
+|---|---|---|
+| `WEBSITE_REPO` | repository variable | `distantsoil/kestrelapp-site`. The website job uses this default when the variable is unset |
+| `WEBSITE_TOKEN` | secret | a fine-grained personal access token: resource owner `distantsoil`, repository access "Only select repositories" with `distantsoil/kestrelapp-site` alone, permission Contents: read and write, nothing else |
+
+Rotation: the token expires on the date chosen at creation. Record the dates here when it is set
+and when it is rotated. Created: `____`. Rotate by: `____`. Last rotated: `____`. Replace the
+secret the same day. The website job must fail loudly when the token is rejected, never skip
+the update silently.
+
+### Website side
+
+In `distantsoil/kestrelapp-site`:
+
+- The download page reads `/latest.json` to show the current version and the download buttons.
+- A `_headers` file at the site root sets a short cache on the feed:
+
+  ```
+  /latest.json
+    Cache-Control: max-age=300
+  ```
 
 ## Signing
 

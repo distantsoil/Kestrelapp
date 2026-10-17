@@ -180,7 +180,7 @@ def test_help_keeps_its_content_and_nav_lists_both_pages():
     assert "<h1>Help</h1>" in helped.text
     for row in source_catalog():
         assert row.kind in helped.text, row.kind
-    assert 'hx-post="/help/update-check"' in helped.text
+    assert 'hx-post="/updates/check"' in helped.text
     assert 'href="/about">About</a>' in helped.text.split("<main")[1]
     for body in (helped.text, about.text):
         side = body.split('<aside class="side"')[1].split("</aside>")[0]

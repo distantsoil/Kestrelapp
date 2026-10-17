@@ -1,0 +1,31 @@
+{
+  "schema": 99,
+  "version": "0.4.0",
+  "published_at": "2026-03-01T12:00:00Z",
+  "download_page": "https://kestrelapp.co/download",
+  "downloads": {
+    "windows": {
+      "file": "Kestrel-Setup-0.4.0.exe",
+      "url": "https://kestrelapp.co/dl/Kestrel-Setup-0.4.0.exe",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signed": false
+    }
+  },
+  "releases": [
+    {
+      "version": "0.4.0",
+      "date": "2026-03-01",
+      "notes_md": "### New\n- Update notices\n- Faster scoring <script>alert(1)</script>\n\n### Fixed\n- Tray icon restore"
+    },
+    {
+      "version": "0.3.5",
+      "date": "2026-02-10",
+      "notes_md": "### New\n- Offer comparison page\n- Backup reminders"
+    },
+    {
+      "version": "0.3.1",
+      "date": "2026-01-15",
+      "notes_md": "### Fixed\n- Resume export spacing\n\nMinor polish."
+    }
+  ]
+}

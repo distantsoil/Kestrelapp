@@ -1,0 +1,12 @@
+{% if version %}
+<div class="warnbox" role="status" data-testid="update-banner"
+     style="margin-bottom:.8rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+  <span>Kestrel {{ version }} is available.</span>
+  <span style="flex:1"></span>
+  <button class="btn primary" type="button" hx-get="/updates/details" hx-target="#update-modal"
+          hx-swap="innerHTML">What's new</button>
+  <a class="btn" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get the update</a>
+  <button class="btn ghost" type="button" hx-post="/updates/remind" hx-target="#update-banner"
+          hx-swap="innerHTML">Later</button>
+</div>
+{% endif %}

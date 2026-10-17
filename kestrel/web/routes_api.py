@@ -94,6 +94,21 @@ async def health():
     return {"status": "ok", "service": "kestrel", "version": __version__}
 
 
+@router.get("/api/updates/status")
+async def updates_status():
+    """What the tray polls: is a newer version worth advertising right now? Honors the Settings
+    toggle, Skip and Remind me, exactly like the banner. No network call."""
+    from kestrel.db.base import utcnow_iso
+    from kestrel.services import updater
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sessionmaker()() as s:
+        enabled = (await load_settings_with_db(s)).updates.enabled
+        state = await updater.load_state(s)
+    version = updater.banner_version(state, __version__, utcnow_iso()) if enabled else None
+    return {"available": version is not None, "version": version}
+
+
 @router.post("/api/quit")
 async def quit_app():
     """The in-app "Quit Kestrel" button: the same real quit as the tray's Quit (D-UI-27), never

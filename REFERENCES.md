@@ -204,6 +204,16 @@ ollama.com was unreachable from the build container; the GitHub docs were fetche
 
 ---
 
+## Update checker and release hosting
+
+| Topic | URL | Notes |
+|---|---|---|
+| Cloudflare Pages limits | https://developers.cloudflare.com/pages/platform/limits/ | **Not verified live.** 25 MiB cap per static file. This is why installers stay on GitHub Releases and the site links to the asset URLs |
+| Cloudflare Pages `_headers` | https://developers.cloudflare.com/pages/configuration/headers/ | **Not verified live.** Used on the website for `/latest.json` with `Cache-Control: max-age=300` (`docs/RELEASING.md`) |
+| GitHub fine-grained personal access tokens | https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens | **Not verified live.** The `WEBSITE_TOKEN` secret: Contents read and write on `distantsoil/kestrelapp-site` only (D-UPD-5) |
+
+---
+
 ## Standards and formats
 
 | Topic | URL | Notes |

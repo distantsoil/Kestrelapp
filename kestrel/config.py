@@ -397,6 +397,16 @@ class Pursuits(BaseModel):
 UI_SCHEMES: tuple[str, ...] = ("indigo", "teal")
 
 
+class Updates(BaseModel):
+    """The update checker (SPEC-INTERFACES.md 1.5). It only asks; it never downloads."""
+
+    enabled: bool = True
+    # Literal rather than importing updater.FEED_URL: keep config free of service imports.
+    # Must match kestrel.services.updater.FEED_URL (a test pins it).
+    feed_url: str = "https://kestrelapp.co/latest.json"
+    check_hours: int = 24
+
+
 class UI(BaseModel):
     """Appearance (docs/UI_PROPOSAL.html). `scheme` is the color scheme the server renders as
     `data-scheme` on <html> for the first paint; the browser's own localStorage copy then wins.
@@ -461,11 +471,14 @@ class Settings(BaseSettings):
     ingest: Ingest = Ingest()
     pursuits: Pursuits = Pursuits()
     ui: UI = UI()
+    updates: Updates = Updates()
 
     # Top-level so Tier 0 rules can read `settings.max_posting_age_days` exactly as SPEC.md 6.1
     # writes it (its sibling is nested as `settings.consulting.max_trigger_age_days`).
     max_posting_age_days: int = 45
     confidential_mode: bool = False
+    # Ignored: superseded by updates.feed_url. Old feeds were a different format, so this value
+    # is deliberately not migrated.
     update_check_url: str | None = None
     log_level: str = "INFO"
 
