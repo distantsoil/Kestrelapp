@@ -193,21 +193,15 @@
 </div>
 
 <div class="panel">
-  <h2>Update check</h2>
+  <h2>Check for updates</h2>
   <p class="muted">
-    Off by default. Kestrel never checks for updates automatically and
-    never downloads or installs anything on its own; this only runs when you click the button below.
+    Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent. Kestrel
+    never downloads or installs anything; you choose if and when to update. You can turn the daily
+    check off under Settings.
   </p>
-  <p>
-    {% if update_check_url %}
-      <span class="pill">configured</span>
-      <span class="mono muted">{{ update_check_url }}</span>
-    {% else %}
-      <span class="pill">update check disabled</span>
-    {% endif %}
-  </p>
-  <button class="btn" hx-post="/help/update-check" hx-target="#update-result"
-          hx-swap="innerHTML">Check now</button>
+  <button class="btn" hx-post="/updates/check" hx-target="#update-result"
+          hx-swap="innerHTML">Check for updates</button>
+  <span id="update-last-checked" class="muted"></span>
   <div id="update-result" style="margin-top:.6rem"></div>
 </div>
 

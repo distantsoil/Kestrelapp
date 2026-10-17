@@ -1,0 +1,27 @@
+<div class="upd-backdrop" role="dialog" aria-modal="true" aria-labelledby="upd-title"
+     data-testid="update-dialog"
+     onclick="if (event.target === this) this.remove()">
+  <div class="card" style="max-width:640px;width:100%;max-height:85vh;overflow:auto;
+                           background:var(--paper)">
+    <h3 id="upd-title">Kestrel {{ version }} is available</h3>
+    {% for n in notes %}
+      <h4 style="margin:.8rem 0 .2rem">{{ n.version }} <span class="muted">{{ n.date }}</span></h4>
+      {{ n.html }}
+    {% else %}
+      <p class="muted">Release notes are not available right now.</p>
+    {% endfor %}
+    <p class="muted">On the download page, get the installer, close Kestrel, and run it. Your data stays where it is.</p>
+    <p style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.6rem 0 0">
+      {% if download_page %}
+        <a class="btn primary" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get the update</a>
+      {% endif %}
+      <button class="btn" type="button" hx-post="/updates/remind" hx-target="#update-banner"
+              hx-swap="innerHTML" hx-on::after-request="this.closest('.upd-backdrop').remove()">Remind me tomorrow</button>
+      <button class="btn ghost" type="button" hx-post="/updates/skip" hx-vals='{"version": "{{ version }}"}'
+              hx-target="#update-banner" hx-swap="innerHTML"
+              hx-on::after-request="this.closest('.upd-backdrop').remove()">Skip this version</button>
+      <button class="btn ghost" type="button"
+              onclick="this.closest('.upd-backdrop').remove()">Close</button>
+    </p>
+  </div>
+</div>

@@ -352,9 +352,48 @@ def _tooltip(status: dict) -> tuple[str, str]:
     return f"Kestrel {__version__} - idle", "idle"
 
 
+_update_version: str | None = None  # set by the poller; drives the tray's "Update available" item
+_UPDATE_POLL_EVERY = 15  # tooltip ticks (4 s each): the update state changes at most daily
+
+
+def _poll_update_status() -> None:
+    """Refresh the cached update version from the local API and redraw the menu on a change."""
+    global _update_version
+    try:
+        import httpx
+
+        resp = httpx.get(f"http://127.0.0.1:{_port}/api/updates/status", timeout=3.0)
+        data = resp.json() if resp.status_code == 200 else None
+    except Exception:
+        return  # keep the last known value; the next poll retries
+    if not isinstance(data, dict) or "available" not in data:
+        return  # an error page or unexpected body is not an answer; keep the last value
+    version = data.get("version") if data["available"] else None
+    if version != _update_version:
+        _update_version = version
+        if icon is not None:
+            icon.update_menu()
+
+
+def _show_update_dialog() -> None:
+    """Bring the window forward and open the release-notes dialog the banner's button opens."""
+    show_window()
+    if window is not None:
+        try:
+            window.evaluate_js(
+                "htmx.ajax('GET','/updates/details',{target:'#update-modal',swap:'innerHTML'})"
+            )
+        except Exception as exc:  # the window may not have a page yet; Open still worked
+            log.debug("update_dialog_failed", error=str(exc))
+
+
 def _tooltip_poller() -> None:
     imgs = _icons()
+    tick = 0
     while not _quitting:
+        if tick % _UPDATE_POLL_EVERY == 0:
+            _poll_update_status()
+        tick += 1
         try:
             tip, state = _tooltip(_status())
             if icon is not None:
@@ -411,6 +450,11 @@ def _build_tray(pystray) -> None:
         f"Kestrel {__version__}",
         menu=pystray.Menu(
             pystray.MenuItem("Open", lambda i, item: show_window(), default=True),
+            pystray.MenuItem(
+                lambda item: f"Update available ({_update_version})",
+                lambda i, item: _show_update_dialog(),
+                visible=lambda item: _update_version is not None,
+            ),
             pystray.MenuItem("Pause worker", lambda i, item: _post("/api/worker/pause"),
                              checked=_paused_checked),
             pystray.MenuItem("Resume worker", lambda i, item: _post("/api/worker/resume")),

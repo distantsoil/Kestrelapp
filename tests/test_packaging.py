@@ -190,7 +190,7 @@ def test_release_workflow_names_the_three_artifacts():
     assert set(release["needs"]) == {"linux", "macos", "windows"}
     assert "refs/tags/v" in release["if"]
     gh = next(s for s in release["steps"] if str(s.get("uses", "")).startswith("softprops/"))
-    assert gh["with"]["generate_release_notes"] is True
+    assert gh["with"]["generate_release_notes"] is False
     assert "Kestrel-Setup-*.exe" in gh["with"]["files"]
     assert "Kestrel-*.dmg" in gh["with"]["files"]
     assert "Kestrel-*-x86_64.AppImage" in gh["with"]["files"]
@@ -222,7 +222,8 @@ def test_release_workflow_marks_unsigned_artifacts():
         # the marker is written after the build and before the upload
         assert steps.index(marker) < steps.index(upload)
     release = jobs["release"]
-    status = next(s for s in release["steps"] if s.get("name") == "Signing status")
+    name = "Release notes and signing status"
+    status = next(s for s in release["steps"] if s.get("name") == name)
     for job in secrets:
         assert f"SIGNING-{job}.txt" in status["run"]
     assert "> SIGNING.txt" in status["run"] and "RELEASE_BODY.md" in status["run"]
@@ -299,6 +300,103 @@ def test_workflow_actions_are_pinned_to_major_versions():
                 uses = step.get("uses")
                 if uses:
                     assert re.fullmatch(r"[\w.-]+/[\w.-]+@v\d+", uses), f"{name}: {uses}"
+
+
+def test_release_notes_come_from_the_changelog_and_prereleases_are_marked():
+    wf = _workflow("release.yml")
+    steps = wf["jobs"]["release"]["steps"]
+    run = "\n".join(s.get("run", "") for s in steps)
+    assert "scripts/changelog_section.py" in run
+    gh = next(s for s in steps if str(s.get("uses", "")).startswith("softprops/"))
+    assert gh["with"]["generate_release_notes"] is False
+    assert "contains(github.ref_name, '-')" in str(gh["with"]["prerelease"])
+
+
+def test_website_job_publishes_latest_json_only_for_real_stable_tags():
+    wf = _workflow("release.yml")
+    job = wf["jobs"]["website"]
+    assert job["needs"] == ["release"] or job["needs"] == "release"
+    cond = job["if"]
+    assert "github.event_name == 'push'" in cond
+    assert "refs/tags/v" in cond
+    assert "!contains(github.ref_name, '-')" in cond
+    assert job["permissions"] == {"contents": "read"}
+    run = "\n".join(s.get("run", "") for s in job["steps"])
+    assert "scripts/build_latest_json.py" in run
+    site = next(s for s in job["steps"] if s.get("with", {}).get("path") == "site")
+    assert site["with"]["token"] == "${{ secrets.WEBSITE_TOKEN }}"
+    # the push runs inside the site checkout, which persisted that token
+    push = next(s for s in job["steps"] if "git push" in s.get("run", ""))
+    assert "cd site" in push["run"]
+    assert site["with"].get("persist-credentials", True) is True
+
+
+def test_release_preflight_gates_every_build():
+    wf = _workflow("release.yml")
+    pre = wf["jobs"]["preflight"]
+    assert pre["runs-on"] == "ubuntu-latest"
+    for name in ("linux", "macos", "windows"):
+        needs = wf["jobs"][name]["needs"]
+        assert "preflight" in ([needs] if isinstance(needs, str) else needs), name
+    run = "\n".join(s.get("run", "") for s in pre["steps"])
+    assert "scripts/changelog_section.py" in run
+    assert "--allow-unreleased" in run
+    assert "::error::" in run and "HAS_WEBSITE_TOKEN" in run
+    token_step = next(s for s in pre["steps"] if "HAS_WEBSITE_TOKEN" in s.get("run", ""))
+    assert "refs/tags/v" in token_step["if"]  # a tag push only, never a dry run
+    assert "!contains(github.ref_name, '-')" in token_step["if"]  # stable versions only
+    # the release body uses the same prerelease logic
+    body = "\n".join(s.get("run", "") for s in wf["jobs"]["release"]["steps"])
+    assert "--allow-unreleased" in body
+
+
+def test_website_token_is_only_ever_the_checkout_token_input():
+    import re
+
+    wf = _workflow("release.yml")
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    uses = re.findall(r"^\s*[\w-]+:\s*\$\{\{[^}]*secrets\.WEBSITE_TOKEN[^}]*\}\}", text, re.M)
+    allowed = {"HAS_WEBSITE_TOKEN: ${{ secrets.WEBSITE_TOKEN != '' }}",
+               "token: ${{ secrets.WEBSITE_TOKEN }}"}
+    assert {u.strip() for u in uses} <= allowed and len(uses) == 2, uses
+    assert "secrets.WEBSITE_TOKEN }}" not in "".join(
+        u for u in uses if u.strip().startswith(("WEBSITE_TOKEN", "GH_TOKEN"))
+    )
+    for name, job in wf["jobs"].items():
+        envs = [job.get("env") or {}] + [st.get("env") or {} for st in job["steps"]]
+        for env in envs:
+            assert "WEBSITE_TOKEN" not in env, name
+            for key, value in env.items():
+                if "secrets.WEBSITE_TOKEN" in str(value):
+                    assert key == "HAS_WEBSITE_TOKEN" and "!= ''" in str(value), (name, key)
+        for st in job["steps"]:
+            if "secrets.WEBSITE_TOKEN" in str(st.get("with", {})):
+                assert str(st["uses"]).startswith("actions/checkout@")
+                assert list(k for k, v in st["with"].items()
+                            if "WEBSITE_TOKEN" in str(v)) == ["token"]
+
+
+def test_real_changelog_has_a_clean_section_for_this_version():
+    import pytest
+
+    path = ROOT / "CHANGELOG.md"
+    if not path.exists():
+        pytest.skip("CHANGELOG.md not present")
+    text = path.read_text(encoding="utf-8")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        from changelog_section import extract_section
+    finally:
+        sys.path.remove(str(ROOT / "scripts"))
+    body = extract_section(text, __version__)
+    assert body, f"CHANGELOG.md needs a non-empty '## [{__version__}]' section"
+    assert not re.search(r"#\d+", text), "no issue or PR numbers in the changelog"
+    shas = [
+        m for m in re.findall(r"\b[0-9a-f]{7,40}\b", text)
+        if re.search(r"[a-f]", m) and re.search(r"\d", m)
+    ]
+    assert not shas, f"no commit SHAs in the changelog: {shas}"
+    assert not re.search(r"(?i)distantsoil/kestrel(?!app)", text)
 
 
 # -------------------------------------------------------------------------------- Windows

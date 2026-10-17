@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import structlog
@@ -42,7 +43,7 @@ _PAGE_MODULES = (
     "dashboard", "chrome", "documents", "profile", "pursuits", "renders", "orgs", "stories",
     "prep", "mock", "offers", "sources", "settings", "analytics", "bench", "about",
     "escalate", "opportunity_actions", "runs_detail", "models", "backup", "applied",
-    "rescore",
+    "rescore", "updates",
 )
 
 # Worker pause is a process-wide flag the tray toggles via /api/worker/pause|resume. A paused
@@ -501,6 +502,53 @@ async def _scheduler_loop(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), timeout=60.0)
 
 
+async def _update_loop(stop: asyncio.Event) -> None:
+    """Ask the static feed whether a newer Kestrel exists (SPEC-INTERFACES 1.5). Never downloads.
+    Settings are re-read every pass so the Settings toggle applies without a restart."""
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import updater
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    sm = get_sessionmaker()
+    first_wait = float(updater.FIRST_CHECK_DELAY_SECONDS)
+    try:
+        async with sm() as s:
+            hours = (await load_settings_with_db(s)).updates.check_hours
+            first_wait = updater.seconds_until_next_check(
+                await updater.load_state(s), hours, datetime.now(UTC)
+            )
+    except Exception as exc:  # fall back to the plain startup delay
+        log.warning("update_wait_error", error_type=type(exc).__name__, error=str(exc))
+    await _wait(stop, first_wait)
+    while not stop.is_set():
+        wait_seconds = 24 * 3600.0
+        try:
+            async with sm() as s:
+                # The toggle lives in the setting table, which get_settings() does not read.
+                cfg = (await load_settings_with_db(s)).updates
+                wait_seconds = float(max(1, cfg.check_hours)) * 3600.0
+                if cfg.enabled:
+                    await updater.check_now(s, feed_url=cfg.feed_url)
+        except Exception as exc:  # an update check must never take down the app
+            log.warning("update_check_error", error_type=type(exc).__name__, error=str(exc))
+        await _wait(stop, wait_seconds)
+
+
+async def _mark_update_seen() -> None:
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import updater
+
+    try:
+        async with get_sessionmaker()() as s:
+            previous = await updater.mark_seen(s)
+            if previous:  # a real upgrade: drives the one-time "Here's what changed" card
+                state = await updater.load_state(s)
+                state.upgraded_from = previous
+                await updater.save_state(s, state)
+    except Exception as exc:  # recording the running version is a convenience only
+        log.warning("update_mark_seen_failed", error_type=type(exc).__name__, error=str(exc))
+
+
 # Loopback hostnames the UI can legitimately be served from. The port deliberately is NOT pinned:
 # the app moves along the 8765 ladder, so the browser's Origin will carry whichever rung it took.
 # urlsplit().hostname strips brackets, so an IPv6 literal arrives as "::1", never "[::1]".
@@ -633,6 +681,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         deliver: asyncio.Task | None = None
         stall: asyncio.Task | None = None
         models: asyncio.Task | None = None
+        updates: asyncio.Task | None = None
         # Every startup, worker or not (finding 7): a CLI or UI-only start must not drop the
         # consulting track an existing install uses.
         await _load_enabled_tracks()
@@ -645,9 +694,13 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
             deliver = asyncio.create_task(_delivery_loop(stop), name="delivery")
             stall = asyncio.create_task(_stall_monitor(stop), name="stall-monitor")
             models = asyncio.create_task(_setup_models_loop(stop), name="setup-models")
+            # Gated on `worker` like the delivery loop: tests build the app with worker=False, so
+            # the update check (a network request) never runs there.
+            await _mark_update_seen()
+            updates = asyncio.create_task(_update_loop(stop), name="update-check")
         if scheduler:
             sched = asyncio.create_task(_scheduler_loop(stop), name="scheduler")
-        for created in (task, deliver, sched, stall, models):
+        for created in (task, deliver, sched, stall, models, updates):
             if created is not None:
                 created.add_done_callback(_log_task_failure)
         # The MCP server is a separate SSE port, started only when enabled (default off). Guard on
@@ -675,7 +728,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
                     log.warning("shutdown_step_failed", step="mcp",
                                 error=f"{type(exc).__name__}: {exc}")
                 mcp_runtime.set_live(False)
-            for extra in (sched, mcp_task, deliver, stall, models):
+            for extra in (sched, mcp_task, deliver, stall, models, updates):
                 if extra is not None:
                     extra.cancel()
                     try:

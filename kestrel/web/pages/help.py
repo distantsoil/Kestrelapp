@@ -6,16 +6,11 @@ leaves the machine, backups, and the install facts (version, port, data and log 
 profile, dependency versions) the extension README and the setup flow point the operator to. The
 version, the project links and the diagnostics download are on /about (pages/about.py).
 
-The update check is disabled by default and never runs automatically (hard constraint,
-SPEC-INTERFACES 1.5: "No auto-update, no silent download. Disabled by default; the operator
-opts in."). GET /help only reports whether `settings.update_check_url` is configured; the actual
-network call happens solely on an explicit POST /help/update-check triggered by the operator's
-own click (no `hx-trigger="load"` anywhere on that button), and that call is wrapped so a bad URL,
-no network, or a malformed response is displayed, never a 500."""
+The "Check for updates" button posts to /updates/check (pages/updates.py), which owns the
+update checker UI. Kestrel never downloads or installs anything."""
 
 from __future__ import annotations
 
-import html
 from importlib.metadata import PackageNotFoundError, metadata
 from importlib.metadata import version as pkg_version
 
@@ -24,7 +19,6 @@ from fastapi.responses import HTMLResponse
 
 import kestrel
 from kestrel import paths
-from kestrel.config import get_settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.ingest.catalog import REGION_NOTE, REQUEST_NEW_PROVIDER, source_catalog
@@ -166,7 +160,6 @@ def _hardware_profile() -> dict[str, str] | None:
 
 @router.get("/help", response_class=HTMLResponse)
 async def help_page(request: Request):
-    settings = get_settings()
     ctx = {
         "title": "Help",
         "query": dict(request.query_params),
@@ -179,7 +172,6 @@ async def help_page(request: Request):
         # authority on which ladder rung this instance took.
         "api_port": _running_port(),
         "dependencies": _dependency_versions(),
-        "update_check_url": settings.update_check_url,
         "tiers": TIERS,
         "tier_names": TIER_NAMES,
         "catalog": source_catalog(),
@@ -222,48 +214,3 @@ async def restore_guides():
         "every page.</span>"
     )
 
-
-@router.post("/help/update-check", response_class=HTMLResponse)
-async def update_check(request: Request):
-    """Operator-triggered only. Returns an HTML fragment for the #update-result target."""
-    import httpx
-
-    settings = get_settings()
-    url = settings.update_check_url
-    if not url:
-        return HTMLResponse(
-            '<div class="muted" id="update-result">'
-            "Update check is disabled (no <span class=\"mono\">update_check_url</span> "
-            "configured).</div>"
-        )
-    current = kestrel.__version__
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.get(url, headers={"User-Agent": f"Kestrel/{current}"})
-            resp.raise_for_status()
-            data = resp.json()
-        latest = str(data.get("version") or data.get("tag_name") or "unknown")
-        download = data.get("url") or data.get("download_url") or data.get("html_url")
-        if latest and latest != current:
-            link = (
-                f' <a class="btn" href="{html.escape(str(download))}" '
-                f'target="_blank" rel="noopener">Download</a>'
-                if download
-                else ""
-            )
-            body = (
-                f'<div class="warnbox" id="update-result">A newer version is available: '
-                f"<strong>{html.escape(latest)}</strong> "
-                f"(running {html.escape(current)}).{link}</div>"
-            )
-        else:
-            body = (
-                f'<div class="muted" id="update-result">Up to date '
-                f"(running {html.escape(current)}).</div>"
-            )
-        return HTMLResponse(body)
-    except Exception as exc:  # a bad URL, no network, or a malformed response must not 500 the page
-        return HTMLResponse(
-            f'<div class="warnbox" id="update-result">Update check failed: '
-            f"{html.escape(str(exc))}</div>"
-        )

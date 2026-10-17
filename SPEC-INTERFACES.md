@@ -166,11 +166,68 @@ ONNX weights plus `onnxruntime` and `tokenizers`, fetched and hash-verified at b
 Version stamping: a single `__version__` feeds `pyproject.toml`, the installer, the window
 title, the `/health` response, and the About page.
 
-### 1.5 Update check
+### 1.5 Update checker
 
-On startup, optionally check a configured URL for a newer version and show a non-blocking banner
-with a download link. **No auto-update, no silent download.** Disabled by default; the operator
-opts in.
+Kestrel tells the operator when a newer release exists and shows what changed. **It never
+downloads or installs anything.** The operator downloads and runs the installer themselves. Two
+public promises bind this subsection, and every rule below keeps them:
+
+- "Asking is fine; installing on its own is not." Checking for a newer release is a request out
+  to the internet. Kestrel says it does this, lets the operator turn it off, and never downloads or
+  installs anything without the operator's click. "It never acts on your behalf" covers this.
+- "Send nothing about the user." The check is a plain request for the latest release version. It
+  sends no ID, no profile details and no usage data. "You are not the product" covers this.
+
+**When it runs.** About 60 seconds after startup, then every 24 hours while Kestrel runs. On by
+default. A switch in Settings turns it off, and while it is off no request is made at all,
+including the startup check.
+
+**Where it goes.** `https://kestrelapp.co/latest.json`, not the GitHub API (D-UPD-4). The check
+goes to kestrelapp.co rather than GitHub; the rules above apply unchanged.
+
+**What the request carries.** These headers and nothing else:
+
+- `User-Agent: Kestrel-Updater`
+- `Accept: application/json`
+- `If-None-Match: <cached ETag>`, only when a cached copy exists
+
+No version, no query string, no cookies. The User-Agent is fixed so the running version never
+leaves the machine through it (D-UPD-3).
+
+**What the response carries.** The feed, schema 1:
+
+```json
+{"schema":1,"version":"0.4.0","published_at":"2026-11-02T15:00:00Z",
+ "download_page":"https://kestrelapp.co/download",
+ "downloads":{"windows":{"file":"Kestrel-Setup-0.4.0.exe","url":"<asset url>","sha256":"...","signed":false},
+              "macos":{...},"linux":{...}},
+ "releases":[{"version":"0.4.0","date":"2026-11-02","notes_md":"### New\n- ..."}]}
+```
+
+- `releases` holds the last 10 CHANGELOG sections, newest first. Prerelease versions are never
+  written to the feed.
+- A feed whose `schema` is not 1 is ignored quietly: no banner, no error.
+- `downloads.<platform>.sha256` is published so the operator can check the file they downloaded
+  against it. Kestrel does not download the file, so it does not check it.
+
+**What the operator sees.** A newer version is one that is higher than `kestrel.__version__` by
+semantic version comparison. Then:
+
+- A non-blocking banner on every page, naming the new version, with "What's new" and "Get the
+  update".
+- "What's new" opens a dialog with the `releases` sections newer than the running version, newest
+  first.
+- One tray and bell notification per new version. The daily check does not repeat it.
+- "Get the update" opens `download_page` in the default browser. Kestrel opens only an https
+  address on kestrelapp.co and ignores any other value.
+
+**When it fails.** A network error, a non-200 response or malformed JSON is logged with context
+and tried again at the next interval. A failed check never blocks startup, never shows an error to
+the operator, and changes nothing on screen unless a newer version is confirmed. The ETag is kept
+on the operator's machine, so an unchanged feed costs a 304.
+
+The release side that publishes the feed is in `docs/RELEASING.md`. The decisions are D-UPD-1 to
+D-UPD-5 in `DECISIONS.md`.
 
 ---
 
