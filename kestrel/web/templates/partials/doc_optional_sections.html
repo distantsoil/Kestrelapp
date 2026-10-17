@@ -1,0 +1,49 @@
+{# Optional sections (D-DOC-3): education, certifications, licenses, projects. The operator's own
+   typed entries, printed exactly as typed and only when a section has entries. Never chosen by
+   the model. Each section collapses to its name and entry count. #}
+<div class="optional-sections" id="optional-sections" data-testid="optional-sections">
+  <h3 style="margin:1.2rem 0 .3rem">Optional sections</h3>
+  <p class="muted" style="margin:0 0 .5rem">Shown on the resume only when they have entries.</p>
+  {% if optional_confidential %}<p class="muted confidential-hint" data-testid="optional-confidential-hint">Confidential mode is on: an employer name typed here prints as that role's redacted label.</p>{% endif %}
+  {% if optional_note %}<p class="tree-note" role="status">{{ optional_note }}</p>{% endif %}
+  {% if optional_error %}<div class="warnbox" role="alert">{{ optional_error }}</div>{% endif %}
+  {% for k in optional_kinds %}
+  <details class="section optional-kind" data-kind="{{ k.kind }}" {% if optional_open == k.kind %}open{% endif %}>
+    <summary class="role-head">
+      <span class="role-name">{{ k.heading }}</span>
+      <span class="muted role-count">{% if k.entries %}{{ k.entries | length }} entr{{ "y" if k.entries | length == 1 else "ies" }}{% else %}empty, not shown{% endif %}</span>
+    </summary>
+    <div class="role-bullets">
+    {% for eid, e in k.entries %}
+      <form class="formgrid section-form optional-entry" data-entry-id="{{ eid }}"
+            hx-post="/documents/{{ selected.id }}/sections/{{ k.kind }}/{{ eid }}"
+            hx-target="#optional-sections" hx-swap="outerHTML">
+        {% for name, label, required, placeholder in k.fields %}
+        <label for="opt-{{ k.kind }}-{{ eid }}-{{ name }}">{{ label }}</label>
+        <input id="opt-{{ k.kind }}-{{ eid }}-{{ name }}" type="text" name="{{ name }}"
+               value="{{ e[name] or '' }}" placeholder="{{ placeholder }}"{% if required %} required{% endif %}>
+        {% endfor %}
+        <span></span>
+        <span><button class="btn ghost" type="submit">Save</button>
+          <button class="btn ghost small danger" type="button"
+                  hx-post="/documents/{{ selected.id }}/sections/{{ k.kind }}/{{ eid }}/delete"
+                  hx-target="#optional-sections" hx-swap="outerHTML"
+                  hx-confirm="Remove this entry from {{ k.heading }}?">Remove</button></span>
+      </form>
+    {% endfor %}
+      <form class="formgrid section-form add-entry" data-testid="add-{{ k.kind }}"
+            hx-post="/documents/{{ selected.id }}/sections/{{ k.kind }}"
+            hx-target="#optional-sections" hx-swap="outerHTML">
+        <span></span><b>Add to {{ k.heading }}</b>
+        {% for name, label, required, placeholder in k.fields %}
+        <label for="opt-{{ k.kind }}-new-{{ name }}">{{ label }}</label>
+        <input id="opt-{{ k.kind }}-new-{{ name }}" type="text" name="{{ name }}"
+               placeholder="{{ placeholder }}"{% if required %} required{% endif %}>
+        {% endfor %}
+        <span></span>
+        <span><button class="btn" type="submit">Add</button></span>
+      </form>
+    </div>
+  </details>
+  {% endfor %}
+</div>

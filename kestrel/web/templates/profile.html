@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Profile · Kestrel{% endblock %}
+{% block content %}
+<h1>Profile</h1>
+<p class="muted">Who you are, what you want, and the documents that say it. The
+Employment{% if consulting_enabled() %}, Consulting{% endif %} and Location tabs are what the filters and the scoring read: a posting outside these
+terms is rejected before any model sees it, so check Settings &gt; Filters after a change.</p>
+
+{# Server-side tabs (D-UI-21): each tab is its own URL so a link from Setup or Today can open
+   the right one, and the Documents tab keeps its master_id in the query. #}
+<div class="tabs" role="tablist">
+  {% for key, label in tabs %}
+    {# Employment and Consulting ARE the track switch here (D-UI-66): each link names its track
+       and remembers it exactly as the nav switch does (setTrack: localStorage and the
+       kestrel-track cookie), so the nav and this page can never disagree. #}
+    <a role="tab" href="{% if key == 'documents' %}/documents{% elif key in ('employment', 'consulting') %}/profile?tab={{ key }}&track={{ key }}{% else %}/profile?tab={{ key }}&track={{ track }}{% endif %}"
+       {% if key in ('employment', 'consulting') %}@click="setTrack('{{ key }}')" data-tab-track="{{ key }}"{% endif %}
+       class="{% if tab == key %}active{% endif %}" data-tab="{{ key }}"
+       {% if tab == key %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% if track in about_missing and not profile_problem %}
+<div class="warnbox" style="margin-bottom:.8rem" data-testid="about-missing">
+  <b>About you ({{ track }}) has no name yet{% if tab == 'about' %}.{% else %}:{% endif %}</b>
+  {% if tab != 'about' %}fill in at least your name on the
+  <a href="/profile?tab=about&track={{ track }}">About you</a> tab{% else %} fill in at least
+  your name below{% endif %}. The documents and the scoring context for this track use it.
+</div>
+{% endif %}
+{% if tab == 'documents' %}
+  {% include "partials/documents_body.html" %}
+{% else %}
+  {% if tab in ('about', 'location') and consulting_enabled() %}
+  <div class="tabs" style="margin-top:-.4rem" role="tablist" aria-label="Track" data-testid="profile-track-switch">
+    <span class="muted" style="border:0; padding-right:.4rem">Track:</span>
+    {% for t in ('employment', 'consulting') %}
+      <a href="/profile?tab={{ tab }}&track={{ t }}" @click="setTrack('{{ t }}')" role="tab"
+         aria-selected="{{ 'true' if track == t else 'false' }}"
+         class="{% if track == t %}active{% endif %}" data-track="{{ t }}">{{ words(t).track_name }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if profile_problem %}
+  <div class="warnbox" style="margin-bottom:.8rem" role="alert" data-testid="profile-unreadable">
+    <b>profile.yml cannot be read, so nothing here can be saved.</b> {{ profile_problem }}
+    Fix the file, or restore a backup from Settings &gt; LAN &amp; backup, then reload.
+  </div>
+  {% elif not profile_exists %}
+  <div class="warnbox" style="margin-bottom:.8rem" data-testid="no-profile">
+    <b>No profile yet.</b> Until you save a tab here, the filters run against the shipped example's
+    terms, which are not yours. The lists below start from that example's thresholds; the personal
+    fields start blank. Nothing from the example's fictional person is kept.
+  </div>
+  {% endif %}
+  <div id="profile-section">
+    {% include "partials/profile_" ~ tab ~ ".html" %}
+  </div>
+  {% if tab == 'employment' %}
+    {# D-TTL-2: loaded on its own so the Employment form stays one form. #}
+    <div id="title-variants" hx-get="/profile/title-variants" hx-trigger="load" hx-swap="outerHTML"></div>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,156 @@
+{# D-UI-71: Retry on a scored tier opens the Score again dialog (GET /rescore/choose), preselected
+   to the model that failed, so the operator keeps it or picks another; it queues through POST
+   /rescore. Without script the form loads the dialog as a page and posts back here. Tier 3 and
+   rows with no role keep the plain retry, which says where to go instead. #}
+{% macro retry_control(row, label, testid) -%}
+  {%- set q = row.q -%}
+  {%- if row.opp and (row.rescore or q.tier in (1, 2)) -%}
+  <span class="score-again" data-testid="{{ testid }}">
+    <form method="get" action="/rescore/choose" hx-get="/rescore/choose"
+          hx-target="next .score-again-slot" hx-swap="innerHTML">
+      <input type="hidden" name="opp_ids" value="{{ row.opp.id }}">
+      {% if q.model and (row.rescore or q.tier == 2) %}<input type="hidden" name="model" value="{{ q.model }}">{% endif %}
+      <input type="hidden" name="quarantine_id" value="{{ q.id }}">
+      <input type="hidden" name="next" value="/quarantine">
+      <input type="hidden" name="page" value="1">
+      <button class="btn score-again-btn" type="submit" aria-haspopup="dialog">{{ label }}</button>
+    </form>
+    <span class="score-again-slot"></span>
+    <span class="score-again-status" aria-live="polite"></span>
+  </span>
+  {%- else -%}
+  <button class="btn" hx-post="/quarantine/{{ q.id }}/retry" data-testid="{{ testid }}"
+          hx-target="#quarantine-list" hx-swap="outerHTML">{{ label }}</button>
+  {%- endif -%}
+{%- endmacro %}
+<div id="quarantine-list">
+  {% if retry_error %}<div class="warnbox" style="margin-bottom:.8rem">{{ retry_error }}</div>{% endif %}
+  {# D-UI-50: every parked role at once, with the same model or another one this time only. #}
+  {% set failed_ids = rows | rejectattr("queued") | rejectattr("hidden") | selectattr("opp") | map(attribute="opp.id") | unique | list %}
+  {# D-UI-70: the banner shows the one "needs you" number Today, the rail and the tray show. #}
+  {% set n_need = needs_you if needs_you is defined else failed_ids | length %}
+  {% if n_need %}
+    <div class="bar" style="margin-bottom:.8rem" data-testid="needs-you">
+      <span class="muted">{{ n_need }} need{{ 's' if n_need == 1 else '' }} you. Try them again, or on another model.</span>
+      {% if failed_ids %}{% with opp_ids=failed_ids, label="Score all failed again…" %}{% include "partials/score_again.html" %}{% endwith %}{% endif %}
+    </div>
+  {% endif %}
+  {% if open_more %}<div class="warnbox" style="margin-bottom:.8rem" data-testid="open-more">And {{ open_more }} more older failures not shown here.</div>{% endif %}
+  <div class="panel">
+    <div style="overflow-x:auto">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>#</th><th>Posting</th><th class="num">Step</th><th>Model</th><th>What went wrong</th>
+          <th class="num">Attempts</th><th>When</th><th>Raw reply</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in rows %}
+        {% set q = row.q %}
+        {% set opp = row.opp %}
+        <tr>
+          <td class="mono">{{ q.id }}</td>
+          <td>
+            {% if opp %}<a href="/opportunities/{{ opp.id }}">{{ opp.title or opp.id }}</a>{% if row.hidden %} <small class="muted">(hidden)</small>{% endif %}
+            {% else %}<span class="muted">(no posting attached)</span>{% endif %}
+          </td>
+          <td class="num mono">{{ q.tier }}</td>
+          <td class="mono"><small>{{ q.model or '-' }}</small></td>
+          <td><small>{{ q.error or '-' }}</small></td>
+          <td class="num mono">{{ q.attempts }}</td>
+          <td class="mono"><small>{{ q.created_at }}</small></td>
+          <td>
+            <details>
+              <summary>view</summary>
+              <div class="desc mono">{{ q.raw_response or '(empty)' }}</div>
+            </details>
+          </td>
+          <td>
+            {% if row.queued %}<span class="muted" data-testid="retry-queued"><small>Queued to score again</small></span>
+            {% else %}{{ retry_control(row, 'Retry…', 'retry') }}{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="muted" style="text-align:center;padding:20px">
+          Nothing failed scoring. Nothing has been silently dropped.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% if rescore_rows %}
+  {# A failed score-again of a role already scored: the earlier score stands and the stage was
+     never touched. Try again re-queues the same score-again (its model with it). #}
+  <div class="panel" data-testid="rescore-failures" style="margin-top:.8rem">
+    <h2>Score again failed (the earlier score stands)</h2>
+    <div style="overflow-x:auto">
+    <table class="data">
+      <thead>
+        <tr><th>#</th><th>Posting</th><th>Model</th><th>What went wrong</th><th>When</th><th>Raw reply</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for row in rescore_rows %}
+        {% set q = row.q %}
+        {% set opp = row.opp %}
+        <tr>
+          <td class="mono">{{ q.id }}</td>
+          <td>
+            {% if opp %}<a href="/opportunities/{{ opp.id }}">{{ opp.title or opp.id }}</a>{% if row.hidden %} <small class="muted">(hidden)</small>{% endif %}
+            {% else %}<span class="muted">(no posting attached)</span>{% endif %}
+          </td>
+          <td class="mono"><small>{{ q.model or '-' }}</small></td>
+          <td><small>{{ row.error or '-' }}</small></td>
+          <td class="mono"><small>{{ q.created_at }}</small></td>
+          <td>
+            <details>
+              <summary>view</summary>
+              <div class="desc mono">{{ q.raw_response or '(empty)' }}</div>
+            </details>
+          </td>
+          <td>
+            {% if row.queued %}<span class="muted" data-testid="retry-queued"><small>Queued to score again</small></span>
+            {% else %}{{ retry_control(row, 'Try again…', 'rescore-try-again') }}{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+  {% if resolved_rows %}
+  {# D-UI-70: a failure a later score of the same role superseded. Kept as history (the raw reply
+     is evidence, hard rule 3); no count or list calls it failed. #}
+  <details class="panel" data-testid="resolved-failures" style="margin-top:.8rem">
+    <summary>Resolved by a later score ({{ resolved_rows | length }})</summary>
+    <div style="overflow-x:auto">
+    <table class="data">
+      <thead>
+        <tr><th>#</th><th>Posting</th><th class="num">Step</th><th>Model</th><th>What went wrong</th><th>When</th><th>Raw reply</th></tr>
+      </thead>
+      <tbody>
+      {% for row in resolved_rows %}
+        {% set q = row.q %}
+        {% set opp = row.opp %}
+        <tr>
+          <td class="mono">{{ q.id }}</td>
+          <td>{% if opp %}<a href="/opportunities/{{ opp.id }}">{{ opp.title or opp.id }}</a>{% endif %}</td>
+          <td class="num mono">{{ q.tier }}</td>
+          <td class="mono"><small>{{ q.model or '-' }}</small></td>
+          <td><small>{{ row.error or q.error or '-' }}</small></td>
+          <td class="mono"><small>{{ q.created_at }}</small></td>
+          <td>
+            <details>
+              <summary>view</summary>
+              <div class="desc mono">{{ q.raw_response or '(empty)' }}</div>
+            </details>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {% endif %}
+</div>

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Kestrel{% endblock %}
+{% block content %}
+<h1>Tailor {{ "capability statement" if master and master.doc_kind != "resume" else "resume" }}</h1>
+{% if back %}
+<p><a href="{{ back }}" data-testid="render-back">&larr; Back to {{ "Applications" if back.startswith("/pursuits") else "the role" }}</a></p>
+{% else %}
+<p><a href="/documents{% if master %}?master_id={{ master.id }}{% endif %}" data-testid="render-back">&larr; Back to Documents</a></p>
+{% endif %}
+<p class="muted" data-testid="tailor-intro">Kestrel picked a wording for each part of your resume to match this role. Review the picks, swap any you disagree with, then render the PDF.</p>
+{% if new_render_error %}
+  <div class="warnbox">{{ new_render_error }}</div>
+{% endif %}
+<div id="render-content">
+  {% include "partials/render_review.html" %}
+</div>
+{% endblock %}

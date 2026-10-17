@@ -1,0 +1,21 @@
+{# Settings > Core > Tracks I use (D-UI-28). Saved by POST /settings/tracks
+   (kestrel/web/pages/sources.py). Turning consulting off hides it across the app; nothing is
+   deleted, and turning it back on brings everything back. #}
+{% set on = enabled_tracks() %}
+<form id="settings-tracks" hx-post="/settings/tracks" hx-target="this" hx-swap="outerHTML"
+      class="panel" data-testid="settings-tracks" style="margin-bottom:1rem">
+  <h3 style="margin-top:0">Tracks I use</h3>
+  <p class="muted" style="margin:.2rem 0 .5rem">Employment is permanent roles. Consulting is
+    fractional and interim work, found through filings, contract notices and news. Turn off a
+    track you do not use and it disappears from menus, tabs and sources, and its sources stop
+    searching. Your profile, documents and pursuits for it are kept; its searches are rebuilt
+    when you turn it back on.</p>
+  <label style="margin-right:1rem"><input type="checkbox" name="tracks" value="employment"
+         {% if 'employment' in on %}checked{% endif %}> Employment</label>
+  <label><input type="checkbox" name="tracks" value="consulting"
+         {% if 'consulting' in on %}checked{% endif %}> Consulting</label>
+  <div style="margin-top:.6rem">
+    <button class="btn" type="submit">Save</button>
+    {% if tracks_message %}<span class="{{ 'muted' if tracks_ok else 'pill gap' }}" data-testid="tracks-message" role="status">{{ tracks_message }}</span>{% endif %}
+  </div>
+</form>

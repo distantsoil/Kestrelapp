@@ -1,0 +1,56 @@
+[
+  {
+    "id": "a1b2c3d4-1111-4a2b-9c3d-000000000001",
+    "text": "Fractional Chief Technology Officer",
+    "categories": {
+      "location": "Boston, MA",
+      "allLocations": ["Boston, MA", "New York, NY"],
+      "commitment": "Part-time",
+      "team": "Executive",
+      "department": "Leadership"
+    },
+    "createdAt": 1753000000000,
+    "country": "US",
+    "workplaceType": "hybrid",
+    "hostedUrl": "https://jobs.lever.co/acme/a1b2c3d4-1111-4a2b-9c3d-000000000001",
+    "applyUrl": "https://jobs.lever.co/acme/a1b2c3d4-1111-4a2b-9c3d-000000000001/apply",
+    "description": "<div><p>Lead technology strategy for a growth-stage portfolio.</p></div>",
+    "descriptionPlain": "Lead technology strategy for a growth-stage portfolio. You will own the roadmap, vendor relationships, and a small platform team, reporting to the CEO.",
+    "descriptionBody": "<div><p>You will own the roadmap and a small platform team.</p></div>",
+    "descriptionBodyPlain": "You will own the roadmap and a small platform team.",
+    "lists": [
+      {
+        "text": "Requirements",
+        "content": "<ul><li>15+ years engineering leadership</li><li>Fractional or fCTO experience</li></ul>"
+      }
+    ],
+    "salaryRange": {
+      "min": 180000,
+      "max": 240000,
+      "currency": "USD",
+      "interval": "per-year-salary"
+    }
+  },
+  {
+    "id": "a1b2c3d4-2222-4a2b-9c3d-000000000002",
+    "text": "Regional Sales Director",
+    "categories": {
+      "location": "Remote - US",
+      "allLocations": ["Remote - US"],
+      "commitment": "Full-time",
+      "team": "Sales",
+      "department": "Go-To-Market"
+    },
+    "createdAt": 1752000000000,
+    "country": "US",
+    "workplaceType": "remote",
+    "hostedUrl": "https://jobs.lever.co/acme/a1b2c3d4-2222-4a2b-9c3d-000000000002",
+    "applyUrl": "https://jobs.lever.co/acme/a1b2c3d4-2222-4a2b-9c3d-000000000002/apply",
+    "description": "<div><p>Drive regional revenue across the eastern territory.</p></div>",
+    "descriptionPlain": "Drive regional revenue across the eastern territory. Fully remote with occasional travel.",
+    "descriptionBody": "<div><p>Own the eastern territory quota.</p></div>",
+    "descriptionBodyPlain": "Own the eastern territory quota.",
+    "lists": [],
+    "salaryRange": null
+  }
+]

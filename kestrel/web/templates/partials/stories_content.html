@@ -1,0 +1,90 @@
+<div id="stories-content"{% if building %} hx-get="/stories" hx-trigger="every 5s" hx-target="#stories-content" hx-swap="outerHTML"{% endif %}>
+  {% if story_notice %}<p class="saved" role="status" data-testid="story-notice">{{ story_notice }}</p>{% endif %}
+  {% if story_error %}<div class="warnbox" role="alert">{{ story_error }}</div>{% endif %}
+  <div class="panel" data-testid="story-tools">
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center">
+      <details class="part-pop" data-testid="add-story" {% if story_error %}open{% endif %}>
+        <summary class="btn primary small">+ Add a story</summary>
+        <form hx-post="/stories" hx-target="#stories-content" hx-swap="outerHTML" class="formgrid" style="margin-top:.6rem">
+          <label for="new-story-title">Title</label>
+          <input id="new-story-title" type="text" name="title" maxlength="200" required placeholder="A short name you will recognize">
+          <label for="new-story-situation">Situation</label>
+          <textarea id="new-story-situation" name="situation" rows="2"></textarea>
+          <label for="new-story-task">Task</label>
+          <textarea id="new-story-task" name="task" rows="2"></textarea>
+          <label for="new-story-action">Action</label>
+          <textarea id="new-story-action" name="action" rows="3"></textarea>
+          <label for="new-story-result">Result</label>
+          <textarea id="new-story-result" name="result" rows="2"></textarea>
+          <label for="new-story-reflection">Reflection</label>
+          <textarea id="new-story-reflection" name="reflection" rows="2"></textarea>
+          <span></span>
+          <button class="btn primary" type="submit">Save story</button>
+        </form>
+      </details>
+      <button class="btn small build-btn" type="button" hx-post="/stories/build" hx-target="#stories-content" hx-swap="outerHTML"
+              {% if building %}disabled{% endif %} data-testid="build-stories"><b>Build stories</b>
+        <span class="btn-sub" data-testid="build-reads">Builds drafts from your notes on {{ notes_count }} {{ 'role' if notes_count == 1 else 'roles' }} and the interview questions Kestrel drafted when it scored each role.</span></button>
+    </div>
+    <p class="muted" style="margin:.5rem 0 0" data-testid="build-status">
+      {% if building %}Building now. This page updates when it finishes.
+      {% elif build_failed %}<span data-testid="build-failed">Last build failed: {{ build_failed }} · <button class="btn small" type="button" hx-post="/stories/build" hx-target="#stories-content" hx-swap="outerHTML">Try again</button></span>
+      {% elif last_build and last_build.ok %}Last build: {{ last_build.created }} new draft{{ "" if last_build.created == 1 else "s" }}, {{ last_build.attached }} matched to a story you already have, from {{ last_build.sketches }} note or sketch{{ "" if last_build.sketches == 1 else "es" }}.{% if last_build.sketches == 0 %} Nothing new to build from: save notes on a prep page, or score more roles.{% endif %}
+      {% elif last_build %}Last build did not finish: {{ last_build.error }}
+      {% else %}A draft is yours once you save it; nothing rewrites it after that. Dismiss a draft you do not want and Build will not propose it again.{% endif %}
+    </p>
+  </div>
+  <div class="panel" id="your-notes" data-testid="your-notes">
+    <h2>Your notes</h2>
+    {% if notes_list %}
+      <ul class="notes-list">
+        {% for n in notes_list %}
+          <li><a href="/prep/{{ n.opportunity_id }}#prep-notes" data-testid="note-link">{{ n.title }}{% if n.org %} at {{ n.org }}{% endif %}</a>
+            <span class="muted">saved {{ n.saved_at }}</span>
+            {% if n.preview %}<div class="muted notes-preview">{{ n.preview }}</div>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted" data-testid="no-notes">No notes yet. Open a role's interview prep and write what you want to remember or say. Build stories reads those notes.</p>
+    {% endif %}
+    <form method="get" action="/stories/notes/add" class="notes-add" data-testid="add-notes">
+      {% if note_choices %}
+        <label for="notes-role">Add notes for a role</label>
+        <select id="notes-role" name="opportunity_id" required>
+          <option value="">Pick a role from your shortlist or applications</option>
+          {% for c in note_choices %}<option value="{{ c.id }}">{{ c.label }}{% if c.org %} at {{ c.org }}{% endif %}</option>{% endfor %}
+        </select>
+        <button class="btn small" type="submit">Add notes</button>
+      {% else %}
+        <span class="muted">Add a role to your shortlist to write notes for its interview.</span>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Theme coverage</h2>
+    {% if report.gaps %}
+      <div class="warnbox">
+        <strong>Gaps:</strong> {{ report.gaps | join(', ') | replace('_', ' ') }}: none of your stories covers
+        {{ 'these themes' if report.gaps|length > 1 else 'this theme' }} yet.
+      </div>
+    {% endif %}
+    <div class="tree" style="grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); margin-top:.6rem">
+      {% for t in report.themes %}
+        <div>
+          <span class="{{ 'covered' if t.covered else 'gap' }}">{{ t.theme.replace('_', ' ') }}</span>
+          <span class="muted mono"> &middot; {{ t.story_ids | length }}</span>
+        </div>
+      {% endfor %}
+    </div>
+    <p class="muted" style="margin-top:.6rem">{{ report.note }}</p>
+  </div>
+
+  <h2 style="margin-top:1.2rem">Stories <span class="muted">({{ stories | length }})</span></h2>
+  {% if not stories %}
+    <p class="muted">No stories yet. Add one yourself, or build drafts from your notes and the interview questions Kestrel drafted for each scored role.</p>
+  {% endif %}
+  {% for story in stories %}
+    {% include "partials/story_item.html" %}
+  {% endfor %}
+</div>

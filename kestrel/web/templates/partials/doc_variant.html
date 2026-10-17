@@ -1,0 +1,20 @@
+<form class="variant {% if v.derived %}derived{% endif %}" id="variant-{{ v.id }}"
+      data-variant-key="{{ v.key }}"
+      hx-post="/documents/variant/{{ v.id }}" hx-target="#variant-{{ v.id }}"
+      hx-swap="outerHTML" hx-trigger="change delay:400ms from:find textarea, submit">
+  <div>
+    {# The wording's key is internal (the render config names it): a tooltip only (D-UI-29). #}
+    <div class="variant-label" title="Internal key: {{ v.key }}">
+      {% if v.derived %}Alternate wording <span class="flag" title="Reworded from your original; review before it is used">⚑ reworded</span>
+      {% else %}Your wording{% endif %}
+    </div>
+    <textarea name="text" aria-label="Bullet text">{{ v.text }}</textarea>
+    <input type="text" name="tags" value="{{ (v.tags or []) | join(', ') }}"
+           placeholder="themes this bullet shows, comma separated" aria-label="Themes"
+           style="width:100%; margin-top:.25rem">
+  </div>
+  <div class="variant-actions">
+    <button class="btn ghost" type="submit" title="Save">Save</button>
+    {% if saved %}<span class="saved" role="status">Saved</span>{% endif %}
+  </div>
+</form>

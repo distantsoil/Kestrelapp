@@ -1,0 +1,32 @@
+{# Settings > Hosted, Your keys (release round R1): the one place a user adds a provider key. Paste,
+   Test (one cheap authenticated call that checks the key with the provider), Save. A saved
+   key is never rendered back: only its last four characters. OpenRouter is listed first, with
+   "Free models available". Key names and the file they live in are under Show details at the
+   bottom of the Advanced section, for power users only. #}
+<section id="hosted-keys" class="key-box" data-testid="hosted-keys">
+  <h3 style="margin-top:0">Your keys</h3>
+  <p class="muted" style="margin:.2rem 0 .6rem">Paste a key from your provider's website, press Test to check it, then Save. Test asks the provider one question (is this key valid) and sends nothing about you.</p>
+  {% if key_result %}
+  <div class="{{ 'okbox' if key_result.ok else 'warnbox' }}" role="status" aria-live="polite" data-testid="key-result" data-key-ok="{{ 'true' if key_result.ok else 'false' }}" style="padding:.5rem .9rem; margin-bottom:.6rem">{{ key_result.text }}</div>
+  {% endif %}
+  {% for pid in preset_order if hosted_backends.get(presets[pid].backend) %}
+  {% set p = presets[pid] %}
+  {% set b = hosted_backends[p.backend] %}
+  <form class="key-row" data-provider="{{ pid }}" hx-post="/settings/hosted/keybox" hx-target="#hosted-panel" hx-swap="outerHTML" autocomplete="off">
+    <input type="hidden" name="provider" value="{{ pid }}">
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+    <div class="key-row-head">
+      <b>{{ p.label }}</b>{% if pid in free_providers %} <span class="pill apply" data-testid="free-models-{{ pid }}">Free models available</span>{% endif %}
+      <span class="muted" data-testid="key-status-{{ pid }}">{% if b.key_present %}Key saved{% if b.key_tail %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}No key saved{% endif %}</span>
+      <a href="{{ p.console }}" target="_blank" rel="noopener" class="muted">Get a key</a>
+    </div>
+    <div class="key-row-input">
+      <label class="sr-only" for="key-{{ pid }}">{{ p.label }} API key</label>
+      <input id="key-{{ pid }}" type="password" name="api_key" placeholder="Paste a key that starts {{ p.key_prefix }}" spellcheck="false">
+      <button class="btn" type="submit" name="op" value="test">Test</button>
+      <button class="btn pri" type="submit" name="op" value="save">Save</button>
+      {% if b.env in kestrel_keys %}<button class="btn ghost" type="submit" name="op" value="remove">Remove</button>{% endif %}
+    </div>
+  </form>
+  {% endfor %}
+</section>

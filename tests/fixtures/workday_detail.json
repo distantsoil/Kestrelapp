@@ -1,0 +1,15 @@
+{
+  "jobPostingInfo": {
+    "id": "abc-123",
+    "title": "Principal Software Engineer, AI Infrastructure",
+    "jobDescription": "<p>Join the AI Infrastructure team to design and operate the training and inference platform behind our accelerated computing stack. You will lead systems work across scheduling, storage, and networking for very large GPU clusters.</p>",
+    "startDate": "2026-07-15",
+    "endDate": "2026-08-30",
+    "timeType": "Full time",
+    "jobRequisitionId": "JR123",
+    "location": "Santa Clara, CA",
+    "hiringOrganization": {
+      "name": "NVIDIA"
+    }
+  }
+}

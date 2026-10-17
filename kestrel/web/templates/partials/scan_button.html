@@ -1,0 +1,30 @@
+{# The Scan now button (D-UI-35). Idle: "Scan now" queues every enabled search. Scanning: the label
+   reads "Scanning" with a soft pulse, becomes "Cancel scan" on hover or focus, and a click cancels
+   the pending searches (the one in progress finishes its source). Polls itself every 5 s only
+   while scanning; the status rail's #scan-signal refreshes it when a scan starts elsewhere.
+   Styled by id and data attributes in partials/toast.html. #}
+{% set st = scan_state or {} %}
+<span id="scan-btn" data-no-busy data-scanning="{{ 1 if st.scanning else 0 }}"
+      {% if st.scanning %}hx-get="/scan/button" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+  {% if st.scanning %}
+    <button class="btn" type="button" data-state="scanning" data-testid="scan-cancel"
+            hx-post="/scan/cancel" hx-target="#scan-btn" hx-swap="outerHTML"
+            aria-label="Scanning, {{ st.remaining }} search{{ 'es' if st.remaining != 1 }} to go. Activate to cancel the scan."
+            title="{{ st.remaining }} search{{ 'es' if st.remaining != 1 }} to go. Click to cancel.">
+      <span data-label="busy">Scanning</span><span data-label="cancel">Cancel scan</span>
+    </button>
+  {% else %}
+    {# D-UI-72: Scan now opens the model dialog (usual models, or one for this scan). A GET form,
+       so it works without script; with htmx the dialog loads into the slot beside it. #}
+    <span class="score-again" data-testid="scan-now-control">
+      <form method="get" action="/scan/choose" hx-get="/scan/choose"
+            hx-target="next .score-again-slot" hx-swap="innerHTML" style="margin:0">
+        <input type="hidden" name="page" value="1">
+        <button class="btn score-again-btn" type="submit" data-state="idle" data-testid="scan-now"
+                aria-haspopup="dialog" title="Choose models, then scan every enabled search">Scan now</button>
+      </form>
+      <span class="score-again-slot"></span>
+    </span>
+  {% endif %}
+  {% if scan_msg %}<small data-scan-msg role="status">{{ scan_msg }}</small>{% endif %}
+</span>

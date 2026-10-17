@@ -1,0 +1,108 @@
+{% if markdown and (filename or warnings) and not extracted_shown %}
+  {# What was READ from the uploaded file, shown before any proposal so the operator can check the
+     conversion. The verbatim check runs against exactly this text. #}
+  <div class="panel" style="margin-top:.8rem; padding:1rem" data-testid="import-extracted">
+    <h3>Text read from {{ filename or 'your file' }}
+      {% if source_format %}<span class="muted">({{ source_format }})</span>{% endif %}</h3>
+    {% for w in warnings %}
+      <div class="warnbox" style="margin-bottom:.5rem">{{ w }}</div>
+    {% endfor %}
+    <details open>
+      <summary class="muted">Extracted markdown ({{ markdown.splitlines() | length }} lines)</summary>
+      <pre style="white-space:pre-wrap; max-height:24rem; overflow:auto; margin:.5rem 0 0">{{ markdown }}</pre>
+    </details>
+  </div>
+{% endif %}
+{% if error %}
+  <div class="warnbox" style="margin-top:.8rem" data-testid="import-error">{{ error }}</div>
+  {% if retryable and markdown %}
+    {# Retry on the text already read: no re-upload, no re-conversion. Same processing panel. #}
+    {% include "partials/import_processing.html" %}
+  {% endif %}
+{% elif proposal and proposal.value %}
+  <div class="panel" style="margin-top:.8rem; padding:1rem">
+    <h3>Proposed import</h3>
+    {% if proposal.flags.non_verbatim or proposal.flags.too_many_derived %}
+      <div class="warnbox">
+        <b class="flag">⚑ Review before accepting.</b>
+        {% if proposal.flags.non_verbatim %}
+          <p>Not verbatim from your source (would be invented text):
+             {{ proposal.flags.non_verbatim | join(', ') }}</p>{% endif %}
+        {% if proposal.flags.too_many_derived %}
+          <p>Too many derived variants in: {{ proposal.flags.too_many_derived | join(', ') }}</p>{% endif %}
+      </div>
+    {% else %}
+      <p class="covered">✓ Every bullet is verbatim from your source. Safe to accept.</p>
+    {% endif %}
+    {% if proposal.flags.unverified %}
+      <div class="warnbox" data-testid="import-unverified">
+        <b>Check these role details.</b> They do not appear as written in the role's header
+        line, so they may have been misread. After you accept, each role on the Documents page
+        has an "Edit role details" line where company, title and dates can be corrected.
+        <ul>{% for item in proposal.flags.unverified %}<li>{{ item }}</li>{% endfor %}</ul>
+      </div>
+    {% endif %}
+    <form hx-post="/api/documents/import/accept" hx-target="#import-proposal" hx-swap="innerHTML">
+      {# The exact reviewed proposal is round-tripped, so accepting writes what was shown, not a
+         fresh, possibly-different model re-run. #}
+      <input type="hidden" name="proposal_json" value="{{ proposal.value.model_dump_json() }}">
+      <input type="hidden" name="text" value="{{ markdown }}">
+      <input type="hidden" name="track" value="{{ track }}">
+      <input type="hidden" name="doc_kind" value="{{ doc_kind }}">
+      {% if proposal.flags.unplaced %}
+        {# Coverage (D-IMPORT-3, D-IMPORT-6): lines no slot took. Shown so nothing is dropped
+           silently, and the operator decides where each goes. The text stays as written. #}
+        <div class="warnbox" data-testid="import-unplaced">
+          <b>{{ proposal.flags.unplaced | length }} line(s) were not placed in any slot.</b>
+          Choose where each one goes, or leave it out. A heading line is usually best left out.
+          <table style="margin-top:.4rem">
+          {% for line in proposal.flags.unplaced %}
+            <tr><td>{{ line }}<input type="hidden" name="unplaced_line" value="{{ line }}"></td>
+              <td><select name="unplaced_to" aria-label="Where this line goes">
+                <option value="">Leave out</option>
+                <option value="skills">Add to skills</option>
+                {% for r in proposal.value.roles %}
+                  <option value="role:{{ loop.index0 }}">Add to {{ (r.company_label or r.title or 'role ' ~ loop.index)[:40] }}</option>
+                {% endfor %}
+              </select></td></tr>
+          {% endfor %}
+          </table>
+        </div>
+      {% endif %}
+      {% if current_offer %}
+        {# D-PRIV-1: the newest role has no end date, so it is probably the current employer.
+           Opt-in only: nothing is marked unless the box is ticked. #}
+        <div class="import-current" data-testid="import-current-employer"
+             x-data="{ current: false }">
+          <label class="current-employer">
+            <input type="checkbox" name="current_employer" value="on" x-model="current">
+            Mark {{ current_offer.company }} as my current employer
+          </label>
+          <label x-show="current">Shown as
+            <input type="text" name="current_employer_as" value="{{ current_offer.hint }}"
+                   maxlength="200" aria-label="Show your current employer as"></label>
+          <span class="muted current-employer-help">Confidential mode (Settings, Core) shows this
+          in its place. You can change it later under Edit role details.</span>
+        </div>
+      {% endif %}
+      {% if ob %}
+        {# The setup wizard (D-UI-65): one approval, then the step's one primary button, which
+           saves the resume and moves on. Disabled, with a hint, until the text is approved. #}
+        <input type="hidden" name="ob" value="1">
+        <div x-data="{ ok: false }" class="wizard-foot" data-testid="ob-resume-approve">
+          <label class="wizard-hint"><input type="checkbox" name="approved" value="1" x-model="ok" {% if not proposal.flags.clean %}disabled{% endif %}> I approve this resume text</label>
+          <span class="sp"></span>
+          <button class="btn primary" type="submit" data-testid="ob-resume-save" :disabled="!ok" disabled>Save resume and continue</button>
+          <span class="wizard-hint" x-show="!ok" data-testid="ob-resume-hint">{{ 'Approve your resume text first' if proposal.flags.clean else 'Fix the flagged items in your source first' }}</span>
+        </div>
+        <p id="ob-approve-error" hidden></p>
+        {# Reading again is no longer the step's main action. #}
+        <button class="btn" type="submit" form="import-form" id="ob-read-btn" hx-swap-oob="true">Read again</button>
+      {% else %}
+      <button class="btn" type="submit" {% if not proposal.flags.clean %}disabled{% endif %}>
+        Accept and create master</button>
+      {% if not proposal.flags.clean %}<span class="muted">Fix the flagged items in your source first.</span>{% endif %}
+      {% endif %}
+    </form>
+  </div>
+{% endif %}

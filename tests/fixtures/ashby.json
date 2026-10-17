@@ -1,0 +1,120 @@
+{
+  "jobs": [
+    {
+      "id": "e1a7c9f0-1111-4a22-9b33-000000000001",
+      "title": "Chief Technology Officer",
+      "department": "Engineering",
+      "team": "Leadership",
+      "employmentType": "FullTime",
+      "location": "San Francisco, CA",
+      "secondaryLocations": [
+        {"location": "New York, NY"}
+      ],
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "address": {
+        "postalAddress": {
+          "addressLocality": "San Francisco",
+          "addressRegion": "CA",
+          "addressCountry": "US"
+        }
+      },
+      "publishedAt": "2026-07-22T15:00:00.000Z",
+      "isListed": true,
+      "shouldDisplayCompensationOnJobPostings": true,
+      "jobUrl": "https://jobs.ashbyhq.com/Ashby/e1a7c9f0-1111-4a22-9b33-000000000001",
+      "applyUrl": "https://jobs.ashbyhq.com/Ashby/e1a7c9f0-1111-4a22-9b33-000000000001/application",
+      "descriptionHtml": "<p>Lead engineering for a Series C SaaS company. Own architecture, security, and a 60-person org.</p>",
+      "descriptionPlain": "Lead engineering for a Series C SaaS company. Own architecture, security, and a 60-person org.",
+      "compensation": {
+        "compensationTierSummary": "$240K – $300K • Offers Equity",
+        "scrapeableCompensationSalarySummary": "$240K - $300K",
+        "compensationTiers": [
+          {
+            "id": "tier-1",
+            "title": "Salary",
+            "tierSummary": "$240K – $300K",
+            "components": [
+              {
+                "id": "comp-1",
+                "summary": "$240K – $300K",
+                "compensationType": "Salary",
+                "interval": "1 YEAR",
+                "currencyCode": "USD",
+                "minValue": 240000,
+                "maxValue": 300000
+              }
+            ]
+          }
+        ],
+        "summaryComponents": [
+          {
+            "compensationType": "Salary",
+            "interval": "1 YEAR",
+            "currencyCode": "USD",
+            "minValue": 240000,
+            "maxValue": 300000
+          },
+          {
+            "compensationType": "EquityPercentage",
+            "interval": "NONE",
+            "currencyCode": null,
+            "minValue": 0.1,
+            "maxValue": 0.5
+          }
+        ]
+      }
+    },
+    {
+      "id": "e1a7c9f0-2222-4a22-9b33-000000000002",
+      "title": "Staff Platform Engineer",
+      "department": "Engineering",
+      "team": "Platform",
+      "employmentType": "FullTime",
+      "location": "Remote - US",
+      "secondaryLocations": [],
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": null,
+      "publishedAt": "2026-07-19T09:30:00.000Z",
+      "isListed": true,
+      "shouldDisplayCompensationOnJobPostings": false,
+      "jobUrl": "https://jobs.ashbyhq.com/Ashby/e1a7c9f0-2222-4a22-9b33-000000000002",
+      "applyUrl": "https://jobs.ashbyhq.com/Ashby/e1a7c9f0-2222-4a22-9b33-000000000002/application",
+      "descriptionHtml": "<p>Build and operate the internal developer platform.</p>",
+      "descriptionPlain": "Build and operate the internal developer platform.",
+      "compensation": null
+    },
+    {
+      "id": "e1a7c9f0-3333-4a22-9b33-000000000003",
+      "title": "Confidential Executive Search",
+      "department": "Executive",
+      "team": "Leadership",
+      "employmentType": "FullTime",
+      "location": "Boston, MA",
+      "secondaryLocations": [],
+      "isRemote": false,
+      "workplaceType": "On-site",
+      "address": null,
+      "publishedAt": "2026-07-10T12:00:00.000Z",
+      "isListed": false,
+      "shouldDisplayCompensationOnJobPostings": true,
+      "jobUrl": "https://jobs.ashbyhq.com/Ashby/e1a7c9f0-3333-4a22-9b33-000000000003",
+      "applyUrl": "https://jobs.ashbyhq.com/Ashby/e1a7c9f0-3333-4a22-9b33-000000000003/application",
+      "descriptionHtml": "<p>This role is not publicly listed.</p>",
+      "descriptionPlain": "This role is not publicly listed.",
+      "compensation": {
+        "summaryComponents": [
+          {
+            "compensationType": "Salary",
+            "interval": "1 YEAR",
+            "currencyCode": "USD",
+            "minValue": 300000,
+            "maxValue": 350000
+          }
+        ]
+      }
+    }
+  ],
+  "apiVersion": "1"
+}

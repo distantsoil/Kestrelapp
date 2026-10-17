@@ -1,0 +1,111 @@
+"""Plain-language pages (D-UI-47): Interview prep, My stories, Failed scoring, and the Tailor
+resume review (intro, per-part Swap and Hide, a Back link that honors `from`). Offline: a
+migrated SQLite file and the test client."""
+
+from __future__ import annotations
+
+import asyncio
+
+from sqlalchemy import select
+from starlette.testclient import TestClient
+
+from kestrel import paths
+from kestrel.db.engine import make_async_engine, reset_engine
+from kestrel.db.models import DocRender, DocSection, DocSlot, DocVariant, SelectionOverride
+from tests.test_web_phase13 import (  # noqa: F401  (the autouse fixture must be importable)
+    _dispose_engines,
+    _fresh_sm,
+    _seed_doc,
+)
+
+
+def _seed_render() -> tuple[int, str]:
+    async def _go():
+        sm = await _fresh_sm()
+        master_id = await _seed_doc(sm, redact_label="[Confidential]")
+        async with sm() as s:
+            sec = (await s.execute(select(DocSection))).scalars().first()
+            opt = DocSlot(doc_section_id=sec.id, key="side_project", sort_order=1, optional=True,
+                          default_variant_key="p1")
+            s.add(opt)
+            await s.flush()
+            s.add(DocVariant(doc_slot_id=opt.id, key="p1", text="Built a side tool.", tags=[],
+                             derived=False))
+            slot = (await s.execute(select(DocSlot).where(DocSlot.key == "s1"))).scalars().one()
+            render = DocRender(
+                doc_master_id=master_id, opportunity_id=None, template="classic",
+                config={"slots": {"s1": "a", "side_project": "p1"}}, rationale={},
+                filename="r.pdf", page_count=1,
+            )
+            s.add(render)
+            await s.commit()
+            return render.id, slot.key
+
+    return asyncio.run(_go())
+
+
+def _client() -> TestClient:
+    from kestrel.web.app import build_app
+
+    asyncio.run(reset_engine())
+    return TestClient(build_app(worker=False))
+
+
+def test_tailor_page_intro_swap_and_hide_controls():
+    render_id, _ = _seed_render()
+    html = _client().get(f"/renders/{render_id}").text
+    assert "Kestrel picked a wording for each part of your resume to match this role." in html
+    assert "then render the PDF." in html
+    assert "Swap (2)" in html and "Owned technology strategy." in html  # the other wording
+    assert ">Hide</button>" in html and "Edit wording" in html
+    assert "hide this slot" not in html and "optional slot" not in html
+
+
+def test_hide_this_part_goes_through_the_override_path():
+    render_id, _ = _seed_render()
+    c = _client()
+    r = c.post(f"/renders/{render_id}/swap", data={"slot_key": "side_project",
+                                                  "variant_key": "hide"})
+    assert r.status_code == 200 and "Hidden from this resume." in r.text
+
+    async def _rows():
+        engine = make_async_engine(paths.db_path())
+        try:
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            async with async_sessionmaker(engine)() as s:
+                return (await s.execute(select(SelectionOverride))).scalars().all()
+        finally:
+            await engine.dispose()
+
+    (row,) = asyncio.run(_rows())
+    assert (row.slot_key, row.model_choice, row.operator_choice) == ("side_project", "p1", "hide")
+
+
+def test_tailor_back_link_honors_from_and_ignores_anything_else():
+    render_id, _ = _seed_render()
+    c = _client()
+    base = c.get(f"/renders/{render_id}").text
+    assert 'href="/documents?master_id=' in base and "Back to Documents" in base
+    role = c.get(f"/renders/{render_id}?from=/opportunities/12").text
+    assert 'href="/opportunities/12" data-testid="render-back"' in role
+    apps = c.get(f"/renders/{render_id}?from=/pursuits").text
+    assert 'href="/pursuits" data-testid="render-back"' in apps and "Back to Applications" in apps
+    for bad in ("//evil.example/x", "https://evil.example", "/settings"):
+        assert "Back to Documents" in c.get(f"/renders/{render_id}", params={"from": bad}).text
+
+
+def test_renamed_pages_use_the_plain_names():
+    asyncio.run(_fresh_sm())
+    c = _client()
+    stories = " ".join(c.get("/stories").text.split())
+    assert "<h1>My stories</h1>" in stories and "Story bank" not in stories
+    assert "A draft is yours once you save it; nothing rewrites it after that." in stories
+    prep = c.get("/prep/999").text
+    assert "<h1>Interview prep</h1>" in prep and "Prep pack" not in prep
+    quarantine = " ".join(c.get("/quarantine").text.split())
+    assert "<h1>Failed scoring</h1>" in quarantine
+    assert "Retry lets you score the posting again with the same model or another one." in (
+        quarantine
+    )
+    assert "schema" not in quarantine.split("<main")[-1].lower()

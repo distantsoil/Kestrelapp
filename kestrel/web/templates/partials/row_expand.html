@@ -1,0 +1,45 @@
+<div class="expand-inner">
+  {% set ev = detail.ev if detail is defined else ev %}
+  {% set opp = detail.opp if detail is defined else opp %}
+  {# ev_json is get_detail's display copy of the evaluation's JSON fields with confidential-mode
+     redaction applied. The Tier 2 prose names the employer; the raw ORM fields are the fallback
+     only when a caller did not go through get_detail. #}
+  {% set evj = detail.ev_json if detail is defined and detail.ev_json is defined else (ev_json if ev_json is defined else none) %}
+  {% if ev %}
+    {% set blocks = evj.blocks if evj else ev.blocks %}
+    {% set dimensions = evj.dimensions if evj else ev.dimensions %}
+    {% set blockers = evj.blockers if evj else ev.blockers %}
+    {% set legitimacy = evj.legitimacy if evj else ev.legitimacy %}
+    <div class="grid2">
+      <div>
+        {% set b = blocks or {} %}
+        {% if b.get('a_role_summary') %}
+          <div class="block"><span class="k">Role:</span> {{ b.a_role_summary.get('what_this_actually_is','') }}</div>
+        {% elif b.get('a_situation') %}
+          <div class="block"><span class="k">Situation:</span> {{ b.a_situation.get('stated','') }}</div>
+        {% endif %}
+        {% if dimensions %}
+          {% for key, d in dimensions.items() %}
+            <div class="dim">
+              <div class="label"><span>{{ key }}</span><span class="mono">{{ '%.1f'|format(d.score) }}</span></div>
+              <div class="track"><span style="width: {{ (d.score/5*100)|round(0) }}%"></span></div>
+            </div>
+          {% endfor %}
+        {% endif %}
+        {% if blockers %}
+          <div class="block blocker">Blockers: {% for bl in blockers %}{{ bl.kind }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+        {% endif %}
+        {% if legitimacy and legitimacy.get('status') %}
+          <div class="block legit-{{ legitimacy.status }}">Legitimacy: {{ legitimacy.status }}</div>
+        {% endif %}
+      </div>
+      <div>
+        {% include "partials/override_control.html" %}
+      </div>
+    </div>
+    <p style="margin-top:8px"><a href="/opportunities/{{ opp.id }}">Open full detail →</a></p>
+  {% else %}
+    <p class="muted">No evaluation yet (stage: {{ opp.stage }}).</p>
+    {% include "partials/override_control.html" %}
+  {% endif %}
+</div>

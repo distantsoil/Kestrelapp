@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ page_label }} · Kestrel{% endblock %}
+{% block content %}
+<div class="phead">
+  <h1 style="margin-right:auto">{{ page_label }}</h1>
+  <a class="btn ghost" href="/settings#applied" data-testid="applied-import-link">Import past applications</a>
+  <div class="tabs" style="border:none;margin:0">
+    <a href="/pursuits?view=kanban&track={{ track }}" class="{% if view == 'kanban' %}active{% endif %}">Board</a>
+    <a href="/pursuits?view=table&track={{ track }}" class="{% if view == 'table' %}active{% endif %}">Table</a>
+  </div>
+</div>
+
+<p class="muted" data-testid="never-applies" style="margin:.2rem 0 .8rem">
+{% if track == 'consulting' %}Kestrel never contacts anyone for you. Add {{ words(track).roles }} here, prepare the {{ words(track).doc }}, and record what you did; it tracks the rest.
+{% else %}Kestrel never applies for you. Add {{ words(track).roles }} here, tailor the {{ words(track).doc }}, and record what you did; it tracks the rest.{% endif %}</p>
+
+{% for o in off_tracks or [] %}
+<p class="warnbox" data-testid="off-track-pursuits" data-track="{{ o.track }}" style="margin:0 0 .8rem">{{ o.name }} is switched off, so it no longer searches or scores, but {{ o.open }} open {{ words(o.track).role if o.open == 1 else words(o.track).roles }} {{ 'is' if o.open == 1 else 'are' }} still there. <a href="/pursuits?track={{ o.track }}">Open the {{ o.name }} {{ words(o.track).board }}</a></p>
+{% endfor %}
+
+<details class="addrole" data-testid="add-role">
+  <summary class="btn">Add a role I found elsewhere</summary>
+  <form class="addrole-form" hx-post="/pursuits/add" hx-target="#board" hx-swap="innerHTML"
+        hx-on::after-request="if (event.detail.successful) { this.reset(); }">
+    <input type="hidden" name="track" value="{{ track }}">
+    <label>Link to the posting <span class="muted">(optional)</span>
+      <input type="url" name="url" placeholder="https://" autocomplete="off"></label>
+    <label>Or paste the posting text
+      <textarea name="text" rows="4" placeholder="Paste the job description here"></textarea></label>
+    <div class="row">
+      <label>Title <span class="muted">(optional)</span> <input type="text" name="title"></label>
+      <label>Organization <span class="muted">(optional)</span> <input type="text" name="org_name"></label>
+    </div>
+    <p class="muted">Kestrel reads the link once, politely, the way a browser would. If it cannot, paste the text instead. Nothing is sent anywhere.</p>
+    <button class="btn primary" type="submit">{{ words(track).add_to_list }}</button>
+  </form>
+</details>
+
+<div id="board">{% include "partials/pursuit_board.html" %}</div>
+
+<script>
+  // Native drag-and-drop, bound ONCE to the document and delegated, so a board refresh (which
+  // swaps the cards) never adds a second set of listeners. Only the card itself starts a drag
+  // (links, selects and buttons inside it are draggable="false"); dragend clears everything, so a
+  // drag that is cancelled or dropped outside a column cannot leave a stale card behind. On drop,
+  // POST the target column's first status (writes a status_event), then refresh the board.
+  (function () {
+    if (window.__pursuitDnD) return;
+    window.__pursuitDnD = true;
+    let dragId = null, dragCol = null, dragEl = null;
+    const clearOver = () => document.querySelectorAll('.kanban .col.dragover')
+      .forEach(c => c.classList.remove('dragover'));
+    const colOf = e => (e.target && e.target.closest) ? e.target.closest('.kanban .col') : null;
+    document.addEventListener('dragstart', e => {
+      const t = e.target;
+      if (!t || !t.classList || !t.classList.contains('pcard')) { dragId = null; return; }
+      dragId = t.dataset.id; dragCol = t.dataset.col; dragEl = t;
+      t.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); }
+    });
+    document.addEventListener('dragend', () => {
+      if (dragEl) dragEl.classList.remove('dragging');
+      dragId = dragCol = dragEl = null;
+      clearOver();
+    });
+    document.addEventListener('dragover', e => {
+      const col = colOf(e);
+      if (!col || dragId === null) return;
+      e.preventDefault(); clearOver(); col.classList.add('dragover');
+    });
+    document.addEventListener('dragleave', e => {
+      const col = colOf(e);
+      if (col && !col.contains(e.relatedTarget)) col.classList.remove('dragover');
+    });
+    document.addEventListener('drop', async e => {
+      const col = colOf(e);
+      if (!col || dragId === null) return;
+      e.preventDefault(); clearOver();
+      const id = dragId, from = dragCol;
+      dragId = dragCol = null;
+      if (from === col.dataset.col) return;
+      try {
+        const body = new URLSearchParams({ to_status: col.dataset.status });
+        await fetch(`/pursuits/${id}/status`, { method: 'POST', body });
+        const track = col.closest('.kanban').dataset.track;
+        htmx.ajax('GET', `/pursuits?view=kanban&track=${track}`, { target: '#board', swap: 'innerHTML' });
+      } catch (err) { /* leave the board unchanged on failure */ }
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,101 @@
+{# The decision panel (D-UI-45, kestrel-flow-mockups section 2), in the drawer and on the detail
+   page. Fit / Why / Watch, the two primary actions, the Disagree control, and the follow-ups
+   once the role is on the shortlist. The AI overview card carries the D-UI-53 disclaimer;
+   Research the company and Score again (D-UI-50) are on every role. Every verdict word comes from kestrel.web.fit (`fit`,
+   `model_word`, `rules_word`, `mine`). The three action routes return this partial again with
+   the nav badges out of band and HX-Trigger: pipelineRefresh, so the row and the badge follow. #}
+<div id="decision" class="decision" data-opp="{{ opp.id }}">
+  {% set w = words(opp.track) %}
+  <dl class="kv fitcard" data-testid="fit-card">
+    <dt>Fit</dt>
+    <dd data-testid="fit-line">
+      {%- if fit.score is not none %}{{ '%.1f'|format(fit.score) }} of 5{% elif fit.word == 'new' %}{{ (fit.why or 'being scored')|capitalize }}{% else %}{{ fit.word|capitalize }}{% endif %}
+      {%- if model_word %} · the model said {{ model_word }}, the scoring rules said {{ rules_word }}{% elif fit.why and fit.word != 'new' %} · {{ fit.why }}{% endif %}</dd>
+  </dl>
+  {# D-UI-73: which rule set it aside, the detail, and where that rule is changed. #}
+  {% if rule_why %}<p class="quiet decision-note" data-testid="rule-why">{{ rule_why.text }} {{ rule_why.verb }} <a href="{{ rule_why.href }}">{{ rule_why.place }}</a>.{% if not override_note %} Score again lets you score this one anyway.{% endif %}</p>{% endif %}
+  {% if override_note %}<p class="quiet decision-note" data-testid="rule-override">{{ override_note }}</p>{% endif %}
+
+  {# The model's own reading of the posting (D-UI-53): titled for what it is, with the
+     disclaimer under the summary and under any "may not be a real opening" flag. #}
+  {% if why or watch or legit_flag %}
+    <div class="ai-overview" data-testid="ai-overview">
+      <span class="eyebrow">AI overview</span>
+      <dl class="kv">
+        {% if why %}<dt>Why</dt><dd data-testid="fit-why">{{ why }}</dd>{% endif %}
+        {% if watch %}<dt>Watch</dt><dd data-testid="fit-watch">{{ watch|join(' ') }}</dd>{% endif %}
+      </dl>
+      {% if legit_flag %}<span class="pill warn" data-testid="legit-flag">may not be a real opening</span>{% endif %}
+      <p class="disclaim" data-testid="ai-disclaimer">{{ ai_disclaimer }}</p>
+    </div>
+  {% endif %}
+
+  <div class="row decision-actions" data-actions>
+    {% if pursuit %}
+      <a class="btn" href="/pursuits" data-testid="on-my-list">{{ w.on_list|capitalize }} · {{ pursuit.status|replace('_', ' ') }}</a>
+    {% elif not opp.archived_at %}
+      <button class="btn pri" type="button" data-testid="add-to-list"
+              hx-post="/opportunities/{{ opp.id }}/add" hx-target="#decision" hx-swap="outerHTML">{{ w.add_to_list }}</button>
+    {% endif %}
+    {% if opp.archived_at %}
+      <span class="quiet" data-testid="hidden-note">Hidden{% if opp.archive_reason %} ({{ archive_reasons.get(opp.archive_reason, opp.archive_reason)|lower }}){% endif %}.</span>
+      <button class="btn" type="button" data-testid="restore"
+              hx-post="/opportunities/{{ opp.id }}/restore" hx-target="#decision" hx-swap="outerHTML">Unhide</button>
+    {% elif not pursuit %}
+      <button class="btn" type="button" data-testid="not-for-me"
+              hx-post="/opportunities/{{ opp.id }}/not-for-me" hx-target="#decision" hx-swap="outerHTML">{{ w.not_for_me }}</button>
+    {% endif %}
+    {# Research the company is there on every role, before any decision (D-UI-53). #}
+    <button class="btn" type="button" data-testid="research"
+            hx-post="/opportunities/{{ opp.id }}/research" hx-target="#decision-note" hx-swap="innerHTML"
+            hx-select="#opp-actions .panel, #opp-actions .warnbox"
+            data-busy-text="Researching the company…">Research the company</button>
+    {% with opp_ids = [opp.id], label = none %}{% include "partials/score_again.html" %}{% endwith %}
+    {# Interview prep (D-UI-55): on every role, always visible. It opens the prep page, which
+       builds the pack on first open. #}
+    <a class="btn" href="/prep/{{ opp.id }}?auto=1" data-testid="interview-prep">{{ words(opp.track).interview_prep }}</a>
+    {% if posting_link and posting_link.href %}
+      <a class="btn quiet" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="open-posting">Open posting</a>
+    {% endif %}
+  </div>
+  {% if not pursuit and not opp.archived_at %}
+    <p class="quiet decision-note">{{ w.add_to_list }} records that you agree with the fit; {{ w.not_for_me }} hides it and records a no. Both teach the ranker.</p>
+  {% endif %}
+  <div id="decision-note" aria-live="polite">
+    {%- if message %}<div class="panel">{{ message }}</div>{% endif -%}
+    {%- if error %}<div class="warnbox">{{ error }}</div>{% endif -%}
+  </div>
+
+  {% include "partials/override_control.html" %}
+
+  {% with opp_id = opp.id %}{% include "partials/score_history.html" %}{% endwith %}
+
+  {% if pursuit %}
+    <div class="fitgroup-head" data-testid="followups"><span>Once it is {{ w.on_list|replace('my', 'your') }}</span></div>
+    <div class="row decision-actions">
+      {% if tailor_href %}
+        <a class="btn" href="{{ tailor_href }}" data-testid="tailor">{{ tailor_label }}</a>
+      {% else %}
+        <button class="btn" type="button" disabled data-testid="tailor"
+                title="No active {{ w.doc }} yet. Import or build one under Documents.">{{ tailor_label }}</button>
+      {% endif %}
+      <button class="btn" type="button" data-testid="escalate"
+              hx-post="/opportunities/{{ opp.id }}/escalate" hx-target="#t3-escalate" hx-swap="innerHTML"
+              data-busy-text="Preparing what would be sent…">Deeper read with a stronger model</button>
+    </div>
+    {# Tier 3 (SPEC 6.4, hard rule 1): destination and cost stated BEFORE the preview. This panel
+       sends nothing; the preview route renders the payload and the confirm form, and only that
+       confirmation transmits. #}
+    <p class="quiet decision-note" id="tier3-card">
+      A one-off read by a bigger hosted model{% if tier3 is defined and tier3 %}, <b>{{ tier3.provider }} · {{ tier3.model }}</b>{% endif %}.
+      It sends this posting, the org context and your profile off this computer.
+      {% if tier3 is defined and tier3 %}
+        {% if tier3.redacted %}Employer redacted.{% elif confidential %}Employer not redacted: no redaction map.{% else %}Employer not redacted (confidential mode off).{% endif %}
+        {% if tier3.tokens is not none %}About {{ tier3.tokens|comma }} tokens in, {{ tier3.cost }}.{% endif %}
+      {% endif %}
+      Nothing is sent until you confirm on the next screen, which shows exactly what goes and what it costs.
+      {% if tier3 is defined and tier3 and tier3.unavailable %}<span class="warn">Preview only: {{ tier3.unavailable }}</span>{% endif %}
+    </p>
+    <div id="t3-escalate"></div>
+  {% endif %}
+</div>

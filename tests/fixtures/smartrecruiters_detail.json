@@ -1,0 +1,22 @@
+{
+  "id": "743999900000001",
+  "name": "Vice President of Information Technology",
+  "applyUrl": "https://jobs.smartrecruiters.com/AcmeCorp/743999900000001/apply",
+  "postingUrl": "https://jobs.smartrecruiters.com/AcmeCorp/743999900000001",
+  "jobAd": {
+    "sections": {
+      "companyDescription": {
+        "title": "Company Description",
+        "text": "<p>Acme builds boring, reliable infrastructure.</p>"
+      },
+      "jobDescription": {
+        "title": "Job Description",
+        "text": "<p>Role details.</p>"
+      },
+      "qualifications": {
+        "title": "Qualifications",
+        "text": "<p>Reqs.</p>"
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{# Score again (D-UI-50): a button that opens the themed dialog to re-score one or more roles,
+   with the same model or a different one for this run only. Included by the role panel and the
+   Pipeline toolbar.
+   Context: `opp_ids` (list of ints), optional `label` (button text), optional `select_from` (a
+   CSS selector for checked inputs named `opp_ids`, so a Pipeline selection is sent too).
+   The dialog (partials/score_again_dialog.html) is fetched on click into the slot below; the
+   "Queued N roles" line lands in the status span. Styles: kestrel.css (.score-again). #}
+{% set _ids = (opp_ids or []) | join(',') %}
+<span class="score-again" data-testid="score-again">
+  <button class="btn score-again-btn" type="button" data-score-again="{{ _ids }}"
+          hx-get="/rescore/choose" hx-vals='{"opp_ids": "{{ _ids }}"}'
+          {%- if select_from is defined and select_from %} hx-include="{{ select_from }}"{% endif %}
+          hx-target="next .score-again-slot" hx-swap="innerHTML" aria-haspopup="dialog"
+          {%- if not _ids and not (select_from is defined and select_from) %} disabled{% endif %}>{{ label or 'Score again…' }}</button>
+  <span class="score-again-slot"></span>
+  <span class="score-again-status" aria-live="polite"></span>
+</span>

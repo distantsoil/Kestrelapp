@@ -1,0 +1,37 @@
+{# Location rules per track (D-UI-21): what geo_allows reads. There is no geocoder (CLAUDE.md):
+   matching is by the names and aliases listed here, never by distance. #}
+<form hx-post="{{ form_post or ('/profile/' ~ track ~ '/location') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
+      class="panel" data-testid="profile-location" data-busy-text="Saving…">
+  <h2 style="margin-top:0">Location <span class="badge">{{ track }}</span></h2>
+  <p class="muted" style="margin:.2rem 0 .6rem">The hard filter (rule geo) keeps a posting that
+    is remote in a listed country, or whose location names a listed state or metro. With no
+    states and no metros listed, no posting is hidden for its location. Matching is
+    by name: list every suburb and spelling you would accept, because a posting that says
+    "Round Rock" only matches if "Round Rock" is here. The check boxes and the travel number are
+    not filters: the scoring model reads them as your preferences.</p>
+  {% if 'geo_rules' in from_example and not saved %}
+  <p class="warnbox" style="margin:.2rem 0 .8rem" data-testid="from-example">
+    <b>Not saved yet.</b> The grey text is only an example. Until you list states or metros,
+    nothing is filtered by location.</p>
+  {% endif %}
+  <div class="formgrid">
+    <label for="pl-remote">Remote</label>
+    <span><input id="pl-remote" type="checkbox" name="remote_ok" value="on" {% if geo.remote_ok %}checked{% endif %}> Remote roles are acceptable <span class="muted">(preference)</span></span>
+    <label for="pl-countries">Remote countries</label>
+    <span><textarea id="pl-countries" name="remote_country_allowlist" rows="2" style="width:100%" placeholder="One per line, e.g. US">{{ (geo.remote_country_allowlist or []) | join('\n') }}</textarea>
+      <span class="muted">Two-letter codes as postings use them.</span></span>
+    <label for="pl-states">On-site states</label>
+    <textarea id="pl-states" name="onsite_states" rows="2" placeholder="One per line, e.g. two-letter state codes">{{ (geo.onsite_states or []) | join('\n') }}</textarea>
+    <label for="pl-metros">On-site metros</label>
+    <span><textarea id="pl-metros" name="onsite_metros" rows="5" style="width:100%"
+        placeholder="{{ ex_metros_text or 'One per line: Metro: suburb, suburb' }}">{{ metros_text }}</textarea>
+      <span class="muted">Metro name, a colon, then the places that count as it.</span></span>
+    <label for="pl-hybrid">Hybrid</label>
+    <span><input id="pl-hybrid" type="checkbox" name="hybrid_requires_metro" value="on" {% if geo.hybrid_requires_metro %}checked{% endif %}> Hybrid roles must be in a listed metro <span class="muted">(preference)</span></span>
+    <label for="pl-reloc">Relocation</label>
+    <span><input id="pl-reloc" type="checkbox" name="relocation_acceptable" value="on" {% if geo.relocation_acceptable %}checked{% endif %}> Relocation is acceptable <span class="muted">(preference)</span></span>
+    <label for="pl-travel">Travel days per month</label>
+    <input id="pl-travel" type="text" inputmode="numeric" name="travel_days_per_month_max" value="{{ geo.travel_days_per_month_max if geo.travel_days_per_month_max is not none else '' }}" placeholder="6">
+  </div>
+  {% include "partials/profile_save_row.html" %}
+</form>

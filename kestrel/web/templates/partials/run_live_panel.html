@@ -1,0 +1,40 @@
+{# The Runs page live panel (D-UI-58), inside Latest run: the current step in words, a bar per
+   stage, the recent events (newest first) and when the run last did anything. An open run with
+   no new row for 10 minutes says so and points to Diagnostics. From
+   kestrel.analytics.run_summary over DB rows only, so a restart shows the same picture. #}
+{% set rs = run %}
+{% if rs and rs.has_run %}
+<div class="run-live" data-testid="run-live" data-run="{{ 'active' if rs.active else ('paused' if rs.paused else 'idle') }}">
+  {% if rs.active %}
+    <p class="run-step" data-testid="run-step"><span class="progress-dot" aria-hidden="true"></span>{{ rs.step or 'Starting' }}</p>
+  {% elif rs.paused %}
+    <p class="run-step" data-testid="run-step">{{ rs.headline }}. Nothing new starts until you resume. <button type="button" class="btn small" data-testid="run-resume" hx-post="/api/worker/resume" hx-swap="none">Resume</button></p>
+  {% else %}
+    <p class="run-step" data-testid="run-step">Last run{% if rs.ended_hhmm %} ended {{ rs.ended_hhmm }}{% endif %}: {{ rs.found_new }} found, {{ rs.rated }} rated{% if rs.failed %}, {{ rs.failed }} failed{% endif %}</p>
+  {% endif %}
+  <div class="run-bars">
+    {% for b in rs.bars if b.total %}
+    <div class="run-bar" data-bar="{{ b.key }}">
+      <span>{{ b.label }}</span>
+      <div class="meter run-meter" role="img" aria-label="{{ b.label }}: {{ b.done }} of {{ b.total }}"><i style="width:{{ b.pct }}%"></i></div>
+      <span class="run-bar-n">{{ b.done }} of {{ b.total }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if rs.shown_groups %}
+  <p class="run-sum-groups">{% for g in rs.shown_groups %}<span class="run-sum-g {{ g.key }}">{{ g.label }} <b>{{ g.n }}</b></span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+  {% if rs.recent_events %}
+  <ul class="run-events" data-testid="run-events">
+    {% for e in rs.recent_events %}
+    <li class="run-ev {{ e.tone }}"><span class="run-ev-at">{{ e.hhmm or '' }}</span><span class="run-ev-t">{{ e.text }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if rs.stalled %}
+    <p class="run-stall" data-testid="run-stall">No activity for {{ rs.stalled_minutes }} {{ 'minute' if rs.stalled_minutes == 1 else 'minutes' }}. If it stays this way, save a <a href="/about#diagnostics">Diagnostics</a> zip.</p>
+  {% else %}
+    <p class="run-activity" data-testid="run-activity">Last activity {{ rs.last_activity_words }}</p>
+  {% endif %}
+</div>
+{% endif %}

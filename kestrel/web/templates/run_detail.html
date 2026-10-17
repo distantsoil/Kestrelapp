@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}{% if run %}Run {{ run.id }}{% else %}Run{% endif %} · Kestrel{% endblock %}
+{% block content %}
+<p><a href="/runs">&larr; Runs</a></p>
+{% if run is none %}
+  <div class="warnbox">No such run{% if load_error %}: {{ load_error }}{% endif %}.</div>
+{% else %}
+  <h1>Run #{{ run.id }}: {{ run.name }}</h1>
+  <p class="muted">
+    {{ run.track or 'both tracks' }} &middot; <span class="badge">{{ run.status }}</span> &middot;
+    started {{ run.started_at }}{% if run.finished_at %} &middot; finished {{ run.finished_at }}{% endif %}
+  </p>
+  {% if run.notes %}<p>{{ run.notes }}</p>{% endif %}
+
+  <div class="panel">
+    <h2>Throughput by step</h2>
+    {% set counts = run.counts or {} %}
+    {% if counts %}
+      <div style="overflow-x:auto">
+      <table class="data">
+        <thead><tr><th>Step</th><th class="num">Seen</th><th class="num">Passed</th>
+          <th class="num">Rejected / errors</th><th>Rate</th></tr></thead>
+        <tbody>
+          {% set c0 = counts.get('tier0', {}) %}
+          <tr>
+            <td title="Tier 0">Rules check</td><td class="num mono">{{ c0.get('seen', 0) }}</td>
+            <td class="num mono">{{ c0.get('pass', 0) }}</td>
+            <td class="num mono">{{ c0.get('reject', 0) }}</td>
+            <td class="muted">deterministic rules, no rate</td>
+          </tr>
+          {% set c1 = counts.get('tier1', {}) %}
+          <tr>
+            <td title="Tier 1">Quick screen</td><td class="num mono">-</td>
+            <td class="num mono">{{ c1.get('completed', 0) }}</td>
+            <td class="num mono">{{ c1.get('errors', 0) }}</td>
+            <td>
+              {% if c1.get('completed', 0) < 5 %}
+                <span class="muted">{{ too_few(c1.get('completed', 0)) }}</span>
+              {% else %}{{ c1.get('per_minute', 0) }}/min{% endif %}
+            </td>
+          </tr>
+          {% set c2 = counts.get('tier2', {}) %}
+          <tr>
+            <td title="Tier 2">Full review</td><td class="num mono">-</td>
+            <td class="num mono">{{ c2.get('completed', 0) }}</td>
+            <td class="num mono">{{ c2.get('errors', 0) }}</td>
+            <td>
+              {% if c2.get('completed', 0) < 5 %}
+                <span class="muted">{{ too_few(c2.get('completed', 0)) }}</span>
+              {% else %}{{ c2.get('per_minute', 0) }}/min{% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="muted">No counts recorded yet{% if run.status == 'running' %} (run is still in progress){% endif %}.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2 title="Quarantine">Failed scoring</h2>
+    <p>{{ quarantined_count }} {{ 'posting' if quarantined_count == 1 else 'postings' }} failed scoring system-wide.
+      <a href="/quarantine">View failed scoring &rarr;</a></p>
+  </div>
+
+  <div class="panel">
+    <h2>Scrape runs in this window</h2>
+    <p class="muted">Kestrel does not link ingestion runs to pipeline runs by id, so this is a
+      best-effort match on start time, not a guaranteed join.</p>
+    {% if scrape_runs %}
+      <div style="overflow-x:auto">
+      <table class="data">
+        <thead><tr><th>#</th><th>Source</th><th>Status</th><th>Started</th><th>Finished</th><th>Counts</th></tr></thead>
+        <tbody>
+        {% for row in scrape_runs %}
+          <tr>
+            <td class="mono">{{ row.scrape.id }}</td>
+            <td>{{ row.source_name or '-' }}</td>
+            <td><span class="badge">{{ row.scrape.status }}</span></td>
+            <td class="mono"><small>{{ row.scrape.started_at }}</small></td>
+            <td class="mono"><small>{{ row.scrape.finished_at or '-' }}</small></td>
+            <td><small class="mono">{{ row.scrape.counts | run_counts }}</small>{% if row.scrape.counts | run_model_label %}<br><small data-testid="run-model-used">on {{ row.scrape.counts | run_model_label }}</small>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="muted">No scrape runs found in this run's time window.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Opportunities evaluated in this window</h2>
+    {% if evaluations %}
+      <div style="overflow-x:auto">
+      <table class="data">
+        <thead><tr><th>Opportunity</th><th class="num">Tier</th><th>Verdict</th>
+          <th class="num">Score</th><th>Evaluated</th></tr></thead>
+        <tbody>
+        {% for row in evaluations %}
+          <tr>
+            <td><a href="/opportunities/{{ row.opp.id }}">{{ row.opp.title or row.opp.id }}</a></td>
+            <td class="num mono">{{ row.ev.tier }}</td>
+            <td><span class="badge {{ verdict_class(row.ev.verdict) }}">{{ row.ev.verdict or '-' }}</span></td>
+            <td class="num mono">{{ '%.2f'|format(row.ev.score) if row.ev.score is not none else '-' }}</td>
+            <td class="mono"><small>{{ row.ev.created_at }}</small></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% if evaluations|length < 5 %}
+        <p class="muted">Too few to judge ({{ evaluations|length }} of 5 needed): not enough evaluations in
+          this window to draw any conclusion from.</p>
+      {% endif %}
+    {% else %}
+      <p class="muted">No evaluations recorded in this run's time window.</p>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

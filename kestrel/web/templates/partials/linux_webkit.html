@@ -1,0 +1,27 @@
+{# The Linux browser-fallback panel (release round R1): shown on the dashboard and the onboarding
+   only when the desktop process could not open its own window (kestrel.desktop.linux_check).
+   Plain words first; the install lines are under Show details. `gap` is a WebKitGap. The packaged
+   AppImage carries no GTK binding, so there the browser is the window and the panel says so
+   instead of promising that a system package brings the window back. #}
+{% if gap %}
+<div class="warnbox linux-gap" role="status" data-testid="linux-webkit">
+  <b>Kestrel opened in your browser because its own window could not open.</b>
+  {% if gap.frozen %}
+  <p class="linux-gap-why">On Linux this build of Kestrel uses your browser as its window.
+    Everything works here. Closing the tab does not stop Kestrel; open it again from your
+    applications menu to get back to this page.</p>
+  {% else %}
+  <p class="linux-gap-why">{{ gap.missing }} Everything works here in the browser. To get the
+    Kestrel window, add the missing piece with your system's software tool, then open Kestrel
+    again.</p>
+  {% endif %}
+  <details class="setup-details" data-testid="linux-webkit-details">
+    <summary>Show details</summary>
+    <p class="quiet">{% if gap.frozen %}Running Kestrel from its source code instead? Its window needs GTK WebKit. {% endif %}The one-line install, typed in a terminal, for common Linux systems:</p>
+    <ul class="linux-gap-list">
+      {% for distro, cmd in gap.install %}<li><b>{{ distro }}</b>: <span class="cmd">{{ cmd }}</span></li>{% endfor %}
+    </ul>
+    {% if gap.detail %}<p class="quiet">What Kestrel saw: <span class="mono">{{ gap.detail }}</span></p>{% endif %}
+  </details>
+</div>
+{% endif %}

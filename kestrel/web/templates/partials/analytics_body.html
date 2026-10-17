@@ -1,0 +1,176 @@
+{% set svo = metrics.score_vs_outcome %}
+
+{% if model_note %}
+<div class="warnbox" style="margin-bottom:.8rem">{{ model_note }}</div>
+{% endif %}
+
+{% include "partials/analytics_summary.html" %}
+
+{# --------------------------------------------------------------------------- The funnel. #}
+<div class="panel">
+  <h2>Funnel</h2>
+  {% set max_n = fn.steps[0].count if fn.steps else 0 %}
+  {% set step_labels = {'ingested': 'Found', 'tier0_pass': 'Passed the rules check', 'tier1_pass': 'Passed the quick screen', 'tier2_evaluated': 'Fully reviewed', 'shortlisted': 'Shortlisted', 'pursued': 'Pursued', 'first_response': 'First reply', 'screening': 'Screening', 'interview': 'Interview', 'final': 'Final round', 'offer': 'Offer'} %}
+  {% for step in fn.steps %}
+    <div style="margin:.5rem 0">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:.85rem">
+        <span title="{{ step.name }}">{{ step_labels.get(step.name, step.name.replace('_', ' ')|capitalize) }}</span>
+        <span class="mono muted">
+          {{ step.count }}
+          {% if step.conversion is not none and not loop.first %}
+            &middot; {{ (step.conversion * 100)|round(1) }}% of {{ step.sample_size }}
+            {% if step.sample_size < 5 %}<span class="pill">{{ too_few(step.sample_size) }}</span>{% endif %}
+          {% endif %}
+        </span>
+      </div>
+      <div style="height:14px; background:var(--bg-alt); border-radius:6px; overflow:hidden">
+        <div style="height:100%; width:{{ ((step.count / max_n * 100) if max_n else 0)|round(1) }}%;
+                    background:var(--orange); border-radius:6px"></div>
+      </div>
+    </div>
+  {% else %}
+    <p class="muted">No opportunities on this track yet.</p>
+  {% endfor %}
+</div>
+
+{# ---------------------------------------------------------- Response rate by score band. #}
+<div class="panel">
+  <h2>Response rate by score band</h2>
+  {% for b in svo.by_score_band %}
+    <div style="margin:.4rem 0">
+      <div style="display:flex; justify-content:space-between; font-size:.85rem">
+        <span class="mono">{{ b.band }}</span>
+        <span class="mono muted">
+          {% if b.rate is not none %}{{ (b.rate * 100)|round(1) }}%{% else %}-{% endif %}
+          of {{ b.n }}
+          {% if b.insufficient %}<span class="pill">{{ too_few(b.n) }}</span>{% endif %}
+        </span>
+      </div>
+      <div style="height:12px; background:var(--bg-alt); border-radius:6px; overflow:hidden">
+        <div style="height:100%; width:{{ ((b.rate * 100) if b.rate is not none else 0)|round(1) }}%;
+                    background:var(--orange); border-radius:6px"></div>
+      </div>
+    </div>
+  {% else %}
+    <p class="muted">No score bands yet.</p>
+  {% endfor %}
+</div>
+
+{# --------------------------------------------------------------------------- Breakdowns. #}
+{% set breakdowns = [
+  ("Source", metrics.breakdowns.by_source),
+  ("Org size", metrics.breakdowns.by_size),
+  ("Ownership", metrics.breakdowns.by_ownership),
+  ("Remote type", metrics.breakdowns.by_remote),
+] %}
+<div class="split">
+  {% for label, bd in breakdowns[:2] %}
+  <div class="panel">
+    <h2>By {{ label }}</h2>
+    <table class="data">
+      <thead><tr><th>{{ label }}</th><th>total</th><th>replied</th><th>rate</th></tr></thead>
+      <tbody>
+        {% for key, v in bd.items() %}
+        <tr>
+          <td>{{ key }}</td>
+          <td class="mono">{{ v.n }}</td>
+          <td class="mono">{{ v.responded }}</td>
+          <td class="mono">
+            {% if v.rate is not none %}{{ (v.rate * 100)|round(1) }}%{% else %}-{% endif %}
+            {% if v.insufficient %}<span class="pill">{{ too_few(v.n) }}</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">No data yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</div>
+<div class="split">
+  {% for label, bd in breakdowns[2:] %}
+  <div class="panel">
+    <h2>By {{ label }}</h2>
+    <table class="data">
+      <thead><tr><th>{{ label }}</th><th>total</th><th>replied</th><th>rate</th></tr></thead>
+      <tbody>
+        {% for key, v in bd.items() %}
+        <tr>
+          <td>{{ key }}</td>
+          <td class="mono">{{ v.n }}</td>
+          <td class="mono">{{ v.responded }}</td>
+          <td class="mono">
+            {% if v.rate is not none %}{{ (v.rate * 100)|round(1) }}%{% else %}-{% endif %}
+            {% if v.insufficient %}<span class="pill">{{ too_few(v.n) }}</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">No data yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</div>
+
+{# --------------------------------------------------------------- Cost/quality and time. #}
+{% set q = metrics.quality %}
+{% set tmet = metrics.time %}
+<div class="split">
+  <div class="panel">
+    <h2>Cost &amp; quality</h2>
+    <div class="formgrid">
+      <label>Evaluations</label><div class="mono">{{ q.evaluations }}</div>
+      <label>Override rate</label>
+      <div class="mono">
+        {% if q.override_rate is not none %}
+          {{ (q.override_rate * 100)|round(1) }}% ({{ q.override_n }}/{{ q.evaluations }})
+        {% else %}-{% endif %}
+      </div>
+      <label title="Quarantine">Failed scoring rate</label>
+      <div class="mono">
+        {% if q.quarantine_rate is not none %}
+          {{ (q.quarantine_rate * 100)|round(1) }}% ({{ q.quarantine_n }})
+        {% else %}-{% endif %}
+      </div>
+      <label>JSON validity</label>
+      <div class="mono">
+        {% if q.json_validity_rate is not none %}{{ (q.json_validity_rate * 100)|round(1) }}%
+        {% else %}-{% endif %}
+      </div>
+      <label>Total tokens</label><div class="mono">{{ q.total_tokens|comma }}</div>
+    </div>
+    {% if q.insufficient %}<p style="margin-top:.5rem"><span class="pill">{{ too_few(q.evaluations) }}</span></p>{% endif %}
+    {% if q.tokens_by_tier %}
+    <table class="data" style="margin-top:.6rem">
+      <thead><tr><th>Step</th><th>Calls</th><th>Tokens</th></tr></thead>
+      <tbody>
+        {% for tier, t in q.tokens_by_tier.items() %}
+        <tr><td class="mono" title="Tier {{ tier }}">{{ {0: 'Rules check', 1: 'Quick screen', 2: 'Full review', 3: 'Deeper read'}.get(tier, tier) }}</td><td class="mono">{{ t.calls }}</td><td class="mono">{{ t.tokens|comma }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Time</h2>
+    <div class="formgrid">
+      <label>{{ words(track).board }}</label><div class="mono">{{ tmet.applications }}</div>
+      <label>Per week</label>
+      <div class="mono">
+        {% if tmet.applications_per_week is not none %}{{ tmet.applications_per_week }} (from {{ tmet.applications_n }})
+        {% else %}<span class="pill">{{ too_few(tmet.applications_n) }}</span>{% endif %}
+      </div>
+      <label>Median first response</label>
+      <div class="mono">
+        {% if tmet.median_first_response_days is not none %}
+          {{ tmet.median_first_response_days }} days (from {{ tmet.first_response_n }})
+        {% else %}
+          <span class="pill">{{ too_few(tmet.first_response_n) }}</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

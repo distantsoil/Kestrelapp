@@ -1,0 +1,159 @@
+# Hardware profiles for the derived num_ctx models (SPEC.md 8.2). Loaded by kestrel.llm.profiles.
+#
+# A profile maps each logical tier to the BASE model it is built from, the context window baked
+# into the derived `kestrel-<tier>` model, and the concurrency the hardware can sustain without
+# swap thrash. `kestrel setup` detects the machine, recommends a profile, pulls its bases, and runs
+# `ollama create` with a Modelfile rendered from this file. `kestrel doctor` compares the configured
+# models against the detected memory and WARNS with the profile to switch to when they will not fit.
+#
+# The shipped kestrel/resources/models/Modelfile.* are the `default_profile` rendered to disk and a
+# test asserts they stay byte-identical to render_modelfile(); regenerate them, never hand-edit.
+#
+# Base tags are placeholders pending model research; swap them here and rebuild, nothing else moves.
+
+default_profile: gpu_16gb
+
+# Context budgets per tier. These are the floor doctor's per-tier num_ctx check requires; a profile
+# may raise them, never lower them, or long descriptions are silently truncated (CLAUDE.md traps).
+num_ctx:
+  tier1: 4096
+  tier2: 16384
+  tier3: 20480
+  docsel: 8192
+
+# Guardrails baked into every derived model so a model that is called without explicit sampling
+# options still behaves. PRECEDENCE: a request that sets temperature or max_tokens WINS (Ollama's
+# /v1 endpoint maps them onto the Modelfile's temperature and num_predict); the values here are the
+# floor for any request that does not set them. The pipeline always sends both from
+# settings.llm.tiers, so in practice these govern ad-hoc calls, `ollama run`, and preflight probes.
+guardrails:
+  temperature: 0.1 # low variance; a scoring run should not drift between identical inputs
+  top_p: 0.9
+  repeat_penalty: 1.1 # keeps a stalled JSON field from looping
+  seed: 7 # fixed sampling seed; with temperature > 0 it still removes run-to-run noise
+  num_predict: # per tier: a hard stop just above the tier's configured max_tokens
+    tier1: 400
+    tier2: 4500
+    tier3: 6500
+    docsel: 1600
+
+# Approximate on-disk weight size (GB) of each base tag at its default quantization. Used by
+# doctor's fit check only when /api/show cannot report details.parameter_size.
+model_sizes_gb:
+  qwen3:4b: 2.6
+  qwen3:8b: 5.2
+  qwen3:14b: 9.3
+  qwen3:30b-a3b: 18.6
+  nomic-embed-text: 0.3
+
+profiles:
+  cpu_8gb:
+    description: "CPU only, or a GPU with 8 GB of VRAM or less"
+    memory_gb: 8
+    kind: cpu
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:8b
+      tier3: qwen3:8b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 1, tier2: 1 }
+  gpu_12gb:
+    description: "NVIDIA GPU with 12 GB of VRAM"
+    memory_gb: 12
+    kind: gpu
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:8b
+      tier3: qwen3:8b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 2, tier2: 1 }
+  gpu_16gb:
+    description: "NVIDIA GPU with 16 GB of VRAM (the reference RTX 4080 Super)"
+    memory_gb: 16
+    kind: gpu
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:14b
+      tier3: qwen3:14b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 4, tier2: 2 }
+  gpu_24gb:
+    description: "NVIDIA GPU with 24 GB of VRAM"
+    memory_gb: 24
+    kind: gpu
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:30b-a3b
+      tier3: qwen3:30b-a3b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 4, tier2: 2 }
+  mac_16gb:
+    description: "Apple silicon Mac with 16 GB of unified memory"
+    memory_gb: 16
+    kind: mac
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:8b
+      tier3: qwen3:8b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 2, tier2: 1 }
+  mac_32gb:
+    description: "Apple silicon Mac with 32 GB of unified memory"
+    memory_gb: 32
+    kind: mac
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:14b
+      tier3: qwen3:14b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 3, tier2: 2 }
+  mac_64gb:
+    description: "Apple silicon Mac with 64 GB of unified memory or more"
+    memory_gb: 64
+    kind: mac
+    models:
+      tier1: qwen3:4b
+      tier2: qwen3:30b-a3b
+      tier3: qwen3:30b-a3b
+      docsel: qwen3:4b
+      embed: nomic-embed-text
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 4, tier2: 2 }
+  # No local model at all: every tier runs on a hosted provider (OpenRouter, OpenModel, Anthropic
+  # or OpenAI) under
+  # the operator's own key, after the Hosted mode disclosure is accepted. `kestrel setup --hosted`
+  # (or the interactive choice when Ollama is missing) selects it; `recommend_profile` suggests it
+  # for any machine without a supported GPU (D-SETUP-6). Nothing is pulled and nothing is built. The
+  # num_ctx block is the shipped floor and is unused: a hosted model carries its own context.
+  # Embeddings never leave the machine, so this profile runs them on the bundled in-process CPU
+  # model (`embed_backend: inprocess`, SPEC.md 8.1.1): a BYOK install needs no Ollama at all.
+  hosted_only:
+    description: "No supported GPU: every tier on a hosted provider under your own key"
+    memory_gb: 0
+    kind: hosted
+    embed_backend: inprocess
+    models:
+      tier1: null
+      tier2: null
+      tier3: null
+      docsel: null
+      embed: null
+    num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
+    concurrency: { tier1: 2, tier2: 2 }
+    note: >-
+      Embeddings run on this machine with the small model bundled in Kestrel, so few-shot examples
+      and the reranker work with no Ollama; nothing about them is sent anywhere. OpenRouter free
+      models carry a daily request cap and may train on inputs unless data collection is set to
+      deny.

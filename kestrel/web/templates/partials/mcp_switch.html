@@ -1,0 +1,29 @@
+{# Settings > LAN & backup > MCP server (D-MCP-1). One switch, off by default, saved as the
+   mcp.enabled setting row; in the running app it starts or stops the server at once. Shows the
+   port and the address to paste into an MCP client. With bind_all on, a device that is not this
+   machine must send the shared secret as X-Kestrel-Key; the Host and Origin pinning is unchanged
+   (kestrel.mcp.server.sse_app). #}
+<div id="mcp-switch" data-testid="mcp-switch" data-on="{{ '1' if mcp_enabled else '0' }}">
+  <h2 style="margin-top:1.2rem">MCP server</h2>
+  <p class="muted">Optional. Lets an MCP client on this machine, such as Claude Desktop, read your
+  pipeline and queue a scan or a re-score. It never applies, emails or messages anyone. Off
+  unless you turn it on.</p>
+  <form hx-post="/settings/mcp" hx-target="#mcp-switch" hx-swap="outerHTML" hx-trigger="change">
+    <label><input type="checkbox" name="enabled" value="1" data-testid="mcp-toggle"
+      {% if mcp_enabled %}checked{% endif %}> Run the MCP server</label>
+  </form>
+  <dl class="kv" style="margin-top:.5rem">
+    <dt>Status</dt><dd data-testid="mcp-status">{% if mcp_running %}Running on port {{ mcp_port }}{% elif mcp_enabled and not mcp_live %}On; starts with Kestrel{% elif mcp_enabled and mcp_stopped_reason %}On, stopped: {{ mcp_stopped_reason }}
+      <button type="button" class="btn small" data-testid="mcp-restart" hx-post="/settings/mcp" hx-vals='{"enabled": "1"}'
+              hx-target="#mcp-switch" hx-swap="outerHTML">Start again</button>{% elif mcp_enabled %}On, not running{% else %}Off{% endif %}</dd>
+    <dt>Port</dt><dd class="mono">{{ mcp_port }}</dd>
+    <dt>Address</dt><dd><code class="mono" data-testid="mcp-address">{{ mcp_address.local }}</code>
+      <button type="button" class="btn ghost small" data-path="{{ mcp_address.local }}"
+              @click="navigator.clipboard.writeText($el.dataset.path)" title="Copy address">Copy</button></dd>
+    {% if mcp_bind_all and mcp_address.lan %}<dt>On your network</dt><dd><code class="mono">{{ mcp_address.lan }}</code></dd>{% endif %}
+  </dl>
+  {% if mcp_bind_all %}
+  <p class="warnbox" data-testid="mcp-secret-note">LAN access is on, so a device that is not this machine must send the shared secret above as the <span class="mono">X-Kestrel-Key</span> header.{% if not mcp_has_secret %} Generate the secret first; until then only this machine can connect.{% endif %}</p>
+  {% endif %}
+  {% if mcp_message %}<p class="{{ 'muted' if mcp_ok else 'warnbox' }}" data-testid="mcp-message" role="status">{{ mcp_message }}</p>{% endif %}
+</div>

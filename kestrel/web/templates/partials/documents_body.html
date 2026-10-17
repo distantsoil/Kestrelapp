@@ -1,0 +1,209 @@
+{% include "partials/employer_banner.html" %}
+
+<div class="tabs">
+  {% for m in masters %}
+    <a href="/documents?master_id={{ m.id }}"
+       class="{% if selected and m.id == selected.id %}active{% endif %}">
+      {{ m.name }} <span class="muted">({{ m.track }}/{{ m.doc_kind }})</span></a>
+  {% endfor %}
+  {% if not masters %}<span class="muted">No documents yet. Start a blank one or import one below.</span>{% endif %}
+</div>
+<details class="addrole new-document" data-testid="new-document" {% if not masters %}open{% endif %}>
+  <summary class="btn small">Start a blank document without an import</summary>
+  <form hx-post="/documents/new" hx-swap="none" class="formgrid section-form">
+    <label for="new-doc-track">Track</label>
+    <select id="new-doc-track" name="track"><option value="employment">Job search</option>{% if consulting_enabled() %}<option value="consulting">Consulting</option>{% endif %}</select>
+    <label for="new-doc-kind">Kind</label>
+    <select id="new-doc-kind" name="doc_kind"><option value="resume">Resume</option>{% if consulting_enabled() %}<option value="capability_statement">Capability statement</option>{% endif %}</select>
+    <label for="new-doc-name">Name</label>
+    <input id="new-doc-name" type="text" name="name" maxlength="200" placeholder="My resume">
+    <span></span>
+    <span><button class="btn" type="submit">Create it</button>
+      <span class="muted">Then add your details, summary, skills and roles below.</span></span>
+  </form>
+</details>
+
+{% if selected %}
+<div class="split">
+  <div>
+    <div class="formgrid" style="margin-bottom:.8rem" data-testid="doc-look">
+      <label for="layout">Layout</label>
+      <span><select id="layout" name="layout">
+        {% for lay in layouts %}<option value="{{ lay }}">{{ lay }}{% if layout_looks and layout_looks[lay] %} ({{ layout_looks[lay].font }}{% if layout_looks[lay].align == "center" %}, centered{% endif %}){% endif %}</option>{% endfor %}
+      </select>
+      <span class="muted">Section order and look for the preview and the test render.</span></span>
+      <label for="font">Font</label>
+      <span><select id="font" name="font">
+        <option value="">Layout default</option>
+        {% for f in fonts or [] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+      </select>
+      <span class="muted">Fonts that ship with Windows and print the same in the PDF.</span></span>
+      <label for="header_align">Name and headline</label>
+      <span><select id="header_align" name="header_align">
+        <option value="">Layout default</option>
+        <option value="left">Left aligned</option>
+        <option value="center">Centered</option>
+      </select></span>
+      {# Accent color (D-DOC-4): saved on this document, used by the preview, every test render
+         and the pipeline's renders. Presets, or a custom six-digit hex color. #}
+      <label for="accent">Accent color</label>
+      <span data-testid="doc-accent"><select id="accent" name="accent"
+              hx-post="/documents/{{ selected.id }}/accent" hx-trigger="change"
+              hx-include="#accent, #accent_custom" hx-target="#accent-status" hx-swap="innerHTML">
+        <option value=""{% if not accent_saved %} selected{% endif %}>Layout default</option>
+        {% for name, hex in accent_presets.items() %}<option value="{{ hex }}"{% if accent_saved == hex %} selected{% endif %}>{{ name }} ({{ hex }})</option>{% endfor %}
+        <option value="custom"{% if accent_is_custom %} selected{% endif %}>Custom…</option>
+      </select>
+      <input id="accent_custom" name="accent_custom" type="text" size="9" maxlength="7"
+             placeholder="#1F3A5F" aria-label="Custom accent color, six-digit hex"
+             value="{{ accent_saved if accent_is_custom else '' }}"
+             pattern="#[0-9A-Fa-f]{6}"
+             hx-post="/documents/{{ selected.id }}/accent" hx-trigger="change"
+             hx-include="#accent, #accent_custom" hx-target="#accent-status" hx-swap="innerHTML">
+      <span id="accent-status" aria-live="polite"></span>
+      <span class="muted">Headings, rules and markers. Saved for this document.</span></span>
+    </div>
+    {% include "partials/doc_basics.html" %}
+    <div id="tree">{% include "partials/doc_tree.html" %}</div>
+    {% include "partials/doc_optional_sections.html" %}
+  </div>
+
+  <div class="doc-side">
+    {# What the left column means, in the operator's terms (D-UI-18). Stays in view while the
+       tree scrolls; the preview sits under it. #}
+    <details class="help panel" data-testid="doc-help">
+      <summary><b>What this means</b> <span class="muted">(click to expand)</span></summary>
+      <p>Your resume is stored as building blocks so each application can use the right ones.</p>
+      <dl>
+        <dt>Role</dt><dd>One job, with its company, title and dates. "Edit role details" fixes
+          anything the import misread. "Add a role" at the end of the list adds one.</dd>
+        <dt>Bullet</dt><dd>One achievement from that role, named by its first words. "Add a
+          bullet" under a role's bullets adds one in your own words.</dd>
+        <dt>Your wording</dt><dd>Your own text, copied exactly from your resume. Edit it here
+          and it saves on its own.</dd>
+        <dt>Alternate wording</dt><dd>A rewording of the same fact for a different audience.
+          "Suggest wordings" asks the model for up to two; nothing is added until you click Add.</dd>
+        <dt>Themes</dt><dd>What the bullet shows (leadership, cost, security). They help the
+          model pick the right wording for a posting.</dd>
+        <dt>Optional</dt><dd>Can be left out of a shorter resume.</dd>
+        <dt>Optional sections</dt><dd>Education, certifications, licenses and projects, typed
+          in your own words. A section with no entries does not appear on the resume.</dd>
+        <dt>Accent color</dt><dd>The color of headings and rules. Pick a preset or type a
+          six-digit hex color; it is saved for this document.</dd>
+      </dl>
+      <p><b>What to do now:</b> read each role, fix any detail the import flagged, then click
+        Live preview. Test render makes the PDF. "Assess this resume" asks the model how it reads
+        for your target titles; it only advises and never changes your text.</p>
+    </details>
+    <div style="display:flex; gap:.5rem; margin-bottom:.5rem; flex-wrap:wrap">
+      <button class="btn" hx-post="/documents/{{ selected.id }}/preview"
+              hx-include="#layout, #font, #header_align, #accent, #accent_custom"
+              hx-target="#preview" hx-swap="innerHTML" data-busy-text="Rendering…">Live preview</button>
+      <a class="btn ghost" href="/renders/new?master_id={{ selected.id }}" id="test-render"
+         data-busy-text="Rendering the PDF…">Test render (PDF)</a>
+      <button class="btn ghost" id="assess-btn" hx-get="/documents/{{ selected.id }}/assess/choose"
+              hx-target="#assess-dialog-slot" hx-swap="innerHTML" hx-disabled-elt="this"
+              aria-haspopup="dialog" data-testid="assess-btn"
+              data-busy-text="Opening the model choice.">Assess this {{ "resume" if selected.doc_kind == "resume" else "capability statement" }}</button>
+      <div id="assess-dialog-slot"></div>
+      {% if assess_host %}
+      <span class="muted" data-testid="assess-hosted" style="flex-basis:100%">The assessment runs on
+        your hosted model ({{ assess_host }}): it sends your resume text, every bullet, role
+        title and date, to that provider.</span>
+      {% endif %}
+      <script>
+        // The test render uses the layout, font and alignment chosen here, so the review
+        // matches the preview.
+        (function () {
+          var a = document.getElementById('test-render');
+          var ids = ['layout', 'font', 'header_align', 'accent', 'accent_custom'];
+          if (!a) return;
+          var base = a.getAttribute('href');
+          function sync() {
+            var href = base;
+            ids.forEach(function (id) {
+              var el = document.getElementById(id);
+              if (el && el.value) href += '&' + id + '=' + encodeURIComponent(el.value);
+            });
+            a.setAttribute('href', href);
+          }
+          ids.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) { el.addEventListener('change', sync); el.addEventListener('input', sync); }
+          });
+          sync();
+        })();
+      </script>
+    </div>
+    <div id="assessment" data-testid="assessment"></div>
+    <div id="preview" class="preview-frame">
+      <p class="muted" style="padding:1rem">Click “Live preview” to render the current variants.</p>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<h2 style="margin-top:2rem">Import a resume or capability statement</h2>
+<p class="muted">Upload a file (.md, .txt, .pdf, .docx, .doc) or paste markdown. The text that was
+read is shown first, then the proposal for review, with any bullet that is not verbatim from your
+source flagged. Nothing is written until you accept.</p>
+<p class="muted"><b>Word (.docx) gives the cleanest result.</b> PDF works, but its text is laid
+out by position, so check the extracted text before accepting.</p>
+<form id="import-form" hx-post="/api/documents/import/read" hx-target="#import-proposal"
+      hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data"
+      hx-disabled-elt="find button[type=submit]" data-no-busy>
+  <div class="formgrid">
+    <label>Track</label>
+    <select name="track"><option value="employment">Job search</option>{% if consulting_enabled() %}<option value="consulting">Consulting</option>{% endif %}</select>
+    <label>Kind</label>
+    <select name="doc_kind"><option value="resume">Resume</option>{% if consulting_enabled() %}<option value="capability_statement">Capability statement</option>{% endif %}</select>
+    <label for="import-file">File</label>
+    <input id="import-file" type="file" name="file" accept=".md,.txt,.pdf,.docx,.doc">
+  </div>
+  <p class="muted" style="margin:.5rem 0 0">Or paste markdown (a chosen file takes precedence):</p>
+  <textarea name="text" rows="8" style="width:100%; margin:.5rem 0" placeholder="Paste here…"></textarea>
+  <button class="btn" type="submit">Propose import</button>
+  <div class="import-status" role="status" aria-live="polite" data-testid="import-reading">
+    <span class="spin" aria-hidden="true"></span><span class="import-stage">Uploading…</span>
+  </div>
+</form>
+<div id="import-proposal" class="import-result"></div>
+<script>
+  // Import status (D-IMPORT-2). Step one reports Uploading with a percentage, then Reading once
+  // the bytes are sent; step two (partials/import_processing.html) counts the seconds it has run.
+  (function () {
+    var form = document.getElementById('import-form');
+    var stage = form.querySelector('.import-stage');
+    form.addEventListener('htmx:beforeRequest', function () {
+      var f = form.querySelector('input[type=file]');
+      stage.textContent = (f && f.files && f.files.length) ? 'Uploading…' : 'Reading…';
+    });
+    form.addEventListener('htmx:xhr:progress', function (evt) {
+      var d = evt.detail;
+      if (!d || !d.lengthComputable || !d.total) return;
+      stage.textContent = d.loaded < d.total
+        ? 'Uploading… ' + Math.floor(100 * d.loaded / d.total) + '%'
+        : 'Reading the file and extracting its text…';
+    });
+    var timers = new WeakMap();
+    document.addEventListener('htmx:beforeRequest', function (evt) {
+      var el = evt.detail && evt.detail.elt;
+      if (!el || !el.classList || !el.classList.contains('import-processing')) return;
+      // One import at a time: a second click would orphan a billed call still running.
+      var btn = form.querySelector('button[type=submit]');
+      if (btn) btn.disabled = true;
+      var out = el.querySelector('.import-elapsed'), t0 = Date.now();
+      timers.set(el, setInterval(function () {
+        if (out) out.textContent = Math.round((Date.now() - t0) / 1000) + ' s elapsed.';
+      }, 1000));
+    });
+    document.addEventListener('htmx:afterRequest', function (evt) {
+      var el = evt.detail && evt.detail.elt;
+      if (el && timers.has(el)) {
+        clearInterval(timers.get(el)); timers.delete(el);
+        var btn = form.querySelector('button[type=submit]');
+        if (btn) btn.disabled = false;
+      }
+    });
+  })();
+</script>

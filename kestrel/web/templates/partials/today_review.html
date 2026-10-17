@@ -1,0 +1,33 @@
+{# Today's Review card (D-UI-60): the Worth a look count (analytics.today.worth_a_look, the one
+   shared query the Pipeline header and the badge use), the strong / your call split, and the top
+   three roles worth a look with their fit word, title, org and fit number. Title and org are
+   redacted under confidential mode exactly as the Pipeline list redacts them (worth_a_look does
+   it; redact_text on the title, redact_name on the org). Re-sent out of band by /today/run so
+   the run panel's "now N in Review" and this number never differ. #}
+{% set w = words(track) %}
+{% set q = '?track=' ~ track if enabled_tracks()|length > 1 else '' %}
+<div class="card" id="today-review" data-testid="today-review"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <span class="eyebrow">Review</span>
+  <div class="num" data-testid="review-n">{{ review.n }}<small>{{ w.role if review.n == 1 else w.roles }} worth a look</small></div>
+  <p class="quiet card-note" data-testid="review-note">
+    {%- if review.n -%}
+      {{ review.strong }} strong {{ 'fit' if review.strong == 1 else 'fits' }}, {{ review.your_call }} your call.
+    {%- else -%}
+      Nothing worth a look yet.
+    {%- endif -%}
+  </p>
+  {% if review.top %}
+  <div class="review-top" role="list" data-testid="review-top">
+    {% for it in review.top %}
+    <a class="review-row" role="listitem" href="/opportunities/{{ it.id }}" data-id="{{ it.id }}">
+      <span class="pill {{ it.tone }}" data-fit="{{ it.word }}">{{ it.word }}</span>
+      <span class="review-t">{{ it.title }}{% if it.org %}, {{ it.org }}{% endif %}</span>
+      <span class="review-s mono">{{ '%.1f'|format(it.score) if it.score is not none else '' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <p class="card-foot"><a class="btn pri" href="/opportunities{{ q }}">Open Pipeline</a>
+    {%- set more = review.n - (review.top|length if review.top else 0) -%}
+    {% if more > 0 %} <a class="quiet review-more" href="/opportunities{{ q }}" data-testid="review-more">{{ more }} more</a>{% endif %}</p>
+</div>

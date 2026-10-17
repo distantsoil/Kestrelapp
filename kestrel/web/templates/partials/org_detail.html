@@ -1,0 +1,186 @@
+<h1>{{ display_name or org.name }}</h1>
+
+<div class="panel">
+  <div class="formgrid">
+    <div class="muted">Sector</div><div>{{ org.sector or '-' }}</div>
+    <div class="muted">Ownership</div><div>{{ org.ownership or '-' }}</div>
+    <div class="muted">Size band</div><div>{{ org.size_band or '-' }}</div>
+    <div class="muted">HQ</div><div>{{ org.hq_location or '-' }}</div>
+    <div class="muted">Website</div>
+    <div>
+      {% if org.url %}<a href="{{ org.url }}" target="_blank" rel="noopener">{{ org.domain or org.url }} ↗</a>
+      {% elif org.domain %}<a href="https://{{ org.domain }}" target="_blank" rel="noopener">{{ org.domain }} ↗</a>
+      {% else %}<span class="muted">-</span>{% endif %}
+    </div>
+    <div class="muted">First / last seen</div>
+    <div class="mono">{{ (org.first_seen_at or '')[:10] or '-' }} → {{ (org.last_seen_at or '')[:10] or '-' }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Signals over time{% if signals %} ({{ signals|length }}){% endif %}</h2>
+  {% if signals %}
+    <table class="data">
+      <thead><tr><th>Observed</th><th>Category</th><th>Statement</th><th>Source</th></tr></thead>
+      <tbody>
+        {% for sig in signals %}
+          <tr>
+            <td class="mono">{{ (sig.observed_at or '')[:10] or '-' }}</td>
+            <td>{% if sig.category %}<span class="pill">{{ sig.category }}</span>{% else %}-{% endif %}</td>
+            <td>{{ sig.statement or sig or '-' }}</td>
+            <td>
+              {% if sig.source_url %}<a href="{{ sig.source_url }}" target="_blank" rel="noopener">source ↗</a>
+              {% else %}<span class="muted">-</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No signals recorded yet.</p>
+  {% endif %}
+</div>
+
+<div class="split">
+  <div class="panel">
+    <h2>Research</h2>
+    {% if research %}
+      {% if research.insufficient_sources %}
+        <div class="warnbox">Insufficient public sources: this research is not solid enough to
+        rely on alone.</div>
+      {% endif %}
+      <p class="muted mono">researched {{ (research.researched_at or '')[:10] or '-' }} ·
+        ttl {{ research.ttl_days }}d</p>
+      {% if research.summary_md %}
+        <div style="white-space:pre-wrap">{{ research.summary_md }}</div>
+      {% else %}
+        <p class="muted">No summary.</p>
+      {% endif %}
+      {% if research.angle %}<p><b>Angle:</b> {{ research.angle }}</p>{% endif %}
+      {% if research.signals %}
+        <p style="margin-bottom:.25rem"><b>Signals from this pass</b></p>
+        <ul>{% for sig in research.signals %}<li>{{ sig.statement or sig }}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if research.unknowns %}
+        <p style="margin-bottom:.25rem"><b>Unknowns</b></p>
+        <ul>{% for u in research.unknowns %}<li>{{ u.statement or u }}</li>{% endfor %}</ul>
+      {% endif %}
+    {% else %}
+      <p class="muted">No research on file yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Warm paths{% if warm_paths %} ({{ warm_paths|length }}){% endif %}</h2>
+    {% if warm_paths %}
+      <table class="data">
+        <thead><tr><th>Tier</th><th>Contact</th><th>Reason</th></tr></thead>
+        <tbody>
+          {% for w in warm_paths %}
+            <tr>
+              <td><span class="pill">tier {{ w.tier }}</span></td>
+              <td>{{ w.contact.name }}{% if w.contact.title %}
+                <span class="muted">({{ w.contact.title }})</span>{% endif %}</td>
+              <td>{{ w.reason }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No warm paths found yet. Import LinkedIn connections or add known contacts
+      to surface one.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Contacts &amp; drafted outreach{% if contacts %} ({{ contacts|length }}){% endif %}</h2>
+  <p class="muted">Drafts are text to copy yourself. Kestrel never sends anything on your behalf.</p>
+  {% if contacts %}
+    {% for row in contacts %}
+      {% set c = row.contact %}
+      <div class="card">
+        <div>
+          <b>{{ c.name }}</b>{% if c.title %} <span class="muted">({{ c.title }})</span>{% endif %}
+          {% if c.contact_type %}<span class="pill">{{ c.contact_type }}</span>{% endif %}
+          {% if c.confidence is not none %}
+            <span class="muted mono">conf {{ '%.2f'|format(c.confidence) }}</span>
+          {% endif %}
+        </div>
+        <div class="muted">
+          {% if c.email %}{{ c.email }}{% endif %}
+          {% if c.linkedin_url %} · <a href="{{ c.linkedin_url }}" target="_blank" rel="noopener">LinkedIn ↗</a>{% endif %}
+        </div>
+        {% if row.drafts %}
+          {% for d in row.drafts %}
+            <div style="margin-top:.6rem">
+              <div class="muted mono">{{ d.channel }} · <span class="pill">{{ d.status }}</span>
+                {% if d.subject %} · {{ d.subject }}{% endif %}</div>
+              <textarea readonly style="width:100%;min-height:4.5rem;white-space:pre-wrap"
+                        onclick="this.select()">{{ d.body or '' }}</textarea>
+              <button type="button" class="btn"
+                      onclick="var t=this.previousElementSibling; t.select();
+                        if (navigator.clipboard) { navigator.clipboard.writeText(t.value).catch(function(){}); }
+                        this.textContent='Copied';">Copy</button>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="muted">No drafted outreach for this contact yet.</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No contacts on file for this org yet.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Opportunities ever seen{% if opportunities %} ({{ opportunities|length }}){% endif %}</h2>
+  {% if opportunities %}
+    <table class="data">
+      <thead><tr><th>Title</th><th>Stage</th><th>Ghost score</th><th>Liveness</th><th>First seen</th></tr></thead>
+      <tbody>
+        {% for o in opportunities %}
+          <tr>
+            <td><a href="/opportunities/{{ o.id }}">{{ o.title or 'Untitled' }}</a></td>
+            <td><span class="pill">{{ o.stage }}</span></td>
+            <td class="mono {% if o.ghost_score >= 0.5 %}gap{% endif %}">{{ '%.2f'|format(o.ghost_score) }}</td>
+            <td>{{ o.liveness }}</td>
+            <td class="mono">{{ (o.first_seen_at or '')[:10] }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No opportunities recorded at this org yet.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Comp observations{% if comp_n_total %} ({{ comp_n_total }} raw){% endif %}</h2>
+  {% if comp_groups %}
+    <table class="data">
+      <thead><tr><th>Title</th><th>Geo</th><th>Interval</th><th>Range</th><th>Currency</th><th>n</th></tr></thead>
+      <tbody>
+        {% for g in comp_groups %}
+          <tr>
+            <td>{{ g.normalized_title }}</td>
+            <td>{{ g.geo_bucket or '-' }}</td>
+            <td>{{ g.interval or '-' }}</td>
+            <td class="mono">
+              {% if g.min is not none or g.max is not none %}
+                {{ '%.0f'|format(g.min) if g.min is not none else '-' }} – {{ '%.0f'|format(g.max) if g.max is not none else '-' }}
+              {% else %}-{% endif %}
+            </td>
+            <td>{{ g.currency or '-' }}</td>
+            <td class="mono {% if g.insufficient %}gap{% else %}covered{% endif %}">
+              {{ g.n }}{% if g.insufficient %} ({{ too_few(g.n) }}){% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No comp observations for this org or its size band yet.</p>
+  {% endif %}
+</div>

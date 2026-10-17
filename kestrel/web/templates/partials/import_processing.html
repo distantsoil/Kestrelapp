@@ -1,0 +1,24 @@
+{# Step two of the import: runs the proposal on the text step one read. `auto` starts it on load
+   (straight after reading); without it this is the Try again control after a failed proposal.
+   Posts into the nearest .import-result, so a retry replaces the error rather than stacking. #}
+<form class="import-processing" hx-post="/api/documents/import" hx-target="closest .import-result"
+      hx-swap="innerHTML" hx-disabled-elt="find button" data-no-busy
+      {% if auto %}hx-trigger="load"{% endif %} style="margin-top:.8rem">
+  <input type="hidden" name="text" value="{{ markdown }}">
+  <input type="hidden" name="track" value="{{ track }}">
+  <input type="hidden" name="doc_kind" value="{{ doc_kind }}">
+  <input type="hidden" name="source_format" value="{{ source_format or '' }}">
+  <input type="hidden" name="filename" value="{{ filename or '' }}">
+  <input type="hidden" name="extracted_shown" value="1">
+  {% if ob %}<input type="hidden" name="ob" value="1">{% endif %}
+  {% if confidential_send and confidential_send.needs_confirm %}<input type="hidden" name="confirm_unredacted" value="{{ confidential_send.confirm }}">{% endif %}
+  {% if confidential_send and not auto %}<button class="btn" type="submit" data-testid="import-send">Send and import</button>
+  {% elif not auto %}<button class="btn" type="submit" data-testid="import-retry">Try again</button>{% endif %}
+  <div class="import-status" role="status" aria-live="polite" data-testid="import-processing">
+    <span class="spin" aria-hidden="true"></span>
+    <span><b>Processing.</b> Mapping roles and bullets with
+      {{ model_label or 'the document-selection model' }}, one role at a time. This usually takes under a
+      minute; a long resume takes a little longer.
+      <span class="muted import-elapsed"></span></span>
+  </div>
+</form>

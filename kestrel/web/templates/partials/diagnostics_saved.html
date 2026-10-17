@@ -1,0 +1,19 @@
+{# The desktop app's diagnostics save (D-UI-41): where the zip went, and a button that asks the
+   shell to show it in Explorer. Theme variables only. #}
+{% if ok %}
+<div class="okbox" role="status" aria-live="polite" data-testid="diagnostics-saved"
+     style="margin-top:.6rem">
+  <b>Saved to <span class="mono" data-testid="diagnostics-path">{{ path }}</span></b>
+  {% if can_reveal %}
+  <div style="margin-top:.5rem; display:flex; gap:.6rem; align-items:center; flex-wrap:wrap">
+    <button class="btn" type="button" data-testid="diagnostics-open-folder"
+            hx-post="/about/diagnostics/reveal" hx-vals='{"name": {{ name | tojson }}}'
+            hx-target="#diagnostics-reveal-result" hx-swap="innerHTML">Open folder</button>
+    <span id="diagnostics-reveal-result"></span>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="warnbox" role="status" data-testid="diagnostics-saved" style="margin-top:.6rem">
+  Could not save the diagnostics bundle: {{ error }}</div>
+{% endif %}

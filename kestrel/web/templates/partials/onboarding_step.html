@@ -1,0 +1,31 @@
+{# One step of the onboarding wizard (D-UI-30). Every save, Back and Next returns this whole
+   element, and an `ob-refresh` event reloads it, so the progress indicator is always current. #}
+<div id="ob-step" data-step="{{ key }}" hx-get="/onboarding/step" hx-trigger="ob-refresh from:body" hx-swap="outerHTML">
+  <div class="ob-head">
+    <h1>{{ info.title }}</h1>
+    <span class="ob-count" data-testid="ob-count">Step {{ number }} of {{ total }}</span>
+  </div>
+  <ol class="ob-progress" aria-label="Setup progress">
+    {% for s in steps %}
+    {% set status = statuses[s.key] %}
+    <li class="{{ 'now' if s.key == key else status }}" data-ob-step="{{ s.key }}" data-status="{{ status }}"
+        {% if s.key == key %}aria-current="step"{% endif %}>
+      {% if s.key in reachable and s.key != key %}<a href="/onboarding?step={{ s.key }}">{% endif %}{{ loop.index }}. {{ s.title }}{% if status == 'ok' %} &#10003;{% elif status == 'skipped' %} (skipped){% endif %}{% if s.key in reachable and s.key != key %}</a>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% if nav_problem %}<div class="warnbox" role="alert" data-testid="ob-nav-problem" style="margin-bottom:1rem">{{ nav_problem }}</div>{% endif %}
+
+  <div class="ob-grid">
+    <div class="ob-main">
+      {% include "partials/onboarding_body.html" %}
+    </div>
+    <aside class="ob-help panel help" data-testid="ob-help" aria-label="Help for this step">
+      <h3>What this is</h3><p>{{ help.what }}</p>
+      <h3>Why it matters</h3><p>{{ help.why }}</p>
+      <h3>What happens next</h3><p>{{ help.next }}</p>
+      <p class="muted" style="margin:0"><small>Everything you enter saves as you go. You can
+        close Kestrel at any step and continue here later. <a href="/help">More help</a></small></p>
+    </aside>
+  </div>
+</div>

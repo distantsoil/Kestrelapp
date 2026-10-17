@@ -1,0 +1,35 @@
+{% if error %}
+  <div class="warnbox">{{ error }}</div>
+{% elif result %}
+  <div class="panel" style="margin-top:.6rem">
+    <p><strong>Situation read:</strong> {{ result.situation_read }}</p>
+    <p><strong>Walk-away (yours, echoed unchanged):</strong>
+      <span class="mono">{{ result.walk_away }}</span></p>
+
+    {% if result.leverage_inventory %}
+      <p class="muted"><strong>Leverage:</strong> {{ result.leverage_inventory|join('; ') }}</p>
+    {% endif %}
+
+    {% for sc in result.scripts %}
+      <div class="panel" style="margin:.5rem 0">
+        <h4>{{ sc.scenario.replace('_', ' ')|title }}
+          {% if not sc.supported %}
+            <span class="pill flag">flagged: rests on nothing supplied, verify before use</span>
+          {% endif %}
+        </h4>
+        <p>{{ sc.script }}</p>
+        <p class="muted"><strong>Basis:</strong> {{ sc.justification_basis }}</p>
+        <p class="muted"><strong>Likely pushback:</strong> {{ sc.likely_pushback }}</p>
+      </div>
+    {% endfor %}
+
+    {% if result.risks %}
+      <p class="muted"><strong>Risks:</strong> {{ result.risks|join('; ') }}</p>
+    {% endif %}
+
+    <p class="muted">These are drafts for you to edit and deliver yourself. There is no send
+    action anywhere in Kestrel. Nothing here adjusts the walk-away number you supplied.</p>
+  </div>
+{% else %}
+  <p class="muted">No scripts yet.</p>
+{% endif %}

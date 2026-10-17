@@ -1,0 +1,38 @@
+{
+  "jobs": [
+    {
+      "id": 5501001,
+      "internal_job_id": 4400001,
+      "requisition_id": "REQ-IT-VP-01",
+      "title": "Vice President of Information Technology",
+      "company_name": "Meridian Health Partners",
+      "absolute_url": "https://boards.greenhouse.io/meridian/jobs/5501001?gh_src=abc123",
+      "updated_at": "2026-07-20T14:03:00-04:00",
+      "first_published": "2026-07-18T09:00:00-04:00",
+      "location": {"name": "Austin, TX"},
+      "content": "&lt;p&gt;We seek a &lt;strong&gt;VP of IT&lt;/strong&gt; to lead a 25-person team across infrastructure, security, and application support for a 1,200-employee regional healthcare provider. Compensation: $210,000 - $245,000. You will own the IT budget and a HITRUST certification effort, reporting to the COO.&lt;/p&gt;",
+      "metadata": [
+        {"name": "Location Type", "value": "Hybrid"},
+        {"name": "Industry", "value": "healthcare"}
+      ],
+      "departments": [{"name": "Information Technology"}],
+      "offices": [{"name": "Austin"}]
+    },
+    {
+      "id": 5501002,
+      "internal_job_id": 4400002,
+      "requisition_id": "REQ-SALES-09",
+      "title": "Regional Sales Director",
+      "company_name": "Meridian Health Partners",
+      "absolute_url": "https://boards.greenhouse.io/meridian/jobs/5501002",
+      "updated_at": "2026-07-15T11:00:00-04:00",
+      "first_published": "2026-07-10T11:00:00-04:00",
+      "location": {"name": "Remote"},
+      "content": "&lt;p&gt;Drive regional sales for our provider network. Fully remote.&lt;/p&gt;",
+      "metadata": [],
+      "departments": [{"name": "Sales"}],
+      "offices": []
+    }
+  ],
+  "meta": {"total": 2}
+}

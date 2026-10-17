@@ -1,0 +1,39 @@
+{# Employment terms (D-UI-21): the numbers the employment hard blockers and soft signals read. #}
+<form hx-post="{{ form_post or ('/profile/employment/employment') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
+      class="panel" data-testid="profile-employment" data-busy-text="Saving…">
+  <h2 style="margin-top:0">Employment terms</h2>
+  {% if 'employment_terms' in from_example and not saved %}
+  <p class="warnbox" style="margin:.2rem 0 .8rem" data-testid="from-example">
+    <b>Not saved yet.</b> The grey text is only an example; nothing here filters a posting
+    until you type your own values and save this tab.</p>
+  {% endif %}
+  <div class="formgrid">
+    <label for="pe-titles">Target titles</label>
+    <span><textarea id="pe-titles" name="target_titles" rows="4" style="width:100%" placeholder="{{ (ex_terms.target_titles or []) | join('\n') or 'One per line' }}">{{ (terms.target_titles or []) | join('\n') }}</textarea>
+      <span class="muted">An exact, partial or near title match raises the score ("IT Director" counts for "Director of IT"). Not a filter.</span></span>
+    <label for="pe-anti">Excluded titles</label>
+    <span><textarea id="pe-anti" name="anti_titles" rows="3" style="width:100%" placeholder="One per line">{{ (terms.anti_titles or []) | join('\n') }}</textarea>
+      <span class="muted">A title containing any of these, exactly as typed, is set aside. Near titles do not count here, so nothing extra is set aside.</span></span>
+    <label for="pe-floor">Seniority floor</label>
+    <span><select id="pe-floor" name="seniority_floor">
+      {% for key, label in seniority_floors %}
+        <option value="{{ key }}" {% if terms.seniority_floor == key %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+      <span class="muted">Titles ranked below this are rejected; a title with no rank passes (rule seniority_floor).</span></span>
+    <label for="pe-cfloor">Comp floor (USD)</label>
+    <span><input id="pe-cfloor" type="text" inputmode="numeric" name="comp_floor_usd" value="{{ terms.comp_floor_usd or '' }}" placeholder="65000">
+      <span class="muted">A posting whose top of range is below this is rejected (rule comp_floor). Blank: no floor.</span></span>
+    <label for="pe-ctarget">Comp target (USD)</label>
+    <span><input id="pe-ctarget" type="text" inputmode="numeric" name="comp_target_usd" value="{{ terms.comp_target_usd or '' }}" placeholder="80000">
+      <span class="muted">At or above this raises the score.</span></span>
+    <label>Exclude</label>
+    <span>
+      {% for t in employment_types %}
+        <label style="margin-right:.8rem"><input type="checkbox" name="type_{{ t }}" value="on"
+          {% if t in (terms.excluded_employment_types or []) %}checked{% endif %}> {{ t.replace('_', ' ') }}</label>
+      {% endfor %}
+    </span>
+  </div>
+  {% include "partials/profile_save_row.html" %}
+</form>

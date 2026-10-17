@@ -1,0 +1,8 @@
+{# Score history (D-UI-50): every Tier 2+ evaluation for one role, newest first, each with its
+   model name, so a re-score sits beside the original. Included by the role panel.
+   Context: `opp_id`. Loads partials/score_history_list.html from GET /rescore/history/{opp_id}
+   when it lands, and again after a pipelineRefresh (a re-score finished or was queued). Empty
+   while the role has only one evaluation. #}
+<div class="score-history-slot" data-testid="score-history-slot"
+     hx-get="/rescore/history/{{ opp_id }}" hx-trigger="load, pipelineRefresh from:body"
+     hx-swap="innerHTML"></div>

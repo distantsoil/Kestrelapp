@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Help · Kestrel{% endblock %}
+{% block content %}
+<h1>Help</h1>
+
+<div class="panel">
+  <h2>What Kestrel does</h2>
+  <p>Kestrel is a free job search app for any job seeker. It runs on your own computer
+  (Windows, macOS or Linux) and you are not the product. It finds openings from public job
+  boards and company hiring pages, checks each one against what you want, and shows the ones
+  worth a look with the reasons. It tailors your own resume text to each role, tracks every
+  application to its outcome, and helps you prepare for interviews and offers. It learns from
+  the decisions you record. If you do consulting or contract work, there is an optional second
+  track for that, off by default.</p>
+  <p>The AI runs on your computer by default. You can instead use an online model with your own
+  key (OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible service), and Kestrel
+  asks before anything goes online. It never applies, emails or messages anyone for you.</p>
+  {# D-UI-64: the site and Ko-fi as link buttons inside the main card, not a loose line. #}
+  <p class="site-links" data-testid="site-links"><a class="btn" href="https://kestrelapp.co" target="_blank" rel="noopener">kestrelapp.co</a> <a class="btn pri" href="https://ko-fi.com/distantsoil" target="_blank" rel="noopener">Support Kestrel on Ko-fi</a></p>
+</div>
+
+<div class="panel" data-testid="help-guides">
+  <h2>Page guides</h2>
+  <p>Each main page opens with a one-line guide. Hide it with Got it; it stays gone until you
+  bring the guides back.</p>
+  <button class="btn" type="button" hx-post="/guides/restore" hx-target="#guides-result"
+          hx-swap="outerHTML">Show the guides again</button>
+  <span id="guides-result"></span>
+</div>
+
+<div class="panel">
+  <h2 id="tiers">The pipeline</h2>
+  <table class="data">
+    <thead><tr><th>Step</th><th>What runs</th><th>What it decides</th><th>Cost</th></tr></thead>
+    <tbody>
+      {% for t in tiers %}
+      <tr><td><b>{{ t.tier }}</b><br><span class="muted mono" title="The name this step has in Settings">{{ t.tech }}</span></td><td>{{ t.what }}</td><td>{{ t.decides }}</td>
+          <td class="muted">{{ t.cost }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Uncertainty escalates, it never rejects: when the quick screen is unsure about a role,
+  it goes on to a full read instead of being set aside, and a posting the model could not score goes to Failed scoring and stays in your pipeline, never dropped.</p>
+  <h3 id="tier-names">The model names on Settings</h3>
+  <p class="muted" style="margin-top:0">Settings &gt; Models and Settings &gt; Hosted assign a
+  model to each of these. An online assignment is used only in Hosted mode; the online deeper read
+  sends data only when you confirm it.</p>
+  <table class="data">
+    <thead><tr><th>Name</th><th>What it is</th></tr></thead>
+    <tbody>
+      {% for n in tier_names %}
+      <tr><td>{{ n.label }}<br><span class="mono muted">{{ n.name }}</span></td><td>{{ n.what }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Where opportunities come from</h2>
+  <p>Every kind Kestrel can scan, read from the adapter registries. Add one on
+  <a href="/sources">Sources</a>: name, track, kind, cadence, and a JSON config with the keys
+  below. The same check the scan uses runs before anything is saved.</p>
+  <div style="overflow-x:auto">
+  <table class="data">
+    <thead>
+      <tr><th>Kind</th><th>What it scans</th><th>What you provide</th><th>Region</th>
+          <th>Rate limit</th></tr>
+    </thead>
+    <tbody>
+      {% for k in catalog %}
+      <tr>
+        <td>
+          <strong>{{ k.name }}</strong><br>
+          <span class="mono muted">{{ k.kind }}</span><br>
+          <span class="pill">{{ k.category }}</span>
+          {% if not k.documented %}<span class="pill gap">undocumented</span>{% endif %}
+          {% if not k.scheduled %}<span class="pill">not scanned</span>{% endif %}
+          {% if not k.can_add_on_sources_page %}<span class="pill gap">not on Sources page</span>{% endif %}
+        </td>
+        <td>{{ k.fetches }}</td>
+        <td>{{ k.provide }}
+          {% if k.config_example %}<div class="mono muted" style="font-size:.78rem; margin-top:.3rem">{{ k.config_example }}</div>{% endif %}
+        </td>
+        <td>{{ k.region }}</td>
+        <td>{{ k.rate_limit }}<div class="muted" style="font-size:.78rem; margin-top:.3rem">{{ k.user_agent }}</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <h3>LinkedIn</h3>
+  <p>Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a
+  LinkedIn posting by hand.</p>
+  <h3>Region</h3>
+  <p>{{ region_note }}</p>
+  <h3>Need a board that is not listed?</h3>
+  <p>{{ request_new_provider }}</p>
+</div>
+
+<div class="split">
+  <div class="panel">
+    <h2>What never happens</h2>
+    <p>Kestrel never submits an application, never sends an email or a message, never clicks apply,
+    never fills in or submits an ATS form, and never automates any social platform. It
+    drafts, recommends, and hands over. Every send is yours. This boundary is deliberate and it is
+    not configurable.</p>
+    <p>It reads only public pages and public filings, respects robots.txt, identifies itself with a
+    descriptive User-Agent, rate-limits every source, and never logs in anywhere.</p>
+  </div>
+  <div class="panel">
+    <h2>What leaves this machine</h2>
+    <p>Nothing, by default. The AI runs on your own computer. Two opt-in paths send data out,
+    both with your own key and both stated in full before you confirm: a deeper read you request
+    for one role, and Hosted mode, which sends your scoring to an online model you choose
+    (OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible service). Both are on
+    <a href="/settings">Settings</a>, Hosted (BYOK) tab.</p>
+    <p>The source scans themselves make ordinary public requests to job boards and filings; the
+    only thing they carry is the search you configured.</p>
+  </div>
+</div>
+
+<div class="split">
+  <div class="panel">
+    <h2>Backups and reinstalls</h2>
+    <p>The <a href="/backup">Backup</a> page downloads one zip with the database, the YAML config
+    and the generated PDFs, exports or imports your profile on its own, and explains what is never
+    included (every key you saved). Restore is on
+    <a href="/settings">Settings</a>, LAN &amp; backup tab.</p>
+    <p>After a reinstall: install, open Setup in the app to rebuild the models, restore the
+    backup, and re-enter any keys in Settings.</p>
+  </div>
+
+  <div class="panel">
+    <h2 id="lan">Kestrel from another device</h2>
+    <p>Optional, and off by default. Kestrel is a web page served by the desktop app, so it can
+    also be opened from a phone, tablet or laptop on the same home network: read Today, review the
+    pipeline, check an application or your interview prep away from the desk. Nothing moves: the models, the
+    database and the documents stay on this machine, which has to be running (in the window or
+    the tray).</p>
+    <p>Turning it on means setting <span class="mono">server.bind_all</span> and sharing one
+    secret with each device, as described on <a href="/settings">Settings</a>, LAN &amp; backup
+    tab, together with what that secret does and does not protect. If you only use Kestrel at
+    this computer, leave it off.</p>
+  </div>
+
+  <div class="panel">
+    <h2>This install</h2>
+    <div class="formgrid">
+      <label>Version</label><div class="mono">{{ version }}</div>
+      <label>License</label><div>{{ license }}</div>
+      <label title="Hardware profile">Your computer</label>
+      <div>
+        {% if hardware_profile %}
+          <span class="mono" title="Hardware profile">{{ hardware_profile.profile }}</span>
+          <span class="muted">{{ hardware_profile.reason }}</span>
+        {% else %}
+          <span class="muted">not checked yet; open Setup</span>
+        {% endif %}
+      </div>
+      <label>API port</label>
+      <div>
+        <code class="mono">{{ api_port }}</code>
+        <span class="muted">the browser extension finds this by itself; you only need it to pin
+        a port by hand</span>
+      </div>
+      <label>Data folder</label>
+      <div>
+        <code class="mono">{{ data_dir }}</code>
+        <button type="button" class="btn ghost" data-path="{{ data_dir }}"
+                @click="navigator.clipboard.writeText($el.dataset.path)"
+                title="Copy path">Copy</button>
+      </div>
+      <label>Log folder</label>
+      <div>
+        <code class="mono">{{ logs_dir }}</code>
+        <button type="button" class="btn ghost" data-path="{{ logs_dir }}"
+                @click="navigator.clipboard.writeText($el.dataset.path)"
+                title="Copy path">Copy</button>
+      </div>
+    </div>
+    <h3 style="margin-top:1rem">Dependencies</h3>
+    <table class="data">
+      <thead><tr><th>Package</th><th>Version</th></tr></thead>
+      <tbody>
+        {% for dep in dependencies %}
+        <tr><td>{{ dep.name }}</td><td class="mono">{{ dep.version }}</td></tr>
+        {% else %}
+        <tr><td colspan="2" class="muted">No dependency metadata available.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Update check</h2>
+  <p class="muted">
+    Off by default. Kestrel never checks for updates automatically and
+    never downloads or installs anything on its own; this only runs when you click the button below.
+  </p>
+  <p>
+    {% if update_check_url %}
+      <span class="pill">configured</span>
+      <span class="mono muted">{{ update_check_url }}</span>
+    {% else %}
+      <span class="pill">update check disabled</span>
+    {% endif %}
+  </p>
+  <button class="btn" hx-post="/help/update-check" hx-target="#update-result"
+          hx-swap="innerHTML">Check now</button>
+  <div id="update-result" style="margin-top:.6rem"></div>
+</div>
+
+<p class="muted">The version, the source repository, how to support the project, and the
+diagnostics download for reporting a problem are on <a href="/about">About</a>.</p>
+{% endblock %}

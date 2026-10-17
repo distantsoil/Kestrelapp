@@ -1,0 +1,54 @@
+<div id="calibrate-queue">
+  {% for u in items %}
+  {% set opp = u.opportunity %}
+  {% set ev = u.evaluation %}
+  <div class="panel" x-data="{ open: false, score: {{ '%.1f'|format(ev.score) if ev and ev.score is not none else '3.0' }} }"
+       data-testid="calitem-{{ opp.id }}">
+    <div class="grid2">
+      <div>
+        <h2><a href="/opportunities/{{ opp.id }}">{{ opp.title or '(untitled)' }}</a></h2>
+        <p class="muted">uncertainty {{ '%.2f'|format(u.uncertainty) }}:
+          near-threshold {{ u.components.proximity }}, divergence {{ u.components.divergence }},
+          novelty {{ u.components.novelty }}</p>
+        <div class="desc" style="max-height:30vh">{{ opp.description_md or '(no description)' }}</div>
+      </div>
+      <div>
+        <p><span class="badge {{ verdict_class(ev.verdict) }}">{{ ev.verdict or '-' }}</span>
+          score <b class="score">{{ '%.2f'|format(ev.score) if ev.score is not none else '-' }}</b>,
+          weighted <span class="mono">{{ '%.2f'|format(ev.weighted_score) if ev.weighted_score is not none else '-' }}</span></p>
+        <div class="override" tabindex="0"
+             @keydown="if (['INPUT','TEXTAREA','SELECT'].includes($event.target.tagName)) return;
+               if ($event.key==='a'){$event.preventDefault(); $refs.agree.click();}
+               else if ($event.key==='o'){$event.preventDefault(); open=true;}">
+          <div class="row">
+            <button class="btn primary" x-ref="agree" data-testid="agree-{{ opp.id }}"
+                    hx-post="/api/learning/label"
+                    hx-vals='{"opportunity_id": {{ opp.id }}, "track": "{{ track }}", "score": "{{ ev.score }}", "verdict": "{{ ev.verdict }}", "source": "active_learning"}'
+                    hx-target="#label-result-{{ opp.id }}" hx-swap="innerHTML">Agree <kbd>A</kbd></button>
+            <button class="btn" @click="open=!open">Adjust / Override <kbd>O</kbd></button>
+            <span id="label-result-{{ opp.id }}"></span>
+          </div>
+          <div class="row hidden" :class="{ 'hidden': !open }" x-cloak style="flex-direction:column;align-items:stretch;margin-top:8px">
+            <form hx-post="/api/learning/label" hx-target="#label-result-{{ opp.id }}" hx-swap="innerHTML">
+              <input type="hidden" name="opportunity_id" value="{{ opp.id }}">
+              <input type="hidden" name="track" value="{{ track }}">
+              <input type="hidden" name="source" value="active_learning">
+              <label class="muted">Score <span class="mono" x-text="Number(score).toFixed(1)"></span>
+                <input type="range" min="1" max="5" step="0.1" x-model="score" name="score"></label>
+              <label class="muted">Verdict
+                <select name="verdict">
+                  {% set vs = ['apply','consider','pass'] if track=='employment' else ['pursue','consider','pass'] %}
+                  {% for v in vs %}<option value="{{ v }}" {% if ev.verdict==v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+                </select></label>
+              <textarea name="rationale" placeholder="Why? (optional)"></textarea>
+              <div class="row" style="margin-top:6px"><button class="btn primary" type="submit">Save label</button></div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted" style="padding:24px;text-align:center">Queue empty: every evaluated {{ track }} item is labeled.</p>
+  {% endfor %}
+</div>

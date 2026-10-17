@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% block title %}Settings · Kestrel{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{# D-PRIV-1: above the tabs, so it shows on whichever tab the page opens on. #}
+{% include "partials/employer_banner.html" %}
+<div x-data="{ tabs: {'#appearance': 'appearance', '#hosted': 'hosted', '#applied': 'applied', '#system': 'system', '#core': 'core'}, tab: null }"
+     x-init="tab = tabs[location.hash] || 'filters'"
+     @hashchange.window="tab = tabs[location.hash] || tab">
+  <div class="tabs">
+    <button :class="{ active: tab==='filters' }" @click="tab='filters'">Filters</button>
+    <button :class="{ active: tab==='weights' }" @click="tab='weights'">Weights</button>
+    <button :class="{ active: tab==='core' }" @click="tab='core'">Core</button>
+    <button :class="{ active: tab==='models' }" @click="tab='models'">Models</button>
+    <button :class="{ active: tab==='hosted' }" @click="tab='hosted'">Hosted (BYOK)</button>
+    <button :class="{ active: tab==='applied' }" @click="tab='applied'">Applied</button>
+    <button :class="{ active: tab==='lan' }" @click="tab='lan'">LAN &amp; backup</button>
+    <button :class="{ active: tab==='learning' }" @click="tab='learning'">Learning</button>
+    <button :class="{ active: tab==='appearance' }" @click="tab='appearance'">Appearance</button>
+    <button :class="{ active: tab==='system' }" @click="tab='system'">System</button>
+  </div>
+
+  <section x-show="tab==='system'" x-cloak id="system">
+    {# Settings > System (D-UI-31): the machine checks and Restart onboarding. #}
+    <div hx-get="/settings/system{% if query.msg %}?msg={{ query.msg | urlencode }}{% endif %}" hx-trigger="intersect once" hx-swap="outerHTML">
+      <p class="muted">Checking this machine...</p>
+    </div>
+  </section>
+
+  <section x-show="tab==='learning'" x-cloak id="learning">
+    <h2>Learning</h2>
+    <div hx-get="/settings/learning" hx-trigger="intersect once" hx-swap="outerHTML">
+      <p class="muted">Loading the learning ledger...</p>
+    </div>
+  </section>
+
+  <section x-show="tab==='appearance'" x-cloak id="appearance">
+    <h2>Appearance</h2>
+    <p class="muted">Pick a color scheme and a mode. The scheme you save here is what every
+    browser sees first; the mode (light, dark, or follow the system) is remembered per browser.
+    Verdict colors never change with the scheme: green apply, orange keep, amber review, red kill.</p>
+    <form hx-post="/settings/appearance" hx-target="#appearance-saved" hx-swap="innerHTML">
+      <div class="scheme-cards">
+        {% for c in scheme_cards %}
+        <label class="scheme-card" :class="{ on: scheme === '{{ c.id }}' }">
+          <input type="radio" name="scheme" value="{{ c.id }}" x-model="scheme"
+                 {% if c.id == scheme %}checked{% endif %}>
+          <span class="swatches">{% for hex in c.swatches %}<i style="background:{{ hex }}"></i>{% endfor %}</span>
+          <span class="sw-text"><b>{{ c.name }}</b><small>{{ c.blurb }}</small></span>
+        </label>
+        {% endfor %}
+      </div>
+      <div class="lbl" style="margin-top:1rem">Mode</div>
+      <div class="modebar" role="radiogroup" aria-label="Mode">
+        <label :class="{ on: theme === 'light' }"><input type="radio" name="theme" value="light" x-model="theme"> Light</label>
+        <label :class="{ on: theme === 'dark' }"><input type="radio" name="theme" value="dark" x-model="theme"> Dark</label>
+        <label :class="{ on: theme === 'auto' }"><input type="radio" name="theme" value="auto" x-model="theme"> System</label>
+      </div>
+      <p><button class="btn primary" type="submit">Save as default</button>
+      <span id="appearance-saved" class="muted"></span></p>
+    </form>
+
+    <h3 style="margin-top:1.5rem" id="desktop-window">Desktop window</h3>
+    <form hx-post="/settings/desktop" hx-target="#desktop-saved" hx-swap="innerHTML" hx-trigger="change">
+      <label><input type="hidden" name="close_to_tray" value="off"><input type="checkbox" name="close_to_tray" value="on" {% if close_to_tray %}checked{% endif %}>
+        Closing the window minimizes Kestrel to the system tray</label>
+      <p class="muted" style="margin:.3rem 0 0">On (the default): the window hides, the worker and scheduled scans keep running, and the tray icon brings it back or quits. Off: closing the window quits Kestrel and stops the worker. Applies from the next close. This is about the Kestrel desktop window; closing a browser tab never stops Kestrel.
+        <span id="desktop-saved" class="muted"></span></p>
+    </form>
+  </section>
+
+  <section x-show="tab==='filters'">
+    <p class="muted">How many of the last 200 opportunities each hard-blocker rule would reject.
+    The numbers these rules use (comp floor, seniority floor, excluded titles, locations, posting
+    age) come from your profile and the Core tab, not from a file. Check this table after changing
+    any of them: a wrongly rejected opportunity is invisible and unrecoverable. The rules' own
+    logic ships in <span class="mono">filters.yml</span> and should not need editing.</p>
+    <button class="btn ghost" hx-get="/settings/filters/preview" hx-target="#filter-preview"
+            hx-swap="outerHTML">Re-run preview</button>
+    {% include "partials/filter_preview.html" %}
+  </section>
+
+  <section x-show="tab==='weights'" x-cloak>
+    <h2>Scoring weights</h2>
+    {% if calibrations %}
+      {% for c in calibrations %}
+        <div class="panel" style="padding:1rem; margin-bottom:.8rem">
+          <b>Proposed recalibration · {{ c.track }}</b>
+          <span class="muted">n={{ c.n_samples }}, CV MAE {{ "%.3f"|format(c.cv_mae_previous or 0) }}
+            → {{ "%.3f"|format(c.cv_mae_proposed or 0) }}</span>
+          <table class="data">
+            <thead><tr><th>Dimension</th><th>Current</th><th>Proposed</th></tr></thead>
+            <tbody>
+              {% for k, v in (c.proposed_weights or {}).items() %}
+                <tr><td>{{ k }}</td><td>{{ "%.3f"|format((c.previous_weights or {}).get(k, 0)) }}</td>
+                  <td>{{ "%.3f"|format(v) }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <button class="btn" hx-post="/settings/calibration/{{ c.id }}/accept"
+                  hx-target="#cal-{{ c.id }}">Accept</button>
+          <button class="btn ghost" hx-post="/settings/calibration/{{ c.id }}/reject"
+                  hx-target="#cal-{{ c.id }}">Reject</button>
+          <span id="cal-{{ c.id }}" class="muted"></span>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted">No proposed recalibration. One appears once enough labels accumulate; it is
+      never applied without your approval.</p>
+    {% endif %}
+  </section>
+
+  <section x-show="tab==='core'" x-cloak>
+    {% include "partials/settings_tracks.html" %}
+    <form hx-post="/settings"hx-target="#core-saved" hx-swap="innerHTML">
+      <div class="formgrid">
+        <label>Tier 1 concurrency</label>
+        <input type="number" name="concurrency.tier1" value="{{ settings.concurrency.tier1 }}">
+        <label>Tier 2 concurrency</label>
+        <input type="number" name="concurrency.tier2" value="{{ settings.concurrency.tier2 }}">
+        <label for="core-age">Oldest posting to keep (days)</label>
+        <span><input id="core-age" type="number" min="1" max="3650" name="max_posting_age_days" value="{{ settings.max_posting_age_days }}">
+          <span class="muted">Older postings are set aside before any model reads them.</span></span>
+        <label for="core-tage">Oldest consulting event to keep (days)</label>
+        <span><input id="core-tage" type="number" min="1" max="3650" name="consulting.max_trigger_age_days" value="{{ settings.consulting.max_trigger_age_days }}">
+          <span class="muted">Older company events are set aside (event age rule).</span></span>
+        <label>Confidential mode</label>
+        <span>
+          <input type="hidden" name="confidential_mode" value="off">
+          <input type="checkbox" name="confidential_mode" value="on"
+                 {% if settings.confidential_mode %}checked{% endif %}>
+        </span>
+      </div>
+      <button class="btn" type="submit" style="margin-top:.6rem">Save</button>
+      <span id="core-saved" class="muted"></span>
+    </form>
+    <p class="muted">Confidential mode replaces the names you list for your current employer
+    with your "Show it as" text in list views, the JSON API, the MCP tools and generated
+    documents, and with a random stand-in code in anything sent to an online model, suggested
+    wordings included. Names match exactly as listed, with that capitalization; other employers
+    show as written, and your editors always show your real text. With nothing marked, Kestrel
+    hides every role that has no end date until you confirm or change it. Importing a resume to
+    an online model always asks first, because the resume may name an employer you have not
+    marked yet.</p>
+    {% if confidential_inert %}
+    <p class="employer-line" data-testid="employer-choose">
+      <span>Confidential mode is on but redacting nothing: Kestrel found no current role to hide,
+      so documents show every employer's real name, and nothing goes to an online model until you
+      choose one.</span>
+      <a class="btn" href="{{ employer_choose_href }}">Choose your current employer</a>
+    </p>
+    {% endif %}
+    {% for e in confidential_employers %}
+    <p class="employer-line" data-testid="employer-hiding">
+      <span>Hiding <b>{{ e.employer }}</b> as <b>{{ e.shown_as }}</b>.</span>
+      <a href="{{ e.href }}">Change</a>
+    </p>
+    {% endfor %}
+  </section>
+
+  <section x-show="tab==='models'" x-cloak>
+    <h2>Models per tier</h2>
+    <table class="data">
+      <thead><tr><th>Tier</th><th>Model</th><th></th></tr></thead>
+      <tbody>
+        {% for tier, cfg in settings.llm.tiers.items() %}
+          <tr><td class="mono">{{ tier }}</td><td>{{ cfg.model }}</td>
+            <td><button class="btn ghost" disabled title="Test needs the local model running">Test</button></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section x-show="tab==='hosted'" x-cloak>
+    <h2>Hosted models, your own key</h2>
+    <p style="margin-top:0">Everything runs on this machine unless you choose otherwise. Two paths
+    send prompts to a hosted model under your own key; you pay the provider directly.
+    <a href="/help#tiers">What are tiers?</a></p>
+    <p class="muted" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
+    <div class="grid3" data-testid="hosted-intro" style="margin:.6rem 0 1rem">
+      <div class="panel" style="padding:.7rem .9rem">
+        <b>Tier 3 escalation</b>
+        <p class="muted" style="margin:.3rem 0 0">Per opportunity, always available. You press
+        Escalate, read exactly what would be sent, and confirm. Nothing goes until you do.</p>
+      </div>
+      <div class="panel" style="padding:.7rem .9rem">
+        <b>Hosted mode</b>
+        <p class="muted" style="margin:.3rem 0 0">The switch below. Tier 1, Tier 2 and document
+        selection run on the hosted models you assign, automatically, on every hosted run. For
+        machines too weak for local inference, or for OpenRouter's free models. Needs the
+        disclosure read and accepted first.</p>
+      </div>
+      <div class="panel" style="padding:.7rem .9rem">
+        <b>Keys and cost</b>
+        <p class="muted" style="margin:.3rem 0 0">Bring a key from
+        <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">OpenRouter</a>,
+        <a href="https://console.openmodel.ai" target="_blank" rel="noopener">OpenModel</a>,
+        <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Anthropic</a> or
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>.
+        Every hosted call records tokens and, where the provider reports it, cost.</p>
+      </div>
+    </div>
+    <p class="muted">The switch is the standing choice. The Runs page and
+    <span class="mono">kestrel run</span> can pick local or hosted for one run.</p>
+    <p class="warnbox"><b>What leaves the machine on a confirmed escalation.</b> The Tier 3 prompt:
+    the job description, the org context Kestrel has gathered, and your profile as the prompt
+    renders it. With confidential mode on, your current employer is redacted first, and the send is
+    refused if there is nothing to redact with. The same redaction and refusal rule applies to
+    every hosted tier. The provider's own retention rules then apply; the OpenRouter options below
+    narrow routing to providers that do not store prompts. Embeddings always stay local.</p>
+    <div hx-get="/settings/hosted{% if query.return_to == 'setup' %}?return_to=setup{% endif %}" hx-trigger="load" hx-swap="outerHTML">
+      <p class="muted">Loading…</p>
+    </div>
+  </section>
+
+  <section x-show="tab==='applied'" x-cloak id="applied">
+    <h2>Applied before Kestrel</h2>
+    <p class="muted">Bring in the applications you have already made so the board starts
+    complete and a re-posted role you applied for is recognized instead of surfacing as new.
+    One review, then one confirm; Kestrel never applies for you, it only records what you did.</p>
+    <div hx-get="/settings/applied" hx-trigger="intersect once" hx-swap="outerHTML">
+      <p class="muted">Loading…</p>
+    </div>
+  </section>
+
+  <section x-show="tab==='lan'" x-cloak>
+    <h2>LAN access</h2>
+    <p><b>What is this?</b> Optional. It lets you open Kestrel from another device on your home
+    network, a phone or tablet on the same Wi-Fi, to read Today, review the pipeline or check a
+    pursuit away from the desk. The app, the models and the data stay on this machine. If you only
+    ever use Kestrel here, leave it off. <a href="/help#lan">More in Help</a>.</p>
+    <p class="muted">Kestrel listens on this machine only until you turn on
+    <span class="mono">server.bind_all</span>. That is set in <span class="mono">settings.yml</span>
+    or as <span class="mono">KESTREL_SERVER__BIND_ALL=true</span>, not on this page, and it takes a
+    restart. With it on, Kestrel also answers on your local network, and every request to the web
+    interface from another device must carry the shared secret below, as the
+    <span class="mono">X-Kestrel-Key</span> header or as a cookie set by scanning the code once.
+    Requests from this machine never need it.</p>
+
+    <p class="warnbox"><b>Read this before you turn it on.</b> This is one shared password for the
+    whole application. There are no accounts, no per-device access, and no way to see who did what.
+    Anyone who has the secret, or who is on a network where they can read unencrypted traffic, can
+    do everything you can do: read every opportunity, every document, and your profile. Traffic is
+    plain HTTP and is not encrypted. Use this on a home network or a VPN you control. Do not use it
+    on shared, public, or office Wi-Fi, and do not forward the port through a router. Do not put a
+    local proxy or port forwarder in front of Kestrel either: that makes every request look like it
+    came from this machine, which switches the secret off entirely.</p>
+
+    <p class="muted"><b>What else the secret gates.</b> With <span class="mono">bind_all</span>
+    on, the MCP server (if enabled) listens on its own port and requires the same secret as the
+    <span class="mono">X-Kestrel-Key</span> header from any device that is not this machine; there
+    is no separate MCP password. The browser extension must carry the secret too, even on this
+    machine, so paste it into the extension's options page. Two cautions: the join link contains
+    the secret, so it lands in that phone's browser history, and the secret is displayed on this
+    page in clear text.</p>
+
+    <button class="btn" hx-post="/settings/lan/secret" hx-target="#secret">
+      {% if lan_secret %}Rotate shared secret{% else %}Generate shared secret{% endif %}</button>
+    <span class="muted">Rotating takes effect immediately and locks out any device using the old
+    one. That is the only way to revoke access.</span>
+    <div id="secret" class="mono">{% if lan_secret %}<code>{{ lan_secret }}</code>{% endif %}</div>
+    <div hx-get="/settings/mcp" hx-trigger="intersect once" hx-swap="outerHTML"><p class="muted">Loading the MCP switch...</p></div>
+    <h2 style="margin-top:1.2rem">Backup</h2>
+    <p class="muted">Your data lives at <span class="mono">{{ data_dir }}</span>. Back up with
+    <span class="mono">kestrel backup</span> (zips the database, config, and generated documents;
+    never your API keys).</p>
+    <form hx-post="/settings/restore" hx-target="#restore-result" hx-encoding="multipart/form-data">
+      <div class="formgrid">
+        <label for="backup_file">Restore from a backup .zip</label>
+        <input type="file" id="backup_file" name="backup_file" accept=".zip" required>
+      </div>
+      <button class="btn" type="submit" style="margin-top:.6rem">Restore</button>
+      <p class="muted">The current database is copied aside to
+      <span class="mono">kestrel.db.pre-restore</span> before anything is overwritten, so a bad
+      restore can always be undone. Restart Kestrel afterward.</p>
+    </form>
+    <div id="restore-result"></div>
+  </section>
+</div>
+{% endblock %}

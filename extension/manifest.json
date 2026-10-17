@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Kestrel Capture",
+  "version": "0.1.0",
+  "minimum_chrome_version": "103",
+  "description": "Capture the page you are viewing into your local Kestrel pipeline, and badge known job postings with their score and status. Talks only to your local Kestrel.",
+  "permissions": ["activeTab", "scripting", "contextMenus", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "optional_host_permissions": ["http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Capture this page into Kestrel" },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.greenhouse.io/*", "*://boards.greenhouse.io/*", "*://*.lever.co/*",
+        "*://*.ashbyhq.com/*", "*://*.myworkdayjobs.com/*", "*://*.smartrecruiters.com/*",
+        "*://*.linkedin.com/jobs/*", "*://*.indeed.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Set up Kestrel · Kestrel{% endblock %}
+{% block pagetitle %}Set up Kestrel{% endblock %}
+{% block content %}
+{% with gap = linux_gap %}{% include "partials/linux_webkit.html" %}{% endwith %}
+{% include "partials/onboarding_step.html" %}
+<script>
+  // A resume accepted inside the wizard (the Documents import's own accept route) reloads the
+  // whole step, so the progress indicator and the step's status move with it.
+  document.addEventListener('htmx:afterRequest', function (evt) {
+    var cfg = evt.detail && evt.detail.requestConfig;
+    if (!cfg || !evt.detail.successful) return;
+    if ((cfg.path || '').indexOf('/api/documents/import/accept') === 0 && document.getElementById('ob-step')) {
+      htmx.trigger(document.body, 'ob-refresh');
+    }
+  });
+</script>
+{% endblock %}

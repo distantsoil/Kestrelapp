@@ -1,0 +1,11 @@
+{# The one-line guide strip (D-UI-47). Shown at the top of a main page until dismissed; the
+   dismissal is a settings row, written by POST /guides/{key}/dismiss. #}
+{% set guide = guide_for(request.url.path, request.query_params.get('track', '')) if request is defined else none %}
+{% if guide %}
+<div class="guide-strip" id="guide-{{ guide.key }}" data-testid="guide-strip" data-guide="{{ guide.key }}" role="note">
+  <span class="guide-text">{{ guide.text }}</span>
+  <button type="button" class="guide-x" aria-label="Got it, hide this guide"
+          hx-post="/guides/{{ guide.key }}/dismiss" hx-target="#guide-{{ guide.key }}"
+          hx-swap="outerHTML">Got it</button>
+</div>
+{% endif %}

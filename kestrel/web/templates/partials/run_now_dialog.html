@@ -1,0 +1,121 @@
+{# The Run now dialog (D-UI-72): the Score again dialog's pattern (partials/score_again_dialog.html)
+   for one search. "Use my usual models" is the default; "Use this model for this run" opens the
+   shared model picker, narrowed by the route to models that meet the Tier 2 budget. The choice
+   rides on this run only; Settings and the configured tier models never change. Posts to
+   /sources/<id>/run-now. Keyboard: focus starts on the first choice and stays inside (Tab and
+   Shift+Tab wrap); Esc or Cancel closes it and returns focus to Run now. `page` renders it open
+   as a plain form (no script) that returns to /sources. Styles: kestrel.css (.score-again-*),
+   theme variables only. #}
+{% from "partials/model_picker.html" import model_select with context %}
+{# Context: Sources passes `source` (one search); Today's Scan now (D-UI-72) passes form_action,
+   form_target, heading, cancel_href and scope_note instead. #}
+{% set _action = form_action or ('/sources/' ~ source.id ~ '/run-now') %}
+{% set _target = form_target or '#sources-panel' %}
+<dialog class="score-again-dialog" data-testid="run-now-dialog"{% if page %} open{% endif %}
+        aria-labelledby="run-now-title" aria-describedby="run-now-desc">
+  <form class="score-again-box" method="post" action="{{ _action }}"
+        {%- if not page %} {% if form_action %}hx-post="{{ form_action }}"{% else %}hx-post="/sources/{{ source.id }}/run-now"{% endif %} hx-target="{{ _target }}" hx-swap="outerHTML" data-busy-text="{{ 'Starting the scan…' if form_action else 'Running this search…' }}"{% endif %}
+        autocomplete="off" data-score-again-form>
+    {% if page and form_action %}<input type="hidden" name="next" value="{{ cancel_href }}">{% endif %}
+    <h2 id="run-now-title">{{ heading or ("Run " ~ source_label ~ " now") }}</h2>
+    <fieldset class="score-again-choices">
+      <legend class="score-again-legend">Which model</legend>
+      <label class="score-again-choice">
+        <input type="radio" name="model_choice" value="usual" checked data-testid="run-now-usual">
+        <span>My usual models{% if current_label %} ({{ current_label }} for the full review){% endif %}</span>
+      </label>
+      {% if can_pick %}
+      <label class="score-again-choice">
+        <input type="radio" name="model_choice" value="other" data-testid="run-now-other"
+               {%- if not (local_models or hosted_models) %} disabled{% endif %}>
+        <span>A different model, this time only</span>
+      </label>
+      {% if local_models or hosted_models %}
+      <div class="score-again-pick">
+        {{ model_select('model', hosted_models, hosted_reasons, local_models=local_models,
+                        hosted_label=hosted_label or 'Hosted', placeholder='Pick a model',
+                        value_prefix=hosted_prefix, testid='run-now-pick') }}
+      </div>
+      {% else %}
+      <p class="score-again-note" data-testid="run-now-no-models">No other model is available right now.</p>
+      {% endif %}
+      {% else %}
+      <p class="score-again-note" data-testid="run-now-no-pick">This kind of search always uses your usual models.</p>
+      {% endif %}
+    </fieldset>
+    <p id="run-now-desc" class="score-again-note">{{ scope_note or "Applies to the full review of the roles this run finds, and only to this run. The quick screen always uses your usual model. Your settings do not change, and later scans use your usual models." }}</p>
+    {% if can_pick and hosted_models and hosted_while_local %}<p class="score-again-note" data-testid="run-now-external-note"><b>Kestrel is on local models. If you pick a {{ hosted_label }} model, the roles this run finds are scored on {{ hosted_label }}: what Hosted mode sends for a full review leaves this computer, with the same redaction.</b></p>{% endif %}
+    {% if can_pick and local_note %}<p class="score-again-note">{{ local_note }}</p>{% endif %}
+    {% if can_pick and hosted_note %}<p class="score-again-note">{{ hosted_note }}</p>{% endif %}
+    <p class="score-again-note score-again-speed">Free models are often much slower and less reliable than paid ones. Local models depend on your hardware.</p>
+    <div class="score-again-actions">
+      {% if page %}<a class="btn ghost" href="{{ cancel_href or '/sources' }}" data-testid="run-now-cancel">Cancel</a>
+      {% else %}<button type="button" class="btn ghost" data-score-again-cancel data-testid="run-now-cancel">Cancel</button>{% endif %}
+      <button type="submit" class="btn primary" data-testid="run-now-go">{{ 'Start scan' if form_action else 'Start run' }}</button>
+    </div>
+  </form>
+</dialog>
+{% if not page %}
+<script>
+  (function () {
+    const dlg = document.currentScript.previousElementSibling;
+    if (!dlg || dlg.tagName !== 'DIALOG') return;
+    const wrap = dlg.closest('.score-again');
+    const opener = wrap ? wrap.querySelector('.score-again-btn') : null;
+    const form = dlg.querySelector('form');
+    // The model picker is a combobox (D-UI-69): its hidden input carries the value and fires
+    // change on a pick; a plain <select> is the no-JS fallback.
+    const sel = dlg.querySelector('.ke-combo input[type="hidden"]') || dlg.querySelector('select');
+    const pickBox = dlg.querySelector('.ke-combo [role="combobox"]') || sel;
+    const other = dlg.querySelector('input[value="other"]');
+    const usual = dlg.querySelector('input[value="usual"]');
+    function focusables() {
+      return Array.from(dlg.querySelectorAll('button, [href], input, select, textarea,'
+        + ' [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled);
+    }
+    function close() {
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      if (opener && opener.focus) opener.focus();
+    }
+    const combo = dlg.querySelector('.ke-combo');
+    function setPickDisabled(d) {
+      if (!sel) return;
+      if (combo && combo.kecombo) combo.kecombo.setDisabled(d);
+      else { if (combo) combo.toggleAttribute('data-combo-disabled', d); sel.disabled = d; }
+    }
+    function syncPick() {
+      setPickDisabled(!(other && other.checked));
+    }
+    syncPick();
+    [usual, other].forEach((r) => r && r.addEventListener('change', syncPick));
+    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } });
+    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close));
+    if (form) {
+      // "Use this model" needs a pick (the server refuses an empty one too).
+      form.addEventListener('submit', (e) => {
+        if (other && other.checked && sel && !sel.value) {
+          e.preventDefault(); e.stopImmediatePropagation(); setPickDisabled(false); pickBox.focus();
+        }
+      }, true);
+      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); });
+      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); });
+    }
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key === 'Tab') {
+        const els = focusables();
+        if (!els.length) return;
+        const first = els[0], last = els[els.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    const first = focusables()[0];
+    if (first) first.focus();
+  })();
+</script>
+{% endif %}

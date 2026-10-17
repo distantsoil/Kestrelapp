@@ -1,0 +1,66 @@
+{# Name and contact, summary wordings and skills groups (D-UI-52): the parts of a resume that were
+   import-only. Everything here is the operator's own typed text, printed as typed. Every form
+   answers with this whole block, so the lists below always match what is stored. #}
+<div class="doc-basics" id="doc-basics" data-testid="doc-basics">
+  {% if basics_note %}<p class="tree-note" role="status">{{ basics_note }}</p>{% endif %}
+  {% if basics_error %}<div class="warnbox" role="alert">{{ basics_error }}</div>{% endif %}
+  {% set hdr = selected.header or {} %}
+  <div class="panel basics-card" data-testid="doc-details">
+    <span class="eyebrow">Your details</span>
+    <form hx-post="/documents/{{ selected.id }}/header" hx-target="#doc-basics" hx-swap="outerHTML" class="formgrid">
+      <label for="hdr-name">Name</label>
+      <input id="hdr-name" type="text" name="name" value="{{ hdr.get('name') or '' }}" maxlength="200" autocomplete="name" placeholder="Pat Example">
+      <label for="hdr-contact">Contact line</label>
+      <input id="hdr-contact" type="text" name="contact" value="{{ hdr.get('contact') or '' }}" maxlength="300" placeholder="pat@example.com · Columbus, OH · linkedin.com/in/patexample">
+      <span></span>
+      <span><button class="btn small" type="submit">Save details</button>
+        <span class="muted">Printed at the top of every {{ "resume" if selected.doc_kind == "resume" else "capability statement" }}. Left empty, your About you details are used.</span></span>
+    </form>
+  </div>
+
+  {% set sums = selected.summary_variants or [] %}
+  <div class="panel basics-card" data-testid="doc-summary">
+    <span class="eyebrow">Summary · {{ sums | length }} wording{{ "" if sums | length == 1 else "s" }}</span>
+    {% for v in sums %}
+      <form hx-post="/documents/{{ selected.id }}/summary/{{ v.key }}" hx-target="#doc-basics" hx-swap="outerHTML" class="basics-row" data-summary-key="{{ v.key }}">
+        <textarea name="text" rows="3" aria-label="Summary wording {{ loop.index }}">{{ v.text }}</textarea>
+        <div class="basics-acts">
+          <button class="btn small" type="submit">Save</button>
+          {% if sums | length > 1 %}
+          <button class="btn ghost small danger" type="button"
+                  hx-post="/documents/{{ selected.id }}/summary/{{ v.key }}/delete" hx-target="#doc-basics" hx-swap="outerHTML"
+                  hx-confirm="Remove this summary wording?">Remove</button>
+          {% endif %}
+        </div>
+      </form>
+    {% endfor %}
+    <form hx-post="/documents/{{ selected.id }}/summary" hx-target="#doc-basics" hx-swap="outerHTML" class="basics-row" data-testid="add-summary">
+      <textarea name="text" rows="2" aria-label="New summary wording" placeholder="{{ 'Another way to say it, for a different kind of role' if sums else 'Two or three sentences on who you are and what you do. Your own words.' }}"></textarea>
+      <div class="basics-acts"><button class="btn small" type="submit">+ Add {{ "another" if sums else "a" }} wording</button></div>
+    </form>
+    <span class="muted">Kestrel picks the wording that suits each role; you can swap or reword it on the Tailor page.</span>
+  </div>
+
+  {% set groups = selected.skill_groups or [] %}
+  <div class="panel basics-card" data-testid="doc-skills">
+    <span class="eyebrow">Skills groups</span>
+    {% for g in groups %}
+      <form hx-post="/documents/{{ selected.id }}/skills/{{ g.key }}" hx-target="#doc-basics" hx-swap="outerHTML" class="basics-row" data-skill-key="{{ g.key }}">
+        <input type="text" name="label" value="{{ g.label }}" maxlength="100" aria-label="Group name" placeholder="Identity">
+        <input type="text" name="items" value="{{ (g['items'] or []) | join(', ') }}" aria-label="Skills in {{ g.label }}, comma separated" placeholder="Entra ID, Okta, Intune">
+        <div class="basics-acts">
+          <button class="btn small" type="submit">Save</button>
+          <button class="btn ghost small danger" type="button"
+                  hx-post="/documents/{{ selected.id }}/skills/{{ g.key }}/delete" hx-target="#doc-basics" hx-swap="outerHTML"
+                  hx-confirm="Remove the {{ g.label }} group?">Remove</button>
+        </div>
+      </form>
+    {% endfor %}
+    <form hx-post="/documents/{{ selected.id }}/skills" hx-target="#doc-basics" hx-swap="outerHTML" class="basics-row" data-testid="add-skills">
+      <input type="text" name="label" maxlength="100" aria-label="New group name" placeholder="Group name, such as Cloud">
+      <input type="text" name="items" aria-label="New group skills, comma separated" placeholder="Skills, separated by commas">
+      <div class="basics-acts"><button class="btn small" type="submit">+ Add a group</button></div>
+    </form>
+    <span class="muted">A group prints as its name, a colon, then its skills. With no groups the Skills section is left out.</span>
+  </div>
+</div>

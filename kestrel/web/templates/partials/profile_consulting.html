@@ -1,0 +1,54 @@
+{# Consulting terms (D-UI-21): the numbers the consulting hard blockers read. #}
+<form hx-post="{{ form_post or ('/profile/consulting/consulting') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
+      class="panel" data-testid="profile-consulting" data-busy-text="Saving…">
+  <h2 style="margin-top:0">Consulting terms</h2>
+  {# How this track differs (SPEC.md 5.2, 5.3): the operator asked what it actually looks for. #}
+  <details class="help" style="margin:.2rem 0 .8rem" data-testid="consulting-how">
+    <summary><b>How the consulting track finds work</b> (it is not a resume search)</summary>
+    <p>Posted fractional and interim roles are a small market, so this track mostly works the
+      other way around: it watches for <b>trigger events</b>, public facts that mean a company
+      may soon need outside help in your field, and surfaces the company before a posting exists.
+      An acquisition closing, a PE investment, a departed senior leader, a new compliance
+      obligation.
+      Those come from SEC filings and the news sources you turn on under Sources, plus any lead
+      you enter by hand, which in consulting is the channel that converts best.</p>
+    <p>What it scores against is this tab: your service lines and target sectors and sizes decide
+      whether a trigger is relevant, the rate floor and minimum engagement reject what is not
+      worth pursuing. The document it tailors is a <b>capability statement</b>, imported on the
+      Documents tab with kind "capability statement", not the resume. A pursuit here is an
+      outreach thread (research, outreach, conversation, scoping, proposal), not an
+      application.</p>
+    <p>Posted fractional roles are still caught: "Fractional and interim roles" under
+      Sources &gt; Your searches is an ordinary job search on this track, built from your titles
+      and the service lines below.</p>
+  </details>
+  {% if 'consulting_terms' in from_example and not saved %}
+  <p class="warnbox" style="margin:.2rem 0 .8rem" data-testid="from-example">
+    <b>Not saved yet.</b> The grey text is only an example; nothing here filters a posting
+    until you type your own values and save this tab.</p>
+  {% endif %}
+  <div class="formgrid">
+    <label for="pc-floor">Day rate floor (USD)</label>
+    <span><input id="pc-floor" type="text" inputmode="numeric" name="day_rate_floor" value="{{ cterms.day_rate_floor or '' }}" placeholder="1800">
+      <span class="muted">An engagement priced below this is rejected (rule rate_floor). Blank: no floor.</span></span>
+    <label for="pc-target">Day rate target (USD)</label>
+    <input id="pc-target" type="text" inputmode="numeric" name="day_rate_target" value="{{ cterms.day_rate_target or '' }}" placeholder="2400">
+    <label for="pc-min">Minimum engagement (days)</label>
+    <span><input id="pc-min" type="text" inputmode="numeric" name="min_engagement_days" value="{{ cterms.min_engagement_days or '' }}" placeholder="20">
+      <span class="muted">Shorter engagements are rejected (rule too_short).</span></span>
+    <label for="pc-max">Concurrent engagements</label>
+    <input id="pc-max" type="text" inputmode="numeric" name="max_concurrent" value="{{ cterms.max_concurrent or '' }}" placeholder="2">
+    <label for="pc-lines">Service lines</label>
+    <textarea id="pc-lines" name="service_lines" rows="4" placeholder="{{ (ex_cterms.service_lines or []) | join('\n') or 'One per line' }}">{{ (cterms.service_lines or []) | join('\n') }}</textarea>
+    <label for="pc-size">Target org size</label>
+    <textarea id="pc-size" name="target_org_size" rows="2" placeholder="One per line, e.g. 100-500">{{ (cterms.target_org_size or []) | join('\n') }}</textarea>
+    <label for="pc-sect">Target sectors</label>
+    <textarea id="pc-sect" name="target_sectors" rows="3" placeholder="{{ (ex_cterms.target_sectors or []) | join('\n') or 'One per line' }}">{{ (cterms.target_sectors or []) | join('\n') }}</textarea>
+    <label for="pc-exsect">Excluded sectors</label>
+    <span><textarea id="pc-exsect" name="excluded_sectors" rows="2" style="width:100%" placeholder="One per line">{{ (cterms.excluded_sectors or []) | join('\n') }}</textarea>
+      <span class="muted">An engagement in any of these is rejected (rule excluded_sector).</span></span>
+    <label for="pc-travel">Travel tolerance</label>
+    <input id="pc-travel" type="text" name="travel_tolerance" value="{{ cterms.travel_tolerance or '' }}" placeholder="regional, up to 6 days per month">
+  </div>
+  {% include "partials/profile_save_row.html" %}
+</form>

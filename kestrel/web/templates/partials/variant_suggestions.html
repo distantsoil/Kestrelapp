@@ -1,0 +1,28 @@
+{# Suggested wordings for one slot (P7c, D-IMPORT-3). Nothing is saved until Add is clicked, and
+   the server re-checks the numbers and the two-per-slot limit when it is. #}
+{% if error %}
+  <div class="warnbox">{{ error }}</div>
+{% elif not suggestions %}
+  <p class="muted">No new wordings came back. Try again, or edit the bullet directly.</p>
+{% else %}
+  <div id="suggest-msg-{{ slot_id }}"></div>
+  <ul class="suggestions" data-testid="variant-suggestions">
+    {% for sg in suggestions %}
+      <li>
+        <p>{{ sg.text }} <span class="muted">{{ sg.tags | join(', ') }}</span></p>
+        {% if sg.problem %}
+          <p class="flag">Not offered: {{ sg.problem }}.</p>
+        {% else %}
+          <form hx-post="/documents/slot/{{ slot_id }}/variants"
+                hx-target="#slot-variants-{{ slot_id }}" hx-swap="beforeend"
+                hx-on::after-request="if (event.detail.successful &&
+                  !event.detail.xhr.getResponseHeader('HX-Retarget')) this.closest('li').remove()">
+            <input type="hidden" name="text" value="{{ sg.text }}">
+            <input type="hidden" name="tags" value="{{ sg.tags | join(',') }}">
+            <button class="btn" type="submit">Add</button>
+          </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}

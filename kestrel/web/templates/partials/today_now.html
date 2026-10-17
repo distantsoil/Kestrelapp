@@ -1,0 +1,11 @@
+{# Today: what the worker is doing right now and whether the operator has to act (D-UI-37).
+   Re-polled every 15 s from /today/now; quarantine is stated apart because it never clears by
+   waiting. #}
+<div id="today-now" data-testid="today-now" data-now="{{ now.state }}" data-no-busy
+     hx-get="/today/now" hx-trigger="every 15s" hx-swap="outerHTML" style="margin:0 0 10px">
+  <div><b>Now:</b> {{ now.line }}</div>
+  {% if now.quarantine %}
+    <div class="muted" style="font-size:12px;margin-top:2px" data-testid="today-now-quarantine">
+      Separate from the queue: {{ now.quarantine }} <a href="/quarantine">Failed scoring</a></div>
+  {% endif %}
+</div>

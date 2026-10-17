@@ -1,0 +1,32 @@
+# Kestrel — build hygiene. Phase 0 extends this; kept minimal here so Phase -1 can commit cleanly.
+
+# Virtualenv / bytecode
+.venv/
+__pycache__/
+*.pyc
+
+# Phase -1 spike build outputs (spike SOURCE is kept in-tree; build artifacts are not)
+spike/build/
+spike/dist/
+
+# Runtime data, logs, secrets, and the real profile (never committed)
+data/
+logs/
+.env
+config/profile.yml
+
+# Phase 14 build artifacts
+/dist/
+/build/
+
+# Real operator profile — never commit (config lives under kestrel/resources/)
+kestrel/resources/config/profile.yml
+**/profile.yml
+!**/profile.example.yml
+
+# Claude Code agent worktrees (separate checkouts)
+.claude/worktrees/
+
+# The in-process embedding model (D-EMBED-2): fetched and hash-verified at build time by
+# scripts/fetch_embed_model.py, never committed (about 90MB).
+kestrel/resources/embed_model/

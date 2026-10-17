@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Models · Kestrel{% endblock %}
+{% block content %}
+<div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap">
+  <h1 style="margin-right:auto">Models
+    <span class="badge">{{ track or 'both tracks' }}</span>
+    <span class="badge">{% if since %}last {{ since }} days{% else %}all time{% endif %}</span>
+  </h1>
+  <span class="muted">Window:</span>
+  {% for d in since_choices %}
+    <a class="btn ghost{% if since == d %} primary{% endif %}"
+       href="/models?track={{ track }}&since={{ d }}">{{ d }}d</a>
+  {% endfor %}
+  <a class="btn ghost{% if not since %} primary{% endif %}" href="/models?track={{ track }}">All</a>
+</div>
+<p class="muted">Which model has done the work at each tier and how it has done, from the
+operator's own evaluation rows. Agreement with operator labels is the only quality signal the model
+does not report about itself. Every rate is shown beside the sample size it rests on; anything
+under five labeled evaluations says "too few to judge" rather than being shown as if it were solid.
+Switch tracks with the Emp/Con toggle in the top bar.</p>
+<p class="muted" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
+
+{# -------------------------------------------------------------------- the one-paragraph verdict #}
+<div class="panel" style="border-left:3px solid var(--orange)">
+  <h2>Where things stand</h2>
+  {% if not rows %}
+    <p>No evaluations {% if since %}in the last {{ since }} days{% endif %}{% if track %} on the
+    {{ track }} track{% endif %} yet. Run the pipeline and label a few results from Calibrate to
+    start a comparison.</p>
+  {% else %}
+    <p>
+      {{ n_evaluations }} evaluations across {{ rows|length }} model and prompt combinations.
+      {% for tier in tiers %}
+        {% set b = best[tier] %}
+        {% if b %}
+          {{ tier|tier_label }}: <b class="mono">{{ b.model }}</b> ({{ b.prompt_version }}) agrees with
+          the operator on {{ '%.0f'|format(b.agreement_rate * 100) }}% of {{ b.n_labeled }} labeled
+          evaluations{% if b.mean_abs_score_error is not none %}, mean absolute score error
+          {{ '%.2f'|format(b.mean_abs_score_error) }}{% endif %}.
+        {% else %}
+          {{ tier|tier_label }}: {{ too_few(max_labeled[tier]) }} to say which model agrees with the operator.
+        {% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
+  <p class="muted" style="margin-top:.4rem">
+    Configured now:
+    {% for name, cfg in configured.items() %}
+      <span class="mono">{{ name }}={{ cfg.model }}</span>{% if cfg.backend != 'local' %}
+      <span class="pill">{{ cfg.backend }}</span>{% endif %}{% if not loop.last %} &middot; {% endif %}
+    {% endfor %}
+  </p>
+</div>
+
+{# ----------------------------------------------------------------- hardware and hosted settings #}
+<div class="split">
+  <div class="panel">
+    <h2 title="Hardware profile">Your computer</h2>
+    {% if hardware %}
+      <p><b class="mono" title="Hardware profile">{{ hardware.profile }}</b>
+        {% if hardware.chosen_at %}<span class="muted">chosen {{ hardware.chosen_at }}</span>{% endif %}</p>
+      {% if hardware.reason %}<p class="muted">{{ hardware.reason }}</p>{% endif %}
+    {% else %}
+      <p class="muted">Kestrel has not checked this computer yet. Open <a href="/setup">Setup</a>
+      to check it and pick models that fit.</p>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <h2>Hosted (frontier) backend</h2>
+    {% if provider and provider.base_url %}
+      <div class="formgrid">
+        <label>Backend</label><div class="mono">{{ provider.backend_name }} ({{ provider.provider }},
+          {{ provider.protocol }})</div>
+        <label>Model</label><div class="mono">{{ provider.model or '(none)' }}</div>
+        <label>Endpoint</label><div class="mono">{{ provider.base_url }}</div>
+        <label>Key</label>
+        <div{% if provider.env_name %} title="Stored as {{ provider.env_name }}"{% endif %}>{% if provider.key_present %}saved{% else %}not set: <a href="/settings#hosted">add it in Settings &gt; Hosted</a>{% endif %}</div>
+      </div>
+    {% else %}
+      <p class="muted">No hosted backend configured.</p>
+    {% endif %}
+    <p class="muted" style="margin-top:.5rem">Hosted sends are opt-in per opportunity and only
+    happen after you confirm the payload. Manage keys under
+    <a href="/settings">Settings &gt; Hosted (BYOK)</a>; pick your own model per tier under
+    <a href="#hosted-overrides">Hosted models per tier</a> below.</p>
+  </div>
+</div>
+
+{# ------------------------------------------------- hosted model overrides per tier (D-UI-42) #}
+{% include "partials/model_overrides.html" %}
+
+{# ---------------------------------------------------------------------------- comparison table #}
+<div class="panel">
+  <h2>Comparison by tier, model, and prompt version</h2>
+  <p class="muted">Click a column header to sort. Agreement is exact-verdict agreement with the
+  operator's latest label on the same opportunity; n_labeled is its denominator. Cost is summed
+  from hosted transmissions; local models have no cost to sum and show "local".</p>
+  <table class="data" id="model-compare">
+    <thead>
+      <tr>
+        <th data-sort="num">Step</th>
+        <th data-sort="text">Model</th>
+        <th data-sort="text">Prompt</th>
+        <th data-sort="num">Rated</th>
+        <th data-sort="num">Mean score</th>
+        <th>Verdicts</th>
+        <th data-sort="num">Agreement</th>
+        <th data-sort="num">Score error</th>
+        <th data-sort="num">Latency ms</th>
+        <th data-sort="num">Tokens in / out</th>
+        <th data-sort="num">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="mono" data-v="{{ r.tier }}">{{ r.tier|tier_label }}</td>
+        <td class="mono" data-v="{{ r.model }}">{{ r.model }}{% if r.hosted %}
+          <span class="pill">hosted</span>{% endif %}</td>
+        <td class="mono" data-v="{{ r.prompt_version }}">{{ r.prompt_version }}</td>
+        <td class="mono" data-v="{{ r.n }}">{{ r.n }}</td>
+        <td class="mono" data-v="{{ r.mean_score if r.mean_score is not none else -1 }}">
+          {% if r.mean_score is not none %}{{ '%.2f'|format(r.mean_score) }}{% else %}-{% endif %}
+        </td>
+        <td class="mono">
+          {% for v, c in r.verdicts.items()|sort %}{{ v }} {{ c }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </td>
+        <td class="mono" data-v="{{ r.agreement_rate if r.agreement_rate is not none else -1 }}">
+          {% if r.insufficient %}
+            <span class="pill">{{ too_few(r.n_labeled) }}</span>
+          {% elif r.agreement_rate is not none %}
+            {{ '%.0f'|format(r.agreement_rate * 100) }}% of {{ r.n_labeled }}
+          {% else %}
+            too few to judge
+          {% endif %}
+        </td>
+        <td class="mono" data-v="{{ r.mean_abs_score_error if r.mean_abs_score_error is not none else 99 }}">
+          {% if r.insufficient %}<span class="pill">{{ too_few(r.n_labeled) }}</span>
+          {% elif r.mean_abs_score_error is not none %}{{ '%.2f'|format(r.mean_abs_score_error) }}
+          {% else %}-{% endif %}
+        </td>
+        <td class="mono" data-v="{{ r.mean_latency_ms or 0 }}">
+          {% if r.mean_latency_ms is not none %}{{ '%.0f'|format(r.mean_latency_ms) }}{% else %}-{% endif %}
+        </td>
+        <td class="mono" data-v="{{ r.mean_prompt_tokens or 0 }}">
+          {% if r.mean_prompt_tokens is not none %}{{ '%.0f'|format(r.mean_prompt_tokens) }} /
+          {{ '%.0f'|format(r.mean_completion_tokens) }}{% else %}-{% endif %}
+        </td>
+        <td class="mono" data-v="{{ r.cost_usd if r.cost_usd is not none else -1 }}">
+          {{ r.cost_label }}{% if r.hosted %} <span class="muted">({{ r.n_costed_sends }} of
+          {{ r.n_hosted_sends }} sends priced)</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="muted" style="text-align:center;padding:1.2rem">
+        No evaluations in this window. This table is computed from stored rows and is never a
+        placeholder.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:.5rem">To run a controlled comparison against the gold set
+  and promote a winner, use the <a href="/bench">Bench</a> page.</p>
+</div>
+
+{# ------------------------------------------------------------------------------ recent history #}
+<div class="panel">
+  <h2>Recent evaluations</h2>
+  <p class="muted">The last {{ history|length }} evaluations, newest first. "Agreed" compares the
+  model's verdict with the operator's latest label on the same opportunity; blank means no label
+  yet.</p>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>When</th><th>Opportunity</th><th>Step</th><th>Model</th><th>Verdict</th>
+        <th>Score</th><th>Operator</th><th>Agreed</th><th>Latency ms</th><th>Tokens</th><th>Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in history %}
+      <tr>
+        <td class="mono muted">{{ h.created_at[:16] }}</td>
+        <td><a href="/opportunities/{{ h.opportunity_id }}">{{ h.title or '(untitled)' }}</a>
+          <span class="muted">{{ h.org or '' }}</span> <span class="pill">{{ h.track }}</span></td>
+        <td class="mono">{{ h.tier|tier_label }}</td>
+        <td class="mono">{{ h.model }}{% if h.hosted %} <span class="pill">hosted</span>{% endif %}</td>
+        <td>{% if h.verdict %}<span class="badge {{ h.verdict }}">{{ h.verdict }}</span>{% else %}-{% endif %}</td>
+        <td class="mono">{% if h.score is not none %}{{ '%.2f'|format(h.score) }}{% else %}-{% endif %}</td>
+        <td>{% if h.operator_verdict %}<span class="badge {{ h.operator_verdict }}">{{ h.operator_verdict }}</span>{% else %}-{% endif %}</td>
+        <td class="mono">
+          {% if h.agreed is true %}<span class="covered">&#10003; yes</span>
+          {% elif h.agreed is false %}<span class="gap">&#10007; no</span>
+          {% else %}-{% endif %}
+        </td>
+        <td class="mono">{{ h.latency_ms }}</td>
+        <td class="mono">{{ h.prompt_tokens }} / {{ h.completion_tokens }}</td>
+        <td class="mono">{{ h.cost_label }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="muted" style="text-align:center;padding:1.2rem">
+        No evaluations yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ------------------------------------------------------------------------------- bench results #}
+<div class="panel">
+  <h2>Benchmark runs</h2>
+  {% if not bench.persisted %}
+    <div class="warnbox" style="margin-bottom:.6rem">No stored benchmark run. {{ bench.note }}</div>
+  {% endif %}
+  {% if bench.goldsets %}
+  <table class="data">
+    <thead><tr><th>Track</th><th>Gold set</th><th>Items</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for g in bench.goldsets %}
+      <tr>
+        <td>{{ g.track }}</td>
+        <td>{% if g.present %}present{% else %}missing{% endif %}</td>
+        <td class="mono">{{ g.n_items }}{% if g.insufficient %} <span class="pill">{{ too_few(g.n_items) }}</span>{% endif %}</td>
+        <td class="muted">
+          {% if not g.present %}Run <span class="mono">kestrel goldset regen --track {{ g.track }}</span>.
+          {% elif g.placeholder %}Shipped placeholder: invented items, so agreement against it says
+          nothing about this operator's judgment. Label real items and regenerate.
+          {% else %}Regenerated from the operator's own labels.{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="muted" style="margin-top:.5rem">Run <span class="mono">kestrel bench --models a,b</span>
+  from a terminal for a controlled comparison, then promote the winner on
+  <a href="/bench">Bench</a>.</p>
+</div>
+
+<script>
+  // Client-side column sort for the comparison table: each sortable cell carries its raw value in
+  // data-v, so "insufficient (n=2)" sorts below every real rate rather than being parsed as one.
+  (function () {
+    const table = document.getElementById('model-compare');
+    if (!table) return;
+    table.querySelectorAll('th[data-sort]').forEach((th, _i) => {
+      const idx = Array.from(th.parentNode.children).indexOf(th);
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+        table.querySelectorAll('th').forEach(h => delete h.dataset.dir);
+        th.dataset.dir = dir;
+        const body = table.tBodies[0];
+        const rows = Array.from(body.rows).filter(r => r.cells.length > 1);
+        const key = r => {
+          const v = r.cells[idx].dataset.v ?? r.cells[idx].textContent.trim();
+          return th.dataset.sort === 'num' ? parseFloat(v) : v.toLowerCase();
+        };
+        rows.sort((a, b) => {
+          const x = key(a), y = key(b);
+          const c = x < y ? -1 : x > y ? 1 : 0;
+          return dir === 'asc' ? c : -c;
+        });
+        rows.forEach(r => body.appendChild(r));
+      });
+    });
+  })();
+</script>
+{% endblock %}

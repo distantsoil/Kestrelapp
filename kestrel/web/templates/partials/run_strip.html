@@ -1,0 +1,4 @@
+{% set t1 = activity.tasks.get('t1', {}) %}
+{% set t2 = activity.tasks.get('t2', {}) %}
+{% set pending = t1.get('pending',0) + t1.get('leased',0) + t2.get('pending',0) + t2.get('leased',0) %}
+{% if pending > 0 %}<a href="/runs">● processing on {{ mode }} models: t1 {{ t1.get('pending',0)+t1.get('leased',0) }}, t2 {{ t2.get('pending',0)+t2.get('leased',0) }} pending</a>{% else %}<span>idle · {{ mode }} models</span>{% endif %}{% if pending_mode %} <span class="muted">· next cycle: {{ pending_mode }}</span>{% endif %}

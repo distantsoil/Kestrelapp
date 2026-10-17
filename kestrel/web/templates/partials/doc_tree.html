@@ -1,0 +1,98 @@
+{# The section -> bullet -> wording tree (D-UI-18, D-UI-29). Slot and wording keys are internal
+   identifiers: they stay in title tooltips and data attributes, never as visible text. A role's
+   bullets sit inside an inset panel under the role header so they read as one group. #}
+<div class="tree" data-testid="doc-tree">
+  {% if tree_note %}<p class="tree-note" role="status">{{ tree_note }}</p>{% endif %}
+  {% for node in tree %}
+    {% set is_role = node.section.section_kind == "role" %}
+    {# Roles render collapsed (operator feedback): company · title · dates and the bullet count.
+       The role just added to or edited (open_section) stays open. #}
+    <details class="section" id="role-{{ node.section.id }}" {% if open_section and open_section == node.section.id %}open{% endif %}
+             data-section-kind="{{ node.section.section_kind }}" data-section-id="{{ node.section.id }}">
+      <summary class="role-head">
+        {%- set head = [] -%}
+        {%- if node.section.org_label %}{% set _ = head.append(node.section.org_label) %}{% endif -%}
+        {%- if node.section.title %}{% set _ = head.append(node.section.title) %}{% endif -%}
+        <span class="role-name">{{ head | join(" · ") if head else node.section.section_kind | replace("_", " ") | capitalize }}</span>
+        {% if node.section.start_date or node.section.end_date %}
+          <span class="role-dates muted">· {{ node.section.start_date }}{% if node.section.start_date and node.section.end_date %} to {% endif %}{{ node.section.end_date }}</span>
+        {% endif %}
+        <span class="muted role-count">{{ node.slots | length }} bullet{% if node.slots | length != 1 %}s{% endif %}</span>
+      </summary>
+      {% with section=node.section, also=node.also, saved=False, edit_open=(edit_open_id and edit_open_id == node.section.id) %}{% include "partials/doc_section_edit.html" %}{% endwith %}
+      <div class="role-bullets">
+      {% for s in node.slots %}
+        <div class="slot" data-slot-key="{{ s.slot.key }}">
+          <div class="slot-head">
+            <div class="slot-title" title="Internal key: {{ s.slot.key }}">Bullet {{ s.n }} · {{ s.label }}
+            </div>
+            <form class="slot-optional" hx-post="/documents/slot/{{ s.slot.id }}/optional" hx-trigger="change"
+                  hx-target="find .opt-status" hx-swap="innerHTML" data-testid="slot-optional">
+              <label class="muted"><input type="checkbox" name="optional" value="1" {% if s.slot.optional %}checked{% endif %}>
+                Can be left out when it does not fit the role</label>
+              <span class="opt-status" aria-live="polite"></span>
+            </form>
+            <button class="btn ghost small danger" type="button"
+                    hx-post="/documents/slot/{{ s.slot.id }}/delete" hx-target="#tree"
+                    hx-swap="innerHTML"
+                    hx-confirm="Remove bullet {{ s.n }} and all its wordings? This cannot be undone.">Remove bullet</button>
+          </div>
+          <div id="slot-variants-{{ s.slot.id }}">
+          {% for v in s.variants %}
+            {% include "partials/doc_variant.html" %}
+          {% endfor %}
+          </div>
+          {# Alternate wordings on demand (D-IMPORT-3): suggested, reviewed, added one by one. #}
+          <form class="slot-suggest" hx-post="/documents/slot/{{ s.slot.id }}/suggest"
+                hx-target="#suggest-{{ s.slot.id }}" hx-swap="innerHTML"
+                hx-disabled-elt="find button" data-no-busy>
+            <button class="btn ghost" type="submit">Suggest wordings</button>
+            <span class="import-status" role="status" aria-live="polite">
+              <span class="spin" aria-hidden="true"></span>Asking the model…</span>
+          </form>
+          <div id="suggest-{{ s.slot.id }}"></div>
+        </div>
+      {% endfor %}
+        {% if not node.slots %}<p class="muted slot-empty">No bullets yet.</p>{% endif %}
+        <form class="add-bullet" hx-post="/documents/section/{{ node.section.id }}/bullets"
+              hx-target="#tree" hx-swap="innerHTML" data-testid="add-bullet">
+          <label for="add-bullet-{{ node.section.id }}">Add a bullet</label>
+          <textarea id="add-bullet-{{ node.section.id }}" name="text" rows="2" required
+                    placeholder="Your own words, exactly as they should print"></textarea>
+          <button class="btn ghost" type="submit">Add bullet</button>
+        </form>
+      </div>
+      <div class="role-foot">
+        <button class="btn ghost small danger" type="button"
+                hx-post="/documents/section/{{ node.section.id }}/delete" hx-target="#tree"
+                hx-swap="innerHTML"
+                hx-confirm="Remove this {{ 'role' if is_role else 'section' }} and all {{ node.slots | length }} of its bullets? This cannot be undone.">Remove {{ "role" if is_role else "section" }}</button>
+      </div>
+    </details>
+  {% endfor %}
+  {% if not tree %}<p class="muted">This document has no roles yet. Add one below.</p>{% endif %}
+
+  {% if selected %}
+  <details class="add-role panel" data-testid="add-role">
+    <summary><b>Add a role</b></summary>
+    <form hx-post="/documents/{{ selected.id }}/roles" hx-target="#tree" hx-swap="innerHTML"
+          class="formgrid section-form">
+      <label for="new-role-org">Company</label>
+      <input id="new-role-org" type="text" name="org_label">
+      <label for="new-role-title">Title</label>
+      <input id="new-role-title" type="text" name="title">
+      <label for="new-role-start">Start</label>
+      <input id="new-role-start" type="text" name="start_date" placeholder="2019">
+      <label for="new-role-end">End</label>
+      <input id="new-role-end" type="text" name="end_date" placeholder="2024 or Present">
+      <label for="new-role-ctx">Context line</label>
+      <input id="new-role-ctx" type="text" name="context_line" placeholder="One line under the title, optional">
+      <label for="new-role-text">First bullet</label>
+      <textarea id="new-role-text" name="text" rows="2" required
+                placeholder="Your own words, exactly as they should print"></textarea>
+      <span></span>
+      <span><button class="btn" type="submit">Add role</button></span>
+    </form>
+  </details>
+  {% endif %}
+</div>

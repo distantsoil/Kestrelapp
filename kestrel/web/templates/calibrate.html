@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Calibrate · Kestrel{% endblock %}
+{% block content %}
+<h1>Calibrate</h1>
+{# The intro panel (mockup section 9): what calibrating does, how many ratings, how long. #}
+<div class="panel calibrate-intro" data-testid="calibrate-intro">
+  <p data-testid="page-purpose">Rate scored roles the way you would judge them, so scoring learns your taste.
+  It does not review your resume; the resume assessment lives on
+  <a href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
+  <ul class="calibrate-steps">
+    <li><b>What it does.</b> Each rating is a label. At 15 Kestrel starts showing the model your own examples; with more, a ranker trained on your ratings can take over the order.</li>
+    <li><b>How many.</b> 15 to start. The roles below are the ones Kestrel is least sure about, so each rating teaches it the most.</li>
+    <li><b>How long.</b> About five minutes for 15: read the posting on the left, the evaluation on the right, then agree or pick your own fit word.</li>
+  </ul>
+</div>
+
+{# ---------------------------------------------- Reranker promotion progress (self-contained). #}
+{% if promo_error %}
+<div class="panel" data-testid="promotion-panel-error"><p class="muted">{{ promo_error }}</p></div>
+{% elif promo %}
+<div class="panel" data-testid="promotion-panel">
+  <h2 title="Reranker promotion">Learned ranking</h2>
+  <p>
+    {% if promo.reranker_active %}
+    <span class="covered">&#10003; learned ranking active</span> for {{ track }} quick-screen decisions.
+    {% else %}
+    <span class="gap">&#10007; not promoted</span>: the rule-based quick screen is still in charge for
+    {{ track }}, not the learned ranking.
+    {% endif %}
+  </p>
+  <table class="data">
+    <thead><tr><th>Criterion</th><th>Current</th><th>Required</th><th>Met</th></tr></thead>
+    <tbody>
+      {% for c in promo.criteria %}
+      <tr data-testid="criterion-{{ c.key }}">
+        <td>{{ c.label }}</td>
+        <td class="mono">{{ c.current }}</td>
+        <td class="mono">{{ c.required }}</td>
+        <td>
+          {% if c.met is none %}<span class="pill">not yet measurable</span>
+          {% elif c.met %}<span class="covered">&#10003;</span>
+          {% else %}<span class="gap">&#10007;</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if promo.last_trained_at %}
+  <p class="muted"><small>Last trained {{ promo.last_trained_at }}, on {{ promo.last_trained_n_labeled }}
+  labeled examples.</small></p>
+  {% endif %}
+  <p><b>Next step:</b> {{ promo.next_step }}</p>
+</div>
+{% endif %}
+
+<h2 class="calibrate-queue-head">Ten roles to rate for the {{ track }} track</h2>
+{% include "partials/calibrate_queue.html" %}
+{% endblock %}

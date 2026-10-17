@@ -1,0 +1,236 @@
+{% from "partials/hosted_disclosure.html" import disclosure_text with context %}
+<div id="hosted-panel">
+  {% if connect_result %}{% with r = connect_result, testid = 'hosted-connect-result' %}{% include "partials/hosted_connect_result.html" %}{% endwith %}
+  {% elif message %}<p class="{{ 'panel' if ok else 'warnbox' }}" style="padding:.6rem 1rem">{{ message }}{% if return_to == 'setup' and ok %} <a class="btn pri" href="/setup" data-testid="return-to-setup" style="margin-left:.6rem">Return to setup</a>{% endif %}</p>{% endif %}
+  {% if return_to == 'setup' and not (message and ok) %}<p class="muted" data-testid="setup-origin" style="margin:0 0 .6rem">You came here from <a href="/setup">Setup</a> (step 6). Connect below; a "Return to setup" button appears once the provider accepts the key.</p>{% endif %}
+
+  {% include "partials/hosted_keys.html" %}
+
+  <h3>Run Kestrel on</h3>
+  <div class="grid2" id="mode-switch">
+    <form hx-post="/settings/hosted/switch" hx-target="#hosted-panel" hx-swap="outerHTML">
+      <input type="hidden" name="mode" value="local">
+      <button class="btn{% if mode != 'local' %} ghost{% endif %}" type="submit" style="width:100%; padding:.8rem; font-size:1.05rem" {% if mode == 'local' %}aria-pressed="true"{% endif %}>Local models{% if mode == 'local' %} (active){% endif %}</button>
+      <p class="muted" style="margin:.4rem 0 0">Profile <span class="mono">{{ local_profile or 'not chosen yet' }}</span>{% if local_models %}: {% for t, m in local_models.items() %}{{ t }} <span class="mono">{{ local_backends.get(t, 'local') }}/{{ m }}</span>{% if local_backends.get(t, 'local') != 'local' %} <span class="warnbox" style="padding:0 .3rem">hosted backend; switching to Local moves it back</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}. Nothing leaves this machine except a Tier 3 escalation you confirm.</p>
+    </form>
+    <form hx-post="/settings/hosted/switch" hx-target="#hosted-panel" hx-swap="outerHTML">
+      <input type="hidden" name="mode" value="hosted">
+      <button class="btn{% if mode != 'hosted' %} ghost{% endif %}" type="submit" style="width:100%; padding:.8rem; font-size:1.05rem" {% if mode == 'hosted' %}aria-pressed="true"{% endif %} title="{{ hosted_problem or 'Switch to hosted models' }}">Hosted models{% if mode == 'hosted' %} (active){% endif %}</button>
+      <p class="muted" style="margin:.4rem 0 0">
+        {% if hosted_models %}{{ hosted_providers|join(' and ') }}: {% for t, m in hosted_models.items() %}{{ t }} <span class="mono">{{ m }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.{% else %}Not configured yet: use <a href="#hosted-connect">Connect a hosted provider</a> below.{% endif %}
+        {% if hosted_problem %}<span class="warnbox" style="padding:0 .3rem">Cannot switch yet: {{ hosted_problem }}.</span>{% else %}Every hosted tier sends automatically on a hosted run.{% endif %}
+      </p>
+    </form>
+  </div>
+  <p class="muted" style="margin:.4rem 0 0">This is the standing choice for every run and for the serve loop. One run can differ: <a href="/runs">Runs</a> has a Local or Hosted choice for the next cycle, and <span class="mono">kestrel run --hosted</span> or <span class="mono">--local</span> does the same from a terminal.</p>
+
+  {% set configured = hosted_mode.active and hosted_models %}
+  {% if not hosted_backends %}
+  <p class="warnbox" data-testid="no-backends">No hosted backend is defined. Your <span class="mono">settings.yml</span> in the data folder has no external backends and the packaged defaults could not be read; restore the <span class="mono">llm.backends</span> block from the shipped file. Settings file in use: <span class="mono">{{ settings_file or 'packaged defaults' }}</span>.</p>
+  {% endif %}
+  <details id="hosted-connect" data-testid="hosted-connect" {% if not configured %}open{% endif %} style="margin-top:1rem">
+    <summary><h3 style="display:inline">{% if configured %}Change hosted provider{% else %}Connect a hosted provider{% endif %}</h3></summary>
+    <p class="muted" style="margin:.3rem 0 .6rem">One step: pick a provider, paste your key, read the disclosure, connect. Kestrel checks the key, picks a model for each tier, and switches over. The models Connect picks are defaults. Connecting again replaces them on every tier, including any set to stay local under Advanced, but keeps every tier you overrode on the <a href="/models#hosted-overrides">Models page</a>.</p>
+    <form hx-post="/settings/hosted/connect" hx-target="#hosted-panel" hx-swap="outerHTML show:#hosted-panel:top" hx-indicator="#connect-busy" autocomplete="off">
+      {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+      {% set chosen = connect_provider or connect_default %}
+      <div class="grid2" role="radiogroup" aria-label="Provider">
+        {% for pid in preset_order if hosted_backends.get(presets[pid].backend) %}
+        {% set p = presets[pid] %}
+        {% set b = hosted_backends[p.backend] %}
+        <label class="panel" style="padding:.5rem .8rem; display:block; cursor:pointer" data-provider="{{ pid }}">
+          <input type="radio" name="provider" value="{{ pid }}" {% if pid == chosen %}checked{% endif %}>
+          <b>{{ p.label }}</b>{% if pid in free_providers %} <span class="pill apply">Free models available</span>{% endif %}
+          {% if b.env in kestrel_keys %}<span class="muted"> · key saved in Kestrel</span>{% elif b.inline_key %}<span class="muted"> · key written in settings.yml</span>{% elif b.key_present %}<span class="muted"> · key from your system settings</span>{% endif %}
+          <div class="muted" style="margin-left:1.4rem">Key starts <span class="mono">{{ p.key_prefix }}</span> · <a href="{{ p.console }}" target="_blank" rel="noopener">get a key</a>{% if b.env in system_keys_ignored %}<br>Your system has its own key for this provider; Kestrel ignores it and uses only a key saved here.{% endif %}</div>
+        </label>
+        {% endfor %}
+      </div>
+      <label style="display:block; margin-top:.6rem">API key
+        <input type="password" name="api_key" placeholder="paste the key; leave blank to use the saved one" style="min-width:24rem"></label>
+      <span class="muted">Saved on this computer, in Kestrel's own data folder. Never shown again, never logged, never in a backup. A key saved here is used only by Kestrel: it is not added to your system settings or passed to any program Kestrel opens.</span>
+      <details style="margin-top:.6rem" {% if not hosted_mode.acknowledgement_current %}open{% endif %}>
+        <summary><b>Disclosure: what leaves this machine</b></summary>
+        {{ disclosure_text() }}
+      </details>
+      <label style="display:block; margin-top:.4rem"><input type="checkbox" name="ack" value="on"> I understand what each hosted tier sends and that the provider's retention rules apply.</label>
+      <label style="margin-right:1.2rem"><input type="checkbox" name="switch" value="on" checked> Switch Kestrel to hosted models now</label>
+      <label title="Only models OpenRouter prices at zero for input and output. Your standing choice; connect again with it changed to re-pick every tier."><input type="checkbox" name="free_only" value="on" {% if free_only %}checked{% endif %}> Free models only (OpenRouter){% if free_only %} <span class="muted">(current)</span>{% endif %}</label>
+      <label style="display:block" data-testid="allow-training"><input type="checkbox" name="allow_training" value="on"> Allow providers that may train on what Kestrel sends <span class="muted">(needed with free models; Kestrel blocks those providers unless you tick this)</span></label>
+      <div style="margin-top:.6rem">
+        <button class="btn" type="submit">Connect</button>
+        <span id="connect-busy" class="htmx-indicator muted">checking the key and listing models…</span>
+        <span class="muted">Two metadata requests to the provider (key check, model list); nothing about you or any opportunity.</span>
+      </div>
+    </form>
+  </details>
+
+  {% if hosted_mode.active %}
+  <div style="margin-top:.8rem">
+    <span class="muted">Disclosure acknowledged {{ hosted_mode.acknowledged_at }}.</span>
+    <form hx-post="/settings/hosted/mode" hx-target="#hosted-panel" hx-swap="outerHTML" style="display:inline">
+      <input type="hidden" name="action" value="off">
+      <button class="btn ghost" type="submit">Turn off hosted mode</button>
+    </form>
+    <span class="muted">Switches back to local models and keeps your hosted assignments.</span>
+  </div>
+  {% endif %}
+
+  <details id="hosted-advanced" data-testid="hosted-advanced" style="margin-top:1rem">
+    <summary><h3 style="display:inline">Advanced: per-tier models, keys, Tier 3, privacy, reasoning effort</h3></summary>
+  {% if not hosted_mode.active %}
+  <h3 style="margin-top:1rem">Hosted mode disclosure</h3>
+  <div class="panel" style="padding:.8rem 1rem">
+    <p style="margin-top:0"><b>Status: {% if hosted_mode.active %}acknowledged {{ hosted_mode.acknowledged_at }}{% elif hosted_mode.acknowledged_at and not hosted_mode.acknowledgement_current %}the disclosure below changed since you accepted it on {{ hosted_mode.acknowledged_at }}, so hosted sends are paused until you read it and accept it again{% elif hosted_mode.enabled %}set on but not acknowledged, so off{% else %}not acknowledged{% endif %}.</b>
+    {% if hosted_mode.active %}Hosted sends happen only on a hosted run (the switch above, a Run now choice, or the CLI flag).{% else %}Acknowledging the disclosure is the first of two steps; the switch above is the second. Until then every tier runs on this machine and the only thing that leaves it is a Tier 3 escalation you preview and confirm.{% endif %}</p>
+    {{ disclosure_text() }}
+    <form hx-post="/settings/hosted/mode" hx-target="#hosted-panel" hx-swap="outerHTML">
+      {% if hosted_mode.active %}
+        <input type="hidden" name="action" value="off">
+        <button class="btn ghost" type="submit">Turn off hosted mode</button>
+        <span class="muted">Turning it off switches Kestrel back to local models and keeps your hosted assignments; they just stop being used.</span>
+      {% else %}
+        <input type="hidden" name="action" value="on">
+        <label><input type="hidden" name="ack" value="off"><input type="checkbox" name="ack" value="on"> I understand what each hosted tier sends and that the provider's retention rules apply.</label>
+        <button class="btn" type="submit" style="margin-left:.6rem">Turn on hosted mode</button>
+      {% endif %}
+    </form>
+  </div>
+
+  {% endif %}
+  <h3 style="margin-top:1rem" id="hosted-assignments">Hosted assignments</h3>
+  <p class="muted" style="margin:.2rem 0 .5rem">Which hosted backend and model each tier uses on a hosted run. The local models are untouched by this table; a tier set to stay local runs on its local model in either mode. Tier 1 and Tier 2 need an assignment before hosted can be chosen.</p>
+  <p class="muted" data-testid="hosted-defaults-note" style="margin:.2rem 0 .5rem">The models here were chosen by Connect as defaults. To pick your own per tier from the provider's list, with free and paid models side by side, use <a href="/models#hosted-overrides">Models &gt; Override models</a>; an overridden tier shows "(Override)" there and survives connecting again.</p>
+  <form hx-post="/settings/hosted/tiers" hx-target="#hosted-panel" hx-swap="outerHTML" autocomplete="off">
+    <table class="data">
+      <thead><tr><th>Tier</th><th>Sends, when hosted</th><th>Backend</th><th>Model id</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in assignment_rows %}
+        <tr>
+          <td class="mono">{{ r.tier }}</td>
+          <td class="muted" style="max-width:22rem">{{ tier_sends.get(r.tier, '') }}</td>
+          <td>
+            <select name="backend.{{ r.tier }}">
+              {% if r.tier != 'frontier' %}<option value="local" {% if not r.external %}selected{% endif %}>stay local (Ollama)</option>{% endif %}
+              {% for name, b in hosted_backends.items() %}<option value="{{ name }}" {% if r.external and r.backend == name %}selected{% endif %}>{{ b.label }}</option>{% endfor %}
+            </select>
+          </td>
+          <td><input name="model.{{ r.tier }}" list="hosted-models" value="{{ r.model }}" style="min-width:18rem"></td>
+          <td>
+            {% if not r.external %}
+              <span class="muted">no hosted assignment; stays local{% if local_hints.get(r.tier) %} · profile model <span class="mono">{{ local_hints.get(r.tier) }}</span>{% endif %}</span>
+            {% elif r.tier == 'frontier' %}
+              hosted, per-item confirm{% if not r.key_present %} · <span class="warnbox" style="padding:0 .3rem">no key saved: <a href="#hosted-keys">add it above</a></span>{% endif %}
+            {% elif r.in_use %}
+              <b>hosted, sending</b>{% if not r.key_present %} · <span class="warnbox" style="padding:0 .3rem">no key saved: <a href="#hosted-keys">add it above</a></span>{% endif %}
+            {% else %}
+              <span class="muted">assigned, used on a hosted run</span>{% if not r.key_present %} · <span class="warnbox" style="padding:0 .3rem">no key saved: <a href="#hosted-keys">add it above</a></span>{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button class="btn" type="submit" style="margin-top:.5rem">Save assignments</button>
+    <span class="muted">Model ids come from the list after Test below.{% if confidential_mode %} Confidential mode is on: hosted sends are redacted or refused.{% endif %}</span>
+  </form>
+  <datalist id="hosted-models">
+    {% for m in models %}<option value="{{ m.id }}">{% if m.id in free_ids %}free · {% endif %}{{ m.name }}{% if m.context_length %} · {{ m.context_length|comma }} ctx{% endif %}{% if m.prompt_usd_per_m is not none %} · ${{ '%.2f' % m.prompt_usd_per_m }}/M in, ${{ '%.2f' % m.completion_usd_per_m }}/M out{% endif %}{% if m.structured_outputs is none and not m.protocols %} · schema support unknown{% endif %}{% if m.protocols %} · {{ m.protocols|join('/') }}{% endif %}</option>{% endfor %}
+  </datalist>
+
+  <h3 style="margin-top:1rem">Backends</h3>
+  <table class="data">
+    <thead><tr><th>Backend</th><th>Provider</th><th>Protocol</th><th>Key</th><th>In use for Tier 3</th></tr></thead>
+    <tbody>
+    {% for name, b in hosted_backends.items() %}
+      <tr>
+        <td class="mono">{{ name }}</td>
+        <td>{{ b.label }} <span class="muted mono">{{ b.base_url }}</span></td>
+        <td class="mono">{{ b.protocol }}</td>
+        <td>{% if b.key_present %}saved{% if b.key_tail %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}<span class="muted">no key saved</span>{% endif %}</td>
+        <td>{% if hosted.backend_name == name %}<b>yes</b> · {{ hosted.model }}{% else %}<span class="muted">no</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:1rem">1. Test the key and list models</h3>
+  <p class="muted" style="margin:.2rem 0 .5rem">Add, change or remove a key under <a href="#hosted-keys">Your keys</a> above.</p>
+  <form hx-post="/settings/hosted/test" hx-target="#hosted-panel" hx-swap="outerHTML" hx-indicator="#hosted-busy">
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+    <label>Backend
+      <select name="backend">
+        {% for name, b in hosted_backends.items() %}<option value="{{ name }}" {% if (tested_backend or hosted.backend_name) == name %}selected{% endif %}>{{ b.label }}</option>{% endfor %}
+      </select></label>
+    <label><input type="hidden" name="free_only" value="off"><input type="checkbox" name="free_only" value="on" {% if free_only %}checked{% endif %}> Free models only</label>
+    <button class="btn" type="submit">Test</button>
+    <span id="hosted-busy" class="htmx-indicator muted">contacting provider…</span>
+    <span class="muted">Two metadata requests to the provider (key check, model list). Sends nothing about you or any opportunity. Free models are priced at zero for input and output on OpenRouter; they carry a daily request cap and may train on inputs unless data collection is set to deny.</span>
+  </form>
+  {% if key %}
+    <div class="panel" style="padding:.6rem 1rem; margin-top:.5rem">
+      <b>{{ key.provider }}</b>: {{ 'accepted' if key.ok else 'rejected' }}{% if key.label %} · label <span class="mono">{{ key.label }}</span>{% endif %}
+      {% if key.usage_usd is not none %} · spent ${{ '%.2f' % key.usage_usd }}{% endif %}
+      {% if key.limit_usd is not none %} · limit ${{ '%.2f' % key.limit_usd }}{% if key.limit_remaining_usd is not none %} (${{ '%.2f' % key.limit_remaining_usd }} left){% endif %}{% endif %}
+      {% if key.is_free_tier %} · <b>free tier</b> (daily caps apply){% endif %}
+      {% if not key.ok %}<div class="muted">{{ key.detail }}</div>{% endif %}
+    </div>
+    {% if model_error %}<p class="warnbox">Key accepted but the model list failed: {{ model_error }}</p>{% endif %}
+    {% if key.ok and not model_error %}
+      <p class="muted">{{ models|length }} model{{ '' if models|length == 1 else 's' }}{% if free_only %} priced at zero{% endif %} that can honor a JSON schema{% if free_only and not models %}; none are free on this backend (only OpenRouter reports pricing, and data collection deny can exclude every free model){% endif %}. They are in the model id list above.</p>
+    {% endif %}
+  {% endif %}
+
+  <h3 style="margin-top:1rem">2. Choose the Tier 3 model and privacy options</h3>
+  <form hx-post="/settings/hosted/model" hx-target="#hosted-panel" hx-swap="outerHTML">
+    <label>Backend
+      <select name="backend">
+        {% for name, b in hosted_backends.items() %}<option value="{{ name }}" {% if (tested_backend or hosted.backend_name) == name %}selected{% endif %}>{{ b.label }}</option>{% endfor %}
+      </select></label>
+    <label>Model id
+      <input name="model" list="hosted-models" value="{{ hosted.model }}" style="min-width:22rem">
+      {% if not models %}<span class="muted">Test first to pick from the provider's list.</span>{% endif %}
+    </label>
+    {% set om = hosted_backends.get('openmodel') %}
+    {% if om %}
+    <label>OpenModel protocol
+      <select name="protocol">
+        <option value="messages" {% if om.protocol == 'messages' %}selected{% endif %}>messages (Anthropic-style; most models)</option>
+        <option value="responses" {% if om.protocol == 'responses' %}selected{% endif %}>responses (OpenAI-style)</option>
+      </select>
+      <span class="muted">Pick the one the model lists; it is shown beside each model after Test.</span></label>
+    {% endif %}
+    {% set ob = hosted_backends.get('frontier') %}
+    {% if ob %}
+    <fieldset style="margin-top:.5rem">
+      <legend class="muted">OpenRouter privacy and cost (applies to every tier on OpenRouter)</legend>
+      <label style="margin-right:1.2rem"><input type="hidden" name="zdr" value="off"><input type="checkbox" name="zdr" value="on" {% if ob.hosted.zdr %}checked{% endif %}> Zero Data Retention endpoints only</label>
+      <label style="margin-right:1.2rem">Providers that store prompts:
+        <select name="data_collection">
+          <option value="deny" {% if ob.hosted.data_collection == 'deny' %}selected{% endif %}>excluded (deny)</option>
+          <option value="allow" {% if ob.hosted.data_collection == 'allow' %}selected{% endif %}>allowed</option>
+        </select></label>
+    </fieldset>
+    {% endif %}
+    <fieldset style="margin-top:.5rem" data-testid="effort-per-provider">
+      <legend class="muted">Reasoning effort per provider (applies to every tier on that provider)</legend>
+      {% for name, b in hosted_backends.items() if effort_levels.get(b.provider) %}
+      <label style="margin-right:1.2rem">{{ b.label }}:
+        <select name="reasoning_effort.{{ name }}">
+          <option value="" {% if not b.hosted.reasoning_effort %}selected{% endif %}>model default</option>
+          {% for e in effort_levels[b.provider] %}<option value="{{ e }}" {% if b.hosted.reasoning_effort == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+        </select></label>
+      {% endfor %}
+      <span class="muted">Lower is cheaper and faster; model default is the provider's own. Each list holds only the words that provider accepts.</span>
+    </fieldset>
+    <button class="btn" type="submit" style="margin-top:.5rem">Use for Tier 3</button>
+  </form>
+  <details class="key-details" data-testid="key-details" style="margin-top:1rem">
+    <summary>Show details: where keys are kept</summary>
+    <p class="muted">For power users. Kestrel keeps each key in the <span class="mono">.env</span> file in its data folder, under these names:
+      {% for name, b in hosted_backends.items() %}{{ b.label }} <span class="mono">{{ b.env }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+      {% if use_system_keys %}<b>KESTREL_USE_SYSTEM_KEYS is set</b>, so a system environment variable with one of these names is used when no key is saved here; a key saved here always wins.{% else %}Kestrel ignores these variables in your system environment unless KESTREL_USE_SYSTEM_KEYS is set.{% endif %}
+      {% if system_keys_ignored %}Present in your system environment and ignored: {% for e in system_keys_ignored %}<span class="mono">{{ e }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
+  </details>
+  </details>
+</div>

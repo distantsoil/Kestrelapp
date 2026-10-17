@@ -1,0 +1,73 @@
+name: CI
+
+# Minutes are metered (Windows 2x, macOS 10x). A push to a PR branch used to run the full matrix
+# twice (push + pull_request); now branches are covered by pull_request and only main runs on
+# push. macOS runs on main only; Windows stays on PRs for the installer check (D-CI-1).
+# Changes touching only these files skip CI (D-CI-2). An explicit list, never "**/*.md": the LLM
+# prompts are .md (kestrel/llm/prompts) and tests read docs/SOURCES.md.
+on:
+  push:
+    branches: [main]
+    tags-ignore: ["v*"]  # tags are built by release.yml
+    paths-ignore:
+      - README.md
+      - CLAUDE.md
+      - AGENTS.md
+      - "docs/images/**"
+  pull_request:
+    paths-ignore:  # keep identical to the push list above
+      - README.md
+      - CLAUDE.md
+      - AGENTS.md
+      - "docs/images/**"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
+    env:
+      KESTREL_HEADLESS: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12 and the project
+        # uv.lock is a universal lock: win11toast and pythonnet carry sys_platform == 'win32'
+        # markers (pyproject), pyobjc carries darwin, so one sync works on all three runners.
+        run: |
+          uv python install 3.12
+          uv sync --extra dev
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: Installer script compiles (Windows)
+        # The release job is the only other place iscc runs, so a broken kestrel.iss used to
+        # surface only at release time. This compiles the real script against a stub program
+        # folder: it checks the preprocessor, every section and the [Code] Pascal, not the app.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --version 6.7.1 --no-progress -y }
+          New-Item -ItemType Directory -Force dist\Kestrel | Out-Null
+          Set-Content dist\Kestrel\Kestrel.exe "stub"
+          & $iscc /Q packaging\kestrel.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed on packaging/kestrel.iss" }
+          Remove-Item -Recurse -Force dist
+
+      - name: pytest
+        # Playwright-dependent and Ollama-dependent tests skip themselves when the runner has
+        # neither; nothing here calls a live job board, ATS, or SEC endpoint (CLAUDE.md).
+        run: uv run pytest -q

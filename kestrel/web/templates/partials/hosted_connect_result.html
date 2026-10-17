@@ -1,0 +1,12 @@
+{# One Connect's result (D-UI-40), shared by the onboarding model step and Settings > Hosted.
+   `r` is a services.hosted_connect.ConnectOutcome (its `defaults` flag adds the Models page link,
+   D-UI-42); `testid` names the box for the tests.
+   Theme variables only, so it follows Light, Dark and every scheme. #}
+<div class="{{ 'okbox' if r.ok else 'warnbox' }}" role="status" aria-live="polite"
+     data-testid="{{ testid }}" data-connect-ok="{{ 'true' if r.ok else 'false' }}"
+     style="padding:.6rem 1rem; margin:.6rem 0">
+  <b data-testid="{{ testid }}-headline">{{ r.headline }}</b>
+  {% if r.detail %}<div style="margin-top:.3rem; font-size:var(--fs-sm)">{{ r.detail }}</div>{% endif %}
+  {% if r.ok and r.defaults %}<div class="connect-defaults" data-testid="{{ testid }}-defaults">These are defaults. <a href="/models#hosted-overrides">Override a tier on the Models page</a>.</div>{% endif %}
+  {% if return_to is defined and return_to == 'setup' and r.ok %}<a class="btn pri" href="/setup" data-testid="return-to-setup" style="margin-top:.4rem">Return to setup</a>{% endif %}
+</div>

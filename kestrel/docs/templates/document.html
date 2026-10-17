@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  /* ATS-safe: single column, no layout tables, real Unicode bullets, selectable text, standard
+     headings. Print stylesheet only; no generator string anywhere. Each layout's look is a class
+     on <body> (D-DOC-1); the font is one of a fixed list (kestrel.docs.styles). */
+  @page { size: Letter; margin: 0.5in; }
+  /* The accent (D-DOC-4) is a validated #RRGGBB (kestrel.docs.styles.valid_accent). Every style
+     draws its headings, rules and markers from it; --accent-soft is the lighter rule tone. */
+  :root { --accent: {{ style.accent }};
+          --accent-soft: color-mix(in srgb, {{ style.accent }} 45%, #ffffff); }
+  * { box-sizing: border-box; }
+  body { font-family: {{ style.font_css | safe }}; font-size: 10.5pt; line-height: 1.35;
+         color: #111; margin: 0; }
+  header.doc { margin-bottom: 10pt; }
+  header.doc .name { font-size: 20pt; font-weight: 700; letter-spacing: .01em; }
+  header.doc .headline { font-size: 11pt; color: #222; margin-top: 1pt; }
+  header.doc .contact { font-size: 9.5pt; color: #333; margin-top: 2pt; }
+  body.align-center header.doc { text-align: center; }
+  section.block { margin-top: 12pt; }
+  h2.section-heading {
+    font-size: 11pt; text-transform: uppercase; letter-spacing: .06em; color: var(--accent);
+    border-bottom: 1px solid var(--accent-soft); padding-bottom: 2pt; margin: 0 0 6pt;
+  }
+  .role, .entry { margin-bottom: 9pt; }
+  .role .row, .entry .row { display: flex; justify-content: space-between;
+    align-items: baseline; gap: 8pt; }
+  .role .org, .entry .lead { font-weight: 700; }
+  .role .title, .entry .sub { font-style: italic; }
+  .role .dates, .entry .dates { color: #444; font-size: 9.5pt; white-space: nowrap; }
+  .role .context, .entry .detail { color: #333; margin: 1pt 0 3pt; }
+  .entry { margin-bottom: 5pt; }
+  .entry .detail, .entry .extra { margin: 1pt 0 0; }
+  .entry .extra { color: #444; font-size: 9.5pt; }
+  ul.bullets { margin: 2pt 0 0; padding-left: 16pt; list-style: none; }
+  ul.bullets > li { position: relative; margin: 1.5pt 0; }
+  ul.bullets > li::before { content: "\2022"; position: absolute; left: -12pt;
+    color: var(--accent); }
+  .summary { margin: 0; }
+  .skills .group { margin: 2pt 0; }
+  .skills .group .label { font-weight: 700; }
+
+  /* Executive: centered name and headline, small caps headings, generous spacing, thin rules. */
+  body.style-executive { font-size: 10.5pt; line-height: 1.45; }
+  body.style-executive header.doc { margin-bottom: 14pt; padding-bottom: 8pt;
+    border-bottom: .5pt solid var(--accent-soft); }
+  body.style-executive header.doc .name { font-size: 23pt; font-weight: 600;
+    letter-spacing: .05em; }
+  body.style-executive header.doc .headline { font-size: 11.5pt; font-style: italic;
+    margin-top: 3pt; }
+  body.style-executive header.doc .contact { margin-top: 5pt; letter-spacing: .02em; }
+  body.style-executive section.block { margin-top: 16pt; }
+  body.style-executive h2.section-heading { text-transform: none; font-variant: small-caps;
+    font-size: 13pt; font-weight: 600; letter-spacing: .08em;
+    border-bottom: .5pt solid var(--accent-soft);
+    padding-bottom: 3pt; margin-bottom: 8pt; }
+  body.style-executive .role { margin-bottom: 13pt; }
+  body.style-executive .role .title { font-style: normal; }
+  body.style-executive .role .context { font-style: italic; margin: 2pt 0 4pt; }
+  body.style-executive ul.bullets > li { margin: 3pt 0; }
+
+  /* Condensed: smaller type, tight spacing, dates inline, made to fit one page. */
+  body.style-condensed { font-size: 9.5pt; line-height: 1.22; }
+  body.style-condensed header.doc { margin-bottom: 6pt; }
+  body.style-condensed header.doc .name { font-size: 16pt; }
+  body.style-condensed header.doc .headline { font-size: 10pt; }
+  body.style-condensed header.doc .contact { font-size: 8.5pt; }
+  body.style-condensed section.block { margin-top: 7pt; }
+  body.style-condensed h2.section-heading { font-size: 9.5pt; letter-spacing: .1em;
+    border-bottom: 0; padding-bottom: 0; margin-bottom: 3pt; font-weight: 700; }
+  body.style-condensed .role, body.style-condensed .entry { margin-bottom: 4pt; }
+  body.style-condensed .role .row, body.style-condensed .entry .row { display: block; }
+  body.style-condensed .role .dates { font-size: 9pt; }
+  body.style-condensed .role .context { margin: 0 0 1pt; }
+  body.style-condensed ul.bullets { margin-top: 1pt; padding-left: 12pt; }
+  body.style-condensed ul.bullets > li { margin: .5pt 0; }
+  body.style-condensed ul.bullets > li::before { left: -9pt; }
+  body.style-condensed .skills .group { margin: 1pt 0; }
+
+  /* Modern (the Technical layout): left aligned, accent-colored headings with an accent rule. */
+  body.style-modern { line-height: 1.4; }
+  body.style-modern header.doc { border-left: 4pt solid var(--accent); padding-left: 9pt; }
+  body.style-modern.align-center header.doc { border-left: 0; padding-left: 0;
+    border-bottom: 2pt solid var(--accent); padding-bottom: 6pt; }
+  body.style-modern header.doc .name { font-size: 21pt; font-weight: 600; letter-spacing: 0; }
+  body.style-modern header.doc .headline { color: var(--accent); font-weight: 600; }
+  body.style-modern h2.section-heading { color: var(--accent); text-transform: none;
+    letter-spacing: .01em; font-size: 12.5pt; font-weight: 700;
+    border-bottom: 1.5pt solid var(--accent); }
+  body.style-modern .role .title { font-style: normal; color: #333; }
+
+  /* Traditional (the Classic layout): serif, centered name over a double rule, plain small
+     uppercase headings, conventional spacing. */
+  body.style-traditional { font-size: 11pt; line-height: 1.38; }
+  body.style-traditional header.doc { padding-bottom: 6pt; margin-bottom: 12pt;
+    border-bottom: 3pt double var(--accent); }
+  body.style-traditional header.doc .name { font-size: 22pt; font-weight: 400;
+    letter-spacing: .12em; text-transform: uppercase; }
+  body.style-traditional header.doc .headline { font-style: italic; }
+  body.style-traditional h2.section-heading { font-size: 10.5pt; font-weight: 700;
+    letter-spacing: .14em; border-bottom: .75pt solid var(--accent); }
+  body.style-traditional .role .title, body.style-traditional .entry .sub { font-style: italic; }
+  body.style-traditional ul.bullets > li::before { color: #111; }
+
+  /* Clean (the Modern layout): sans serif, name in the accent, headings in sentence case with a
+     short accent bar underneath, light gray dates, airy spacing. */
+  body.style-clean { line-height: 1.42; color: #1a1a1a; }
+  body.style-clean header.doc { margin-bottom: 14pt; }
+  body.style-clean header.doc .name { font-size: 24pt; font-weight: 300; color: var(--accent);
+    letter-spacing: 0; }
+  body.style-clean header.doc .headline { font-size: 11.5pt; color: #444; }
+  body.style-clean header.doc .contact { color: #555; }
+  body.style-clean section.block { margin-top: 14pt; }
+  body.style-clean h2.section-heading { text-transform: none; letter-spacing: .02em;
+    font-size: 12pt; font-weight: 600; border-bottom: 0; padding-bottom: 3pt;
+    background-image: linear-gradient(var(--accent), var(--accent));
+    background-repeat: no-repeat; background-size: 28pt 1.5pt; background-position: 0 100%; }
+  body.style-clean .role .title, body.style-clean .entry .sub { font-style: normal; color: #444; }
+  body.style-clean .role .dates, body.style-clean .entry .dates { color: #666; }
+
+  /* Compact: dense one-page bias. Small type, tight spacing, dates inline, headings set as a
+     narrow accent band on the left edge. Still one column (ATS reading order). */
+  body.style-compact { font-size: 9pt; line-height: 1.2; }
+  body.style-compact header.doc { margin-bottom: 5pt; padding-bottom: 4pt;
+    border-bottom: 1pt solid var(--accent); }
+  body.style-compact header.doc .name { font-size: 15pt; }
+  body.style-compact header.doc .headline { font-size: 9.5pt; }
+  body.style-compact header.doc .contact { font-size: 8.5pt; }
+  body.style-compact section.block { margin-top: 6pt; }
+  body.style-compact h2.section-heading { font-size: 9pt; letter-spacing: .08em;
+    border-bottom: 0; border-left: 3pt solid var(--accent); padding: 0 0 0 4pt;
+    margin-bottom: 3pt; }
+  body.style-compact .role, body.style-compact .entry { margin-bottom: 3pt; }
+  body.style-compact .role .row, body.style-compact .entry .row { display: block; }
+  body.style-compact .role .dates, body.style-compact .entry .dates { font-size: 8.5pt; }
+  body.style-compact .role .context { margin: 0; }
+  body.style-compact ul.bullets { margin-top: 0; padding-left: 10pt; }
+  body.style-compact ul.bullets > li { margin: 0; }
+  body.style-compact ul.bullets > li::before { left: -8pt; }
+  body.style-compact .skills .group { margin: 0; }
+</style>
+</head>
+{%- set inline_dates = style.style in ("condensed", "compact") -%}
+<body class="style-{{ style.style }} align-{{ style.align }}" data-layout="{{ style.layout }}" data-font="{{ style.font }}" data-accent="{{ style.accent }}">
+  <header class="doc">
+    {% if header.name %}<div class="name">{{ header.name }}</div>{% endif %}
+    {% if header.headline %}<div class="headline">{{ header.headline }}</div>{% endif %}
+    {%- set bits = [] -%}
+    {%- if header.contact %}{% set _ = bits.append(header.contact) %}
+    {%- else -%}
+      {%- if header.email %}{% set _ = bits.append(header.email) %}{% endif -%}
+      {%- if header.phone %}{% set _ = bits.append(header.phone) %}{% endif -%}
+      {%- if header.location %}{% set _ = bits.append(header.location) %}{% endif -%}
+      {%- for link in header.links or [] %}{% set _ = bits.append(link) %}{% endfor -%}
+    {%- endif -%}
+    {% if bits %}<div class="contact">{{ bits | join("  •  ") }}</div>{% endif %}
+  </header>
+
+  {% for block in blocks %}
+  <section class="block" data-block="{{ block.heading | lower }}">
+    <h2 class="section-heading">{{ block.heading }}</h2>
+    {% if block.type == "summary" %}
+      <p class="summary" data-summary="1">{{ block.text }}</p>
+    {% elif block.type == "skills" %}
+      <div class="skills">
+        {% for g in block.skills %}
+        <div class="group"><span class="label">{{ g["label"] }}:</span> {{ g["items"] | join(", ") }}</div>
+        {% endfor %}
+      </div>
+    {% else %}
+      {% for role in block.roles %}
+      <div class="role">
+        <div class="row">
+          <span><span class="org">{{ role.org }}</span>{% if role.title %}, <span class="title">{{ role.title }}</span>{% endif %}{% if inline_dates and role.dates %} <span class="dates">({{ role.dates }})</span>{% endif %}</span>
+          {% if not inline_dates %}<span class="dates">{{ role.dates }}</span>{% endif %}
+        </div>
+        {% if role.context %}<div class="context">{{ role.context }}</div>{% endif %}
+        {% if role.bullets %}
+        <ul class="bullets">
+          {% for bl in role.bullets %}<li data-vk="{{ bl.key }}">{{ bl.text }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {# Optional-section entries (D-DOC-3): the operator's typed text, as typed. #}
+      {% for e in block.entries %}
+      <div class="entry">
+        <div class="row">
+          <span><span class="lead">{{ e.lead }}</span>{% if e.sub %}, <span class="sub">{{ e.sub }}</span>{% endif %}{% if inline_dates and e.dates %} <span class="dates">({{ e.dates }})</span>{% endif %}</span>
+          {% if not inline_dates and e.dates %}<span class="dates">{{ e.dates }}</span>{% endif %}
+        </div>
+        {% if e.detail %}<div class="detail">{{ e.detail }}</div>{% endif %}
+        {% if e.extra %}<div class="extra">{{ e.extra }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    {% endif %}
+  </section>
+  {% endfor %}
+</body>
+</html>

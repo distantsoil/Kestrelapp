@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Today · Kestrel{% endblock %}
+{% block content %}
+{# Today (D-UI-49, D-UI-51, D-UI-59, D-UI-60): the persistent run panel, then the Review / Act /
+   Schedule cards, then the system's asks below a rule. Page rules live in the stream 2 section
+   of kestrel.css, scoped under #today, on theme variables only. #}
+<div id="today">
+  {% set w = words(track) %}{% set consulting = (track == 'consulting') %}
+  {% if first_run %}
+    <div class="banner">
+      <b>Welcome to Kestrel.</b> Nothing has been scanned yet. Add a source, build the models, and
+      run the first scan from <a href="/sources">Sources</a>. The list below says what is missing.
+    </div>
+  {% endif %}
+
+  <div class="bar">
+    <h1>Today</h1>
+    <span class="quiet">{{ today.strftime('%A, %B') }} {{ today.day }}</span>
+    <span class="sp"></span>
+    {% include "partials/scan_button.html" %}
+  </div>
+
+  {# The persistent run panel (D-UI-59): always present, full width. It re-polls itself and
+     brings the Review card along out of band, so both read one run summary. #}
+  {% include "partials/today_run.html" %}
+
+  {% set q = '?track=' ~ track if enabled_tracks()|length > 1 else '' %}
+  <div class="grid3 today-cards">
+    {# ---------------------------------------------------------------------------- Review #}
+    {% include "partials/today_review.html" %}
+
+    {# ------------------------------------------------------------------------------- Act #}
+    <div class="card" data-testid="today-act">
+      <span class="eyebrow">Act</span>
+      {% set off_n = off_tracks|sum(attribute='apply') + off_tracks|sum(attribute='follow_up') %}
+      <div class="num">{{ act.n + off_n }}<small>{{ 'thing' if act.n + off_n == 1 else 'things' }} to do</small></div>
+      <p class="quiet card-note" data-testid="act-note">
+        {%- if act.n -%}
+          {{ act.apply }} {{ 'in your leads to contact' if consulting else 'on your shortlist to apply to' }} · {{ act.follow_up }} {{ 'follow-up' if act.follow_up == 1 else 'follow-ups' }} due
+          {%- if act.earliest %} ({{ act.earliest.title }}{% if act.earliest.days_quiet is not none %}, {{ act.earliest.days_quiet }} {{ 'day' if act.earliest.days_quiet == 1 else 'days' }} quiet{% endif %}){% endif -%}
+        {%- else -%}
+          {{ 'Nothing in your leads yet' if consulting else 'Nothing on your shortlist yet' }} and no follow-ups due.
+        {%- endif -%}
+      </p>
+      {% if ghosting.n %}<p class="quiet card-note" data-testid="act-ghosting">{{ ghosting.n }} {{ 'application' if ghosting.n == 1 else 'applications' }} past {{ ghosting.days }} days with no reply</p>{% endif %}
+      {# A switched-off track stops scanning and scoring; its open work is never hidden (R2). #}
+      {% for o in off_tracks %}
+      <p class="quiet card-note" data-testid="act-off-track" data-track="{{ o.track }}">{{ o.name }} (switched off): {{ o.apply }} to act on · {{ o.follow_up }} {{ 'follow-up' if o.follow_up == 1 else 'follow-ups' }} due · <a href="/pursuits?track={{ o.track }}">Open {{ words(o.track).board }}</a></p>
+      {% endfor %}
+      <p class="card-foot"><a class="btn" href="/pursuits{{ q }}">Open {{ w.board }}</a></p>
+    </div>
+
+    {# -------------------------------------------------------------------------- Schedule #}
+    <div class="card" data-testid="today-schedule">
+      <span class="eyebrow">Schedule</span>
+      <dl class="kv"><dt>Mode</dt><dd data-testid="schedule-mode">{{ schedule.mode_words }}</dd></dl>
+      <div id="schedule-bar" class="sched-bar{% if run.active %} running{% endif %}" tabindex="0" role="img"
+           aria-label="Run status: {{ run.headline }}" data-tip="{{ run.headline }}" title="{{ run.headline }}"></div>
+      <dl class="kv">
+        <dt>Next</dt><dd data-testid="schedule-next">{% if schedule.next %}Next scheduled run: {{ schedule.next }}{% else %}No schedule set. <a href="/runs#run-schedule">Set one</a>{% endif %}</dd>
+        <dt>Last</dt><dd data-testid="schedule-last">{% if schedule.last %}Last scheduled run: {{ schedule.last.when }}, {{ schedule.last.outcome }}{% else %}No scheduled run yet{% endif %}</dd>
+      </dl>
+    </div>
+  </div>
+
+  {# Whether the score tells good roles from bad yet, with its n (hard rule 6). It sat on the
+     Overnight card, which the Schedule card replaced (D-UI-60). #}
+  <p class="quiet honest-line" data-testid="today-honest">
+    {% if honest.error %}Analytics unavailable: {{ honest.error }}
+    {% elif honest.discriminating is false %}<b class="warn">The score is not discriminating</b> ({{ honest.n }} outcomes).
+    {% elif honest.discriminating is none %}Not enough outcomes yet to judge the score: {{ too_few(honest.n) }}.
+    {% else %}Score is discriminating ({{ honest.n }} outcomes).{% endif %}
+    <a href="/analytics">Analytics</a>
+  </p>
+
+  {# -------------------------------------------------------------------------------- Asks #}
+  <div class="rule-title" data-testid="today-setup-rule">Things to finish</div>
+  <div class="card" data-testid="today-asks">
+    {% if asks %}
+      <div class="list">
+        {% for a in asks %}
+          <div class="it" data-ask="{{ a.key }}" id="ask-{{ a.key }}">
+            <div><div class="t">{{ a.title }}</div><div class="s">{{ a.line }}</div></div>
+            <span class="ask-actions">
+              <a class="btn" href="{{ a.href }}">{{ a.button }}</a>
+              {% if a.dismissable %}<button type="button" class="btn quiet" data-testid="ask-dismiss"
+                      hx-post="/today/asks/{{ a.key }}/dismiss" hx-target="#ask-{{ a.key }}"
+                      hx-swap="delete">Not now</button>{% endif %}
+            </span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">Nothing. Kestrel has what it needs from you.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Failed scoring · Kestrel{% endblock %}
+{% block content %}
+<h1>Failed scoring</h1>
+<p class="muted">These postings got a reply the model could not finish or that did not match the
+  expected shape. Nothing is lost: the raw reply is kept, and Retry lets you score the posting again
+  with the same model or another one.</p>
+{% if outcome %}<div class="{{ 'okbox' if outcome.ok else 'warnbox' }}" role="status" data-testid="retry-note" style="margin-bottom:.8rem">{{ outcome.text }}</div>{% endif %}
+{% include "partials/quarantine_list.html" %}
+{% endblock %}

@@ -1,0 +1,107 @@
+# FICTIONAL example profile (SPEC.md 4.1, 9). Copy to profile.yml and edit; profile.yml is never
+# shipped and never committed. One profile per track. Every field the Tier 0 filters reference
+# (employment_terms, consulting_terms, geo_rules, must_have, must_avoid, requires_sponsorship) is
+# populated here so this doubles as a template.
+#
+# The FILTERING settings are deliberately permissive (release concern 10, release round review
+# finding 1): no seniority floor, no pay floor, no excluded titles or types, no on-site states or
+# metros, so nothing is hidden for its level, title or location until you set your own. The
+# Profile page shows this file's values only as grey placeholder hints, never as saved values.
+
+employment:
+  track: employment
+  is_active: true
+  full_name: "Jordan A. Rivera"
+  email: "jordan.rivera@example.com"
+  phone: "+1-614-555-0142"
+  location: "Columbus, OH"
+  headline: "Operations analyst: reporting, process improvement, and supply chain"
+  work_auth: "US citizen"
+  requires_sponsorship: false
+  narrative: >
+    Jordan Rivera is an operations analyst with eight years turning messy spreadsheets into
+    reports a team can act on. At a regional distribution company, Jordan standardized shipping
+    and receiving metrics across three warehouses and cut weekly reporting time from two days to
+    two hours. Earlier, as a business analyst at a food producer, Jordan led a process review that
+    cut order-entry errors by 40 percent. Jordan prefers measurable improvements over big plans
+    and is happiest where the work is making a daily process simpler, faster, and more accurate.
+    Target roles are analyst or coordinator roles in operations or supply chain, in the Columbus
+    area or fully remote in the US.
+  must_have:
+    - "reporting or process improvement as a core duty"
+    - "a team that uses the analysis"
+  must_avoid:
+    - "commission-only pay"
+    - "pure data entry"
+    - "pure staffing-agency listing"
+  proof_points:
+    - key: reporting_automation
+      claim: "Cut weekly reporting time from two days to two hours with an automated report"
+      evidence: "Regional distribution company, 2022-2025"
+      metric: "2 days to 2 hours, 3 warehouses"
+    - key: inventory_accuracy
+      claim: "Raised inventory accuracy by redesigning the cycle-count process"
+      evidence: "Warehouse operations"
+      metric: "92% to 98% accuracy"
+    - key: order_errors
+      claim: "Led a process review that cut order-entry errors"
+      evidence: "Regional food producer, 2018-2022"
+      metric: "-40% order-entry errors"
+  employment_terms:
+    target_titles: ["Operations Analyst", "Business Analyst", "Process Improvement Analyst", "Supply Chain Analyst", "Operations Coordinator"]
+    anti_titles: []            # empty: no title is excluded
+    seniority_floor: ""        # blank: any level (nothing is hidden for its level)
+    comp_floor_usd:            # blank: no pay floor
+    comp_target_usd: 70000
+    excluded_employment_types: []
+  geo_rules: &geo_rules
+    remote_ok: true
+    remote_country_allowlist: [US]
+    onsite_states: []          # empty with no metros: nothing is filtered by location
+    onsite_metros: []
+    hybrid_requires_metro: false
+    relocation_acceptable: false
+    travel_days_per_month_max: 4
+
+consulting:
+  track: consulting
+  is_active: true
+  full_name: "Jordan A. Rivera"
+  email: "jordan.rivera@example.com"
+  phone: "+1-614-555-0142"
+  location: "Columbus, OH"
+  headline: "Independent operations consultant: reporting, dashboards, and process documentation"
+  work_auth: "US citizen"
+  requires_sponsorship: false
+  narrative: >
+    Jordan Rivera helps small and mid-size companies replace manual spreadsheets with one shared
+    weekly report, and writes down the process so the team can run it without outside help.
+    Engagements are scoped to a specific outcome: a working dashboard, a documented process, or a
+    cleaner order-to-cash workflow. Jordan works solo and brings in a trusted colleague when a
+    project needs a second pair of hands.
+  must_have:
+    - "a decision maker who can commit budget"
+    - "a concrete near-term outcome, not open-ended advice"
+  must_avoid:
+    - "unpaid 'pick your brain' scoping with no budget"
+    - "ongoing staffing with no defined outcome"
+  proof_points:
+    - key: dashboard_build
+      claim: "Built one weekly dashboard for three warehouses in eight weeks"
+      evidence: "Regional distribution company project"
+      metric: "3 warehouses, 8 weeks, 1 dashboard"
+    - key: reporting_time
+      claim: "Cut weekly reporting time without losing detail"
+      evidence: "Operations consulting engagement"
+      metric: "2 days to 2 hours"
+  consulting_terms:
+    day_rate_floor:
+    day_rate_target: 600
+    min_engagement_days:
+    max_concurrent: 2
+    service_lines: ["reporting and dashboard setup", "process documentation", "order-to-cash cleanup"]
+    target_org_size: ["100-500", "500-1000"]
+    target_sectors: ["professional_services", "manufacturing", "healthcare"]
+    excluded_sectors: []
+    travel_tolerance: "regional, up to 4 days per month"
+  geo_rules: *geo_rules

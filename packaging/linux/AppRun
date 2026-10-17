@@ -1,0 +1,8 @@
+#!/bin/sh
+# AppImage entry point. The AppImage runtime mounts the squashfs read-only and runs this script;
+# every argument is passed through, so `./Kestrel-x.y.z-x86_64.AppImage` opens the app and
+# `./Kestrel-x.y.z-x86_64.AppImage setup` runs the CLI (kestrel/desktop/__main__.py dispatches).
+# Nothing is written beside the binary: the data home is ~/.local/share/kestrel (kestrel/paths.py).
+HERE="$(dirname "$(readlink -f "$0")")"
+export APPDIR="${APPDIR:-$HERE}"
+exec "$HERE/usr/lib/kestrel/kestrel" "$@"

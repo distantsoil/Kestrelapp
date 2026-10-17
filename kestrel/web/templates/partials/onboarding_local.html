@@ -1,0 +1,26 @@
+{# The local-model checks inside the onboarding model step (D-UI-30): Ollama, the hardware
+   profile, download, build and verify, with live progress. Buttons only; the terminal commands
+   are under Show details (release round R1). While work runs this box polls itself; the poll
+   that finds it finished answers with HX-Trigger ob-refresh, which reloads the whole step so its
+   status and the progress indicator move too. #}
+{% from "partials/setup_step_macros.html" import step_details, model_progress, step_actions %}
+<div id="ob-local" class="steps" data-testid="ob-local"
+     {% if running %}hx-get="/onboarding/models/local?poll=1" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if local_message %}<div class="warnbox" role="status">{{ local_message }}</div>{% endif %}
+  {% for s in local_steps %}
+  <div class="step" data-step="{{ s.key }}" data-status="{{ s.status }}">
+    <span class="ic {% if s.status == 'ok' %}ok{% elif s.status == 'now' %}now{% elif s.status == 'warn' %}warn{% else %}todo{% endif %}">{% if s.status == 'ok' %}&#10003;{% elif s.status == 'warn' %}!{% else %}{{ loop.index }}{% endif %}</span>
+    <div>
+      <div><b>{{ s.title }}</b>{% if s.detail %} <span class="quiet">{{ s.detail }}</span>{% endif %}</div>
+      <div class="d">{{ s.explanation }}</div>
+      {{ model_progress(models, s.key) }}
+      {% if action and action.step == s.key and action.lines %}
+      <pre class="log" data-action="{{ action.name }}" data-action-status="{{ action.status }}">{% for line in action.lines %}{{ line }}
+{% endfor %}</pre>
+      {% endif %}
+      {{ step_details(s) }}
+    </div>
+    <span class="act">{{ step_actions(s, running, action, models, '/onboarding/models/action', '#ob-local') }}</span>
+  </div>
+  {% endfor %}
+</div>

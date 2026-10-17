@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en" data-scheme="{{ ui_scheme() }}" x-data="chrome()">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Kestrel{% endblock %}</title>
+  {# Theme and scheme before first paint. The server renders data-scheme from the stored setting;
+     this browser's own choice (localStorage) wins over it, and the theme is per browser only. #}
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('kestrel-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+        var s = localStorage.getItem('kestrel-scheme');
+        if (s === 'indigo' || s === 'teal') document.documentElement.setAttribute('data-scheme', s);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  {# Declared explicitly: static is mounted at /static, so a browser's automatic request for
+     /favicon.ico at the site root would 404 and the tab would stay blank. #}
+  <link rel="icon" href="/static/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-512.png">
+  <meta name="theme-color" content="#4F5BD5">
+  <link rel="stylesheet" href="/static/css/kestrel.css">
+  <script src="/static/js/htmx.min.js" defer></script>
+  <script src="/static/js/alpine.min.js" defer></script>
+  <script>
+    // Busy feedback for every htmx request (kestrel.css body.busy): counted, so overlapping
+    // requests keep the cursor until the last one answers, and a failed send clears it too.
+    (function () {
+      var inflight = 0;
+      function on(name, fn) { document.addEventListener(name, fn); }
+      // A polled partial (hx-trigger="every ...") is not a click: it never shows the cursor.
+      // Nor is a long request that shows its own status (data-no-busy, e.g. the import): there a
+      // spinning cursor for a minute reads as a hang.
+      function polled(evt) { var el = evt.detail && evt.detail.elt; if (el && el.closest && el.closest('[data-no-busy], [data-busy-text]')) return true; var t = el && el.getAttribute && el.getAttribute('hx-trigger'); return !!(t && t.indexOf('every') >= 0); }
+      // An element with data-busy-text (a model call, a PDF render) gets a spinner and that text
+      // beside it for as long as its request is open, instead of the cursor (D-UI-20).
+      function host(evt) { var el = evt.detail && evt.detail.elt; return el && el.closest && el.closest('[data-busy-text]'); }
+      function showStatus(h) {
+        if (h.__status) return;
+        var s = document.createElement('span');
+        s.className = 'import-status busy-status'; s.setAttribute('role', 'status'); s.setAttribute('aria-live', 'polite');
+        s.style.display = 'inline-flex';
+        var dot = document.createElement('span'); dot.className = 'spin'; dot.setAttribute('aria-hidden', 'true');
+        s.appendChild(dot); s.appendChild(document.createTextNode(h.getAttribute('data-busy-text')));
+        var btn = h.tagName === 'FORM' ? h.querySelector('button[type=submit], button:not([type])') : null;
+        (btn || h).insertAdjacentElement('afterend', s);
+        h.__status = s;
+      }
+      function hideStatus(h) { if (h.__status) { h.__status.remove(); h.__status = null; } }
+      // The decision is recorded on the request itself: htmx re-fires afterRequest on an
+      // ancestor when the element was swapped out mid-request, with that ancestor as elt, so
+      // judging the element again on the way out would miscount.
+      function xhr(evt) { return evt.detail && evt.detail.xhr; }
+      on('htmx:beforeRequest', function (evt) {
+        var x = xhr(evt); if (!x || x.__kseen) return; x.__kseen = true;
+        var h = host(evt); if (h) { x.__khost = h; showStatus(h); return; }
+        if (polled(evt)) return;
+        x.__kcounted = true; inflight += 1; document.body.classList.add('busy');
+      });
+      function done(evt) {
+        var x = xhr(evt); if (!x || x.__kdone) return; x.__kdone = true;
+        if (x.__khost) { hideStatus(x.__khost); return; }
+        if (!x.__kcounted) return;
+        inflight = Math.max(0, inflight - 1); if (!inflight) document.body.classList.remove('busy');
+      }
+      on('htmx:afterRequest', done);  // fired on load, error, abort and timeout alike
+    })();
+  </script>
+</head>
+<body>
+{% set cur = active_track(request) %}
+{% set p = request.url.path %}
+{% set icons = {
+  'today': '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+  'pipeline': '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  'pursuits': '<path d="M5 21V4h12l-2 4 2 4H5"/>',
+  'documents': '<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5"/>',
+  'interview': '<path d="M4 4h16v12H8l-4 4z"/>',
+  'offers': '<path d="M3 12l9-9h9v9l-9 9z"/><circle cx="16" cy="8" r="1.5"/>',
+  'calibrate': '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  'analytics': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  'bench': '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/>',
+  'setup': '<path d="M12 2l3 5h5l-4 4 1.5 6L12 14l-5.5 3L8 11 4 7h5z"/>',
+  'sources': '<path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/>',
+  'models': '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  'runs': '<path d="M6 4l14 8-14 8z"/>',
+  'settings': '<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/><circle cx="12" cy="12" r="7"/>',
+  'help': '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  'about': '<circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>',
+  'more': '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'
+} %}
+{% macro icon(name) -%}
+<svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ icons[name]|safe }}</svg>
+{%- endmacro %}
+{% macro navlinks(path, counts=True, track='') %}
+{% for group, items in nav_groups %}
+  <div class="navgroup">
+    {% if group %}<div class="lbl">{{ group }}</div>{% endif %}
+    {% for it in items %}
+    <a href="{{ it.href }}" class="{% if nav_active(it, path) %}active{% endif %}" title="{{ it.label_for(track) }}"{% if nav_active(it, path) %} aria-current="page"{% endif %}>{{ icon(it.icon) }}{% if counts and it.count == 'unrated' %}<span class="ring" id="nav-ring" title="A run is active" hidden></span>{% endif %}{% if counts and it.count %}<span class="n" id="nav-count-{{ it.count }}"{% if it.count == 'unrated' %} title="Roles not yet rated"{% endif %}></span>{% endif %}{{ it.label_for(track) }}</a>
+    {% endfor %}
+  </div>
+{% endfor %}
+{% endmacro %}
+{% macro trackswitch(track, badges=True) %}
+{# Only when more than one track is in use (D-UI-28): with consulting off there is nothing to
+   switch. Two tabs, no "Both" (D-UI-57): every track page reads exactly one track. Each tab's
+   badge is what waits for the operator on that track (Worth a look plus follow-ups due), filled
+   by the /status/counts out-of-band swap and hidden at zero (CSS :empty). #}
+{% if enabled_tracks()|length > 1 %}
+<div class="track-switch" role="tablist" aria-label="Track" data-track="{{ track }}">
+  {% for t in enabled_tracks() %}
+  <a href="?track={{ t }}" role="tab" @click="setTrack('{{ t }}')" data-tab-track="{{ t }}"
+     aria-selected="{{ 'true' if track == t else 'false' }}"
+     class="{% if track == t %}active{% endif %}">{{ words(t).track_name }}{% if badges %}<span class="n" id="nav-count-track-{{ t }}" title="Waiting for you on this track"></span>{% endif %}</a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+<div class="shell">
+  <aside class="side" id="sidebar">
+    <a class="brand" href="/" title="Kestrel"><img class="mark" src="/static/icon.svg" alt="" width="22" height="22"><span class="word">Kestrel</span></a>
+    {{ trackswitch(cur) }}
+    <nav class="mainnav" aria-label="Main">
+      {{ navlinks(p, track=cur) }}
+    </nav>
+    {# Count badges arrive as out-of-band swaps into the #nav-count-* spans above. #}
+    <div hidden hx-get="/status/counts" hx-trigger="load, every 30s" hx-swap="none"></div>
+    <div class="rail" id="rail" hx-get="/status/rail" hx-trigger="load, every 10s" hx-swap="innerHTML">
+      <span class="line"><span class="dot idle"></span><span class="txt">Checking status</span></span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="title">{% block pagetitle %}{{ nav_title(p, cur) }}{% endblock %}</div>
+      <span class="spacer"></span>
+      <button class="search" type="button" @click="openPalette()" title="Command palette (Ctrl+K)">
+        <span class="search-text">Search or jump to</span><kbd>⌘K</kbd></button>
+      <div class="bell" x-data="{ open: false }">
+        <button class="btn ghost" @click="open = !open" title="Notifications"
+                hx-get="/notifications/bell" hx-trigger="load, every 20s" hx-target="#bellcount"
+                hx-swap="innerHTML">🔔<span id="bellcount" class="badge"></span></button>
+        <div class="dropdown" x-show="open" @click.outside="open = false" x-cloak
+             hx-get="/notifications/list" hx-trigger="intersect once">Loading…</div>
+      </div>
+      <div class="menu-wrap" x-data="{ open: false }">
+        <button class="btn ghost" @click="open = !open" title="Appearance: theme and scheme">◑</button>
+        <div class="menu" x-show="open" @click.outside="open = false" x-cloak role="menu">
+          <div class="lbl">Theme</div>
+          <button type="button" :class="{ on: theme === 'light' }" @click="theme = 'light'">Light</button>
+          <button type="button" :class="{ on: theme === 'dark' }" @click="theme = 'dark'">Dark</button>
+          <button type="button" :class="{ on: theme === 'auto' }" @click="theme = 'auto'">System</button>
+          <div class="lbl">Scheme</div>
+          <button type="button" :class="{ on: scheme === 'indigo' }" @click="scheme = 'indigo'">Indigo</button>
+          <button type="button" :class="{ on: scheme === 'teal' }" @click="scheme = 'teal'">Teal</button>
+          <a class="menu-link" href="/settings#appearance">Save as the default under Settings</a>
+        </div>
+      </div>
+      {% if desktop_can_quit() %}
+      {# Closing the window keeps Kestrel in the tray; this ends it (D-UI-27). #}
+      <button class="btn ghost" type="button" title="Quit Kestrel: stop searching and close"
+              data-testid="quit-app"
+              aria-haspopup="dialog" onclick="window.kestrelQuit && window.kestrelQuit.open(this)">⏻</button>
+      {% endif %}
+    </header>
+    <main class="container">
+      {# A one-line notice carried by a redirect (?msg=), e.g. a refused or partial reset.
+         Autoescaped: the text comes from the URL. #}
+      {% set flash = request.query_params.get('msg') if request is defined else None %}
+      {% if flash %}<div class="warnbox" role="status" data-testid="flash" style="margin-bottom:.8rem">{{ flash }}</div>{% endif %}
+      {% include "partials/guide_strip.html" %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+{# Phone: bottom bar with the first three Work pages; More opens a sheet with the rest. #}
+<nav class="bottombar" aria-label="Main (phone)">
+  {% for group, items in nav_groups %}{% for it in items %}{% if it.href in bottom_bar %}
+  <a href="{{ it.href }}" class="{% if nav_active(it, p) %}active{% endif %}">{{ icon(it.icon) }}<span>{{ it.label_for(cur) }}</span></a>
+  {% endif %}{% endfor %}{% endfor %}
+  <button type="button" @click="more = true" :class="{ active: more }">{{ icon('more') }}<span>More</span></button>
+</nav>
+<div class="sheet-backdrop" x-show="more" x-cloak @click="more = false"></div>
+<div class="sheet" x-show="more" x-cloak @keydown.escape.window="more = false">
+  <div class="sheet-head"><b>Kestrel</b><button class="btn ghost" type="button" @click="more = false">Close</button></div>
+  {{ trackswitch(cur, badges=False) }}
+  <nav class="mainnav" aria-label="All pages">
+    {{ navlinks(p, counts=False, track=cur) }}
+  </nav>
+</div>
+
+<div class="palette-backdrop" x-show="palette" x-cloak @click="palette = false"
+     @keydown.escape.window="palette = false"></div>
+<div class="palette" x-show="palette" x-cloak>
+  <input type="text" x-model="q" x-ref="pq" placeholder="Go to…"
+         @keydown.enter="go()" @keydown.down.prevent="idx = Math.min(idx + 1, filtered().length - 1)"
+         @keydown.up.prevent="idx = Math.max(idx - 1, 0)" @input="idx = 0">
+  <ul>
+    <template x-for="(item, i) in filtered()" :key="item.href">
+      <li :class="{ sel: i === idx }" @click="location.href = item.href"
+          @mouseenter="idx = i"><span x-text="item.label"></span>
+        <span class="mono muted" x-text="item.href"></span></li>
+    </template>
+  </ul>
+</div>
+
+<script>
+  function chrome() {
+    return {
+      theme: localStorage.getItem('kestrel-theme') || 'auto',
+      scheme: (function () {
+        var s = null;
+        try { s = localStorage.getItem('kestrel-scheme'); } catch (e) {}
+        if (s === 'indigo' || s === 'teal') return s;
+        return document.documentElement.getAttribute('data-scheme') || 'indigo';
+      })(),
+      palette: false, q: '', idx: 0, more: false,
+      pages: [
+        {% for group, items in nav_groups %}{% for it in items %}
+        {label: {{ it.label_for(cur)|tojson }}, href: {{ it.href|tojson }}},
+        {% endfor %}{% endfor %}
+        {label: 'Failed scoring', href: '/quarantine'}, {label: 'Backup', href: '/backup'},
+      ],
+      init() {
+        this.$watch('theme', v => {
+          localStorage.setItem('kestrel-theme', v);
+          if (v === 'auto') document.documentElement.removeAttribute('data-theme');
+          else document.documentElement.setAttribute('data-theme', v);
+        });
+        if (this.theme !== 'auto') document.documentElement.setAttribute('data-theme', this.theme);
+        this.$watch('scheme', v => {
+          try { localStorage.setItem('kestrel-scheme', v); } catch (e) {}
+          document.documentElement.setAttribute('data-scheme', v);
+        });
+        document.documentElement.setAttribute('data-scheme', this.scheme);
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+        window.addEventListener('keydown', (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); this.openPalette(); }
+        });
+        // Persist the track tab across pages (D-UI-57): localStorage as before, plus a cookie the
+        // server reads, so a page opened without ?track= (Today at /, a bookmark) shows the
+        // remembered tab. With one track in use (consulting switched off, D-UI-28) a stored
+        // choice is ignored.
+        const multi = {{ enabled_tracks()|length }} > 1;
+        const here = new URLSearchParams(location.search).get('track');
+        if (multi) {
+          if (here === 'employment' || here === 'consulting') { this.setTrack(here); }
+          else {
+            let t = null;
+            try { t = localStorage.getItem('kestrel-track'); } catch (e) {}
+            if ((t === 'employment' || t === 'consulting') && t !== {{ cur|tojson }}
+                && !document.cookie.includes('kestrel-track=')) {
+              this.setTrack(t);  // an older install remembered the tab in localStorage only
+              if (document.cookie.includes('kestrel-track=' + t)) location.reload();
+            }
+          }
+        }
+      },
+      openPalette() {
+        this.palette = true; this.more = false;
+        this.$nextTick(() => this.$refs.pq && this.$refs.pq.focus());
+      },
+      setTrack(v) {
+        try { localStorage.setItem('kestrel-track', v); } catch (e) {}
+        document.cookie = 'kestrel-track=' + v + '; path=/; max-age=31536000; samesite=lax';
+      },
+      filtered() {
+        const q = this.q.toLowerCase();
+        return this.pages.filter(p => p.label.toLowerCase().includes(q));
+      },
+      go() { const f = this.filtered(); if (f[this.idx]) location.href = f[this.idx].href; },
+    };
+  }
+</script>
+{% include "partials/toast.html" %}
+{% include "partials/quit_confirm.html" %}
+</body>
+</html>

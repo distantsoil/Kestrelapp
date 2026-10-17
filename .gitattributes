@@ -1,0 +1,14 @@
+# Last matching line wins, so the `binary` overrides below must stay AFTER this one.
+# core.autocrlf=true on the build machine; this pins index normalization to LF regardless of who
+# clones the repo, so a checkout elsewhere cannot silently flip line endings under the tests.
+* text=auto eol=lf
+
+# Minified vendor bundles: suppress the useless one-line diff, but keep them TEXT so the rule above
+# still normalizes them to LF in the index. Do NOT use `binary` here: it implies -text, which would
+# freeze the working tree's CRLF into the index and mangle the bundle on a core.autocrlf machine.
+*.min.js -diff
+
+# The vendored tiktoken cl100k_base cache is hash-named data: never convert its line endings or
+# git will mangle it on checkout and tiktoken will fall back to a network fetch (see FINDINGS F2).
+spike/vendor/tiktoken_cache/** binary
+kestrel/resources/tiktoken_cache/** binary

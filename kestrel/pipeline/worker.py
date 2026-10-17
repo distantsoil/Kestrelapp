@@ -1,0 +1,530 @@
+"""The pipeline worker (SPEC.md 6.6). It drains one tier fully before starting the next, because
+Tier 1 and Tier 2 use different models and 16GB of VRAM cannot hold both without thrash (unload +
+reload on every task). Within a tier it runs settings.concurrency.{tier1,tier2} leases in parallel.
+
+Every unit of work is a leased Task row, so a kill mid-run resumes cleanly: reclaim_expired returns
+crashed leases, handlers are idempotent on stage, and enqueue is idempotent per opportunity, so
+restart neither loses nor duplicates work. A graceful stop lets in-flight tasks finish and leaves
+the rest pending. Progress reports per-tier throughput and an ETA from the trailing 20 completions.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import time
+from collections import deque
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+import structlog
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from kestrel.config import HostedMode, Settings
+from kestrel.db.base import utcnow_iso
+from kestrel.db.models import Setting, Source, Task
+from kestrel.llm.client import LLMClient
+from kestrel.pipeline import runlog
+from kestrel.pipeline._shared import (
+    HandlerOutcome,
+    ModelOverrideError,
+    client_for,
+    settings_with_override,
+)
+from kestrel.pipeline.embed import enqueue_stale_embeddings, handle_embed
+from kestrel.pipeline.profile import load_profile
+from kestrel.pipeline.tier0 import run_tier0_batch
+from kestrel.pipeline.tier1 import handle_t1
+from kestrel.pipeline.tier2 import handle_t2
+from kestrel.queue.queue import TaskQueue, claimable
+from kestrel.services.run_model import T2_ONLY_KEY
+
+log = structlog.get_logger()
+
+ProgressCb = Callable[[str], None]
+
+# The tier whose model a task's `model_override` replaces, per task type. On a t1 task only a
+# Score again (`rescore`) override applies to Tier 1 (D-UI-50); a run's one-run model rides on a
+# t1 task as T2_ONLY_KEY instead and reaches Tier 2 alone (D-UI-72).
+_OVERRIDE_TIER = {"t1": "tier1", "t2": "tier2"}
+
+
+def _tier_external(settings: Settings, tier: str) -> bool:
+    """Whether `tier` names an external backend (whatever Hosted mode says)."""
+    tcfg = settings.llm.tiers.get(tier)
+    backend = settings.llm.backends.get(tcfg.backend) if tcfg else None
+    return bool(backend and backend.external)
+
+
+@dataclass
+class TierStats:
+    completed: int = 0
+    errors: int = 0
+    elapsed_s: float = 0.0
+
+    @property
+    def per_minute(self) -> float:
+        return (self.completed / self.elapsed_s * 60.0) if self.elapsed_s > 0 else 0.0
+
+
+@dataclass
+class RunStats:
+    tier0: dict = field(default_factory=dict)
+    embed: TierStats = field(default_factory=TierStats)
+    tier1: TierStats = field(default_factory=TierStats)
+    tier2: TierStats = field(default_factory=TierStats)
+
+
+class Worker:
+    def __init__(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        client: LLMClient,
+        settings: Settings,
+        *,
+        stop: asyncio.Event | None = None,
+        progress: ProgressCb | None = None,
+        paused: Callable[[], bool] | None = None,
+    ) -> None:
+        self._sm = sessionmaker
+        # The app's pause flag (review finding 2): every drain checks it between tasks, so a
+        # pause finishes the leased task, releases nothing mid-task and claims no more.
+        self._paused = paused or (lambda: False)
+        self._client = client
+        self._settings = settings
+        self._queue = TaskQueue(sessionmaker)
+        self._stop = stop or asyncio.Event()
+        self._progress = progress or (lambda _m: None)
+        self._profiles = {t: load_profile(t) for t in ("employment", "consulting")}
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    def _halted(self) -> bool:
+        """Stop requested or worker paused: claim nothing more (finding 2)."""
+        return self._stop.is_set() or self._paused()
+
+    def apply_settings(self, settings: Settings) -> None:
+        """Swap in freshly resolved settings for the worker AND its client. The client resolves
+        each tier's backend and model from its own `settings`, so updating only the worker's copy
+        (what the serve loop used to do) left the client on the settings it was built with and
+        a Settings-page change to a tier never reached the model call."""
+        self._settings = settings
+        if hasattr(self._client, "settings"):
+            self._client.settings = settings
+        self.refresh_profiles()
+
+    def refresh_profiles(self) -> None:
+        """Re-read profile.yml when it has changed on disk (the Profile page writes it, D-UI-21),
+        so a saved threshold reaches the next cycle without a restart. Called from
+        apply_settings, once per cycle: a drain already running finishes on the old profile."""
+        from kestrel.services.profile_edit import profile_path
+
+        try:
+            stamp = profile_path().stat().st_mtime_ns
+        except OSError:
+            stamp = 0
+        if stamp != getattr(self, "_profile_stamp", None):
+            self._profile_stamp = stamp
+            self._profiles = {t: load_profile(t) for t in ("employment", "consulting")}
+
+    async def resolve_settings(self, mode: str | None) -> Settings:
+        """Settings for one run: the setting-table layer plus the requested mode ("local" or
+        "hosted"), resolved once so the whole run scores on one tier set. None keeps the settings
+        the worker already holds, whose own `llm.mode` is then what the run records."""
+        if mode is None:
+            return self._settings
+        from kestrel.services.setting_overrides import load_settings_with_db
+
+        async with self._sm() as s:
+            return await load_settings_with_db(s, mode=mode)
+
+    async def reclaim(self) -> int:
+        """Return any crashed (expired) leases to the queue before draining, then re-enqueue
+        orphans once (requeue_orphans). Called once per worker startup."""
+        n = await self._queue.reclaim_expired()
+        await self.requeue_orphans()
+        return n
+
+    async def requeue_orphans(self) -> dict[str, int]:
+        """A role waiting on a scoring step with nothing queued gets its task back, once
+        (pipeline.orphans, D-UI-56). Never fatal to startup: a failure is logged and the role
+        keeps reading "waiting" until the next start."""
+        from kestrel.pipeline.orphans import requeue_orphans
+
+        try:
+            return await requeue_orphans(self._sm)
+        except SQLAlchemyError as exc:
+            log.warning("orphan_requeue_failed", error=str(exc))
+            return {"requeued": 0, "stuck": 0}
+
+    async def _has_claimable(self, task_type: str) -> bool:
+        """Whether lease() could return anything for the type (queue.claimable)."""
+        async with self._sm() as s:
+            n = (
+                await s.execute(
+                    select(func.count())
+                    .select_from(Task)
+                    .where(Task.type == task_type, claimable(utcnow_iso()))
+                )
+            ).scalar_one()
+        return n > 0
+
+    async def _pending_count(self, task_type: str) -> int:
+        async with self._sm() as s:
+            return (
+                await s.execute(
+                    select(func.count())
+                    .select_from(Task)
+                    .where(Task.type == task_type, Task.status == "pending")
+                )
+            ).scalar_one()
+
+    async def drain_embed(self, stats: TierStats) -> None:
+        """The embed tier: first enqueue every opportunity whose vector is missing or came from
+        another model (once per embed model, D-EMBED-4), then drain. A failed sweep is logged and
+        the drain still runs; new postings were enqueued at ingestion regardless."""
+        try:
+            await enqueue_stale_embeddings(self._sm, self._settings)
+        except SQLAlchemyError as exc:
+            log.warning("embed_sweep_failed", error=str(exc))
+        await self.drain_tier("embed", self._settings.concurrency.embed, handle_embed, stats)
+
+    async def drain_tier(
+        self,
+        task_type: str,
+        concurrency: int,
+        handler: Callable[..., Awaitable[HandlerOutcome]],
+        stats: TierStats,
+    ) -> None:
+        """Run up to `concurrency` leases in parallel until the tier's queue is empty or a stop is
+        requested. Completions feed a trailing-window ETA.
+
+        Tier 2 drains one model at a time (CLAUDE.md: model swap thrash): its claimable tasks are
+        grouped by the model they will run on (the configured Tier 2 model, or a task's
+        `model_override`), the configured model's group first, then the largest, and each group
+        is drained to empty before the next starts. A mixed queue never alternates models."""
+        total_at_start = await self._pending_count(task_type)
+        started = time.perf_counter()
+        window: deque[float] = deque(maxlen=20)
+        worker_id = f"pipeline-{task_type}"
+        done_lock = asyncio.Lock()
+        group: list[Any] = [None]  # the lease filter of the model group being drained
+
+        async def one_worker(idx: int) -> None:
+            wid = f"{worker_id}-{idx}"
+            while not self._halted():
+                task = await self._queue.lease(
+                    wid, types=[task_type], lease_seconds=600, where=group[0]
+                )
+                if task is None:
+                    return
+                async with done_lock:
+                    leased[0] += 1
+                payload = task.payload or {}
+                opp_id = payload.get("opportunity_id")
+                settings, client = await self._task_settings(task_type, payload)
+                kwargs: dict = {}
+                if task_type == "t2":
+                    kwargs["changed"] = bool(payload.get("changed"))
+                    if payload.get("rescore"):
+                        kwargs["rescore"] = True
+                        kwargs["requested_at"] = payload.get("requested_at")
+                        kwargs["task_id"] = task.id
+                if task_type == "t1":
+                    if payload.get("rescore"):
+                        # A score-again of a role Tier 1 set aside: the stage stays as it was
+                        # until this task runs (queue.rescore), so the handler is told.
+                        kwargs["rescore"] = True
+                        kwargs["requested_at"] = payload.get("requested_at")
+                        if payload.get("tier0_override"):
+                            # Score this role anyway (D-UI-74): runs from t0_reject.
+                            kwargs["tier0_override"] = True
+                        if payload.get("model_override"):
+                            # Score again on another model (D-UI-50): Tier 1 ran on it (or fell
+                            # back, logged), and the Tier 2 task carries it on; that task's own
+                            # settings re-check it when it runs, so a pick that can no longer
+                            # run falls back there too (hard rule 4).
+                            kwargs["model_override"] = payload.get("model_override")
+                    if payload.get(T2_ONLY_KEY):
+                        # A run's one-run model (D-UI-72): Tier 1 stays on the configured model;
+                        # only the Tier 2 task Tier 1 enqueues carries the pick.
+                        kwargs["t2_model_override"] = payload.get(T2_ONLY_KEY)
+                try:
+                    outcome = await handler(
+                        self._sm,
+                        client,
+                        settings,
+                        opportunity_id=opp_id,
+                        profiles=self._profiles,
+                        **kwargs,
+                    )
+                except Exception as exc:  # unexpected handler crash: retry the task, keep draining
+                    log.error("handler_crash", task=task.id, type=task_type, error=str(exc))
+                    await self._queue.fail(task.id, str(exc), worker_id=wid, retry=True)
+                    async with done_lock:
+                        stats.errors += 1
+                    continue
+
+                if outcome.action == "error":
+                    await self._queue.fail(task.id, outcome.error or "", worker_id=wid, retry=True)
+                    async with done_lock:
+                        stats.errors += 1
+                    continue
+
+                await self._queue.complete(task.id, worker_id=wid)
+                async with done_lock:
+                    stats.completed += 1
+                    window.append(time.perf_counter())
+                    self._emit_progress(task_type, stats.completed, total_at_start, window)
+
+        leased = [0]
+        if task_type != "t2":
+            await asyncio.gather(*(one_worker(i) for i in range(max(1, concurrency))))
+        else:
+            while not self._halted():
+                groups = await self._model_groups(task_type)
+                if not groups:
+                    break
+                group[0] = groups[0]
+                leased[0] = 0
+                await asyncio.gather(*(one_worker(i) for i in range(max(1, concurrency))))
+                if not leased[0]:
+                    break  # counted but not claimable after all (a lost race): next cycle
+        stats.elapsed_s = time.perf_counter() - started
+
+    async def _model_groups(self, task_type: str) -> list[Any]:
+        """Lease filters for the tier's claimable tasks, one per model they will run on, in
+        drain order: the configured model first, then by task count (largest first), then by
+        name, so the order is stable. An override naming the configured model joins its group."""
+        tier = _OVERRIDE_TIER[task_type]
+        tcfg = self._settings.llm.tiers.get(tier)
+        cfg = (str(tcfg.backend), str(tcfg.model)) if tcfg is not None else ("", "")
+        backend = func.coalesce(func.json_extract(Task.payload, "$.model_override.backend"), "")
+        model = func.json_extract(Task.payload, "$.model_override.model")
+        async with self._sm() as s:
+            rows = (
+                await s.execute(
+                    select(backend, model, func.count())
+                    .where(Task.type == task_type, claimable(utcnow_iso()))
+                    .group_by(backend, model)
+                )
+            ).all()
+        counts: dict[tuple[str, str] | None, int] = {}
+        for b, m, n in rows:
+            key = None if (not m or (str(b), str(m)) == cfg) else (str(b), str(m))
+            counts[key] = counts.get(key, 0) + int(n)
+        order = sorted(counts, key=lambda k: (k is not None, -counts[k], k or ("", "")))
+        out: list[Any] = []
+        for key in order:
+            if key is None:
+                out.append(or_(model.is_(None), model == "",
+                               and_(backend == cfg[0], model == cfg[1])))
+            else:
+                out.append(and_(backend == key[0], model == key[1]))
+        return out
+
+    async def _task_settings(self, task_type: str, payload: dict) -> tuple[Settings, LLMClient]:
+        """The settings and client for one task: the worker's own, or, for a score-again task
+        that names another model (`model_override`, D-UI-50), a deep copy with that tier's model
+        replaced for this task only. An override that can no longer run is logged and the task
+        runs on the configured model instead: the role still gets scored (hard rule 4).
+
+        `self._settings` is refreshed only between cycles, so a task that would reach an external
+        backend first re-reads Hosted mode from the setting rows (_hosted_now, one small read).
+        Turned off, or its disclosure no longer acknowledged, since the cycle began: an override
+        falls back to the configured model, and a configured hosted tier gets the live Hosted
+        mode so the client refuses the send exactly as when it is off (Privacy: nothing leaves
+        the machine after the operator turned that off). Local tasks pay no extra read."""
+        override = payload.get("model_override")
+        tier = _OVERRIDE_TIER.get(task_type)
+        if tier is None:
+            return self._settings, self._client
+        if task_type == "t1" and not payload.get("rescore"):
+            override = None  # Tier 1 runs a one-off model only for Score again (D-UI-72 amended)
+        settings = self._settings
+        if override:
+            try:
+                settings = settings_with_override(self._settings, tier, override)
+            except ModelOverrideError as exc:
+                log.warning("model_override_unavailable", type=task_type, reason=str(exc))
+        if _tier_external(settings, tier):
+            live = await self._hosted_now()
+            if not live.active:
+                if settings is not self._settings:
+                    log.warning(
+                        "model_override_unavailable", type=task_type,
+                        reason="Hosted mode was turned off since this run began",
+                    )
+                    settings = self._settings
+                if _tier_external(settings, tier):
+                    log.warning("hosted_mode_off_mid_run", type=task_type, tier=tier)
+                    settings = settings.model_copy(deep=True)
+                    settings.llm.hosted_mode = live
+        if settings is self._settings:
+            return self._settings, self._client
+        return settings, client_for(self._client, settings)
+
+    async def _hosted_now(self) -> HostedMode:
+        """Hosted mode as the setting rows say it is NOW: the cycle's copy with every
+        `llm.hosted_mode.<field>` row laid over it (the Settings > Hosted switch and the
+        disclosure acknowledgement are written there). A row that no longer validates reads as
+        off: when unsure, nothing is sent. Limitation: a row DELETED mid-cycle keeps the cycle's
+        value until the next cycle (the switch writes False, it does not delete)."""
+        prefix = "llm.hosted_mode."
+        try:
+            async with self._sm() as s:
+                rows = (
+                    await s.execute(
+                        select(Setting.key, Setting.value).where(Setting.key.like(prefix + "%"))
+                    )
+                ).all()
+        except SQLAlchemyError as exc:
+            log.warning("hosted_mode_read_failed", error=str(exc))
+            return HostedMode(enabled=False)
+        data = self._settings.llm.hosted_mode.model_dump()
+        for key, value in rows:
+            field_name = key[len(prefix):]
+            if "." not in field_name:
+                data[field_name] = value
+        try:
+            return HostedMode.model_validate(data)
+        except ValueError as exc:
+            log.warning("hosted_mode_row_invalid", error=str(exc))
+            return HostedMode(enabled=False)
+
+    def _emit_progress(self, task_type: str, done: int, total: int, window: deque[float]) -> None:
+        eta = ""
+        if len(window) >= 2:
+            per_item = (window[-1] - window[0]) / (len(window) - 1)
+            remaining = max(0, total - done)
+            eta = f", eta ~{int(per_item * remaining)}s" if remaining else ""
+        rpm = ""
+        if len(window) >= 2:
+            per_item = (window[-1] - window[0]) / (len(window) - 1)
+            if per_item > 0:
+                rpm = f", {60.0 / per_item:.1f}/min"
+        self._progress(f"[{task_type}] {done}/{total}{rpm}{eta}")
+
+    async def drain_scrapes(self, stats: TierStats | None = None) -> TierStats:
+        """Execute every pending `scrape` task, one source at a time (each source rate-limits its
+        own host; parallel sources would only multiply that). The scheduler, the tray's "scan
+        now", and MCP `trigger_scan` all ENQUEUE these; this is their only consumer. A source
+        that fails records its own scrape_run and the task completes: retrying a scrape through
+        the queue would re-hit a public site that already answered with an error."""
+        from kestrel.ingest.http import HttpClient
+        from kestrel.ingest.runner import run_source
+        from kestrel.ingest.signal_runner import run_signal_source
+        from kestrel.ingest.signal_sources import SIGNAL_SOURCE_KINDS
+
+        stats = stats or TierStats()
+        started = time.perf_counter()
+        wid = "pipeline-scrape"
+        if self._halted() or not await self._has_claimable("scrape"):
+            # Nothing queued: skip building the HTTP client. Its TLS context (the CA bundle
+            # parse) is synchronous work on the shared event loop, and this runs every 5 s.
+            stats.elapsed_s = time.perf_counter() - started
+            return stats
+        ing = self._settings.ingest
+        async with HttpClient(
+            user_agent=ing.user_agent,
+            default_rate_per_sec=ing.default_rate_per_sec,
+            timeout=ing.request_timeout_s,
+            respect_robots=ing.respect_robots,
+        ) as http:
+            while not self._halted():
+                task = await self._queue.lease(wid, types=["scrape"], lease_seconds=1800)
+                if task is None:
+                    break
+                source_id = (task.payload or {}).get("source_id")
+                try:
+                    async with self._sm() as s:
+                        src = await s.get(Source, source_id) if source_id is not None else None
+                        kind = src.kind if src else None
+                    if kind is None:
+                        raise ValueError(f"source {source_id!r} not found")
+                    if kind in SIGNAL_SOURCE_KINDS:
+                        outcome = await run_signal_source(
+                            self._sm, source_id, http=http, client=self._client,
+                            settings=self._settings,
+                        )
+                    else:
+                        payload = task.payload or {}  # D-UI-72: a scan's one-run model
+                        outcome = await run_source(
+                            self._sm, source_id, http=http,
+                            model_override=payload.get("model_override"),
+                            model_label=payload.get("model_label"),
+                        )
+                except Exception as exc:  # the source's own run recorded what it could
+                    log.error("scrape_task_crash", task=task.id, source=source_id, error=str(exc))
+                    await self._queue.fail(task.id, str(exc), worker_id=wid, retry=False)
+                    stats.errors += 1
+                    # A crash before the runner recorded a scrape_run leaves last_run_at where it
+                    # was, and the scheduler would re-enqueue (and dead-letter) every tick. Advance
+                    # it so the source waits out its cadence like a failed run does.
+                    with contextlib.suppress(Exception):
+                        async with self._sm() as s:
+                            src = await s.get(Source, source_id) if source_id is not None else None
+                            if src is not None:
+                                src.last_run_at = utcnow_iso()
+                                await s.commit()
+                    continue
+                await self._queue.complete(task.id, worker_id=wid)
+                stats.completed += 1
+                if outcome.status != "ok":
+                    stats.errors += 1
+                self._progress(f"[scrape] source {source_id}: {outcome.status} {outcome.counts}")
+        stats.elapsed_s = time.perf_counter() - started
+        return stats
+
+    async def run(
+        self, *, track: str | None = None, limit: int | None = None, mode: str | None = None
+    ) -> RunStats:
+        """Full pass: reclaim crashed leases, Tier 0 sweep, then drain Tier 1, then Tier 2. A crash
+        anywhere marks the run row `failed` with the error and re-raises; a run is never left
+        `running` after the process that owned it has moved on. `mode` ("local" or "hosted")
+        resolves the tier set for this whole run and is recorded on the Run row; an explicit
+        "hosted" that cannot run raises config.HostedModeError before any row is written."""
+        self.apply_settings(await self.resolve_settings(mode))
+        stats = RunStats()
+        run_id = await runlog.open_run(
+            self._sm, name="pipeline", track=track, mode=self._settings.llm.mode
+        )
+        try:
+            return await self._run_tiers(stats, run_id, track=track, limit=limit)
+        except Exception as exc:
+            await runlog.finish_run(
+                self._sm, run_id, status="failed",
+                counts={"error": f"{type(exc).__name__}: {exc}"[:500]},
+            )
+            raise
+
+    async def _run_tiers(
+        self, stats: RunStats, run_id: int, *, track: str | None, limit: int | None
+    ) -> RunStats:
+        await self.reclaim()
+
+        stats.tier0 = await run_tier0_batch(
+            self._sm, settings=self._settings, track=track, limit=limit
+        )
+        self._progress(f"[t0] {stats.tier0}")
+
+        # Embed FIRST. Tier 1's reranker gate and Tier 2's few-shot selection both look up the
+        # opportunity's vector and silently degrade without one, so draining embed after them would
+        # leave the first pass through every batch running blind.
+        if not self._stop.is_set():
+            await self.drain_embed(stats.embed)
+        if not self._stop.is_set():
+            await self.drain_tier("t1", self._settings.concurrency.tier1, handle_t1, stats.tier1)
+        if not self._stop.is_set():
+            await self.drain_tier("t2", self._settings.concurrency.tier2, handle_t2, stats.tier2)
+
+        await runlog.finish_run(
+            self._sm, run_id,
+            status="stopping" if self._stop.is_set() else "done",
+            counts=runlog.stats_counts(stats),
+        )
+        return stats

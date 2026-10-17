@@ -1,0 +1,98 @@
+{# Today's persistent run panel (D-UI-59), full width at the top, always present. One run summary
+   per request (kestrel.analytics.run_summary with track None, R1): the run is global, so the
+   headline here is the very string the status rail and the Schedule card's tooltip print
+   (run_summary.step_words). Only "This run added ..." is the active tab's track, and its
+   "now N in Review" is review.n, the Review card's own number (re-sent out of band below).
+
+   Searching: "Searching 3 of 5 searches", a breathing bar, the search running now, last
+   activity. Rating: the segmented bar (scored, failed, rating now, waiting), the counts, the
+   model and the time left when an estimate exists. Paused: "Pausing: finishing N" while leased
+   tasks finish, then "Paused", a Resume button, no live dot, no stall warning, slow poll. Finished or idle: "Last run", the local date and time, a status word
+   (a tooltip names a source that had a problem and says it is retried next run), a dim bar,
+   then two lines at the same size. Polls every 5 s while active, every 30 s otherwise. #}
+{% set rs = run %}{% set w = words(track) %}
+{% set multi = enabled_tracks()|length > 1 %}
+{% set q = '?track=' ~ track if multi else '' %}
+<div id="today-run" class="card run-panel" data-testid="today-run"
+     data-run="{{ 'active' if rs.active else ('paused' if rs.paused else ('idle' if rs.has_run else 'none')) }}"
+     data-no-busy hx-get="/today/run?track={{ track }}" hx-trigger="every {{ '5s' if rs.active or rs.finishing else '30s' }}, run-refresh from:body" hx-swap="outerHTML">
+  {% macro additions() -%}
+    {%- if not track_ran -%}
+      <span data-testid="run-no-track">No runs yet on this track.</span>
+    {%- else -%}
+      {%- set into = (w.track_name ~ "'s ") if multi else '' -%}
+      This run added <b class="run-good">{{ added.worth }}</b> to {{ into }}Worth a look (now {{ review.n }} in Review), <b class="run-warn">{{ added.maybe }}</b> to Maybe and {{ added.not_fit }} to Not a fit.
+    {%- endif -%}
+  {%- endmacro %}
+  {% macro second_line() -%}
+    {%- if rs.set_aside -%}
+    <span data-testid="run-rules">{{ rs.set_aside }} set aside by your rules{% if rs.rules_words %} ({{ rs.rules_words }}){% endif %} <a href="/settings">Review rules</a></span>
+    {%- endif -%}
+    {%- if rs.set_aside and rs.failed %} · {% endif -%}
+    {%- if rs.failed -%}
+    <span data-testid="run-failed"><span class="run-bad">{{ rs.failed }} failed</span> <a href="/quarantine">Score again</a></span>
+    {%- endif -%}
+  {%- endmacro %}
+
+  {% if rs.active and rs.stage == 'searching' %}
+    <div class="run-head"><h3 data-testid="run-headline">{{ rs.headline }}</h3><span class="sp"></span><span class="run-when">last activity {{ rs.last_activity_words }}</span></div>
+    <div class="run-prog breathe" role="progressbar" aria-label="Searching" aria-valuetext="{{ rs.headline }}"><i></i></div>
+    <p class="quiet run-line" data-testid="run-current">{{ rs.current_search or 'Starting the next search' }}</p>
+  {% elif rs.active %}
+    <div class="run-head"><h3 data-testid="run-headline">{{ rs.headline }}</h3><span class="sp"></span><span class="run-when">last activity {{ rs.last_activity_words }}</span></div>
+    {% if rs.stage == 'quick_screen' %}
+      {% set b = rs.bars[1] %}
+      <div class="run-prog" role="progressbar" aria-label="Quick screen" aria-valuemin="0" aria-valuemax="{{ b.total }}" aria-valuenow="{{ b.done }}"><i class="s-run" style="width:{{ b.pct }}%"></i></div>
+      <p class="run-line"><span class="run-good">{{ rs.quick_screen_kept }} kept</span> · <span class="quiet">{{ rs.quick_screen_total - rs.quick_screen_done }} waiting for the quick screen</span></p>
+    {% else %}
+      {% set rw = rs.rate_widths %}
+      <div class="run-prog" role="progressbar" aria-label="Rating progress" aria-valuemin="0" aria-valuemax="{{ rs.to_rate }}" aria-valuenow="{{ rs.rated + rs.failed }}">
+        <i class="s-good" style="width:{{ rw.scored }}%" title="{{ rs.rated }} scored"></i><i class="s-bad" style="width:{{ rw.failed }}%" title="{{ rs.failed }} failed"></i><i class="s-run" style="width:{{ rw.running }}%" title="{{ rs.rating_now }} rating now"></i>
+      </div>
+      <p class="run-line" data-testid="run-legend"><span class="run-good">{{ rs.rated }} scored</span> · <span class="run-bad">{{ rs.failed }} failed</span> · <span class="run-accent">{{ rs.rating_now }} rating now</span> · <span class="quiet">{{ rs.waiting }} waiting{% if rate_model %} on {{ rate_model }}{% endif %}</span></p>
+    {% endif %}
+    {% if eta_minutes %}<p class="quiet run-line" data-testid="run-eta">About {{ eta_minutes }} {{ 'minute' if eta_minutes == 1 else 'minutes' }} left at the current pace.</p>{% endif %}
+    {% if rs.found_new %}<p class="quiet run-line">{{ rs.found_new }} new {{ w.role if rs.found_new == 1 else w.roles }} found so far. New {{ w.roles }} appear under Review as they finish.</p>{% endif %}
+  {% elif rs.paused %}
+    <div class="run-head"><h3 data-testid="run-headline">{{ rs.headline }}</h3><span class="sp"></span>{% if rs.when %}<span class="run-when">started {{ rs.when }}</span>{% endif %}
+      <button type="button" class="btn small" data-testid="run-resume" hx-post="/api/worker/resume" hx-swap="none">Resume</button></div>
+    <div class="run-prog dim" aria-hidden="true"><i></i></div>
+    <p class="run-line">{% if rs.finishing %}The {{ rs.finishing }} {{ 'task' if rs.finishing == 1 else 'tasks' }} already running will finish; nothing new starts until you resume.{% else %}Nothing new starts until you resume.{% endif %} So far: {{ rs.found_new }} new {{ w.role if rs.found_new == 1 else w.roles }} found, {{ rs.rated }} rated.</p>
+  {% elif rs.has_run %}
+    <div class="run-head">
+      <h3 data-testid="run-headline">Last run</h3>
+      {% if rs.when %}<span class="run-when" data-testid="run-ended">{{ rs.when }}</span>{% endif %}
+      {% if rs.problem_count %}
+        <span><span class="pill warn" data-testid="run-status">finished, {{ rs.problem_count }} {{ 'source' if rs.problem_count == 1 else 'sources' }} had a problem</span>
+          <span class="tip" tabindex="0" role="note" aria-label="{{ rs.problem_note }}" data-tip="{{ rs.problem_note }}" title="{{ rs.problem_note }}">i</span></span>
+      {% elif rs.status == 'interrupted' or rs.searches_cut_off %}
+        <span class="pill warn" data-testid="run-status">stopped early</span>
+      {% elif rs.status == 'running' %}
+        <span class="pill" data-testid="run-status">still running</span>
+      {% elif rs.status == 'failed' %}
+        <span class="pill bad" data-testid="run-status">did not finish</span>
+      {% else %}
+        <span class="pill good" data-testid="run-status">finished</span>
+      {% endif %}
+    </div>
+    <div class="run-prog dim" aria-hidden="true"><i></i></div>
+    <p class="run-line" data-testid="run-line1"><b>{{ rs.found_new }}</b> new {{ w.role if rs.found_new == 1 else w.roles }} found, <b>{{ rs.rated }}</b> rated. {{ additions() }}</p>
+    {% set l2 = second_line()|trim %}
+    {% if l2 %}<p class="quiet run-line" data-testid="run-line2">{{ l2 }}</p>{% endif %}
+  {% else %}
+    <div class="run-head"><h3 data-testid="run-headline">No runs yet</h3></div>
+    <div class="run-prog dim" aria-hidden="true"><i></i></div>
+    <p class="quiet run-line">Press Scan now to run the first search. The progress shows here.</p>
+  {% endif %}
+  {% if (rs.active or rs.paused) and (rs.set_aside or rs.failed) %}
+    <p class="quiet run-line" data-testid="run-line2">{{ second_line()|trim }}</p>
+  {% endif %}
+  {% if open_failed and open_failed != rs.failed %}
+    <p class="quiet run-line" data-testid="open-failed"><a href="/quarantine">{{ open_failed }} {{ w.role if open_failed == 1 else w.roles }} failed scoring</a>. Retry them on the same model or another.</p>
+  {% endif %}
+</div>
+{% if oob %}
+{% include "partials/today_review.html" %}
+<div id="schedule-bar" hx-swap-oob="true" class="sched-bar{% if rs.active %} running{% endif %}" tabindex="0" role="img"
+     aria-label="Run status: {{ rs.headline }}" data-tip="{{ rs.headline }}" title="{{ rs.headline }}"></div>
+{% endif %}

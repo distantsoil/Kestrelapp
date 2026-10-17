@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Kestrel">
+  <title>Kestrel</title>
+  <!-- Windhover: a kestrel seen from below, holding still in the wind (D-UI-13). Texture is
+       light only: a two-tone ground, a glare from the top left, a rim light, a soft shadow. -->
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6470E0"/>
+      <stop offset="1" stop-color="#3A44A8"/>
+    </linearGradient>
+    <radialGradient id="glare" cx="0.26" cy="0.18" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bird" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E3E6FB"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="11" flood-color="#000000" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#ground)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glare)"/>
+  <rect x="5" y="5" width="502" height="502" rx="107" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="3"/>
+  <path d="M256 92 C270 92 282 102 284 118 C286 134 292 142 300 150 C348 134 420 112 472 116 C452 170 380 220 312 236 C306 266 300 294 294 318 C324 326 348 352 358 392 C324 398 290 400 256 400 C222 400 188 398 154 392 C164 352 188 326 218 318 C212 294 206 266 200 236 C132 220 60 170 40 116 C92 112 164 134 212 150 C220 142 226 134 228 118 C230 102 242 92 256 92 Z" fill="url(#bird)" filter="url(#shadow)"/>
+</svg>

@@ -1,0 +1,18 @@
+# Shipped sources (SPEC.md 5.1-5.3, D-SRC-3). Job searches and the SEC filings watch are built from
+# the operator's profile (kestrel/ingest/generated.py), and company boards, feeds and PE portfolio
+# pages are added on the Sources page, so the only source shipped here is SAM.gov, which needs a
+# key the operator saves under Sources > Advanced. Shipped DISABLED: a fresh install must not
+# scrape unattended (see also scheduler.enabled=false).
+
+employment: []
+
+consulting:
+  - kind: sam_gov
+    name: "SAM.gov federal IT contracts"
+    enabled: false
+    cadence_hours: 24
+    config:
+      # Requires a free API key from sam.gov; the adapter disables the source with a clear message
+      # if the key is absent rather than failing the run.
+      api_key_env: SAM_GOV_API_KEY
+      naics: ["541512", "541611", "541519"]

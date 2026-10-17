@@ -1,0 +1,32 @@
+{# Steps 2 to 6 of Settings > System (D-UI-31). Polled every 2 s while a download, a build or the
+   check runs: the root carries the hx-get only then, so a finished one's final state is rendered
+   once and the polling stops. Buttons only; the terminal commands are under Show details. #}
+{% from "partials/setup_step_macros.html" import step_details, model_progress, step_actions %}
+<div id="setup-steps" class="steps"{% if setup_status %} data-setup-status="{{ setup_status }}"{% endif %}
+     {% if running %}hx-get="/setup/steps" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if message %}<div class="warnbox">{{ message }}</div>{% endif %}
+  {% for s in st.steps %}
+  <div class="step" data-step="{{ s.key }}" data-status="{{ s.status }}">
+    <span class="ic {% if s.status == 'ok' %}ok{% elif s.status == 'now' %}now{% elif s.status == 'warn' %}warn{% else %}todo{% endif %}">{% if s.status == 'ok' %}&#10003;{% elif s.status == 'warn' %}!{% else %}{{ s.number }}{% endif %}</span>
+    <div>
+      <div><b>{{ s.number }}. {{ s.title }}</b>{% if s.detail %} <span class="quiet">{{ s.detail }}</span>{% endif %}</div>
+      <div class="d">{{ s.explanation }}</div>
+      {{ model_progress(models, s.key) }}
+      {% if s.key == 'profile' and s.status != 'skip' %}
+      <form method="post" action="/setup/profile" hx-post="/setup/profile" hx-target="#system-panel" hx-swap="outerHTML" style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+        <select name="profile">
+          {% for name in profile_names %}<option value="{{ name }}"{% if name == st.profile %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+        <button class="btn quiet" type="submit">Change</button>
+      </form>
+      {% endif %}
+      {% if action and action.step == s.key and action.lines %}
+      <pre class="log" data-action="{{ action.name }}" data-action-status="{{ action.status }}">{% for line in action.lines %}{{ line }}
+{% endfor %}</pre>
+      {% endif %}
+      {{ step_details(s) }}
+    </div>
+    <span class="act">{{ step_actions(s, running, action, models, '/setup/action', '#setup-steps') }}</span>
+  </div>
+  {% endfor %}
+</div>

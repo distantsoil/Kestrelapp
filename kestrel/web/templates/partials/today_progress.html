@@ -1,0 +1,48 @@
+{# Today's scoring progress panel (D-UI-49, kestrel-flow-mockups section 1), rendered from
+   analytics.today.progress_view over the shared scoring_progress dict. Active: headline, meter
+   (scored, failed, running), legend, model, the time left only when an estimate exists, and the
+   speed note; it re-polls every 10 s. Finished within 12 hours: one line with a link to Failed
+   scoring when any failed. Whenever roles sit in the Pipeline's Scoring failed group, a line
+   says "N roles failed scoring" with a link there, whatever the latest run said (D-UI-56).
+   Otherwise an empty, silent placeholder. #}
+{% set p = progress %}{% set w = words(track if track is defined else '') %}
+{% macro open_failed_line() -%}
+  {%- if p.open_failed -%}
+  <p class="progress-note" data-testid="open-failed"><a href="/quarantine">{{ p.open_failed }} {{ w.role if p.open_failed == 1 else w.roles }} failed scoring</a>. Retry them on the same model or another.</p>
+  {%- endif -%}
+{%- endmacro %}
+{% if p.state == 'active' %}
+<div id="today-progress" class="progress-panel" data-testid="today-progress" data-progress="active"
+     data-no-busy hx-get="/today/progress" hx-trigger="every 10s" hx-swap="outerHTML">
+  <div class="progress-head">
+    <b><span class="progress-dot" aria-hidden="true"></span>Fit scoring in progress: {{ p.done }} of {{ p.total }} {{ w.roles }} scored</b>
+    {% if p.eta_minutes is not none %}<span class="quiet" data-testid="progress-eta">about {{ p.eta_minutes }} {{ 'minute' if p.eta_minutes == 1 else 'minutes' }} left at the current pace</span>{% endif %}
+  </div>
+  <div class="meter progress-meter" role="img" aria-label="{{ p.scored }} scored, {{ p.failed }} failed, {{ p.running }} scoring now, {{ p.waiting }} waiting">
+    <i class="seg-scored" style="width:{{ p.widths.scored }}%"></i><i class="seg-failed" style="width:{{ p.widths.failed }}%"></i><i class="seg-running" style="width:{{ p.widths.running }}%"></i>
+  </div>
+  <div class="progress-legend">
+    <span><b>{{ p.scored }}</b> scored</span>
+    <span><b>{{ p.failed }}</b> failed scoring</span>
+    <span><b>{{ p.running }}</b> scoring now</span>
+    <span><b>{{ p.waiting }}</b> waiting</span>
+    {% if p.model %}<span data-testid="progress-model">on {{ p.model }}</span>{% endif %}
+  </div>
+  {{ open_failed_line() }}
+  <p class="quiet progress-note">Nothing to do yet. New {{ w.roles }} appear under Review as they finish. Free online models and models on your own computer can both take a while; a big first scan can run for an hour or more.</p>
+</div>
+{% elif p.state == 'finished' %}
+<div id="today-progress" class="progress-panel" data-testid="today-progress" data-progress="finished">
+  <div class="progress-head">
+    <b>Scoring finished: {{ p.last_run.scored }} scored, {{ p.last_run.failed }} failed</b>
+    {% if p.last_run.failed %}<a href="/quarantine" data-testid="progress-failed">Failed scoring</a>{% endif %}
+  </div>
+  {{ open_failed_line() }}
+</div>
+{% elif p.state == 'failed' %}
+<div id="today-progress" class="progress-panel" data-testid="today-progress" data-progress="failed">
+  {{ open_failed_line() }}
+</div>
+{% else %}
+<div id="today-progress" data-testid="today-progress" data-progress="none" hidden></div>
+{% endif %}

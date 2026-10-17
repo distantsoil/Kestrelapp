@@ -1,0 +1,200 @@
+{% macro part(render, key, title, text, hidden, alts, all_wordings, n_wordings, rationale, optional, sub="", missing=false, missing_key="", skills=false, master=none) %}
+  <div class="panel part" data-part="{{ key }}" data-testid="part-{{ key }}">
+    <div class="key">
+      <b>{{ title }}</b>{% if sub %} <span class="muted">· {{ sub }}</span>{% endif %}
+      {% if optional %}<span class="muted">· optional</span>{% endif %}
+    </div>
+    <div class="part-text">
+      {% if hidden %}
+        <span class="muted">Hidden from this resume.</span>
+      {% elif missing %}
+        <span class="flag">Wording {{ missing_key or "unset" }} no longer exists. Swap it for one of yours.</span>
+      {% else %}
+        {{ text }}
+      {% endif %}
+    </div>
+    {% if rationale %}<p class="muted" style="margin:.2rem 0 .6rem">“{{ rationale }}”</p>{% endif %}
+    <div class="part-acts">
+      {% if hidden %}
+        {% if skills %}
+          <form hx-post="/renders/{{ render.id }}/swap" hx-target="#render-content" hx-swap="innerHTML" data-busy-text="Re-rendering…">
+            <input type="hidden" name="slot_key" value="skills"><input type="hidden" name="variant_key" value="show">
+            <button class="btn small" type="submit">Show again</button>
+          </form>
+        {% else %}
+          <form hx-post="/renders/{{ render.id }}/swap" hx-target="#render-content" hx-swap="innerHTML" data-busy-text="Re-rendering…" class="part-swapform">
+            <input type="hidden" name="slot_key" value="{{ key }}">
+            <select name="variant_key" aria-label="Wording to show for {{ title }}">
+              {% for alt in all_wordings %}<option value="{{ alt.key }}">{{ alt.text[:70] or alt.key }}{% if alt.text|length > 70 %}…{% endif %}</option>{% endfor %}
+            </select>
+            <button class="btn small" type="submit">Show again</button>
+          </form>
+        {% endif %}
+      {% else %}
+        {% if n_wordings >= 2 and alts %}
+          <details class="part-pop">
+            <summary class="btn small">Swap ({{ n_wordings }})</summary>
+            <form hx-post="/renders/{{ render.id }}/swap" hx-target="#render-content" hx-swap="innerHTML"
+                  data-busy-text="Re-rendering…" class="part-swapform">
+              <input type="hidden" name="slot_key" value="{{ key }}">
+              <select name="variant_key" aria-label="Another wording for {{ title }}">
+                {% for alt in alts %}<option value="{{ alt.key }}">{{ alt.text[:70] or alt.key }}{% if alt.text|length > 70 %}…{% endif %}</option>{% endfor %}
+              </select>
+              <button class="btn small" type="submit">Swap</button>
+            </form>
+          </details>
+        {% endif %}
+        {% if skills %}
+          <a class="btn small" href="/documents{% if master %}?master_id={{ master.id }}{% endif %}">Edit on Documents</a>
+        {% else %}
+          <details class="part-pop">
+            <summary class="btn small">Edit wording</summary>
+            <form hx-post="/renders/{{ render.id }}/wording" hx-target="#render-content" hx-swap="innerHTML"
+                  data-busy-text="Re-rendering…" class="part-editform">
+              <input type="hidden" name="slot_key" value="{{ key }}">
+              <textarea name="text" rows="4" aria-label="Your wording for {{ title }}" required>{{ text }}</textarea>
+              <p class="muted">Saves as a new wording of your own, used for this resume. The original stays available under Swap.</p>
+              <button class="btn small primary" type="submit">Save wording</button>
+            </form>
+          </details>
+        {% endif %}
+        <form hx-post="/renders/{{ render.id }}/swap" hx-target="#render-content" hx-swap="innerHTML"
+              data-busy-text="Re-rendering…" class="part-hideform">
+          <input type="hidden" name="slot_key" value="{{ key }}">
+          <input type="hidden" name="variant_key" value="hide">
+          <button class="btn small" type="submit" title="Leave this part off this resume only">Hide</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+{% endmacro %}
+{% if not render %}
+  <div class="panel">
+    <p class="muted">No render found{% if render_id_requested %} for id {{ render_id_requested }}{% endif %}.
+      Create one from a document master's <span class="mono">Test render</span> button on
+      <a href="/documents">Documents</a>.</p>
+  </div>
+{% else %}
+  <div class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:.6rem">
+      <div>
+        <strong>{{ master.name if master else ("Document #" ~ render.doc_master_id) }}</strong>
+        <span class="muted"> · {{ master.doc_kind if master else "unknown kind" }} · render #{{ render.id }}</span>
+        {% if opportunity %}
+          <div class="muted">For {{ opportunity.title or "Untitled" }}{% if org_name %} · {{ org_name }}{% endif %}</div>
+        {% endif %}
+      </div>
+      <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap">
+        {% if render.defaults_used %}
+          <span class="badge review" title="Kestrel could not use its picks for some parts, so it used your standard wording there">standard wording used</span>
+        {% endif %}
+        <span class="pill mono">{{ render.page_count if render.page_count is not none else "-" }} pages</span>
+        {% if render.pdf_path %}
+          <a class="btn ghost" href="/renders/{{ render.id }}/download">Download PDF</a>
+        {% endif %}
+        {% set app_word = "lead" if opportunity and opportunity.track == "consulting" else "application" %}
+        {% if render.opportunity_id %}
+          <button class="btn" hx-post="/renders/{{ render.id }}/attach" hx-target="#attach-result" hx-swap="innerHTML">
+            Use for this {{ app_word }}</button>
+        {% endif %}
+      </div>
+    </div>
+    <div id="attach-result" class="muted" style="margin-top:.4rem">
+      {% if pursuit and pursuit.document_id == render.id %}
+        <span class="covered">Attached to this {{ app_word }}.</span>
+      {% endif %}
+    </div>
+    {% if not render.pdf_path %}
+      <div class="warnbox" style="margin-top:.6rem">No PDF file is on record for this render.</div>
+    {% endif %}
+    {% if look %}
+      {# Layout, font and header alignment for this review (D-DOC-1). #}
+      <form class="look-form" hx-post="/renders/{{ render.id }}/look" hx-target="#render-content"
+            hx-swap="innerHTML" data-testid="render-look" data-busy-text="Re-rendering…">
+        {# Carried so a look change that starts a new render keeps the Back link (D-UI-46). #}
+        {% if back %}<input type="hidden" name="from" value="{{ back }}">{% endif %}
+        <label for="look-layout">Layout</label>
+        <select id="look-layout" name="layout">
+          {% for lay in look.layouts %}<option value="{{ lay }}"{% if lay == (look.layout or look.effective.layout) %} selected{% endif %}>{{ lay }}</option>{% endfor %}
+        </select>
+        <label for="look-font">Font</label>
+        <select id="look-font" name="font">
+          <option value="">Layout default</option>
+          {% for f in look.fonts %}<option value="{{ f }}"{% if f == look.font %} selected{% endif %}>{{ f }}</option>{% endfor %}
+        </select>
+        <label for="look-align">Name and headline</label>
+        <select id="look-align" name="header_align">
+          <option value="">Layout default</option>
+          <option value="left"{% if look.header_align == "left" %} selected{% endif %}>Left aligned</option>
+          <option value="center"{% if look.header_align == "center" %} selected{% endif %}>Centered</option>
+        </select>
+        <label for="look-accent">Accent color</label>
+        <select id="look-accent" name="accent">
+          <option value="">Document default</option>
+          {% for name, hex in look.accents.items() %}<option value="{{ hex }}"{% if hex == look.accent %} selected{% endif %}>{{ name }}</option>{% endfor %}
+          {% if look.accent and look.accent not in look.accents.values() %}<option value="{{ look.accent }}" selected>Custom ({{ look.accent }})</option>{% endif %}
+        </select>
+        <button class="btn ghost" type="submit">Apply</button>
+        <span class="muted">Showing {{ look.effective.font }}, {{ "centered" if look.effective.align == "center" else "left aligned" }}.</span>
+        {% if look_changed %}<span class="saved" role="status">Preview updated. Make a new test render for a PDF with this look.</span>{% endif %}
+      </form>
+    {% endif %}
+    {% if unresolved %}
+      <div class="warnbox" style="margin-top:.6rem" data-testid="unresolved-keys">
+        <b>The preview does not match the picks saved for this render.</b>
+        {% for u in unresolved %}
+          <div>
+            {% if u.slot in ("summary", "layout") %}
+              The saved {{ u.slot }} choice <span class="mono">{{ u.key }}</span> no longer exists{% if u.slot == "layout" %}; the standard section order is shown{% else %}; no summary is shown{% endif %}.
+            {% else %}
+              {{ u.slot.replace("_", " ") }}: the saved wording <span class="mono">{{ u.key }}</span> no longer exists; your standard wording is shown instead.
+            {% endif %}
+          </div>
+        {% endfor %}
+        Swap in one of your wordings below to clear this.
+      </div>
+    {% endif %}
+    {% if over_page_limit %}
+      <div class="warnbox" style="margin-top:.6rem">
+        This document runs {{ render.page_count }} pages, over the {{ max_pages }}-page limit.
+        To shorten it, hide a part below or swap in a shorter wording.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="split">
+    <div>
+      <h2>Your picks</h2>
+      {% if catalog_missing %}
+        <p class="muted">The document this render came from no longer exists, so the other
+          wordings cannot be shown.</p>
+      {% endif %}
+      {% if wording_notice %}<p class="saved" role="status" data-testid="wording-notice">{{ wording_notice }}</p>{% endif %}
+      {% if summary_row %}
+        {{ part(render, "summary", "Summary", summary_row.chosen.text if summary_row.chosen else "", summary_row.hidden, summary_row.alternatives, summary_row.all_wordings, summary_row.n_wordings, none, false) }}
+      {% endif %}
+      {% for row in slot_rows %}
+        {{ part(render, row.slot.key, row.part, row.chosen.text if row.chosen else "", row.hidden, row.alternatives, row.all_wordings, row.n_wordings, row.rationale, row.slot.optional, sub=(row.key_words if row.part != row.key_words else ""), missing=(row.chosen is none and not row.hidden), missing_key=row.chosen_key) }}
+      {% endfor %}
+      {% if skills_row %}
+        {{ part(render, "skills", "Skills", skills_row.text, skills_row.hidden, [], [], 0, none, false, skills=true, master=master) }}
+      {% endif %}
+      {% if not slot_rows and not catalog_missing %}
+        <p class="muted">This document has no slots.</p>
+      {% endif %}
+    </div>
+
+    <div>
+      <h2>Preview</h2>
+      <div class="preview-frame">
+        {% if preview_html %}
+          {# Its own frame, as on Documents: the document's stylesheet (fonts, the layout's look)
+             must not restyle this page, and dark mode must not repaint the paper (D-DOC-1). #}
+          <iframe class="preview-doc" title="Preview" srcdoc="{{ preview_html }}"></iframe>
+        {% else %}
+          <p class="muted" style="padding:1rem">No preview available.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endif %}

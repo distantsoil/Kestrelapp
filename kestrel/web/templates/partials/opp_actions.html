@@ -1,0 +1,91 @@
+{# Six of the eight opportunity-detail actions (SPEC-INTERFACES 2.1): Shortlist (now Add to my shortlist
+   in the decision panel, D-UI-45; the shortlist route still answers here), Tailor, Research,
+   Find contacts, Interview prep, Archive. Escalate to Tier 3 and the Override control live elsewhere on
+   opportunity_detail.html already. Every button hx-posts (Tailor hx-gets, it writes nothing) back
+   into this same panel with hx-swap="outerHTML", so the result message and any updated state
+   (pursuit, archived_at) are always current after a click. It also reloads itself on
+   pipelineRefresh, so Add to my shortlist in the decision panel shows here at once. #}
+<div id="opp-actions"{% if opp is not none %} hx-get="/opportunities/{{ opp.id }}/actions"
+     hx-trigger="pipelineRefresh from:body" hx-target="this" hx-swap="outerHTML"{% endif %}>
+{% if opp is none %}
+  <div class="warnbox">{{ error or 'Opportunity not found.' }}</div>
+{% else %}
+  <h2>Actions</h2>
+  {% if message %}<div class="panel" style="margin-bottom:.6rem">{{ message }}</div>{% endif %}
+  {% if error %}<div class="warnbox" style="margin-bottom:.6rem">{{ error }}</div>{% endif %}
+
+  <div class="row" style="flex-wrap:wrap;gap:1.2rem;align-items:flex-start">
+
+    {# 1. On my shortlist: Add to my shortlist lives in the decision panel (D-UI-45); this keeps the
+       pursuit's re-post switch. #}
+    {% if pursuit %}
+    <div>
+        <div class="muted">{{ words(opp.track).on_list|capitalize }} ({{ pursuit_column or pursuit.status|replace('_', ' ') }})</div>
+        <form hx-post="/pursuits/{{ pursuit.id }}/reposts" hx-trigger="change" hx-swap="none" style="margin:.2rem 0 0"><label class="muted" title="Once applied, a new posting of this role is hidden on arrival as a re-post. Tick to see such listings anyway."><input type="checkbox" name="allow" value="on" {% if pursuit.allow_reposts %}checked{% endif %}> allow re-posts</label></form>
+    </div>
+    {% endif %}
+
+    {# 2. Tailor #}
+    <div>
+      <button class="btn" hx-get="/opportunities/{{ opp.id }}/tailor"
+              hx-target="#opp-actions" hx-swap="outerHTML">Tailor</button>
+      {% if masters %}
+        <ul>
+          {% for m in masters %}
+            <li>
+              <a href="/renders/new?master_id={{ m.id }}&opportunity_id={{ opp.id }}&from=/opportunities/{{ opp.id }}">
+                {{ m.name }} ({{ m.doc_kind }})
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="muted">No active document masters for the {{ opp.track }} track yet.</div>
+      {% endif %}
+    </div>
+
+    {# 3. Research #}
+    <div>
+      <button class="btn" hx-post="/opportunities/{{ opp.id }}/research"
+              hx-target="#opp-actions" hx-swap="outerHTML"
+              data-busy-text="Researching the organization…">Research</button>
+      <div class="muted">Org research from already-known sources.</div>
+    </div>
+
+    {# 4. Find contacts #}
+    <div>
+      <button class="btn" hx-post="/opportunities/{{ opp.id }}/contacts"
+              hx-target="#opp-actions" hx-swap="outerHTML"
+              data-busy-text="Looking for public contacts and warm paths…">Find contacts</button>
+      <div class="muted">Draft-only: nothing here is ever sent.</div>
+    </div>
+
+    {# 5. Interview prep: the always-visible button is in the decision panel (D-UI-55); a pack
+       built from here is announced with a primary button, never a bare link. #}
+    {% if prep_ready %}
+    <div>
+      <a class="btn primary" href="/prep/{{ opp.id }}" data-testid="open-interview-prep">Open {{ words(opp.track).interview_prep|lower }}</a>
+    </div>
+    {% endif %}
+
+    {# 6. Hide (reversible; the column is archived_at, the operator's word is Hide) #}
+    <div>
+      {% if opp.archived_at %}
+        <button class="btn" hx-post="/opportunities/{{ opp.id }}/unarchive"
+                hx-target="#opp-actions" hx-swap="outerHTML">Unhide</button>
+        <div class="muted">hidden {{ opp.archived_at }}{% if opp.archive_reason %} &middot; {{ (archive_reasons or {}).get(opp.archive_reason, opp.archive_reason)|lower }}{% endif %}{% if opp.stage_reason and opp.stage_reason.startswith('Re-post') %} &middot; {{ opp.stage_reason|lower }}; Unhide if this is a different role{% endif %}</div>
+      {% else %}
+        <form hx-post="/opportunities/{{ opp.id }}/archive" hx-target="#opp-actions" hx-swap="outerHTML"
+              class="row" style="gap:6px">
+          <select name="reason" aria-label="Why hide it">
+            {% for key, label in (archive_reasons or {}).items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+          <button class="btn" type="submit">Hide</button>
+        </form>
+        <div class="muted">Takes it out of the active pipeline; the Hidden chip shows it again.</div>
+      {% endif %}
+    </div>
+
+  </div>
+{% endif %}
+</div>

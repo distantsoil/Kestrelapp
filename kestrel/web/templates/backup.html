@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Backup · Kestrel{% endblock %}
+{% block content %}
+<h1>Backup</h1>
+<p class="muted">Take a backup before a reinstall, a machine move, or any experiment with the
+database. Restore is on <a href="/settings">Settings</a> under the LAN &amp; backup tab.</p>
+
+<div class="split">
+  <div class="panel">
+    <h2>Download a backup</h2>
+    <p>One zip, built fresh when you click, identical to what <span class="mono">kestrel backup</span>
+    writes.</p>
+    <a class="btn primary" href="/backup/download">Download a backup</a>
+    <h3 style="margin-top:1rem">What it contains</h3>
+    <ul>
+      <li>The database <span class="mono">kestrel.db</span> with its WAL and SHM files: every
+      opportunity, evaluation, pursuit, story, label, and document master and variant.</li>
+      <li>Every <span class="mono">*.yml</span> under <span class="mono">{{ config_dir }}</span>:
+      settings, filters, sources, and your profile.</li>
+      <li>Generated PDFs: resumes and capability statements, and interview prep packs.</li>
+    </ul>
+    <h3>What it never contains</h3>
+    <ul>
+      <li>Your saved keys: no API key, no shared LAN secret, no online-model key. Keys are
+      re-entered in Settings after a reinstall, by design.</li>
+      <li>Logs, the learned ranking, the computer check, and the downloaded AI models. Open Setup
+      to rebuild the models.</li>
+    </ul>
+    <p class="muted">Data folder: <span class="mono">{{ data_dir }}</span></p>
+  </div>
+
+  <div class="panel">
+    <h2>Profile only</h2>
+    <p>Your <span class="mono">profile.yml</span> is the part of the configuration that is hardest
+    to rewrite. Export it on its own to keep a copy or to carry it to another machine.</p>
+    {% if has_profile %}
+      <a class="btn" href="/backup/export-profile">Export profile</a>
+    {% else %}
+      <span class="pill">no profile.yml yet</span>
+      <span class="muted">Kestrel is on the shipped example profile, which is fiction and is not
+      exported.</span>
+    {% endif %}
+    <p class="muted" style="margin-top:.6rem">The export is <span class="mono">profile.yml</span>
+    alone. Document masters and variants live in the database and travel in the full backup; there
+    is no separate masters export.</p>
+
+    <h3 style="margin-top:1rem">Import a profile</h3>
+    <form hx-post="/backup/import-profile" hx-target="#import-result"
+          hx-encoding="multipart/form-data">
+      <div class="formgrid">
+        <label for="profile_file">profile.yml</label>
+        <input type="file" id="profile_file" name="profile_file" accept=".yml,.yaml" required>
+      </div>
+      <button class="btn" type="submit" style="margin-top:.6rem">Import profile</button>
+      <p class="muted">The file is parsed and loaded for at least one track before it replaces
+      anything. The previous file is kept at <span class="mono">{{ profile_bak }}</span>.
+      Your saved keys are never touched.</p>
+    </form>
+    <div id="import-result"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Restore</h2>
+  <p>Restore from a backup zip on <a href="/settings">Settings</a>, LAN &amp; backup tab, or run
+  <span class="mono">kestrel restore &lt;file.zip&gt;</span>. The archive is validated in full
+  before anything is touched and the current database is copied aside first, so a bad restore is
+  always reversible. Restart Kestrel afterward.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% if not rows %}
+  <p class="muted">No notifications.</p>
+{% else %}
+  {% for n in rows %}
+    <div class="notif {% if not n.read_at %}unread{% endif %}">
+      <div><span class="pill">{{ n.severity }}</span> <b>{{ n.title }}</b></div>
+      {% if n.body %}<div class="muted">{{ n.body }}</div>{% endif %}
+      <div class="mono muted" style="font-size:.72rem">{{ n.created_at }}</div>
+    </div>
+  {% endfor %}
+{% endif %}

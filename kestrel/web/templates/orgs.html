@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Kestrel{% endblock %}
+{% block content %}
+{% if not found %}
+  <h1>Organization</h1>
+  <div class="warnbox">Organization {{ org_id }} not found.</div>
+{% else %}
+  {% include "partials/org_detail.html" %}
+{% endif %}
+{% endblock %}

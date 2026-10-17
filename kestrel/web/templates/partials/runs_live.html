@@ -1,0 +1,64 @@
+<div id="runs-live" hx-get="/runs" hx-trigger="every 5s, run-refresh from:body" hx-swap="outerHTML">
+  {% set t1 = activity.tasks.get('t1', {}) %}
+  {% set t2 = activity.tasks.get('t2', {}) %}
+  {% set em = activity.tasks.get('embed', {}) %}
+  {% set sr = activity.tasks.get('scrape', {}) %}
+  <div class="grid2">
+    <div class="panel">
+      <h2>Live queue</h2>
+      <table>
+        <thead><tr><th>Step</th><th class="num">Pending</th><th class="num">Leased</th><th class="num">Done</th></tr></thead>
+        <tbody>
+          <tr><td>Scan</td><td class="num mono">{{ sr.get('pending',0) }}</td><td class="num mono">{{ sr.get('leased',0) }}</td><td class="num mono">{{ sr.get('done',0) }}</td></tr>
+          <tr><td title="Tier 1">Quick screen</td><td class="num mono">{{ t1.get('pending',0) }}</td><td class="num mono">{{ t1.get('leased',0) }}</td><td class="num mono">{{ t1.get('done',0) }}</td></tr>
+          <tr><td title="Tier 2">Full review</td><td class="num mono">{{ t2.get('pending',0) }}</td><td class="num mono">{{ t2.get('leased',0) }}</td><td class="num mono">{{ t2.get('done',0) }}</td></tr>
+          <tr><td title="Embed">Indexing</td><td class="num mono">{{ em.get('pending',0) }}</td><td class="num mono">{{ em.get('leased',0) }}</td><td class="num mono">{{ em.get('done',0) }}</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:8px">Failed scoring: {{ activity.quarantined }}{% if activity.quarantined %} (parked, not part of the queue; <a href="/quarantine">review</a> only if you want them retried){% endif %}</p>
+    </div>
+    <div class="panel" data-testid="latest-run">
+      <h2>Latest run</h2>
+      {% include "partials/run_live_panel.html" %}
+      {% if run_model %}<p class="muted" data-testid="run-model">Scoring on {{ run_model }}</p>{% endif %}
+      {% set r = activity.latest_run %}
+      {% if r %}
+        {% set c = r.counts or {} %}
+        {% if r.status == 'running' %}
+          <p><b>Running</b> <span class="badge">#{{ r.id }}</span>{% if r.mode %} <span class="badge">{{ r.mode }}</span>{% endif %} <span class="muted">{{ r.name }}{% if r.track %} · {{ r.track }}{% endif %}</span></p>
+          <p class="muted">started {{ r.started_at }}. These totals update as each stage finishes.</p>
+        {% else %}
+          <p><b>{{ r.name }}</b> <span class="badge">{{ r.status }}</span>{% if r.mode %} <span class="badge">{{ r.mode }}</span>{% endif %} {% if r.track %}· {{ r.track }}{% endif %}</p>
+          <p class="muted">started {{ r.started_at }}{% if r.finished_at %} · finished {{ r.finished_at }}{% endif %}</p>
+        {% endif %}
+        {% if c.get('scrape') %}
+          {% set sc = c.get('scrape') %}
+          <p>Scan: {{ sc.get('completed',0) }} search{{ 'es' if sc.get('completed',0) != 1 }}, {{ sc.get('new',0) }} new{% if sc.get('errors') %}, {{ sc.get('errors') }} failed{% endif %}</p>
+        {% endif %}
+        {% if c.get('tier1') or c.get('tier2') %}
+          {% set c1 = c.get('tier1', {}) %}{% set c2 = c.get('tier2', {}) %}
+          <p><span title="Tier 1">Quick screen</span>: {{ c1.get('completed',0) }} done, {{ c1.get('per_minute',0) }}/min · <span title="Tier 2">Full review</span>: {{ c2.get('completed',0) }} done, {{ c2.get('per_minute',0) }}/min</p>
+        {% endif %}
+        {% if c.get('tier0') %}{% set c0 = c.get('tier0') %}<p class="muted"><span title="Tier 0">Rules check</span>: {{ c0.get('seen', 0) }} checked, {{ c0.get('reject', 0) }} set aside</p>{% endif %}
+        {% if r.notes %}<p class="muted">{{ r.notes }}</p>{% endif %}
+      {% else %}<p class="muted">No runs yet. A run is recorded when the worker has something to scan or score.</p>{% endif %}
+    </div>
+  </div>
+  <div class="panel" data-testid="recent-scans" style="margin-top:1rem">
+    <h2>Recent scans</h2>
+    <table>
+      <thead><tr><th>Search</th><th>Status</th><th>Started</th><th>Finished</th><th class="num">New</th></tr></thead>
+      <tbody>
+        {% for sc in scans or [] %}
+        <tr>
+          <td>{{ sc.source }}</td>
+          <td><span class="badge">{{ sc.status }}</span>{% if sc.error %} <small class="muted">{{ sc.error }}</small>{% endif %}{% if sc.model %} <small class="muted" data-testid="scan-model">on {{ sc.model }}</small>{% endif %}</td>
+          <td class="mono"><small>{{ sc.started_at }}</small></td>
+          <td class="mono"><small>{{ sc.finished_at or '–' }}</small></td>
+          <td class="num mono">{{ sc.new }}</td>
+        </tr>
+        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No scans yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

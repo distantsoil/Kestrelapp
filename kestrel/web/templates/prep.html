@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ words(opportunity.track if opportunity else '').interview_prep }} · Kestrel{% endblock %}
+{% block content %}
+<h1>{{ words(opportunity.track if opportunity else '').interview_prep }}</h1>
+{% if opportunity is none %}
+  <div class="warnbox">No such opportunity. Nothing to prep.</div>
+{% else %}
+  <p class="muted">
+    {{ opportunity.title or "Role" }}{% if org_name %} · {{ org_name }}{% endif %}
+  </p>
+{% endif %}
+<div id="prep-pack">{% include "partials/prep_pack.html" %}</div>
+{% endblock %}

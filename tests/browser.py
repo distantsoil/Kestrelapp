@@ -1,0 +1,106 @@
+"""Shared browser launch for tests that need a real Chromium (CI gate: scripts/check.py).
+
+Production drives the Edge already on the machine (CLAUDE.md: never bundle Chromium), so tests
+try Edge first. Where Edge is absent (the cloud container) they fall back to a Chromium found
+via KESTREL_BROWSER_PATH or the Playwright browsers dir, and skip only when neither exists.
+A skip is never silent: scripts/check.py prints skip reasons and warns on browser skips.
+"""
+
+from __future__ import annotations
+
+import glob
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+BROWSER_PATH_ENV = "KESTREL_BROWSER_PATH"
+SKIP_PREFIX = "Browser unavailable"  # scripts/check.py greps skip reasons for this
+
+
+def _browser_roots() -> list[Path]:
+    roots = []
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if override and override != "0":
+        roots.append(Path(override))
+    roots += [Path("/opt/pw-browsers"), Path.home() / ".cache" / "ms-playwright",
+              Path.home() / "Library" / "Caches" / "ms-playwright"]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.append(Path(local) / "ms-playwright")
+    return roots
+
+
+def fallback_chromium() -> str | None:
+    """A Chromium executable other than Edge: KESTREL_BROWSER_PATH if it names a file, else the
+    newest chromium-*/ build in the Playwright browsers dir. None when there is none."""
+    explicit = os.environ.get(BROWSER_PATH_ENV)
+    if explicit and Path(explicit).is_file():
+        return explicit
+    patterns = ("chromium-*/chrome-linux/chrome", "chromium-*/chrome-linux64/chrome",
+                "chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-win64/chrome.exe",
+                "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium")
+    for root in _browser_roots():
+        for pattern in patterns:
+            hits = sorted(glob.glob(str(root / pattern)))
+            if hits:
+                return hits[-1]
+    return None
+
+
+def _edge_installed() -> bool:
+    from kestrel.docs import render
+
+    return bool(render._edge_candidates())  # noqa: SLF001 (same probe the app's doctor uses)
+
+
+def use_browser_fallback(monkeypatch: pytest.MonkeyPatch) -> str | None:
+    """For tests that render through the app (docs PDF): when Edge is absent, point
+    KESTREL_BROWSER_PATH at the fallback Chromium for this test. Skips if there is none."""
+    explicit = os.environ.get(BROWSER_PATH_ENV)
+    if (explicit and Path(explicit).is_file()) or _edge_installed():
+        return explicit
+    path = fallback_chromium()
+    if path is None:
+        pytest.skip(f"{SKIP_PREFIX}: no Edge, no {BROWSER_PATH_ENV}, no Playwright Chromium")
+    monkeypatch.setenv(BROWSER_PATH_ENV, path)
+    return path
+
+
+def _launch_kwargs() -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = [{"channel": "msedge"}]
+    fb = fallback_chromium()
+    if fb:
+        attempts.append({"executable_path": fb})
+    return attempts
+
+
+def launch_sync(playwright: Any, monkeypatch: pytest.MonkeyPatch | None = None) -> Any:
+    """Edge first, then the fallback Chromium; skip only when neither starts."""
+    errors: list[str] = []
+    for kwargs in _launch_kwargs():
+        try:
+            browser = playwright.chromium.launch(headless=True, **kwargs)
+        except Exception as exc:  # Playwright Error: missing channel/executable
+            errors.append(str(exc).splitlines()[0][:120])
+            continue
+        if "executable_path" in kwargs and monkeypatch is not None:
+            monkeypatch.setenv(BROWSER_PATH_ENV, kwargs["executable_path"])
+        return browser
+    pytest.skip(f"{SKIP_PREFIX}: {'; '.join(errors) or 'no candidates'}")
+
+
+async def launch_async(playwright: Any, monkeypatch: pytest.MonkeyPatch | None = None) -> Any:
+    errors: list[str] = []
+    for kwargs in _launch_kwargs():
+        try:
+            browser = await playwright.chromium.launch(headless=True, **kwargs)
+        except Exception as exc:
+            errors.append(str(exc).splitlines()[0][:120])
+            continue
+        if "executable_path" in kwargs and monkeypatch is not None:
+            monkeypatch.setenv(BROWSER_PATH_ENV, kwargs["executable_path"])
+        return browser
+    pytest.skip(f"{SKIP_PREFIX}: {'; '.join(errors) or 'no candidates'}")
+

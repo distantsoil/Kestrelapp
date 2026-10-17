@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "partials/model_picker.html" import model_select with context %}
+{% block title %}Benchmark · Kestrel{% endblock %}
+{% block content %}
+<h1>Benchmark</h1>
+<p data-testid="page-purpose">Bench compares models on a fixed test set so you can
+choose which model runs each tier. It does not review your resume; the resume assessment lives on
+<a href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
+<p class="muted">Pick a model, backend, and prompt version per tier, run against the gold set, and
+promote the winner. Model choice is an empirical question (SPEC.md 8.6) -- nothing here is decided
+by feel.</p>
+
+<div class="split">
+  <div class="panel">
+    <h2>Run against gold set</h2>
+    {% if models_error %}
+      <div class="warnbox" style="margin-bottom:.6rem">{{ models_error }} Local models are not
+      listed until the AI engine is running{% if hosted_label %}; hosted models still are{% endif %}.</div>
+    {% endif %}
+    {% if hosted_error %}<div class="warnbox" data-testid="bench-hosted-error" style="margin-bottom:.6rem">{{ hosted_error }}</div>{% endif %}
+    {% if hosted_label and not hosted_models %}
+      <p class="muted" style="margin-bottom:.6rem"><a class="btn small" href="/bench?hosted=1" data-testid="bench-load-hosted">Load hosted models</a>
+      adds the models {{ hosted_label }} lists to both pickers.</p>
+    {% endif %}
+    <form hx-post="/bench/run" hx-target="#bench-results" hx-swap="innerHTML"
+          hx-disabled-elt="find button"
+          data-busy-text="Running the gold set. One model call per item; this can take minutes.">
+      <div class="formgrid">
+        <label>Step</label>
+        <select name="tier">
+          {% for t in tiers %}
+          <option value="{{ t }}">{{ t|tier_label }}
+            {% if tier_config[t] %}(currently {{ tier_config[t].model }}){% endif %}</option>
+          {% endfor %}
+        </select>
+        <label>Backend</label>
+        <select name="backend">
+          {% for b in backends %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+        </select>
+        <label>Model</label>
+        {{ model_select('model', hosted_models, local_models=available_models, hosted_label='Hosted (' ~ hosted_label ~ ')', value_prefix=hosted_prefix, testid='bench-run-model') }}
+        <label>Prompt version</label>
+        <select name="prompt_version">
+          {% for v in prompt_versions %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
+        </select>
+      </div>
+      <button class="btn primary" type="submit" style="margin-top:.6rem">Run against gold set</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Promote to tier</h2>
+    <p class="muted">A local model writes the setting-table override for that tier (highest
+    precedence, SPEC.md 4.6). A hosted model becomes that tier's hosted override, shown as
+    "(Override)" on <a href="/models#hosted-overrides">Models</a>. Either takes effect on the next
+    request or task lease, with no restart.</p>
+    <form hx-post="/bench/promote" hx-target="#promote-result" hx-swap="innerHTML"
+          data-busy-text="Promoting…">
+      <div class="formgrid">
+        <label>Step</label>
+        <select name="tier">
+          {% for t in tiers %}<option value="{{ t }}">{{ t|tier_label }}</option>{% endfor %}
+        </select>
+        <label>Model</label>
+        {{ model_select('model', hosted_models, local_models=available_models, hosted_label='Hosted (' ~ hosted_label ~ ')', value_prefix=hosted_prefix, testid='bench-promote-model') }}
+      </div>
+      <button class="btn" type="submit" style="margin-top:.6rem">Promote</button>
+    </form>
+    <div id="promote-result" style="margin-top:.6rem"></div>
+  </div>
+</div>
+
+<h2 style="margin-top:1.5rem">Comparison</h2>
+<div id="bench-results">
+  {% include "partials/bench_table.html" %}
+</div>
+{% endblock %}

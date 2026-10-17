@@ -1,0 +1,29 @@
+{# Step one of the import: what was read, then the processing step, which starts on load. #}
+{% if error %}
+  <div class="warnbox" style="margin-top:.8rem" data-testid="import-error">{{ error }}</div>
+{% else %}
+  {% if filename or warnings %}
+    <div class="panel" style="margin-top:.8rem; padding:1rem" data-testid="import-extracted">
+      <h3>Text read from {{ filename or 'your file' }}
+        {% if source_format %}<span class="muted">({{ source_format }})</span>{% endif %}</h3>
+      {% for w in warnings %}
+        <div class="warnbox" style="margin-bottom:.5rem">{{ w }}</div>
+      {% endfor %}
+      <details>
+        <summary class="muted">Extracted markdown ({{ markdown.splitlines() | length }} lines)</summary>
+        <pre style="white-space:pre-wrap; max-height:24rem; overflow:auto; margin:.5rem 0 0">{{ markdown }}</pre>
+      </details>
+    </div>
+  {% endif %}
+  <div class="import-result">
+    {% if confidential_send %}
+      {# D-PRIV-1: said BEFORE anything is sent, and the step waits for the click. #}
+      <p class="warnbox" data-testid="import-confidential-send">This sends your whole resume to
+      {{ confidential_send.provider }}, including your current employer's name. Confidential mode
+      can hide it only after you mark your current employer.{% if confidential_send.shown %} Names
+      you have already marked go as stand-in codes.{% endif %}</p>
+    {% endif %}
+    {% set auto = not confidential_send %}
+    {% include "partials/import_processing.html" %}
+  </div>
+{% endif %}

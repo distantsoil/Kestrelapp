@@ -1,0 +1,55 @@
+{% if error %}
+  <div class="warnbox">{{ error }}</div>
+{% endif %}
+
+{% if turn %}
+  <div class="panel">
+    <p><b>Q:</b> {{ turn.question }}</p>
+    <p class="muted">Your answer: {{ turn.answer }}</p>
+    <div class="split">
+      <div>
+        <h2>Scores</h2>
+        <table class="data">
+          <tbody>
+            {% for k, v in (turn.scores or {}).items() %}
+              <tr><td>{{ k }}</td><td class="mono">{{ v }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h2>Critique</h2>
+        <p>{{ turn.critique.worked_well }}</p>
+        <ul>
+          {% for imp in (turn.critique.improvements or []) %}<li>{{ imp }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% if turn.unsupported_claims %}
+      <div class="warnbox" style="margin-top:.6rem">
+        <b>Unsupported claims</b>: not found in your proof points or canonical stories.
+        <ul>
+          {% for c in turn.unsupported_claims %}<li>{{ c }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if pending_question %}
+  <div class="card">
+    <p><b>Question {{ (ms.question_count or 0) + 1 }}</b>
+      <span class="pill">{{ ms.mode.replace('_', ' ') }}</span></p>
+    <p>{{ pending_question }}</p>
+    <form hx-post="/mock/session/{{ ms.id }}/answer" hx-target="#active" hx-swap="innerHTML"
+          hx-disabled-elt="find button" data-busy-text="Scoring your answer…">
+      <textarea name="answer" rows="6" required style="width:100%"
+                placeholder="Answer in your own words..."></textarea>
+      <button class="btn primary" type="submit" style="margin-top:.5rem">Submit answer</button>
+    </form>
+    <form hx-post="/mock/session/{{ ms.id }}/end" hx-target="#active" hx-swap="innerHTML"
+          style="margin-top:.5rem" data-busy-text="Writing the debrief…">
+      <button class="btn ghost" type="submit">End session</button>
+    </form>
+  </div>
+{% endif %}

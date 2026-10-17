@@ -1,0 +1,137 @@
+{# The Assess popup on Profile > Documents (D-DOC-2): a themed <dialog> in the pattern of
+   partials/quit_confirm.html. Loaded on demand by the Assess button (GET .../assess/choose) and
+   opened as soon as it lands. Two ways out: assess with the current model, or pick another
+   model for this run only (no setting changes). The picker is the shared macro: Kestrel's local
+   derived models when Ollama is up, the hosted list while Hosted mode is on and a key is saved.
+   Keyboard: focus starts on the first action and stays inside (Tab and Shift+Tab wrap), Esc or
+   Cancel closes it and returns focus to the Assess button. Styles: kestrel.css (.assess-model),
+   theme variables only. #}
+{% from "partials/model_picker.html" import model_select with context %}
+<dialog id="assess-model" class="assess-model" data-testid="assess-model"
+        aria-labelledby="assess-model-title" aria-describedby="assess-model-desc">
+  <div class="assess-model-box">
+    <h2 id="assess-model-title">Assess this {{ doc_word }}</h2>
+    {% if missing %}
+    <p id="assess-model-desc">That document no longer exists.</p>
+    <div class="assess-model-actions">
+      <button type="button" class="btn" data-assess-cancel>Close</button>
+    </div>
+    {% else %}
+    <p id="assess-model-desc">The model reads your {{ doc_word }} against your target titles and
+      advises. It never changes your text.</p>
+    <form hx-post="/documents/{{ master_id }}/assess" hx-target="#assessment" hx-swap="innerHTML"
+          data-assess-run data-current-label="{{ current_label or '' }}" data-busy-text="Assessing against your target titles. This can take a minute.">
+      <button type="submit" class="btn primary assess-model-current" data-testid="assess-current">Assess with the current model{% if current_label %} ({{ current_label }}){% endif %}</button>
+    </form>
+    <form class="assess-model-other" hx-post="/documents/{{ master_id }}/assess" hx-target="#assessment"
+          hx-swap="innerHTML" data-assess-run autocomplete="off"
+          data-current-label="{{ current_label or '' }}"
+          data-busy-text="Assessing with the model you picked. This can take a minute.">
+      <label for="assess-model-pick">Or pick another model for this run only</label>
+      {% if local_models or hosted_models %}
+      <div class="assess-model-pickrow">
+        {{ model_select('model', hosted_models, hosted_reasons, local_models=local_models,
+                        hosted_label=hosted_label or 'Hosted', placeholder='Pick a model',
+                        value_prefix=hosted_prefix, testid='assess-pick') }}
+        <button type="submit" class="btn" data-testid="assess-other">Assess with this model</button>
+      </div>
+      {% if hosted_models and hosted_while_local %}<p class="assess-model-note" data-testid="assess-external-note"><b>Kestrel is on local models. If you pick a {{ hosted_label }} model, this one assessment runs on {{ hosted_label }}; your {{ doc_word }} text will be sent.</b></p>{% endif %}
+      {% if hosted_models %}<p class="assess-model-note" data-testid="assess-hosted-note">A {{ hosted_label }} model sends your {{ doc_word }} text, every bullet, role title and date, to that provider, with the same redaction as Hosted mode.</p>{% endif %}
+      {% else %}
+      <p class="assess-model-note" data-testid="assess-no-models">No other model is available right now.</p>
+      {% endif %}
+      {% if local_note %}<p class="assess-model-note">{{ local_note }}</p>{% endif %}
+      {% if hosted_note %}<p class="assess-model-note">{{ hosted_note }}</p>{% endif %}
+      <p class="assess-model-note">Local choices are Kestrel's own models, which carry their context size. The pick applies to this assessment only; Settings stay as they are.</p>
+    </form>
+    <div class="assess-model-actions">
+      <button type="button" class="btn ghost" data-assess-cancel data-testid="assess-cancel">Cancel</button>
+    </div>
+    {% endif %}
+  </div>
+</dialog>
+<script>
+  (function () {
+    const dlg = document.getElementById('assess-model');
+    if (!dlg) return;
+    const opener = document.getElementById('assess-btn');
+    // The picker is a combobox (D-UI-69): its hidden input carries the value; a plain <select>
+    // is the fallback when the script did not load. The label targets the text input.
+    const sel = dlg.querySelector('.ke-combo input[type="hidden"]') || dlg.querySelector('select');
+    const pickBox = dlg.querySelector('.ke-combo [role="combobox"]') || sel;
+    if (pickBox) pickBox.id = 'assess-model-pick';
+    function focusables() {
+      return Array.from(dlg.querySelectorAll('button, [href], input, select, textarea,'
+        + ' [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled);
+    }
+    function close() {
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      if (opener && opener.focus) opener.focus();
+    }
+    dlg.querySelectorAll('[data-assess-cancel]').forEach((b) => b.addEventListener('click', close));
+    // A run closes the popup; the result lands in #assessment below the buttons.
+    dlg.querySelectorAll('form[data-assess-run]').forEach((f) => {
+      f.addEventListener('submit', (e) => {
+        const pick = f.querySelector('.ke-combo input[type="hidden"]') || f.querySelector('select');
+        if (pick && !pick.value) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          const box = f.querySelector('.ke-combo [role="combobox"]') || pick;
+          if (box.focus) box.focus();
+        }
+      }, true);
+      // The popup closes as the run starts, so the "running" state lives outside it: a panel in
+      // #assessment naming the model with an elapsed timer, and the Assess button disabled and
+      // reading "Assessing…" until the reply lands (operator: "I have no idea if it's running").
+      f.addEventListener('htmx:beforeRequest', () => {
+        const box = f.querySelector('.ke-combo [role="combobox"]');
+        const nat = f.querySelector('select');
+        const name = box ? box.value : (nat ? (nat.selectedOptions[0] || {}).textContent
+                                            : f.dataset.currentLabel);
+        const out = document.getElementById('assessment');
+        if (out) {
+          out.innerHTML = '<div class="assess-running" role="status" aria-live="polite"'
+            + ' data-testid="assess-running"><span class="assess-spinner" aria-hidden="true"></span>'
+            + '<span><b>Assessing' + (name ? ' with ' + name.trim().split(' (')[0] : '') + '.</b> '
+            + '<span class="muted">Running for <span class="assess-elapsed">0s</span>. Free and'
+            + ' local models can take a few minutes; the result appears here.</span></span></div>';
+          const t0 = Date.now(), el = out.querySelector('.assess-elapsed');
+          const timer = setInterval(() => {
+            if (!document.body.contains(el)) { clearInterval(timer); return; }
+            const s = Math.round((Date.now() - t0) / 1000);
+            el.textContent = s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+          }, 1000);
+        }
+        if (opener) { opener.disabled = true; opener.dataset.label = opener.textContent;
+                      opener.textContent = 'Assessing…'; }
+        if (dlg.open) dlg.close();
+      });
+      f.addEventListener('htmx:afterRequest', (e) => {
+        if (opener) { opener.disabled = false;
+                      if (opener.dataset.label) opener.textContent = opener.dataset.label; }
+        const out = document.getElementById('assessment');
+        if (out && !e.detail.successful) {
+          out.innerHTML = '<div class="warnbox" role="alert">The assessment did not finish ('
+            + (e.detail.xhr ? e.detail.xhr.status : 'no reply') + '). Try again, or pick another'
+            + ' model.</div>';
+        }
+        dlg.remove();
+      });
+    });
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key === 'Tab') {
+        const els = focusables();
+        if (!els.length) return;
+        const first = els[0], last = els[els.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    const first = focusables()[0];
+    if (first) first.focus();
+  })();
+</script>

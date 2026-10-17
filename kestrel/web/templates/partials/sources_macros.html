@@ -1,0 +1,95 @@
+{# Shared pieces of the Sources page (D-SRC-3). #}
+
+{# Run now (D-UI-72): opens the small dialog (usual models, or one model for this run only).
+   The form is a plain GET to the dialog page without script; with htmx it loads the dialog into
+   the slot beside it. Signal kinds (SEC, SAM.gov and the like) have no one-run model and run at
+   once on the usual models. #}
+{% macro run_now(src, signal_kinds) -%}
+  {% if src.kind in signal_kinds %}
+  <form method="post" action="/sources/{{ src.id }}/run-now" hx-post="/sources/{{ src.id }}/run-now"
+        hx-target="#sources-panel" hx-swap="outerHTML" data-busy-text="Running this search…" style="margin:0">
+    <button class="btn" type="submit" data-testid="run-now">Run now</button>
+  </form>
+  {% else %}
+  <span class="score-again" data-testid="run-now-control">
+    <form method="get" action="/sources/{{ src.id }}/run-now/choose" hx-get="/sources/{{ src.id }}/run-now/choose"
+          hx-target="next .score-again-slot" hx-swap="innerHTML" style="margin:0">
+      <input type="hidden" name="page" value="1">
+      <button class="btn score-again-btn" type="submit" aria-haspopup="dialog" data-testid="run-now">Run now</button>
+    </form>
+    <span class="score-again-slot"></span>
+  </span>
+  {% endif %}
+{%- endmacro %}
+
+{% macro health(src, run, run_message) -%}
+  {% if src.kind == 'jobspy' and (src.config or {}).get('no_boards') %}
+    <div class="warnbox" style="font-size:.78rem; padding:.3rem .5rem" data-testid="no-boards">
+      Off: this search named only LinkedIn, which Kestrel does not search, so it has no job
+      boards left.
+      <button class="btn" hx-post="/sources/{{ src.id }}/default-boards"
+              hx-target="#sources-panel" hx-swap="outerHTML">Use Kestrel's default boards</button>
+    </div>
+  {% elif src.health %}
+    <span class="mono muted">{{ src.health }}</span>
+  {% elif src.consecutive_failures >= 3 %}
+    <span class="pill gap">off after 3 failures</span>
+  {% elif src.consecutive_failures > 0 %}
+    <span class="pill gap">{{ src.consecutive_failures }} failures in a row</span>
+  {% elif run %}
+    <span class="pill {{ 'covered' if run.status == 'ok' else 'gap' }}">{{ run.status }}</span>
+    {% if run.counts %}<div class="muted mono" style="font-size:.75rem">{{ run.counts | run_counts }}</div>{% endif %}
+    {% if run.counts | run_model_label %}<div class="muted" style="font-size:.75rem" data-testid="run-model-used">on {{ run.counts | run_model_label }}</div>{% endif %}
+  {% else %}
+    <span class="muted">no runs yet</span>
+  {% endif %}
+  {% if run and run.error %}
+    <div class="warnbox" style="margin-top:.3rem; font-size:.78rem; padding:.3rem .5rem">{{ run.error }}</div>
+  {% endif %}
+  {% if run_message and run_message.id == src.id %}
+    <div class="pill covered" style="margin-top:.3rem">{{ run_message.text }}</div>
+  {% endif %}
+{%- endmacro %}
+
+{% macro last_run(src) -%}
+  {% if src.last_run_at %}<span class="mono">{{ src.last_run_at[:16]|replace('T', ' ') }}</span>{% else %}<span class="muted">never</span>{% endif %}
+{%- endmacro %}
+
+{% macro edit_form(src, vals, tracks, kinds, config_text) -%}
+<form hx-post="/sources/{{ src.id }}" hx-target="#sources-panel" hx-swap="outerHTML">
+  <div class="formgrid">
+    <label>Name</label>
+    <input type="text" name="name" value="{{ vals.name if vals else src.name }}" required>
+
+    <label>Track</label>
+    <select name="track">
+      {% for t in tracks %}
+      <option value="{{ t }}"
+        {% if (vals.track if vals else src.track) == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+
+    <label>Kind</label>
+    <select name="kind">
+      {% for k in kinds %}
+      <option value="{{ k }}"
+        {% if (vals.kind if vals else src.kind) == k %}selected{% endif %}>{{ k }}</option>
+      {% endfor %}
+    </select>
+
+    <label>Cadence (hours)</label>
+    <input type="number" name="cadence_hours" min="1"
+           value="{{ vals.cadence_hours if vals else src.cadence_hours }}">
+
+    <label>Config (JSON)</label>
+    <textarea name="config" rows="4" class="mono">{{ vals.config if vals else config_text.get(src.id, '{}') }}</textarea>
+
+    <label>Enabled</label>
+    <input type="checkbox" name="enabled" value="1"
+           {% if (vals.enabled if vals else src.enabled) %}checked{% endif %}>
+  </div>
+  <div style="display:flex; gap:.4rem; margin-top:.4rem">
+    <button class="btn primary" type="submit">Save</button>
+  </div>
+</form>
+{%- endmacro %}

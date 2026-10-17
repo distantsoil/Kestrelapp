@@ -1,0 +1,40 @@
+{# Near-title search variants (D-TTL-2): what the generated searches ask for beside the target
+   titles, each removable. Reloads after an Employment save (titleVariantsChanged). Theme
+   tokens only (kestrel.css). #}
+<div id="title-variants" class="panel" data-testid="title-variants"
+     hx-get="/profile/title-variants" hx-trigger="titleVariantsChanged from:body" hx-swap="outerHTML">
+  <h2 style="margin-top:0">Other ways your titles are searched</h2>
+  {% if not variants.employment_on %}
+    <p class="muted">The employment track is off, so nothing is searched for these titles.</p>
+  {% elif not variants.used and not variants.removed and not variants.dropped %}
+    <p class="muted" data-testid="title-variants-none">No variants for your current target titles yet.</p>
+  {% else %}
+    <p class="muted">Kestrel also searches these common ways of writing your target titles, so a posting titled "IT Director" is found for "Director of IT". Each variant is searched on every board ({{ variants.boards }}), which adds to the searches each run, so remove any you do not want. Scoring counts near titles as matches either way.</p>
+    {% if variants.used %}
+    <ul data-testid="title-variants-used">
+      {% for v in variants.used %}
+      <li>{{ v }}
+        <form hx-post="/title-variants/remove" hx-target="#title-variants" hx-swap="outerHTML" style="display:inline">
+          <input type="hidden" name="variant" value="{{ v }}">
+          <button class="btn ghost" type="submit" data-testid="title-variant-remove" aria-label="Remove {{ v }}">Remove</button>
+        </form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if variants.dropped %}
+    <p class="muted" data-testid="title-variants-dropped">Left out to stay under the search limit: {{ variants.dropped | join(', ') }}.</p>
+    {% endif %}
+    {% if variants.removed %}
+    <p class="muted" style="margin-bottom:.2rem">You removed these, so they are not searched:</p>
+    <ul data-testid="title-variants-removed">
+      {% for v in variants.removed %}
+      <li>{{ v }}
+        <form hx-post="/title-variants/restore" hx-target="#title-variants" hx-swap="outerHTML" style="display:inline">
+          <input type="hidden" name="variant" value="{{ v }}">
+          <button class="btn ghost" type="submit" data-testid="title-variant-restore" aria-label="Search for {{ v }} again">Restore</button>
+        </form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  {% endif %}
+</div>

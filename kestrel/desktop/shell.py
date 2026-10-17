@@ -1,0 +1,612 @@
+"""The desktop shell process model (SPEC-INTERFACES 1.1, transcribed from spike/FINDINGS.md).
+
+Startup order (each a numbered trap from the spec / a FINDINGS correction):
+  freeze_support + stdout/stderr repair happen in __main__ BEFORE this module's main() runs.
+  1  Local\\ single-instance mutex; a second instance POSTs /api/focus and exits 0 (F5).
+     On macOS and Linux the same contract is an exclusive flock on <data_home>/kestrel.lock.
+  2  resolve paths + seed config + configure logging.
+  3  programmatic Alembic on a sync sqlite:// URL (migrate.run_migrations).
+  4  uvicorn on an OS-assigned free port, off the main thread, no signal handlers (F5).
+  5  worker + scheduler from the FastAPI lifespan, on uvicorn's loop (build_app).
+  6  wait for /health, then write runtime.json.
+  7  preflight (doctor); the tray thread with live tooltip + full menu + icon states.
+  8  webview.create_window + the closing handler (F1 _quitting guard), then webview.start() last.
+
+Quit is GRACEFUL (F8): it flips _quitting, stops the scheduler+worker via server.should_exit (whose
+lifespan shutdown waits up to 30s for in-flight tasks and RELEASES LEASES), stops the tray, and only
+then destroys the window. It never hard-kills mid-drain; only a server still running after the drain
+window is ended, so a Quit always leaves no process behind (D-UI-17).
+
+Windows is the packaged, double-clickable product and its path is unchanged. On macOS and Linux
+this module imports cleanly (the kernel32 bits are loaded inside the functions that need them) and,
+when pywebview has no backend to show a window, falls back to the default browser with the server
+kept in the foreground until Ctrl+C."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+import sys
+import threading
+import time
+import webbrowser
+from pathlib import Path
+
+import structlog
+
+from kestrel import __version__, paths
+
+log = structlog.get_logger()
+
+IS_WINDOWS = sys.platform == "win32"
+
+# ------------------------------------------------------------------- module-scope singletons
+_mutex_handle = None  # never closed: closing the handle would release the single-instance lock
+_lock_file = None  # the flock'd file object on macOS/Linux; held open for the process lifetime
+window = None
+icon = None
+server = None
+server_thread: threading.Thread | None = None
+_quitting = False  # F1: window.destroy() re-fires `closing`; the handler allows it when quitting
+_toast_shown = False
+_port = 0
+
+ERROR_ALREADY_EXISTS = 183
+MUTEX_NAME = "Local\\Kestrel"  # Local\\ not Global\\ (Global needs a privilege, blocks a 2nd user)
+LOCK_FILENAME = "kestrel.lock"  # macOS/Linux: flock'd under data_home(), the same contract
+
+
+# --------------------------------------------------------------------------- mutex (trap 1)
+def focus_running_instance() -> None:
+    """A lock only DETECTS; focus is a POST to the running instance found via runtime.json."""
+    try:
+        info = json.loads(paths.runtime_json().read_text(encoding="utf-8"))
+        import httpx
+
+        httpx.post(f"http://127.0.0.1:{info['port']}/api/focus", timeout=5.0)
+        log.info("focused_existing_instance", port=info["port"])
+    except Exception as exc:  # a second launch must never crash; it just reports
+        log.warning("focus_request_failed", error=str(exc))
+
+
+def _acquire_windows_mutex() -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    global _mutex_handle
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    _mutex_handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+    return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+
+
+def lock_file_path() -> Path:
+    return paths.data_home() / LOCK_FILENAME
+
+
+def _acquire_lock_file() -> bool:
+    """macOS/Linux: an exclusive, non-blocking flock. flock is per open file description, so even
+    a second open() in the same process is refused, and the kernel drops it when the process dies
+    (no stale-pid problem, no cleanup needed on a crash)."""
+    import fcntl
+
+    global _lock_file
+    paths.ensure_dirs()
+    f = open(lock_file_path(), "a+", encoding="utf-8")  # held open on purpose, not scoped
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return False
+    _lock_file = f
+    return True
+
+
+def acquire_single_instance() -> bool:
+    """True iff we are the first instance. Otherwise focus the running instance and return False."""
+    first = _acquire_windows_mutex() if IS_WINDOWS else _acquire_lock_file()
+    if not first:
+        focus_running_instance()
+    return first
+
+
+def release_single_instance() -> None:
+    """Give the single-instance lock back on a FAILED start.
+
+    The mutex is normally held until the process dies, which is what a clean quit relies on. But a
+    start that never reached a healthy server used to return while the non-daemon uvicorn thread
+    kept the process, and therefore the mutex, alive: every later launch decided Kestrel was
+    already running, POSTed /api/focus at a server that never came up, and exited. Releasing here
+    is what lets the next double-click start fresh."""
+    global _mutex_handle, _lock_file
+    if _mutex_handle is not None:
+        try:
+            import ctypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.ReleaseMutex(_mutex_handle)
+            kernel32.CloseHandle(_mutex_handle)
+        except Exception as exc:  # best-effort on a path that is already failing
+            log.warning("mutex_release_failed", error=str(exc))
+        _mutex_handle = None
+    if _lock_file is not None:
+        try:
+            import fcntl
+
+            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
+            _lock_file.close()
+        except Exception as exc:
+            log.warning("lock_file_release_failed", error=str(exc))
+        _lock_file = None
+
+
+# -------------------------------------------------------------------- server thread (traps 4-6)
+def start_server() -> int:
+    from kestrel.web.app import build_app
+    from kestrel.web.serve import _make_server, bind_free_port
+
+    global server, server_thread, _port
+    sock, port = bind_free_port()
+    _port = port
+    # worker AND scheduler from the lifespan, on uvicorn's single loop (never a second loop).
+    server = _make_server(build_app(worker=True, scheduler=True), log_level="info")
+    server_thread = threading.Thread(
+        target=server.run, kwargs={"sockets": [sock]}, name="uvicorn"
+    )
+    server_thread.start()
+    return port
+
+
+# ------------------------------------------------------------------------- window ops (trap 8)
+def hide_window() -> None:
+    if window is not None:
+        window.hide()
+    log.info("window_hidden_worker_continues")
+
+
+def show_window() -> None:
+    if window is not None:
+        window.show()
+        try:
+            window.restore()
+        except Exception:  # not every backend implements restore(); hide/show is the contract
+            pass
+
+
+def on_closing():
+    """closing event: hide to tray and cancel the OS close (return False). F1: window.destroy() on
+    quit re-fires this event, so when _quitting is set we ALLOW the close (return True), otherwise
+    the app could never exit. With close-to-tray off (D-UI-8), or with no tray to come back
+    from, closing the window is a real quit: the same graceful path as the tray's Quit, minus the
+    destroy(), since the OS close this handler allows does that."""
+    global _toast_shown
+    if _quitting:
+        return True
+    from kestrel.web.deps import close_to_tray
+
+    if icon is None or not close_to_tray():
+        _begin_quit()
+        return True
+    if not _toast_shown:
+        # Once per launch, not once ever (D-UI-16): a balloon is easy to miss, and the first
+        # close of each session is when "where did it go?" is asked.
+        _toast_shown = True
+        _notify(CLOSE_TO_TRAY_TITLE, CLOSE_TO_TRAY_BODY)
+    hide_window()
+    return False
+
+
+CLOSE_TO_TRAY_TITLE = "Kestrel is still running"
+CLOSE_TO_TRAY_BODY = (
+    "Kestrel keeps working in the background while the window is closed. Open it again from "
+    "this tray icon. To quit on close instead, go to Settings > Appearance > Desktop window."
+)
+
+
+def _notify(title: str, body: str) -> None:
+    if icon is not None:
+        try:
+            icon.notify(body, title)
+            log.info("tray_notified", title=title)
+        except Exception as exc:  # notifications are best-effort; never break the flow
+            # Warning, not debug: the diagnostics bundle must show why a notice never appeared.
+            log.warning("tray_notify_failed", error=f"{type(exc).__name__}: {exc}")
+
+
+# --------------------------------------------------------------------------- graceful quit (F8)
+def _begin_quit() -> None:
+    """Stop the server (graceful lifespan drain) and the tray; leaves the window to the caller."""
+    global _quitting
+    _quitting = True
+    log.info("quit_requested")
+    if server is not None:
+        # server.should_exit triggers uvicorn's shutdown, which runs the lifespan finally: it
+        # signals the worker, waits up to 30s for in-flight tasks, and releases the leases (F8).
+        server.should_exit = True
+    if icon is not None:
+        try:
+            icon.stop()
+        except Exception as exc:
+            log.debug("tray_stop_failed", error=str(exc))
+
+
+def do_quit() -> None:
+    """The one place a real quit happens. Never a hard kill mid-drain; only after the drain window
+    has passed does _finish_quit end a process whose server will not stop (D-UI-17)."""
+    if _quitting:
+        return
+    _begin_quit()
+    if window is not None:
+        window.destroy()  # the only destroy() in the program; unblocks webview.start()
+
+
+# ------------------------------------------------------------------- control helpers (loopback)
+def _post(path: str) -> None:
+    try:
+        import httpx
+
+        httpx.post(f"http://127.0.0.1:{_port}{path}", timeout=5.0)
+    except Exception as exc:
+        log.warning("control_post_failed", path=path, error=str(exc))
+
+
+def _status() -> dict:
+    try:
+        import httpx
+
+        return httpx.get(f"http://127.0.0.1:{_port}/api/status", timeout=3.0).json()
+    except Exception:
+        return {}
+
+
+def _open_folder(p: Path) -> None:
+    """Open the operator's own data/log folder in the OS file manager."""
+    try:
+        if IS_WINDOWS:
+            os.startfile(str(p))  # noqa: S606
+        else:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, str(p)], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        log.warning("open_folder_failed", path=str(p), error=str(exc))
+
+
+def reveal_file(p: Path) -> None:
+    """Show a file Kestrel just saved for the operator (the diagnostics zip, D-UI-41): Explorer
+    opens its folder with the file selected. Explorer is a windowed program, so no console
+    flashes. Elsewhere the folder opens (Finder selects the file on macOS)."""
+    try:
+        if IS_WINDOWS:
+            # One command string: explorer parses `/select,"path"` itself and misreads the whole
+            # argument quoted, which is what list-form quoting would produce for a path with
+            # spaces. The path comes from the Downloads Known Folder and cannot contain a quote.
+            subprocess.Popen(f'explorer /select,"{p}"')  # noqa: S603
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(p)], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        else:
+            _open_folder(p.parent)
+    except OSError as exc:
+        log.warning("reveal_file_failed", path=str(p), error=str(exc))
+        raise
+
+
+# ------------------------------------------------------------------------------ tray (trap 7)
+def _icons() -> dict:
+    """The three tray states, from the shipped mark.
+
+    Prefers the rasterized mark in kestrel/resources/icons (generated from docs/images by
+    scripts/make_icons.py) so the tray matches the installer, the taskbar, and the browser tab.
+    Falls back to the drawn placeholder if those are missing, because a tray icon failing to load
+    must not stop the app from starting.
+    """
+    from PIL import Image, ImageDraw
+
+    try:
+        from kestrel import paths
+
+        icons_dir = paths.packaged_icons()
+        loaded = {}
+        for state in ("idle", "working", "working_att"):
+            with paths.resource_path(icons_dir / f"tray-{state}.png") as p:
+                loaded[state] = Image.open(p).convert("RGBA")
+        return loaded
+    except Exception as exc:  # a missing or unreadable icon is cosmetic, never fatal
+        log.warning("tray_icons_fallback", error=str(exc))
+
+    def _mk(fill: bool, accent: str | None) -> Image.Image:
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse((6, 6, 58, 58), fill="#4F5BD5" if fill else None, outline="#4F5BD5", width=6)
+        if not fill:
+            d.ellipse((22, 22, 42, 42), fill="#4F5BD5")
+        if accent:
+            d.ellipse((40, 6, 58, 24), fill=accent)
+        return img
+
+    return {"idle": _mk(False, None), "working": _mk(True, None),
+            "working_att": _mk(True, "#b3261e")}
+
+
+def _tooltip(status: dict) -> tuple[str, str]:
+    """(tooltip text, icon state) from /api/status. Shows live run progress when a run is active."""
+    act = status.get("activity") or {}
+    run = act.get("run") or act.get("active_run") or {}
+    done, total = run.get("done"), run.get("total")
+    if status.get("paused"):
+        return f"Kestrel {__version__} - paused", "idle"
+    if run and total:
+        rate = run.get("per_minute") or run.get("rate")
+        eta = run.get("eta_minutes") or run.get("eta")
+        tip = f"Kestrel {__version__} - run: {done}/{total}"
+        if rate:
+            tip += f", {rate}/min"
+        if eta:
+            tip += f", ~{eta}m left"
+        state = "working_att" if act.get("errors") or act.get("quarantined") else "working"
+        return tip, state
+    return f"Kestrel {__version__} - idle", "idle"
+
+
+def _tooltip_poller() -> None:
+    imgs = _icons()
+    while not _quitting:
+        try:
+            tip, state = _tooltip(_status())
+            if icon is not None:
+                icon.title = tip
+                icon.icon = imgs.get(state, imgs["idle"])
+        except Exception as exc:
+            log.debug("tooltip_poll_error", error=str(exc))
+        time.sleep(4.0)
+
+
+def _initial_size(screen: tuple[int, int] | None = None) -> tuple[int, int]:
+    """Nine tenths of the primary screen, capped at 1600x1000 and never below the minimum.
+    pywebview reports screens in logical pixels, so this already accounts for scaling."""
+    if screen is None:
+        try:
+            import webview
+
+            first = webview.screens[0]
+            screen = (int(first.width), int(first.height))
+        except Exception:  # no backend yet, or no screen: a sensible fixed size
+            screen = (1440, 900)
+    w = max(960, min(1600, int(screen[0] * 0.9)))
+    h = max(640, min(1000, int(screen[1] * 0.9) - 40))  # 40: the taskbar
+    return w, h
+
+
+def start_tray() -> bool:
+    """Start the tray icon on its own thread. False (with a log line, never a crash) when this
+    machine cannot host one: pystray's import on Linux needs an X display or an appindicator/GTK
+    stack, and a headless session or an SSH shell has neither. Kestrel runs without a tray."""
+    try:
+        import pystray
+    except Exception as exc:  # Xlib raises DisplayNameError, not ImportError, with no DISPLAY
+        log.warning("tray_unavailable", error=f"{type(exc).__name__}: {exc}")
+        return False
+    try:
+        _build_tray(pystray)
+    except Exception as exc:  # a backend that imports but cannot create an icon
+        log.warning("tray_unavailable", error=f"{type(exc).__name__}: {exc}")
+        return False
+    return True
+
+
+def _build_tray(pystray) -> None:
+    imgs = _icons()
+
+    def _paused_checked(item) -> bool:
+        return bool(_status().get("paused"))
+
+    global icon
+    icon = pystray.Icon(
+        "kestrel",
+        imgs["idle"],
+        f"Kestrel {__version__}",
+        menu=pystray.Menu(
+            pystray.MenuItem("Open", lambda i, item: show_window(), default=True),
+            pystray.MenuItem("Pause worker", lambda i, item: _post("/api/worker/pause"),
+                             checked=_paused_checked),
+            pystray.MenuItem("Resume worker", lambda i, item: _post("/api/worker/resume")),
+            pystray.MenuItem("Run scan now", lambda i, item: _post("/api/scan/now")),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Recent notifications", lambda i, item: show_window()),
+            pystray.MenuItem("Open data folder", lambda i, item: _open_folder(paths.data_dir())),
+            pystray.MenuItem("Open logs", lambda i, item: _open_folder(paths.logs_dir())),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", lambda i, item: do_quit()),
+        ),
+    )
+    threading.Thread(target=icon.run, name="tray", daemon=True).start()
+    threading.Thread(target=_tooltip_poller, name="tray-tooltip", daemon=True).start()
+
+
+# --------------------------------------------------------------------------- preflight (trap 7)
+def run_preflight() -> None:
+    """Run the SPEC-INTERFACES 1.2 checks (doctor). A blocking failure is logged and surfaced in the
+    UI (/about and, on first run, the operator opens the profile/sources editors); the app still
+    starts so the operator can fix things from within it rather than being locked out."""
+    try:
+        from kestrel import doctor
+
+        report = doctor.run_doctor(quick=True)
+        log.info("preflight", blocking=report.has_blocking_failure)
+        if report.has_blocking_failure:
+            log.warning("preflight_blocking", report=doctor.format_report(report)[:2000])
+    except Exception as exc:  # preflight is advisory; never block launch on it
+        log.warning("preflight_error", error=str(exc))
+
+
+# ------------------------------------------------------------------------------------ main
+def abort_start(reason: str) -> int:
+    """Tear down a start that failed before the window existed, and return the exit code.
+
+    Stops the server thread (which also runs the lifespan shutdown and releases leases), waits for
+    it, and releases the single-instance mutex so the next launch is not turned away as a
+    duplicate. Returning without doing this left a headless, windowless process holding the lock."""
+    log.error("desktop_start_aborted", reason=reason)
+    if server is not None:
+        server.should_exit = True
+    if server_thread is not None:
+        server_thread.join(timeout=35.0)
+        if server_thread.is_alive():
+            log.warning("server_thread_still_alive_after_abort")
+    release_single_instance()
+    with __import__("contextlib").suppress(OSError):
+        paths.runtime_json().unlink()
+    return 1
+
+
+def run_desktop() -> int:
+    """The full startup sequence. Called from __main__ after freeze_support + stdout repair.
+    Returns the process exit code: 0 for a clean run or a second-instance handoff, non-zero when
+    the server never became healthy."""
+    from kestrel.db import migrate
+    from kestrel.web.serve import wait_for_health, write_runtime
+
+    paths.ensure_dirs()
+    _configure_logging()
+    log.info("kestrel_start", pid=os.getpid(), version=__version__,
+             frozen=getattr(__import__("sys"), "frozen", False))
+
+    if not acquire_single_instance():
+        log.info("second_instance_exit")
+        return 0
+
+    migrate.run_migrations()
+    port = start_server()
+    if not wait_for_health(port):
+        return abort_start("health_never_up")
+    write_runtime(port, os.getpid())
+    run_preflight()
+
+    from kestrel.web.desktop_bridge import set_focus_handler
+
+    url = f"http://127.0.0.1:{port}/"
+    global window
+    try:
+        import webview
+
+        if sys.platform == "linux":
+            # Say up front what a missing GTK WebKit means (release round R1); the browser
+            # fallback below shows the same in a panel when the window then cannot open.
+            from kestrel.desktop import linux_check
+
+            gap = linux_check.detect()
+            if gap is not None:
+                log.warning("linux_webkit_probe", missing=gap.missing)
+        if not IS_WINDOWS:
+            # pywebview picks its backend lazily, inside webview.start(), AFTER create_window has
+            # returned; a Linux box with no GTK/Qt bindings (or a mac without the Cocoa extras)
+            # would therefore pass create_window and then raise out of start() with the tray
+            # already up. Probe now so that failure lands in the except below and the browser
+            # fallback runs instead. Windows is untouched: WebView2 is loaded by start() as before.
+            webview.initialize()
+        # pywebview cancels every download unless told otherwise (edgechromium's
+        # on_download_starting sets args.Cancel when ALLOW_DOWNLOADS is off): the diagnostics
+        # zip, a backup, a rendered PDF or the notices archive flashed a window and vanished.
+        # With it on, WebView2 shows the standard Save As dialog (D-UI-12).
+        webview.settings["ALLOW_DOWNLOADS"] = True
+        # Opens large but not maximized (D-UI-14, revised by the operator in 0.3.0: "full
+        # screen is fine but not preferred"): most of the primary screen, never past it, so the
+        # bottom of a page (the Hosted key and Next button) is never below the fold at 150%
+        # scaling. min_size keeps a resized window usable.
+        width, height = _initial_size()
+        window = webview.create_window(
+            f"Kestrel {__version__}", url=url, width=width, height=height,
+            min_size=(960, 640),
+        )
+    except Exception as exc:
+        if IS_WINDOWS:  # the packaged product: a missing WebView2 is a real failure, as before
+            raise
+        # macOS without the Cocoa backend wired, Linux without GTK/Qt: not a reason to refuse to
+        # run. The server is already healthy, so hand the UI to the default browser instead.
+        log.warning("webview_unavailable_using_browser", error=f"{type(exc).__name__}: {exc}")
+        if sys.platform == "linux":
+            from kestrel.desktop import linux_check
+
+            linux_check.record_fallback(f"{type(exc).__name__}: {exc}")
+        window = None
+        return _run_in_browser(url)
+
+    window.events.closing += on_closing
+    # Register the window with the tray and /api/focus only AFTER it exists, so a second launch (or
+    # a tray Quit) during startup never finds `window is None`.
+    set_focus_handler(show_window)
+    from kestrel.web.desktop_bridge import set_quit_handler
+
+    set_quit_handler(do_quit)  # the in-app "Quit Kestrel" button (D-UI-27)
+    from kestrel.web.desktop_bridge import set_reveal_handler
+
+    # Saved files (the diagnostics zip) go to Downloads and open in Explorer, never through the
+    # WebView2 downloads flyout (D-UI-41).
+    set_reveal_handler(reveal_file)
+    start_tray()
+    log.info("webview_start")
+    webview.start()  # blocks the main thread until window.destroy()
+
+    # webview returned => a real quit is in progress. Let uvicorn's graceful shutdown (worker drain
+    # + lease release) finish before the process exits; never truncate it.
+    return _finish_quit()
+
+
+# Open requests (serve.GRACEFUL_REQUEST_S) plus the lifespan's 30 s worker drain, with headroom.
+QUIT_JOIN_S = 45.0
+
+
+def _finish_quit() -> int:
+    if server_thread is not None:
+        server_thread.join(timeout=QUIT_JOIN_S)
+    with __import__("contextlib").suppress(OSError):
+        paths.runtime_json().unlink()
+    if server_thread is not None and server_thread.is_alive():
+        # The drain window has passed and the server still has not stopped. Returning would leave
+        # a process with no window and no tray that only Task Manager can end (0.2.0, D-UI-17), so
+        # end it here. Nothing durable is lost: every unit of work is a task row whose lease
+        # expires and is picked up at next launch (hard rule 5).
+        log.warning("quit_forced_after_drain_timeout", waited_s=QUIT_JOIN_S)
+        logging.shutdown()
+        os._exit(0)
+    log.info("kestrel_exit_clean")
+    return 0
+
+
+def _run_in_browser(url: str) -> int:
+    """The no-window path (macOS/Linux without a pywebview backend): print the URL, open the
+    default browser, keep the server in the foreground until Ctrl+C or a tray/API quit, then run
+    the same graceful shutdown the window path does."""
+    from kestrel.web.desktop_bridge import set_focus_handler
+
+    print(f"Kestrel is running at {url}  (Ctrl+C to quit)")
+    try:
+        webbrowser.open(url)
+    except Exception as exc:  # no browser registered is not fatal; the URL is on screen
+        log.warning("browser_open_failed", error=str(exc))
+    # A second launch's /api/focus brings the UI back by opening a tab, the closest thing to a
+    # raise when there is no window to raise.
+    set_focus_handler(lambda: webbrowser.open(url))
+    start_tray()
+    try:
+        while not _quitting and server_thread is not None and server_thread.is_alive():
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        log.info("ctrl_c")
+    do_quit()
+    set_focus_handler(None)
+    return _finish_quit()
+
+
+def _configure_logging() -> None:
+    import logging
+
+    handler = logging.FileHandler(paths.logs_dir() / "kestrel.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(threadName)s %(message)s"))
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)

@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kestrel"
+dynamic = ["version"]
+description = "Local-LLM career operations engine (Windows desktop application)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE.md" }
+authors = [{ name = "Mark Crowle-Groves" }]
+
+dependencies = [
+  # Ingestion
+  "python-jobspy",
+  "httpx",
+  "playwright",
+  "markdownify",
+  "pypdf",
+  "python-docx",  # .docx import (kestrel.docs.convert); .pdf goes through pypdf above
+
+  # Rules / config
+  "simpleeval",
+  "pydantic>=2",
+  "pydantic-settings>=2",
+  # The data-home .env is the only home for API keys (config.load_dotenv_into_environ). 1.2.2+
+  # rewrites it atomically (temp file + os.replace, file mode kept); Kestrel fsyncs after.
+  "python-dotenv>=1.2.2,<2",
+  "pyyaml",
+  # Web / API
+  "fastapi",
+  "uvicorn[standard]",
+  "jinja2",
+  "python-multipart",
+  # QR for the LAN join link. Pure Python with no dependencies, emits inline SVG, so the frozen
+  # app needs no image toolchain and the page needs no CDN.
+  "segno",
+  # Data
+  "sqlalchemy>=2",
+  "aiosqlite",
+  "alembic",
+  # Scheduling
+  "apscheduler",
+  # ML / tokens
+  "scikit-learn",
+  "numpy",
+  "scipy",
+  "tiktoken",
+  # In-process CPU embeddings (kestrel.llm.inprocess_embed, D-EMBED-1): the bundled ONNX model runs
+  # on onnxruntime's CPU provider and tokenizers reads its tokenizer.json. No torch, no network.
+  "onnxruntime>=1.31.0",
+  "tokenizers>=0.23.3",
+  # Infra
+  "structlog",
+  "typer>=0.12",
+  # Desktop shell. pywebview and pystray are cross-platform (Cocoa on macOS, GTK/Qt and
+  # appindicator/X11 on Linux, backends the operator installs); pythonnet is the WebView2 bridge
+  # and only builds on Windows. Both Windows-only packages are imported lazily, never at module
+  # top level, so a source checkout on macOS or Linux runs `kestrel serve` without them.
+  "pywebview",
+  "pythonnet; sys_platform == 'win32'",
+  "pystray",
+  "pillow",
+  # MCP + notifications (win11toast is the Windows toast; macOS and Linux use osascript and
+  # notify-send through kestrel.services.delivery)
+  "fastmcp",
+  "win11toast; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff",
+  "pytest",
+  "pytest-asyncio",
+  "respx",
+  "pyinstaller",
+]
+
+[project.scripts]
+kestrel = "kestrel.cli:app"
+
+[tool.hatch.version]
+path = "kestrel/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kestrel"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"kestrel/resources" = "kestrel/resources"
+"kestrel/llm/prompts" = "kestrel/llm/prompts"
+"kestrel/db/migrations" = "kestrel/db/migrations"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Agent worktrees (Claude Code) are other checkouts of this repo, never part of this tree.
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+ignore = ["B008"]  # typer uses function calls (Option/Argument) in defaults
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    # A database worker thread calling into a closed event loop is a leaked connection, not
+    # noise: fail the test instead of letting CI annotate it (tests/conftest.py, D-TEST-1).
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+]

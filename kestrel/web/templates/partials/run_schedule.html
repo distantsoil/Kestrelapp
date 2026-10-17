@@ -1,0 +1,17 @@
+<div class="panel" id="run-schedule" data-testid="run-schedule" style="padding:.8rem 1rem; margin-bottom:1rem">
+  <h2 style="margin-top:0">Schedule</h2>
+  <p class="muted" style="margin:.2rem 0 .6rem">One scan of every enabled source, daily or weekly, on this machine's clock ({{ local_tz }}). It fires only while the Kestrel desktop app is running, in the window or the tray, and once per day or week: a time missed while Kestrel was closed fires at the next start that same day or week. Changing the schedule after it has fired waits for the next period. Per-source cadences on Sources keep running as before.</p>
+  <form hx-post="/runs/schedule" hx-target="#run-schedule" hx-swap="outerHTML" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap">
+    <label><input type="radio" name="kind" value="off" {% if schedule.kind == 'off' %}checked{% endif %}> Off</label>
+    <label><input type="radio" name="kind" value="daily" {% if schedule.kind == 'daily' %}checked{% endif %}> Daily</label>
+    <label><input type="radio" name="kind" value="weekly" {% if schedule.kind == 'weekly' %}checked{% endif %}> Weekly on
+      <select name="weekday" aria-label="Weekday">
+        {% for name in weekdays %}<option value="{{ loop.index0 }}" {% if schedule.weekday == loop.index0 %}selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select></label>
+    <label>at <input type="time" name="time" value="{{ schedule.time }}" required></label>
+    <button class="btn" type="submit">Save schedule</button>
+    <span class="muted" data-testid="schedule-status">
+      {% if schedule_saved %}Saved: {% endif %}{{ schedule.describe() }}{% if schedule_next %}; next {{ schedule_next }}{% endif %}{% if schedule_last %} (last fired {{ schedule_last }}){% endif %}.
+    </span>
+  </form>
+</div>

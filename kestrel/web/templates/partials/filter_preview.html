@@ -1,0 +1,19 @@
+<div id="filter-preview">
+  {% for track, rules in preview.items() %}
+    <h3>{{ track }} <span class="muted">(last {{ rules[0].of_n if rules else 0 }} opportunities)</span></h3>
+    {% if rules %}
+      <table class="data">
+        <thead><tr><th>Rule</th><th>Reason</th><th>Would reject</th></tr></thead>
+        <tbody>
+          {% for r in rules %}
+            <tr>
+              <td class="mono">{{ r.id }}</td>
+              <td class="muted">{{ r.reason or '' }}</td>
+              <td class="{% if r.rejects %}gap{% endif %}">{{ r.rejects }} / {{ r.of_n }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}<p class="muted">No hard-blocker rules for this track.</p>{% endif %}
+  {% endfor %}
+</div>

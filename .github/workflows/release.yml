@@ -1,0 +1,211 @@
+name: Release
+
+# Pushing a tag `vX.Y.Z` builds the three installers and publishes them to a GitHub Release with
+# generated notes. `workflow_dispatch` is the dry run: the same builds, uploaded as workflow
+# artifacts only, no release; its `platform` choice builds all three or just one. Signing runs
+# only when the matching secrets exist; without them the build scripts say so and produce unsigned installers (docs/RELEASING.md). Every build job writes
+# a SIGNING-<platform>.txt marker ("signed" or "unsigned: add <secrets> to sign") next to its
+# installer; the release step attaches them as SIGNING.txt and puts the lines in the release body,
+# so an unsigned download is never published without saying so.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    # A dry run can build one platform, so testing one installer does not pay for the other two
+    # (macOS minutes cost 10x, Windows 2x). A tag push ignores this and always builds all three,
+    # so a published release can never be missing an installer (D-CI-3).
+    inputs:
+      platform:
+        description: "Installer to build (dry run: workflow artifacts only, no release)"
+        type: choice
+        options: [all, windows, macos, linux]
+        default: all
+
+permissions:
+  contents: write
+
+env:
+  KESTREL_HEADLESS: "1"
+
+jobs:
+  linux:
+    name: Linux AppImage
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install
+        run: |
+          uv python install 3.12
+          uv sync --extra dev
+      - name: Fetch the embedding model
+        # The in-process embedding model (D-EMBED-2): pinned by SHA-256, never committed; the
+        # spec refuses to build without it.
+        run: uv run python scripts/fetch_embed_model.py
+      - name: Build AppImage
+        # appimagetool itself runs with --appimage-extract-and-run, so the runner needs no FUSE.
+        run: PYTHON="$(uv python find)" packaging/build_appimage.sh
+      - name: Smoke test the frozen binary
+        run: |
+          export KESTREL_DATA_HOME="$RUNNER_TEMP/kestrel-home"
+          ./dist/Kestrel/kestrel version
+          ./dist/Kestrel/kestrel doctor --quick || true
+      - name: Signing marker
+        # No signing path exists for the AppImage (no secrets are defined for it); say so.
+        run: |
+          echo "linux: unsigned: the AppImage is not signed (no Linux signing secrets are defined); verify it against SHA256SUMS.txt" > dist/SIGNING-linux.txt
+          cat dist/SIGNING-linux.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Kestrel-linux-x86_64
+          path: |
+            dist/Kestrel-*-x86_64.AppImage
+            dist/SIGNING-linux.txt
+          if-no-files-found: error
+
+  macos:
+    name: macOS dmg
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos'
+    runs-on: macos-latest
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install
+        run: |
+          uv python install 3.12
+          uv sync --extra dev
+      - name: Fetch the embedding model
+        # The in-process embedding model (D-EMBED-2): pinned by SHA-256, never committed; the
+        # spec refuses to build without it.
+        run: uv run python scripts/fetch_embed_model.py
+      - name: Import the signing certificate
+        if: env.APPLE_CERT_P12_BASE64 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/kestrel-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+      - name: Build dmg
+        run: PYTHON="$(uv python find)" packaging/build_dmg.sh
+      - name: Smoke test the bundle
+        run: |
+          export KESTREL_DATA_HOME="$RUNNER_TEMP/kestrel-home"
+          ./dist/Kestrel.app/Contents/MacOS/Kestrel version
+          ./dist/Kestrel.app/Contents/MacOS/Kestrel doctor --quick || true
+      - name: Signing marker
+        run: |
+          if [ -n "$APPLE_SIGNING_IDENTITY" ] && [ -n "$APPLE_CERT_P12_BASE64" ]; then
+            echo "macos: signed" > dist/SIGNING-macos.txt
+          else
+            echo "macos: unsigned: add APPLE_SIGNING_IDENTITY, APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD to sign and notarize" > dist/SIGNING-macos.txt
+          fi
+          cat dist/SIGNING-macos.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Kestrel-macos
+          path: |
+            dist/Kestrel-*.dmg
+            dist/SIGNING-macos.txt
+          if-no-files-found: error
+
+  windows:
+    name: Windows installer
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows'
+    runs-on: windows-latest
+    env:
+      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install
+        run: |
+          uv python install 3.12
+          uv sync --extra dev
+      - name: Fetch the embedding model
+        # The in-process embedding model (D-EMBED-2): pinned by SHA-256, never committed; the
+        # spec refuses to build without it.
+        run: uv run python scripts/fetch_embed_model.py
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --version 6.7.1 --no-progress -y
+          }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $env:PYTHON = (uv python find)
+          packaging\build_windows.ps1
+      - name: Smoke test the frozen CLI
+        shell: pwsh
+        run: |
+          $env:KESTREL_DATA_HOME = "$env:RUNNER_TEMP\kestrel-home"
+          .\dist\Kestrel\kestrel-cli.exe version
+          .\dist\Kestrel\kestrel-cli.exe doctor --quick; if ($LASTEXITCODE -ne 0) { exit 0 }
+      - name: Signing marker
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_CERT_PFX_BASE64) {
+            Set-Content -Path dist\SIGNING-windows.txt -Value "windows: signed"
+          } else {
+            Set-Content -Path dist\SIGNING-windows.txt -Value "windows: unsigned: add WINDOWS_CERT_PFX_BASE64 and WINDOWS_CERT_PASSWORD to sign"
+          }
+          Get-Content dist\SIGNING-windows.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Kestrel-windows
+          path: |
+            dist/Kestrel-Setup-*.exe
+            dist/SIGNING-windows.txt
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [linux, macos, windows]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum Kestrel-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Signing status
+        # One SIGNING.txt from the three per-platform markers, and the same lines at the top of
+        # the release body, so nobody downloads an unsigned installer without being told.
+        run: |
+          cd artifacts
+          cat SIGNING-windows.txt SIGNING-macos.txt SIGNING-linux.txt > SIGNING.txt
+          { echo "## Code signing"; echo; sed 's/^/- /' SIGNING.txt; echo; } > RELEASE_BODY.md
+          cat RELEASE_BODY.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          body_path: artifacts/RELEASE_BODY.md
+          files: |
+            artifacts/Kestrel-Setup-*.exe
+            artifacts/Kestrel-*.dmg
+            artifacts/Kestrel-*-x86_64.AppImage
+            artifacts/SHA256SUMS.txt
+            artifacts/SIGNING.txt

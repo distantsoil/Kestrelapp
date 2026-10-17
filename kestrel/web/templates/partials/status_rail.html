@@ -1,0 +1,19 @@
+{# Sidebar status rail (docs/UI_PROPOSAL.html): four rows, one state dot each. Rendered by
+   /status/rail from routes_control._status_payload and polled by HTMX every 10 s. #}
+<a class="line" data-rail="worker" href="/runs" title="Worker state and the last cycle">
+  <span class="dot {{ worker.state }}"></span><span class="txt">{{ worker.label }}</span></a>
+<a class="line" data-rail="model" href="/models" title="The model Ollama has loaded right now">
+  <span class="dot {{ model.state if model else 'idle' }}"></span><span class="txt">{{ model.label if model else 'local mode' }}</span></a>
+<a class="line" data-rail="scan" href="/sources" title="Last source scan and new opportunities">
+  <span class="dot {{ scan.state }}"></span><span class="txt">{{ scan.label }}</span></a>
+<a class="line" data-rail="hosted" href="/settings" title="Your online model key and whether it is ready">
+  <span class="dot {{ hosted.state }}"></span><span class="txt">{{ hosted.label }}</span></a>
+{% if worker.open_failed %}<a class="line" data-rail="failed" href="/quarantine" title="Roles the model could not finish">
+  <span class="dot warn"></span><span class="txt">{{ worker.open_failed }} {{ 'role' if worker.open_failed == 1 else 'roles' }} failed scoring</span></a>{% endif %}
+{% if pending_mode %}<span class="line" data-rail="pending"><span class="dot idle"></span><span class="txt">Next cycle: {{ pending_mode }}</span></span>{% endif %}
+{# Out-of-band: the scan signal the toast container reads (D-UI-36). #}
+{% set st = scan_state or {} %}
+<div id="scan-signal" hx-swap-oob="true" hidden data-ready="1" data-scanning="{{ 1 if st.scanning else 0 }}"
+     data-remaining="{{ st.remaining or 0 }}" data-event="{{ st.event if st.event is not none else 'none' }}"
+     data-new="{{ st.new if st.new is not none else 0 }}" data-errors="{{ st.errors or 0 }}"
+     data-scoring="{{ st.scoring or 0 }}"></div>

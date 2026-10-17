@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Sources · Kestrel{% endblock %}
+{% block content %}
+<h1>Sources</h1>
+<p class="muted">Where Kestrel looks for work. Your searches are built from your profile and
+follow it when it changes. Company boards and other sources are under Advanced.</p>
+<p class="muted" data-testid="us-note">{{ us_note }} Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a LinkedIn posting by hand with Add a role I found elsewhere.</p>
+
+{% include "partials/sources_panel.html" %}
+{% endblock %}

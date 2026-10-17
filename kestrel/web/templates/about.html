@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}About · Kestrel{% endblock %}
+{% block content %}
+<h1>About</h1>
+
+<div class="panel">
+  <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap">
+    <img class="mark" src="/static/icon.svg" alt="" width="56" height="56">
+    <div>
+      <h2 style="margin:0">Kestrel</h2>
+      <div>Version <span class="mono" id="about-version">{{ version }}</span></div>
+      <div class="muted">
+        {% if frozen %}packaged desktop build{% else %}source checkout{% endif %}
+        &middot; Python {{ python_version }} &middot; {{ platform }}
+      </div>
+      <div class="muted">Copyright 2026 M Crowle-Groves &middot; PolyForm Noncommercial License 1.0.0
+        &middot; free for noncommercial use, not for sale</div>
+    </div>
+  </div>
+  <div class="formgrid" style="margin-top:1rem">
+    <label>Data folder</label>
+    <div>
+      <code class="mono">{{ data_home }}</code>
+      <button type="button" class="btn ghost" data-path="{{ data_home }}"
+              @click="navigator.clipboard.writeText($el.dataset.path)"
+              title="Copy path">Copy</button>
+    </div>
+  </div>
+  <p style="margin-top:1rem">Kestrel is a free job search app for any job seeker, and you are not
+  the product. It runs on your own computer (Windows, macOS or Linux), finds openings, scores
+  them for fit, tailors your own resume text to each role, tracks every application to its
+  outcome, and learns from the decisions you record. An optional second track covers consulting
+  and contract work; it is off by default.</p>
+  <p>Your search stays on this computer. The AI runs here by default; you can choose an online
+  model with your own key (OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible
+  service), and Kestrel asks before anything goes online and shows exactly what would be sent.
+  It never applies, emails or messages anyone for you; it drafts, recommends, and hands over.</p>
+  <p class="muted">Built with Claude, Qwen and NVIDIA Nemotron. The source is public under the
+  PolyForm Noncommercial License 1.0.0 (see <span class="mono">LICENSE.md</span>).</p>
+  {# D-UI-64: the site and Ko-fi as link buttons inside the main card, not a loose line. #}
+  <p class="site-links" data-testid="site-links"><a class="btn" href="https://kestrelapp.co" target="_blank" rel="noopener">kestrelapp.co</a> <a class="btn pri" href="https://ko-fi.com/distantsoil" target="_blank" rel="noopener">Support Kestrel on Ko-fi</a></p>
+</div>
+
+<div class="split">
+  <div class="panel">
+    <h2>Source and issues</h2>
+    <p>Source code; issues and feature requests go here.</p>
+    <a class="btn" href="{{ github_url }}" target="_blank" rel="noopener">GitHub repository</a>
+    <p class="muted" style="margin-top:.6rem"><span class="mono">{{ github_url }}</span></p>
+  </div>
+  <div class="panel">
+    <h2>Support the project</h2>
+    <p>Kestrel is free. If it earned you an interview, you can support its development.</p>
+    <a class="btn primary" href="{{ kofi_url }}" target="_blank" rel="noopener">Support on Ko-fi</a>
+    <p class="muted" style="margin-top:.6rem"><span class="mono">{{ kofi_url }}</span></p>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Built on</h2>
+  <p class="muted">Open-source software Kestrel ships, each under its own license. The full license
+  text of every bundled library is in the <a href="/about/notices" target="_blank" rel="noopener">third-party notices</a>.</p>
+  <ul>
+    {% for c in built_on %}
+    <li><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a> ({{ c.license }}): {{ c.what }}.</li>
+    {% endfor %}
+  </ul>
+  <h2>Inspired by</h2>
+  <p class="muted">Projects whose ideas shaped Kestrel. No code or text was taken from them;
+  <span class="mono">REFERENCES.md</span> records what each one contributed.</p>
+  <ul>
+    {% for c in inspired_by %}
+    <li><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a> ({{ c.license }}): {{ c.what }}.</li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="panel" id="diagnostics">
+  <h2>Diagnostics</h2>
+  {% if desktop %}
+  <p>When something goes wrong, save one zip and attach it to a GitHub issue or hand it to
+  whoever asked for it. It is built when you click, saved to your Downloads folder, and is never
+  sent anywhere by Kestrel.</p>
+  {# Desktop app: saved straight to Downloads, no browser download flyout (D-UI-41). #}
+  <button class="btn primary" type="button" data-testid="diagnostics-save"
+          hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML"
+          data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
+  <div id="diagnostics-result"></div>
+  {% else %}
+  <p>When something goes wrong, download one zip and attach it to a GitHub issue or hand it to
+  whoever asked for it. It is built when you click and is never sent anywhere by Kestrel.</p>
+  <a class="btn primary" href="/about/diagnostics">Download diagnostics</a>
+  {% endif %}
+  <h3 style="margin-top:1rem">What it contains</h3>
+  <ul>
+    {% for name, what in bundle_contents %}
+    <li><span class="mono">{{ name }}</span>: {{ what }}.</li>
+    {% endfor %}
+  </ul>
+  <h3>What it never contains</h3>
+  <ul>
+    {% for item in bundle_excluded %}
+    <li>{{ item }}.</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">Open the zip before you send it if you want to check; every file in it is
+  plain text.</p>
+</div>
+{% endblock %}

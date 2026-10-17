@@ -1,0 +1,23 @@
+{# Disagree with the fit? (D-UI-45; SPEC-INTERFACES 2.1's override control). The four fit words
+   from kestrel.web.fit, a required reason, Save. The API maps the word to the stored verdict and
+   a training score (fit.verdict_for_fit), so the learning loop keeps its (verdict, score) pair;
+   agreeing is implicit in Add to my list, so there is no Agree button and no slider. #}
+{% set opp = detail.opp if detail is defined else opp %}
+{% set words = fit_words if fit_words is defined else [] %}
+{% set said = mine if mine is defined else none %}
+<div class="override" data-testid="disagree">
+  <div class="fitgroup-head"><span>Disagree with the fit?</span></div>
+  <form class="disagree" hx-post="/api/opportunities/{{ opp.id }}/override"
+        hx-target="#ovr-result-{{ opp.id }}" hx-swap="innerHTML">
+    <input type="hidden" name="mode" value="override">
+    <span class="seg" role="radiogroup" aria-label="The fit you would give it">
+      {% for w in words %}<label><input type="radio" name="fit" value="{{ w }}" required {% if said == w %}checked{% endif %}><span>{{ w|capitalize }}</span></label>{% endfor %}
+    </span>
+    <input type="text" name="reason" required maxlength="500" aria-label="Why"
+           placeholder="Why, in a few words (saved as your label)">
+    <button class="btn" type="submit" data-testid="submit-override-{{ opp.id }}">Save</button>
+    <span id="ovr-result-{{ opp.id }}" aria-live="polite">
+      {%- if said %}<span class="done" data-testid="override-done">You said {{ said }}.</span>{% endif -%}
+    </span>
+  </form>
+</div>

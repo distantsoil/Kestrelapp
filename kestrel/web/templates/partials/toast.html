@@ -1,0 +1,204 @@
+{# The toast containers and the scan signal (D-UI-36), included once from base.html. The status
+   rail response (every 10 s) swaps #scan-signal out of band; the script below turns a new scan
+   event into "Search done: N new. Still scoring M." (never "finished" while scoring continues,
+   D-UI-63) and refreshes the Scan button when the scan state
+   flips. The scan toast (#kestrel-toast) is persistent: no auto-hide, it stays until it is
+   dismissed (x, Escape while it has focus) or clicked; clicking opens the Pipeline on its New
+   today chip (/opportunities?new_today=1). A scan with errors keeps the warning tone. Other
+   callers of window.kestrelToast(text) go to their own box (#kestrel-toast-note), stacked under
+   the scan toast, and fade after six seconds, so they never replace the scan toast or start a
+   timer on it. Seen and dismissed state live in localStorage, so one tab's toast is the only
+   one, and dismissing it in one tab clears it in the others. Styled by id and data attributes
+   only, with the theme tokens, so both schemes and both themes follow. The scan button's pulse
+   lives here too: this partial is on every page. #}
+<style>
+  #kestrel-toast, #kestrel-toast-note { position: fixed; top: 12px; left: 50%; z-index: 60; max-width: min(92vw, 420px);
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 14px;
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-left: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow);
+    font-size: var(--fs-md); transform: translate(-50%, -140%); opacity: 0;
+    transition: transform .28s ease-out, opacity .28s ease-out; }
+  #kestrel-toast-note { top: 72px; }
+  #kestrel-toast[data-show], #kestrel-toast-note[data-show] { transform: translate(-50%, 0); opacity: 1; }
+  #kestrel-toast[data-tone="warn"] { border-left-color: var(--warn); }
+  #kestrel-toast:has(a[data-toast-text][href]) { cursor: pointer; }
+  #kestrel-toast [data-toast-text] { color: inherit; text-decoration: none; }
+  #kestrel-toast a[data-toast-text][href]:hover,
+  #kestrel-toast a[data-toast-text][href]:focus-visible { text-decoration: underline; }
+  #kestrel-toast[hidden], #kestrel-toast-note[hidden] { display: none; }
+  #kestrel-toast [data-toast-close], #kestrel-toast-note [data-toast-close] { background: none;
+    border: 0; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer;
+    padding: 2px 4px; }
+  #kestrel-toast [data-toast-close]:hover,
+  #kestrel-toast-note [data-toast-close]:hover { color: var(--text); }
+  #scan-btn { display: inline-flex; align-items: center; gap: 8px; }
+  #scan-btn [data-scan-msg] { color: var(--muted); }
+  #scan-btn [data-state="scanning"] { border-color: var(--accent); color: var(--accent-deep);
+    animation: scan-glow 2.2s ease-in-out infinite; }
+  #scan-btn [data-state="scanning"] [data-label="cancel"] { display: none; }
+  #scan-btn [data-state="scanning"]:hover, #scan-btn [data-state="scanning"]:focus-visible {
+    animation: none; border-color: var(--bad); color: var(--bad); }
+  #scan-btn [data-state="scanning"]:hover [data-label="busy"],
+  #scan-btn [data-state="scanning"]:focus-visible [data-label="busy"] { display: none; }
+  #scan-btn [data-state="scanning"]:hover [data-label="cancel"],
+  #scan-btn [data-state="scanning"]:focus-visible [data-label="cancel"] { display: inline; }
+  @keyframes scan-glow {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent-tint); opacity: .78; }
+    50% { box-shadow: 0 0 0 4px var(--accent-tint), 0 0 10px 1px var(--accent); opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #kestrel-toast, #kestrel-toast-note { transition: none; }
+    #scan-btn [data-state="scanning"] { animation: none; box-shadow: 0 0 0 3px var(--accent-tint); }
+  }
+</style>
+<div id="scan-signal" hidden></div>
+<div id="kestrel-toast" role="status" aria-live="polite" aria-atomic="true" hidden
+     data-testid="toast">
+  <a data-toast-text data-testid="toast-link"></a>
+  <button type="button" data-toast-close aria-label="Dismiss">&times;</button>
+</div>
+<div id="kestrel-toast-note" role="status" aria-live="polite" aria-atomic="true" hidden
+     data-testid="toast-note">
+  <a data-toast-text></a>
+  <button type="button" data-toast-close aria-label="Dismiss">&times;</button>
+</div>
+<script>
+  (function () {
+    var KEY = 'kestrel-scan-event';            // the last scan event any tab has shown
+    var DISMISSED = 'kestrel-scan-dismissed';  // the scan event a tab dismissed
+    var NEW_HREF = '/opportunities?new_today=1';  // the Pipeline's New today chip
+    var MAIN = 'kestrel-toast', NOTE = 'kestrel-toast-note';
+    var memo = {};  // when localStorage is unavailable, remember for this page only
+    var timers = {};
+    var queued = [];  // plain toasts waiting while the scan toast holds the only box
+    var shownEvent = null;  // the scan event the persistent toast is showing, if any
+    var fresh = false;  // set when the rail has just swapped in a new #scan-signal
+    function load(k) {
+      try { var v = localStorage.getItem(k); if (v !== null) return v; } catch (e) {}
+      return k in memo ? memo[k] : null;
+    }
+    function store(k, v) {
+      memo[k] = v;
+      try { localStorage.setItem(k, v); } catch (e) {}
+    }
+    function getSeen() { return load(KEY); }
+    function setSeen(v) { store(KEY, v); }
+    function box(id) { return document.getElementById(id); }
+    function hide(id) {
+      id = id || MAIN;
+      var t = box(id);
+      clearTimeout(timers[id]); timers[id] = null;
+      if (!t) return;
+      t.removeAttribute('data-show');
+      setTimeout(function () { if (!t.hasAttribute('data-show')) t.hidden = true; }, 300);
+      if (id === MAIN) {
+        shownEvent = null;
+        var next = queued.shift();
+        if (next) show(next[0], next[1]);
+      }
+    }
+    function dismissScan() {
+      if (shownEvent !== null) store(DISMISSED, shownEvent);  // clears it in the other tabs
+      hide(MAIN);
+    }
+    // opts: {href: where a click goes, sticky: stay until dismissed or clicked, tone: 'warn'}.
+    // A sticky toast owns #kestrel-toast; any other goes to #kestrel-toast-note, so a plain
+    // toast can never replace a persistent one or start a timer on it.
+    function show(text, opts) {
+      opts = opts || {};
+      var id = opts.sticky ? MAIN : NOTE;
+      var t = box(id);
+      if (!t && !opts.sticky) {
+        if (shownEvent !== null) { queued.push([text, opts]); return; }  // no second box
+        id = MAIN; t = box(MAIN);
+      }
+      if (!t) return;
+      var link = t.querySelector('[data-toast-text]');
+      link.textContent = text;
+      if (link.setAttribute && link.removeAttribute) {
+        if (opts.href) link.setAttribute('href', opts.href); else link.removeAttribute('href');
+      }
+      if (opts.tone) t.setAttribute('data-tone', opts.tone); else t.removeAttribute('data-tone');
+      t.hidden = false;
+      requestAnimationFrame(function () { t.setAttribute('data-show', ''); });
+      clearTimeout(timers[id]);
+      timers[id] = null;
+      if (!opts.sticky) timers[id] = setTimeout(function () { hide(id); }, 6000);
+    }
+    window.kestrelToast = function (text, opts) {
+      return show(text, Object.assign({}, opts || {}, {sticky: false}));
+    };
+    // The end of the search step is not the end of the run (D-UI-63): scoring may continue, so
+    // this never says "finished". The run panel says "Last run ... finished" when it closes.
+    function searchDoneText(n, errs, scoring) {
+      var text = 'Search done: ' + n + ' new';
+      if (errs) text += ', ' + errs + (errs === 1 ? ' source had a problem' : ' sources had a problem');
+      text += '.';
+      if (scoring) text += ' Still scoring ' + scoring + '.';
+      return text;
+    }
+    window.kestrelSearchDoneText = searchDoneText;
+    function check() {
+      var sig = box('scan-signal');
+      if (!sig || !sig.hasAttribute('data-ready')) return;
+      var ev = sig.getAttribute('data-event') || 'none';
+      var seen = getSeen();
+      if (seen === null) {
+        setSeen(ev);  // first look in this browser: a baseline, never a toast for an old scan
+      } else if (ev !== seen && ev !== 'none' && sig.getAttribute('data-scanning') !== '1') {
+        // Marked seen only when shown: an event that lands while another scan is still running
+        // stays unseen, and toasts once scanning clears (the poll after the last search ends).
+        setSeen(ev);
+        var n = parseInt(sig.getAttribute('data-new') || '0', 10) || 0;
+        var errs = parseInt(sig.getAttribute('data-errors') || '0', 10) || 0;
+        var scoring = parseInt(sig.getAttribute('data-scoring') || '0', 10) || 0;
+        show(searchDoneText(n, errs, scoring), {href: NEW_HREF, sticky: true, tone: errs ? 'warn' : ''});
+        shownEvent = ev;
+      }
+      // At most one button refresh per fresh signal, so a state that flips between the two
+      // responses can never turn into a request loop.
+      var btn = box('scan-btn');
+      if (fresh && btn && window.htmx
+          && btn.getAttribute('data-scanning') !== sig.getAttribute('data-scanning')) {
+        htmx.ajax('GET', '/scan/button', {target: '#scan-btn', swap: 'outerHTML'});
+      }
+      fresh = false;
+    }
+    function ownerOf(el) {
+      if (!el || !el.closest) return null;
+      var t = el.closest('#' + NOTE);
+      if (t) return NOTE;
+      return el.closest('#' + MAIN) ? MAIN : null;
+    }
+    document.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return;
+      var id = ownerOf(e.target);
+      if (e.target.closest('[data-toast-close]')) {
+        if ((id || MAIN) === MAIN) dismissScan(); else hide(id);
+        return;
+      }
+      // A click anywhere on a toast that has a destination follows it (the link itself
+      // navigates on its own; the rest of the box does the same).
+      if (!id) return;
+      var link = box(id) && box(id).querySelector('a[data-toast-text][href]');
+      if (!link) return;
+      if (id === MAIN) dismissScan(); else hide(id);
+      if (!e.target.closest('a[href]')) window.location.assign(link.getAttribute('href'));
+    });
+    // Escape dismisses the toast that has focus (its link or its x).
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var id = ownerOf(document.activeElement);
+      if (!id) return;
+      if (id === MAIN) dismissScan(); else hide(id);
+    });
+    // Another tab dismissed the scan toast this tab is showing: clear it here too.
+    if (window.addEventListener) {
+      window.addEventListener('storage', function (e) {
+        if (e.key === DISMISSED && shownEvent !== null && e.newValue === shownEvent) hide(MAIN);
+      });
+    }
+    document.addEventListener('htmx:oobAfterSwap', function () { fresh = true; setTimeout(check, 0); });
+    document.addEventListener('htmx:afterSettle', function () { setTimeout(check, 0); });
+  })();
+</script>

@@ -1,0 +1,118 @@
+{# Evaluation tab (docs/UI_PROPOSAL.html Screen 3): the fit number (both scores only when they
+   differ), the agreement line in fit words, the
+   dimension meters, the lettered blocks A to G, legitimacy and blockers. `ev_json` is the
+   redacted display copy from get_detail; never the raw ORM JSON. #}
+{% macro show(v) -%}
+  {%- if v is mapping -%}
+    <dl class="kv">{% for k, x in v.items() %}{% if x is not none and x != '' and x != [] %}<dt>{{ k|replace('_', ' ') }}</dt><dd>{{ show(x) }}</dd>{% endif %}{% endfor %}</dl>
+  {%- elif v is iterable and v is not string -%}
+    <ul>{% for x in v %}<li>{{ show(x) }}</li>{% endfor %}</ul>
+  {%- elif v is sameas true -%}yes{%- elif v is sameas false -%}no
+  {%- else -%}{{ v }}{%- endif -%}
+{%- endmacro %}
+{% set labels = {
+  'a_role_summary': 'A · What this actually is', 'b_fit': 'B · Why you', 'c_level': 'C · Level and scope',
+  'd_comp': 'D · Compensation', 'e_angle': 'E · Angle', 'f_interview': 'F · Likely interview questions',
+  'a_situation': 'A · Situation', 'b_thesis': 'B · Engagement thesis', 'c_buyers': 'C · Buyers and access',
+  'd_economics': 'D · Economics', 'e_approach': 'E · Approach', 'f_delivery': 'F · Delivery',
+  'g_risk': 'G · Risk'
+} %}
+{% set dim_names = {
+  'role_fit': 'Role fit', 'domain_match': 'Domain match', 'company_context': 'Company context',
+  'comp_logistics': 'Comp and logistics', 'trajectory': 'Trajectory', 'engagement_fit': 'Engagement fit',
+  'buyer_access': 'Buyer access', 'economics': 'Economics', 'delivery_feasibility': 'Delivery feasibility',
+  'strategic_value': 'Strategic value'
+} %}
+<div id="tab-evaluation" data-tab="evaluation">
+{% if ev %}
+  {% if override_note %}<p class="quiet" data-testid="eval-rule-override">{{ override_note }}</p>{% endif %}
+  {# One number unless the model and the weighted dimensions disagree on it (D-UI-45): then both,
+     named for what they are. The words come from kestrel.web.fit via the route (fit,
+     model_word, rules_word). #}
+  {% set both = ev.score is not none and ev.weighted_score is not none and (ev.score - ev.weighted_score)|abs >= 0.05 %}
+  <div data-scores>
+    {% if both %}
+      <div class="num" data-testid="score-holistic">{{ '%.1f'|format(ev.score) }}<small>model's score</small></div>
+      <div class="num" style="color:var(--muted)" data-testid="score-weighted">{{ '%.1f'|format(ev.weighted_score) }}<small>weighted score</small></div>
+    {% else %}
+      <div class="num" data-testid="score-holistic">{{ '%.1f'|format(fit.score) if fit.score is not none else '' }}<small>fit</small></div>
+    {% endif %}
+    <div class="quiet" data-testid="agreement">
+      {% if model_word %}The model said {{ model_word }}, the scoring rules said {{ rules_word }}. Your call: the word you pick teaches the ranker.
+      {% elif ev.needs_review %}The model's score and the weighted score disagree. Your call: the word you pick teaches the ranker.
+      {% elif ev.tier == 1 %}A quick screen only; the full read has not run yet.
+      {% else %}The model and the scoring rules agree: {{ fit.word }}.{% endif %}
+      Scored by {{ ev.model or 'unknown model' }}{% if ev.created_at %} at {{ ev.created_at[:16]|replace('T', ' ') }} UTC{% endif %}{% if ev.prompt_version %}, prompt {{ ev.prompt_version }}{% endif %}{% if ev.prompt_tokens %}, {{ ev.prompt_tokens|comma }} tokens in{% endif %}.
+      {% if ev.forced_by %}{{ forced_words(ev.forced_by) }}{% endif %}
+    </div>
+  </div>
+
+  {% if ev_json.dimensions %}
+    {% for key, d in ev_json.dimensions.items() %}
+      {% set sc = d.score if d is mapping else d %}
+      <div class="dimrow">
+        <span>{{ dim_names.get(key, key|replace('_', ' ')|capitalize) }}</span>
+        <div class="meter"><i style="width: {{ ((sc or 0) / 5 * 100)|round(0) }}%"></i></div>
+        <span class="score">{{ '%.1f'|format(sc) if sc is not none else '–' }}</span>
+        {% if d is mapping and d.why %}<small>{{ d.why }}</small>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% set b = ev_json.blocks or {} %}
+  {% for key in b.keys()|sort %}
+    {% set v = b[key] %}
+    {% if v is not none and v != '' and v != [] and v != {} %}
+    <div class="block" data-block="{{ key }}">
+      <b>{{ labels.get(key, key|replace('_', ' ')|capitalize) }}</b>
+      {% if key == 'a_role_summary' and v is mapping %}
+        {{ v.get('what_this_actually_is', '') }}
+        {% if v.get('title_body_mismatch') %}<div class="quiet">Title versus body: {{ v.title_body_mismatch }}</div>{% endif %}
+      {% elif key == 'b_fit' and v is mapping %}
+        {% if v.get('matches') %}<ul>{% for m in v.matches %}<li><b style="display:inline;text-transform:none;letter-spacing:0;font-size:inherit;color:inherit">{{ m.requirement }}</b> <span class="pill {{ 'good' if m.strength == 'strong' else 'grey' }}">{{ m.strength }}</span> {{ m.evidence }}</li>{% endfor %}</ul>{% endif %}
+        {% if v.get('gaps') %}<div class="quiet" style="margin-top:6px">What would worry a hiring committee</div><ul>{% for g in v.gaps %}<li>{{ g.requirement }} <span class="pill {{ 'bad' if g.severity == 'fatal' else ('warn' if g.severity == 'addressable' else 'grey') }}">{{ g.severity }}</span>{% if g.mitigation %} Mitigation: {{ g.mitigation }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+      {% elif key == 'e_angle' and v is mapping %}
+        {{ v.get('lead_with', '') }}
+        {% if v.get('jd_citations') %}<ul>{% for c in v.jd_citations %}<li class="quiet">“{{ c }}”</li>{% endfor %}</ul>{% endif %}
+      {% elif key == 'f_interview' and v is not string and v is iterable %}
+        <ul>{% for q in v %}<li>{{ q.likely_question if q is mapping else q }}{% if q is mapping and q.why_asked %} <span class="quiet">({{ q.why_asked }})</span>{% endif %}</li>{% endfor %}</ul>
+      {% else %}
+        {{ show(v) }}
+      {% endif %}
+    </div>
+    {% endif %}
+  {% endfor %}
+
+  {% if ev_json.legitimacy and ev_json.legitimacy.get('status') %}
+    {% set lg = ev_json.legitimacy %}
+    <div class="block" data-block="g_legitimacy">
+      <b>G · Legitimacy</b>
+      <span class="legit-{{ lg.status }}">{{ lg.status }}</span>
+      {% if lg.status in ('suspect', 'reject') %}<span class="pill warn" data-testid="legit-flag">may not be a real opening</span>{% endif %}
+      {% if lg.get('confidence') %}· {{ lg.confidence }} confidence{% endif %}
+      {% if watch %}· {{ watch|join(' ') }}{% else %}· nothing to watch{% endif %}
+    </div>
+  {% endif %}
+
+  {% if ai_disclaimer is defined and ai_disclaimer %}<p class="disclaim" data-testid="ai-disclaimer">{{ ai_disclaimer }}</p>{% endif %}
+
+  <div class="block" data-block="blockers">
+    <b>Blockers</b>
+    {% if ev_json.blockers %}
+      <ul>{% for bl in ev_json.blockers %}<li class="blocker"><b style="display:inline;text-transform:none;letter-spacing:0;font-size:inherit;color:inherit">{{ bl.kind|replace('_', ' ') }}</b>: {{ bl.detail }}</li>{% endfor %}</ul>
+    {% else %}<span class="quiet">No blockers.</span>{% endif %}
+  </div>
+
+  <div class="block" data-block="comp_corpus">
+    <b>Compensation corpus</b>
+    <span class="quiet">{{ comp_intel or 'too few to judge (0 of 5 needed)' }}</span>
+  </div>
+{% else %}
+  <p class="quiet">{% if rule_why %}{{ rule_why.text }} No model read it. {{ rule_why.verb }} <a href="{{ rule_why.href }}" data-testid="eval-rule-link">{{ rule_why.place }}</a>.{% elif fit.word == 'not a fit' %}Not a fit by the {{ fit.why or 'rule' }}, before any model ran.{% elif fit.why %}{{ fit.why|capitalize }}.{% else %}Being scored.{% endif %}</p>
+  {% if override_note %}<p class="quiet" data-testid="eval-rule-override">{{ override_note }}</p>{% endif %}
+  <div class="block" data-block="comp_corpus">
+    <b>Compensation corpus</b>
+    <span class="quiet">{{ comp_intel or 'too few to judge (0 of 5 needed)' }}</span>
+  </div>
+{% endif %}
+</div>

@@ -1,0 +1,15 @@
+{# D-PRIV-1 fail closed: confidential mode is on and nothing is marked, so Kestrel treats the
+   newest open-ended role of each document as the current employer until the operator confirms
+   or changes it. Shown on Documents and Settings (the operator's own config screens). #}
+{% for e in employer_banner or [] %}
+  <div class="employer-banner warnbox" id="employer-banner-{{ e.section_id }}" data-testid="employer-inferred">
+    <span>Kestrel is hiding <b>{{ e.employer }}</b> as <b>{{ e.shown_as }}</b> because it looks
+    like your current job. Confirm or change.</span>
+    <form hx-post="/documents/section/{{ e.section_id }}/confirm-current"
+          hx-target="#employer-banner-{{ e.section_id }}" hx-swap="outerHTML">
+      <input type="hidden" name="shown_as" value="{{ e.shown_as }}">
+      <button class="btn small" type="submit">Confirm</button>
+    </form>
+    <a class="btn small ghost" href="{{ e.href }}">Change</a>
+  </div>
+{% endfor %}

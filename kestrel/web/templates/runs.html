@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Runs · Kestrel{% endblock %}
+{% block content %}
+<h1>Runs</h1>
+
+<div class="panel" style="padding:.8rem 1rem; margin-bottom:1rem">
+  <h2 style="margin-top:0">Run now</h2>
+  <p class="muted" style="margin:.2rem 0 .6rem">The worker is on <b>{{ mode }}</b> models (Settings > Hosted sets the standing choice). Pick the models for the next cycle only; later cycles return to the Settings choice.</p>
+  <form hx-post="/runs/now" hx-target="#run-now-msg" hx-swap="innerHTML" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap"
+        data-busy-text="Starting the run…">
+    <label><input type="radio" name="mode" value="local" {% if settings_mode == 'local' %}checked{% endif %}> Local models</label>
+    <label title="{{ hosted_problem or 'Hosted models under your own key' }}"><input type="radio" name="mode" value="hosted" {% if settings_mode == 'hosted' %}checked{% endif %} {% if hosted_problem %}disabled{% endif %}> Hosted models{% if hosted_problem %} <span class="muted">(unavailable: {{ hosted_problem }})</span>{% endif %}</label>
+    <button class="btn" type="submit">Run now</button>
+    <span id="run-now-msg" class="muted">{% if pending_mode %}Queued: the next worker cycle runs on <b>{{ pending_mode }}</b> models.{% endif %}</span>
+  </form>
+</div>
+
+{% include "partials/run_schedule.html" %}
+
+{% include "partials/keep_awake.html" %}
+
+{% include "partials/runs_live.html" %}
+
+<div class="panel">
+  <h2>Recent runs</h2>
+  <table>
+    <thead><tr><th>#</th><th>Name</th><th>Track</th><th>Mode</th><th>Status</th><th>Started</th><th>Finished</th><th>Counts</th></tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td class="mono"><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
+        <td><a href="/runs/{{ r.id }}">{{ r.name }}</a></td><td>{{ r.track or '-' }}</td>
+        <td>{% if r.mode %}<span class="badge">{{ r.mode }}</span>{% else %}<span class="muted">unknown</span>{% endif %}</td>
+        <td><span class="badge">{{ r.status }}</span></td>
+        <td class="mono"><small>{{ r.started_at }}</small></td>
+        <td class="mono"><small>{{ r.finished_at or '-' }}</small></td>
+        <td><small class="mono">{{ r.counts }}</small></td>
+      </tr>
+      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:20px">No runs yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

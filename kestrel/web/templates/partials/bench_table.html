@@ -1,0 +1,36 @@
+{% if notice %}<div class="warnbox" style="margin-bottom:.8rem">{{ notice }}</div>{% endif %}
+{% if ran %}
+<p class="muted" style="margin-bottom:.6rem">Requested step <b>{{ tier|tier_label }}</b>, model
+  <b class="mono">{{ model }}</b>{% if backend %} on backend <b>{{ backend }}</b>{% endif %}{% if prompt_version %},
+  prompt version <b class="mono">{{ prompt_version }}</b>{% endif %}. No model was called for this
+  click -- see the notice above for why.</p>
+{% endif %}
+<table class="data">
+  <thead>
+    <tr>
+      <th>Step</th><th>Model</th><th>Prompt version</th><th>Track</th><th>Items</th>
+      <th>Exact-verdict match</th><th>Mean abs. score error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.tier|tier_label }}</td>
+      <td class="mono">{{ r.model }}</td>
+      <td class="mono">{{ r.prompt_version }}</td>
+      <td>{{ r.track }}</td>
+      <td>{{ r.n }}{% if not r.sufficient %} <span class="pill">insufficient, n&lt;5</span>{% endif %}</td>
+      <td>{% if r.exact_match_rate is not none %}{{ '%.0f'|format(r.exact_match_rate * 100) }}%{% else %}-{% endif %}</td>
+      <td>{% if r.mae is not none %}{{ '%.2f'|format(r.mae) }}{% else %}-{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="7" class="muted" style="text-align:center;padding:1.2rem">
+        No gold runs yet. No opportunity has both a stored evaluation and an operator label yet --
+        this table is real, computed data, never a placeholder number. Label a few items from the
+        Calibrate queue to start building it.
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

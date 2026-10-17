@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Analytics · Kestrel{% endblock %}
+{% block content %}
+<div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap">
+  <h1 style="margin-right:auto">Analytics <span class="badge">{{ track }}</span></h1>
+  <a class="btn ghost" href="/analytics?track={{ track }}">Refresh</a>
+</div>
+<p class="muted">The funnel, breakdowns, cost and quality, and the summary for the
+{{ track }} track. Every rate is shown next to the sample size it rests on; anything under five
+observations says "too few to judge" rather than being shown as if it were solid. Switch tracks
+with the track switch in the sidebar.</p>
+
+<div id="analytics-body">{% include "partials/analytics_body.html" %}</div>
+{% endblock %}

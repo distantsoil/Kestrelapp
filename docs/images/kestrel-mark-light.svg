@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Kestrel">
+  <title>Kestrel</title>
+  <!-- The light tray variant of the Windhover mark (D-UI-13): a paper tile with the orange bird,
+       for light taskbars where the orange tile would read as a notification. -->
+  <defs>
+    <linearGradient id="bird" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#EE8A4E"/>
+      <stop offset="1" stop-color="#C9551F"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="504" height="504" rx="110" fill="#FFFFFF" stroke="#4F5BD5" stroke-width="8"/>
+  <path d="M256 92 C270 92 282 102 284 118 C286 134 292 142 300 150 C348 134 420 112 472 116 C452 170 380 220 312 236 C306 266 300 294 294 318 C324 326 348 352 358 392 C324 398 290 400 256 400 C222 400 188 398 154 392 C164 352 188 326 218 318 C212 294 206 266 200 236 C132 220 60 170 40 116 C92 112 164 134 212 150 C220 142 226 134 228 118 C230 102 242 92 256 92 Z" fill="url(#bird)"/>
+</svg>

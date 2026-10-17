@@ -1,0 +1,81 @@
+{# Settings > System (D-UI-31): the machine checks that used to be the Setup page, then Restart
+   onboarding. Loaded into the System tab on first view; the run mode cards and the profile
+   change swap this whole panel so every step's state is current after a save. #}
+<div id="system-panel">
+  <h2>System</h2>
+  <p class="muted" style="margin-top:0">How Kestrel runs on this machine: {{ st.hardware_line }}.
+    Everything here acts on this machine only (Ollama pulls and builds, the preflight check).</p>
+  {% if message %}<div class="card msg muted" role="status">{{ message }}</div>{% endif %}
+  {% if st.low_spec_warning %}
+  <div class="warnbox msg" role="alert" data-testid="low-spec-warning">
+    <b>{{ st.low_spec_warning }}</b>
+    <div class="d">Why: {{ st.recommended_reason }}.
+      Hosted uses none of this machine's memory. Connect a key on the
+      <a href="/settings#hosted">Hosted (BYOK)</a> tab, then choose Hosted below.</div>
+  </div>
+  {% endif %}
+
+  <div class="steps">
+    <div class="step" style="grid-template-columns:26px minmax(0,1fr)">
+      <span class="ic {% if st.choice_explicit %}ok{% else %}now{% endif %}">{% if st.choice_explicit %}&#10003;{% else %}1{% endif %}</span>
+      <div>
+        <div><b>1. How will Kestrel run?</b></div>
+        <div class="cards">
+          {% for value, label, blurb in [
+            ('local', 'Local', 'Models on this machine through Ollama. Nothing leaves it. Recommended with an NVIDIA GPU with 12 GB of VRAM, or Apple silicon with 16 GB; slower machines can still choose it.'),
+            ('hosted', 'Hosted', 'Every tier on a provider you choose under your own key: OpenRouter (free models available), OpenModel, Anthropic or OpenAI. No Ollama, no downloads. You read and accept what each tier sends.'),
+            ('both', 'Both', 'Local models for daily runs, a hosted set ready to switch to per run or for Tier 3. Steps 2 to 6 all apply.'),
+          ] %}
+          <form hx-post="/setup/mode" hx-target="#system-panel" hx-swap="outerHTML" method="post" action="/setup/mode">
+            <input type="hidden" name="mode" value="{{ value }}">
+            <button type="submit" class="card{% if st.choice == value %} sel{% endif %}" aria-pressed="{{ 'true' if st.choice == value else 'false' }}">
+              <b>{{ label }}</b><div class="d">{{ blurb }}</div>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+        <div class="d">Detected: {{ st.hardware_line }}.
+          {% if st.recommended == 'hosted_only' %}Hosted is recommended on this machine: {{ st.recommended_reason }}.
+          {% else %}Local is recommended on this machine ({{ st.recommended_reason }}); a machine without a supported GPU gets Hosted recommended instead.{% endif %}</div>
+        {% if st.choice == 'hosted' and st.hosted_problem %}
+        <div class="d" data-testid="hosted-pending">Hosted mode will apply once step 6 is complete ({{ st.hosted_problem }}); until then runs use local models.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% include "partials/setup_steps.html" %}
+
+  <details class="setup-details" data-testid="system-terminal-details" style="margin-top:1rem">
+    <summary>Show details</summary>
+    <p class="quiet">The same setup from a terminal, on Windows, macOS or Linux: <span class="mono">kestrel setup</span> (Local),
+      <span class="mono">kestrel setup --hosted</span> or <span class="mono">--hosted --free</span> (Hosted),
+      and either followed by <span class="mono">kestrel provider set-key</span> for Both.</p>
+  </details>
+
+  <h2 style="margin-top:1.6rem" id="restart-onboarding">Restart onboarding</h2>
+  <p class="muted" style="margin-top:0">Walk through the setup guide again, from how Kestrel thinks
+    to your first search. Pick one.</p>
+  <div class="restart" data-testid="restart-onboarding">
+    <form method="post" action="/onboarding/restart" class="panel" style="padding:.8rem 1rem">
+      <input type="hidden" name="choice" value="keep">
+      <b>Keep my details</b>
+      <p class="muted" style="margin:.3rem 0 .6rem">Opens step 1 with everything you entered
+        already filled in. Change what you like; nothing is deleted.</p>
+      <button class="btn primary" type="submit">Restart with my details</button>
+    </form>
+    <form method="post" action="/onboarding/restart" class="panel" style="padding:.8rem 1rem"
+          x-data="{ typed: '' }">
+      <input type="hidden" name="choice" value="clear">
+      <b>Clear everything and start over</b>
+      <p class="muted" style="margin:.3rem 0 .6rem">Deletes every opportunity, pursuit, document,
+        search, label and setting, and your profile. A backup zip is written first, beside the data
+        folder, and is never deleted. Models already in Ollama stay, so nothing is downloaded again.</p>
+      <label style="display:block"><input type="checkbox" name="keep_keys" value="on" checked>
+        Keep my API keys</label>
+      <label style="display:block; margin-top:.4rem">Type <span class="mono">RESET</span> to confirm
+        <input type="text" name="confirm" x-model="typed" autocomplete="off" style="width:8rem"></label>
+      <button class="btn danger" type="submit" style="margin-top:.6rem" :disabled="typed !== 'RESET'">Clear everything</button>
+    </form>
+  </div>
+</div>

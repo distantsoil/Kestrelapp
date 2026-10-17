@@ -1,0 +1,15 @@
+<div class="panel" id="keep-awake" data-testid="keep-awake" style="padding:.8rem 1rem; margin-bottom:1rem">
+  <h2 style="margin-top:0">Keep this computer awake</h2>
+  <p class="muted" style="margin:.2rem 0 .6rem">A scheduled scan cannot run on a sleeping machine. With this on, Windows holds off sleep for as long as Kestrel is open, in the window or the tray. The screen still turns off on its own schedule; only sleep is held. Windows only.</p>
+  <form hx-post="/runs/keep-awake" hx-target="#keep-awake" hx-swap="outerHTML" hx-trigger="change"
+        style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap">
+    <label><input type="checkbox" name="on" value="on" {% if keep_awake %}checked{% endif %}> Keep awake while Kestrel is running</label>
+    <span class="muted" data-testid="keep-awake-status">
+      {% if keep_awake_saved %}
+        {% if keep_awake_problem %}Saved, but {{ keep_awake_problem }}.
+        {% elif keep_awake %}On: sleep is held off until Kestrel quits.
+        {% else %}Off: Windows sleeps on its own schedule.{% endif %}
+      {% elif keep_awake %}On.{% endif %}
+    </span>
+  </form>
+</div>

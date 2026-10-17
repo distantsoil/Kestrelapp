@@ -1,0 +1,70 @@
+{# The in-app Quit confirmation (D-UI-39): an in-page modal in the app's own theme instead of the
+   WebView2 (Edge) native confirm box. Rendered only when the desktop shell can quit (the same
+   rule as the Quit button, D-UI-27). Keyboard: focus starts on Quit and stays inside the dialog
+   (Tab and Shift+Tab wrap), Enter confirms, Esc or Cancel closes it and returns focus to the
+   button that opened it. Styles live in kestrel.css (.quit-confirm), theme variables only.
+   Quitting does exactly what the button always did: POST /api/quit, then a closing notice. #}
+{% if desktop_can_quit is defined and desktop_can_quit() %}
+<dialog id="quit-confirm" class="quit-confirm" data-testid="quit-confirm"
+        aria-labelledby="quit-confirm-title" aria-describedby="quit-confirm-desc">
+  <div class="quit-confirm-box">
+  <h2 id="quit-confirm-title">Quit Kestrel?</h2>
+  <p id="quit-confirm-desc">Scheduled searches stop until you open it again.</p>
+  <div class="quit-confirm-actions">
+    <button type="button" class="btn" data-quit-cancel data-testid="quit-cancel">Cancel</button>
+    <button type="button" class="btn primary" data-quit-confirm data-testid="quit-confirm-go">Quit Kestrel</button>
+  </div>
+  </div>
+</dialog>
+<script>
+  (function () {
+    const dlg = document.getElementById('quit-confirm');
+    if (!dlg) return;
+    const go = dlg.querySelector('[data-quit-confirm]');
+    const cancelBtn = dlg.querySelector('[data-quit-cancel]');
+    let opener = null;
+
+    function focusables() {
+      return Array.from(dlg.querySelectorAll('button, [href], input, select, textarea,'
+        + ' [tabindex]:not([tabindex="-1"])')).filter((el) => !el.disabled);
+    }
+    function close() {
+      if (dlg.open) dlg.close();
+      if (opener && opener.focus) opener.focus();
+    }
+    function quit() {
+      if (dlg.open) dlg.close();
+      fetch('/api/quit', {method: 'POST'});
+      document.body.innerHTML = '<p style="padding:2rem">Kestrel is closing…</p>';
+    }
+    function open(from) {
+      opener = from || document.activeElement;
+      if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+      go.focus();
+    }
+    go.addEventListener('click', quit);
+    cancelBtn.addEventListener('click', close);
+    // Esc: the dialog's own cancel event; keep the focus return in one place.
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key === 'Enter') {
+        // Enter on Cancel cancels; anywhere else in the dialog it confirms.
+        e.preventDefault();
+        if (e.target === cancelBtn) close(); else quit();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const els = focusables();
+        if (!els.length) return;
+        const first = els[0], last = els[els.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    });
+    // A click on the backdrop (the dialog itself, outside the inner box) cancels, like Esc.
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    window.kestrelQuit = {open: open, close: close, quit: quit};
+  })();
+</script>
+{% endif %}

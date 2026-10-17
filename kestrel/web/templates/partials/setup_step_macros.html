@@ -1,0 +1,51 @@
+{# Shared pieces of a Setup step (release round R1), used by Settings > System (setup_steps.html)
+   and the onboarding model step (onboarding_local.html). App first: the instruction is always a
+   button; the exact terminal commands sit under Show details for power users. Pull and build
+   progress comes from the task rows (services.model_tasks.snapshot). `models["items"]` is
+   subscripted because `models.items` would be the dict method. #}
+
+{% macro step_details(s) %}
+{% if s.commands %}
+<details class="setup-details" data-testid="setup-details-{{ s.key }}">
+  <summary>Show details</summary>
+  <p class="quiet">The same step from a terminal, if you prefer one:</p>
+  {% for c in s.commands %}<span class="cmd">{{ c }}</span>{% endfor %}
+</details>
+{% endif %}
+{% endmacro %}
+
+{% macro model_progress(models, kind) %}
+{% if models and models.kind == kind and models["items"] %}
+<ul class="setup-progress" data-testid="setup-progress-{{ kind }}" data-live="{{ 'true' if models.live else 'false' }}">
+  {% for i in models["items"] %}
+  <li class="setup-progress-item" data-task-status="{{ i.status }}">
+    <span class="mono">{{ i.target }}</span>
+    <span class="setup-progress-step">{{ i.step }}{% if i.percent is not none and i.status == 'leased' %} <b data-testid="setup-percent">{{ i.percent }}%</b>{% endif %}</span>
+    {% if i.status in ('leased', 'done') %}<progress max="100"{% if i.percent is not none %} value="{{ i.percent }}"{% endif %}>{{ i.percent or 0 }}%</progress>{% endif %}
+    {% if i.error %}<div class="setup-progress-error">{{ i.error }}</div>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endmacro %}
+
+{% macro step_actions(s, running, action, models, post_base, target) %}
+  {% if s.pill %}<span class="pill {{ s.pill_class }}">{{ s.pill }}</span>{% endif %}
+  {% if s.link and s.link_external %}<a class="btn{% if s.status in ('now', 'warn') %} pri{% endif %}" href="{{ s.link }}" target="_blank" rel="noopener" data-testid="download-ollama">{{ s.link_label }}</a>{% endif %}
+  {% if s.action %}
+    {% if models and models.stopping and models.kind == s.action %}
+      <span class="pill review" data-testid="setup-stopping-{{ s.action }}">Stopping…</span>
+    {% elif models and models.live and models.kind == s.action %}
+      <button class="btn" hx-post="{{ post_base }}/cancel" hx-target="{{ target }}" hx-swap="outerHTML" data-testid="setup-cancel-{{ s.action }}">Cancel</button>
+    {% elif running and s.action != 'check' %}
+      {% if action and action.name == s.action and action.status == 'running' %}<span class="pill review">running</span>
+      {% else %}<button class="btn" disabled style="opacity:.6">{{ s.action_label }}</button>{% endif %}
+    {% else %}
+      <button class="btn{% if s.status == 'now' %} pri{% endif %}"
+              hx-post="{{ post_base }}/{{ s.action }}" hx-target="{{ target }}" hx-swap="outerHTML"
+              data-testid="setup-action-{{ s.action }}"
+              {% if not s.action_enabled %}disabled style="opacity:.6"{% endif %}>{% if models and models.failed and models.kind == s.action and s.action_enabled %}Try again{% else %}{{ s.action_label }}{% endif %}</button>
+    {% endif %}
+  {% endif %}
+  {% if s.link and not s.link_external %}<a class="btn{% if s.status == 'now' and not s.action %} pri{% endif %}" href="{{ s.link }}">{{ s.link_label }}</a>{% endif %}
+{% endmacro %}

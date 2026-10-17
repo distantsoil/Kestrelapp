@@ -1,0 +1,40 @@
+{# Resume assessment (P13, D-DOC-2). Advice only: nothing here is written to the document.
+   Slot keys are internal; bullets are named by role and position, the key is a tooltip. #}
+<div class="panel assessment" data-testid="assessment-result">
+  <div class="assessment-head">
+    <b>Assessment</b>
+    {% if model_label %}<span class="muted">Ran on {{ model_label }}.</span>{% endif %}
+  </div>
+  {% if error %}
+    <div class="warnbox" data-testid="assessment-error">{{ error }}</div>
+  {% elif result and result.value %}
+    {% set v = result.value %}
+    <p class="muted">Against: {% if result.targets %}{{ result.targets | join(", ") }}{% else %}no target titles are set in Profile, so this reads the document on its own terms{% endif %}.
+      Advice only. Your text is unchanged; edit any bullet yourself.</p>
+    <p>{{ v.overall_fit }}</p>
+    {% if v.strengths %}
+      <h4>Strengths</h4>
+      <ul>
+        {% for st in v.strengths %}
+          <li>{{ st.point }}
+            {% if st.slot_keys %}<span class="muted">({% for k in st.slot_keys %}<span title="Internal key: {{ k }}">{{ result.slot_labels.get(k, k) }}</span>{% if not loop.last %}; {% endif %}{% endfor %})</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if v.gaps %}
+      <h4>Gaps a hiring manager will look for</h4>
+      <ul>
+        {% for g in v.gaps %}<li><b>{{ g.gap }}</b> <span class="muted">{{ g.why_it_matters }}</span></li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% if v.strengthen %}
+      <h4>Bullets to strengthen</h4>
+      <ul>
+        {% for b in v.strengthen %}
+          <li><span title="Internal key: {{ b.slot_key }}">{{ result.slot_labels.get(b.slot_key, b.slot_key) }}</span>: {{ b.reason }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endif %}
+</div>

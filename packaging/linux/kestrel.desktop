@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Kestrel
+Comment=Local-LLM career operations engine
+Exec=kestrel %U
+Icon=kestrel
+Terminal=false
+Categories=Office;Utility;
+Keywords=jobs;career;resume;consulting;
+StartupWMClass=Kestrel

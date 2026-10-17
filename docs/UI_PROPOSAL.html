@@ -1,0 +1,532 @@
+<title>Kestrel UI Proposal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap">
+<style>
+/* Layout: a proposal document (narrow measure) interleaved with full-width app screens drawn in HTML. */
+:root {
+  --orange: #D4622A; --orange-deep: #B04D1C; --orange-tint: #FBECE3;
+  --paper: #FFFFFF; --warm: #F8F4F0; --line: #E6DDD5; --ink: #1C1612; --muted: #6F655C;
+  --action: #D4622A; --action-fg: #FFFFFF;
+  --keep: #D4622A; --keep-tint: #FBECE3; --keep-fg: #B04D1C;
+  --good: #2E7D54; --warn: #B8860B; --bad: #B3261E;
+  --good-tint: rgba(46,125,84,.13); --warn-tint: rgba(184,134,11,.16); --bad-tint: rgba(179,38,30,.12);
+  --shadow: 0 1px 2px rgba(28,22,18,.06), 0 8px 24px rgba(28,22,18,.06);
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #1A1512; --warm: #211B17; --line: #3A312A; --ink: #F3EDE7; --muted: #A99E95;
+  --orange-tint: #3B2216; --orange-deep: #E7855A;
+  --keep: #E8793F; --keep-tint: #3B2216; --keep-fg: #F29A6B;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --paper: #1A1512; --warm: #211B17; --line: #3A312A; --ink: #F3EDE7; --muted: #A99E95;
+  --orange-tint: #3B2216; --orange-deep: #E7855A;
+  --keep: #E8793F; --keep-tint: #3B2216; --keep-fg: #F29A6B;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); color-scheme: dark; }
+
+body { background: var(--warm); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; padding-block: 0 4rem; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; }
+.measure { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -.005em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.05; }
+h2 { font-size: 1.75rem; line-height: 1.15; margin-top: .25rem; }
+h3 { font-size: 1.2rem; }
+p { margin: .6rem 0; }
+.eyebrow { font-family: var(--mono); font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+header.hero { padding-block: 3.5rem 2rem; border-bottom: 1px solid var(--line); }
+header.hero .lede { font-size: 1.12rem; color: var(--muted); max-width: 62ch; }
+section.part { padding-block: 2.5rem 1rem; border-bottom: 1px solid var(--line); }
+section.part:last-of-type { border-bottom: 0; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
+@media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+table.cmp { width: 100%; border-collapse: collapse; font-size: .93rem; margin-top: 1rem; }
+table.cmp th, table.cmp td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.cmp th { font-weight: 600; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+.tblwrap { overflow-x: auto; }
+ul.points { padding-left: 1.2rem; }
+ul.points li { margin: .35rem 0; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+.note { background: var(--keep-tint); border-left: 3px solid var(--keep); padding: .7rem 1rem; border-radius: 0 6px 6px 0; margin: 1rem 0; }
+
+/* ---------- Screen frames ---------- */
+.screen-wrap { overflow-x: auto; margin: 1.25rem 0; padding-bottom: 6px; }
+.screen { position: relative; width: 1120px; min-height: 620px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; display: grid; grid-template-columns: 220px minmax(0, 1fr); font-size: 13px; line-height: 1.45; }
+.screen.single { grid-template-columns: 1fr; }
+.caption { font-size: .9rem; color: var(--muted); display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.caption b { color: var(--ink); }
+
+/* Sidebar */
+.side { background: var(--warm); border-right: 1px solid var(--line); padding: 14px 12px; display: flex; flex-direction: column; gap: 14px; }
+.brand { font-weight: 700; font-size: 17px; color: var(--orange); letter-spacing: -.01em; padding: 2px 8px; display: flex; align-items: center; gap: 8px; }
+.brand .word { color: var(--ink); }
+.brand .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--orange); display: inline-grid; place-items: center; color: #fff; font-size: 12px; font-family: var(--mono); }
+.navgroup .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 0 8px 4px; }
+.navgroup a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+.navgroup a.on { background: var(--orange-tint); color: var(--orange-deep); font-weight: 600; }
+.navgroup a .n { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.navgroup a.on .n { color: var(--orange-deep); }
+.status { margin-top: auto; border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 6px; font-size: 12px; }
+.status .row { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.dot.idle { background: var(--muted); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.track { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; font-size: 11px; }
+.track span { padding: 3px 9px; color: var(--muted); }
+.track span.on { background: var(--action); color: var(--action-fg); }
+
+/* Main */
+.main { padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bar h1 { font-family: var(--sans); font-size: 20px; font-weight: 600; letter-spacing: 0; }
+.bar .sp { flex: 1; }
+.search { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; color: var(--muted); min-width: 220px; background: var(--paper); }
+.search kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: auto; }
+.btn { border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 7px; padding: 5px 11px; font: inherit; font-weight: 500; cursor: default; }
+.btn.pri { background: var(--action); border-color: var(--action); color: var(--action-fg); }
+.btn.quiet { background: transparent; }
+.btn.danger { color: var(--bad); border-color: var(--bad-tint); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); background: var(--paper); }
+.chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.pill.apply, .pill.pursue { background: var(--good-tint); color: var(--good); }
+.pill.keep { background: var(--keep-tint); color: var(--keep-fg); }
+.pill.review { background: var(--warn-tint); color: var(--warn); }
+.pill.kill { background: var(--bad-tint); color: var(--bad); }
+.pill.grey { background: var(--warm); color: var(--muted); border: 1px solid var(--line); }
+.card { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.card h3 { font-family: var(--sans); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+.grid2 { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); gap: 12px; align-items: start; }
+.num { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.num small { font-size: 12px; color: var(--muted); font-weight: 400; display: block; margin-top: 2px; }
+.list { display: grid; gap: 0; }
+.list .it { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.list .it:first-child { border-top: 0; }
+.it .t { font-weight: 500; }
+.it .s { color: var(--muted); font-size: 12px; }
+.score { font-family: var(--mono); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stripe { border-left: 3px solid var(--line); padding-left: 10px; }
+.stripe.apply { border-color: var(--good); } .stripe.keep { border-color: var(--keep); } .stripe.review { border-color: var(--warn); } .stripe.kill { border-color: var(--bad); }
+.meter { height: 6px; background: var(--warm); border-radius: 3px; overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--orange); }
+.steps { display: grid; gap: 10px; }
+.step { display: grid; grid-template-columns: 26px minmax(0,1fr) auto; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.step .ic { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; background: var(--good); }
+.step .ic.todo { background: var(--line); color: var(--muted); } .step .ic.warn { background: var(--warn); } .step .ic.now { background: var(--action); color: var(--action-fg); }
+.step .d { color: var(--muted); font-size: 12px; }
+.step .cmd { font-family: var(--mono); font-size: 11.5px; background: var(--warm); padding: 4px 8px; border-radius: 5px; margin-top: 6px; display: inline-block; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); }
+.tabs span { padding: 7px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs span.on { color: var(--orange-deep); border-bottom-color: var(--orange); font-weight: 600; }
+.drop { border: 1.5px dashed var(--orange); background: var(--orange-tint); border-radius: 10px; padding: 22px; text-align: center; color: var(--orange-deep); }
+.drop small { display: block; color: var(--muted); margin-top: 4px; }
+.kv { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 12px; font-size: 12px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; }
+.dimrow { display: grid; grid-template-columns: 150px minmax(0,1fr) 44px; gap: 10px; align-items: center; font-size: 12px; padding: 4px 0; }
+.block { padding: 8px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.block b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 2px; }
+.warnbox { background: var(--warn-tint); border: 1px solid rgba(184,134,11,.35); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
+.quiet { color: var(--muted); }
+.hdrrow { display: flex; align-items: baseline; gap: 10px; }
+.hdrrow h2 { font-family: var(--sans); font-size: 17px; font-weight: 600; }
+.mob { width: 390px; min-height: 560px; }
+@media (prefers-reduced-motion: no-preference) { .screen { transition: box-shadow .2s; } }
+.p-ember{--action:#D4622A;--action-fg:#FFFFFF;--orange:#D4622A;--orange-deep:#B04D1C;--orange-tint:#FCEBE2;--paper:#FFFFFF;--warm:#F3F5F8;--line:#DEE3EA;--ink:#141A24;--muted:#5D6775;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .p-ember:not(.force-light){--action:#E8793F;--action-fg:#1A0F08;--orange:#E8793F;--orange-deep:#F29A6B;--orange-tint:#3A2317;--paper:#111827;--warm:#0B1220;--line:#263244;--ink:#E8EDF4;--muted:#9AA6B8;}}
+:root[data-theme="dark"] .p-ember:not(.force-light){--action:#E8793F;--action-fg:#1A0F08;--orange:#E8793F;--orange-deep:#F29A6B;--orange-tint:#3A2317;--paper:#111827;--warm:#0B1220;--line:#263244;--ink:#E8EDF4;--muted:#9AA6B8;}
+.p-ember.force-dark{--action:#E8793F;--action-fg:#1A0F08;--orange:#E8793F;--orange-deep:#F29A6B;--orange-tint:#3A2317;--paper:#111827;--warm:#0B1220;--line:#263244;--ink:#E8EDF4;--muted:#9AA6B8;}
+.p-ember.force-light{--action:#D4622A;--action-fg:#FFFFFF;--orange:#D4622A;--orange-deep:#B04D1C;--orange-tint:#FCEBE2;--paper:#FFFFFF;--warm:#F3F5F8;--line:#DEE3EA;--ink:#141A24;--muted:#5D6775;}
+.p-teal{--action:#0F8F7E;--action-fg:#FFFFFF;--orange:#0F8F7E;--orange-deep:#0B6E61;--orange-tint:#DDF3EF;--paper:#FFFFFF;--warm:#F4F6F7;--line:#E0E5E8;--ink:#17191C;--muted:#60676E;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .p-teal:not(.force-light){--action:#2CC4AE;--action-fg:#07201C;--orange:#2CC4AE;--orange-deep:#5ED8C6;--orange-tint:#113A35;--paper:#17191D;--warm:#111316;--line:#2B3036;--ink:#EDEFF2;--muted:#9CA3AB;}}
+:root[data-theme="dark"] .p-teal:not(.force-light){--action:#2CC4AE;--action-fg:#07201C;--orange:#2CC4AE;--orange-deep:#5ED8C6;--orange-tint:#113A35;--paper:#17191D;--warm:#111316;--line:#2B3036;--ink:#EDEFF2;--muted:#9CA3AB;}
+.p-teal.force-dark{--action:#2CC4AE;--action-fg:#07201C;--orange:#2CC4AE;--orange-deep:#5ED8C6;--orange-tint:#113A35;--paper:#17191D;--warm:#111316;--line:#2B3036;--ink:#EDEFF2;--muted:#9CA3AB;}
+.p-teal.force-light{--action:#0F8F7E;--action-fg:#FFFFFF;--orange:#0F8F7E;--orange-deep:#0B6E61;--orange-tint:#DDF3EF;--paper:#FFFFFF;--warm:#F4F6F7;--line:#E0E5E8;--ink:#17191C;--muted:#60676E;}
+.p-gold{--action:#C9931E;--action-fg:#1A1200;--orange:#C9931E;--orange-deep:#9A6F0F;--orange-tint:#F7EDD2;--paper:#FFFFFF;--warm:#F5F6FA;--line:#E1E4EE;--ink:#121529;--muted:#5F6480;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .p-gold:not(.force-light){--action:#E3B04B;--action-fg:#1A1200;--orange:#E3B04B;--orange-deep:#F0C877;--orange-tint:#3A2E12;--paper:#12162A;--warm:#0B0E1E;--line:#262C48;--ink:#ECEEF8;--muted:#9EA4C2;}}
+:root[data-theme="dark"] .p-gold:not(.force-light){--action:#E3B04B;--action-fg:#1A1200;--orange:#E3B04B;--orange-deep:#F0C877;--orange-tint:#3A2E12;--paper:#12162A;--warm:#0B0E1E;--line:#262C48;--ink:#ECEEF8;--muted:#9EA4C2;}
+.p-gold.force-dark{--action:#E3B04B;--action-fg:#1A1200;--orange:#E3B04B;--orange-deep:#F0C877;--orange-tint:#3A2E12;--paper:#12162A;--warm:#0B0E1E;--line:#262C48;--ink:#ECEEF8;--muted:#9EA4C2;}
+.p-gold.force-light{--action:#C9931E;--action-fg:#1A1200;--orange:#C9931E;--orange-deep:#9A6F0F;--orange-tint:#F7EDD2;--paper:#FFFFFF;--warm:#F5F6FA;--line:#E1E4EE;--ink:#121529;--muted:#5F6480;}
+.p-indigo{--action:#4F5BD5;--action-fg:#FFFFFF;--orange:#4F5BD5;--orange-deep:#3A44A8;--orange-tint:#E6E8FA;--paper:#FFFFFF;--warm:#FAF9F6;--line:#E5E1DA;--ink:#1B1A1F;--muted:#6B6870;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .p-indigo:not(.force-light){--action:#7B86F0;--action-fg:#0F1030;--orange:#7B86F0;--orange-deep:#A3ABF7;--orange-tint:#262A4D;--paper:#1B1B1F;--warm:#141417;--line:#303036;--ink:#F0EFF3;--muted:#A2A1A8;}}
+:root[data-theme="dark"] .p-indigo:not(.force-light){--action:#7B86F0;--action-fg:#0F1030;--orange:#7B86F0;--orange-deep:#A3ABF7;--orange-tint:#262A4D;--paper:#1B1B1F;--warm:#141417;--line:#303036;--ink:#F0EFF3;--muted:#A2A1A8;}
+.p-indigo.force-dark{--action:#7B86F0;--action-fg:#0F1030;--orange:#7B86F0;--orange-deep:#A3ABF7;--orange-tint:#262A4D;--paper:#1B1B1F;--warm:#141417;--line:#303036;--ink:#F0EFF3;--muted:#A2A1A8;}
+.p-indigo.force-light{--action:#4F5BD5;--action-fg:#FFFFFF;--orange:#4F5BD5;--orange-deep:#3A44A8;--orange-tint:#E6E8FA;--paper:#FFFFFF;--warm:#FAF9F6;--line:#E5E1DA;--ink:#1B1A1F;--muted:#6B6870;}
+.p-ink{--action:#141A24;--action-fg:#FFFFFF;--orange:#3B5BA9;--orange-deep:#2E4A8C;--orange-tint:#E7EDF9;--paper:#FFFFFF;--warm:#F3F5F8;--line:#DEE3EA;--ink:#141A24;--muted:#5D6775;}@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .p-ink:not(.force-light){--action:#E8EDF4;--action-fg:#111827;--orange:#7FA2F2;--orange-deep:#A7C0F7;--orange-tint:#1B2740;--paper:#111827;--warm:#0B1220;--line:#263244;--ink:#E8EDF4;--muted:#9AA6B8;}}:root[data-theme="dark"] .p-ink:not(.force-light){--action:#E8EDF4;--action-fg:#111827;--orange:#7FA2F2;--orange-deep:#A7C0F7;--orange-tint:#1B2740;--paper:#111827;--warm:#0B1220;--line:#263244;--ink:#E8EDF4;--muted:#9AA6B8;}.p-ink.force-dark{--action:#E8EDF4;--action-fg:#111827;--orange:#7FA2F2;--orange-deep:#A7C0F7;--orange-tint:#1B2740;--paper:#111827;--warm:#0B1220;--line:#263244;--ink:#E8EDF4;--muted:#9AA6B8;}.p-ink.force-light{--action:#141A24;--action-fg:#FFFFFF;--orange:#3B5BA9;--orange-deep:#2E4A8C;--orange-tint:#E7EDF9;--paper:#FFFFFF;--warm:#F3F5F8;--line:#DEE3EA;--ink:#141A24;--muted:#5D6775;}.p-ink .brand .mark{background:#D4622A}
+.force-dark{--keep:#E8793F;--keep-tint:#3B2216;--keep-fg:#F29A6B}.force-light{--keep:#D4622A;--keep-tint:#FBECE3;--keep-fg:#B04D1C}
+.force-dark .screen, .force-dark .screen *{color-scheme:dark}
+.force-dark{background:var(--warm)}
+.swatches{display:flex;gap:10px;flex-wrap:wrap;margin:1rem 0}
+.sw{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--paper);cursor:pointer;font:inherit;color:var(--ink);text-align:left;min-width:0}
+.sw.on{outline:2px solid var(--ink);outline-offset:1px}
+.sw .chips{display:flex;gap:3px}.sw .chips i{width:14px;height:22px;border-radius:3px;display:block;border:1px solid rgba(0,0,0,.08)}
+.sw b{display:block;font-weight:600}.sw small{color:var(--muted);display:block;max-width:34ch}
+.modebar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.9rem;color:var(--muted)}
+.modebar button{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:4px 12px;font:inherit}
+.modebar button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+</style>
+
+<div class="wrap p-indigo" id="wrap">
+<header class="hero">
+  <div class="eyebrow">Design proposal · October 2026</div>
+  <h1>Kestrel, made legible</h1>
+  <p class="lede">Kestrel does a lot and shows it all at once. The proposal keeps the orange and white identity and every feature, and changes how the work is organized: a sidebar that groups pages by what you are doing, a home page that answers "what needs me today", status you can see without reading a log, and a first run that walks you to a working system instead of a terminal.</p>
+</header>
+
+<section class="part">
+  <div class="cols">
+    <div>
+      <h2>What is wrong today</h2>
+      <ul class="points">
+        <li><b>Nine equal tabs.</b> Pipeline, Pursuits, Documents, Stories, Offers, Analytics, Sources, Settings and Dashboard sit in one row with no grouping. Nothing says where to start or where setup lives (Calibrate, Runs, Bench and About are only reachable from the command palette).</li>
+        <li><b>State is invisible.</b> Whether the worker is running, which model is loaded, when the last scan happened, and whether Ollama is even up are either a small mono string in the top bar or a visit to <code>kestrel doctor</code>.</li>
+        <li><b>Tables for everything.</b> The pipeline is a dense grid where the three numbers that matter (verdict, score, what to do) compete with seven that rarely matter.</li>
+        <li><b>First run is a terminal.</b> The README says there is no setup window on purpose. For one engineer that was fine. For "extremely easy to set up" it is the single biggest gap, and a machine with no GPU has no path at all today.</li>
+        <li><b>Plain by default.</b> One typeface at one size, one border color, every box a card. The eye has nothing to grab.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>What the proposal keeps</h2>
+      <ul class="points">
+        <li>Orange <code>#D4622A</code> and white, with dark mode as the same palette. The accent is used for the one thing that matters on each screen, not for everything.</li>
+        <li>Every page and every feature. Nothing is removed; pages are grouped and some are nested under the page they belong to.</li>
+        <li>The stack: Jinja templates, HTMX, Alpine, a hand-written stylesheet served from disk. No build toolchain is introduced.</li>
+        <li>The hard rules in the UI: the Tier 3 send still shows exactly what leaves the machine, document bullets stay the operator's own text, sample sizes stay stated.</li>
+      </ul>
+      <div class="note">Scope of this document: mockups and the reasoning behind them, for your edits. Implementation follows once you have cut what you do not want.</div>
+    </div>
+  </div>
+</section>
+
+
+<section class="part">
+  <div class="eyebrow">Color</div>
+  <h2>Five schemes, both modes</h2>
+  <p class="measure">The brown-and-orange dark mode is retired. The two chosen schemes come first. Each scheme keeps the Kestrel identity in light mode and uses a true neutral ground in dark mode, never a tinted brown. Pick one and every screen on this page re-skins. The verdict colors never change with the scheme: green apply, orange keep, amber review, red kill, in every scheme and both modes, so a state always reads the same. Only the ground, the action color and the links move.</p>
+  <div class="swatches"><button class="sw on" data-p="indigo" type="button"><span class="chips"><i style="background:#FFFFFF"></i><i style="background:#FAF9F6"></i><i style="background:#4F5BD5"></i><i style="background:#1B1B1F"></i><i style="background:#141417"></i><i style="background:#7B86F0"></i></span><span><b>Paper & Indigo</b><small>Warm paper in light, true charcoal in dark, indigo accent. The most conventional software look of the five.</small></span></button><button class="sw" data-p="teal" type="button"><span class="chips"><i style="background:#FFFFFF"></i><i style="background:#F4F6F7"></i><i style="background:#0F8F7E"></i><i style="background:#17191D"></i><i style="background:#111316"></i><i style="background:#2CC4AE"></i></span><span><b>Graphite & Teal</b><small>Neutral graphite with a calm teal accent. Verdict colors stay green, amber and red, so the accent never competes with a state.</small></span></button><button class="sw" data-p="ink" type="button"><span class="chips"><i style="background:#FFFFFF"></i><i style="background:#F3F5F8"></i><i style="background:#141A24"></i><i style="background:#111827"></i><i style="background:#0B1220"></i><i style="background:#E8EDF4"></i></span><span><b>Slate &amp; Ink</b><small>Buttons in ink, links in slate blue, orange kept only for the mark and the keep state. Nothing fights the slate.</small></span></button><button class="sw" data-p="ember" type="button"><span class="chips"><i style="background:#FFFFFF"></i><i style="background:#F3F5F8"></i><i style="background:#D4622A"></i><i style="background:#111827"></i><i style="background:#0B1220"></i><i style="background:#E8793F"></i></span><span><b>Slate & Ember</b><small>Cool slate neutrals, the Kestrel orange kept as a single ember accent. Closest to today without the brown.</small></span></button><button class="sw" data-p="gold" type="button"><span class="chips"><i style="background:#FFFFFF"></i><i style="background:#F5F6FA"></i><i style="background:#C9931E"></i><i style="background:#12162A"></i><i style="background:#0B0E1E"></i><i style="background:#E3B04B"></i></span><span><b>Midnight & Gold</b><small>Deep blue-black ground with an amber accent. Highest contrast of the five; reads well on a phone at night.</small></span></button></div>
+  <div class="modebar"><span>Preview mode:</span><button type="button" data-m="auto" class="on">Follow my setting</button><button type="button" data-m="light">Light</button><button type="button" data-m="dark">Dark</button></div>
+  <div class="note"><b>Decided:</b> Paper and Indigo ships as the default; Graphite and Teal is the one alternate, selectable under Settings with light, dark or follow-system for each. The other three stay here for the record and are not built.
+</section>
+<!-- =============================================== 1. SHELL + HOME -->
+<section class="part">
+  <div class="eyebrow">Screen 1</div>
+  <h2>The shell and the home page</h2>
+  <p class="measure">A left sidebar replaces the tab row. Pages are grouped into <b>Work</b> (what you do daily), <b>Learn</b> (what the system learns from you) and <b>Setup</b> (sources, models, settings). The bottom of the sidebar is a status rail that is always visible: worker state, model loaded, last scan, Ollama health. The home page answers one question, "what needs me today", in three columns: review, act, and what the system did overnight.</p>
+
+  <div class="screen-wrap"><div class="screen">
+    <aside class="side">
+      <div class="brand"><span class="mark">K</span><span class="word">Kestrel</span></div>
+      <div class="track"><span class="on">Both</span><span>Employment</span><span>Consulting</span></div>
+      <div class="navgroup"><div class="lbl">Work</div>
+        <a class="on">Today <span class="n">7</span></a>
+        <a>Pipeline <span class="n">142</span></a>
+        <a>Pursuits <span class="n">9</span></a>
+        <a>Documents</a>
+        <a>Interview prep</a>
+        <a>Offers</a>
+      </div>
+      <div class="navgroup"><div class="lbl">Learn</div>
+        <a>Calibrate <span class="n">4</span></a>
+        <a>Analytics</a>
+      </div>
+      <div class="navgroup"><div class="lbl">Setup</div>
+        <a>Sources</a>
+        <a>Models</a>
+        <a>Settings</a>
+      </div>
+      <div class="status">
+        <div class="row"><span class="dot"></span>Worker idle · last cycle 2 min ago</div>
+        <div class="row"><span class="dot"></span>Ollama · kestrel-tier2 loaded</div>
+        <div class="row"><span class="dot idle"></span>Last scan 06:10 · 31 new</div>
+        <div class="row"><span class="dot warn"></span>Hosted Tier 3: no key</div>
+      </div>
+    </aside>
+    <div class="main">
+      <div class="bar"><h1>Today</h1><span class="quiet">Sunday, October 12</span><span class="sp"></span>
+        <div class="search">Search or jump to <kbd>⌘K</kbd></div><button class="btn">Scan now</button></div>
+      <div class="grid3">
+        <div class="card"><h3>Review</h3>
+          <div class="num">7 <small>shortlisted since yesterday, 2 need a second look</small></div>
+          <div class="list" style="margin-top:8px">
+            <div class="it stripe apply"><div><div class="t">VP of Information Technology</div><div class="s">Northwind Freight · Columbus, hybrid</div></div><span class="score">4.6</span></div>
+            <div class="it stripe apply"><div><div class="t">Fractional CIO, post-acquisition integration</div><div class="s">Ridgeline Utilities · consulting</div></div><span class="score">4.4</span></div>
+            <div class="it stripe review"><div><div class="t">Head of Infrastructure and Security</div><div class="s">Beacon Robotics · score and model disagree</div></div><span class="score">3.8</span></div>
+          </div>
+          <p style="margin:8px 0 0"><button class="btn pri">Review all 7</button></p>
+        </div>
+        <div class="card"><h3>Act</h3>
+          <div class="num">3 <small>next actions due</small></div>
+          <div class="list" style="margin-top:8px">
+            <div class="it"><div><div class="t">Follow up with recruiter</div><div class="s">Cascade Regional Health · due today</div></div><span class="pill keep">today</span></div>
+            <div class="it"><div><div class="t">Send capability statement</div><div class="s">Harbor Point Analytics · due tomorrow</div></div><span class="pill grey">tomorrow</span></div>
+            <div class="it"><div><div class="t">Prep: panel interview</div><div class="s">Vantage Mutual · Thursday</div></div><span class="pill grey">Thu</span></div>
+          </div>
+          <p style="margin:8px 0 0"><button class="btn">Open pursuits</button></p>
+        </div>
+        <div class="card"><h3>Overnight</h3>
+          <div class="kv">
+            <dt>Scanned</dt><dd>14 sources · 31 new postings</dd>
+            <dt>Tier 0</dt><dd>31 in · 19 kept · 12 blocked (stale, geography)</dd>
+            <dt>Tier 1</dt><dd>19 in · 11 kept · 8 rejected</dd>
+            <dt>Tier 2</dt><dd>11 evaluated · 4 shortlisted</dd>
+            <dt>Quarantine</dt><dd>1 item · <span style="color:var(--orange-deep)">open</span></dd>
+            <dt>Ghosting</dt><dd>2 pursuits past 21 days with no reply</dd>
+          </div>
+          <div style="margin-top:10px" class="meter"><i style="width:62%"></i></div>
+          <div class="quiet" style="font-size:11px;margin-top:4px">Score is discriminating (n=38). <span style="color:var(--orange-deep)">Analytics</span></div>
+        </div>
+      </div>
+      <div class="card"><h3>What the system wants from you</h3>
+        <div class="list">
+          <div class="it"><div><div class="t">4 calibration labels</div><div class="s">Three more and the few-shot examples switch on (15 of 18 labels).</div></div><button class="btn">Label</button></div>
+          <div class="it"><div><div class="t">Confirm the redaction map</div><div class="s">Confidential mode is on but no section names your employer yet.</div></div><button class="btn">Fix</button></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="caption"><span><b>Why it works.</b> Three columns, three verbs. Counts in the sidebar tell you where work is waiting without opening the page.</span><span>Sidebar collapses to icons under 1000px; on a phone it becomes a bottom bar with Today, Pipeline, Pursuits, More.</span></div>
+</section>
+
+<!-- =============================================== 2. PIPELINE -->
+<section class="part">
+  <div class="eyebrow">Screen 2</div>
+  <h2>Pipeline as a triage list, not a spreadsheet</h2>
+  <p class="measure">Each opportunity is a row with a colored stripe for the verdict, the title and org, one line of the model's own summary, and the score. Filters are chips you can see, not a strip of empty inputs. Selecting a row opens a side drawer with the evaluation, so you can triage twenty items without leaving the list. The full detail page still exists for deep work.</p>
+  <div class="screen-wrap"><div class="screen">
+    <aside class="side">
+      <div class="brand"><span class="mark">K</span><span class="word">Kestrel</span></div>
+      <div class="track"><span class="on">Both</span><span>Employment</span><span>Consulting</span></div>
+      <div class="navgroup"><div class="lbl">Work</div><a>Today <span class="n">7</span></a><a class="on">Pipeline <span class="n">142</span></a><a>Pursuits <span class="n">9</span></a><a>Documents</a><a>Interview prep</a><a>Offers</a></div>
+      <div class="navgroup"><div class="lbl">Learn</div><a>Calibrate <span class="n">4</span></a><a>Analytics</a></div>
+      <div class="navgroup"><div class="lbl">Setup</div><a>Sources</a><a>Models</a><a>Settings</a></div>
+      <div class="status"><div class="row"><span class="dot"></span>Worker: Tier 2 · 3 of 11</div><div class="row"><span class="dot"></span>Ollama · kestrel-tier2 loaded</div><div class="row"><span class="dot idle"></span>Last scan 06:10 · 31 new</div></div>
+    </aside>
+    <div class="main">
+      <div class="bar"><h1>Pipeline</h1><span class="quiet">142 open · 7 shortlisted</span><span class="sp"></span><div class="search">Search titles and orgs <kbd>/</kbd></div><button class="btn quiet">Saved views ▾</button></div>
+      <div class="chips"><span class="chip on">Shortlisted</span><span class="chip">Needs review</span><span class="chip">Evaluated</span><span class="chip">New today</span><span class="chip">Quarantined 1</span><span class="chip">Archived</span><span class="chip" style="margin-left:auto">Sort: score ▾</span></div>
+      <div class="grid2">
+        <div class="list card" style="padding:0 14px">
+          <div class="it stripe apply" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">VP of Information Technology <span class="pill apply">apply</span></div><div class="s">Northwind Freight · Columbus, hybrid · $230k to $260k · seen 3×</div><div class="s">Owns IT for an acquired carrier mid-integration; reports to the CFO; budget authority stated.</div></div><span class="score">4.6</span><button class="btn quiet">›</button></div>
+          <div class="it stripe apply" style="grid-template-columns:minmax(0,1fr) auto auto;background:var(--orange-tint);margin:0 -14px;padding:8px 14px"><div><div class="t">Fractional CIO, post-acquisition integration <span class="pill pursue">pursue</span></div><div class="s">Ridgeline Utilities · consulting · trigger: 8-K acquisition, 11 days ago</div><div class="s">Buyer is the COO; 90-day integration scope; day rate implied by comparable engagements.</div></div><span class="score">4.4</span><button class="btn quiet">‹</button></div>
+          <div class="it stripe apply" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">Director of IT Operations <span class="pill apply">apply</span></div><div class="s">Cascade Regional Health · Dallas · $185k to $210k</div><div class="s">Operations-heavy; two of five dimensions below your floor on trajectory.</div></div><span class="score">4.1</span><button class="btn quiet">›</button></div>
+          <div class="it stripe review" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">Head of Infrastructure and Security <span class="pill review">needs review</span></div><div class="s">Beacon Robotics · remote · comp not stated</div><div class="s">Model says keep, weighted score says consider. Your call decides what the reranker learns.</div></div><span class="score">3.8</span><button class="btn quiet">›</button></div>
+          <div class="it stripe keep" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">Chief Information Officer <span class="pill keep">keep</span></div><div class="s">Vantage Mutual · Hartford · relocation implied</div><div class="s">Strong fit on domain; geography is the open question.</div></div><span class="score">3.4</span><button class="btn quiet">›</button></div>
+          <div class="it stripe kill" style="grid-template-columns:minmax(0,1fr) auto auto"><div><div class="t">Senior IT Manager <span class="pill kill">kill</span></div><div class="s">Harbor Point Analytics · title below target band</div></div><span class="score">2.6</span><button class="btn quiet">›</button></div>
+        </div>
+        <div class="card">
+          <div class="hdrrow"><h2>Fractional CIO, post-acquisition integration</h2></div>
+          <div class="quiet" style="font-size:12px">Ridgeline Utilities · consulting · evaluated 05:48 by kestrel-tier2</div>
+          <div style="display:flex;gap:16px;align-items:center;margin:10px 0"><div class="num">4.4<small>holistic</small></div><div class="num" style="color:var(--muted)">4.3<small>weighted</small></div><span class="pill pursue" style="font-size:12px">pursue</span></div>
+          <div class="dimrow"><span>Engagement fit</span><div class="meter"><i style="width:92%"></i></div><span class="score">4.6</span></div>
+          <div class="dimrow"><span>Buyer access</span><div class="meter"><i style="width:84%"></i></div><span class="score">4.2</span></div>
+          <div class="dimrow"><span>Economics</span><div class="meter"><i style="width:80%"></i></div><span class="score">4.0</span></div>
+          <div class="dimrow"><span>Delivery feasibility</span><div class="meter"><i style="width:88%"></i></div><span class="score">4.4</span></div>
+          <div class="dimrow"><span>Strategic value</span><div class="meter"><i style="width:90%"></i></div><span class="score">4.5</span></div>
+          <div class="block"><b>What this actually is</b>A 90-day integration lead for a utility that closed an acquisition eleven days ago. The COO is the likely buyer; no IT leader is named in the filing.</div>
+          <div class="block"><b>Legitimacy</b><span style="color:var(--good)">clean</span> · public 8-K, named counterparties, no recruiter intermediary</div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn pri">Shortlist</button><button class="btn">Override verdict</button><button class="btn quiet">Open full page</button><button class="btn danger" style="margin-left:auto">Archive</button></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="caption"><span><b>Why it works.</b> The stripe and pill carry the verdict; the score is the only number in the row. The one-line summary is the model's own "what this actually is" block, which is the most useful sentence Tier 2 produces and is currently hidden behind a click.</span></div>
+</section>
+
+<!-- =============================================== 3. OPPORTUNITY DETAIL -->
+<section class="part">
+  <div class="eyebrow">Screen 3</div>
+  <h2>Opportunity detail with the decision at the top</h2>
+  <p class="measure">The current page stacks description, evaluation, override, escalation and documents in one column. The proposal puts the verdict and the three actions at the top, then tabs: <b>Evaluation</b>, <b>Posting</b>, <b>Organization</b>, <b>Documents</b>, <b>History</b>. Tier 3 escalation becomes a deliberate dialog with the payload, the destination and the cost estimate in one view, which it already shows but inline and easy to miss.</p>
+  <div class="screen-wrap"><div class="screen single">
+    <div class="main">
+      <div class="bar"><span class="quiet">Pipeline ›</span><h1>VP of Information Technology</h1><span class="pill apply" style="font-size:12px">apply</span><span class="sp"></span><button class="btn pri">Start pursuit</button><button class="btn">Tailor resume</button><button class="btn">Escalate to Tier 3…</button></div>
+      <div class="quiet" style="font-size:12px;margin-top:-8px">Northwind Freight · Columbus, hybrid · $230k to $260k · posted 6 days ago · via Greenhouse · seen 3 times, unchanged</div>
+      <div class="tabs"><span class="on">Evaluation</span><span>Posting</span><span>Organization</span><span>Documents</span><span>History</span></div>
+      <div class="grid2">
+        <div>
+          <div style="display:flex;gap:20px;align-items:center;margin:4px 0 12px"><div class="num">4.6<small>holistic</small></div><div class="num" style="color:var(--muted)">4.5<small>weighted</small></div><div class="quiet" style="font-size:12px;max-width:34ch">Model and weights agree. Evaluated by kestrel-tier2 at 05:52, prompt v2, 3.1k tokens in.</div></div>
+          <div class="dimrow"><span>Role fit</span><div class="meter"><i style="width:94%"></i></div><span class="score">4.7</span></div>
+          <div class="dimrow"><span>Domain match</span><div class="meter"><i style="width:90%"></i></div><span class="score">4.5</span></div>
+          <div class="dimrow"><span>Company context</span><div class="meter"><i style="width:92%"></i></div><span class="score">4.6</span></div>
+          <div class="dimrow"><span>Comp and logistics</span><div class="meter"><i style="width:86%"></i></div><span class="score">4.3</span></div>
+          <div class="dimrow"><span>Trajectory</span><div class="meter"><i style="width:96%"></i></div><span class="score">4.8</span></div>
+          <div class="block"><b>A · What this actually is</b>Head of IT for a privately held freight carrier eighteen months into a roll-up. The posting is written by the CFO's office; integration, vendor consolidation and a security program are the first-year scope.</div>
+          <div class="block"><b>B · Why you</b>Director-level ownership across multiple regions maps directly; M&amp;A integration is the stated priority and your two integrations are the proof points.</div>
+          <div class="block"><b>C · What would worry a hiring committee</b>No freight or logistics vertical. Mitigation: lead with the retail rollout and the vendor consolidation numbers.</div>
+          <div class="block"><b>G · Legitimacy</b><span style="color:var(--good)">clean</span> · careers page matches ATS, named hiring manager, no pay-to-apply signals</div>
+        </div>
+        <div>
+          <div class="card"><h3>Your call</h3>
+            <p class="quiet" style="margin:0 0 8px;font-size:12px">Agree, or override. Either way the system learns from it.</p>
+            <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn pri">Agree: apply</button><button class="btn">Consider</button><button class="btn">Pass</button></div>
+            <div class="meter" style="margin-top:10px"><i style="width:92%"></i></div>
+            <div class="quiet" style="font-size:11px;margin-top:4px">Your score 4.6 · drag to change · note optional</div>
+          </div>
+          <div class="card" style="margin-top:12px"><h3>Documents</h3>
+            <div class="kv"><dt>Resume</dt><dd>Not tailored yet · 11 slots, 2 flagged for this role</dd><dt>Cover letter</dt><dd>Draft from Tier 2 blocks B and C</dd></div>
+            <p style="margin:8px 0 0"><button class="btn">Tailor resume</button> <button class="btn quiet">Preview</button></p>
+          </div>
+          <div class="card" style="margin-top:12px"><h3>Tier 3 escalation</h3>
+            <p class="quiet" style="margin:0;font-size:12px">Sends this posting, the org context and your profile to <b>OpenRouter · anthropic/claude-sonnet-4.6</b>. Employer redacted. About 3,400 tokens in, about $0.02. Nothing is sent until you confirm on the next screen.</p>
+            <p style="margin:8px 0 0"><button class="btn">Preview what would be sent</button></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="caption"><span><b>Why it works.</b> The decision controls are where the eye lands; the long posting text is a tab, not a wall. The cost and destination of a hosted send are stated before the preview, so escalation is a considered choice rather than a red button.</span></div>
+</section>
+
+<!-- =============================================== 4. DOCUMENTS -->
+<section class="part">
+  <div class="eyebrow">Screen 4</div>
+  <h2>Documents: import by dropping a file</h2>
+  <p class="measure">Today the importer takes pasted Markdown. The proposal adds a drop zone that accepts PDF, DOCX, DOC and Markdown (this is being built in the current branch), shows the text Kestrel extracted beside the proposed sections and variants, and makes the rule visible: every bullet in a rendered PDF is your own text, so anything the model could not find verbatim in your file is flagged and cannot be accepted.</p>
+  <div class="screen-wrap"><div class="screen">
+    <aside class="side">
+      <div class="brand"><span class="mark">K</span><span class="word">Kestrel</span></div>
+      <div class="track"><span class="on">Both</span><span>Employment</span><span>Consulting</span></div>
+      <div class="navgroup"><div class="lbl">Work</div><a>Today <span class="n">7</span></a><a>Pipeline <span class="n">142</span></a><a>Pursuits <span class="n">9</span></a><a class="on">Documents</a><a>Interview prep</a><a>Offers</a></div>
+      <div class="navgroup"><div class="lbl">Learn</div><a>Calibrate <span class="n">4</span></a><a>Analytics</a></div>
+      <div class="navgroup"><div class="lbl">Setup</div><a>Sources</a><a>Models</a><a>Settings</a></div>
+      <div class="status"><div class="row"><span class="dot"></span>Worker idle</div><div class="row"><span class="dot"></span>Ollama · kestrel-docsel loaded</div></div>
+    </aside>
+    <div class="main">
+      <div class="bar"><h1>Documents</h1><span class="sp"></span><button class="btn">Render preview</button></div>
+      <div class="tabs"><span class="on">Resume (employment)</span><span>Capability statement (consulting)</span><span>Renders</span><span class="on" style="margin-left:auto;border-bottom-color:transparent;color:var(--muted);font-weight:400">Import</span></div>
+      <div class="grid2">
+        <div>
+          <div class="drop">Drop your resume here, or choose a file<small>PDF, Word (.docx, .doc), Markdown or text · up to 10 MB · nothing leaves this machine</small></div>
+          <div class="card" style="margin-top:12px"><h3>What Kestrel read from Rivera_Resume.docx</h3>
+            <div class="quiet" style="font-size:12px;white-space:pre-wrap;font-family:var(--mono);line-height:1.5">## Director of IT · Northwind Freight · 2021 to 2025
+- Led IT through two acquisitions, 300 staff across three regions
+- Consolidated 14 SaaS vendors to 6, saving $410k a year
+- Built the ISO 27001 program to certification in 11 months
+## Head of Technology · Cascade Regional Health · 2017 to 2021
+- Migrated 1,200 endpoints to Intune and Munki with zero downtime …</div>
+            <div class="warnbox" style="margin-top:8px">Word tables were flattened to lists. Check the Skills section before accepting.</div>
+          </div>
+        </div>
+        <div class="card"><h3>Proposed structure · 2 sections · 11 slots · 23 variants</h3>
+          <div class="list">
+            <div class="it"><div><div class="t">roles.northwind.bullets · slot 1</div><div class="s">3 variants · default: "Led IT through two acquisitions…"</div></div><span class="pill apply">verbatim</span></div>
+            <div class="it"><div><div class="t">roles.northwind.bullets · slot 2</div><div class="s">2 variants · "Consolidated 14 SaaS vendors…"</div></div><span class="pill apply">verbatim</span></div>
+            <div class="it"><div><div class="t">summary · executive</div><div class="s">"IT leader with 15 years across…" <span style="color:var(--bad)">not in your file</span></div></div><span class="pill kill">rewritten</span></div>
+            <div class="it"><div><div class="t">roles.cascade.bullets · slot 1</div><div class="s">2 variants · "Migrated 1,200 endpoints…"</div></div><span class="pill apply">verbatim</span></div>
+          </div>
+          <div class="warnbox" style="margin-top:10px">1 variant was reworded by the model and cannot be accepted. Edit it to your own words, or drop it.</div>
+          <div style="display:flex;gap:8px;margin-top:10px"><button class="btn pri" disabled style="opacity:.6">Accept 22 variants</button><button class="btn">Edit flagged</button></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="caption"><span><b>Why it works.</b> The extracted text sits next to the proposal, so a flattened table or a lost heading is obvious before anything is saved. The verbatim rule is a visible pill per variant instead of a rejection message after the fact.</span></div>
+</section>
+
+<!-- =============================================== 5. SETUP -->
+<section class="part">
+  <div class="eyebrow">Screen 5</div>
+  <h2>First run: a setup page instead of a terminal</h2>
+  <p class="measure">The first time Kestrel opens, and any time preflight fails, it lands here. The first choice is how Kestrel will run: Local, Hosted, or Both; the remaining steps show as required or skipped accordingly. Each step is one line with a state, a plain explanation, and the exact command when the fix is yours to run. Steps that Kestrel can do itself (pull models, build the derived models, seed the config) have a button. The hardware profile is detected and named, with the models it implies, and a machine with no GPU is steered to Hosted. The same page is <b>Setup › Models</b> afterward, where the Local/Hosted switch also lives.</p>
+  <div class="screen-wrap"><div class="screen single" style="min-height:560px">
+    <div class="main" style="max-width:880px">
+      <div class="bar"><h1>Set up Kestrel</h1><span class="quiet">Windows 11 · NVIDIA GPU 16 GB · 64 GB RAM</span></div>
+      <div class="steps">
+        <div class="step" style="grid-template-columns:26px minmax(0,1fr)"><span class="ic">✓</span><div><div><b>1. How will Kestrel run?</b></div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px">
+            <div class="card" style="border-color:var(--action);padding:10px 12px"><b>Local</b><div class="d">Models on this machine through Ollama. Nothing leaves it. Needs a GPU or 16 GB of RAM.</div></div>
+            <div class="card" style="padding:10px 12px"><b>Hosted</b><div class="d">Every tier on OpenRouter, OpenModel, Anthropic or OpenAI under your own key, free models included. No Ollama, no downloads. You read and accept what each tier sends.</div></div>
+            <div class="card" style="padding:10px 12px"><b>Both</b><div class="d">Local models for daily runs, a hosted set ready to switch to per run or for Tier 3. Steps 2 to 5 and 7 both apply.</div></div>
+          </div>
+          <div class="d" style="margin-top:6px">Detected: Windows 11, NVIDIA GPU 16 GB, 64 GB RAM. Local is recommended on this machine; a laptop with no GPU gets Hosted recommended instead. You can change this later under Settings.</div></div></div>
+        <div class="step"><span class="ic">✓</span><div><div><b>2. Ollama is running</b> <span class="quiet">version 0.14.2 at 127.0.0.1:11434</span></div><div class="d">Kestrel does not install Ollama for you; it checks for it and shows the installer when it is missing. Skipped when you chose Hosted.</div></div><span class="pill apply">ok</span></div>
+        <div class="step"><span class="ic">✓</span><div><div><b>3. Hardware profile: 16 GB GPU</b></div><div class="d">Tier 1 qwen3:4b · Tier 2 qwen3:14b · document selection qwen3:4b · embeddings nomic-embed-text. Change it if you know better. Skipped when you chose Hosted.</div></div><button class="btn quiet">Change</button></div>
+        <div class="step"><span class="ic now">4</span><div><div><b>Pull the base models</b> <span class="quiet">2 of 4 present</span></div><div class="d">About 9.5 GB to download once. Kestrel runs <span class="mono">ollama pull</span> for each and shows progress here. Skipped when you chose Hosted.</div><span class="cmd">ollama pull qwen3:14b · ollama pull nomic-embed-text</span></div><button class="btn pri">Pull 2 models</button></div>
+        <div class="step"><span class="ic todo">5</span><div><div><b>Build the derived models and verify the context window</b></div><div class="d">Bakes each tier's context window and guardrails into kestrel-tier1, kestrel-tier2, kestrel-tier3 and kestrel-docsel, then runs a needle test, because Ollama's metadata can lie. Skipping this is the number one cause of quietly wrong scores. Skipped when you chose Hosted.</div></div><button class="btn" disabled style="opacity:.6">Build</button></div>
+        <div class="step"><span class="ic todo">6</span><div><div><b>Hosted provider and key</b> <span class="quiet">required for Hosted and Both</span></div><div class="d">Paste an OpenRouter, OpenModel, Anthropic or OpenAI key, test it, pick a model per tier (a "free only" filter is available), read what each tier sends, and accept. Optional for Local: it enables Tier 3 escalation only.</div></div><button class="btn">Add a key</button></div>
+        <div class="step"><span class="ic warn">!</span><div><div><b>7. Tell Kestrel who you are</b></div><div class="d">No profile for either track yet. Import a resume (PDF, Word or Markdown) on Documents, or edit profile.yml.</div></div><button class="btn">Import resume</button></div>
+      </div>
+      <div class="quiet" style="font-size:12px">Same from a terminal: <span class="mono">kestrel setup</span> (Local), <span class="mono">kestrel setup --hosted</span> or <span class="mono">--hosted --free</span> (Hosted), and either followed by <span class="mono">kestrel provider set-key</span> for Both. Windows, macOS or Linux.</div>
+    </div>
+  </div></div>
+  <div class="caption"><span><b>Why it works.</b> It is <code>kestrel doctor</code> with buttons, and it names the one thing the README calls "the single most important setup step" as a step rather than a paragraph.</span></div>
+</section>
+
+<!-- =============================================== 6. PHONE -->
+<section class="part">
+  <div class="eyebrow">Screen 6</div>
+  <h2>On a phone, through the tunnel</h2>
+  <div class="cols">
+    <div class="measure">
+      <p>With Cloudflare Tunnel and Access in front, the phone is where triage happens on the train. The same pages, with the sidebar folded into a bottom bar and the pipeline row reduced to stripe, title, org and score. Swipe actions on a row: shortlist, pass, later.</p>
+      <p>Nothing here needs a native app. It is the existing responsive stylesheet with a bottom navigation and larger touch targets.</p>
+    </div>
+    <div class="screen-wrap"><div class="screen single mob" style="min-height:560px;width:390px">
+      <div class="main" style="padding:14px 14px 64px">
+        <div class="bar"><h1 style="font-size:18px">Today</h1><span class="sp"></span><span class="dot"></span><span class="quiet" style="font-size:11px">idle</span></div>
+        <div class="card"><h3>Review · 7</h3>
+          <div class="list">
+            <div class="it stripe apply"><div><div class="t">VP of Information Technology</div><div class="s">Northwind Freight</div></div><span class="score">4.6</span></div>
+            <div class="it stripe apply"><div><div class="t">Fractional CIO, integration</div><div class="s">Ridgeline Utilities</div></div><span class="score">4.4</span></div>
+            <div class="it stripe review"><div><div class="t">Head of Infra &amp; Security</div><div class="s">Beacon Robotics</div></div><span class="score">3.8</span></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:10px"><h3>Due</h3>
+          <div class="list"><div class="it"><div><div class="t">Follow up with recruiter</div><div class="s">Cascade Regional Health</div></div><span class="pill keep">today</span></div></div>
+        </div>
+        <div style="position:absolute;left:0;right:0;bottom:0;border-top:1px solid var(--line);background:var(--paper);display:flex;justify-content:space-around;padding:8px 0;font-size:11px"><span style="color:var(--orange-deep);font-weight:600">Today</span><span class="quiet">Pipeline</span><span class="quiet">Pursuits</span><span class="quiet">More</span></div>
+      </div>
+    </div></div>
+  </div>
+</section>
+
+<!-- =============================================== SYSTEM -->
+<section class="part">
+  <h2>The visual system behind the screens</h2>
+  <div class="cols">
+    <div class="measure">
+      <h3>Color</h3>
+      <p>Orange stays the accent and is spent on one thing per screen: the active nav item, the primary button, the selected row. Verdicts use a separate semantic set (green apply, orange keep, amber review, red kill) so the accent never competes with a state. Neutrals are warm, not grey, so the page reads as paper rather than a spreadsheet. Dark mode is the same palette on a warm dark ground.</p>
+      <h3>Type</h3>
+      <p>One sans for the interface, a mono for numbers and identifiers, and tabular figures everywhere a column of scores lines up. Sizes come from a five-step scale instead of per-element pixels. Labels in small caps with letter-spacing mark structure; headings are sentence case.</p>
+    </div>
+    <div class="measure">
+      <h3>Components</h3>
+      <p>Four building blocks cover every page: the <b>row with a stripe</b> (pipeline, pursuits, calibrate, quarantine), the <b>card with a label</b> (home, settings, org), the <b>step</b> (setup, doctor, bench) and the <b>meter</b> (dimension scores, progress, calibration). Fewer components means fewer decisions per page and a UI that reads the same everywhere.</p>
+      <h3>Implementation cost</h3>
+      <p>One stylesheet rewrite, a new base template with the sidebar and status rail, and the home, pipeline and setup pages reworked. Detail, documents and settings reuse their existing partials inside the new frame. No JavaScript framework; HTMX and Alpine stay. Estimated at three focused sessions, with the setup page first because it unblocks the cross-platform install story.</p>
+    </div>
+  </div>
+  <div class="tblwrap">
+  <table class="cmp">
+    <thead><tr><th>Today</th><th>Proposed</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Nine tabs in one row; Calibrate, Runs, Bench, About hidden</td><td>Sidebar in three groups; every page reachable; counts beside the pages with waiting work</td><td>Navigation encodes what you are doing, not the module list</td></tr>
+      <tr><td>Dashboard with two panels</td><td>Today: review, act, overnight, and what the system wants from you</td><td>The page answers a question instead of listing tables</td></tr>
+      <tr><td>Run strip as a mono string in the top bar</td><td>Status rail: worker, model, last scan, Ollama, hosted key</td><td>State is visible without reading a log</td></tr>
+      <tr><td>Pipeline as a nine-column table</td><td>Triage rows with stripe, summary line and score; side drawer</td><td>Three things per row, not nine</td></tr>
+      <tr><td>Detail page as one long column</td><td>Decision at the top, five tabs, Tier 3 as a stated-cost dialog</td><td>The decision is the page's job</td></tr>
+      <tr><td>Paste Markdown to import</td><td>Drop PDF, DOCX, DOC or Markdown; extracted text beside the proposal; verbatim pill per variant</td><td>Imports the files people have; the hard rule becomes visible</td></tr>
+      <tr><td>Terminal-only doctor and models build</td><td>Setup page with steps, buttons and the detected hardware profile; <code>kestrel setup</code> for the terminal</td><td>Extremely easy to set up, on all three platforms</td></tr>
+      <tr><td>Desktop-width only</td><td>Same pages with a bottom bar on phones</td><td>The tunnel makes the phone the triage device</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+</div>
+<script>
+(function(){
+  var wrap=document.getElementById('wrap');
+  var keys=['p-indigo','p-teal','p-ink','p-ember','p-gold'];
+  function setP(k){ keys.forEach(function(c){wrap.classList.remove(c)}); wrap.classList.add('p-'+k);
+    document.querySelectorAll('.sw').forEach(function(b){b.classList.toggle('on',b.dataset.p===k)});
+    try{localStorage.setItem('kestrel-proposal-palette',k)}catch(e){} }
+  function setM(m){ wrap.classList.remove('force-light','force-dark'); if(m!=='auto') wrap.classList.add('force-'+m);
+    document.querySelectorAll('.modebar button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m)});
+    try{localStorage.setItem('kestrel-proposal-mode',m)}catch(e){} }
+  document.querySelectorAll('.sw').forEach(function(b){b.addEventListener('click',function(){setP(b.dataset.p)})});
+  document.querySelectorAll('.modebar button').forEach(function(b){b.addEventListener('click',function(){setM(b.dataset.m)})});
+  var p=null,m=null; try{p=localStorage.getItem('kestrel-proposal-palette');m=localStorage.getItem('kestrel-proposal-mode')}catch(e){}
+  if(p&&keys.indexOf('p-'+p)>=0) setP(p); if(m) setM(m);
+})();
+</script>

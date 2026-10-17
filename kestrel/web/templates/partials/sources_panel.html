@@ -1,0 +1,116 @@
+{% import "partials/sources_macros.html" as sm %}
+<div id="sources-panel">
+
+  {# ------------------------------------------------------------- Your searches (D-SRC-3) #}
+  <div class="panel" data-testid="your-searches">
+    <div class="bar" style="margin-bottom:.4rem">
+      <h2 style="margin:0">Your searches</h2>
+      {% if generated %}
+      <span class="pill {{ 'covered' if generated_on else 'grey' }}" data-testid="searches-state">{{ 'On' if generated_on else 'Off' }}</span>
+      <span class="sp"></span>
+      <form hx-post="/sources/searches" hx-target="#sources-panel" hx-swap="outerHTML" style="margin:0">
+        <input type="hidden" name="enable" value="{{ '0' if generated_on else '1' }}">
+        <button class="btn {{ '' if generated_on else 'primary' }}" type="submit" data-testid="searches-switch">
+          {{ 'Turn searching off' if generated_on else 'Turn searching on' }}</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if generated %}
+    <p class="muted" style="margin:0 0 .6rem">Built from your
+      <a href="/profile?tab=employment">job titles</a> and <a href="/profile?tab=location">location</a>.
+      They update when you change your profile.</p>
+    <div style="overflow-x:auto">
+    <table class="data">
+      <thead><tr><th>Search</th>{% if show_track %}<th>Track</th>{% endif %}<th>Last run</th><th>Health</th><th></th></tr></thead>
+      {% for src in generated %}
+      {% set run = runs.get(src.id) %}
+      {% set is_edit_error = edit_error and edit_error.id == src.id %}
+      <tbody>
+        <tr data-testid="search-row">
+          <td>{{ summaries.get(src.name) or src.name }}</td>
+          {% if show_track %}<td>{{ src.track }}</td>{% endif %}
+          <td>{{ sm.last_run(src) }}</td>
+          <td>{{ sm.health(src, run, run_message) }}</td>
+          <td>
+            {{ sm.run_now(src, signal_kinds) }}
+          </td>
+        </tr>
+        <tr>
+          <td colspan="{{ 5 if show_track else 4 }}" style="padding-top:0">
+            <details class="section-edit" {% if is_edit_error %}open{% endif %}>
+              <summary class="muted">Show details</summary>
+              <p class="muted" style="margin:.4rem 0">Runs every {{ src.cadence_hours }} hours as
+                <span class="mono">{{ src.kind }}</span>. Editing it makes it your own search: it
+                will no longer follow your profile.</p>
+              {% if is_edit_error %}<div class="warnbox">{{ edit_error.message }}</div>{% endif %}
+              {{ sm.edit_form(src, edit_error.values if is_edit_error else None, tracks, kinds, config_text) }}
+            </details>
+          </td>
+        </tr>
+      </tbody>
+      {% endfor %}
+    </table>
+    </div>
+    {% if consulting %}
+    <p style="margin:.6rem 0 0" data-testid="sec-titles-row">
+      <label><input type="checkbox" name="on" value="1" data-testid="sec-titles"
+             hx-post="/sources/sec-titles" hx-trigger="change" hx-target="#sources-panel" hx-swap="outerHTML"
+             {% if sec_titles_on %}checked{% endif %}> {{ sec_titles_label }}</label>
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="muted" data-testid="no-searches" style="margin:0">Your searches come from
+      <a href="/profile?tab=employment">Profile &gt; Employment</a> and Location: add the job
+      titles you want and where, and they appear here.</p>
+    {% endif %}
+  </div>
+
+  {# ---------------------------------------------------- Sources you added, and shipped ones #}
+  {% if sources %}
+  <div class="panel" data-testid="own-sources">
+    <h2>Other sources</h2>
+    <div style="overflow-x:auto">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Name</th><th>Kind</th>{% if show_track %}<th>Track</th>{% endif %}<th>Enabled</th>
+          <th>Last run</th><th>Health</th><th>Actions</th>
+        </tr>
+      </thead>
+      {% for src in sources %}
+      {% set run = runs.get(src.id) %}
+      {% set is_edit_error = edit_error and edit_error.id == src.id %}
+      <tbody x-data="{ editing: {{ 'true' if is_edit_error else 'false' }} }">
+        <tr>
+          <td>{{ src.name }}</td>
+          <td class="mono">{{ src.kind }}</td>
+          {% if show_track %}<td>{{ src.track }}</td>{% endif %}
+          <td><span class="pill {{ 'covered' if src.enabled else '' }}">{{ 'on' if src.enabled else 'off' }}</span></td>
+          <td>{{ sm.last_run(src) }}</td>
+          <td>{{ sm.health(src, run, run_message) }}</td>
+          <td>
+            <div style="display:flex; gap:.35rem; flex-wrap:wrap">
+              <button class="btn" type="button" @click="editing = !editing">Edit</button>
+              <button class="btn" hx-post="/sources/{{ src.id }}/toggle"
+                      hx-target="#sources-panel" hx-swap="outerHTML">
+                {{ 'Turn off' if src.enabled else 'Turn on' }}
+              </button>
+              {{ sm.run_now(src, signal_kinds) }}
+            </div>
+          </td>
+        </tr>
+        <tr class="expand-row" x-show="editing" x-cloak>
+          <td colspan="{{ 7 if show_track else 6 }}">
+            {% if is_edit_error %}<div class="warnbox">{{ edit_error.message }}</div>{% endif %}
+            {{ sm.edit_form(src, edit_error.values if is_edit_error else None, tracks, kinds, config_text) }}
+          </td>
+        </tr>
+      </tbody>
+      {% endfor %}
+    </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% include "partials/sources_advanced.html" %}
+</div>

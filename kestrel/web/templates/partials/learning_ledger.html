@@ -1,0 +1,222 @@
+{# Settings > Learning (D-UI-5). Rendered whole on tab open, or as the labels table alone
+   (only_table) for paging, filtering and single deletes. #}
+{% macro labels_table(rows, total, page, pages, track, tracks, page_size, message, ok) %}
+<div id="learning-labels">
+  {% if message %}
+    <p class="{{ 'muted' if ok else 'warnbox' }}">{{ message }}</p>
+  {% endif %}
+  <div class="filters">
+    <label>Track
+      <select name="track" hx-get="/settings/learning/labels" hx-target="#learning-labels"
+              hx-swap="outerHTML" hx-include="this">
+        <option value="" {% if not track %}selected{% endif %}>All tracks</option>
+        {% for t in tracks %}
+          <option value="{{ t }}" {% if t == track %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <span class="muted">{{ total }} decision{{ '' if total == 1 else 's' }}{% if track %} on the {{ track }} track{% endif %}, newest first.</span>
+  </div>
+  {% if rows %}
+  <table class="data">
+    <thead><tr>
+      <th>Date</th><th>Opportunity</th><th>Model</th><th>You</th><th>Rationale</th>
+      <th>Feeds</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="mono">{{ (r.created_at or '')[:10] }}</td>
+        <td>
+          <a href="/opportunities/{{ r.opportunity_id }}">{{ r.title or 'untitled' }}</a>
+          <span class="muted">{{ r.org or '' }} · {{ r.track }}</span>
+        </td>
+        <td>
+          {% if r.model_verdict %}<span class="pill {{ r.model_verdict }}">{{ r.model_verdict }}</span>{% else %}<span class="muted">none</span>{% endif %}
+          {% if r.model_score is not none %}<span class="mono">{{ "%.1f"|format(r.model_score) }}</span>{% endif %}
+        </td>
+        <td>
+          {% if r.your_verdict %}<span class="pill {{ r.your_verdict }}">{{ r.your_verdict }}</span>{% else %}<span class="muted">none</span>{% endif %}
+          {% if r.your_score is not none %}<span class="mono">{{ "%.1f"|format(r.your_score) }}</span>{% endif %}
+          {% if r.agreed is true %}<span class="muted">agreed</span>{% elif r.agreed is false %}<span class="muted">disagreed</span>{% endif %}
+        </td>
+        <td class="muted">{{ (r.rationale or '')[:160] }}</td>
+        <td class="muted">
+          {% if r.kind == 'label' %}calibration, reranker{% if r.feeds_few_shot %}, few-shot{% endif %}
+          {% else %}calibration, reranker{% endif %}
+        </td>
+        <td class="right">
+          <button class="btn ghost danger" type="button"
+                  hx-post="/settings/learning/labels/{{ r.id }}/delete"
+                  hx-vals='{"kind": "{{ r.kind }}", "track": "{{ track or '' }}", "page": "{{ page }}"}'
+                  hx-target="#learning-labels" hx-swap="outerHTML"
+                  hx-confirm="Delete this decision? The opportunity stays; only your judgment on it goes.">Delete</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pages > 1 %}
+  <div class="pager">
+    {% if page > 1 %}
+      <button class="btn ghost" hx-get="/settings/learning/labels?track={{ track or '' }}&page={{ page - 1 }}"
+              hx-target="#learning-labels" hx-swap="outerHTML">Newer</button>
+    {% endif %}
+    <span class="muted">Page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}
+      <button class="btn ghost" hx-get="/settings/learning/labels?track={{ track or '' }}&page={{ page + 1 }}"
+              hx-target="#learning-labels" hx-swap="outerHTML">Older</button>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% else %}
+    <p class="muted">No decisions recorded yet. Agree, Adjust or Override on an opportunity, or label
+    from the Calibrate page, and they appear here.</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% if only_table %}
+{{ labels_table(rows, total, page, pages, track, tracks, page_size, message, ok) }}
+{% else %}
+<div id="learning-ledger">
+  {% if message %}
+    <p class="{{ 'muted' if ok else 'warnbox' }}">{{ message }}</p>
+  {% endif %}
+
+  <p><b>Yes, every Agree, Adjust, Override and Calibrate decision is stored on this machine and
+  teaches three things:</b> the scoring weights (calibration, applied only when you accept a
+  proposal on the Weights tab), the examples the model is shown in later full reviews
+  (few-shot), and a learned reranker that can take over the quick screen once it passes every promotion
+  criterion. The local model's own weights never change and nothing leaves this machine; Kestrel
+  changes what the model is shown and how its scores are combined, and all of it lives in the
+  database and the ml folder below.</p>
+
+  <dl class="kv">
+    <dt>Database</dt><dd class="mono">{{ summary.db_path }}</dd>
+    <dt>Tables</dt><dd class="mono">label (Calibrate queue), verdict_override (Agree / Adjust / Override), calibration, ml_model, setting (scoring.weights.*)</dd>
+    <dt>ML folder</dt><dd class="mono">{{ summary.ml_dir }}</dd>
+    <dt>Decisions</dt><dd>{{ summary.n_total }} across both tracks</dd>
+  </dl>
+  <p class="muted">Few-shot examples draw only on Calibrate-queue labels that have an embedding;
+  Agree, Adjust and Override decisions feed calibration and the reranker.</p>
+
+  <div class="grid2">
+    {% for t in summary.tracks %}
+    <div class="card">
+      <h3>{{ t.track }}</h3>
+      <dl class="kv">
+        <dt>Decisions</dt>
+        <dd>{{ t.n_total }} ({{ t.n_overrides }} Agree / Adjust / Override, {{ t.n_labels }} from the Calibrate queue)</dd>
+        <dt>Agreement with the model</dt>
+        <dd>{{ t.agreement.text }}</dd>
+        <dt>Calibrations</dt>
+        <dd>{{ t.calibrations_accepted }} accepted, {{ t.calibrations_proposed }} awaiting your decision</dd>
+      </dl>
+      <table class="data">
+        <thead><tr><th>Teaches</th><th>Progress</th><th>State</th></tr></thead>
+        <tbody>
+          {% for f in t.floors %}
+          <tr>
+            <td>{{ f.label }}<br><span class="muted">{{ f.note }}</span></td>
+            <td class="mono">{{ f.n }} of {{ f.needed }}</td>
+            <td>
+              {% if f.active %}<span class="pill ok">active</span>
+              {% elif f.reached %}<span class="pill warn">floor reached, not active</span>
+              {% else %}<span class="pill grey">inactive</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <table class="data">
+        <thead><tr><th>Weight</th><th>Current</th><th>Shipped</th></tr></thead>
+        <tbody>
+          {% for w in t.weights %}
+          <tr>
+            <td>{{ w.key }}</td>
+            <td class="mono">{{ "%.3f"|format(w.current) }}{% if w.overridden %} <span class="pill keep">calibrated</span>{% endif %}</td>
+            <td class="mono">{{ "%.3f"|format(w.default) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <dl class="kv">
+        <dt>Reranker</dt>
+        <dd>
+          {% if t.reranker.active %}
+            promoted, trained {{ (t.reranker.trained_at or '')[:10] }} on {{ t.reranker.n_samples }} decisions
+            under sklearn {{ t.reranker.sklearn_version }}{% if not t.reranker.loadable %};
+            <b>its files are missing or built under another sklearn, so the quick screen falls back to the model</b>{% endif %}.
+            {{ t.reranker.labels_since_training }} decision{{ '' if t.reranker.labels_since_training == 1 else 's' }}
+            since training count toward drift (five needed before drift can demote).
+          {% else %}
+            not promoted; the rule-based quick screen is in charge.
+          {% endif %}
+          {% if t.reranker.last_drift_demotion_at %}
+            Last demoted for drift {{ t.reranker.last_drift_demotion_at[:10] }}.
+          {% endif %}
+        </dd>
+      </dl>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h3>Files in the ML folder</h3>
+  {% if summary.files %}
+  <table class="data">
+    <thead><tr><th>File</th><th>Size</th><th>Track</th><th>Trained</th><th>sklearn</th><th></th></tr></thead>
+    <tbody>
+      {% for f in summary.files %}
+      <tr>
+        <td class="mono">{{ f.name }}</td>
+        <td class="mono">{{ f.size|comma }} bytes</td>
+        <td>{{ f.track or '' }}</td>
+        <td class="mono">{{ (f.trained_at or '')[:19] }}</td>
+        <td class="mono">{{ f.sklearn_version or '' }}</td>
+        <td>{% if f.active %}<span class="pill ok">active</span>{% endif %}
+            {% if not f.kestrel_wrote_it %}<span class="pill grey">not Kestrel's; reset leaves it</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">Empty. Files appear here once a reranker has been trained.</p>
+  {% endif %}
+  <p class="muted">This Kestrel runs sklearn {{ summary.sklearn_version }}. A reranker trained under
+  another version is refused and the quick screen falls back to the model.</p>
+
+  <h3>Your decisions</h3>
+  {% if summary.confidential %}
+    <p class="muted">Confidential mode is on: your current employer is redacted in this table.</p>
+  {% endif %}
+  {{ labels_table(rows, total, page, pages, track, tracks, page_size, none, true) }}
+
+  <h3>Export</h3>
+  <p><a class="btn" href="/settings/learning/export" download>Download all decisions as JSON</a>
+  <span class="muted">Both tables, every row, with the opportunity title and organization as
+  stored. The file is <b>not</b> redacted even in confidential mode: it is your own data, written
+  only to where you save it.</span></p>
+
+  <h3>Reset</h3>
+  <p class="warnbox"><b>This cannot be undone.</b> Reset removes what Kestrel has learned from you
+  and nothing else: opportunities, evaluations, pursuits, documents and outcomes stay exactly as
+  they are. Take an export first if you may want these decisions back.</p>
+  <form hx-post="/settings/learning/reset" hx-target="#learning-ledger" hx-swap="outerHTML">
+    <div class="formgrid">
+      <label><input type="checkbox" name="labels" value="on" checked> Decisions</label>
+      <span class="muted">Every Agree / Adjust / Override and Calibrate-queue row, both tracks.</span>
+      <label><input type="checkbox" name="reranker" value="on" checked> Reranker</label>
+      <span class="muted">Every trained reranker record and the pickle files Kestrel wrote in the ML
+      folder. The quick screen goes back to rule-based scoring.</span>
+      <label><input type="checkbox" name="calibrations" value="on" checked> Calibrations</label>
+      <span class="muted">Accepted and pending weight proposals are marked rejected and the shipped
+      weights apply again on the next cycle.</span>
+      <label for="learning-confirm">Type {{ reset_word }} to confirm</label>
+      <input id="learning-confirm" type="text" name="confirm" autocomplete="off"
+             placeholder="{{ reset_word }}">
+    </div>
+    <button class="btn danger" type="submit" style="margin-top:.6rem">Reset learning</button>
+  </form>
+</div>
+{% endif %}

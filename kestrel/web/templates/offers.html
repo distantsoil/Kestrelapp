@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Negotiation · Kestrel{% endblock %}
+{% block content %}
+<h1>Negotiation</h1>
+<p class="muted">Open offers, benchmarked against your own accumulated data, never model priors.
+Scripts below are drafts for you to edit and deliver yourself; nothing here sends anything on your
+behalf, and nothing here computes your walk-away number.</p>
+<div id="offers-list">
+  {% include "partials/offers_list.html" %}
+</div>
+{% endblock %}

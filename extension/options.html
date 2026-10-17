@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kestrel Capture — options</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; max-width: 480px; margin: 2rem auto; color: #1f1a17; }
+    h1 { color: #d4622a; font-size: 1.2rem; }
+    label { display: block; margin: .8rem 0 .2rem; font-weight: 600; }
+    input, select { width: 100%; padding: .4rem; border: 1px solid #e4ded9; border-radius: 6px; }
+    .row { display: flex; gap: .5rem; }
+    button { margin-top: 1rem; padding: .5rem .9rem; background: #d4622a; color: #fff; border: none;
+      border-radius: 6px; cursor: pointer; }
+    .muted { color: #6b625b; font-size: .85rem; }
+    #status { margin-left: .6rem; }
+  </style>
+</head>
+<body>
+  <h1>Kestrel Capture</h1>
+  <p class="muted">This extension talks only to your local Kestrel. Nothing is sent anywhere else.
+  Leave the port blank and it finds Kestrel by itself. Set one only to pin a specific instance;
+  the running port is on Kestrel's About page (it is the port in <code>runtime.json</code>).</p>
+
+  <div class="row">
+    <div style="flex:2"><label>API host</label><input id="host" value="127.0.0.1"></div>
+    <div style="flex:1"><label>Port</label><input id="port" type="number" placeholder="auto"></div>
+  </div>
+  <label>Shared secret (required)</label>
+  <input id="secret" type="password" placeholder="X-Kestrel-Key">
+  <p class="muted">Kestrel accepts a capture or a badge lookup from an extension only when it
+  carries this secret, so that any other extension with a localhost permission cannot drive your
+  Kestrel. Generate it in Kestrel under Settings &gt; LAN and paste it here. It is sent as the
+  <code>X-Kestrel-Key</code> header on real requests, never on a discovery probe.</p>
+  <label>Badge style</label>
+  <select id="badgeStyle">
+    <option value="pill">Pill (score + status)</option>
+    <option value="minimal">Minimal (dot)</option>
+  </select>
+  <label>Badge these boards</label>
+  <input id="boards" value="greenhouse,lever,ashby,workday,smartrecruiters,linkedin,indeed">
+  <div>
+    <button id="save">Save</button>
+    <button id="test" style="background:#6b625b">Test connection</button>
+    <span id="status" class="muted"></span>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

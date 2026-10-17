@@ -1,0 +1,74 @@
+<div id="honest-summary">
+{# ---- Summary: the code-computed verdict leads, and is never masked (hard rule 6). ---- #}
+{% if summary %}
+  {% if summary.not_discriminating %}
+  <div class="warnbox" style="margin-bottom:.8rem">
+    <b>&#9888; The score is not discriminating.</b> {{ summary.headline_finding }}
+  </div>
+  {% elif summary.insufficient_data %}
+  <div class="warnbox" style="margin-bottom:.8rem">
+    <b>Too few to judge.</b> {{ summary.headline_finding }}
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2>Summary</h2>
+    <p>
+      {% if summary.discriminating == true %}
+        <span class="covered">&#10003; score is discriminating</span>
+      {% elif summary.discriminating == false %}
+        <span class="gap">&#10007; score is not discriminating</span>
+      {% else %}
+        <span class="muted">{{ too_few(svo.n_outcomes, 10) }}</span>
+      {% endif %}
+    </p>
+    {% if not summary.not_discriminating and not summary.insufficient_data %}
+      <p><b>{{ summary.headline_finding }}</b></p>
+    {% endif %}
+    <div style="white-space:pre-wrap">{{ summary.summary_md }}</div>
+    {% if summary.narrative_pending %}
+      {# The narrative costs a model call, so it is written on request, not on every visit
+         (D-UI-19). The verdicts above are code-computed and already final. #}
+      <form hx-post="/analytics/narrative?track={{ track }}" hx-target="#honest-summary"
+            hx-swap="outerHTML" hx-disabled-elt="find button" data-no-busy
+            style="margin-top:.6rem">
+        <button class="btn" type="submit" data-testid="write-narrative">Write the narrative</button>
+        <span class="import-status" role="status" aria-live="polite">
+          <span class="spin" aria-hidden="true"></span>Asking the model. This takes a few seconds.</span>
+      </form>
+    {% endif %}
+
+    {% if summary.one_thing_to_change %}
+    <div class="panel" style="border-left:3px solid var(--orange); margin:.8rem 0 0">
+      <h2>One thing to change</h2>
+      <p>{{ summary.one_thing_to_change }}</p>
+      {% if summary.evidence_for_it %}<p class="muted"><small>{{ summary.evidence_for_it }}</small></p>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if summary.sample_size_warnings %}
+    <p class="muted" style="margin-top:.6rem"><b>Sample size notes:</b></p>
+    <ul class="muted">
+      {% for w in summary.sample_size_warnings %}<li>{{ w }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+{% else %}
+  {% if svo.n_outcomes < 10 %}
+  <div class="warnbox" style="margin-bottom:.8rem">
+    <b>Too few to judge ({{ svo.n_outcomes }} of 10 needed).</b> Only {{ svo.n_outcomes }} recorded outcomes on the {{ track }} track;
+    not enough signal to draw conclusions yet.
+  </div>
+  {% elif svo.discriminating == false %}
+  <div class="warnbox" style="margin-bottom:.8rem">
+    <b>&#9888; The score is not discriminating.</b> {{ svo.headline }}
+  </div>
+  {% endif %}
+  <div class="panel">
+    <h2>Metrics summary</h2>
+    <p>{{ svo.headline }}</p>
+    <p class="muted"><small>Computed from the operator's own data ({{ svo.n_outcomes }} outcomes);
+    the narrative model was not available for this view.</small></p>
+  </div>
+{% endif %}
+</div>

@@ -1,0 +1,48 @@
+<div id="active">
+  {% if active %}
+    <p class="muted">Resuming your {{ active.mode.replace('_', ' ') }} session, question
+      {{ (active.question_count or 0) + 1 }}.</p>
+    {% include "partials/mock_active.html" %}
+  {% endif %}
+</div>
+
+{% if not active %}
+<div class="panel">
+  <form hx-post="/mock/{{ opportunity_id }}/start" hx-target="#active" hx-swap="innerHTML"
+        hx-disabled-elt="find button" data-busy-text="Asking the model for the first question…">
+    <div class="formgrid">
+      <label>Mode</label>
+      <select name="mode">
+        {% for m in modes %}<option value="{{ m }}">{{ m.replace('_', ' ') }}</option>{% endfor %}
+      </select>
+    </div>
+    <button class="btn primary" type="submit" style="margin-top:.5rem">Start mock interview</button>
+  </form>
+</div>
+{% endif %}
+
+<h2 style="margin-top:2rem">History</h2>
+{% if history %}
+  <table class="data">
+    <thead>
+      <tr><th>Mode</th><th>Questions</th><th>Mean scores</th><th>Started</th><th>Ended</th></tr>
+    </thead>
+    <tbody>
+      {% for h in history %}
+        <tr>
+          <td>{{ h.mode.replace('_', ' ') }}
+            {% if h.ended_at is none %}<span class="pill">in progress</span>{% endif %}</td>
+          <td class="mono">{{ h.question_count }}</td>
+          <td>
+            {% for k, v in (h.mean_scores or {}).items() %}<span class="pill">{{ k }} {{ v }}</span>{% endfor %}
+            {% if not h.mean_scores %}<span class="muted">no scores yet</span>{% endif %}
+          </td>
+          <td class="mono">{{ (h.started_at or '')[:16] }}</td>
+          <td class="mono">{{ (h.ended_at or '')[:16] if h.ended_at else 'open' }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="muted">No mock interviews yet for this opportunity.</p>
+{% endif %}

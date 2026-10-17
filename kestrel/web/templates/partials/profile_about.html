@@ -1,0 +1,33 @@
+{# About you, per track (D-UI-21). Writes the personal block of profile.yml. #}
+<form hx-post="{{ form_post or ('/profile/' ~ track ~ '/about') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
+      class="panel" data-testid="profile-about" data-busy-text="Saving…"
+      {% if ob_require_name %}x-data="{ named: {{ 'true' if block.full_name else 'false' }} }"{% endif %}>
+  <h2 style="margin-top:0">About you <span class="badge">{{ track }}</span></h2>
+  <div class="formgrid">
+    <label for="pa-name">Full name</label>
+    <input id="pa-name" type="text" name="full_name" value="{{ block.full_name or '' }}" autocomplete="name"
+           {% if ob_require_name %}@input="named = $el.value.trim() !== ''"{% endif %}>
+    <label for="pa-email">Email</label>
+    <input id="pa-email" type="email" name="email" value="{{ block.email or '' }}" autocomplete="email">
+    <label for="pa-phone">Phone</label>
+    <input id="pa-phone" type="text" name="phone" value="{{ block.phone or '' }}" autocomplete="tel">
+    <label for="pa-loc">Home location</label>
+    <input id="pa-loc" type="text" name="location" value="{{ block.location or '' }}" placeholder="Columbus, OH">
+    <label for="pa-head">Headline</label>
+    <input id="pa-head" type="text" name="headline" value="{{ block.headline or '' }}"
+           placeholder="One line, as on your resume">
+    <label for="pa-auth">Work authorization</label>
+    <input id="pa-auth" type="text" name="work_auth" value="{{ block.work_auth or '' }}" placeholder="US citizen">
+    <label for="pa-spon">Visa sponsorship</label>
+    <span><input id="pa-spon" type="checkbox" name="requires_sponsorship" value="on" {% if block.requires_sponsorship %}checked{% endif %}>
+      Check this if you need an employer to sponsor your visa.
+      <span class="muted">When checked, postings that say they cannot sponsor are rejected.</span></span>
+    <label for="pa-must">Must have</label>
+    <textarea id="pa-must" name="must_have" rows="3" placeholder="One per line">{{ (block.must_have or []) | join('\n') }}</textarea>
+    <label for="pa-avoid">Must avoid</label>
+    <textarea id="pa-avoid" name="must_avoid" rows="3" placeholder="One per line">{{ (block.must_avoid or []) | join('\n') }}</textarea>
+  </div>
+  <p class="muted" style="margin:.5rem 0 0">Must-have and must-avoid are read by the scoring
+    model, not the hard filters: a miss lowers the score, it does not reject.</p>
+  {% include "partials/profile_save_row.html" %}
+</form>

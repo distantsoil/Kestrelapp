@@ -1,0 +1,18 @@
+{# The triage drawer (docs/UI_PROPOSAL.html Screen 2, regrouped by D-UI-45): the fit word, then
+   the decision panel shared with the detail page (Fit, the AI overview, Add to my shortlist, Not for me, Research the company,
+   Open posting, Disagree with the fit?, and the follow-ups once the role is on the shortlist). The
+   prose comes from ev_json, get_detail's confidential-mode copy, never the raw ORM fields. #}
+<div class="card" id="drawer-card" data-opp="{{ opp.id }}" @keydown.escape.stop="close()">
+  <div class="bar">
+    <h3>{{ title_display }}</h3>
+    <span class="pill {{ 'wait' if fit.word == 'new' else fit.tone }}" data-fit="{{ fit.word }}">{{ 'being scored' if fit.word == 'new' else fit.word }}</span>
+    <span class="sp"></span>
+    <button class="btn quiet" type="button" @click="close()" aria-label="Close">Close</button>
+  </div>
+  <div class="quiet" style="font-size:var(--fs-sm)">
+    {{ facts[:3]|join(' · ') }}{% if opp.track == 'consulting' %} · consulting{% endif %}
+    {%- if ev %} · scored {{ (ev.created_at or '')[:10] }}{% endif %}
+  </div>
+  {% include "partials/opp_decision.html" %}
+  <p style="margin:10px 0 0"><a class="btn quiet" href="/opportunities/{{ opp.id }}" data-testid="drawer-open">Open full page</a></p>
+</div>

@@ -1,0 +1,164 @@
+# Kestrel default settings. Seeded into %LOCALAPPDATA%\Kestrel\config on first run.
+# Precedence (SPEC.md 4.6, highest first): setting-table row -> environment (KESTREL_*) -> this
+# file -> code default. Only keys in the typed model (kestrel/config.py) are honored.
+
+llm:
+  backends:
+    local:                                 # Ollama, OpenAI-compatible endpoint
+      base_url: "http://127.0.0.1:11434/v1"
+      api_key: "ollama"                    # ignored by Ollama, required by the client
+      json_mode: json_schema               # response_format: {type: json_schema, ...}
+      thinking_control: reasoning_effort   # reasoning_effort: "none"
+      requires_num_ctx_modelfile: true     # SPEC.md 8.2 — CRITICAL
+    inprocess:                             # SPEC.md 8.1.1: bundled CPU embedding model, embed tier only
+      engine: inprocess                    # no endpoint, no Ollama, nothing leaves the machine
+    # ---- Hosted, bring-your-own-key backends (SPEC 6.4 / 8.7). Tier 3 escalation ONLY. ----
+    # The `frontier` TIER below names exactly one of these; nothing else ever routes to them. The
+    # key lives in <data home>/.env under api_key_env (Settings > Hosted, or edit the file). The
+    # `hosted` block holds privacy and cost controls that ride in the request body.
+    frontier:                              # OpenRouter (OpenAI-compatible chat completions)
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: OPENROUTER_API_KEY      # from .env, never committed; unset until the operator adds it
+      provider: openrouter
+      protocol: chat_completions
+      json_mode: json_schema               # response_format json_schema, strict; require_parameters
+      thinking_control: none               # reasoning is controlled by hosted.reasoning_effort
+      external: true                       # permitted to transmit off the machine (Tier 3 only)
+      extra_headers:                       # OpenRouter attribution (SPEC 6.4)
+        HTTP-Referer: "https://github.com/kestrel/kestrel"
+        X-Title: "Kestrel"
+      hosted:
+        require_parameters: true           # never route to an endpoint that ignores the schema
+        data_collection: deny              # exclude providers that store or train on prompts
+        zdr: false                         # true = Zero Data Retention endpoints only (fewer models)
+        reasoning_effort: null             # e.g. "none" | "low" | "high"; null = model default
+    openmodel:                             # openmodel.ai (Messages or Responses per model; no chat completions)
+      base_url: "https://api.openmodel.ai/v1"
+      api_key_env: OPENMODEL_API_KEY
+      provider: openmodel
+      protocol: messages                   # https://docs.openmodel.ai/en/docs/api-reference/messages
+      json_mode: json_schema               # text.format json_schema, strict
+      thinking_control: none
+      external: true
+    anthropic:                             # Claude API direct (https://platform.claude.com/docs)
+      base_url: "https://api.anthropic.com/v1"
+      api_key_env: ANTHROPIC_API_KEY
+      provider: anthropic
+      protocol: messages                   # /v1/messages; structured output via output_config.format
+      json_mode: json_schema
+      thinking_control: none               # thinking is the model's default; effort via hosted.reasoning_effort
+      external: true
+    openai:                                # OpenAI API direct (https://platform.openai.com/docs)
+      base_url: "https://api.openai.com/v1"
+      api_key_env: OPENAI_API_KEY
+      provider: openai
+      protocol: chat_completions           # /v1/chat/completions with response_format json_schema, strict
+      json_mode: json_schema
+      thinking_control: none
+      external: true
+  tiers:
+    # embed runs on Ollama (`local`) or in-process (`backend: inprocess, model: "all-MiniLM-L6-v2"`,
+    # which the hosted_only profile selects). Vectors are keyed by model; a switch re-embeds.
+    embed:   { backend: local, model: "nomic-embed-text" }
+    tier1:   { backend: local, model: "kestrel-tier1",  temperature: 0.0, max_tokens: 300 }
+    tier2:   { backend: local, model: "kestrel-tier2",  temperature: 0.2, max_tokens: 4000, timeout_s: 600 }
+    tier3:   { backend: local, model: "kestrel-tier3",  temperature: 0.3, max_tokens: 6000 }
+    docsel:  { backend: local, model: "kestrel-docsel", temperature: 0.0, max_tokens: 1500 }
+    trigger: { backend: local, model: "kestrel-tier1",  temperature: 0.0, max_tokens: 600 }
+    # Tier 3 ESCALATION (SPEC 6.4): operator-confirmed, hosted, never automatic. A separate role so
+    # nothing local (cover letters, the deep local eval) is ever routed off-machine. `backend` is
+    # one of the external backends above (frontier = OpenRouter, openmodel, anthropic, openai) and
+    # `model` is that provider's model id; both are set from Settings > Hosted without a restart.
+    frontier: { backend: frontier, model: "anthropic/claude-sonnet-4.6", temperature: 0.3, max_tokens: 6000, timeout_s: 300 }
+  # The native (non-/v1) endpoint used only by preflight to read a model's effective num_ctx.
+  ollama_native_url: "http://127.0.0.1:11434"
+
+concurrency:
+  tier1: 4
+  tier2: 2
+
+pipeline:
+  tier1_min_confidence: 0.6
+  max_jd_tokens: 6000
+
+# Top-level so Tier 0 rules read `settings.max_posting_age_days` exactly as SPEC.md 6.1 writes it.
+max_posting_age_days: 45
+
+scoring:
+  divergence_flag: 0.75
+  weights:
+    employment:
+      role_fit: 0.30
+      domain_match: 0.20
+      company_context: 0.20
+      comp_logistics: 0.15
+      trajectory: 0.15
+    consulting:
+      engagement_fit: 0.30
+      buyer_access: 0.20
+      economics: 0.20
+      delivery_feasibility: 0.15
+      strategic_value: 0.15
+
+thresholds:
+  apply: 4.0
+  consider: 3.0
+
+consulting:
+  min_trigger_confidence: 0.5
+  max_trigger_age_days: 120
+
+scheduler:
+  enabled: false          # a fresh install does not start scraping unattended (SPEC.md 6.5)
+
+learning:
+  min_labels_for_calibration: 30
+  few_shot_k: 3
+  min_labels_for_few_shot: 15
+  min_labels_for_reranker: 200
+  reranker_max_mae: 0.6
+  reranker_uncertain_band: 0.4
+  drift_threshold: 0.8
+
+stories:
+  merge_threshold: 0.88
+
+docs:
+  max_pages: 2
+
+liveness:
+  cadence_days: 3
+
+notify:
+  enabled: true
+  high_score: 4.5
+  ntfy_topic: null
+  webhook_url: null
+
+research:
+  searx_url: null
+
+mcp:
+  enabled: false
+  port: 9110
+
+server:
+  host: "127.0.0.1"
+  bind_all: false
+
+ingest:
+  # Descriptive User-Agent with a contact address. Edit the contact before running SEC EDGAR.
+  user_agent: "Kestrel/1.0 (+https://github.com/kestrel-app; contact: operator@example.com)"
+  default_rate_per_sec: 2.0
+  workday_rate_per_sec: 1.0
+  sec_rate_per_sec: 10.0
+  detail_concurrency: 4
+  request_timeout_s: 60.0
+  respect_robots: true
+
+pursuits:
+  ghosting_days: 21
+
+confidential_mode: false
+update_check_url: null
+log_level: "INFO"
