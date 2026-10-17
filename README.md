@@ -45,7 +45,7 @@ OSI open-source license. More at [kestrelapp.co](https://kestrelapp.co), includi
 
 | | |
 |---|---|
-| **Find** | Public job boards, company hiring pages, a browser extension that captures the page you are reading, and a paste box for anything else. Duplicates are merged. |
+| **Find** | Public job boards, company hiring pages, and a paste box for anything else. Duplicates are merged. |
 | **Score** | A quick screen, then a full review, each by an AI model. Roles worth a look come with the reasons. When the AI is unsure, a role is kept, never silently dropped. |
 | **Tailor** | The AI SELECTS from bullets you wrote; it never writes new ones. Every line in a generated PDF is your own text, byte for byte. |
 | **Track** | Applications with status history, next actions, and outcome capture. |
@@ -331,7 +331,7 @@ Configure sources and profiles in the Settings page (gear icon) or via the comma
 Every source has a kind, fixed in code: five ATS boards (Greenhouse, Lever, Ashby, Workday,
 SmartRecruiters), the JobSpy aggregator (Indeed, Glassdoor, ZipRecruiter, Google Jobs,
 Dice), and four consulting signal sources (SEC EDGAR 8-K filings, SAM.gov procurement notices,
-RSS/Atom feeds, PE portfolio pages), plus manual capture from the extension or a paste. The Help
+RSS/Atom feeds, PE portfolio pages), plus manual capture by paste. The Help
 page in the app lists each kind with what it scans, what you must provide, its rate limit and its
 region, generated from the adapter registries. The same table, with the steps for adding a new
 adapter, is in [`docs/SOURCES.md`](docs/SOURCES.md).
