@@ -31,7 +31,7 @@ number; chips above filter by state, and a drawer holds the evaluation and actio
 
 **Applications is a four-column board.** To apply, Applied, Interviewing, and Offer / Closed. A card
 that has waited past its follow-up date says how many days it has been quiet (here, nine days with
-no reply), and each card offers the next honest action: Tailor resume, I applied, Heard back,
+no reply), and each card offers the next action: Tailor resume, I applied, Heard back,
 Interview scheduled. Kestrel records what you did; it never applies for you. The Table view lists
 the same pursuits as rows.
 

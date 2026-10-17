@@ -52,7 +52,7 @@ Kestrel in your default browser. The tray icon needs a desktop with AppIndicator
 instructions are in [docs/LINUX.md](LINUX.md).
 
 
-## Configuring Sources
+## Configuring sources
 
 Two tracks, each with its own sources:
 
@@ -83,7 +83,7 @@ The shipped configuration is US-centric (JobSpy defaults to the USA, SEC EDGAR a
 federal). The boards themselves work worldwide: change the search
 location and your profile's `geo_rules` and the pipeline runs unchanged.
 
-## Importing Your Resume and Capability Statement
+## Importing your resume and capability statement
 
 Kestrel does not write your resume. It takes the one you have, decomposes it into sections, slots
 and variants, and later selects among your own bullets per opportunity. Import accepts **PDF, Word
@@ -116,7 +116,7 @@ kestrel doc import path/to/resume.md --track employment --doc-kind resume --acce
 
 This creates a `doc_master` (your canonical resume) that the system tailors per opportunity.
 
-### Document Selection (P3)
+### Document selection (P3)
 
 When rendering a PDF for an opportunity, Kestrel runs P3 model-driven selection: it reads the opportunity details and your role variants, and selects which roles and achievements to emphasize. The model always chooses from your existing text; it never generates new content. Every slot defaults to your full text if selection fails or confidence is low.
 
@@ -131,20 +131,20 @@ hosted sends. Every rate carries its n, and anything under five labeled outcomes
 when you are choosing between a local profile and a hosted model: bench says which model agrees
 with the reference answers; the Models page says which one agrees with you.
 
-## The Learning Loop
+## The learning loop
 
-Kestrel learns from every decision you make. As you review opportunities, the system captures labels and feeds them back into scoring.
+As you review opportunities, Kestrel captures your labels and feeds them back into scoring.
 
-### How It Works
+### How it works
 
 1. **Label as you review:** From the opportunity detail page or the pipeline list, one-click actions let you agree with the score, adjust it, or override it entirely. Your label is recorded immediately.
 2. **Calibration:** As labels accumulate (starts at five), run `kestrel calibrate` to recompute dimension weights from your feedback. A proposal shows the new weights and cross-validation error (old vs. new); review and accept in the UI/API to apply.
 3. **Reranker:** Once you have fifty+ labeled examples, `kestrel train` builds a learned reranker on top of the tier 2 score. It compares both algorithms on held-out data and only promotes the reranker if all four criteria pass (lower error, better AUC, good coverage, no drift). Nothing is applied without your approval.
 4. **Few-shot injection:** High-confidence labels from your gold set are injected as examples into Tier 1 and Tier 2 prompts, teaching the model what you care about.
 
-The loop is slow to warm (week one shows random swings; by month three, you'll see clear signal), so be patient with early scores. Keep labeling; the system improves with every decision.
+The loop is slow to warm (week one shows random swings; by month three, you'll see clear signal), so be patient with early scores.
 
-### Where It Lives, and How to See or Reset It
+### Where it lives, and how to see or reset it
 
 Every decision is a row in the local database (`data/kestrel.db`: the `label` table for the Calibrate queue, `verdict_override` for Agree, Adjust and Override), accepted calibrations are `calibration` rows plus `scoring.weights.*` rows in the `setting` table, and a trained reranker is an `ml_model` row with its two pickle files under `data/ml/`. The model's own weights are never changed and nothing leaves the machine. Settings > Learning shows all of it: counts and agreement per track (with the n, and labeled insufficient under five), the three floors as "n of N" with active or inactive, current versus shipped weights, the files in the ML folder, and the decisions themselves with a per-row delete. Download all decisions as JSON from the same tab (the export is not redacted; it is your own data), and Reset, with the typed word RESET, removes any combination of decisions, the reranker and its files, and the accepted calibrations, while leaving opportunities, evaluations, pursuits and documents untouched.
 

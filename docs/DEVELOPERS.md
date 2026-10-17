@@ -110,7 +110,7 @@ and a bigger profile), and they do not act on your behalf. Kestrel never submits
 applies; it drafts and hands over.
 
 
-## Picking a Model with `kestrel bench`
+## Picking a model with `kestrel bench`
 
 Kestrel ships a benchmark harness so you compare models on a gold set, changing exactly one variable
 at a time:
@@ -135,15 +135,15 @@ Each tier is also configured separately in Settings by base URL, model name, and
 three at local Ollama, or point tier 2 at a hosted inference service.
 
 
-## Operational Traps
+## Operational traps
 
 These are verified against live Ollama, Playwright, and Windows behavior. Learn them once to avoid surprises:
 
-### Context Window Truncation (THE CRITICAL ONE)
+### Context window truncation (the critical one)
 
 Ollama's default context window is far below Kestrel's needs. Long job descriptions are silently cut in half with no error, and scores are quietly wrong. **Solution:** Build the derived models with `kestrel models build` and verify with `kestrel doctor`. This is not optional.
 
-### Disabling Thinking (if Using Reasoning Models)
+### Disabling thinking (if using reasoning models)
 
 If your Tier 2 model has reasoning capabilities, you likely want to disable them (they consume 5x tokens for little benefit on deterministic scoring). The parameter is backend-specific:
 
@@ -152,23 +152,23 @@ If your Tier 2 model has reasoning capabilities, you likely want to disable them
 
 Sending the wrong one is silently ignored; you find out via a massive token bill. Kestrel strips `<think>` spans defensively regardless.
 
-### Structured Output or Failure
+### Structured output or failure
 
-Every LLM call returns schema-validated JSON. One repair attempt, then the response is quarantined with the raw output preserved for investigation. Never silently defaulted to a fallback. If this feels noisy, it's by design: a wrong score that you catch is infinitely better than a silent error.
+Every LLM call returns schema-validated JSON. One repair attempt, then the response is quarantined with the raw output preserved for investigation. Never silently defaulted to a fallback. If this feels noisy, it's by design: a wrong score that you catch is better than a silent error.
 
-### Document Selection Never Invents
+### Document selection never invents
 
 The model selects from your existing text. If selection fails, it defaults to your full document, flagged for review. If you see a hallucinated variant key in the generated PDF, it's a validation bug, not a feature. Report it.
 
-### Sample Sizes
+### Sample sizes
 
-Any number derived from fewer than five observations (comp intelligence, conversion rates, analytics summaries) is labeled "insufficient" rather than presented as solid. Week one feels noisy; month three feels solid.
+Any number derived from fewer than five observations (comp intelligence, conversion rates, analytics summaries) is labeled "insufficient" rather than presented as solid.
 
-### Ghost Jobs and Liveness (Weak Early, Good Later)
+### Ghost jobs and liveness
 
-The system learns which employers post perpetually open roles (ghosts) and which opportunities go live and die fast (liveness). These features start weak and improve as labels accumulate. Don't expect accurate ghost or liveness scores in week one.
+The system learns which employers post perpetually open roles (ghosts) and which opportunities go live and die fast (liveness). These features start weak and improve as labels accumulate.
 
-## Common Commands
+## Common commands
 
 ```bash
 kestrel setup                  # guided first run on any platform (--dry-run, --profile, --yes)
@@ -233,7 +233,7 @@ kestrel serve
 kestrel worker
 ```
 
-## Architecture Notes
+## Architecture notes
 
 - **Local-first:** Inference runs on your Ollama instance by default. A hosted Tier 3 backend is optional and opt-in per opportunity.
 - **Resumable:** Every task is a queue row; kill the process at any moment and restart. No lost state.
@@ -242,7 +242,7 @@ kestrel worker
 - **Windows, macOS and Linux:** Driven by `pywebview` (Edge WebView2 on Windows, WebKit on macOS and Linux), tray via `pystray`, PDF rendering via Playwright.
 
 
-## Learn More
+## Learn more
 
 - [`SPEC.md`](../SPEC.md): core architecture, data model, pipeline, scoring, and platform traps
 - [`SPEC-INTERFACES.md`](../SPEC-INTERFACES.md): desktop shell, web UI, API, CLI, and MCP server
