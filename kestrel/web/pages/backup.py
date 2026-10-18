@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 from kestrel import paths
 from kestrel.services import backup as backup_service
 from kestrel.web.deps import templates
+from kestrel.web.uploads import closing_upload
 
 router = APIRouter()
 
@@ -82,7 +83,11 @@ async def import_profile(request: Request):
     if upload is None or not getattr(upload, "filename", ""):
         return HTMLResponse('<div class="warnbox">Choose a profile.yml file first.</div>')
     try:
-        data = await upload.read()
+        # `closing_upload` because the upload owns a spooled temp file that holds an OS handle
+        # once it has rolled to disk. Reading it is not closing it, and nothing else will
+        # (D-RR1-4); on Windows the open handle is a sharing violation.
+        async with closing_upload(upload):
+            data = await upload.read()
     except OSError as exc:
         return HTMLResponse(
             f'<div class="warnbox">Could not read the upload: {html.escape(str(exc))}</div>'

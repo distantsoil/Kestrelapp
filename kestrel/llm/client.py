@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -631,6 +632,37 @@ def messages_output_text(data: dict) -> str:
     if tool_inputs:
         return json.dumps(tool_inputs[0])
     return "".join(texts)
+
+
+def _never_left(exc: BaseException) -> bool:
+    """True only when the request provably never reached the provider, so re-sending it cannot
+    duplicate an egress.
+
+    The distinction the `request error:` label cannot carry: a refused connection, a DNS failure or
+    a connect timeout means no bytes arrived; an HTTP error status means the provider received the
+    entire payload and answered (401 bad key, 429 rate limit, 500); a read timeout means the request
+    went out and the answer was slow. Only the first group is safe to retry (review).
+
+    Deliberately conservative: anything not positively identified as a connection failure counts as
+    egressed: re-sending operator data off-machine is the one error that cannot be undone."""
+    import httpx
+
+    # A transport failure that is NOT a connect-phase failure.
+    if isinstance(exc, ProviderError):
+        return False
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ConnectError)):
+        return True
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError)):
+        # Read/write timeouts and mid-stream drops happen AFTER the request was sent.
+        return False
+    # A refused connection is the one socket-level failure that happens before any byte is sent.
+    # A reset or an abort can arrive after the provider has the whole request, so they count as
+    # egressed like every other unproven case (D-RR1-5).
+    if isinstance(exc, ConnectionRefusedError):
+        return True
+    if isinstance(exc, (socket.gaierror, socket.herror)):
+        return True  # DNS
+    return False
 
 
 class ModelDeclined(RuntimeError):

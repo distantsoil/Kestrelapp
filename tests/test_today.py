@@ -57,6 +57,9 @@ def _now() -> datetime:
 
 
 def _today() -> date:
+    # LOCAL, matching what the operator's date input produces: `next_action_at` values here are
+    # calendar dates with no timezone, so they are compared against the local day. The UTC
+    # timestamps seeded through `_ago` are converted to a local date by the app before counting.
     return date.today()
 
 

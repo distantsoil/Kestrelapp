@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant
 from kestrel.docs import convert as convert_mod
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.uploads import closing_upload
 
 router = APIRouter()
 log = structlog.get_logger()
@@ -1292,23 +1293,28 @@ async def _read_source(form) -> dict:
     filename = str(getattr(upload, "filename", "") or "")
     if upload is not None and filename:
         ctx["filename"] = filename
-        try:
-            data = await _read_upload_within_limit(upload, filename)
-            # pypdf, python-docx and the LibreOffice subprocess (up to 120 s) are all
-            # synchronous: off the event loop, or every other request waits behind them.
-            converted = await asyncio.to_thread(
-                convert_mod.convert_to_markdown, data, filename=filename
-            )
-        except ConvertError as exc:
-            ctx["error"] = str(exc)
-            return ctx
-        except Exception as exc:  # a parser crash on a hostile file is a message, not a 500
-            ctx["error"] = f"Could not read {filename!r}: {type(exc).__name__}: {exc}"
-            return ctx
-        ctx.update(markdown=converted.markdown.strip(), warnings=list(converted.warnings),
-                   source_format=converted.source_format)
-        if not ctx["markdown"]:
-            ctx["error"] = f"{filename!r} contained no text to import."
+        # `closing_upload` wraps the whole block, not just the read: there are early returns here
+        # on a conversion error and on a parser crash, and a converter that raises on a hostile
+        # document is precisely when the reference would be dropped unread. Reading an UploadFile
+        # is not closing it, and nothing else will (D-RR1-4).
+        async with closing_upload(upload):
+            try:
+                data = await _read_upload_within_limit(upload, filename)
+                # pypdf, python-docx and the LibreOffice subprocess (up to 120 s) are all
+                # synchronous: off the event loop, or every other request waits behind them.
+                converted = await asyncio.to_thread(
+                    convert_mod.convert_to_markdown, data, filename=filename
+                )
+            except ConvertError as exc:
+                ctx["error"] = str(exc)
+                return ctx
+            except Exception as exc:  # a parser crash on a hostile file is a message, not a 500
+                ctx["error"] = f"Could not read {filename!r}: {type(exc).__name__}: {exc}"
+                return ctx
+            ctx.update(markdown=converted.markdown.strip(), warnings=list(converted.warnings),
+                       source_format=converted.source_format)
+            if not ctx["markdown"]:
+                ctx["error"] = f"{filename!r} contained no text to import."
         return ctx
     # Pasted text, or the second (processing) step re-posting what the first step read.
     ctx["markdown"] = str(form.get("text") or "").strip()
@@ -1533,6 +1539,10 @@ async def import_accept(request: Request):
             f'<a class="btn" href="/documents?master_id={master_id}">Open it</a></div>'
         )
     except ImportRejected as exc:
-        return HTMLResponse(f'<div class="warnbox">Rejected at the write boundary: {exc}</div>')
+        return HTMLResponse(
+            f'<div class="warnbox">Rejected at the write boundary: {escape(str(exc))}</div>'
+        )
     except Exception as exc:  # bad/absent proposal JSON, or a DB error
-        return HTMLResponse(f'<div class="warnbox">Could not accept the import: {exc}</div>')
+        return HTMLResponse(
+            f'<div class="warnbox">Could not accept the import: {escape(str(exc))}</div>'
+        )

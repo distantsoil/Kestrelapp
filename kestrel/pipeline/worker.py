@@ -44,6 +44,63 @@ from kestrel.services.run_model import T2_ONLY_KEY
 
 log = structlog.get_logger()
 
+# A scoring task can outlive its lease. Tier 2's per-request timeout is 600s and `run_guarded`
+# may issue an attempt, then a repair, then a reasoning-off re-ask, so one task can run far longer
+# than any single request. Without a heartbeat the lease expires mid-call, `claimable()` reports
+# the row as available, and the next `Worker.run()` reclaims and re-leases it while the first
+# handler is still scoring: two handlers write duplicate Evaluations and race on `opp.stage`, so a
+# role one handler wrote as `t1_reject` can lose to a `t1_pass` (hard rule 4: a wrongly rejected
+# opportunity is invisible and unrecoverable), and the tokens are spent twice.
+#
+# Two defences, because they fail independently: the lease is longer than one request, and a
+# heartbeat renews it every _RENEW_S for as long as the handler runs. Mirrors
+# kestrel/interview/story_task.py, which already does this for the story build.
+_TASK_LEASE_S = 900
+_RENEW_S = 120
+# After "database is locked" a renewal is retried this soon, doubling back up to _RENEW_S.
+_RENEW_LOCK_BACKOFF_S = 5.0
+# Where a drained task type's counts live on RunStats, so a crashed worker is recorded where the
+# run summary and the live run panel actually read it.
+_STATS_FIELD = {"t1": "tier1", "t2": "tier2", "embed": "embed"}
+
+
+async def _renew_lease(queue: Any, task_id: int, worker_id: str) -> None:
+    """Keep one task's lease alive while its handler runs (hard rule 5, resumability).
+
+    Renewal is best effort and never aborts the scoring: SQLite answering "database is locked"
+    backs off and tries again shortly, any other error waits for the next beat, and a lease
+    actually lost (heartbeat False: reclaimed, or another worker took it) stops renewing. Cancelled
+    by the worker when the handler returns."""
+    from sqlalchemy.exc import OperationalError
+
+    from kestrel.queue.queue import _is_lock_error
+
+    delay = _RENEW_S
+    backoff = _RENEW_LOCK_BACKOFF_S
+    while True:
+        await asyncio.sleep(delay)
+        try:
+            alive = await queue.heartbeat(
+                task_id, worker_id, lease_seconds=_TASK_LEASE_S
+            )
+        except OperationalError as exc:
+            if not _is_lock_error(exc):
+                log.warning("pipeline_renew_error", task=task_id, error=str(exc))
+                delay = _RENEW_S
+                continue
+            log.info("pipeline_renew_locked", task=task_id, retry_in_s=backoff)
+            delay = backoff
+            backoff = min(backoff * 2, _RENEW_S)
+            continue
+        except Exception as exc:  # noqa: BLE001 - a missed renewal must not kill the scoring
+            log.warning("pipeline_renew_error", task=task_id, error=str(exc))
+            delay = _RENEW_S
+            continue
+        if not alive:
+            log.warning("pipeline_lease_lost", task=task_id, worker=worker_id)
+            return
+        delay, backoff = _RENEW_S, _RENEW_LOCK_BACKOFF_S
+
 ProgressCb = Callable[[str], None]
 
 # The tier whose model a task's `model_override` replaces, per task type. On a t1 task only a
@@ -218,72 +275,94 @@ class Worker:
             wid = f"{worker_id}-{idx}"
             while not self._halted():
                 task = await self._queue.lease(
-                    wid, types=[task_type], lease_seconds=600, where=group[0]
+                    wid, types=[task_type], lease_seconds=_TASK_LEASE_S, where=group[0]
                 )
                 if task is None:
                     return
                 async with done_lock:
                     leased[0] += 1
-                payload = task.payload or {}
-                opp_id = payload.get("opportunity_id")
-                settings, client = await self._task_settings(task_type, payload)
-                kwargs: dict = {}
-                if task_type == "t2":
-                    kwargs["changed"] = bool(payload.get("changed"))
-                    if payload.get("rescore"):
-                        kwargs["rescore"] = True
-                        kwargs["requested_at"] = payload.get("requested_at")
-                        kwargs["task_id"] = task.id
-                if task_type == "t1":
-                    if payload.get("rescore"):
-                        # A score-again of a role Tier 1 set aside: the stage stays as it was
-                        # until this task runs (queue.rescore), so the handler is told.
-                        kwargs["rescore"] = True
-                        kwargs["requested_at"] = payload.get("requested_at")
-                        if payload.get("tier0_override"):
-                            # Score this role anyway (D-UI-74): runs from t0_reject.
-                            kwargs["tier0_override"] = True
-                        if payload.get("model_override"):
-                            # Score again on another model (D-UI-50): Tier 1 ran on it (or fell
-                            # back, logged), and the Tier 2 task carries it on; that task's own
-                            # settings re-check it when it runs, so a pick that can no longer
-                            # run falls back there too (hard rule 4).
-                            kwargs["model_override"] = payload.get("model_override")
-                    if payload.get(T2_ONLY_KEY):
-                        # A run's one-run model (D-UI-72): Tier 1 stays on the configured model;
-                        # only the Tier 2 task Tier 1 enqueues carries the pick.
-                        kwargs["t2_model_override"] = payload.get(T2_ONLY_KEY)
+                # Held for the life of the handler, so a Tier 2 call that outlives the lease is
+                # renewed rather than reclaimed underneath itself (see _TASK_LEASE_S).
+                beat = asyncio.create_task(_renew_lease(self._queue, task.id, wid))
                 try:
-                    outcome = await handler(
-                        self._sm,
-                        client,
-                        settings,
-                        opportunity_id=opp_id,
-                        profiles=self._profiles,
-                        **kwargs,
-                    )
-                except Exception as exc:  # unexpected handler crash: retry the task, keep draining
-                    log.error("handler_crash", task=task.id, type=task_type, error=str(exc))
-                    await self._queue.fail(task.id, str(exc), worker_id=wid, retry=True)
-                    async with done_lock:
-                        stats.errors += 1
-                    continue
+                    await _score_one(task, wid, task_type, task.payload or {})
+                finally:
+                    beat.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await beat
 
-                if outcome.action == "error":
-                    await self._queue.fail(task.id, outcome.error or "", worker_id=wid, retry=True)
-                    async with done_lock:
-                        stats.errors += 1
-                    continue
-
-                await self._queue.complete(task.id, worker_id=wid)
+        async def _score_one(task: Any, wid: str, task_type: str, payload: dict) -> None:
+            """Run one leased task to a terminal queue state. Never raises: a handler crash and a
+            failed send both go back to the queue (the page shows the reason and Try again) and the
+            worker keeps draining."""
+            opp_id = payload.get("opportunity_id")
+            settings, client = await self._task_settings(task_type, payload)
+            kwargs: dict = {}
+            if task_type == "t2":
+                kwargs["changed"] = bool(payload.get("changed"))
+                if payload.get("rescore"):
+                    kwargs["rescore"] = True
+                    kwargs["requested_at"] = payload.get("requested_at")
+                    kwargs["task_id"] = task.id
+            if task_type == "t1":
+                if payload.get("rescore"):
+                    # A score-again of a role Tier 1 set aside: the stage stays as it was
+                    # until this task runs (queue.rescore), so the handler is told.
+                    kwargs["rescore"] = True
+                    kwargs["requested_at"] = payload.get("requested_at")
+                    if payload.get("tier0_override"):
+                        # Score this role anyway (D-UI-74): runs from t0_reject.
+                        kwargs["tier0_override"] = True
+                    if payload.get("model_override"):
+                        # Score again on another model (D-UI-50): Tier 1 ran on it (or fell back,
+                        # logged), and the Tier 2 task carries it on; that task's own settings
+                        # re-check it when it runs, so a pick that can no longer run falls back
+                        # there too (hard rule 4).
+                        kwargs["model_override"] = payload.get("model_override")
+                if payload.get(T2_ONLY_KEY):
+                    # A run's one-run model (D-UI-72): Tier 1 stays on the configured model;
+                    # only the Tier 2 task Tier 1 enqueues carries the pick.
+                    kwargs["t2_model_override"] = payload.get(T2_ONLY_KEY)
+            try:
+                outcome = await handler(
+                    self._sm,
+                    client,
+                    settings,
+                    opportunity_id=opp_id,
+                    profiles=self._profiles,
+                    **kwargs,
+                )
+            except Exception as exc:  # unexpected handler crash: retry the task, keep draining
+                log.error("handler_crash", task=task.id, type=task_type, error=str(exc))
+                await self._queue.fail(task.id, str(exc), worker_id=wid, retry=True)
                 async with done_lock:
-                    stats.completed += 1
-                    window.append(time.perf_counter())
-                    self._emit_progress(task_type, stats.completed, total_at_start, window)
+                    stats.errors += 1
+                return
+
+            if outcome.action == "error":
+                await self._queue.fail(
+                    task.id, outcome.error or "", worker_id=wid, retry=True
+                )
+                async with done_lock:
+                    stats.errors += 1
+                return
+
+            # `complete()` is False when this worker no longer owns the task: its lease was
+            # reclaimed and someone else took it. The work itself is done and the row is already
+            # terminal by that worker's hand, so this is not an error -- but counting it here
+            # would report one task as completed twice on the same Run row and skew the progress
+            # figures the live run panel polls.
+            if not await self._queue.complete(task.id, worker_id=wid):
+                log.warning("pipeline_complete_not_owned", task=task.id, worker=wid)
+                return
+            async with done_lock:
+                stats.completed += 1
+                window.append(time.perf_counter())
+                self._emit_progress(task_type, stats.completed, total_at_start, window)
 
         leased = [0]
         if task_type != "t2":
-            await asyncio.gather(*(one_worker(i) for i in range(max(1, concurrency))))
+            await self._gather_workers(one_worker, concurrency, task_type, stats)
         else:
             while not self._halted():
                 groups = await self._model_groups(task_type)
@@ -291,10 +370,57 @@ class Worker:
                     break
                 group[0] = groups[0]
                 leased[0] = 0
-                await asyncio.gather(*(one_worker(i) for i in range(max(1, concurrency))))
+                await self._gather_workers(one_worker, concurrency, task_type, stats)
                 if not leased[0]:
                     break  # counted but not claimable after all (a lost race): next cycle
         stats.elapsed_s = time.perf_counter() - started
+
+    async def _gather_workers(
+        self, one_worker: Any, concurrency: int, task_type: str, stats: Any
+    ) -> int:
+        """Run the sibling workers to completion, whatever one of them does.
+
+        Plain `asyncio.gather` re-raises the first exception immediately but does NOT cancel the
+        others, so one worker failing on `lease()`, `complete()` or an unretried OperationalError
+        unwound `drain_tier` with three coroutines still running unsupervised: still leasing and
+        scoring, mutating the `stats` and `window` already written to the closed Run row, with
+        their own exceptions then swallowed as "Task exception was never retrieved". Every
+        sibling is awaited here.
+
+        A crashed worker is COUNTED and then re-raised (review). Collecting the exceptions
+        without surfacing them was its own defect: `drain_tier` returned normally, the outer
+        `except` that writes a `failed` Run row was never reached, and the run was recorded as
+        `done` for a drain that silently lost a worker. Cancellation is not a crash here: the outer
+        drain owns shutdown, so it is counted and re-raised the same way (the caller's `except`
+        treats CancelledError as cancellation, not failure).
+        """
+        results = await asyncio.gather(
+            *(one_worker(i) for i in range(max(1, concurrency))), return_exceptions=True
+        )
+        crashed: list[BaseException] = []
+        for i, r in enumerate(results):
+            if isinstance(r, BaseException):
+                log.error(
+                    "pipeline_worker_crashed",
+                    type=task_type,
+                    worker=i,
+                    error=f"{type(r).__name__}: {r}",
+                )
+                crashed.append(r)
+        if crashed:
+            # Counted on the drained tier's own stats, where the run summary and the live run panel
+            # read them. No `await` between the read and the write, so this is safe on the single
+            # loop the worker and every DB session share.
+            #
+            # The crash is NOT re-raised (review): re-raising skipped Tier 2 and embed
+            # entirely, so one worker dying mid-drain turned a partial run into no run at all. A
+            # degraded tier is already a normal outcome -- a 429 from a job board produces `partial`
+            # and the next tier still runs -- and this now behaves the same way. The count on
+            # `stats.errors` is what keeps the run from being reported as a clean `done`.
+            tier_stats = getattr(stats, _STATS_FIELD.get(task_type, ""), None)
+            if tier_stats is not None:
+                tier_stats.errors += len(crashed)
+        return len(crashed)
 
     async def _model_groups(self, task_type: str) -> list[Any]:
         """Lease filters for the tier's claimable tasks, one per model they will run on, in

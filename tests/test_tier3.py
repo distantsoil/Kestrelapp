@@ -143,6 +143,50 @@ async def test_confirm_transmits_payload_byte_for_byte_and_audits(sm, monkeypatc
         assert (await s.get(Opportunity, oid)).stage == "t3_done"
 
 
+async def test_concurrent_confirms_transmit_exactly_once(sm, monkeypatch):
+    """Two confirmations of one previewed payload, raced, must produce ONE send.
+
+    The guard was a SELECT followed by the send followed by the audit insert, so two concurrent
+    requests both saw no prior row and both transmitted: the operator's data left the machine
+    twice and the provider billed twice. The audit row is now reserved (inserted and committed)
+    before the send, backed by a unique index on (opportunity_id, payload_sha256).
+    """
+    import asyncio
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    async with sm() as s:
+        oid = await _seed_opp(s)
+    settings = get_settings()
+    async with sm() as s:
+        preview = await tier3.build_escalation_preview(s, settings, oid)
+    client = _RecordingClient(settings)
+
+    async def confirm() -> tier3.EscalationResult:
+        async with sm() as s:
+            return await tier3.transmit_escalation(
+                s, client, settings, oid, confirmation_token=preview.confirmation_token
+            )
+
+    first, second = await asyncio.gather(confirm(), confirm(), return_exceptions=True)
+
+    results = [r for r in (first, second) if not isinstance(r, BaseException)]
+    assert len(results) == 2, f"a confirmation raised: {first!r} {second!r}"
+    assert sum(1 for r in results if r.sent) == 1, "exactly one confirmation may transmit"
+    # The payload went out once, not twice.
+    assert len(client.calls) == 1
+    # And exactly one audit row survives for the payload.
+    async with sm() as s:
+        rows = (
+            await s.execute(
+                select(FrontierTransmission).where(
+                    FrontierTransmission.payload_sha256 == preview.confirmation_token
+                )
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].status == "sent"
+
+
 async def test_confidential_mode_redacts_employer_before_send(sm, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     async with sm() as s:
@@ -203,7 +247,13 @@ async def test_second_identical_transmit_is_refused_as_replay(sm, monkeypatch):
         r2 = await tier3.transmit_escalation(
             s, client, settings, oid, confirmation_token=preview.confirmation_token
         )
-    assert r2.sent is False and "already transmitted" in (r2.error or "")
+    assert r2.sent is False, "the same payload must never be sent twice"
+    assert r2.error and r2.transmission_id == r1.transmission_id, (
+        "the refusal must point at the transmission that already happened"
+    )
+    assert "fresh preview" not in r2.error, (
+        "the confirmation token is deterministic, so suggesting a fresh preview cannot help"
+    )
     assert len(client.calls) == 1  # the model was contacted exactly once
     async with sm() as s:
         trans = (await s.execute(select(FrontierTransmission))).scalars().all()

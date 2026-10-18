@@ -10,6 +10,7 @@ highest-precedence config layer), so they take effect on the next worker cycle w
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import html
 
@@ -29,6 +30,7 @@ from kestrel.rules import helpers
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.auth import SETTING_KEY as SHARED_SECRET_KEY
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache, templates
+from kestrel.web.uploads import closing_upload
 
 # Settings > Appearance (docs/UI_PROPOSAL.html): the two shipped schemes with their swatches.
 # Light/dark/system is a per-browser choice (localStorage) and is never stored server-side.
@@ -287,11 +289,16 @@ async def restore_from_upload(request: Request):
     restore it via the same kestrel.services.backup logic the CLI uses. A bad upload never 500s --
     a missing file, a non-zip, or a zip that is not a Kestrel backup all come back as a readable
     message in the Backup section instead of a crash."""
+    import html
+    import sqlite3
     import tempfile
     import zipfile
     from pathlib import Path
 
+    from kestrel.db import migrate
     from kestrel.services.backup import InvalidBackupError, restore_backup
+    from kestrel.services.reset import IDLE_WAIT_S, _forget_caches
+    from kestrel.web import app as app_mod
 
     form = await request.form()
     upload = form.get("backup_file")
@@ -299,30 +306,87 @@ async def restore_from_upload(request: Request):
         return HTMLResponse('<div class="warnbox">Choose a backup .zip file first.</div>')
 
     try:
-        data = await upload.read()
+        # `closing_upload` because the upload owns a spooled temp file that holds an OS handle
+        # once it has rolled to disk. Reading it is not closing it, and nothing else will
+        # (D-RR1-4). This route is also the one that later replaces kestrel.db, so a handle left
+        # open here is a sharing violation against the restore itself.
+        async with closing_upload(upload):
+            data = await upload.read()
     except OSError as exc:
-        return HTMLResponse(f'<div class="warnbox">Could not read the upload: {exc}</div>')
+        return HTMLResponse(
+            f'<div class="warnbox">Could not read the upload: {html.escape(str(exc))}</div>'
+        )
 
-    try:
-        with tempfile.TemporaryDirectory(prefix="kestrel-upload-") as tmp:
-            tmp_zip = Path(tmp) / "uploaded-backup.zip"
-            tmp_zip.write_bytes(data)
-            result = restore_backup(tmp_zip)
-    except InvalidBackupError as exc:
-        return HTMLResponse(f'<div class="warnbox">{exc}</div>')
-    except (OSError, zipfile.BadZipFile) as exc:
-        return HTMLResponse(f'<div class="warnbox">Restore failed: {exc}</div>')
+    # `InvalidBackupError` messages quote the archive's own entry names, which the uploader fully
+    # controls (a rejected member may be named `config/<img src=x onerror=...>/../../x.yml`).
+    # Escaped here so a crafted archive cannot execute markup in the app's own origin, which is
+    # the origin holding the LAN shared secret and every mutating endpoint. `/backup/download`
+    # escapes the same way; documents.py and bench.py do too.
+    # The database is written through SQLite while the app's connections stay open (R1), so the
+    # pool is NOT torn down here: disposing it used to leave the background loops on the old
+    # engine and every new request on a second one, both open on the same file. What must stop is
+    # the worker, so a cycle that read the old data does not write its results into the restored
+    # data. The hold is counted, so an overlapping reset or a tray Resume cannot release it, and
+    # the maintenance lock keeps a second restore (or a reset) from running at the same time.
+    lock = app_mod.maintenance_lock()
+    if lock.locked():
+        return HTMLResponse(
+            '<div class="warnbox">A restore or reset is already running, so nothing was restored. '
+            "Try again when it finishes.</div>"
+        )
+    from alembic.util.exc import CommandError
+    from sqlalchemy.exc import SQLAlchemyError
 
-    # The restored database carries its own shared secret (or none). Drop the cached one so the
-    # next non-loopback request reads the restored value instead of authorizing against a key that
-    # no longer exists in this data set.
-    from kestrel.web.auth import reset_cache
+    async with lock, app_mod.worker_held():
+        if not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
+            return HTMLResponse(
+                '<div class="warnbox">Kestrel is in the middle of a run, so nothing was restored. '
+                "Try again in a minute.</div>"
+            )
+        try:
+            with tempfile.TemporaryDirectory(prefix="kestrel-upload-") as tmp:
+                tmp_zip = Path(tmp) / "uploaded-backup.zip"
+                tmp_zip.write_bytes(data)
+                # Extraction, validation and the database write are blocking I/O on a path shared
+                # with every request on uvicorn's one loop, so they run in a thread.
+                result = await asyncio.to_thread(restore_backup, tmp_zip)
+        except InvalidBackupError as exc:
+            return HTMLResponse(f'<div class="warnbox">{html.escape(str(exc))}</div>')
+        except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
+            return HTMLResponse(
+                f'<div class="warnbox">Restore failed: {html.escape(str(exc))}</div>'
+            )
+        try:
+            # A backup from an older Kestrel is on an older schema. Startup migrates; a restore in
+            # a running app has to as well. A NEWER backup was refused in staging, so a failure
+            # here is a lock or a broken migration; the previous data is in the snapshot.
+            await asyncio.to_thread(migrate.run_migrations)
+        except (CommandError, SQLAlchemyError, OSError) as exc:
+            log.warning("restore_migration_failed", error=f"{type(exc).__name__}: {exc}")
+            saved = html.escape(str(result.pre_restore_backup or "the Kestrel-backups folder"))
+            return HTMLResponse(
+                '<div class="warnbox">The backup was restored, but bringing it up to date with '
+                f"this version failed ({html.escape(type(exc).__name__)}). Restart Kestrel to "
+                f"retry. Your previous database is saved at {saved}.</div>"
+            )
+        # Process caches that would otherwise answer from the data just replaced (the restored
+        # database carries its own shared secret, tracks, UI scheme and status counts), and the
+        # shipped sources and layouts a backup from an older Kestrel does not have yet. The same
+        # put-back the in-app reset does.
+        from kestrel.web.auth import reset_cache
 
-    reset_cache()
+        reset_cache()
+        _forget_caches()
+        await app_mod._seed_shipped_sources()
+        await app_mod._seed_shipped_layouts()
+        await app_mod._load_enabled_tracks()
 
-    lines = "<br>".join(result.summary_lines())
+    # Escaped: the restored config and document file names come from the archive, which the
+    # uploader controls (the same reason InvalidBackupError messages are escaped above).
+    lines = "<br>".join(html.escape(line) for line in result.summary_lines())
     return HTMLResponse(
-        f'<div class="muted">{lines}<br>Restart Kestrel to pick up the restored data.</div>'
+        f'<div class="muted">Restore complete. Kestrel is using the restored data now.<br>{lines}'
+        "</div>"
     )
 
 

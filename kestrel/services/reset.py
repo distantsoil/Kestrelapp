@@ -121,6 +121,14 @@ def _clear_files(keep_keys: bool) -> tuple[list[str], list[str], list[str]]:
         d = paths.data_dir() / sub
         if d.exists():
             _gone(f"data/{sub}", lambda d=d: shutil.rmtree(d))
+    # Full copies of the database that restore leaves beside it (timestamped, or the older fixed
+    # name). A reset that promises to delete every opportunity and pursuit must not leave them; the
+    # backup it wrote first, outside the data folder, is the recovery path.
+    db = paths.db_path()
+    if db.parent.exists():
+        for f in sorted(db.parent.glob(f"{db.name}.pre-restore*")):
+            if f.is_file():
+                _gone(f"data/{f.name}", lambda f=f: f.unlink(missing_ok=True))
     env = paths.dotenv_path()
     if env.exists():
         if keep_keys:
@@ -174,35 +182,36 @@ async def reset_in_app(sessionmaker, *, keep_keys: bool = True) -> ResetResult:
     except Exception as exc:  # no backup, no reset
         raise RuntimeError(f"Backup before reset failed, nothing was deleted: {exc}") from exc
 
-    was_paused = app_mod.is_paused()
-    app_mod.set_paused(True)
+    lock = app_mod.maintenance_lock()
+    if lock.locked():
+        raise ResetBusy("A restore or reset is already running. Nothing was deleted.")
     removed: list[str] = []
     kept: list[str] = []
     failed: list[str] = []
-    try:
-        # A cycle that started before the pause keeps writing until it ends (review finding
-        # 7). Wait for it; if it is still running after a minute and a half, refuse with
-        # nothing deleted rather than empty the tables under it.
-        if not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
-            raise ResetBusy(
-                "Kestrel is in the middle of a run. Nothing was deleted. Try again in a minute."
-            )
-        n_tables = await _empty_tables(sessionmaker)
-        removed.append(f"{n_tables} tables emptied")
-        r, k, f = await asyncio.to_thread(_clear_files, keep_keys)
-        removed += r
-        kept += k
-        failed += f
-    finally:
-        # Whatever happened after the backup, the app is put back into a working state: the
-        # seeded config, sources, layouts and fresh caches (review finding 5).
+    # A counted hold, not "remember whether it was paused and put that back": an overlapping
+    # restore, or a tray Resume, used to unpause the worker while the tables were being emptied.
+    async with lock, app_mod.worker_held():
         try:
+            # A cycle that started before the pause keeps writing until it ends (review finding
+            # 7). Wait for it; if it is still running after a minute and a half, refuse with
+            # nothing deleted rather than empty the tables under it.
+            if not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
+                raise ResetBusy(
+                    "Kestrel is in the middle of a run. Nothing was deleted. Try again in a minute."
+                )
+            n_tables = await _empty_tables(sessionmaker)
+            removed.append(f"{n_tables} tables emptied")
+            r, k, f = await asyncio.to_thread(_clear_files, keep_keys)
+            removed += r
+            kept += k
+            failed += f
+        finally:
+            # Whatever happened after the backup, the app is put back into a working state: the
+            # seeded config, sources, layouts and fresh caches (review finding 5).
             await asyncio.to_thread(paths.seed_config)
             _forget_caches()
             await app_mod._seed_shipped_sources()
             await app_mod._seed_shipped_layouts()
             await app_mod._load_enabled_tracks()
-        finally:
-            app_mod.set_paused(was_paused)
     log.info("reset_in_app", removed=removed, kept=kept, failed=failed, backup=str(zip_path))
     return ResetResult(backup=zip_path, removed=removed, kept=kept, failed=failed)

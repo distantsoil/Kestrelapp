@@ -13,13 +13,16 @@ model, and post-processes identically (the SYSTEM decides the verdict, never the
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
@@ -287,52 +290,168 @@ async def transmit_escalation(
         )
     ).scalars().first()
     if already is not None:
-        return EscalationResult(
-            sent=False,
-            transmission_id=already.id,
-            error=(
-                f"this exact payload was already transmitted (record #{already.id}, "
-                f"{already.status}); not re-sent. Open a fresh preview to escalate again."
-            ),
-            preview=preview,
+        # A prior row blocks a re-send by default, and it should: `sent` and `quarantined` mean
+        # the payload left the machine (a quarantine is TWO sends: attempt plus repair).
+        #
+        # `failed` is different, and blocking it wedged the operator permanently
+        # (review). A transport failure -- a 401, a refused connection, a timeout -- means
+        # nothing was transmitted, so the same payload is safe to try again. Without the token and
+        # cost check, a partial response could be counted twice. And because the token is
+        # deterministic when confidential mode is off, re-previewing produced the SAME token, so
+        # "open a fresh preview to escalate again" could never have worked -- the message sent
+        # the operator in a loop that was guaranteed to fail.
+        # The payload only provably never left the machine if the request failed to ESTABLISH the
+        # connection: refused, DNS failure, connect timeout. `GuardResult.egressed` says so
+        # explicitly, decided by exception type in `llm.client._never_left`.
+        #
+        # It was previously decided by matching the `request error:` prefix (review),
+        # and that was wrong: `run_guarded` writes that same prefix for EVERY exception that is
+        # not a `ModelDeclined`, so a real HTTP 401/429/500 -- where the provider received the
+        # entire payload -- and a timeout waiting for the reply both looked retryable. The
+        # operator re-confirmed, the payload went out a second time, and the one-egress guarantee
+        # this whole reservation exists to provide was undone by the fix for T1. The test that
+        # missed it hand-seeded `error="HTTP 500"`, a string the real code never writes.
+        #
+        # Tokens and cost are also checked: if the provider billed anything, it saw the payload.
+        retryable = (
+            already.status == "failed"
+            and not already.egressed
+            and not already.prompt_tokens
+            and not already.completion_tokens
+            and not already.cost_usd
         )
+        if not retryable:
+            # The message must not tell the operator to open a fresh preview: the token is
+            # deterministic, so a fresh preview yields the SAME one and the suggestion cannot ever
+            # work (review). Say what would actually unblock them.
+            if already.status == "failed":
+                # Name only what really changes the token (_token_of: model, base_url, messages):
+                # the profile feeds the messages and the online model is part of the hash. The
+                # posting text is not editable in the app, and the earlier wording pointed at
+                # offers, which Tier 3 never touches (D-RR1-5).
+                blocked = (
+                    # "may have": a cancelled or locally failed send is recorded as egressed
+                    # because it cannot be proven otherwise, not because it is known to have gone.
+                    f"this payload may already have reached the provider (record #{already.id}, "
+                    "failed) "
+                    "and is never sent twice. Editing your profile, or choosing a different "
+                    "online model in Settings, makes a new request that can be sent."
+                )
+            else:
+                blocked = (
+                    "this exact payload has already been sent (record "
+                    f"#{already.id}, {already.status}) and is never sent twice."
+                )
+            return EscalationResult(
+                sent=False, transmission_id=already.id, error=blocked, preview=preview
+            )
+        # Nothing was billed and nothing left the machine: re-reserve THIS row rather than
+        # inserting a second one, which the unique index would refuse anyway. The update is a
+        # compare-and-swap on status, so two concurrent retries cannot both take the row.
+        claimed = await session.execute(
+            update(FrontierTransmission)
+            .where(
+                FrontierTransmission.id == already.id,
+                FrontierTransmission.status == "failed",
+                FrontierTransmission.egressed.is_(False),
+            )
+            # egressed=True from the moment the retry is claimed: the send is about to happen,
+            # so a kill mid-send must leave a row that reads "may have gone", never the stale
+            # False from the earlier connect failure (D-RR1-5). The attempt's own result
+            # overwrites it once the call returns.
+            .values(status="pending", error=None, egressed=True)
+        )
+        await session.commit()
+        if claimed.rowcount != 1:
+            return EscalationResult(
+                sent=False,
+                transmission_id=already.id,
+                error="another retry of this exact payload started a moment ago; not sent twice.",
+                preview=preview,
+            )
+        trans = already
+        await session.refresh(trans)
+    else:
+        # RESERVE BEFORE SENDING. The guard above is a READ, and a read cannot close the window
+        # between "has this payload gone out?" and "record that it went out". Two concurrent
+        # confirmations -- a double-click, or an htmx retry racing the first response -- both saw
+        # no prior row and both sent, so the operator's data left the machine twice and the
+        # provider billed twice, against a comment that promises exactly one egress. So the audit
+        # row is written and COMMITTED FIRST, as a durable reservation, and only then does the
+        # payload go out. The unique index on (opportunity_id, payload_sha256) makes the second
+        # reservation fail in the DATABASE rather than in a race between two coroutines.
+        #
+        # A crash between the reservation and the send is handled by the `pending` recovery below,
+        # not by leaving the row in flight forever.
+        trans = FrontierTransmission(
+            opportunity_id=opp.id,
+            provider=preview.provider,
+            base_url=preview.base_url,
+            model=preview.model,
+            confidential=preview.confidential,
+            payload=preview.messages,
+            payload_sha256=preview.confirmation_token,
+            prompt_tokens_estimate=preview.prompt_tokens_estimate,
+            status="pending",
+        )
+        session.add(trans)
+        try:
+            await session.commit()
+        except IntegrityError:
+            # A concurrent confirmation reserved this exact payload first. It goes out once, from
+            # that request; this one transmits nothing.
+            await session.rollback()
+            return EscalationResult(
+                sent=False,
+                error=(
+                    "another confirmation of this exact payload was reserved moments ago; "
+                    "it was not sent twice. Refresh to see that result."
+                ),
+                preview=preview,
+            )
+        await session.refresh(trans)
 
     spec = prompt_spec(_VERSION[opp.track])
     hook = make_quarantine_hook(session, tier=3, opportunity_id=opp.id)
-    result = await run_guarded(
-        client,
-        tier=_FRONTIER_TIER,
-        messages=preview.messages,
-        model_cls=spec.model_cls,
-        temperature=None,  # fall back to the frontier tier config
-        max_tokens=None,
-        schema_name=spec.version.replace("/", "_"),
-        on_quarantine=hook,
-        allow_external=True,  # the ONE place this is permitted
-        reply_filter=preview.mapping if preview.confidential else None,
-    )
+    # The SEND is inside the guard too (review): the previous fix only wrapped the work
+    # that follows it, so a connection dropped DURING the model call -- the most common way a slow
+    # hosted request is cancelled, and a client disconnect cancels exactly here -- left the
+    # reservation `pending` forever. It is the same stuck state, reached by the most likely path.
+    try:
+        result = await run_guarded(
+            client,
+            tier=_FRONTIER_TIER,
+            messages=preview.messages,
+            model_cls=spec.model_cls,
+            temperature=None,  # fall back to the frontier tier config
+            max_tokens=None,
+            schema_name=spec.version.replace("/", "_"),
+            on_quarantine=hook,
+            allow_external=True,  # the ONE place this is permitted
+            reply_filter=preview.mapping if preview.confidential else None,
+        )
+    except asyncio.CancelledError:
+        await _fail_reservation(session, trans, "cancelled during the send")
+        raise
+    except Exception as exc:  # noqa: BLE001 - the reservation must reflect what happened
+        await _fail_reservation(session, trans, f"send failed: {type(exc).__name__}: {exc}")
+        raise
     if preview.mapping is not None:
         await _forget_codebook(session, opp.id)  # the next escalation draws fresh codes
 
-    trans = FrontierTransmission(
-        opportunity_id=opp.id,
-        provider=preview.provider,
-        base_url=preview.base_url,
-        model=preview.model,
-        confidential=preview.confidential,
-        payload=preview.messages,
-        payload_sha256=preview.confirmation_token,
-        prompt_tokens_estimate=preview.prompt_tokens_estimate,
-        status="sent",
-        prompt_tokens=result.prompt_tokens or None,
-        completion_tokens=result.completion_tokens or None,
-        cost_usd=result.cost_usd,
-    )
+    # Record the usage the provider actually billed, whatever happens next. Before this the
+    # token/cost fields were set only on the paths below, so a crash in the post-send work lost
+    # the real spend (review).
+    trans.prompt_tokens = result.prompt_tokens or None
+    trans.completion_tokens = result.completion_tokens or None
+    trans.cost_usd = result.cost_usd
+    # Carried on the row so a later retry can tell a never-left failure from one the provider
+    # received. Defaults True on the column: an unknown outcome counts as egressed.
+    trans.egressed = result.egressed
 
     if result.quarantined or result.value is None:
         trans.status = "quarantined" if result.quarantined else "failed"
         trans.error = result.error
-        session.add(trans)
         await session.commit()
         await session.refresh(trans)
         return EscalationResult(
@@ -340,6 +459,52 @@ async def transmit_escalation(
             error=result.error, preview=preview,
         )
 
+    # The payload HAS left the machine at this point. Everything below -- `load_profile`,
+    # `scoring.post_process`, building and flushing the Evaluation -- is local work that can still
+    # raise, and a client disconnect cancels the handler outright. Left unguarded, any of those
+    # left the reservation `pending` forever: indistinguishable from a send still in flight, and
+    # permanently blocking that payload from ever being re-sent, with the billed cost unrecorded.
+    # A post-send failure is recorded as `failed`, which carries its tokens and cost and so stays
+    # non-retryable -- the data really did egress, which is exactly the distinction the guard uses.
+    try:
+        return await _record_escalation(
+            session, opp, preview, trans, result, spec, settings
+        )
+    except asyncio.CancelledError:
+        await _fail_reservation(session, trans, "cancelled after the payload was sent")
+        raise
+    except Exception as exc:  # noqa: BLE001 - the audit row must reflect what actually happened
+        await _fail_reservation(session, trans, f"{type(exc).__name__}: {exc}")
+        raise
+
+
+async def _fail_reservation(session: AsyncSession, trans: Any, reason: str) -> None:
+    """Close out a reservation that did not complete.
+
+    `egressed` is left True: whatever the outcome, the operator must not be offered a re-send of
+    this payload, because the request may well have reached the provider before it failed. A stuck
+    `pending` row is the one state that is unambiguously unrecoverable, so the row is always
+    resolved to something the guard can reason about."""
+    try:
+        trans.status = "failed"
+        trans.error = reason[:2000]
+        trans.egressed = True
+        await session.commit()
+    except Exception:  # noqa: BLE001 - never mask the original failure with the cleanup's
+        with contextlib.suppress(Exception):
+            await session.rollback()
+
+
+async def _record_escalation(
+    session: AsyncSession,
+    opp: Any,
+    preview: Any,
+    trans: Any,
+    result: Any,
+    spec: Any,
+    settings: Any,
+) -> EscalationResult:
+    """Everything after a completed send: scoring, the Tier 3 Evaluation, the pursuit's stage."""
     value = result.value
     dim_scores = {n: getattr(value.dimensions, n).score for n in value.dimensions.model_fields}
     blockers = [{"kind": b.kind, "detail": b.detail} for b in value.blockers]
@@ -384,6 +549,7 @@ async def transmit_escalation(
     )
     session.add(ev)
     await session.flush()
+    trans.status = "sent"
     trans.evaluation_id = ev.id
     session.add(trans)
     opp.stage = "t3_done"
