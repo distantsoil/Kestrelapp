@@ -907,11 +907,16 @@ def test_today_help_and_escalate_use_the_operator_words(monkeypatch):
 
 
 def test_about_and_help_link_the_site_and_ko_fi():
+    """D-UI-64: both pages carry the link row in their main card. Help links the site; About puts
+    Check for updates in that first slot instead (the site stays one click away on Help)."""
     asyncio.run(_seed())
     with _client() as c:
         for path in ("/about", "/help"):
             line = c.get(path).text.split('data-testid="site-links"')[1].split("</p>")[0]
-            assert 'href="https://kestrelapp.co"' in line and ">kestrelapp.co</a>" in line
+            if path == "/help":
+                assert 'href="https://kestrelapp.co"' in line and ">kestrelapp.co</a>" in line
+            else:
+                assert ">Check for updates</button>" in line
             assert 'href="https://ko-fi.com/distantsoil"' in line
             assert ">Support Kestrel on Ko-fi</a>" in line
 

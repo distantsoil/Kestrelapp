@@ -97,6 +97,19 @@ async def notices() -> PlainTextResponse:
 
 @router.get("/about", response_class=HTMLResponse)
 async def page(request: Request):
+    from kestrel.services import updater
+    from kestrel.web.pages.updates import format_last_checked
+
+    # The top card's Check for updates button shows when the last check ran, as Settings does. A
+    # database that cannot be read yet (first launch, mid-restore) shows "never" rather than a 500.
+    try:
+        async with sessionmaker()() as s:
+            update_last_checked = format_last_checked(
+                (await updater.load_state(s)).last_checked_at
+            )
+    except (SQLAlchemyError, sqlite3.Error) as exc:
+        log.warning("about_last_checked_failed", error=f"{type(exc).__name__}: {exc}")
+        update_last_checked = format_last_checked(None)
     ctx = {
         "title": "About",
         "query": dict(request.query_params),
@@ -106,6 +119,9 @@ async def page(request: Request):
         "platform": platform.platform(),
         "data_home": str(paths.data_home()),
         "github_url": GITHUB_URL,
+        # Release notes are the changelog in the source repository, newest version first.
+        "changelog_url": f"{GITHUB_URL}/blob/main/CHANGELOG.md",
+        "update_last_checked": update_last_checked,
         "kofi_url": KOFI_URL,
         "built_on": BUILT_ON,
         "inspired_by": INSPIRED_BY,

@@ -4,6 +4,10 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### New
+
+- The About page has a Check for updates button, with when it last checked, and a Release notes link beside the version number.
+
 ## [0.5.0] - 2026-10-18
 
 ### New

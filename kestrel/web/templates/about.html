@@ -8,7 +8,8 @@
     <img class="mark" src="/static/icon.svg" alt="" width="56" height="56">
     <div>
       <h2 style="margin:0">Kestrel</h2>
-      <div>Version <span class="mono" id="about-version">{{ version }}</span></div>
+      <div>Version <span class="mono" id="about-version">{{ version }}</span>
+        &middot; <a href="{{ changelog_url }}" target="_blank" rel="noopener">Release notes</a></div>
       <div class="muted">
         {% if frozen %}packaged desktop build{% else %}source checkout{% endif %}
         &middot; Python {{ python_version }} &middot; {{ platform }}
@@ -37,8 +38,11 @@
   It never applies, emails or messages anyone for you; it drafts, recommends, and hands over.</p>
   <p class="muted">Built with Claude, Qwen and NVIDIA Nemotron. The source is public under the
   PolyForm Noncommercial License 1.0.0 (see <span class="mono">LICENSE.md</span>).</p>
-  {# D-UI-64: the site and Ko-fi as link buttons inside the main card, not a loose line. #}
-  <p class="site-links" data-testid="site-links"><a class="btn" href="https://kestrelapp.co" target="_blank" rel="noopener">kestrelapp.co</a> <a class="btn pri" href="https://ko-fi.com/distantsoil" target="_blank" rel="noopener">Support Kestrel on Ko-fi</a></p>
+  {# D-UI-64, amended: here the first button checks for updates (the same /updates/check as Help
+     and Settings) instead of linking the site, which Help still links. #}
+  <p class="site-links" data-testid="site-links"><button class="btn" type="button" hx-post="/updates/check" hx-target="#update-result" hx-swap="innerHTML">Check for updates</button> <a class="btn pri" href="https://ko-fi.com/distantsoil" target="_blank" rel="noopener">Support Kestrel on Ko-fi</a>
+    <span id="update-last-checked" class="muted">Last checked: {{ update_last_checked }}</span></p>
+  <div id="update-result"></div>
 </div>
 
 <div class="split">

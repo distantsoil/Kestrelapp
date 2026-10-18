@@ -431,3 +431,32 @@ def test_diagnostics_counts_tier0_set_asides_by_rule_name_only():
     counted = str(summary["counts"]["tier0_rejects_by_rule"])
     assert _EMPLOYER not in counted and "help desk" not in counted
     assert "globex" not in counted
+
+
+# ------------------------------------------------------------------------- updates and notes
+def test_about_has_a_check_for_updates_button_where_the_site_link_was():
+    """The top card's link row offers Check for updates (the same /updates/check every other
+    surface uses) in place of the kestrelapp.co button, with the result shown in the card."""
+    with _client() as c:
+        body = c.get("/about").text
+    row = body.split('data-testid="site-links"')[1].split("</p>")[0]
+    assert 'hx-post="/updates/check"' in row and ">Check for updates</button>" in row
+    assert 'href="https://kestrelapp.co"' not in row, "the site button should be replaced here"
+    assert 'href="https://ko-fi.com/distantsoil"' in row  # Ko-fi stays
+    # Targets the check's response swaps into, including its out-of-band "Last checked" line;
+    # without them the click renders nothing and htmx logs an error.
+    assert 'id="update-result"' in body and 'id="update-last-checked"' in body
+
+
+def test_about_links_the_release_notes_beside_the_version():
+    with _client() as c:
+        body = c.get("/about").text
+    line = body.split('id="about-version"')[1].split("</div>")[0]
+    assert f'href="{GITHUB}/blob/main/CHANGELOG.md"' in line and ">Release notes</a>" in line
+    assert 'class="btn' not in line, "a plain text link, not a button"
+
+
+def test_the_about_check_reports_through_the_shared_route():
+    with _client() as c:
+        r = c.post("/updates/check")
+    assert r.status_code == 200 and 'data-testid="update-result"' in r.text
