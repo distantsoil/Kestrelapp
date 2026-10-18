@@ -160,8 +160,11 @@ def make_scrubber(
 
     mapping = (redaction if isinstance(redaction, EmployerMap)
                else from_pairs(dict(redaction or {}).items()))
-    values = sorted({v for v in secrets if v and len(v) >= MIN_SECRET_CHARS}, key=len,
-                    reverse=True)
+    raw = {v for v in secrets if v and len(v) >= MIN_SECRET_CHARS}
+    # App events reach the log as JSON, which escapes `"` and `\`. A key containing either would
+    # appear in its escaped form and slip past an exact match on the raw value, so both are masked.
+    escaped = {json.dumps(v, ensure_ascii=False)[1:-1] for v in raw}
+    values = sorted(raw | escaped, key=len, reverse=True)
 
     def scrub(text: str) -> str:
         out = text

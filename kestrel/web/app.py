@@ -67,11 +67,38 @@ async def wait_for_idle_cycle(timeout: float) -> bool:
 
 
 def is_paused() -> bool:
-    return _paused.is_set()
+    """Paused by the operator (the tray) OR held by a maintenance operation (restore, reset)."""
+    return _paused.is_set() or _holds["n"] > 0
 
 
 def set_paused(paused: bool) -> None:
+    """The operator's pause switch. It cannot release a `worker_held` hold: a tray Resume pressed
+    in the middle of a restore must not let the worker write into data being replaced."""
     _paused.set() if paused else _paused.clear()
+
+
+# Holds taken by maintenance operations, counted so they nest and overlap safely. Each restore or
+# reset used to record "was it paused?" and put that back on exit; two overlapping operations (or a
+# tray Resume in between) then unpaused the worker while the other was still writing.
+_holds = {"n": 0}
+
+
+@contextlib.asynccontextmanager
+async def worker_held():
+    """Keep the worker and scheduler idle for the duration, whatever the tray does meanwhile."""
+    _holds["n"] += 1
+    try:
+        yield
+    finally:
+        _holds["n"] -= 1
+
+
+# One restore or reset at a time: both replace the data the other is working on.
+_maintenance = asyncio.Lock()
+
+
+def maintenance_lock() -> asyncio.Lock:
+    return _maintenance
 
 
 # How long a background loop waits before retrying its own SETUP after a failure. Module-level so a
@@ -341,7 +368,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     continue
             cycle: runlog.CycleRun | None = None
             try:
-                if _paused.is_set():  # the tray paused the worker: idle without draining
+                if is_paused():  # the tray paused the worker, or a restore/reset holds it
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(stop.wait(), timeout=2.0)
                     continue
@@ -384,7 +411,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # on the request thread).
                 # A pause mid-cycle (finding 2): each drain above finished its leased task and
                 # claimed no more; nothing further starts until the operator resumes.
-                if not _paused.is_set():
+                if not is_paused():
                     await drain_story_builds(sm, client, settings, stop=stop)
                 # Drift is a rolling window over the last 50 labels; checking it every idle
                 # cycle (5 s) loaded both reranker pickles and every Org and Source row on the
@@ -393,9 +420,9 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     for track in ("employment", "consulting"):
                         async with sm() as s:
                             await check_drift(s, track, settings)
-                if not _paused.is_set():
+                if not is_paused():
                     await _maybe_run_liveness(sm, settings, run_liveness_cycle)
-                if _paused.is_set() and cycle.run_id is not None and not stop.is_set():
+                if is_paused() and cycle.run_id is not None and not stop.is_set():
                     carried = cycle  # paused mid-run: the run stays open until resumed
                 else:
                     await cycle.finish("stopping" if stop.is_set() else "done")
@@ -459,6 +486,9 @@ async def _delivery_loop(stop: asyncio.Event) -> None:
         # Settings are read INSIDE the try: a bad settings.yml used to raise here, outside it, and
         # end the loop for the life of the process with nothing logged.
         wait_seconds = 60.0
+        if is_paused():  # a restore or reset is replacing the rows this would mark delivered
+            await _wait(stop, 5.0)
+            continue
         try:
             settings = get_settings()
             wait_seconds = float(max(5, settings.notify.batch_seconds))
@@ -480,7 +510,7 @@ async def _scheduler_loop(stop: asyncio.Event) -> None:
     sm = get_sessionmaker()
     queue = TaskQueue(sm)
     while not stop.is_set():
-        if _paused.is_set():  # paused (the tray, or an in-app reset): enqueue nothing
+        if is_paused():  # paused (the tray), or held by a restore or reset: enqueue nothing
             await _wait(stop, 5.0)
             continue
         try:

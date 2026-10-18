@@ -73,15 +73,27 @@ async def handle_t1(
     # override, so its Tier 2 task is an ordinary first score on the pick.
     if model_override:
         t2_extra: dict | None = {"model_override": model_override}
-        if rescore:
-            t2_extra["rescore"] = True
     elif t2_model_override:
         t2_extra = {"model_override": t2_model_override}
     else:
         t2_extra = None
     if rescore:
         # The Tier 2 step of an operator's Score again is requested too (finding 10).
-        t2_extra = {**(t2_extra or {}), "requested": True}
+        #
+        # `rescore` goes HERE, not inside the model_override branch above (review). It used
+        # to be set there only, so a plain Score again -- no model override, the common case --
+        # enqueued a Tier 2 task carrying `requested` and `requested_at` but NOT `rescore`. The
+        # worker forwards the timestamp only `if payload.get("rescore")` and tier2.py runs its
+        # replay guard only `if requested_at:`, so BOTH gates failed and the guard never ran: a
+        # crash between the evaluation commit and the task completion scored the role twice. The
+        # commit that introduced `requested_at` therefore fixed only the override case and left
+        # the common path inert. The comment above already claimed "a score-again hands Tier 2
+        # the same flag"; now it does.
+        t2_extra = {**(t2_extra or {}), "requested": True, "rescore": True}
+        # `requested_at` is the other half: "an evaluation made since then means a re-leased task
+        # already did the work, so skip" (tier2.py). Both must be present for the guard to run.
+        if requested_at:
+            t2_extra["requested_at"] = requested_at
     async with sessionmaker() as session:
         opp = await session.get(Opportunity, opportunity_id)
         if opp is None:

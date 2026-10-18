@@ -647,10 +647,8 @@ def _run_in_browser(url: str) -> int:
 
 
 def _configure_logging() -> None:
-    import logging
+    """Route stdlib logging AND structlog into kestrel.log. Configuring stdlib alone left every
+    Kestrel event (all structlog) printing to a stdout the windowed build does not have."""
+    from kestrel.logging_setup import configure_logging
 
-    handler = logging.FileHandler(paths.logs_dir() / "kestrel.log", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(threadName)s %(message)s"))
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.addHandler(handler)
+    configure_logging()

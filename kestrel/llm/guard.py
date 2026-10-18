@@ -15,7 +15,7 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, ValidationError
 
-from kestrel.llm.client import LLMClient, ModelDeclined, json_schema_for
+from kestrel.llm.client import LLMClient, ModelDeclined, _never_left, json_schema_for
 from kestrel.llm.docselect import build_doc_select_schema, validate_doc_selection
 from kestrel.llm.schemas import P3DocSelect
 
@@ -60,6 +60,12 @@ class GuardResult:
     latency_ms: int = 0
     # Provider-reported USD cost summed across attempts, None when no attempt reported one.
     cost_usd: float | None = None
+    # Did the payload reach the provider? True for every HTTP error and for a timeout while
+    # waiting for a reply; False only for a failure to establish the connection at all. A caller
+    # that must not re-send (Tier 3's one-egress reservation) reads THIS, never the
+    # `request error:` text, which is written for both (review). Defaults True: an unknown
+    # outcome is treated as "it went out", because a duplicate egress cannot be undone.
+    egressed: bool = True
 
 
 def _add_cost(total: float | None, part: float | None) -> float | None:
@@ -360,6 +366,21 @@ async def run_guarded(
         except Exception as exc:  # request/transport error: not a quarantine, the caller can retry
             return GuardResult(
                 ok=False, error=f"request error: {type(exc).__name__}: {exc}",
+                # Whether the payload EVER REACHED the provider, as a separate fact rather than
+                # something a caller has to infer from the message. The `request error:` prefix is
+                # written for EVERY exception that is not a `ModelDeclined` -- including
+                # `ProviderError` (an HTTP 401/402/404/429/500, provider got the whole
+                # payload) and including a timeout while WAITING for the reply, by which point the
+                # request has already gone out. A caller deciding "was this safe to re-send?" from
+                # that prefix gets it wrong (review).
+                #
+                # Only a failure to ESTABLISH the connection proves the payload never left:
+                # refused, DNS failure, connect timeout. Everything else the peer answered.
+                #
+                # `exhausted` means this is the reasoning-off RE-ASK: the first attempt was
+                # accepted and billed, so the payload has already gone out whatever this attempt
+                # did (D-RR1-5). The repair path below makes the same call.
+                egressed=exhausted or not _never_left(exc),
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                 latency_ms=latency, cost_usd=cost,
             )
@@ -444,10 +465,13 @@ async def run_guarded(
             cost_usd=cost,
         )
     except Exception as exc:
+        # The first attempt already went out, so a failure on the REPAIR is never a "never left"
+        # case: the payload has been sent at least once regardless of what this attempt did.
         return GuardResult(
             ok=False,
             raw=first_content,
             error=f"repair request error: {type(exc).__name__}: {exc}",
+            egressed=True,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=latency,

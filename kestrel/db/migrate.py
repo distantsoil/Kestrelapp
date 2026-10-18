@@ -49,6 +49,23 @@ def head_revision() -> str | None:
         return None
 
 
+def known_revisions() -> frozenset[str] | None:
+    """Every revision the SHIPPED migration scripts define, or None if they cannot be read.
+
+    A restore uses this to refuse a backup made by a NEWER Kestrel: its database is stamped with a
+    revision this build has never heard of, and `command.upgrade` would fail on it only AFTER the
+    restore had already replaced the live data, leaving an app that will not start."""
+    from alembic.script import ScriptDirectory
+    from alembic.util.exc import CommandError
+
+    try:
+        with paths.resource_path(paths.packaged_migrations()) as mig_dir:
+            script = ScriptDirectory.from_config(_config(str(mig_dir), ":memory:"))
+            return frozenset(rev.revision for rev in script.walk_revisions())
+    except (OSError, RuntimeError, ValueError, CommandError):
+        return None
+
+
 def current_revision(db_path: str | Path | None = None) -> str | None:
     """The applied head revision, or None if the DB is not initialized. Used by doctor."""
     from sqlalchemy import create_engine, text

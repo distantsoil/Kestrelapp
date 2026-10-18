@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 _VEST_YEARS = 4
+_WEEKS_PER_YEAR = 52
 
 
 def _num(value: Any) -> float | None:
@@ -53,3 +54,25 @@ def engagement_value(engagement: Any) -> float | None:
     if rate is None or days is None:
         return None
     return rate * days
+
+
+def annualized_engagement(engagement: Any) -> float | None:
+    """The engagement value scaled to an annual figure, for the comparison matrix (D-RR1-1).
+
+    An employment offer's `total_first_year` is annual cash comp, so a consulting offer has to be
+    on an annual scale too or it cannot share a ranking column. This is an ARITHMETIC
+    ANNUALIZATION of the agreed scope, not a forecast: a 6-week engagement at $50k scales to about
+    $433k, which is why `OfferComp.basis` records `consulting_annualized` and the matrix labels the
+    column "annualized engagement (not guaranteed)" wherever it renders.
+
+    Requires `duration_weeks`. Without it there is no defensible denominator -- guessing from
+    `days_committed` would invent a 5-day week and inflate short engagements further -- so the
+    figure is None and the row stays unvalued rather than being given a number that reads as a
+    salary."""
+    total = engagement_value(engagement)
+    if total is None:
+        return None
+    weeks = _num(getattr(engagement, "duration_weeks", None))
+    if weeks is None or weeks <= 0:
+        return None
+    return total * _WEEKS_PER_YEAR / weeks

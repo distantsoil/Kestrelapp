@@ -17,9 +17,10 @@ Restore is safety-first (CLAUDE.md "resumability is not optional" + the explicit
   1. The archive is fully validated and extracted to a TEMP staging directory first. A truncated
      zip, an unsafe path entry, or a missing kestrel.db is caught here -- the real data directory
      is never touched until staging succeeds.
-  2. The CURRENT database (+ -wal/-shm) is copied aside to kestrel.db.pre-restore before anything
-     is overwritten, so a bad restore is always recoverable.
-  3. Only then are the db/config/documents replaced from the staged copy.
+  2. The CURRENT database is snapshotted to a timestamped kestrel.db.pre-restore-<UTC> file before
+     anything is written, so a bad restore is always recoverable.
+  3. Only then is the staged db written into the live one through SQLite (safe with the app's
+     connections open) and the config and documents copied in.
 Nothing under data_home() other than the database, config, and generated documents is ever touched
 (most importantly: .env is never read, written, or included in a backup -- secrets never leave the
 machine this way, hard rule)."""
@@ -34,7 +35,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import structlog
+
 from kestrel import paths
+
+log = structlog.get_logger()
 
 DB_NAME = "kestrel.db"
 DB_SIDE_FILES = (f"{DB_NAME}-wal", f"{DB_NAME}-shm")
@@ -43,6 +48,19 @@ DOCS_PREFIX = "documents/"
 ML_PREFIX = "ml/"
 # Subdirectories of data_dir() holding generated PDFs, each mapped under DOCS_PREFIX in the zip.
 DOC_SUBDIRS = ("documents", "prep_packs")
+
+# A backup is a snapshot of a local SQLite file plus YAML and PDFs: it is never large. These caps
+# exist so a crafted or mis-selected archive (a 42.zip-style bomb) cannot fill the operator's disk,
+# and so a wrong file picked in the file dialog is refused rather than extracted.
+MAX_ARCHIVE_MEMBERS = 20_000
+MAX_MEMBER_BYTES = 2 * 1024**3  # 2 GiB: one generated PDF or the database, not a bomb
+MAX_TOTAL_BYTES = 8 * 1024**3  # 8 GiB across the whole archive
+
+# Tables every Kestrel database has. A backup whose kestrel.db parses as SQLite but is missing
+# these is not ours (or is from before the table existed): refuse it rather than install it.
+_REQUIRED_TABLES = frozenset({"opportunity", "task", "evaluation"})
+# How many timestamped pre-restore snapshots are kept beside the database (see _backup_current_db).
+PRE_RESTORE_KEEP = 3
 
 
 class InvalidBackupError(ValueError):
@@ -62,9 +80,7 @@ class RestoreResult:
     def summary_lines(self) -> list[str]:
         lines = [f"database restored: {self.db_restored}"]
         if self.wal_restored:
-            lines.append("database WAL restored")
-        if self.shm_restored:
-            lines.append("database SHM restored")
+            lines.append("the backup's write-ahead log was applied")
         lines.append(f"{len(self.config_files)} config file(s) restored")
         lines.append(f"{len(self.document_files)} generated document file(s) restored")
         if self.pre_restore_backup is not None:
@@ -293,36 +309,183 @@ def _stage_backup(src: Path, staging: Path) -> None:
                 raise InvalidBackupError(
                     f"Refusing an unsafe path entry in the backup: {info.filename}"
                 )
+        # Caps BEFORE extracting anything: zipfile reports sizes in the central directory, so a
+        # decompression bomb is refused without writing a byte to the staging directory.
+        if len(members) > MAX_ARCHIVE_MEMBERS:
+            raise InvalidBackupError(
+                "This archive has more entries than a Kestrel backup can have; "
+                "it is not one of ours."
+            )
+        total = 0
+        for info in members:
+            if info.file_size > MAX_MEMBER_BYTES:
+                raise InvalidBackupError(
+                    f"Refusing an oversized entry in the backup: {info.filename} "
+                    f"({info.file_size:,} bytes unpacked)"
+                )
+            total += info.file_size
+        if total > MAX_TOTAL_BYTES:
+            raise InvalidBackupError(
+                f"This backup unpacks to {total:,} bytes, more than a Kestrel backup can be. "
+                "It is not one of ours."
+            )
         for info in members:
             dest = staging / info.filename
             dest.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(info) as fsrc, open(dest, "wb") as fdst:
-                shutil.copyfileobj(fsrc, fdst)
+            try:
+                with zf.open(info) as fsrc, open(dest, "wb") as fdst:
+                    shutil.copyfileobj(fsrc, fdst)
+            except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
+                # An encrypted or otherwise unreadable member is a bad archive, not a 500.
+                raise InvalidBackupError(
+                    f"Could not read {info.filename} from the backup: {exc}"
+                ) from exc
+
+    _validate_staged_db(staging / DB_NAME)
+
+
+def _validate_staged_db(staged: Path) -> None:
+    """Refuse a backup whose kestrel.db is not a readable SQLite database carrying our schema.
+
+    `_stage_backup` validates the archive's STRUCTURE (it is a zip, it has a kestrel.db, no unsafe
+    paths). Structure alone is not enough: a zip whose kestrel.db holds the bytes `not a database`
+    passes every check above and would then be copied over a working database, reporting
+    `db_restored=True`. `sqlite3.connect` succeeds on any path and only fails at the first query, so
+    the check is an actual read plus an integrity pass. The real database is still untouched: this
+    runs entirely inside the staging directory (review finding, restore validation)."""
+    try:
+        con = sqlite3.connect(f"file:{staged.as_posix()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise InvalidBackupError(
+            "The kestrel.db inside this backup could not be opened as a database."
+        ) from exc
+    try:
+        try:
+            row = con.execute("PRAGMA integrity_check").fetchone()
+        except sqlite3.DatabaseError as exc:
+            raise InvalidBackupError(
+                "The kestrel.db inside this backup is not a usable SQLite database, so "
+                "restoring it would destroy the current one. Your database is unchanged."
+            ) from exc
+        if not row or row[0] != "ok":
+            raise InvalidBackupError(
+                "The kestrel.db inside this backup failed SQLite's integrity check, so it was not "
+                "restored. Your database has not been touched."
+            )
+        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        revision = None
+        if "alembic_version" in names:
+            row = con.execute("SELECT version_num FROM alembic_version").fetchone()
+            revision = row[0] if row else None
+    except sqlite3.DatabaseError as exc:
+        raise InvalidBackupError(
+            "The kestrel.db inside this backup is not a readable database, so it was not restored. "
+            "Your database has not been touched."
+        ) from exc
+    finally:
+        con.close()
+    # A backup made by a NEWER Kestrel is stamped with a revision this build does not know. It would
+    # pass every check above, be written into the live database, and only then fail to migrate,
+    # leaving an app that will not start. Refused here, while nothing real has been touched. (If
+    # the shipped scripts cannot be read, `known` is None and doctor reports that separately.)
+    from kestrel.db import migrate
+
+    known = migrate.known_revisions()
+    if revision is not None and known is not None and revision not in known:
+        raise InvalidBackupError(
+            "This backup was made by a newer version of Kestrel, so this version cannot open it. "
+            "Update Kestrel, then restore it again. Your database has not been touched."
+        )
+    missing = sorted(_REQUIRED_TABLES - names)
+    if missing:
+        raise InvalidBackupError(
+            "The kestrel.db inside this backup is not a Kestrel database (missing tables: "
+            f"{', '.join(missing)}), so it was not restored. Your database has not been touched."
+        )
 
 
 def _backup_current_db(db: Path) -> Path | None:
-    """Copy the CURRENT db (+ wal/shm) aside before restore overwrites anything, so a bad restore
-    is always recoverable. Returns the path of the .pre-restore copy, or None if there was no
-    existing database to preserve."""
+    """Snapshot the CURRENT db aside before restore writes anything, so a bad restore is always
+    recoverable. Returns the path of the copy, or None if there was no database to preserve.
+
+    Each restore gets its own timestamped copy: a fixed `kestrel.db.pre-restore` name meant every
+    attempt (including a failed one) overwrote the safety copy of the attempt before it. The copy
+    is taken through SQLite's backup API (`snapshot_database`), so it is one consistent file
+    including whatever still sat in the WAL, not a main file plus side files copied at different
+    moments while the app was writing."""
     if not db.exists():
         return None
-    pre = db.with_name(db.name + ".pre-restore")
-    shutil.copy2(db, pre)
-    for suffix in ("-wal", "-shm"):
-        side = Path(f"{db}{suffix}")
-        if side.exists():
-            shutil.copy2(side, Path(f"{pre}{suffix}"))
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    pre = db.with_name(f"{db.name}.pre-restore-{stamp}")
+    snapshot_database(db, pre)
+    # Each snapshot is a full copy of the operator's database, so they are not left to pile up:
+    # the newest PRE_RESTORE_KEEP stay (the timestamp sorts by name), older ones go.
+    snapshots = sorted(db.parent.glob(f"{db.name}.pre-restore-*"))
+    for old in snapshots[:-PRE_RESTORE_KEEP]:
+        try:
+            old.unlink()
+        except OSError as exc:  # a locked old copy is not worth failing a restore over
+            log.warning("pre_restore_prune_failed", path=old.name, error=str(exc))
     return pre
+
+
+def _write_into_live(staged: Path, db: Path) -> None:
+    """Replace the live database's contents with the staged one, THROUGH SQLite.
+
+    The previous restore deleted kestrel.db-wal/-shm and file-copied the staged db over kestrel.db.
+    Inside the running app that can never work on Windows: the worker, scheduler and delivery loops
+    hold pooled connections for the life of the process, and Windows refuses to delete or overwrite
+    a file another handle has open (WinError 32) or has byte-range locked (WinError 33). Reproduced
+    13 times out of 13 through the running app, idle or under load (R1).
+
+    SQLite's online backup API writes every page of the staged database into the live one as an
+    ordinary write transaction. SQLite does the locking, so other connections may stay open; each
+    sees the restored data from its next transaction. Nothing is unlinked or overwritten on disk.
+    A staged -wal shipped in the archive sits beside the staged db and is applied when it is opened.
+    """
+    source = sqlite3.connect(str(staged))
+    try:
+        target = sqlite3.connect(str(db), timeout=30)
+        try:
+            target.execute("PRAGMA busy_timeout=30000")
+            src_page = source.execute("PRAGMA page_size").fetchone()[0]
+            dst_page = target.execute("PRAGMA page_size").fetchone()[0]
+            if db.stat().st_size and src_page != dst_page:
+                # A WAL database cannot change page size while other connections are open, and
+                # the backup would fail part way. Every Kestrel database uses SQLite's default, so
+                # this only refuses a database that did not come from Kestrel.
+                raise InvalidBackupError(
+                    f"The kestrel.db inside this backup uses a {src_page}-byte page size and this "
+                    f"one uses {dst_page}, so it cannot be restored in place. Nothing was changed."
+                )
+            source.backup(target)
+            # Best effort: fold the restored pages back into the main file now. PASSIVE never waits
+            # on a reader, so an open read transaction elsewhere cannot stall the restore.
+            try:
+                target.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except sqlite3.Error:
+                pass
+        finally:
+            target.close()
+    finally:
+        source.close()
 
 
 def restore_backup(path: str | Path) -> RestoreResult:
     """Restore a Kestrel backup zip into the live data directory.
 
-    Safety order: (1) stage + validate the archive in a temp directory -- a bad zip is refused with
-    a clear message before anything real is touched; (2) copy the CURRENT database aside to
-    kestrel.db.pre-restore (+ -wal/-shm); (3) only then replace the db/config/documents from the
-    staged copy. The data directory is never left half-written: any failure in step 1 happens
-    entirely outside it, and step 2 guarantees step 3's overwrite is reversible.
+    Safety order: (1) stage + validate the archive in a temp directory -- a bad zip, an unsafe
+    path, an oversized archive or a kestrel.db that is not a usable Kestrel database is refused with
+    a clear message before anything real is touched; (2) snapshot the CURRENT database aside to a
+    timestamped kestrel.db.pre-restore-<UTC> file; (3) only then write the staged db into the live
+    one and copy the config and documents. Any failure in step 1 happens entirely outside the data
+    directory, and step 2 makes step 3 reversible.
+
+    The database is written through SQLite (`_write_into_live`), so this is safe while other
+    connections are open, which inside the app they always are. What it cannot do is stop work
+    that started against the OLD data from writing into the restored data, so the web route pauses
+    the worker and waits for its cycle to finish first. The restored database may be on an older
+    schema; the caller runs migrations afterwards.
     """
     src = Path(path)
     if not src.is_file():
@@ -336,23 +499,14 @@ def restore_backup(path: str | Path) -> RestoreResult:
         db = paths.db_path()
         result = RestoreResult(pre_restore_backup=_backup_current_db(db))
 
-        # A restored db that predates the current WAL/SHM must not inherit stale side files that
-        # do not belong to it, unless the archive supplies its own (copied in below).
-        for suffix in ("-wal", "-shm"):
-            stale = Path(f"{db}{suffix}")
-            if stale.exists():
-                stale.unlink()
-
         staged_db = staging / DB_NAME
         if staged_db.exists():
-            shutil.copy2(staged_db, db)
+            # Recorded before the write: opening the staged db applies (and may then remove) its
+            # own -wal/-shm, which travel inside the archive beside it.
+            result.wal_restored = (staging / DB_SIDE_FILES[0]).exists()
+            result.shm_restored = (staging / DB_SIDE_FILES[1]).exists()
+            _write_into_live(staged_db, db)
             result.db_restored = True
-        for name, suffix, flag in ((DB_SIDE_FILES[0], "-wal", "wal_restored"),
-                                    (DB_SIDE_FILES[1], "-shm", "shm_restored")):
-            staged_side = staging / name
-            if staged_side.exists():
-                shutil.copy2(staged_side, Path(f"{db}{suffix}"))
-                setattr(result, flag, True)
 
         staged_cfg = staging / CONFIG_PREFIX.rstrip("/")
         if staged_cfg.exists():

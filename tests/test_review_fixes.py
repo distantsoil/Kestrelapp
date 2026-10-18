@@ -97,7 +97,14 @@ async def test_replay_guard_refuses_after_a_failed_send_too(sm, monkeypatch):
         r = await tier3.transmit_escalation(
             s, client, settings, oid, confirmation_token=preview.confirmation_token
         )
-    assert r.sent is False and "already transmitted" in (r.error or "") and "failed" in r.error
+    # The refusal must not tell the operator to "open a fresh preview": the confirmation token is
+    # deterministic, so a fresh preview produces the same token and the advice cannot work
+    # (review). Assert the behaviour -- refused, nothing sent -- not the exact wording.
+    assert r.sent is False, "a payload the provider already received was sent again"
+    assert r.error, "a refusal must explain itself"
+    assert "fresh preview" not in r.error, (
+        "the refusal still suggests a fresh preview, which cannot help when the token is the same"
+    )
     assert client.calls == []
 
 

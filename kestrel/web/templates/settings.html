@@ -283,9 +283,10 @@
         <input type="file" id="backup_file" name="backup_file" accept=".zip" required>
       </div>
       <button class="btn" type="submit" style="margin-top:.6rem">Restore</button>
-      <p class="muted">The current database is copied aside to
-      <span class="mono">kestrel.db.pre-restore</span> before anything is overwritten, so a bad
-      restore can always be undone. Restart Kestrel afterward.</p>
+      <p class="muted">The current database is saved first as a dated
+      <span class="mono">kestrel.db.pre-restore-&hellip;</span> file in the data folder, so a
+      restore can always be undone. Kestrel pauses its work while it restores and uses the restored
+      data right away.</p>
     </form>
     <div id="restore-result"></div>
   </section>

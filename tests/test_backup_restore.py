@@ -11,6 +11,7 @@ upload endpoint never 500ing on a bad file."""
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import zipfile
 
 import pytest
@@ -173,8 +174,13 @@ def test_roundtrip_after_wipe_service_level(tmp_path):
 
 
 # ------------------------------------------------------------------------------- THE GATE (2/2)
-def test_cli_backup_then_restore_roundtrip(tmp_path):
+def test_cli_backup_then_restore_roundtrip(tmp_path, monkeypatch):
     """The same round trip, driven through the actual `kestrel backup` / `kestrel restore` CLI."""
+    from kestrel import cli as cli_mod
+
+    # `kestrel restore` refuses while the desktop app is running; whether one happens to be open
+    # on the machine running the tests must not decide this one.
+    monkeypatch.setattr(cli_mod, "_app_is_running", lambda: False)
     asyncio.run(_seed_two_orgs())
 
     result = runner.invoke(app, ["backup", "--out", str(tmp_path)])
@@ -189,7 +195,7 @@ def test_cli_backup_then_restore_roundtrip(tmp_path):
     assert restored.exit_code == 0, restored.output
     assert "database restored: True" in restored.output
     assert "previous database preserved at" in restored.output
-    assert "Restart Kestrel" in restored.output
+    assert "Restore complete" in restored.output
 
     forget_engine()
     assert asyncio.run(_org_names()) == {"acme robotics", "beacon health"}
@@ -235,6 +241,56 @@ def test_restore_refuses_a_corrupt_zip(tmp_path):
 
     with pytest.raises(InvalidBackupError, match="Not a valid zip"):
         restore_backup(not_a_zip)
+
+
+def test_restore_refuses_a_db_that_is_not_sqlite(tmp_path):
+    """A well-formed zip whose kestrel.db holds garbage. Structure checks pass, so without the
+    content check this overwrote a working database and reported db_restored=True."""
+    bogus = tmp_path / "garbage-db.zip"
+    with zipfile.ZipFile(bogus, "w") as z:
+        z.writestr("kestrel.db", b"not a database")
+
+    db = paths.db_path()
+    migrate.run_migrations()  # so "the live db is untouched" is a real claim
+    db_before = db.read_bytes()
+    pre_restore = db.with_name(db.name + ".pre-restore")
+    pre_restore.unlink(missing_ok=True)
+
+    with pytest.raises(InvalidBackupError, match="not a usable SQLite database"):
+        restore_backup(bogus)
+
+    # Refused during staging: the live database is byte-identical and nothing was copied aside.
+    assert db.read_bytes() == db_before
+    assert not pre_restore.exists()
+
+
+def test_restore_refuses_a_db_without_kestrel_tables(tmp_path):
+    """A real SQLite file, but not ours. Installing it would look successful and then break
+    every query, so the expected tables are checked too."""
+    bogus = tmp_path / "wrong-schema.zip"
+    other = tmp_path / "other.db"
+    con = sqlite3.connect(str(other))
+    con.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+    con.commit()
+    con.close()
+    with zipfile.ZipFile(bogus, "w") as z:
+        z.write(other, "kestrel.db")
+
+    with pytest.raises(InvalidBackupError, match="not a Kestrel database"):
+        restore_backup(bogus)
+
+
+def test_restore_refuses_an_oversized_entry(tmp_path, monkeypatch):
+    """A decompression bomb is refused from the zip's central directory, before extraction."""
+    import kestrel.services.backup as backup_mod
+
+    monkeypatch.setattr(backup_mod, "MAX_MEMBER_BYTES", 16)
+    bomb = tmp_path / "bomb.zip"
+    with zipfile.ZipFile(bomb, "w") as z:
+        z.writestr("kestrel.db", b"x" * 64)
+
+    with pytest.raises(InvalidBackupError, match="oversized entry"):
+        restore_backup(bomb)
 
 
 def test_config_and_documents_are_restored_to_their_real_locations(tmp_path):
@@ -307,3 +363,25 @@ def test_web_restore_endpoint_never_500s_on_a_bad_upload(tmp_path):
         r3 = c.post("/settings/restore", data={})
         assert r3.status_code == 200
         assert "Choose a backup" in r3.text
+
+
+def test_web_restore_escapes_the_archive_entry_name_in_its_error(tmp_path):
+    """A rejected entry name is quoted into the error message, and the uploader controls it.
+    Unescaped, a crafted archive executed markup in the app's own origin -- the one holding the
+    LAN shared secret and every mutating endpoint."""
+    evil = tmp_path / "evil.zip"
+    with zipfile.ZipFile(evil, "w") as z:
+        z.writestr("kestrel.db", b"x")
+        # Rejected for the "..", so it reaches the message carrying live markup.
+        z.writestr("config/<img src=x onerror=alert(1)>/../../evil.yml", "pwn: true")
+
+    with _client() as c:
+        r = c.post(
+            "/settings/restore",
+            files={"backup_file": ("evil.zip", evil.read_bytes(), "application/zip")},
+        )
+    assert r.status_code == 200
+    # The name still READS as the operator typed it (the text is preserved), but no live tag
+    # survives: "<img" is neutralized, so the payload cannot execute in the app's origin.
+    assert "&lt;img src=x onerror=alert(1)&gt;" in r.text
+    assert "<img src=x" not in r.text

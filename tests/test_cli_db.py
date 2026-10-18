@@ -12,8 +12,10 @@ runner = CliRunner()
 def test_db_upgrade_then_current():
     result = runner.invoke(app, ["db", "upgrade"])
     assert result.exit_code == 0, result.output
-    assert "0016" in result.output  # head advanced with the run summary indexes (D-UI-58)
+    # head advanced with the operator's qualitative ratings for the offer comparison,
+    # then the `egressed` column that records whether a payload ever reached the provider
+    assert "0019" in result.output
 
     current = runner.invoke(app, ["db", "current"])
     assert current.exit_code == 0
-    assert "0016" in current.output
+    assert "0019" in current.output

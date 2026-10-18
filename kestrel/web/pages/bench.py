@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from html import escape
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -215,7 +216,7 @@ async def promote(request: Request):
                 row.value = model
             await s.commit()
     except Exception as exc:  # noqa: BLE001 -- surface as a warnbox, never a 500
-        return HTMLResponse(f'<div class="warnbox">Could not save: {exc}</div>')
+        return HTMLResponse(f'<div class="warnbox">Could not save: {escape(str(exc))}</div>')
     ctx = {"tier": tier, "model": model, "key": key}
     return templates().TemplateResponse(request, "partials/bench_promote_result.html", ctx)
 

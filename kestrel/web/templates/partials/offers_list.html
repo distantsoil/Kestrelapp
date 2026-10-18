@@ -1,9 +1,13 @@
+{% if message %}
+  <div class="covered" role="status">{{ message }}</div>
+{% endif %}
+
 <button class="btn ghost" hx-get="/offers" hx-target="#offers-list" hx-swap="innerHTML"
         style="margin-bottom:.8rem">↻ Refresh</button>
 
 {% if not offers %}
   <div class="panel"><p class="muted">No open offers right now (open means verbal or written).
-  An offer appears here once one is recorded against a pursuit.</p></div>
+  Record one below and it appears here, benchmarked against your own accumulated data.</p></div>
 {% else %}
   {% for row in offers %}
     {% set b = row.benchmark %}
@@ -64,6 +68,29 @@
         {% endif %}
       {% endif %}
 
+      <h4 style="margin-top:1rem">Your ratings for the comparison</h4>
+      <p class="muted">These five are your judgment, not the tool's, so they are never inferred
+      from the offer text. Rate 0 to 5; leave one blank and that axis is simply not scored, and
+      the totals renormalize over the axes you did rate. Organizational risk is the inverse: 5 is
+      a low-risk organization.</p>
+      <form hx-post="/offers/{{ row.offer.id }}/qual" hx-target="#offers-list"
+            hx-swap="innerHTML" hx-disabled-elt="find button"
+            data-busy-text="Saving your ratings.">
+        {# The track selects WHICH table the rating lands in: Offer.id and EngagementOffer.id
+           are independent sequences, so both tables hand out id 1 (review). #}
+        <input type="hidden" name="track" value="{{ row.track }}">
+        <div class="formgrid">
+          {% for axis in qual_axes %}
+            <label for="qual-{{ row.offer.id }}-{{ axis }}">{{ axis.replace('_', ' ') }} (0-5)</label>
+            <input type="number" id="qual-{{ row.offer.id }}-{{ axis }}"
+                   name="qual_{{ axis }}" min="0" max="5" step="0.5"
+                   value="{{ row.offer.qual_json[axis] if row.offer.qual_json else '' }}"
+                   placeholder="not rated">
+          {% endfor %}
+        </div>
+        <button class="btn" type="submit" style="margin-top:.5rem">Save ratings</button>
+      </form>
+
       <h4 style="margin-top:1rem">Draft negotiation scripts</h4>
       <p class="muted">These are drafts for you to edit and deliver yourself. There is no send
       action here. Your walk-away number is required and is never computed for you.</p>
@@ -97,7 +124,11 @@
           <tbody>
             {% for r in matrix.rows %}
               <tr>
-                <td>{{ r.label }}</td>
+                <td>{{ r.label }}
+                  {% if r.basis == 'consulting_annualized' %}
+                    <span class="muted">(annualized engagement, not guaranteed)</span>
+                  {% endif %}
+                </td>
                 {% for axis in matrix.axes %}
                   <td>
                     {% if r.raw[axis] is not none %}
@@ -112,9 +143,122 @@
           </tbody>
         </table>
       </div>
-      <p class="muted">Raw value, then normalized (0-1) in parentheses. Weights default to equal
-      and are yours to change; this table is analysis to make the trade-offs legible, never a
+      <p class="muted">Raw value, then normalized (0-1) in parentheses. Blank means that axis does
+      not count toward the total. This table is analysis to make the trade-offs legible, never a
       recommendation to accept.</p>
+
+      <h4 style="margin-top:1rem">What each axis is worth to you</h4>
+      <form hx-post="/offers/weights" hx-target="#offers-list" hx-swap="innerHTML"
+            hx-disabled-elt="find button" data-busy-text="Saving your weights.">
+        <div class="formgrid">
+          {% for axis in axes %}
+            <label for="w-{{ axis }}">{{ axis.replace('_', ' ') }}</label>
+            <input type="number" id="w-{{ axis }}" name="{{ axis }}" min="0" step="0.5"
+                   value="{{ weights[axis] if weights.get(axis) is not none else '' }}"
+                   placeholder="equal">
+          {% endfor %}
+        </div>
+        <button class="btn" type="submit" style="margin-top:.5rem">Save weights</button>
+      </form>
     </div>
   {% endif %}
 {% endif %}
+
+<div class="panel">
+  <h3>Record an offer</h3>
+  <p class="muted">Record what you were actually told. Nothing is sent anywhere and nothing is
+  submitted on your behalf; this exists so Kestrel can value the offer against your own data and
+  draft scripts you deliver yourself. Leave a field blank for anything you were not told.</p>
+  {% if not pursuits %}
+    <p class="muted">No pursuit is available to attach an offer to. Start a pursuit from the
+    opportunity first.</p>
+  {% else %}
+  <form hx-post="/offers" hx-target="#offers-list" hx-swap="innerHTML"
+        hx-disabled-elt="find button" data-busy-text="Recording the offer.">
+    <div class="formgrid">
+      <label for="offer-pursuit">Which pursuit</label>
+      <select id="offer-pursuit" name="pursuit_id" required>
+        {% for p in pursuits %}
+          <option value="{{ p.pursuit.id }}">[{{ p.track }}] {{ p.org_name or 'Unknown org' }} &middot;
+            {{ p.title }} ({{ p.pursuit.status }})</option>
+        {% endfor %}
+      </select>
+
+      <label for="offer-track">Track</label>
+      <select id="offer-track" name="track">
+        <option value="employment">Employment (salary offer)</option>
+        <option value="consulting">Consulting (engagement offer)</option>
+      </select>
+
+      <label for="offer-status">Status</label>
+      <select id="offer-status" name="status">
+        {% for s in offer_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+
+      <label for="offer-received">Received</label>
+      <input type="date" id="offer-received" name="received_at">
+
+      <label>Employment figures</label>
+      <div class="muted">Leave blank if you were not told. A 0 is recorded as a 0, not as blank.</div>
+      <label for="offer-base">Base salary</label>
+      <input type="text" inputmode="decimal" id="offer-base" name="base" placeholder="e.g. 185000">
+      <label for="offer-bonus">Bonus target %</label>
+      <input type="text" inputmode="decimal" id="offer-bonus" name="bonus_target_pct" placeholder="e.g. 15">
+      <label for="offer-equity-desc">Equity description</label>
+      <input type="text" id="offer-equity-desc" name="equity_description"
+             placeholder="e.g. 0.15% over 4 years, 1-year cliff">
+      <label for="offer-equity-val">Equity value estimate</label>
+      <input type="text" inputmode="decimal" id="offer-equity-val" name="equity_value_estimate">
+      <label for="offer-signing">Signing bonus</label>
+      <input type="text" inputmode="decimal" id="offer-signing" name="signing">
+      <label for="offer-pto">PTO days</label>
+      <input type="number" id="offer-pto" name="pto_days" min="0" step="1">
+      <label for="offer-start">Start date</label>
+      <input type="date" id="offer-start" name="start_date">
+      <label for="offer-deadline">Decision deadline</label>
+      <input type="date" id="offer-deadline" name="deadline">
+      <label for="offer-level">Level title</label>
+      <input type="text" id="offer-level" name="level_title">
+      <label for="offer-reports">Reports to</label>
+      <input type="text" id="offer-reports" name="reports_to">
+      <label for="offer-location">Location policy</label>
+      <input type="text" id="offer-location" name="location_policy" placeholder="e.g. onsite 3 days, hybrid">
+      <label for="offer-benefits">Benefits notes</label>
+      <input type="text" id="offer-benefits" name="benefits_notes">
+
+      <label>Consulting figures</label>
+      <div class="muted">Used when the track above is consulting.</div>
+      <label for="offer-rate">Day rate</label>
+      <input type="text" inputmode="decimal" id="offer-rate" name="day_rate">
+      <label for="offer-days">Days committed</label>
+      <input type="number" id="offer-days" name="days_committed" min="0" step="1">
+      <label for="offer-weeks">Duration (weeks)</label>
+      <input type="number" id="offer-weeks" name="duration_weeks" min="0" step="1">
+      <label for="offer-terms">Payment terms</label>
+      <input type="text" id="offer-terms" name="payment_terms" placeholder="e.g. net 30">
+      <label for="offer-expenses">Expenses</label>
+      <input type="text" id="offer-expenses" name="expenses">
+      <label for="offer-renewal">Renewal terms</label>
+      <input type="text" id="offer-renewal" name="renewal_terms">
+      <label for="offer-exclusivity">Exclusivity</label>
+      <input type="text" id="offer-exclusivity" name="exclusivity">
+      <label for="offer-ip">IP terms</label>
+      <input type="text" id="offer-ip" name="ip_terms">
+      <label for="offer-notice">Notice period</label>
+      <input type="text" id="offer-notice" name="notice_period">
+
+      <label for="offer-notes">Notes</label>
+      <textarea id="offer-notes" name="notes_md" rows="3"></textarea>
+
+      <label>Your ratings (optional)</label>
+      <div class="muted">0-5, and only for the figures you have. Left blank here you can still rate
+      them on the offer's own card below.</div>
+      {% for axis in qual_axes %}
+        <label for="new-qual-{{ axis }}">{{ axis.replace('_', ' ') }}</label>
+        <input type="number" id="new-qual-{{ axis }}" name="qual_{{ axis }}" min="0" max="5" step="0.5">
+      {% endfor %}
+    </div>
+    <button class="btn" type="submit" style="margin-top:.5rem">Record offer</button>
+  </form>
+  {% endif %}
+</div>

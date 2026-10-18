@@ -1099,10 +1099,16 @@ def restore(path: str) -> None:
     """Restore the database, config, and generated documents from a backup zip.
 
     Safety: the zip is validated (and fully staged) before anything on disk is touched; the
-    current database is copied aside to kestrel.db.pre-restore first, so a bad restore is always
-    recoverable."""
+    current database is snapshotted to a timestamped kestrel.db.pre-restore-<UTC> file first, so a
+    bad restore is always recoverable."""
+    from kestrel.db import migrate
     from kestrel.services.backup import InvalidBackupError, restore_backup
 
+    if _app_is_running():
+        # The running app can restore safely from Settings, where it pauses its own worker. From
+        # here nothing pauses it, so its work against the old data could land in the restored one.
+        typer.echo("Kestrel is running. Restore from Settings, or quit it from the tray first.")
+        raise typer.Exit(code=2)
     try:
         result = restore_backup(path)
     except InvalidBackupError as exc:
@@ -1111,7 +1117,8 @@ def restore(path: str) -> None:
 
     for line in result.summary_lines():
         typer.echo(line)
-    typer.echo("Restart Kestrel (or run `kestrel db upgrade`) to pick up the restored data.")
+    migrate.run_migrations()  # a backup from an older Kestrel is brought up to this version
+    typer.echo("Restore complete.")
 
 
 @app.command()

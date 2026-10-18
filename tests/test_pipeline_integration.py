@@ -5,12 +5,14 @@ consulting evaluations write signals back to the org."""
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
 from kestrel.config import get_settings
-from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine, Run, Source
+from kestrel.db.base import utcnow_iso
+from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine, Run, Source, Task
 from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tier2 import handle_t2
 from kestrel.pipeline.worker import Worker
@@ -273,3 +275,56 @@ async def test_resume_does_not_duplicate_or_lose_work(sm):
             ).scalars().all()
         )
     assert after == before  # no duplicate evaluation on resume/re-run
+
+
+async def test_a_long_running_task_keeps_its_lease_renewed(sm, monkeypatch):
+    """A scoring task that outlives its lease must be renewed while it runs.
+
+    Without the renewal the lease expires mid-call, `claimable()` reports the row as available,
+    and the next worker run reclaims and re-leases it while the first handler is still scoring:
+    two handlers write duplicate Evaluations and race on `opp.stage`, so a role one wrote as
+    `t1_reject` can lose to a `t1_pass` (hard rule 4). The lease here is deliberately much
+    shorter than the task so the expiry is unambiguous, and the renewal is what keeps it held.
+    """
+    import asyncio
+
+    import kestrel.pipeline.worker as worker_mod
+    from kestrel.queue.queue import TaskQueue, claimable
+
+    monkeypatch.setattr(worker_mod, "_RENEW_S", 0.05)
+    monkeypatch.setattr(worker_mod, "_TASK_LEASE_S", 1)
+
+    await _seed(sm)
+    queue = TaskQueue(sm)
+    async with sm() as s:
+        opp = (
+            await s.execute(select(Opportunity).where(Opportunity.title == "VP of IT #0"))
+        ).scalar_one()
+        await queue.enqueue("t1", opp.id)
+        await s.commit()
+
+    task = await queue.lease("w1", types=["t1"], lease_seconds=1)
+    assert task is not None
+
+    beat = asyncio.create_task(worker_mod._renew_lease(queue, task.id, "w1"))
+    try:
+        # Well past the 1s lease the task was taken with.
+        await asyncio.sleep(1.6)
+        # Still held: a heartbeat from the owning worker succeeds, and a competing worker
+        # cannot claim it because the lease has not lapsed.
+        assert await queue.heartbeat(task.id, "w1", lease_seconds=1) is True
+        assert await queue.lease("intruder", types=["t1"]) is None
+        async with sm() as s:
+            still_leased = (
+                await s.execute(
+                    select(Task).where(
+                        Task.id == task.id,
+                        claimable(utcnow_iso()),
+                    )
+                )
+            ).scalar_one_or_none()
+        assert still_leased is None, "the task became claimable while its handler was running"
+    finally:
+        beat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat

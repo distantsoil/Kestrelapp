@@ -58,8 +58,13 @@ async def _text_from(request: Request) -> tuple[str, str | None]:
     upload = form.get("file")
     text = str(form.get("text") or "")
     if upload is not None and hasattr(upload, "read"):
-        data = await upload.read()
-        if len(data) > MAX_TEXT:
+        from kestrel.web.uploads import UploadTooLarge, read_upload
+
+        try:
+            # Size-limited and always closed (D-RR1-4): an oversize file is refused before it is
+            # fully buffered, and the temp file never outlives the request.
+            data = await read_upload(upload, limit=MAX_TEXT, too_large=UploadTooLarge)
+        except UploadTooLarge:
             return "", "That file is larger than 2 MB; a tracker is a few kilobytes."
         if data:
             text = data.decode("utf-8-sig", errors="replace")

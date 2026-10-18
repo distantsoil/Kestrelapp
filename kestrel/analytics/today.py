@@ -39,6 +39,37 @@ from kestrel.web.words import words
 
 log = structlog.get_logger()
 
+
+def _utc_today() -> date:
+    """UTC today. NOT used for "today" in this module -- see `_local_date_of` for why."""
+    return datetime.now(UTC).date()
+
+
+def _local_date_of(stored: str | None) -> date | None:
+    """The LOCAL calendar date of a stored UTC timestamp, or of a bare date string.
+
+    Two different kinds of value live in these columns and they need different treatment:
+
+    - `next_action_at` / `deadline` are CALENDAR dates the operator typed into a date input
+      ("due tomorrow"). They have no timezone and must be compared against today's LOCAL date, or
+      after 20:00 in a US time zone an item due today would already read as overdue.
+    - `applied_at` / `last_activity_at` are UTC TIMESTAMPS written by `db.base.utcnow_iso`. Counting
+      days against them with the local date (the original bug) undercounted by one for the four
+      hours each evening when UTC has already rolled to the next day: a pursuit 30 days quiet was
+      reported as 29.
+
+    So a bare `YYYY-MM-DD` is returned as-is, and a full timestamp is converted from UTC to the
+    operator's local calendar day before the day count is taken (review)."""
+    text = (stored or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) <= 10:  # a calendar date, not an instant
+            return date.fromisoformat(text[:10])
+        return datetime.fromisoformat(text).astimezone().date()
+    except ValueError:
+        return None
+
 # Verdicts that put an item on the shortlist: employment "apply", consulting "pursue".
 SHORTLIST_VERDICTS: tuple[str, ...] = ("apply", "pursue")
 TRACKS: tuple[str, ...] = ("employment", "consulting")
@@ -348,11 +379,12 @@ async def act_summary(
         conf, mapping = await confidential(session)
         p, opp, d = due[0]
         quiet = None
-        try:
-            since = date.fromisoformat((p.applied_at or p.last_activity_at or "")[:10])
+        # `today` is the LOCAL date (due dates are local calendar dates the operator typed), and
+        # the stored UTC timestamp is converted to a local day before counting, so a pursuit 30
+        # days quiet reads as 30 rather than 29 in the evening, when UTC has already rolled over.
+        since = _local_date_of(p.applied_at or p.last_activity_at)
+        if since is not None:
             quiet = max(0, (today - since).days)
-        except ValueError:
-            quiet = None
         earliest = {
             "opp_id": opp.id,
             "title": redact_text(opp.title or "Untitled", mapping, enabled=conf),

@@ -309,11 +309,15 @@ def test_applied_column_verbs():
         p, events = _pursuit(pid)
         assert p.status == "screening" and events[-1].note == "recruiter call"
         assert p.next_action is None
-        c.post(f"/pursuits/{pid}/act/interview", data={"when": "2026-10-17", "at_time": "10:00"})
+        # A date relative to today, never a fixed one: once a fixed date passes, the card rightly
+        # reads "interview was <date>; record the outcome" and this assertion fails on the clock.
+        when = today + timedelta(days=3)
+        c.post(f"/pursuits/{pid}/act/interview",
+               data={"when": when.isoformat(), "at_time": "10:00"})
         p, events = _pursuit(pid)
         assert p.status == "interviewing" and p.next_action == "Interview"
-        assert p.next_action_at == "2026-10-17T10:00"
-        assert "interview Oct 17 10:00" in c.get("/pursuits").text
+        assert p.next_action_at == f"{when.isoformat()}T10:00"
+        assert f"interview {when.strftime('%b')} {when.day} 10:00" in c.get("/pursuits").text
         assert "Choose the interview date" in c.post(
             f"/pursuits/{pid}/act/interview", data={}).text
         c.post(f"/pursuits/{pid}/act/offer", data={})

@@ -591,6 +591,11 @@ class Offer(Base):
     received_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     status: Mapped[str] = mapped_column(String, default="verbal")
     notes_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The operator's own 0-5 ratings for the comparison matrix's qualitative axes (level/scope,
+    # reporting line, location/travel, org risk, trajectory fit). Judgments the tool must not make
+    # for them, so until they are set the matrix renormalizes over the axes actually present and
+    # this offer is not penalised for them. Migration 0018.
+    qual_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class EngagementOffer(Base):
@@ -609,6 +614,8 @@ class EngagementOffer(Base):
     received_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     status: Mapped[str] = mapped_column(String, default="verbal")
     notes_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Same operator ratings as Offer.qual_json, for the consulting comparison row.
+    qual_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 # ============================================================================ Modules 5: Learning
@@ -746,3 +753,21 @@ class FrontierTransmission(Base):
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Did the payload reach the provider? False ONLY for a failure to establish the connection
+    # (refused, DNS, connect timeout), where a retry cannot duplicate an egress. True for every
+    # HTTP error and for a timeout waiting for the reply. Migration 0019. Defaults True: an unknown
+    # outcome is treated as egressed, because a duplicate egress cannot be undone.
+    egressed: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+# One transmission per confirmed payload (review finding, Tier 3 double egress).
+# transmit_escalation inserts and COMMITS this row as a reservation BEFORE the payload leaves the
+# concurrent confirmations of the same previewed payload cannot both send: the second reservation
+# fails here instead of racing the first. Application-level "have I sent this?" checks cannot close
+# that window; a unique constraint can.
+Index(
+    "ux_frontier_transmission_payload",
+    FrontierTransmission.opportunity_id,
+    FrontierTransmission.payload_sha256,
+    unique=True,
+)
