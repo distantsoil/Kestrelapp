@@ -4,6 +4,8 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-18
+
 ### New
 
 - Record a job offer or a consulting engagement against the pursuit it came from, then rate each one on level and scope, reporting line, location and travel, risk, and fit with where you are headed. The comparison weighs those ratings the way you set them. Kestrel never guesses them for you.
