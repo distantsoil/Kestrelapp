@@ -357,8 +357,12 @@ def test_backup_carries_the_reranker(tmp_path):
 def test_cli_reset_refuses_a_folder_that_is_not_kestrels(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
+    from kestrel import cli as cli_mod
     from kestrel.cli import app
 
+    # Whether a Kestrel app happens to be open on the machine running the tests must not decide
+    # this: the running-app guard refuses first, and this test is about the folder check.
+    monkeypatch.setattr(cli_mod, "_app_is_running", lambda: False)
     victim = tmp_path / "Documents"
     victim.mkdir()
     (victim / "taxes.pdf").write_bytes(b"x")
