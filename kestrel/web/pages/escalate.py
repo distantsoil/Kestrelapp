@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from kestrel.llm.client import LLMClient
+from kestrel.llm.service_name import service_name
 from kestrel.pipeline.tier3 import build_escalation_preview, transmit_escalation
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker
@@ -40,6 +41,7 @@ async def escalate_preview(opp_id: int):
     from kestrel.web.routes_pages import _cost_line
 
     cost = _cost_line(preview.model, preview.prompt_tokens_estimate)
+    service = service_name(preview.base_url)
 
     payload = "\n\n".join(f"[{m['role']}]\n{_esc(m['content'])}" for m in preview.messages)
     conf = (
@@ -50,12 +52,20 @@ async def escalate_preview(opp_id: int):
     # Plain words (D-UI-45): what is sent, where, and what it costs, before the one button.
     warn = (
         f'<div class="warnbox">Sending would put the text below on '
-        f'{_esc(preview.provider)} ({_esc(preview.base_url)}), off this computer. '
+        f'{_esc(service)} ({_esc(preview.base_url)}), off this computer. '
         f"{_esc(preview.unavailable)}</div>"
         if preview.unavailable
         else '<div class="warnbox">Sending puts the text below on '
-        f'{_esc(preview.provider)} ({_esc(preview.base_url)}), off this computer. '
+        f'{_esc(service)} ({_esc(preview.base_url)}), off this computer. '
         "Read it first; nothing goes until you press Send.</div>"
+    )
+    # Plain summary above the payload: what leaves, where, and that it
+    # includes the job + your profile
+    summary = (
+        f'<p class="muted" style="margin:.3rem 0 .6rem">This sends the job posting and your '
+        f'profile to {_esc(service)}, using the model '
+        f'<span class="mono">{_esc(preview.model)}</span>. '
+        f"Confidential redaction: {('on' if preview.confidential else 'off')}.</p>"
     )
     confirm_form = (
         ""
@@ -65,13 +75,13 @@ async def escalate_preview(opp_id: int):
             f'hx-swap="innerHTML">'
             f'<input type="hidden" name="confirmation_token" '
             f'value="{_esc(preview.confirmation_token)}">'
-            f'<button type="submit" class="danger">Send to {_esc(preview.provider)}</button>'
+            f'<button type="submit" class="danger">Send for a deeper read</button>'
             f'</form>'
         )
     )
     return HTMLResponse(
         f'<div class="panel" id="t3-preview">'
-        f"<h4>Deeper read with a stronger model: what would be sent</h4>{warn}"
+        f"<h4>Deeper read with a stronger model: what would be sent</h4>{warn}{summary}"
         f'<div class="muted">To <span class="mono">{_esc(preview.base_url)}</span> '
         f"&middot; model <span class=\"mono\">{_esc(preview.model)}</span> &middot; "
         f"about {preview.prompt_tokens_estimate} tokens in, {_esc(cost)} &middot; {conf}</div>"

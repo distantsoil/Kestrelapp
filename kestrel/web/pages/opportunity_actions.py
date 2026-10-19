@@ -39,12 +39,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.enums import ARCHIVE_REASONS, PURSUIT_STATUS, valid_pursuit_status
-from kestrel.db.models import DocMaster, Opportunity, Org, Pursuit, VerdictOverride
+from kestrel.db.models import DocMaster, Opportunity, Org, PrepPack, Pursuit, VerdictOverride
 from kestrel.ingest.http import HttpClient
 from kestrel.llm.client import LLMClient
 from kestrel.research.company import research_org
 from kestrel.research.contacts import discover_contacts
 from kestrel.research.excerpts import acquire_excerpts
+from kestrel.services.org_research import run_org_research
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.fit import GOOD, NOT_FIT, verdict_for_fit
@@ -53,6 +54,18 @@ from kestrel.web.words import words
 
 router = APIRouter()
 log = structlog.get_logger()
+
+
+async def _latest_prep_pack(session: AsyncSession, opportunity_id: int) -> PrepPack | None:
+    """Return the most recent prep pack for an opportunity, if any."""
+    return (
+        await session.execute(
+            select(PrepPack)
+            .where(PrepPack.opportunity_id == opportunity_id)
+            .order_by(PrepPack.created_at.desc(), PrepPack.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 async def _context(
@@ -117,9 +130,11 @@ async def _render(
     *,
     message: str | None = None,
     error: str | None = None,
-    prep_ready: bool = False,
+    prep_ready: bool | None = None,
 ) -> HTMLResponse:
     ctx = await _context(session, opp_id, message=message, error=error)
+    if prep_ready is None:
+        prep_ready = await _latest_prep_pack(session, opp_id) is not None
     ctx["prep_ready"] = prep_ready
     return templates().TemplateResponse(request, "partials/opp_actions.html", ctx)
 
@@ -351,7 +366,8 @@ async def shortlist(request: Request, opp_id: int) -> HTMLResponse:
 async def actions_panel(request: Request, opp_id: int) -> HTMLResponse:
     """The actions panel as it stands, for its own pipelineRefresh reload. Read-only."""
     async with sessionmaker()() as s:
-        return await _render(request, s, opp_id)
+        prep = await _latest_prep_pack(s, opp_id)
+        return await _render(request, s, opp_id, prep_ready=prep is not None)
 
 
 # ============================================================================ 2. Tailor
@@ -393,27 +409,10 @@ async def research(request: Request, opp_id: int) -> HTMLResponse:
                 if org is None:
                     error = "Organization record is missing."
                 else:
-                    settings = await load_settings_with_db(s)
-                    # A real fetching client, not http=None. With no client every fetching tier in
-                    # acquire_excerpts short-circuits and only the DB-derived ATS tier contributes,
-                    # which yields exactly one excerpt: research_org requires two, so the action
-                    # could never do anything except record "insufficient sources" forever.
-                    # HttpClient is polite by construction (descriptive User-Agent, per-host rate
-                    # limit, robots.txt respected, backoff), which is what hard rule 7 requires.
-                    # This fetches PUBLIC company pages only; it transmits no operator data, so
-                    # Tier 3 remains the only path that sends anything of the operator's outward.
-                    async with (
-                        httpx.AsyncClient() as llm_http,
-                        HttpClient(
-                            user_agent=settings.ingest.user_agent,
-                            default_rate_per_sec=settings.ingest.default_rate_per_sec,
-                            timeout=settings.ingest.request_timeout_s,
-                            respect_robots=settings.ingest.respect_robots,
-                        ) as http,
-                    ):
-                        client = LLMClient(settings, http=llm_http)
-                        record = await research_org(s, client, org, settings=settings, http=http)
-                    await s.commit()  # research_org flushes but does not commit
+                    # Shared with `kestrel research`: polite public-page client, model only via
+                    # research_org, commit included. `research_org` is passed by name so this
+                    # module's seam stays patchable.
+                    record = await run_org_research(s, org, researcher=research_org)
                     if record.insufficient_sources:
                         message = (
                             f"Research recorded for {org.name}, but fewer than 2 sources were "

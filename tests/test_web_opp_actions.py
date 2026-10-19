@@ -310,6 +310,16 @@ def test_prep_pack_builds_and_persists(monkeypatch: pytest.MonkeyPatch) -> None:
     assert asyncio.run(_prep_pack_count(ids["opp_id"])) == 1
 
 
+def test_prep_links_survive_other_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    ids = asyncio.run(_seed())
+    with _client(monkeypatch) as c:
+        assert c.post(f"/opportunities/{ids['opp_id']}/prep").status_code == 200
+        r = c.post(f"/opportunities/{ids['opp_id']}/shortlist")
+        assert r.status_code == 200 and "Added to your shortlist" in r.text
+        assert f'href="/mock/{ids["opp_id"]}"' in r.text
+        assert 'data-testid="open-interview-prep"' in r.text
+
+
 # ============================================================================ 6. Archive
 def test_archive_round_trips(monkeypatch: pytest.MonkeyPatch) -> None:
     ids = asyncio.run(_seed())
@@ -401,3 +411,30 @@ def test_archived_opportunities_leave_the_active_pipeline(monkeypatch):
     assert "archived_at.is_(None)" in inspect.getsource(review_queue), (
         "Today's review queue still surfaces hidden opportunities"
     )
+
+
+def test_research_action_uses_the_shared_service_and_keeps_its_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = asyncio.run(_seed())
+    seen: list[str] = []
+
+    import kestrel.services.org_research as svc
+
+    real = svc.run_org_research
+
+    async def spy(session, org, **kw):
+        seen.append(org.name)
+        return await real(session, org, **kw)
+
+    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.run_org_research", spy)
+
+    async def fake_research_org(session, client, org, *, settings, http=None, operator_paste=None):
+        return OrgResearch(org_id=org.id, summary_md=None, signals=[], insufficient_sources=True)
+
+    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.research_org", fake_research_org)
+    with _client(monkeypatch) as c:
+        r = c.post(f"/opportunities/{ids['opp_id']}/research")
+        assert r.status_code == 200
+        assert "fewer than 2 sources" in r.text
+    assert seen == ["Beacon Robotics"]

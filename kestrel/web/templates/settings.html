@@ -192,7 +192,7 @@
     <p class="muted" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
     <div class="grid3" data-testid="hosted-intro" style="margin:.6rem 0 1rem">
       <div class="panel" style="padding:.7rem .9rem">
-        <b>Tier 3 escalation</b>
+        <b>Deeper reads</b>
         <p class="muted" style="margin:.3rem 0 0">Per opportunity, always available. You press
         Escalate, read exactly what would be sent, and confirm. Nothing goes until you do.</p>
       </div>
@@ -276,7 +276,7 @@
     <h2 style="margin-top:1.2rem">Backup</h2>
     <p class="muted">Your data lives at <span class="mono">{{ data_dir }}</span>. Back up with
     <span class="mono">kestrel backup</span> (zips the database, config, and generated documents;
-    never your API keys).</p>
+    never your API keys or the LAN shared secret).</p>
     <form hx-post="/settings/restore" hx-target="#restore-result" hx-encoding="multipart/form-data">
       <div class="formgrid">
         <label for="backup_file">Restore from a backup .zip</label>
@@ -286,7 +286,8 @@
       <p class="muted">The current database is saved first as a dated
       <span class="mono">kestrel.db.pre-restore-&hellip;</span> file in the data folder, so a
       restore can always be undone. Kestrel pauses its work while it restores and uses the restored
-      data right away.</p>
+      data right away. This computer keeps its own LAN shared secret; after restoring on a
+      different computer, set up LAN pairing again.</p>
     </form>
     <div id="restore-result"></div>
   </section>

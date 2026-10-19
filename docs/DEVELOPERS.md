@@ -127,9 +127,13 @@ and the projected wall-clock for a 500-item run. Any figure computed from fewer 
 labeled insufficient rather than shown as if it were solid. Promote the winner to a tier from the
 Bench page in the app.
 
-The gold set ships as clearly-marked placeholder files (`evals/goldset.*.jsonl`); once you have
-labeled your own opportunities, regenerate it from your real judgments with
-`kestrel goldset regen --track employment`.
+The answer key is looked up in this order: your own `goldset.<track>.regenerated.jsonl` in the
+evals folder, then `goldset.<track>.jsonl` there (the checkout's placeholders), then the same
+placeholders shipped inside the app under `kestrel/resources/evals/`, so `kestrel-cli bench` also
+works in the installed app. The placeholders are clearly marked and invented; once you have labeled
+your own opportunities, regenerate the key from your real judgments with
+`kestrel goldset regen --track employment`. The bench output names the key it used ("your labels"
+or "the shipped examples").
 
 Each tier is also configured separately in Settings by base URL, model name, and API key. Point all
 three at local Ollama, or point tier 2 at a hosted inference service.
@@ -237,7 +241,7 @@ kestrel worker
 
 - **Local-first:** Inference runs on your Ollama instance by default. A hosted Tier 3 backend is optional and opt-in per opportunity.
 - **Resumable:** Every task is a queue row; kill the process at any moment and restart. No lost state.
-- **Offline:** All static assets (HTMX, Alpine, Tailwind CSS, tiktoken encoding) are vendored. No CDN required.
+- **Offline:** All static assets (HTMX, Alpine, hand-written stylesheet, tiktoken encoding) are vendored. No CDN required.
 - **Single machine, single user:** No accounts, no sync, no horizontal scaling. SQLite is the right database.
 - **Windows, macOS and Linux:** Driven by `pywebview` (Edge WebView2 on Windows, WebKit on macOS and Linux), tray via `pystray`, PDF rendering via Playwright.
 

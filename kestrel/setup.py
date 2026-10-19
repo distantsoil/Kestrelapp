@@ -72,7 +72,7 @@ HOSTED_ROUTES: tuple[tuple[str, str], ...] = (
 PICK_TIERS: tuple[str, ...] = ("tier1", "tier2", "docsel")
 _PICK_ROLES = {
     "tier1": "fast triage (also the trigger classifier)",
-    "tier2": "the deep evaluation (also tier3 work and Tier 3 escalation)",
+    "tier2": "the deep evaluation (also deeper reads)",
     "docsel": "document slot selection",
 }
 # A model priced above this per million prompt tokens is never a default pick; the operator can
@@ -98,7 +98,7 @@ HOSTED_DISCLOSURE = (
     "Tier 3 work sends {tier3}.\n"
     "Document selection sends {docsel}.\n"
     "Trigger classification sends {trigger}.\n"
-    "Tier 3 escalation is unchanged: it sends {frontier}.\n"
+    "Deeper reads are unchanged: they send {frontier}.\n"
     "The provider's own retention rules apply to everything sent; Kestrel cannot recall it.\n"
     "OpenRouter free models may train on your inputs unless the data collection option below is "
     "set to deny, and with deny on there may be no free model left to route to.\n"

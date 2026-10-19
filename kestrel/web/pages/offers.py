@@ -14,6 +14,7 @@ Three hard rules are enforced here, not merely in the modules underneath:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from html import escape
 from typing import Any
 
@@ -41,9 +42,22 @@ from kestrel.negotiation.compare import (
     compare_offers,
     offer_comp_from,
 )
-from kestrel.negotiation.scripts import draft_scripts
+from kestrel.negotiation.scripts import ScriptResult, draft_scripts
+from kestrel.privacy import EmployerMap
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.redact import confidential_once, redact_json, redact_name, redact_text
+
+# Human-readable labels for comparison matrix axes
+AXIS_LABELS = {
+    "total_first_year": "Total first-year comp",
+    "four_year_value": "Four-year value",
+    "level_scope": "Level and scope",
+    "reporting_line": "Reporting line",
+    "location_travel": "Location and travel",
+    "org_risk": "Company risk",
+    "trajectory_fit": "Fit with where you are headed",
+}
 
 router = APIRouter()
 
@@ -133,6 +147,18 @@ async def page(request: Request):
     ctx = await _offers_ctx(request)
     tmpl = "partials/offers_list.html" if request.headers.get("HX-Request") else "offers.html"
     return templates().TemplateResponse(request, tmpl, ctx)
+
+
+async def _pursuit_names(session: AsyncSession, pursuit_id: int) -> tuple[str | None, str | None]:
+    """(organization, role) for a pursuit, for the competing-offers line."""
+    pursuit = await session.get(Pursuit, pursuit_id)
+    opp = (
+        await session.get(Opportunity, pursuit.opportunity_id)
+        if pursuit and pursuit.opportunity_id
+        else None
+    )
+    org = await session.get(Org, opp.org_id) if opp and opp.org_id else None
+    return (org.name if org else (opp.org_name if opp else None)), (opp.title if opp else None)
 
 
 async def _pickable_pursuits(session: AsyncSession) -> list[dict]:
@@ -380,15 +406,54 @@ def _offer_form_error(request: Request, message: str) -> HTMLResponse:
     return HTMLResponse(f'<div class="warnbox" role="status">{escape(message)}</div>')
 
 
+_OFFER_TEXT_FIELDS = ("payment_terms", "exclusivity", "equity_description", "level_title")
+
+
+def _redact_scripts(result: ScriptResult, mapping: EmployerMap, *, enabled: bool) -> ScriptResult:
+    """Every model-written string the scripts partial renders, with the current employer shown as
+    the operator's "Show it as" text. The walk-away is the operator's own figure, left unchanged."""
+    if not enabled or not mapping:
+        return result
+    return replace(
+        result,
+        situation_read=redact_text(result.situation_read, mapping, enabled=True) or "",
+        scripts=redact_json(result.scripts, mapping, enabled=True),
+        leverage_inventory=redact_json(result.leverage_inventory, mapping, enabled=True),
+        risks=redact_json(result.risks, mapping, enabled=True),
+        unsupported_scenarios=redact_json(result.unsupported_scenarios, mapping, enabled=True),
+    )
+
+
 async def _offers_ctx(request: Request, message: str | None = None) -> dict:
     """The list's context: open offers with their benchmarks, the comparison matrix when there is
     more than one, and the pickers. Built in one place so `page` and every mutation render from
     the same stored state and can never disagree."""
     async with sessionmaker()() as s:
         rows = await _open_offers(s)
+        conf_on, emp_map = await confidential_once(s)
         for row in rows:
             row["benchmark"] = await benchmark_offer(s, row["pursuit"].id)
+            for c in row["benchmark"].competing if row["benchmark"] else []:
+                c["org_name"], c["title"] = await _pursuit_names(s, c["pursuit_id"])
+        # Confidential mode: the current employer is shown as the operator's "Show it as" text
+        # in every name on this page, the competing-offer lines included.
+        for row in rows:
+            row["org_name"] = redact_name(row["org_name"], emp_map, enabled=conf_on)
+            if row["opp"] is not None:
+                row["title_shown"] = redact_text(row["opp"].title, emp_map, enabled=conf_on)
+            # The operator's typed terms are free text and can name the employer too.
+            row["terms"] = {
+                f: redact_text(getattr(row["offer"], f, None), emp_map, enabled=conf_on)
+                for f in _OFFER_TEXT_FIELDS
+            }
+            for c in row["benchmark"].competing if row["benchmark"] else []:
+                c["org_name"] = redact_name(c["org_name"], emp_map, enabled=conf_on)
+                c["title"] = redact_text(c["title"], emp_map, enabled=conf_on)
         weights = await _weights(s)
+        pickable = await _pickable_pursuits(s)
+        for p in pickable:
+            p["org_name"] = redact_name(p["org_name"], emp_map, enabled=conf_on)
+            p["title"] = redact_text(p["title"], emp_map, enabled=conf_on)
         matrix: ComparisonMatrix | None = None
         if len(rows) > 1:
             comps = [
@@ -397,7 +462,7 @@ async def _offers_ctx(request: Request, message: str | None = None) -> dict:
                     offer_id=row["offer"].id,
                     label=(
                         f"{row['org_name'] or 'Unknown org'} · "
-                        f"{row['opp'].title if row['opp'] else 'Untitled'}"
+                        f"{row.get('title_shown') or 'Untitled'}"
                     ),
                     # The operator's own ratings for the qualitative axes, stored with the offer.
                     # Without them every qualitative axis reads None and the matrix ranks offers
@@ -413,9 +478,10 @@ async def _offers_ctx(request: Request, message: str | None = None) -> dict:
             "query": dict(request.query_params),
             "offers": rows,
             "matrix": matrix,
-            "pursuits": await _pickable_pursuits(s),
+            "pursuits": pickable,
             "axes": AXES,
             "qual_axes": QUAL_AXES,
+            "axis_labels": AXIS_LABELS,
             "offer_statuses": _OFFER_STATUSES,
             "weights": weights,
             "message": message,
@@ -447,6 +513,11 @@ async def scripts(request: Request, pursuit_id: int):
                 client = LLMClient(await load_settings_with_db(s), http=http)
                 result = await draft_scripts(s, client, pursuit_id, walk_away=walk_away)
                 await s.commit()  # persists a quarantine row if the model call failed validation
+                if result is not None:
+                    # Confidential mode: model prose names the current employer like anything
+                    # else on this page does, so it is redacted the same way.
+                    conf_on, emp_map = await confidential_once(s)
+                    result = _redact_scripts(result, emp_map, enabled=conf_on)
         if result is None:
             ctx = {
                 "error": (

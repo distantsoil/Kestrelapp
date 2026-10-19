@@ -172,6 +172,27 @@ def open_browser_when_healthy(port: int, url: str, timeout: float = 30.0) -> thr
     return thread
 
 
+def _configure_serve_logging(log_level: str) -> None:
+    """Configure file logging for `kestrel serve` (same as desktop) plus a single console handler.
+
+    The console handler is marked so we can detect and avoid adding duplicates on repeated calls.
+    """
+    import logging
+
+    from kestrel.logging_setup import configure_logging
+
+    configure_logging(log_level)
+    root = logging.getLogger()
+    # Check if our marked console handler is already attached
+    for h in root.handlers:
+        if getattr(h, "_kestrel_serve_console", False):
+            return
+    console = logging.StreamHandler()
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(threadName)s %(message)s"))
+    console._kestrel_serve_console = True
+    root.addHandler(console)
+
+
 def serve(
     *,
     worker: bool = True,
@@ -184,6 +205,7 @@ def serve(
     bound URL; `open_browser` None means should_open_browser()."""
     from kestrel.db import migrate
 
+    _configure_serve_logging(log_level)
     migrate.run_migrations()
     sock, port = bind_free_port()
     write_runtime(port, os.getpid())

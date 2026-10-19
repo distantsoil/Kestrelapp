@@ -24,9 +24,9 @@ second track for consulting and contract work exists but is optional and off by 
 
 The public promises (kestrelapp.co) are binding on the code: free and "you are not the product";
 never applies, emails or messages anyone; asks before anything goes to an online model; source
-public under PolyForm Noncommercial 1.0.0; built with Claude, Qwen and NVIDIA Nemotron. Do not
-assume the original operator's hardware, seniority, location or field anywhere in shipped
-defaults, copy or examples.
+public under PolyForm Noncommercial 1.0.0; built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA
+Nemotron, Space Bunny and LongCat. Do not assume the original operator's hardware, seniority,
+location or field anywhere in shipped defaults, copy or examples.
 
 ## Source of truth
 
@@ -65,7 +65,9 @@ mark the phase `BLOCKED`, and continue with work that does not depend on it.
 **Tests alongside code, never after.**
 
 **Never call a live job board, ATS, or SEC endpoint from a test.** Fixtures live in
-`tests/fixtures/`, captured from real payloads with identifying data replaced.
+`tests/fixtures/`, captured from real payloads with identifying data replaced. Some
+signal-source tests build their payloads inline in the test instead; they still never touch the
+network.
 
 **No scope creep.** This specification is complete; there is no v2 backlog. If something is not
 in a spec file, it is deferred, not put into the code.
@@ -246,8 +248,11 @@ These were verified against live documentation and live APIs. Do not rediscover 
   than merely detectable.
 - **`simpleeval` cannot evaluate generator expressions** (`GeneratorExp`), and supports
   comprehensions only under `EvalWithCompoundTypes`. Every Tier 0 rule therefore uses a
-  whitelisted null-safe helper function. Reintroducing `any(x for y in z)` into `filters.yml`
-  makes the shipped config fail to load on first run. There is a test guarding this; keep it.
+  whitelisted null-safe helper function. An AST guard in `kestrel/rules/helpers.py`
+  (`_assert_no_comprehensions`) rejects generator expressions, comprehensions and lambdas at
+  config load; `simpleeval` is not what stops them. That guard is load-bearing: do not remove
+  or loosen it. Reintroducing `any(x for y in z)` into `filters.yml` makes the shipped config
+  fail to load on first run. There is a test guarding this; keep it.
 - **There is no geocoder in this stack and there will not be one.** `geo_allows` matches
   municipality names and operator-maintained aliases, never distance.
 - **`webview.start()` blocks the main thread and runs once per process.** Close-to-tray is the
@@ -270,7 +275,7 @@ These were verified against live documentation and live APIs. Do not rediscover 
   engine, never `sqlite+aiosqlite://`.
 - **Model swap thrash.** With 16GB VRAM, alternating tier 1 and tier 2 models forces constant
   unload and reload. The worker **drains all pending tasks for one tier before starting
-  another** unless the models are identical. Set `OLLAMA_KEEP_ALIVE` generously.
+  another**, always, with no exception when two tiers share a model. Set `OLLAMA_KEEP_ALIVE` generously.
 - **`OLLAMA_NUM_PARALLEL`** must be at least the max configured concurrency or requests
   serialize regardless of how many are sent.
 - **Lever's job title field is `text`, not `title`.** Greenhouse's `location` is an object.

@@ -68,6 +68,6 @@ jobs:
           Remove-Item -Recurse -Force dist
 
       - name: pytest
-        # Playwright-dependent and Ollama-dependent tests skip themselves when the runner has
-        # neither; nothing here calls a live job board, ATS, or SEC endpoint (CLAUDE.md).
+        # Playwright-dependent tests skip themselves when the runner has
+        # no browser; nothing here calls a live job board, ATS, or SEC endpoint (CLAUDE.md).
         run: uv run pytest -q

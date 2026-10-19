@@ -28,6 +28,8 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -103,18 +105,54 @@ class GoldEntry(BaseModel):
     placeholder: bool = False
 
 
-def load_goldset(track: str, *, gold_dir: Path | str | None = None) -> list[GoldEntry]:
-    """Load evals/goldset.<track>.jsonl (one JSON object per line). `gold_dir` overrides the
-    default location (kestrel.paths.evals_dir()) for tests. Raises GoldSetMissing if the file does
-    not exist -- the caller must catch this, never let it crash a bench run -- and GoldSetError on
-    a line that is not valid JSON or does not carry the required gold-entry fields."""
+def _packaged_goldset(track: str) -> Traversable | None:
+    """The placeholder gold set shipped as package data (kestrel/resources/evals), or None."""
+    res = resources.files("kestrel").joinpath("resources", "evals", f"goldset.{track}.jsonl")
+    return res if res.is_file() else None
+
+
+def goldset_source(
+    track: str, *, gold_dir: Path | str | None = None
+) -> tuple[str, Path | Traversable]:
+    """Pick the answer key for TRACK. Returns (kind, location); kind is "regenerated" (the
+    operator's own labels), "placeholder" (the invented examples in evals_dir) or "packaged"
+    (the same examples shipped inside the app). Order: regenerated, placeholder, packaged. The
+    packaged fallback applies only when `gold_dir` is not given (tests pass it explicitly).
+    Raises GoldSetMissing when none exists."""
     directory = Path(gold_dir) if gold_dir is not None else paths.evals_dir()
-    path = directory / f"goldset.{track}.jsonl"
-    if not path.is_file():
-        raise GoldSetMissing(track, path)
+    regenerated = directory / f"goldset.{track}.regenerated.jsonl"
+    if regenerated.is_file():
+        return "regenerated", regenerated
+    placeholder = directory / f"goldset.{track}.jsonl"
+    if placeholder.is_file():
+        return "placeholder", placeholder
+    if gold_dir is None:
+        packaged = _packaged_goldset(track)
+        if packaged is not None:
+            return "packaged", packaged
+    raise GoldSetMissing(track, placeholder)
+
+
+def goldset_label(track: str, *, gold_dir: Path | str | None = None) -> str:
+    """Plain-words name of the answer key in use: "your labels" or "the shipped examples"."""
+    try:
+        kind, _ = goldset_source(track, gold_dir=gold_dir)
+    except GoldSetMissing:
+        return "no answer key"
+    return "your labels" if kind == "regenerated" else "the shipped examples"
+
+
+def load_goldset(track: str, *, gold_dir: Path | str | None = None) -> list[GoldEntry]:
+    """Load the gold set for TRACK (one JSON object per line), looking in order for
+    goldset.<track>.regenerated.jsonl then goldset.<track>.jsonl in kestrel.paths.evals_dir(), then
+    the placeholder copy shipped as package data. `gold_dir` replaces the evals_dir lookup for
+    tests (no packaged fallback). Raises GoldSetMissing if none exists -- the caller must catch
+    this, never let it crash a bench run -- and GoldSetError on a line that is not valid JSON or
+    does not carry the required gold-entry fields."""
+    _kind, path = goldset_source(track, gold_dir=gold_dir)
 
     entries: list[GoldEntry] = []
-    with path.open(encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8") as f:
         for lineno, raw_line in enumerate(f, start=1):
             line = raw_line.strip()
             if not line:
@@ -419,8 +457,9 @@ async def _run_item(
     verdict_match = abs_err = None
     if result.ok and result.value is not None:
         value = result.value
+        dim_fields = type(value.dimensions).model_fields
         dim_scores = {
-            name: getattr(value.dimensions, name).score for name in value.dimensions.model_fields
+            name: getattr(value.dimensions, name).score for name in dim_fields
         }
         blockers = [{"kind": b.kind, "detail": b.detail} for b in value.blockers]
         work_auth = getattr(value, "work_auth_signal", None)

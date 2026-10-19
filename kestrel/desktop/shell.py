@@ -6,7 +6,8 @@ Startup order (each a numbered trap from the spec / a FINDINGS correction):
      On macOS and Linux the same contract is an exclusive flock on <data_home>/kestrel.lock.
   2  resolve paths + seed config + configure logging.
   3  programmatic Alembic on a sync sqlite:// URL (migrate.run_migrations).
-  4  uvicorn on an OS-assigned free port, off the main thread, no signal handlers (F5).
+  4  uvicorn on a deterministic port ladder (8765..8774), falling back
+   to OS-assigned; off the main thread, no signal handlers (F5).
   5  worker + scheduler from the FastAPI lifespan, on uvicorn's loop (build_app).
   6  wait for /health, then write runtime.json.
   7  preflight (doctor); the tray thread with live tooltip + full menu + icon states.
@@ -24,6 +25,7 @@ kept in the foreground until Ctrl+C."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -54,8 +56,36 @@ _toast_shown = False
 _port = 0
 
 ERROR_ALREADY_EXISTS = 183
-MUTEX_NAME = "Local\\Kestrel"  # Local\\ not Global\\ (Global needs a privilege, blocks a 2nd user)
+MUTEX_NAME = "Local\\Kestrel"  # Local\ not Global\ (Global needs a privilege, blocks a 2nd user)
 LOCK_FILENAME = "kestrel.lock"  # macOS/Linux: flock'd under data_home(), the same contract
+
+
+def _normalized(path: Path) -> str:
+    """One spelling per real folder: resolve() follows symlinks, junctions and 8.3 short names
+    (strict=False, so a folder not yet created still works), then normcase folds case on Windows.
+    Mutex names are case-sensitive, so two cases of one Windows path must not split."""
+    return os.path.normcase(str(Path(path).resolve(strict=False)))
+
+
+def _mutex_name() -> str:
+    """Return the Windows mutex name for the current data home.
+
+    The default data home (no KESTREL_DATA_HOME, or KESTREL_DATA_HOME naming the default folder
+    under any spelling) uses exactly MUTEX_NAME, the installer's AppMutex. Any other folder gets
+    Local\\Kestrel-<8 hex> from a hash of its normalized real path, so two folders never share a
+    lock and two spellings of one folder never get two.
+    """
+    current = _normalized(paths.data_home())
+    if current == _normalized(paths.default_data_home()):
+        return MUTEX_NAME
+    return f"Local\\Kestrel-{hashlib.sha256(current.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _lock_file_name() -> str:
+    """macOS/Linux: always LOCK_FILENAME. The file lives inside the data home, so it is already
+    per folder, and flock on the same inode holds across spellings of the path. A hashed name
+    would also let an older build (which uses kestrel.lock) and this one both get a lock."""
+    return LOCK_FILENAME
 
 
 # --------------------------------------------------------------------------- mutex (trap 1)
@@ -79,12 +109,12 @@ def _acquire_windows_mutex() -> bool:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.restype = wintypes.HANDLE
     kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-    _mutex_handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+    _mutex_handle = kernel32.CreateMutexW(None, False, _mutex_name())
     return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
 
 
 def lock_file_path() -> Path:
-    return paths.data_home() / LOCK_FILENAME
+    return paths.data_home() / _lock_file_name()
 
 
 def _acquire_lock_file() -> bool:

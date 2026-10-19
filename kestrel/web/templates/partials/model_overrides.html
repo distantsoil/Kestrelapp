@@ -9,7 +9,7 @@
   {% if not ov_backend %}
     <p class="muted">No hosted provider is connected, so there is nothing to override yet. Connect one under <a href="/settings#hosted">Settings &gt; Hosted (BYOK)</a>; it picks a default model per tier, which you can then override here.</p>
   {% else %}
-  <p class="muted">Connect picked a default model for each tier from {{ ov_label }}. Override any tier with a model of your own; a tier you leave alone keeps its default, and connecting again keeps every override. Tier 3 escalation stays opt-in per opportunity whatever model it uses.</p>
+  <p class="muted">Connect picked a default model for each tier from {{ ov_label }}. Override any tier with a model of your own; a tier you leave alone keeps its default, and connecting again keeps every override. Deeper reads stay opt-in per opportunity whatever model it uses.</p>
   {% if ov_error %}
     <div class="warnbox" data-testid="override-error" style="margin:.4rem 0">{{ ov_error }}
       <button class="btn small" type="button" hx-get="/models/hosted/overrides?open=1&refresh=1" hx-target="#hosted-overrides" hx-swap="outerHTML" data-busy-text="Fetching the model list again.">Try again</button></div>
@@ -19,7 +19,7 @@
         hx-disabled-elt="find button[type=submit]" data-busy-text="Saving your overrides."
         x-data="{ freeOnly: {{ 'true' if ov_free_default else 'false' }} }" autocomplete="off">
     <label class="free-toggle"><input type="checkbox" x-model="freeOnly" data-testid="free-only" {% if ov_free_default %}checked{% endif %}> Free only</label>
-    <span class="muted">{{ ov_n_free }} free of {{ ov_models|length }} models. Each says how it returns JSON: structured (a strict schema), JSON mode, or no JSON guarantee; Kestrel checks every reply either way and keeps any it cannot use for review. Clear the box to show paid models too, for example a paid frontier with free Tier 1 and Tier 2.</span>
+    <span class="muted">{{ ov_n_free }} free of {{ ov_models|length }} models. Each says how it returns JSON: structured (a strict schema), JSON mode, or no JSON guarantee; Kestrel checks every reply either way and keeps any it cannot use for review. Clear the box to show paid models too, for example a paid model for deeper reads with free quick screen and full review.</span>
     <table class="data override-table" style="margin-top:.5rem">
       <thead><tr><th>Tier</th><th>Now</th><th>Pick a model</th><th></th></tr></thead>
       <tbody>

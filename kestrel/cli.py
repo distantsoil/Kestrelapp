@@ -81,6 +81,7 @@ def _app_is_running() -> bool:
     from kestrel.desktop import shell
 
     try:
+        # Use the same lock name derivation as the shell so we check the correct mutex/file
         free = shell._acquire_windows_mutex() if sys.platform.startswith("win") \
             else shell._acquire_lock_file()
     except OSError:
@@ -459,7 +460,7 @@ async def _escalate(opportunity_id: int, *, confirm: bool, show_payload: bool) -
         await reset_engine()
         raise typer.Exit(code=2)
 
-    typer.echo("Tier 3 escalation PREVIEW (nothing has been transmitted):")
+    typer.echo("Deeper read PREVIEW (nothing has been transmitted):")
     typer.echo(f"  destination : {preview.provider}  {preview.base_url}")
     typer.echo(f"  model       : {preview.model}")
     typer.echo(f"  confidential: {'ON (employer redacted)' if preview.confidential else 'off'}")
@@ -615,7 +616,7 @@ def provider_use(
             await s.commit()
 
     asyncio.run(_go())
-    typer.echo(f"Tier 3 escalation now uses {backend} / {model}")
+    typer.echo(f"Deeper reads now use {backend} / {model}")
 
 
 app.add_typer(doc_app, name="doc")
@@ -721,6 +722,8 @@ def doc_import(
 
 
 async def _doc_import(file: str, accept: bool, track: str, doc_kind: str) -> None:
+    from pathlib import Path
+
     import httpx
 
     from kestrel.db import migrate
@@ -728,7 +731,7 @@ async def _doc_import(file: str, accept: bool, track: str, doc_kind: str) -> Non
     from kestrel.docs.imports import accept_import, propose_import
     from kestrel.llm.client import LLMClient
 
-    markdown = open(file, encoding="utf-8").read()
+    markdown = Path(file).read_text(encoding="utf-8")
     migrate.run_migrations()
     settings = await _db_settings()  # setting-table rows (a hosted-only install) over YAML
     sm = get_sessionmaker()
@@ -762,9 +765,91 @@ async def _doc_import(file: str, accept: bool, track: str, doc_kind: str) -> Non
 
 
 @app.command()
-def research(org: str) -> None:
-    """Run company research."""
-    _todo("research", "Phase 9")
+def research(
+    org: str = typer.Argument(..., help="Name of an organization already in Kestrel."),
+    org_id: int = typer.Option(None, "--id", help="Pick one org by id when the name is ambiguous."),
+) -> None:
+    """Run company research on an existing org, the same research the app runs. Reads public
+    pages only; nothing is sent anywhere."""
+    import asyncio
+
+    raise typer.Exit(asyncio.run(_research(org, org_id)))
+
+
+async def _research(name: str, org_id: int | None) -> int:
+    from sqlalchemy import func, select
+
+    from kestrel.db import migrate
+    from kestrel.db.engine import get_sessionmaker, reset_engine
+    from kestrel.db.models import Org
+    from kestrel.services.org_research import run_org_research
+
+    migrate.run_migrations()
+    from kestrel.ingest.orgs import normalized_name
+
+    needle = normalized_name(name) or name.strip().lower()
+    sm = get_sessionmaker()
+    try:
+        async with sm() as s:
+            if org_id is not None:
+                picked = await s.get(Org, org_id)
+                matches = [picked] if picked is not None else []
+            else:
+                col = func.lower(Org.normalized_name)
+                matches = list(
+                    (await s.execute(select(Org).where(col == needle).order_by(Org.id)))
+                    .scalars()
+                    .all()
+                )
+                if not matches and needle:
+                    like = "%" + (
+                        needle.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+                    ) + "%"
+                    matches = list(
+                        (
+                            await s.execute(
+                                select(Org).where(col.like(like, escape="\\")).order_by(Org.id)
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+            if not matches:
+                typer.echo(f"No organization matches {name!r}. Nothing was created.")
+                return 1
+            if len(matches) > 1:
+                typer.echo(f"{len(matches)} organizations match {name!r}; rerun with --id <n>:")
+                for o in matches:
+                    typer.echo(f"  {o.id}  {o.name}")
+                return 1
+            org = matches[0]
+            record = await run_org_research(s, org)
+            typer.echo(f"Research for {org.name} (id {org.id})")
+            if record.insufficient_sources:
+                typer.echo(
+                    "INSUFFICIENT: fewer than two sources were available. This is not a summary."
+                )
+            else:
+                typer.echo("")
+                typer.echo(record.summary_md or "(no summary)")
+            for sig in record.signals or []:
+                if isinstance(sig, dict):
+                    cat = sig.get("category") or "signal"
+                    stmt = sig.get("statement") or ""
+                    src = sig.get("url") or sig.get("source_index")
+                    tail = f" (source: {src})" if src is not None else ""
+                    typer.echo(f"- [{cat}] {stmt}{tail}")
+                else:
+                    typer.echo(f"- {sig}")
+            if record.unknowns:
+                typer.echo("Unknowns:")
+                for u in record.unknowns:
+                    typer.echo(f"- {u}")
+            if record.angle:
+                typer.echo(f"Angle: {record.angle}")
+            return 0
+    finally:
+        await reset_engine()
 
 
 @app.command()
@@ -911,22 +996,30 @@ def _warn_unfit_models(models: list[str], settings, client) -> None:
 
 
 def _goldset_is_placeholder(track: str) -> bool:
-    """True if the gold set is still the shipped placeholder rather than the operator's own labels.
+    """True if the answer key in use is the shipped examples rather than the operator's labels.
 
     Agreement and MAE against invented items measure nothing about this operator's judgment. The
     harness must say so rather than print a rate that reads like a result.
     """
-    from kestrel import paths
+    from kestrel.bench.harness import goldset_source
 
-    path = paths.evals_dir() / f"goldset.{track}.jsonl"
-    regenerated = paths.evals_dir() / f"goldset.{track}.regenerated.jsonl"
-    return path.exists() and not regenerated.exists()
+    try:
+        kind, _ = goldset_source(track)
+    except FileNotFoundError:
+        return False
+    return kind != "regenerated"
 
 
 async def _bench(models_csv: str, prompt_version_csv: str | None) -> None:
     import httpx
 
-    from kestrel.bench.harness import BenchArgError, GoldSetError, render_table, run_bench
+    from kestrel.bench.harness import (
+        BenchArgError,
+        GoldSetError,
+        goldset_label,
+        render_table,
+        run_bench,
+    )
     from kestrel.db import migrate
     from kestrel.db.engine import reset_engine
     from kestrel.llm.client import LLMClient
@@ -957,6 +1050,8 @@ async def _bench(models_csv: str, prompt_version_csv: str | None) -> None:
     for track, reason in report.skipped_tracks.items():
         typer.echo(f"[{track}] {reason}")
     if report.variants:
+        for track in sorted({v.track for v in report.variants}):
+            typer.echo(f"[{track}] answer key: {goldset_label(track)}")
         typer.echo(render_table(report.variants))
         placeholder = [t for t in {v.track for v in report.variants} if _goldset_is_placeholder(t)]
         if placeholder:
@@ -982,8 +1077,8 @@ def goldset_regen(
     track: str = typer.Option(..., help="employment | consulting"),
 ) -> None:
     """Turn the operator's accumulated labels for TRACK into
-    evals/goldset.<track>.regenerated.jsonl. Never overwrites the shipped
-    evals/goldset.<track>.jsonl placeholder."""
+    goldset.<track>.regenerated.jsonl in the evals folder, which `kestrel bench` then uses in
+    place of the shipped examples. Never overwrites the goldset.<track>.jsonl placeholder."""
     import asyncio
 
     asyncio.run(_goldset_regen(track))
@@ -1086,8 +1181,9 @@ async def _export(fmt: str, track: str | None, out: str | None) -> None:
 def backup(
     out: str = typer.Option(None, help="Directory for the backup zip (default: data dir)."),
 ) -> None:
-    """Timestamped zip of the database (with its WAL), the YAML config, and the generated
-    documents/prep packs. Never includes .env, so secrets never leave the machine in a backup."""
+    """Timestamped zip of a consistent copy of the database, the YAML config, and the generated
+    documents/prep packs. Never includes .env or the LAN shared key, so secrets never leave the
+    machine in a backup."""
     from kestrel.services.backup import create_backup
 
     archive = create_backup(out)

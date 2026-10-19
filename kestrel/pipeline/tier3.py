@@ -506,7 +506,8 @@ async def _record_escalation(
 ) -> EscalationResult:
     """Everything after a completed send: scoring, the Tier 3 Evaluation, the pursuit's stage."""
     value = result.value
-    dim_scores = {n: getattr(value.dimensions, n).score for n in value.dimensions.model_fields}
+    dim_fields = type(value.dimensions).model_fields
+    dim_scores = {n: getattr(value.dimensions, n).score for n in dim_fields}
     blockers = [{"kind": b.kind, "detail": b.detail} for b in value.blockers]
     post = scoring.post_process(
         track=opp.track,

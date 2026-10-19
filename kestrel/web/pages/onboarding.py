@@ -356,6 +356,7 @@ async def _ctx(request: Request, key: str | None = None, **extra) -> dict[str, A
             "consulting_plain": CONSULTING_PLAIN,
             "state": state,
             "is_first": keys.index(key) == 0,
+            "onboarding_complete": state.completed,
         }
         if key == "models":
             ready, line = models_status(st, settings, extra.get("connect_ok"))

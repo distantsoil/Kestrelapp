@@ -391,7 +391,7 @@ def test_each_chip_maps_to_its_query_parameter():
         assert re.search(r'data-count="1"[^>]*data-chip="quarantined"', base)
         assert 'data-chip="clear"' not in base  # nothing active: nothing to clear
         for label in (">My shortlist<", ">Your call<", ">Scored<", ">New today<",
-                      ">Failed scoring (parked)<", ">Hidden<"):
+                      ">Couldn&#39;t score<", ">Hidden<"):
             assert label in base, label
 
         shortlisted = _get(c, "/opportunities?shortlisted=1")

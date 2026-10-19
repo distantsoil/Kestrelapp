@@ -19,6 +19,7 @@ from kestrel.bench.harness import (
     GoldSetError,
     GoldSetMissing,
     build_variants,
+    goldset_label,
     load_goldset,
     render_table,
     run_bench,
@@ -432,3 +433,75 @@ async def test_render_table_flags_insufficient_sample_and_lists_models(gold_dir:
 
 def test_render_table_handles_no_variants():
     assert render_table([]) == "(no bench variants ran)"
+
+
+# ============================================================================= answer-key lookup
+def _row(title: str) -> dict:
+    return {
+        "track": "employment", "title": title, "org": "Acme", "description_md": "d",
+        "gold_verdict": "keep", "gold_score": 80,
+    }
+
+
+def _point_evals_dir(monkeypatch, directory: Path) -> None:
+    from kestrel import paths
+
+    monkeypatch.setattr(paths, "evals_dir", lambda: directory)
+
+
+def test_regenerated_goldset_wins_over_the_placeholder(tmp_path, monkeypatch):
+    _point_evals_dir(monkeypatch, tmp_path)
+    _write_goldset(tmp_path, "employment", [_row("placeholder")])
+    (tmp_path / "goldset.employment.regenerated.jsonl").write_text(
+        json.dumps(_row("mine")) + "\n", encoding="utf-8"
+    )
+    assert [e.title for e in load_goldset("employment")] == ["mine"]
+    assert goldset_label("employment") == "your labels"
+
+
+def test_placeholder_in_evals_dir_is_used_when_nothing_regenerated(tmp_path, monkeypatch):
+    _point_evals_dir(monkeypatch, tmp_path)
+    _write_goldset(tmp_path, "employment", [_row("placeholder")])
+    assert [e.title for e in load_goldset("employment")] == ["placeholder"]
+    assert goldset_label("employment") == "the shipped examples"
+
+
+def test_packaged_goldset_is_used_when_evals_dir_is_empty(tmp_path, monkeypatch):
+    """A frozen install: the data folder holds no gold set, so the copy inside the app is read."""
+    _point_evals_dir(monkeypatch, tmp_path)
+    for track in ("employment", "consulting"):
+        entries = load_goldset(track)
+        assert entries and all(e.placeholder for e in entries)
+    assert goldset_label("employment") == "the shipped examples"
+
+
+def test_gold_dir_override_has_no_packaged_fallback(tmp_path):
+    with pytest.raises(GoldSetMissing):
+        load_goldset("employment", gold_dir=tmp_path)
+
+
+def test_packaged_goldsets_are_identical_to_the_repo_root_files():
+    from importlib import resources
+
+    root = Path(__file__).resolve().parent.parent / "evals"
+    for track in ("employment", "consulting"):
+        packaged = resources.files("kestrel").joinpath(
+            "resources", "evals", f"goldset.{track}.jsonl"
+        )
+        assert packaged.read_bytes() == (root / f"goldset.{track}.jsonl").read_bytes()
+
+
+def test_bench_output_names_the_answer_key(tmp_path, monkeypatch):
+    """`kestrel bench` prints which answer key it used, and only labels it a placeholder when it
+    is not the operator's own."""
+    import inspect
+
+    from kestrel import cli
+
+    _point_evals_dir(monkeypatch, tmp_path)
+    assert cli._goldset_is_placeholder("employment") is True  # packaged examples
+    (tmp_path / "goldset.employment.regenerated.jsonl").write_text(
+        json.dumps(_row("mine")) + "\n", encoding="utf-8"
+    )
+    assert cli._goldset_is_placeholder("employment") is False
+    assert "answer key: {goldset_label(track)}" in inspect.getsource(cli._bench)

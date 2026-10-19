@@ -18,7 +18,6 @@ def test_defaults_load_from_packaged_yaml():
     assert s.llm.backends["local"].requires_num_ctx_modelfile is True
     assert s.thresholds.apply == 4.0
     assert s.max_posting_age_days == 45
-    assert s.scheduler.enabled is False
     assert s.mcp.port == 9110
 
 
@@ -38,3 +37,31 @@ def test_reread_reflects_change(monkeypatch):
     assert get_settings().max_posting_age_days == 45
     monkeypatch.setenv("KESTREL_MAX_POSTING_AGE_DAYS", "99")
     assert get_settings().max_posting_age_days == 99  # no restart needed
+
+
+def test_old_settings_yaml_with_scheduler_enabled_false_loads_without_error(monkeypatch, tmp_path):
+    """An old settings.yml that still contains `scheduler: enabled: false` loads without error.
+    The scheduler config was removed; extra keys in YAML are ignored by pydantic extra="ignore"."""
+    old_yaml = tmp_path / "settings.yml"
+    old_yaml.write_text("""
+scheduler:
+  enabled: false
+llm:
+  backends:
+    local:
+      base_url: "http://127.0.0.1:11434/v1"
+      api_key: "ollama"
+      json_mode: json_schema
+      thinking_control: reasoning_effort
+      requires_num_ctx_modelfile: true
+  tiers:
+    embed:   { backend: local, model: "nomic-embed-text" }
+    tier1:   { backend: local, model: "kestrel-tier1", temperature: 0.0, max_tokens: 300 }
+    tier2:   { backend: local, model: "kestrel-tier2", temperature: 0.2, max_tokens: 4000 }
+    tier3:   { backend: local, model: "kestrel-tier3", temperature: 0.3, max_tokens: 6000 }
+    docsel:  { backend: local, model: "kestrel-docsel", temperature: 0.0, max_tokens: 1500 }
+""", encoding="utf-8")
+    monkeypatch.setattr("kestrel.config.paths.config_file", lambda _: old_yaml)
+    # Should not raise
+    s = load_settings()
+    assert s.llm.tiers["tier2"].model == "kestrel-tier2"

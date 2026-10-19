@@ -130,6 +130,9 @@ hosted sends. Every rate carries its n, and anything under five labeled outcomes
 "insufficient (n=...)" rather than a number. Use it with `kestrel bench` (the gold-set harness)
 when you are choosing between a local profile and a hosted model: bench says which model agrees
 with the reference answers; the Models page says which one agrees with you.
+Bench uses your own labels once you have run `kestrel goldset regen` (the file
+`goldset.<track>.regenerated.jsonl` in the evals folder); before that it uses the shipped example
+answers, which are invented, and it says which of the two it used.
 
 ## The learning loop
 
@@ -247,6 +250,7 @@ runs, the MCP port) are in [WEBAPP.md](WEBAPP.md).
 - Confidential mode redacts your current employer everywhere in generated output and list views if enabled.
 - All inference is local unless you explicitly opt in to a hosted Tier 3 backend for a specific opportunity.
 - Backups never include `.env` secrets; they contain only the database and YAML config.
+- The LAN shared secret is removed from the database copy in a backup, and a restore keeps the secret the computer already has. On a different computer, set up LAN pairing again.
 - The Backup page in the app downloads that same archive and exports or imports `profile.yml` on its own; nothing in it ever carries an API key.
 
 ## Support and diagnostics

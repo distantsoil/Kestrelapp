@@ -11,7 +11,7 @@
     <form hx-post="/settings/hosted/switch" hx-target="#hosted-panel" hx-swap="outerHTML">
       <input type="hidden" name="mode" value="local">
       <button class="btn{% if mode != 'local' %} ghost{% endif %}" type="submit" style="width:100%; padding:.8rem; font-size:1.05rem" {% if mode == 'local' %}aria-pressed="true"{% endif %}>Local models{% if mode == 'local' %} (active){% endif %}</button>
-      <p class="muted" style="margin:.4rem 0 0">Profile <span class="mono">{{ local_profile or 'not chosen yet' }}</span>{% if local_models %}: {% for t, m in local_models.items() %}{{ t }} <span class="mono">{{ local_backends.get(t, 'local') }}/{{ m }}</span>{% if local_backends.get(t, 'local') != 'local' %} <span class="warnbox" style="padding:0 .3rem">hosted backend; switching to Local moves it back</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}. Nothing leaves this machine except a Tier 3 escalation you confirm.</p>
+      <p class="muted" style="margin:.4rem 0 0">Profile <span class="mono">{{ local_profile or 'not chosen yet' }}</span>{% if local_models %}: {% for t, m in local_models.items() %}{{ t }} <span class="mono">{{ local_backends.get(t, 'local') }}/{{ m }}</span>{% if local_backends.get(t, 'local') != 'local' %} <span class="warnbox" style="padding:0 .3rem">hosted backend; switching to Local moves it back</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}. Nothing leaves this machine except a deeper read you confirm.</p>
     </form>
     <form hx-post="/settings/hosted/switch" hx-target="#hosted-panel" hx-swap="outerHTML">
       <input type="hidden" name="mode" value="hosted">
@@ -82,7 +82,7 @@
   <h3 style="margin-top:1rem">Hosted mode disclosure</h3>
   <div class="panel" style="padding:.8rem 1rem">
     <p style="margin-top:0"><b>Status: {% if hosted_mode.active %}acknowledged {{ hosted_mode.acknowledged_at }}{% elif hosted_mode.acknowledged_at and not hosted_mode.acknowledgement_current %}the disclosure below changed since you accepted it on {{ hosted_mode.acknowledged_at }}, so hosted sends are paused until you read it and accept it again{% elif hosted_mode.enabled %}set on but not acknowledged, so off{% else %}not acknowledged{% endif %}.</b>
-    {% if hosted_mode.active %}Hosted sends happen only on a hosted run (the switch above, a Run now choice, or the CLI flag).{% else %}Acknowledging the disclosure is the first of two steps; the switch above is the second. Until then every tier runs on this machine and the only thing that leaves it is a Tier 3 escalation you preview and confirm.{% endif %}</p>
+    {% if hosted_mode.active %}Hosted sends happen only on a hosted run (the switch above, a Run now choice, or the CLI flag).{% else %}Acknowledging the disclosure is the first of two steps; the switch above is the second. Until then every tier runs on this machine and the only thing that leaves it is a deeper read you preview and confirm.{% endif %}</p>
     {{ disclosure_text() }}
     <form hx-post="/settings/hosted/mode" hx-target="#hosted-panel" hx-swap="outerHTML">
       {% if hosted_mode.active %}
@@ -223,7 +223,7 @@
       {% endfor %}
       <span class="muted">Lower is cheaper and faster; model default is the provider's own. Each list holds only the words that provider accepts.</span>
     </fieldset>
-    <button class="btn" type="submit" style="margin-top:.5rem">Use for Tier 3</button>
+    <button class="btn" type="submit" style="margin-top:.5rem">Use for deeper reads</button>
   </form>
   <details class="key-details" data-testid="key-details" style="margin-top:1rem">
     <summary>Show details: where keys are kept</summary>

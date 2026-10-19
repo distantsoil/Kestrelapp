@@ -6,6 +6,7 @@ browser."""
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import subprocess
 import sys
@@ -211,6 +212,222 @@ def test_focus_failure_on_second_instance_never_raises(shell, monkeypatch):
     monkeypatch.setattr(shell, "_lock_file", None)
     paths.runtime_json().unlink(missing_ok=True)  # no runtime.json: nothing to focus
     assert shell.acquire_single_instance() is False  # reports, does not crash
+
+
+# ---- per-data-home single-instance lock tests -----------------------------------------
+
+
+def test_mutex_name_default_data_home_is_canonical(monkeypatch):
+    """With no KESTREL_DATA_HOME override, the mutex name is exactly MUTEX_NAME."""
+    from kestrel.desktop import shell
+
+    monkeypatch.delenv("KESTREL_DATA_HOME", raising=False)
+    importlib.reload(shell)
+    assert shell._mutex_name() == shell.MUTEX_NAME
+
+
+def test_mutex_name_non_default_data_home_is_hashed(monkeypatch, tmp_path):
+    """A non-default data home yields a suffixed mutex name."""
+    from kestrel.desktop import shell
+
+    custom = tmp_path / "custom"
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(custom))
+    importlib.reload(shell)
+    assert shell._mutex_name() != shell.MUTEX_NAME
+    assert shell._mutex_name().startswith("Local\\Kestrel-")
+
+
+def test_two_different_data_homes_give_different_names(monkeypatch, tmp_path):
+    """Two distinct data homes produce two distinct mutex/lock names."""
+    from kestrel.desktop import shell
+
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(a))
+    importlib.reload(shell)
+    name_a = shell._mutex_name()
+
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(b))
+    importlib.reload(shell)
+    name_b = shell._mutex_name()
+
+    assert name_a != name_b
+    assert name_a.startswith("Local\\Kestrel-")
+    assert name_b.startswith("Local\\Kestrel-")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive paths are the Windows rule")
+def test_same_data_home_different_case_gives_same_name(monkeypatch, tmp_path):
+    """On Windows, mutex names are case-sensitive, so C:\\ and c:\\ must not split.
+    We normalize with os.path.normcase so the hash is the same regardless of case."""
+    from kestrel.desktop import shell
+
+    # Use a path with mixed case
+    mixed = tmp_path / "MyFolder"
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(mixed))
+    importlib.reload(shell)
+    name1 = shell._mutex_name()
+
+    # Same path, different case
+    mixed_lower = str(mixed).lower()
+    monkeypatch.setenv("KESTREL_DATA_HOME", mixed_lower)
+    importlib.reload(shell)
+    name2 = shell._mutex_name()
+
+    assert name1 == name2
+
+
+def test_keystrel_data_home_explicitly_set_to_default_is_canonical(monkeypatch, tmp_path):
+    """When KESTREL_DATA_HOME is explicitly set to the default data home path,
+    the mutex name should still be the canonical MUTEX_NAME (not a hashed variant).
+    This ensures the installer's AppMutex check and single-instance detection
+    work correctly even when the env var is set to the default location."""
+    from kestrel import paths
+    from kestrel.desktop import shell
+
+    # Get the default data home by temporarily clearing KESTREL_DATA_HOME
+    monkeypatch.delenv("KESTREL_DATA_HOME", raising=False)
+    importlib.reload(paths)
+    default_path = paths.data_home()
+
+    # Now explicitly set KESTREL_DATA_HOME to that same path
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(default_path))
+    importlib.reload(paths)
+    importlib.reload(shell)
+
+    # Should return canonical MUTEX_NAME, not a hashed variant
+    assert shell._mutex_name() == shell.MUTEX_NAME, (
+        f"Expected {shell.MUTEX_NAME}, got {shell._mutex_name()}"
+    )
+    assert shell._lock_file_name() == shell.LOCK_FILENAME, (
+        f"Expected {shell.LOCK_FILENAME}, got {shell._lock_file_name()}"
+    )
+
+
+def _point_default_home_at(monkeypatch, base: Path) -> Path:
+    """Make the per-OS default data home live under base (via the env vars paths reads), so a
+    test can alias it without touching the real one. Returns the default home."""
+    monkeypatch.delenv("KESTREL_DATA_HOME", raising=False)
+    if sys.platform == "win32":
+        monkeypatch.setenv("LOCALAPPDATA", str(base))
+    elif sys.platform == "darwin":
+        monkeypatch.setenv("HOME", str(base))
+    else:
+        monkeypatch.setenv("XDG_DATA_HOME", str(base))
+    home = paths.default_data_home()
+    home.mkdir(parents=True)
+    return home
+
+
+def _alias_dir(target: Path, alias: Path) -> None:
+    """A second spelling of one folder: a junction on Windows (no privilege needed), a symlink
+    elsewhere."""
+    if sys.platform == "win32":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(alias))
+    else:
+        os.symlink(target, alias, target_is_directory=True)
+
+
+def test_default_data_home_ignores_the_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(tmp_path / "elsewhere"))
+    assert paths.data_home() == tmp_path / "elsewhere"
+    monkeypatch.delenv("KESTREL_DATA_HOME")
+    assert paths.default_data_home() == paths.data_home()
+
+
+def test_default_home_reached_through_an_alias_is_canonical(monkeypatch, tmp_path):
+    """KESTREL_DATA_HOME naming the default folder through a junction or symlink is still the
+    default folder: it must take MUTEX_NAME, or two instances could open one database."""
+    from kestrel.desktop import shell
+
+    real_base = tmp_path / "real"
+    home = _point_default_home_at(monkeypatch, real_base)
+    alias_base = tmp_path / "alias"
+    try:
+        _alias_dir(real_base, alias_base)
+    except OSError as exc:  # symlinks can be refused by policy; nothing to test then
+        pytest.skip(f"cannot create a directory alias here: {exc}")
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(alias_base / home.name))
+    assert shell._mutex_name() == shell.MUTEX_NAME
+
+
+def test_two_aliases_of_one_custom_folder_share_a_name(monkeypatch, tmp_path):
+    from kestrel.desktop import shell
+
+    real = tmp_path / "custom"
+    real.mkdir()
+    alias = tmp_path / "custom-alias"
+    try:
+        _alias_dir(real, alias)
+    except OSError as exc:
+        pytest.skip(f"cannot create a directory alias here: {exc}")
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(real))
+    name_real = shell._mutex_name()
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(alias))
+    assert shell._mutex_name() == name_real != shell.MUTEX_NAME
+
+
+def test_posix_lock_file_is_always_kestrel_lock(monkeypatch, tmp_path):
+    """The lock file sits inside the data home, so it is per folder already. A hashed name let a
+    0.5 instance (kestrel.lock) and a 0.6 instance on the same folder both get a lock."""
+    from kestrel.desktop import shell
+
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(tmp_path / "custom"))
+    assert shell._lock_file_name() == shell.LOCK_FILENAME == "kestrel.lock"
+    assert shell.lock_file_path() == tmp_path / "custom" / "kestrel.lock"
+
+
+def test_lock_name_does_not_reload_paths(monkeypatch, tmp_path):
+    """Computing the name used to importlib.reload(paths), wiping every monkeypatch on it."""
+    from kestrel.desktop import shell
+
+    marker = tmp_path / "runtime.json"
+    monkeypatch.setattr(paths, "runtime_json", lambda: marker)
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(tmp_path / "custom"))
+    shell._mutex_name()
+    shell._lock_file_name()
+    assert paths.runtime_json() == marker
+    assert os.environ["KESTREL_DATA_HOME"] == str(tmp_path / "custom")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows mutex test")
+def test_windows_two_different_data_homes_can_both_hold_lock(monkeypatch, tmp_path):
+    """On Windows, two processes with different data homes can both hold the mutex."""
+    from kestrel.desktop import shell
+
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+
+    # First data home
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(a))
+    importlib.reload(shell)
+    assert shell.acquire_single_instance() is True
+    shell.release_single_instance()
+
+    # Second data home
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(b))
+    importlib.reload(shell)
+    assert shell.acquire_single_instance() is True
+    shell.release_single_instance()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows mutex test")
+def test_windows_same_data_home_cannot_hold_twice(monkeypatch, tmp_path):
+    """On Windows, two attempts with the same data home cannot both hold the mutex."""
+    from kestrel.desktop import shell
+
+    custom = tmp_path / "custom"
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(custom))
+    importlib.reload(shell)
+
+    # First acquire succeeds
+    assert shell.acquire_single_instance() is True
+    # Second acquire (simulated by clearing _mutex_handle) fails
+    shell._mutex_handle = None
+    assert shell.acquire_single_instance() is False
+    shell.release_single_instance()
 
 
 def test_tray_start_is_a_log_line_not_a_crash_without_a_display(shell, monkeypatch):

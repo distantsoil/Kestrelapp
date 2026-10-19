@@ -107,7 +107,7 @@ def test_base_renders_the_three_groups_and_every_link():
             assert item.href in links, item.label
             assert f'title="{item.label}"' in html
     # The labels the proposal names, and the ones it renames.
-    for label in ("Today", "Pipeline", "Applications", "Profile", "Interview prep", "Offers",
+    for label in ("Today", "Pipeline", "Applications", "Profile", "My stories", "Offers",
                   "Calibrate", "Analytics", "Sources", "Models", "Settings", "Help", "Runs",
                   "Bench"):
         assert f">{label}</a>" in html, label
@@ -185,7 +185,7 @@ def test_status_rail_returns_the_four_rows():
     assert rows == ["worker", "model", "scan", "hosted"]
     assert r.text.count('class="dot ') == 4
     assert "Not scoring anything right now" in r.text
-    assert "kestrel-tier2:latest loaded" in r.text
+    assert "Full review loaded" in r.text
     assert "No scan yet" in r.text
     assert "Online deeper-read key: not set" in r.text
     for state in re.findall(r'class="dot ([a-z]+)"', r.text):

@@ -267,7 +267,7 @@ def test_readme_is_app_first_and_has_the_unsigned_beta_section():
                     "OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible",
                     "never applies, emails or messages anyone",
                     "PolyForm Noncommercial License 1.0.0",
-                    "Claude, Qwen and NVIDIA Nemotron"):
+                    "Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and LongCat"):
         assert promise in first_run or promise.capitalize() in first_run, promise
     assert _DASH not in readme
     assert "kestrel setup" in dev
@@ -284,7 +284,9 @@ def test_help_and_about_state_the_public_promises_and_no_linkedin_source():
         assert "any job seeker" in text and "you are not the product" in text
         assert "OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible" in text
         assert "never applies, emails or messages anyone" in text
-    assert "Built with Claude, Qwen and NVIDIA Nemotron" in about
+    assert ("Built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and "
+            "LongCat.") in about
+    assert "Claude, Qwen and NVIDIA Nemotron" not in about
     assert "PolyForm Noncommercial" in about and "LICENSE.md" in about
     # The source table is generated from the catalog; no row is a LinkedIn source.
     table = c.get("/help").text.split("Where opportunities come from")[1].split("<h3>LinkedIn")[0]

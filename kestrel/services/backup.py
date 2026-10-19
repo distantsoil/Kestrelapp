@@ -23,7 +23,14 @@ Restore is safety-first (CLAUDE.md "resumability is not optional" + the explicit
      connections open) and the config and documents copied in.
 Nothing under data_home() other than the database, config, and generated documents is ever touched
 (most importantly: .env is never read, written, or included in a backup -- secrets never leave the
-machine this way, hard rule)."""
+machine this way, hard rule).
+
+The one secret the database itself holds, the LAN shared key (`server.shared_secret` in the
+`setting` table, kestrel/web/auth.py), is deleted from the staged snapshot before it is zipped
+(`_strip_secrets`), never from the live database. A restore keeps the key this machine has now
+(`_read_lan_key` before the write, `_put_back_lan_key` after), so an older backup that still
+carries a key cannot replace it, and a machine with no key ends with none. LAN pairing is set up
+again on a different computer."""
 
 from __future__ import annotations
 
@@ -106,6 +113,41 @@ def snapshot_database(src: Path, dest: Path) -> None:
         source.close()
 
 
+def _lan_setting_key() -> str:
+    # Imported lazily: kestrel.web.auth is the one place the key name is defined, and the CLI's
+    # backup path should not import the web layer at module load.
+    from kestrel.web.auth import SETTING_KEY
+
+    return SETTING_KEY
+
+
+def _has_setting_table(con: sqlite3.Connection) -> bool:
+    row = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'setting'"
+    ).fetchone()
+    return row is not None
+
+
+def _strip_secrets(snapshot: Path) -> None:
+    """Delete the LAN shared key from a STAGED snapshot (never the live database) before it is
+    zipped. The copy is switched out of WAL mode first so the delete lands in the main file that
+    goes into the zip, not in a -wal beside it that is left behind. secure_delete zeroes only what
+    THIS delete frees; the live database runs without it, so an earlier key value can still sit in
+    its free pages or unused cell space, and the backup API copies pages verbatim. VACUUM then
+    rebuilds the copy with no free space at all. It is safe here: the copy is a standalone temp
+    file in rollback-journal mode that nothing else has open."""
+    con = sqlite3.connect(str(snapshot))
+    try:
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.execute("PRAGMA secure_delete=ON")
+        if _has_setting_table(con):
+            con.execute("DELETE FROM setting WHERE key = ?", (_lan_setting_key(),))
+            con.commit()
+        con.execute("VACUUM")
+    finally:
+        con.close()
+
+
 def create_backup(out_dir: str | Path | None = None) -> Path:
     """Zip a consistent snapshot of the database, the YAML config, and the generated
     documents/prep packs into a timestamped archive under out_dir (default: the data dir). Never
@@ -126,6 +168,7 @@ def create_backup(out_dir: str | Path | None = None) -> Path:
         if db.exists():
             snapshot = Path(snap_dir) / DB_NAME
             snapshot_database(db, snapshot)
+            _strip_secrets(snapshot)  # the LAN shared key stays on this machine
             z.write(snapshot, DB_NAME)
         cfg = paths.config_dir()
         if cfg.exists():
@@ -471,6 +514,45 @@ def _write_into_live(staged: Path, db: Path) -> None:
         source.close()
 
 
+def _read_lan_key(db: Path) -> tuple[str, str] | None:
+    """This machine's LAN shared key row (raw JSON value, updated_at), read before a restore
+    writes the database, or None when there is no database or no key."""
+    if not db.exists() or not db.stat().st_size:
+        return None
+    con = sqlite3.connect(str(db), timeout=30)
+    try:
+        con.execute("PRAGMA busy_timeout=30000")
+        if not _has_setting_table(con):
+            return None
+        row = con.execute(
+            "SELECT value, updated_at FROM setting WHERE key = ?", (_lan_setting_key(),)
+        ).fetchone()
+    finally:
+        con.close()
+    return None if row is None else (row[0], row[1])
+
+
+def _put_back_lan_key(db: Path, saved: tuple[str, str] | None) -> None:
+    """After the restore wrote the live database: whatever key the backup carried (an older
+    backup may hold another machine's) is removed, and this machine's key, if it had one, is put
+    back exactly as it was. Runs before the caller's migrations, which never touch this row."""
+    con = sqlite3.connect(str(db), timeout=30)
+    try:
+        con.execute("PRAGMA busy_timeout=30000")
+        if not _has_setting_table(con):
+            return
+        key = _lan_setting_key()
+        with con:
+            con.execute("DELETE FROM setting WHERE key = ?", (key,))
+            if saved is not None:
+                con.execute(
+                    "INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key, saved[0], saved[1]),
+                )
+    finally:
+        con.close()
+
+
 def restore_backup(path: str | Path) -> RestoreResult:
     """Restore a Kestrel backup zip into the live data directory.
 
@@ -505,7 +587,9 @@ def restore_backup(path: str | Path) -> RestoreResult:
             # own -wal/-shm, which travel inside the archive beside it.
             result.wal_restored = (staging / DB_SIDE_FILES[0]).exists()
             result.shm_restored = (staging / DB_SIDE_FILES[1]).exists()
+            machine_key = _read_lan_key(db)  # this machine's LAN key wins over the backup's
             _write_into_live(staged_db, db)
+            _put_back_lan_key(db, machine_key)
             result.db_restored = True
 
         staged_cfg = staging / CONFIG_PREFIX.rstrip("/")

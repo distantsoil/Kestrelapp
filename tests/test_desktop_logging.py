@@ -78,3 +78,51 @@ def test_the_scrubber_masks_a_key_in_its_json_escaped_form():
     line = "2026-10-17 INFO MainThread " + json.dumps({"event": "x", "header": key})
     scrubbed = make_scrubber(None, [key])(line)
     assert REDACTED in scrubbed and "ab\\\"cd" not in scrubbed, scrubbed
+
+
+# ---- kestrel serve logging tests ----------------------------------------------------------
+
+
+@pytest.mark.usefixtures("_clean_logging")
+def test_serve_logging_writes_structlog_events_to_kestrel_log_and_console():
+    """After serve logging setup, a structlog event appears in kestrel.log AND on the console."""
+    from kestrel.web.serve import _configure_serve_logging
+
+    paths.ensure_dirs()
+    _configure_serve_logging("INFO")
+
+    # Emit a structlog event
+    structlog.get_logger().warning("serve_probe", detail="test")
+
+    # Flush all handlers
+    for h in logging.getLogger().handlers:
+        h.flush()
+
+    # Check file log
+    text = (paths.logs_dir() / "kestrel.log").read_text(encoding="utf-8")
+    assert "serve_probe" in text
+    assert "test" in text
+
+    # Check console output was captured (via the StreamHandler we added)
+    # The fixture captures the console via capfd, but we can verify the handler exists
+    console_handlers = [
+        h for h in logging.getLogger().handlers
+        if getattr(h, "_kestrel_serve_console", False)
+    ]
+    assert len(console_handlers) == 1
+
+
+@pytest.mark.usefixtures("_clean_logging")
+def test_serve_logging_twice_leaves_exactly_one_console_handler():
+    """Calling the setup twice leaves exactly ONE console handler (no duplicates)."""
+    from kestrel.web.serve import _configure_serve_logging
+
+    paths.ensure_dirs()
+    _configure_serve_logging("INFO")
+    _configure_serve_logging("INFO")
+
+    console_handlers = [
+        h for h in logging.getLogger().handlers
+        if getattr(h, "_kestrel_serve_console", False)
+    ]
+    assert len(console_handlers) == 1

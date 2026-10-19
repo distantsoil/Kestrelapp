@@ -508,6 +508,12 @@ Models are chosen from the same picker as `/models` (D-UI-44), never typed: loca
 one group, the hosted provider's list (loaded on request) in another. Promoting a hosted model
 saves it as that tier's hosted override, validated as on `/models`.
 
+The page's Run button makes no model call. A real benchmark run drives one model call per gold-set
+item per model, which would block the shared web and worker loop, so the run is the CLI's job
+(`kestrel bench`). Run on the page re-reads the agreement between the stored evaluations and the
+user's own labels and says so; it invents no numbers and is empty until both exist for the same
+opportunity.
+
 **`/about`**
 Version, data folder link, log folder link, license, dependency versions, update check.
 
@@ -689,7 +695,7 @@ gates. The application is the product; this is the service entrance.
 | `research <org>` | Run company research. |
 | `calibrate` | Recompute weight proposals from labels. |
 | `train` | Train and evaluate the reranker, reporting promotion criteria. |
-| `bench [--models a,b] [--prompt-version v]` | The benchmark harness. |
+| `bench --models a,b [--prompt-version v]` | The benchmark harness. `--models` is required; `--prompt-version` is optional. |
 | `export [--format csv\|json] [--track T]` | Dump the pipeline. |
 | `backup [--out PATH]` | Timestamped zip of database, config, and documents. |
 | `restore <PATH>` | Restore from a backup. |

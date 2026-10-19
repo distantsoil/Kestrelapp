@@ -10,8 +10,9 @@ signing secrets exist.
    it through hatch; the window title, `/health`, `/about`, the installer file names and the macOS
    bundle version all come from it. Then regenerate the Inno Setup include so the committed file
    matches (`uv run python packaging/gen_version_iss.py`).
-2. Make sure `main` is green (`.github/workflows/ci.yml`: ruff and pytest on Ubuntu, macOS and
-   Windows).
+2. Make sure `main` is green (`.github/workflows/ci.yml`: ruff and pytest on Ubuntu and Windows for pull requests, and on
+   Ubuntu, macOS and Windows for pushes to `main`). macOS does not run on pull requests, so the
+   first macOS result for a change is the push to `main`; the release tag builds macOS again.
 3. Tag and push:
 
    ```bash
@@ -30,6 +31,9 @@ signing secrets exist.
    Each job smoke-tests the frozen CLI (`version`, `doctor --quick`) before uploading. The release
    job attaches the three files plus `SHA256SUMS.txt` to a GitHub Release named after the tag, with
    the CHANGELOG section for that version as its body (see "Release notes and the website").
+   The AppImage needs `libfuse2` on the machine that runs it. Where it is missing, run it with
+   `--appimage-extract-and-run` (for example `./Kestrel-<version>-x86_64.AppImage
+   --appimage-extract-and-run`).
 
 5. Check the Release page, download one installer and launch it on a machine that is not the build
    machine. The window opening and `<kestrel> doctor` running are the acceptance test.
@@ -75,7 +79,8 @@ For each release:
    setup" below): the `preflight` job runs before any installer is built and fails a stable tag
    push with a clear error if the secret is empty.
 4. The release job publishes the GitHub Release with that section as its body.
-5. The `website` job commits `latest.json` to `distantsoil/kestrelapp-site` with the
+5. The separate `website` job (not the release job, which only publishes the GitHub Release)
+   commits `latest.json` to `distantsoil/kestrelapp-site` with the
    `WEBSITE_TOKEN` secret. Cloudflare Pages rebuilds on push. The feed holds the last 10 sections,
    newest first. A tag with a prerelease suffix (for example `v0.4.0-rc.1`) is never written.
 

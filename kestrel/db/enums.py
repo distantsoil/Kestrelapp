@@ -62,6 +62,8 @@ LIVENESS = ("live", "closed", "unknown", "unchecked")
 
 VERDICTS = ("apply", "pursue", "consider", "pass", "keep", "kill")
 
+# No code sets "failed" today (a task goes to "dead" after its last attempt); it stays because
+# existing databases and constraints may name it.
 TASK_STATUS = ("pending", "leased", "done", "failed", "dead", "cancelled")
 
 RUN_STATUS = ("running", "stopping", "done", "failed", "interrupted")

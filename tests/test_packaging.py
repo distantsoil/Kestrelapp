@@ -196,6 +196,21 @@ def test_release_workflow_names_the_three_artifacts():
     assert "Kestrel-*-x86_64.AppImage" in gh["with"]["files"]
 
 
+def test_release_preflight_refuses_a_tag_that_is_not_the_package_version():
+    """D8: a tag push must match kestrel.__version__ (prerelease suffix ignored), or the release
+    would publish installers and a feed whose version disagrees with the app they install."""
+    wf = _workflow("release.yml")
+    step = next(
+        s for s in wf["jobs"]["preflight"]["steps"] if s.get("name") == "Changelog section exists"
+    )
+    run = step["run"]
+    push_branch = run.split('if [ "$GITHUB_EVENT_NAME" = "push" ]; then', 1)[1].split("else", 1)[0]
+    assert "__version__" in push_branch
+    assert "::error::" in run
+    assert "mismatch" in run or "does not match" in run
+    assert run.index("::error::") > run.index("__version__")
+
+
 def test_release_workflow_marks_unsigned_artifacts():
     """Every build job writes a SIGNING-<platform>.txt ("signed", or "unsigned: add <secrets> to
     sign") beside its installer and uploads it; the release step attaches the merged SIGNING.txt

@@ -424,7 +424,8 @@ def test_settings_hosted_flow(monkeypatch):
             "reasoning_effort.frontier": "none",
         },
     )
-    assert r.status_code == 200 and "now uses frontier / a/first" in r.text
+    assert r.status_code == 200 and "Deeper reads now use a/first on " in r.text
+    assert "frontier /" not in r.text  # the service is named, never the backend key
 
     async def _check():
         from kestrel.db.engine import get_sessionmaker
@@ -1047,7 +1048,8 @@ def test_settings_offers_reasoning_effort_per_provider_with_only_its_words(monke
             "reasoning_effort.frontier": "xhigh",
         },
     )
-    assert r.status_code == 200 and "now uses anthropic / claude-haiku-5-5" in r.text
+    assert r.status_code == 200
+    assert "Deeper reads now use claude-haiku-5-5 on anthropic.com" in r.text
 
     async def _check():
         from kestrel.db.engine import get_sessionmaker

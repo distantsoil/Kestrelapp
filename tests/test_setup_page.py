@@ -275,7 +275,7 @@ def test_local_on_a_no_gpu_machine_falls_back_to_the_cpu_profile(quiet, monkeypa
         assert st.profile == "cpu_8gb" and not st.profile_recorded
         assert st.profile_reason == ss.LOCAL_FALLBACK_REASON
         prof = _step(st, "profile")
-        assert prof.title == "Hardware profile: cpu_8gb"
+        assert prof.title == "Hardware profile: CPU only, or a GPU with 8 GB of VRAM or less"
         assert not prof.explanation.startswith(".")
         assert "Hosted is recommended" in prof.explanation
         pull = _step(st, "pull")

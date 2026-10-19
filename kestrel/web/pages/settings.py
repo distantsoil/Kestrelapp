@@ -370,8 +370,9 @@ async def restore_from_upload(request: Request):
                 f"retry. Your previous database is saved at {saved}.</div>"
             )
         # Process caches that would otherwise answer from the data just replaced (the restored
-        # database carries its own shared secret, tracks, UI scheme and status counts), and the
-        # shipped sources and layouts a backup from an older Kestrel does not have yet. The same
+        # database carries its own tracks, UI scheme and status counts; restore_backup put this
+        # machine's own LAN key back, but the auth cache is reset all the same), and the shipped
+        # sources and layouts a backup from an older Kestrel does not have yet. The same
         # put-back the in-app reset does.
         from kestrel.web.auth import reset_cache
 
@@ -444,7 +445,7 @@ async def generate_secret(request: Request):
 import structlog  # noqa: E402
 
 from kestrel.llm import providers as prov  # noqa: E402
-from kestrel.services.hosted_connect import FREE_PROVIDERS, provider_order  # noqa: E402
+from kestrel.services.hosted_connect import FREE_PROVIDERS, provider_order, tier_label  # noqa: E402
 
 log = structlog.get_logger()
 
@@ -943,7 +944,7 @@ async def hosted_save_tiers(request: Request):
             prefix = "llm.tiers" if tier == prov.FRONTIER_TIER else "llm.hosted_tiers"
             if backend_name == "local":
                 if tier == prov.FRONTIER_TIER:
-                    problems.append("frontier must stay on a hosted backend")
+                    problems.append("deeper reads must stay on an online model service")
                     continue
                 await _unset(s, f"{prefix}.{tier}.backend")
                 await _unset(s, f"{prefix}.{tier}.model")
@@ -951,10 +952,10 @@ async def hosted_save_tiers(request: Request):
                 manual[tier] = None
                 continue
             if backend_name not in externals:
-                problems.append(f"{tier}: unknown backend {backend_name!r}")
+                problems.append(f"{tier_label(tier)}: unknown online service {backend_name!r}")
                 continue
             if not model:
-                problems.append(f"{tier}: a model id is required for {backend_name}")
+                problems.append(f"{tier_label(tier)}: a model id is required")
                 continue
             await _set(s, f"{prefix}.{tier}.backend", backend_name)
             await _set(s, f"{prefix}.{tier}.model", model)
@@ -1194,11 +1195,16 @@ async def hosted_save_model(request: Request):
             await _set(s, key, effort if effort in levels else None)
         await s.commit()
         settings = await load_settings_with_db(s)
+        # The service by its own name (its host), never the backend key ("frontier").
+        from kestrel.llm.service_name import service_name
+
+        chosen = settings.llm.backends.get(backend_name)
+        service = service_name(chosen.base_url) if chosen else "your online model service"
         ctx = await _hosted_ctx(
             s,
             settings,
             ok=True,
-            message=f"Tier 3 escalation now uses {backend_name} / {model}. No restart needed.",
+            message=f"Deeper reads now use {model} on {service}. No restart needed.",
         )
     return _hosted_partial(request, ctx)
 
