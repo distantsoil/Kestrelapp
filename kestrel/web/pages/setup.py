@@ -167,7 +167,11 @@ async def setup_profile(request: Request):
     try:
         await asyncio.to_thread(ss.record_profile, name)
     except KeyError as exc:
-        return HTMLResponse(html.escape(str(exc)), status_code=400)
+        # A fixed sentence with the submitted name, never the exception's own text (D-SEC-1).
+        log.info("setup_profile_unknown", profile=name, error=str(exc))
+        return HTMLResponse(
+            f"Unknown hardware profile: {html.escape(name)}.", status_code=400
+        )
     except OSError as exc:
         log.warning("setup_profile_record_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(

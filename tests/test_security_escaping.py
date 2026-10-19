@@ -113,3 +113,10 @@ def test_plain_error_never_carries_a_path():
     assert plain_error(RuntimeError(SECRET_PATH)) == (
         "an unexpected problem (RuntimeError); the details are in the log"
     )
+
+
+def test_unknown_setup_profile_names_it_without_the_exception_text():
+    r = _client().post("/setup/profile", data={"profile": "<b>nope</b>"})
+    assert r.status_code == 400
+    assert r.text == "Unknown hardware profile: &lt;b&gt;nope&lt;/b&gt;."
+
