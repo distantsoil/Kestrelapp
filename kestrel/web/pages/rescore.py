@@ -37,6 +37,7 @@ from kestrel.pipeline.profile import load_profile
 from kestrel.queue.rescore import MAX_ROLES, enqueue_rescore, parse_ids
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.fit import RuleWhy, explain_rule, fit_for
 
 router = APIRouter()
@@ -321,8 +322,8 @@ async def rescore(request: Request):
             await _count_retry(s, str(form.get("quarantine_id") or ""), result.queued)
             await s.commit()
     except Exception as exc:  # a write path never turns into a 500 (CLAUDE.md)
-        log.warning("rescore_failed", error=f"{type(exc).__name__}: {exc}")
-        return answer(f"Not queued: {type(exc).__name__}: {exc}", ok=False)
+        log.warning("rescore_failed", error_type=type(exc).__name__, error=str(exc))
+        return answer(f"Not queued: {plain_error(exc)}", ok=False)
     n = len(result.queued)
     head = f"Queued {n} role{'s' if n != 1 else ''} for scoring." if n else "Nothing queued."
     body = " ".join([head, *result.messages()])

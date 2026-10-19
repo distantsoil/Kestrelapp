@@ -80,6 +80,9 @@ concurrency:
 pipeline:
   tier1_min_confidence: 0.6
   max_jd_tokens: 6000
+  # Roles from a found company board that do not look like the operator's field or level are
+  # scored in the background when Kestrel is idle, at most this many a day (never rejected).
+  lane_daily_cap: 200
 
 # Top-level so Tier 0 rules read `settings.max_posting_age_days` exactly as SPEC.md 6.1 writes it.
 max_posting_age_days: 45

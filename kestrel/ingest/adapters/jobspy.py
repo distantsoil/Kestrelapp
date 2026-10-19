@@ -53,14 +53,14 @@ LINKEDIN_REFUSED = (
 # Kestrel's default boards. JobSpy reads a missing or None `site_name` as EVERY site it knows,
 # LinkedIn included, so Kestrel never passes one: a source with no boards named asks these
 # (release round review, finding 2). LinkedIn is never among them (D-SRC-5).
-DEFAULT_SITES: tuple[str, ...] = ("indeed", "google")
+DEFAULT_SITES: tuple[str, ...] = ("indeed", "glassdoor")
 
 # Set in a source's config when LinkedIn was its only board and was taken out: the source stays
 # off, and the Sources row says why and offers the default boards, until the operator picks them.
 NO_BOARDS_KEY = "no_boards"
 NO_BOARDS_REFUSED = (
     "This search named only LinkedIn, which Kestrel does not search, so it has no job boards "
-    "left. Choose Use Kestrel's default boards (Indeed and Google) to turn it back on."
+    "left. Choose Use Kestrel's default boards (Indeed and Glassdoor) to turn it back on."
 )
 
 

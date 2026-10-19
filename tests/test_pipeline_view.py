@@ -711,7 +711,9 @@ def test_add_is_one_transaction_and_says_where_the_role_sits(monkeypatch):
     monkeypatch.setattr(oa, "record_override", boom)
     with _client() as c:
         r = c.post(f"/opportunities/{ids['d']}/add")
-    assert "Could not add it to your shortlist: disk full" in r.text
+    # The failure is named by type only; its text stays in the log (D-SEC-1).
+    assert "Could not add it to your shortlist: an unexpected problem (RuntimeError)" in r.text
+    assert "disk full" not in r.text
 
     async def pursuits(s):
         return (await s.execute(select(Pursuit).where(Pursuit.opportunity_id == ids["d"]))).all()
@@ -729,6 +731,95 @@ def test_add_is_one_transaction_and_says_where_the_role_sits(monkeypatch):
     assert f'hx-get="/opportunities/{ids["a"]}/actions"' in detail
     assert "pipelineRefresh from:body" in detail
     assert f'opportunity_id={ids["a"]}&from=/opportunities/{ids["a"]}' in detail
+
+
+# ------------------------------------------------------------- remove from the list (D-UI-75)
+async def _pursuit_rows(s, opp_id: int):
+    return (await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))).all()
+
+
+def test_remove_undoes_an_accidental_add_and_its_label():
+    """Add by mistake, then Remove: no pursuit, no label from the Add, and the panel offers Add
+    again. Removing a role that is not on the list says so and never 500s."""
+    ids = asyncio.run(_seed())
+    with _client() as c:
+        c.post(f"/opportunities/{ids['d']}/add")
+        panel = c.get(f"/opportunities/{ids['d']}").text
+        assert f'hx-post="/opportunities/{ids["d"]}/remove"' in panel
+        assert ">Remove from my shortlist<" in panel
+        r = c.post(f"/opportunities/{ids['d']}/remove", headers={"HX-Request": "true"})
+        assert r.status_code == 200 and r.headers["HX-Trigger"] == "pipelineRefresh"
+        assert r.text.lstrip().startswith('<div id="decision"')
+        assert "Removed from your shortlist." in r.text
+        assert 'data-testid="add-to-list"' in r.text and 'data-testid="not-for-me"' in r.text
+        assert 'hx-swap-oob="true"' in r.text
+        assert ids["d"] not in _row_ids(_get(c, "/opportunities?shortlisted=1"))
+        again = c.post(f"/opportunities/{ids['d']}/remove")
+        assert again.status_code == 200 and "Not on your shortlist." in again.text
+        assert c.post("/opportunities/999999/remove").status_code == 200
+    assert asyncio.run(_with_session(lambda s: _pursuit_rows(s, ids["d"]))) == []
+    assert asyncio.run(_with_session(_labels)) == []
+
+
+def test_remove_keeps_the_judgments_that_came_before_the_add():
+    """Not for me, Unhide, Add, Remove: the pass stays and only the Add's yes goes, so the
+    learning loop reads the operator's word from before the mistake. An agree label from an Add
+    goes too (the add on seed c agrees with the model's pursue)."""
+    ids = asyncio.run(_seed())
+    with _client() as c:
+        c.post(f"/opportunities/{ids['k']}/not-for-me")
+        c.post(f"/opportunities/{ids['k']}/restore")
+        c.post(f"/opportunities/{ids['k']}/add")
+        c.post(f"/opportunities/{ids['k']}/remove")
+        c.post(f"/opportunities/{ids['c']}/add")
+        r = c.post(f"/opportunities/{ids['c']}/remove")
+        assert "Removed from your leads." in r.text
+    labels = asyncio.run(_with_session(_labels))
+    assert [(lb.opportunity_id, lb.operator_verdict) for lb in labels] == [(ids["k"], "pass")]
+
+
+def test_remove_after_applying_deletes_the_history_and_warns_first():
+    """A role added for the wrong application can be removed at any stage. Its status history,
+    outcome and offers go with it; a notification about it stays, unlinked from the pursuit.
+    The confirmation says what will be deleted once there is history behind the role."""
+    from kestrel.db.models import Notification, Offer, Outcome, StatusEvent
+    from kestrel.services.pursuits import set_pursuit_status
+
+    ids = asyncio.run(_seed())
+    with _client() as c:
+        first = c.get(f"/opportunities/{ids['a']}").text
+        assert 'hx-confirm="Remove this from your shortlist?"' in first
+
+    async def advance(s):
+        stmt = select(Pursuit).where(Pursuit.opportunity_id == ids["a"])
+        p = (await s.execute(stmt)).scalar_one()
+        await set_pursuit_status(s, p.id, "applied")
+        await set_pursuit_status(s, p.id, "rejected")
+        s.add_all([
+            Outcome(pursuit_id=p.id, opportunity_id=ids["a"], final_status="rejected"),
+            Offer(pursuit_id=p.id, base=150000),
+            Notification(kind="liveness", title="Closed", opportunity_id=ids["a"], pursuit_id=p.id),
+        ])
+        await s.commit()
+        return p.id
+
+    pid = asyncio.run(_with_session(advance))
+    with _client() as c:
+        later = c.get(f"/opportunities/{ids['a']}").text
+        assert "Its status history, notes, outcome and offers are deleted too." in later
+        r = c.post(f"/opportunities/{ids['a']}/remove")
+        assert "Removed from your shortlist." in r.text
+
+    async def left(s):
+        events = (await s.execute(select(StatusEvent).where(StatusEvent.pursuit_id == pid))).all()
+        outcomes = (await s.execute(select(Outcome).where(Outcome.pursuit_id == pid))).all()
+        offers = (await s.execute(select(Offer).where(Offer.pursuit_id == pid))).all()
+        notes = (await s.execute(select(Notification))).scalars().all()
+        return events, outcomes, offers, notes, await _pursuit_rows(s, ids["a"])
+
+    events, outcomes, offers, notes, pursuits = asyncio.run(_with_session(left))
+    assert (events, outcomes, offers, pursuits) == ([], [], [], [])
+    assert [(n.opportunity_id, n.pursuit_id) for n in notes] == [(ids["a"], None)]
 
 
 def test_disagree_maps_the_fit_word_to_a_verdict_and_refreshes_the_row():
@@ -1145,3 +1236,35 @@ def test_a_stuck_orphan_says_stuck_with_score_again():
     d = _row(html, ids["d"])
     assert 'data-scoring="stuck">stuck</span>' in d and "scoring stopped" in d
     assert 'data-testid="row-score-again"' in d and "Being scored · 1" in html
+
+
+def test_remove_unhides_a_role_imported_as_applied_and_speaks_consulting():
+    """A role the applied-history import hid as applied, then removed: it comes back to triage,
+    so it is not left hidden with no Add, and its re-posts are no longer hidden as applied. On
+    the consulting track the button and the confirmation speak of leads."""
+    ids = asyncio.run(_seed())
+
+    async def imported(s):
+        opp = await s.get(Opportunity, ids["d"])
+        opp.archived_at = iso(_now())
+        opp.archive_reason = "applied"
+        opp.stage_reason = "Imported applied history"
+        s.add(Pursuit(opportunity_id=opp.id, track="employment", status="applied",
+                      last_activity_at=iso(_now())))
+        await s.commit()
+
+    asyncio.run(_with_session(imported))
+    with _client() as c:
+        r = c.post(f"/opportunities/{ids['d']}/remove")
+        assert "Removed from your shortlist." in r.text and 'data-testid="add-to-list"' in r.text
+        assert ids["d"] in _row_ids(_get(c, "/opportunities"))
+        c.post(f"/opportunities/{ids['c']}/add")
+        lead = c.get(f"/opportunities/{ids['c']}").text
+        assert ">Remove from my leads<" in lead
+        assert 'hx-confirm="Remove this from your leads?"' in lead
+
+    async def row(s):
+        opp = await s.get(Opportunity, ids["d"])
+        return opp.archived_at, opp.archive_reason, opp.stage_reason
+
+    assert asyncio.run(_with_session(row)) == (None, None, None)

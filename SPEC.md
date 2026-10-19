@@ -370,9 +370,8 @@ overrides, models) are defined in `SPEC-MODULES.md`.
   name: "Indeed: Operations Analyst, Columbus OH"
   cadence_hours: 12
   config:
-    site_name: [indeed, google]
+    site_name: [indeed, glassdoor]
     search_term: '"vice president" OR "head of" (IT OR technology OR infrastructure) -sales -intern'
-    google_search_term: "operations analyst jobs near Columbus, OH since yesterday"
     location: "Columbus, OH"
     distance: 100
     results_wanted: 200
@@ -395,6 +394,9 @@ Guardrails, all of which must be enforced rather than discovered:
 - ZipRecruiter answers JobSpy with a Cloudflare 403 on every search, and JobSpy reports that as
   zero results with zero errors. Profile-generated searches therefore ask Indeed and Google only;
   a custom source may still name `zip_recruiter` (D-SRC-4).
+- Generated searches ask Indeed and Glassdoor. Google Jobs is available to custom sources but
+  currently returns nothing through JobSpy (D-SRC-4 amended). Every run records its postings per
+  board, so a board that found nothing is shown, not hidden in the total.
 - Profile-generated searches also ask for near-title variants of each target title (D-TTL-2):
   up to 3 per title, deduplicated, 9 in all, OR-joined into the same title queries. A variant
   only swaps a searchable abbreviation for its other form (IT and Information Technology, VP and
@@ -418,6 +420,24 @@ Guardrails, all of which must be enforced rather than discovered:
 Workday matters disproportionately: it is the dominant enterprise ATS, and enterprise is where
 VP of IT roles live. It paginates via `offset`/`limit` and needs a second call per job for the
 full description (`/wday/cxs/{tenant}/{site}/job/{path}`).
+
+**Company boards found in the searches (D-SRC-7).** These platforms cannot be searched across
+companies; each company has its own board. A JobSpy search run therefore reads each posting's
+link (`job_url_direct`, then `job_url`), and a link to a company board on one of the five
+platforms becomes a source for that company: `origin: discovered`, `cadence_hours: 24`, on or off
+with the search that found it. Hosts match exactly (`boards.greenhouse.io`,
+`job-boards.greenhouse.io`, `jobs.lever.co`, `jobs.ashbyhq.com`, `{tenant}.{dc}.myworkdayjobs.com`,
+`jobs.smartrecruiters.com`, `careers.smartrecruiters.com`); EU hosts are not matched, since they
+use APIs the adapters do not call. A board already among the sources, in any state, is never
+added again, so one the operator turned off stays off. At most 40 found boards per track. A
+discovery failure is logged and never changes the run's status.
+Greenhouse short links (`grnh.se`) are followed with one request each, redirects off, at most 20
+per run. A role from a found board is scored at once when its level is unknown or at or above the
+floor and its title shares a field word with the target titles or with the titles of at least two
+of the operator's pursuits (D-SRC-8). Any other role from a found board waits in a background
+lane: stored, never rejected, and scored only when no other work is waiting, up to
+`pipeline.lane_daily_cap` (200) a day. "Score everything now" frees the whole lane once, after a
+confirmation that states the count, the time and, on an online model, the cost (D-SRC-9).
 
 **Manual.** Paste a URL (httpx, escalating to Playwright on a JavaScript shell) or paste raw JD
 text. Both produce a normal `opportunity` and run the identical pipeline.
@@ -619,6 +639,12 @@ An opportunity flows strictly downward and may exit at any tier.
 Microseconds. Target: eliminate 60-80% of raw ingest. Rules live in
 `kestrel/resources/config/filters.yml`, keyed by track, so they are tunable without a code
 change. Every rejection records the rule that fired.
+
+A rejection is not final when the inputs change. A profile save that changes what the rules read
+(target or excluded titles, seniority floor, pay floor, geography, sponsorship) queues one
+resumable, rules-only `t0_recheck` task per track. It re-runs the rules on roles set aside by
+Tier 0 and returns the ones that now pass to `new`. A role the operator scored anyway, labeled,
+put in a pursuit or hid is never touched (D-RULES-1).
 
 > **Critical implementation constraint, and the reason these rules look the way they do.**
 > `simpleeval` does **not** support generator expressions (`GeneratorExp`) at all, and supports

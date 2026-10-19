@@ -27,7 +27,7 @@ log = structlog.get_logger()
 # with this name are closed as interrupted at app start: a CLI run in another process may be live.
 APP_RUN_NAME = "desktop"
 INTERRUPTED = "interrupted"
-_WORK_TYPES = ("scrape", "embed", "t1", "t2")
+_WORK_TYPES = ("scrape", "embed", "t1", "t2", "t0_recheck")
 
 
 def tier_counts(stats: TierStats) -> dict[str, Any]:

@@ -27,7 +27,7 @@ from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting, Source, Task
 from kestrel.llm.client import LLMClient
-from kestrel.pipeline import runlog
+from kestrel.pipeline import lane, recheck, runlog
 from kestrel.pipeline._shared import (
     HandlerOutcome,
     ModelOverrideError,
@@ -39,7 +39,7 @@ from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tier0 import run_tier0_batch
 from kestrel.pipeline.tier1 import handle_t1
 from kestrel.pipeline.tier2 import handle_t2
-from kestrel.queue.queue import TaskQueue, claimable
+from kestrel.queue.queue import TaskQueue, claimable, in_lane
 from kestrel.services.run_model import T2_ONLY_KEY
 
 log = structlog.get_logger()
@@ -236,9 +236,24 @@ class Worker:
                 await s.execute(
                     select(func.count())
                     .select_from(Task)
-                    .where(Task.type == task_type, Task.status == "pending")
+                    .where(Task.type == task_type, Task.status == "pending", ~in_lane())
                 )
             ).scalar_one()
+
+    async def release_lane(self) -> int:
+        """At the end of a cycle, once every normal tier has drained: free the day's share of
+        the background lane (pipeline.lane). Never starts a model; the freed tasks then go
+        through the usual tier-by-tier drain."""
+        if self._halted():
+            return 0
+        try:
+            return await lane.release_due(
+                self._sm, cap=self._settings.pipeline.lane_daily_cap,
+                hosted=lane.scores_on_hosted(self._settings),
+            )
+        except SQLAlchemyError as exc:
+            log.warning("lane_release_failed", error=str(exc))
+            return 0
 
     async def drain_embed(self, stats: TierStats) -> None:
         """The embed tier: first enqueue every opportunity whose vector is missing or came from
@@ -633,6 +648,9 @@ class Worker:
     ) -> RunStats:
         await self.reclaim()
 
+        # Roles the rules set aside under an older profile get another look first (rules only);
+        # those that now pass go back to `new` and the sweep below carries them on.
+        await recheck.drain(self._sm, settings=self._settings, stop=self._stop)
         stats.tier0 = await run_tier0_batch(
             self._sm, settings=self._settings, track=track, limit=limit
         )
@@ -647,6 +665,17 @@ class Worker:
             await self.drain_tier("t1", self._settings.concurrency.tier1, handle_t1, stats.tier1)
         if not self._stop.is_set():
             await self.drain_tier("t2", self._settings.concurrency.tier2, handle_t2, stats.tier2)
+        # Idle: the day's share of roles from found company boards (the background lane), which
+        # then drain tier by tier like anything else.
+        if not self._stop.is_set() and await self.release_lane():
+            if not self._stop.is_set():
+                await self.drain_tier(
+                    "t1", self._settings.concurrency.tier1, handle_t1, stats.tier1
+                )
+            if not self._stop.is_set():
+                await self.drain_tier(
+                    "t2", self._settings.concurrency.tier2, handle_t2, stats.tier2
+                )
 
         await runlog.finish_run(
             self._sm, run_id,

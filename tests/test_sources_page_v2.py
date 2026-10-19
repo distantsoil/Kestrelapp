@@ -183,6 +183,26 @@ def test_rows_added_by_hand_are_custom():
     assert _run(_rows())["Acme board"].origin == "custom"
 
 
+def test_boards_found_in_searches_are_marked_and_counted_and_switch_off_alone():
+    """D-SRC-7: a found board sits with the other sources, says where it came from, and turns
+    off on its own row without touching the searches."""
+    async def _seed():
+        async with get_sessionmaker()() as s:
+            s.add(Source(track="employment", kind="greenhouse", name="Northwind jobs (Greenhouse)",
+                         config={"token": "northwind"}, enabled=True, origin="discovered"))
+            await s.commit()
+
+    with _client() as c:
+        _run(_seed())
+        page = c.get("/sources").text
+        assert 'data-testid="found-boards">1 company board' in page
+        assert "found in your searches." in page and 'data-testid="found-board"' in page
+        sid = _run(_rows())["Northwind jobs (Greenhouse)"].id
+        assert c.post(f"/sources/{sid}/toggle").status_code == 200
+    row = _run(_rows())["Northwind jobs (Greenhouse)"]
+    assert row.enabled is False and row.origin == "discovered"
+
+
 # ----------------------------------------------------------------------- company board lookup
 def test_candidate_slugs_drop_suffixes_and_keep_case_where_it_matters():
     slugs = candidate_slugs("Acme Robotics, Inc.")
@@ -373,3 +393,38 @@ def test_saving_tracks_rebuilds_the_generated_searches():
     names = set(_run(_rows()))
     assert "Fractional and interim roles" in names
     assert "SEC filings that may signal a need for your work" in names
+
+
+def test_a_job_search_row_shows_postings_per_board_and_flags_a_silent_one():
+    from kestrel.db.models import Opportunity
+    from kestrel.ingest.adapters.jobspy import DEFAULT_SITES
+
+    assert DEFAULT_SITES == ("indeed", "glassdoor")
+    _profile()
+    _run(_build())
+
+    async def _seed():
+        async with get_sessionmaker()() as s:
+            src = (await s.execute(select(Source).where(Source.kind == "jobspy"))).scalars().first()
+            run = ScrapeRun(source_id=src.id, status="ok", started_at="2026-10-18T10:00:00+00:00")
+            s.add(run)
+            await s.flush()
+            for i in range(3):
+                s.add(Opportunity(
+                    track="employment", opp_type="job", source_id=src.id, scrape_run_id=run.id,
+                    external_id=f"x{i}", title=f"t{i}", org_name="Org",
+                    last_seen_at="2026-10-18T10:05:00+00:00", raw={"site": "indeed"},
+                ))
+            s.add(Opportunity(  # seen in an earlier run: not this run's
+                track="employment", opp_type="job", source_id=src.id, external_id="old",
+                title="old", org_name="Org", last_seen_at="2026-10-01T10:05:00+00:00",
+                raw={"site": "glassdoor"},
+            ))
+            await s.commit()
+
+    _run(_seed())
+    with _client() as c:
+        html = c.get("/sources").text
+    assert "Indeed 3, Glassdoor 0" in " ".join(html.split())
+    assert "Glassdoor found nothing this run." in html
+    assert "Indeed found nothing" not in html

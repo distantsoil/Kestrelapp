@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant
 from kestrel.docs import convert as convert_mod
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.uploads import closing_upload
 
 router = APIRouter()
@@ -705,7 +706,7 @@ async def preview(request: Request, master_id: int):
     except Exception as exc:  # a 500 here is invisible: htmx leaves the target untouched
         log.warning("preview_failed", master_id=master_id, error=f"{type(exc).__name__}: {exc}")
         return HTMLResponse(
-            f'<div class="warnbox">Preview failed: {escape(f"{type(exc).__name__}: {exc}")}. '
+            f'<div class="warnbox">Preview failed: {escape(type(exc).__name__)}. '
             "Download diagnostics from About if this keeps happening.</div>"
         )
 
@@ -1543,6 +1544,7 @@ async def import_accept(request: Request):
             f'<div class="warnbox">Rejected at the write boundary: {escape(str(exc))}</div>'
         )
     except Exception as exc:  # bad/absent proposal JSON, or a DB error
+        log.warning("import_accept_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Could not accept the import: {escape(str(exc))}</div>'
+            f'<div class="warnbox">Could not accept the import: {escape(plain_error(exc))}</div>'
         )

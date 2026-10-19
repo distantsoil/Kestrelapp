@@ -261,6 +261,9 @@ class Concurrency(BaseModel):
 class Pipeline(BaseModel):
     tier1_min_confidence: float = 0.6
     max_jd_tokens: int = 6000
+    # Roles from a found company board that the smart filter did not keep are scored in the
+    # background, at most this many a day (D-SRC-8). 0 turns the background scoring off.
+    lane_daily_cap: int = 200
 
 
 class EmploymentWeights(BaseModel):

@@ -577,6 +577,9 @@ async def onboarding_save(request: Request, key: str):
         for track in targets:
             pe.save_section(track, section, values)
         await _rebuild_searches()
+        from kestrel.web.pages.profile import _queue_recheck
+
+        await _queue_recheck(targets)  # a first profile may release roles set aside before it
     except pe.ProfileEditError as exc:
         problem = str(exc)
     except OSError as exc:

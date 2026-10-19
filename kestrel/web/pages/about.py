@@ -42,6 +42,7 @@ from kestrel.services import diagnostics
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import desktop_bridge
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.pages import help as help_page
 from kestrel.web.redact import redaction_map
 
@@ -155,9 +156,10 @@ async def download_diagnostics():
             diagnostics.build_bundle_to_temp, settings, redaction=redaction
         )
     except OSError as exc:
+        log.warning("diagnostics_bundle_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
             f'<div class="warnbox">Could not build the diagnostics bundle: '
-            f"{html.escape(str(exc))}</div>",
+            f"{html.escape(plain_error(exc))}</div>",
             status_code=500,
         )
     return FileResponse(
@@ -192,8 +194,9 @@ async def save_diagnostics(request: Request):
                 diagnostics.build_bundle, settings, out_dir=folder, redaction=redaction
             )
         except OSError as exc:
-            log.warning("diagnostics_save_failed", folder=str(folder), error=str(exc))
-            errors.append(f"{folder}: {exc}")
+            log.warning("diagnostics_save_failed", folder=str(folder),
+                        error_type=type(exc).__name__, error=str(exc))
+            errors.append(f"{folder}: {plain_error(exc)}")
             continue
         except (sqlite3.Error, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
             # Not about the folder (the database or the archive itself): trying the next folder
@@ -202,7 +205,8 @@ async def save_diagnostics(request: Request):
                         error_type=type(exc).__name__, error=str(exc))
             return _saved_partial(
                 request, ok=False,
-                error=f"Could not build the diagnostics file ({type(exc).__name__}: {exc}).",
+                error=(f"Could not build the diagnostics file "
+                       f"({type(exc).__name__}: {plain_error(exc)})."),
             )
         log.info("diagnostics_saved", path=str(archive))
         return _saved_partial(

@@ -33,6 +33,10 @@
   <div class="row decision-actions" data-actions>
     {% if pursuit %}
       <a class="btn" href="/pursuits" data-testid="on-my-list">{{ w.on_list|capitalize }} · {{ pursuit.status|replace('_', ' ') }}</a>
+      {# The undo for Add (D-UI-75). Past the first column it deletes real history, so it says so. #}
+      <button class="btn" type="button" data-testid="remove-from-list"
+              hx-post="/opportunities/{{ opp.id }}/remove" hx-target="#decision" hx-swap="outerHTML"
+              hx-confirm="Remove this from your {{ w.list }}?{% if pursuit.status != 'shortlisted' %} Its status history, notes, outcome and offers are deleted too. This cannot be undone.{% elif pursuit.notes_md or pursuit.next_action %} Its notes and next action are deleted too.{% endif %}">{{ w.remove_from_list }}</button>
     {% elif not opp.archived_at %}
       <button class="btn pri" type="button" data-testid="add-to-list"
               hx-post="/opportunities/{{ opp.id }}/add" hx-target="#decision" hx-swap="outerHTML">{{ w.add_to_list }}</button>

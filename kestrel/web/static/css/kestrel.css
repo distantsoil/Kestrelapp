@@ -1187,3 +1187,18 @@ details.fitgroup[open] > summary.fitgroup-head > .quiet { visibility: hidden; }
 .wizard-hint { font-size: var(--fs-sm); color: var(--muted); }
 /* Update dialog backdrop (pages/updates.py) */
 .upd-backdrop { position: fixed; inset: 0; background: var(--backdrop); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; }
+
+/* Applications page: live search and filters */
+.pfilter { display: grid; gap: 8px; margin: 0 0 .8rem; }
+.pfilter-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.pfilter-search { flex: 1 1 260px; max-width: 460px; }
+.pfilter-search input { width: 100%; }
+.pfilter-check, .pfilter-sort { display: inline-flex; gap: 6px; align-items: center; color: var(--ink); }
+.pfilter .chip { cursor: pointer; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 999px; padding: 3px 12px; font: inherit; font-size: 13px; }
+.pfilter .chip.on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-deep); }
+.pfilter-count { margin-left: auto; }
+.pfilter-empty { text-align: center; padding: 2rem 1rem; border: 1px dashed var(--line); border-radius: var(--radius-lg); color: var(--muted); margin-bottom: .8rem; }
+.pcard[hidden], #board tr[hidden] { display: none !important; }
+
+/* Column counts on the Applications board, rewritten as filters change (D-UI-76). */
+.ccount { font-variant-numeric: tabular-nums; }

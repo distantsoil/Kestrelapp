@@ -88,6 +88,24 @@ async def profile(request: Request):
     return templates().TemplateResponse(request, "profile.html", ctx)
 
 
+async def _queue_recheck(tracks: list[str]) -> int:
+    """After a save: queue the Tier 0 re-check when the rules' inputs changed and return how many
+    set-aside roles it will look at again. Never fails the save."""
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.pipeline import recheck
+
+    total = 0
+    for track in tracks:
+        try:
+            total += await recheck.queue_after_save(get_sessionmaker(), track)
+        except Exception as exc:  # a profile save must not fail on its side effect
+            import structlog
+
+            structlog.get_logger().warning("tier0_recheck_queue_failed", track=track,
+                                           error=str(exc))
+    return total
+
+
 async def _rebuild_searches() -> bool:
     """Rebuild the profile-generated searches after a save (D-SRC-2, silent by the operator's
     choice: the save row says when they changed). Never fails the save."""
@@ -117,16 +135,18 @@ async def profile_save(request: Request, track: str, section: str):
     form = await request.form()
     problem: str | None = None
     searches_updated = False
+    rechecking = 0
     try:
         values = pe.section_from_form(section, form)
         pe.save_section(track, section, values)
         searches_updated = await _rebuild_searches()
+        rechecking = await _queue_recheck([track])
     except pe.ProfileEditError as exc:
         problem = str(exc)
     except OSError as exc:
         problem = f"Could not write profile.yml: {exc}"
     ctx = {**_section_ctx(track), "saved": problem is None, "problem": problem,
-           "searches_updated": searches_updated}
+           "searches_updated": searches_updated, "rechecking": rechecking}
     resp = templates().TemplateResponse(request, f"partials/profile_{section}.html", ctx)
     if section == "employment" and problem is None:
         resp.headers["HX-Trigger"] = "titleVariantsChanged"  # the variants list follows (D-TTL-2)

@@ -231,7 +231,8 @@ async def fetch_models(
             AttributeError) as exc:
         log.info("hosted_model_list_failed", backend=name, error=type(exc).__name__)
         raise ModelListError(
-            f"The model list from {name} could not be fetched: {type(exc).__name__}: {exc}"
+            f"The model list from {name} could not be fetched ({type(exc).__name__}). "
+            "Check the key and your connection under Settings > Hosted."
         ) from exc
     prime(name, backend, models)
     return list(models)

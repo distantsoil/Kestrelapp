@@ -482,7 +482,8 @@ def test_saving_a_wording_shows_saved_and_a_preview_failure_is_visible(monkeypat
 
     mid = int(re.search(r"/documents/(\d+)/preview", html).group(1))
     r = client.post(f"/documents/{mid}/preview")
-    assert r.status_code == 200 and "Preview failed: RuntimeError: no template" in r.text
+    assert r.status_code == 200 and "Preview failed: RuntimeError." in r.text
+    assert "no template" not in r.text  # exception text stays in the log
 
 
 def test_pursuits_links_to_the_applied_import_and_render_review_links_back(monkeypatch):

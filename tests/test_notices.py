@@ -17,7 +17,7 @@ def test_runtime_closure_has_runtime_deps_and_no_dev_tools():
 def test_notices_carry_jobspy_license_text_and_copyright():
     text = notices.build_notices()
     section = text.split("python-jobspy ", 1)[1].split("=" * 78, 2)
-    assert "License: MIT License (from the license file)" in section[0]
+    assert "License: MIT" in section[0]
     assert "Copyright (c) 2023 Cullen Watson" in text
     assert "Permission is hereby granted" in text
 

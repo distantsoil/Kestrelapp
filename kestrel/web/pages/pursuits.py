@@ -6,6 +6,8 @@ a verb only records what the operator already did."""
 
 from __future__ import annotations
 
+import html
+import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Request
@@ -19,9 +21,16 @@ from kestrel.db.models import DocMaster, DocRender, Opportunity, Org, Outcome, P
 from kestrel.services import pursuit_board as board_svc
 from kestrel.services.pursuits import set_pursuit_status
 from kestrel.web.deps import active_track, sessionmaker, templates, track_is_consulting
-from kestrel.web.redact import confidential, redact_name
+from kestrel.web.redact import confidential, redact_name, redact_text
 
 router = APIRouter()
+
+
+def _search_text(*parts: str | None) -> str:
+    """What the search box matches for one card: lowercased, punctuation folded to spaces. Every
+    part is already redacted, so confidential mode never leaks the employer through search."""
+    joined = " ".join(p for p in parts if p)
+    return re.sub(r"[\W_]+", " ", joined.lower()).strip()
 
 
 def _track_of(raw: str | None) -> str:
@@ -105,10 +114,16 @@ async def _board(session: AsyncSession, track: str, *, notice: dict | None = Non
                     when += f" {pursuit.next_action_at[11:16]}"
                 sub.append(f"{pursuit.next_action.lower()} {when}")
             docs = resumes.get(opp.id, [])
+            shown_org = redact_name(org.name if org else opp.org_name, mapping, enabled=conf)
             card = {
                 "pursuit": pursuit,
                 "opp": opp,
-                "org_name": redact_name(org.name if org else opp.org_name, mapping, enabled=conf),
+                "org_name": shown_org,
+                "search": _search_text(
+                    shown_org,
+                    *(redact_text(t, mapping, enabled=conf) for t in (
+                        opp.title, opp.location_raw, pursuit.notes_md, pursuit.next_action)),
+                ),
                 "overdue": quiet is not None or interview_was is not None,
                 "quiet_days": quiet,
                 "sub": " · ".join(sub),
@@ -242,7 +257,7 @@ async def move_status(request: Request, pursuit_id: int):
         notice = {"ok": False, "text": err} if err else None
         return await _render_board(request, track, notice=notice)
     if err:
-        return HTMLResponse(err, status_code=400)
+        return HTMLResponse(html.escape(err), status_code=400)
     return HTMLResponse("", status_code=204)
 
 

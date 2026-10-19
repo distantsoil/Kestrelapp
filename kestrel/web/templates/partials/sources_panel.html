@@ -30,7 +30,7 @@
           <td>{{ summaries.get(src.name) or src.name }}</td>
           {% if show_track %}<td>{{ src.track }}</td>{% endif %}
           <td>{{ sm.last_run(src) }}</td>
-          <td>{{ sm.health(src, run, run_message) }}</td>
+          <td>{{ sm.health(src, run, run_message, site_lines.get(src.id)) }}</td>
           <td>
             {{ sm.run_now(src, signal_kinds) }}
           </td>
@@ -69,6 +69,36 @@
   {% if sources %}
   <div class="panel" data-testid="own-sources">
     <h2>Other sources</h2>
+    {% if found_boards %}
+    <p class="muted" data-testid="found-boards">{{ found_boards }} company board{{ '' if found_boards == 1 else 's' }}
+      found in your searches{% if found_boards >= found_cap %} (the most Kestrel adds is {{ found_cap }}){% endif %}.
+      Each is read straight from the company, once a day. Turn one off and it stays off.</p>
+    {% if lane_message %}<div class="banner" data-testid="lane-result">{{ lane_message }}</div>{% endif %}
+    {% if lane.waiting %}
+    <div data-testid="lane" x-data="{ confirming: false }">
+      <p class="muted" data-testid="lane-waiting">Waiting: {{ lane.waiting }} role{{ '' if lane.waiting == 1 else 's' }}
+        from company boards that do not look like your field or level are {{ 'kept for you' if lane.hosted else 'scored when Kestrel is idle' }}.
+        None are rejected.{% if lane.hosted %} Because your scoring runs on an online model, these wait for you to choose Score everything now.{% endif %}
+        <button class="btn" type="button" data-testid="lane-score-now" x-show="!confirming"
+                @click="confirming = true">Score everything now</button></p>
+      <div class="warnbox" x-show="confirming" x-cloak data-testid="lane-confirm">
+        <p><strong>Score all {{ lane.waiting }} waiting role{{ '' if lane.waiting == 1 else 's' }} now?</strong></p>
+        {% if lane.hosted %}
+        <p>Kestrel is set to use an online model, so <strong>every role can cost real money</strong>
+          on your account with that service, and the roles are sent to it. Kestrel cannot tell you the
+          total beforehand. Stop here if you are unsure.</p>
+        {% endif %}
+        <p>On a local model this takes your computer about <strong>{{ lane.time }}</strong>
+          ({{ lane.waiting }} roles at about {{ lane.seconds }} seconds each{{ '' if lane.measured else ', a rough figure because not enough roles have been scored yet' }}),
+          and it will be busy meanwhile.{% if not lane.hosted %} If you later switch to an online model, scoring each role there costs money.{% endif %}</p>
+        <p>This happens once. Afterward Kestrel goes back to scoring them slowly in the background.</p>
+        <button class="btn" type="button" hx-post="/sources/score-everything" hx-vals='{"confirm": "1"}'
+                hx-target="#sources-panel" hx-swap="outerHTML" data-testid="lane-confirm-yes">Yes, score them all now</button>
+        <button class="btn" type="button" @click="confirming = false">Cancel</button>
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}
     <div style="overflow-x:auto">
     <table class="data">
       <thead>
@@ -82,12 +112,12 @@
       {% set is_edit_error = edit_error and edit_error.id == src.id %}
       <tbody x-data="{ editing: {{ 'true' if is_edit_error else 'false' }} }">
         <tr>
-          <td>{{ src.name }}</td>
+          <td>{{ src.name }}{% if src.origin == 'discovered' %} <span class="pill grey" data-testid="found-board">found in your searches</span>{% endif %}</td>
           <td class="mono">{{ src.kind }}</td>
           {% if show_track %}<td>{{ src.track }}</td>{% endif %}
           <td><span class="pill {{ 'covered' if src.enabled else '' }}">{{ 'on' if src.enabled else 'off' }}</span></td>
           <td>{{ sm.last_run(src) }}</td>
-          <td>{{ sm.health(src, run, run_message) }}</td>
+          <td>{{ sm.health(src, run, run_message, site_lines.get(src.id)) }}</td>
           <td>
             <div style="display:flex; gap:.35rem; flex-wrap:wrap">
               <button class="btn" type="button" @click="editing = !editing">Edit</button>

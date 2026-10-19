@@ -8,19 +8,32 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ### New
 
+- Company boards Kestrel finds score the roles that look like your field and level first. The rest wait and are scored when Kestrel is otherwise idle, up to 200 a day, so nothing is thrown away. Importing your past applications teaches it your field.
+- A Score everything now button on the Sources page scores every waiting role at once, after a clear warning about the time and, on an online model, the cost.
+- Search and filter your Applications as you type: find a role by company, title, place or notes, narrow by stage, hide closed ones, sort the table, and press "/" to jump to the search box.
+- The Sources page shows how many postings each job board gave in the last run, and says when a board found nothing.
+- Kestrel now finds company job boards for you. When a job from your searches links to a company's own Greenhouse, Lever, Ashby, Workday or SmartRecruiters page, Kestrel starts reading that company's board directly, once a day, so you see all of its openings first-hand. You can turn any company off on the Sources page, and it stays off.
 - The About page has a Check for updates button, with when it last checked, and a Release notes link beside the version number.
 - A Mock interview link on the prep pack and on the role page, so you can reach a mock interview without typing its address.
 - `kestrel-cli research "<company>"` now runs the same company research as the app, for a company Kestrel already knows. Results built from fewer than two sources are labeled insufficient instead of summarized.
 
 ### Changed
 
+- Job searches now ask Indeed and Glassdoor. Google Jobs returns nothing through the search library, so it is no longer asked by default.
+- Changing your profile rules (seniority floor, excluded titles, pay floor, locations) now gives the roles they set aside a second look, and the save says how many.
 - Clearer wording throughout. Kestrel says "you" instead of "the operator", "1 page" instead of "1 pages", and shows local dates and times. Pages and buttons use plain names: "My stories", "Offers", "Use for deeper reads", "Couldn't score", and a plain hardware description. The sidebar names the model that is running in plain words.
 - The confirmation before a deeper read names the online service your text goes to, says what is included, and still shows the full text that will be sent.
 - The Offers page shows money in whole dollars, ranges as "$178,500 to $210,000", competing offers by company and role, and "not enough data yet (0 of the 5 needed)" when there is too little to compare. A walk-away amount you type is formatted, but never changed.
 - The About page and README credit all seven models Kestrel was built with: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and LongCat.
 
+### Security
+
+- Updated libraries to fix known security issues.
+- Error messages no longer show file paths or technical details; those go to the log instead. Text typed into forms is escaped wherever it is shown back.
+
 ### Fixed
 
+- A role added to your shortlist by mistake can be taken off again: Remove from my shortlist, on the role page and in the list's side panel, undoes the add completely: the role leaves your board and your stats, and Kestrel forgets the "good fit" it learned from the add (for adds made from this version on). It works at any stage, so a role tracked by mistake can be removed too.
 - Backups no longer contain the LAN shared key, and restoring a backup keeps the key this computer already has. On a different computer, set up LAN pairing again.
 - In confidential mode, your current employer is now hidden everywhere on the Offers page too: in the competing offers, the pursuit picker, the offer terms you typed, and the negotiation scripts.
 - `kestrel-cli bench` works in the installed app, and uses your own labels after `kestrel-cli goldset regen`.

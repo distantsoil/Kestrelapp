@@ -229,7 +229,9 @@ def test_research_service_failure_renders_inline_error_not_500(
         r = c.post(f"/opportunities/{ids['opp_id']}/research")
         assert r.status_code == 200
         assert "Research failed" in r.text
-        assert "model backend unreachable" in r.text
+        assert "RuntimeError" in r.text  # the type, never the text
+        assert "model backend unreachable" not in r.text
+        assert "the details are in the log" in r.text
 
 
 def test_research_without_a_linked_org_renders_inline_error(
@@ -280,6 +282,28 @@ def test_find_contacts_success_renders_count(monkeypatch: pytest.MonkeyPatch) ->
         assert "Found 1 contact" in r.text
 
 
+def test_action_failure_logs_carry_the_opportunity_and_the_error_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import structlog
+
+    ids = asyncio.run(_seed())
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("model backend unreachable")
+
+    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.research_org", boom)
+    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.discover_contacts", boom)
+    with _client(monkeypatch) as c, structlog.testing.capture_logs() as logs:
+        c.post(f"/opportunities/{ids['opp_id']}/research")
+        c.post(f"/opportunities/{ids['opp_id']}/contacts")
+    by_event = {e["event"]: e for e in logs}
+    for event in ("research_failed", "find_contacts_failed"):
+        assert by_event[event]["opp_id"] == ids["opp_id"]
+        assert by_event[event]["error_type"] == "RuntimeError"
+        assert by_event[event]["error"] == "model backend unreachable"
+
+
 def test_find_contacts_service_failure_renders_inline_error_not_500(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -295,7 +319,8 @@ def test_find_contacts_service_failure_renders_inline_error_not_500(
         r = c.post(f"/opportunities/{ids['opp_id']}/contacts")
         assert r.status_code == 200
         assert "Contact discovery failed" in r.text
-        assert "quarantined: schema mismatch" in r.text
+        assert "RuntimeError" in r.text
+        assert "quarantined: schema mismatch" not in r.text
 
 
 # ============================================================================ 5. Prep pack

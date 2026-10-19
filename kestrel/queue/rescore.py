@@ -186,6 +186,8 @@ async def _upgrade_waiting_t1(session: AsyncSession, opportunity_id: int, extra:
         if (payload.get("tier0_override") and payload.get("rescore")) or task.status != "pending":
             continue
         payload.update(extra)
+        if payload.pop("lane", 0):  # a lane task the operator asked for leaves the lane
+            task.priority = int(payload.pop("lane_priority", 0) or 0)
         payload.pop(T2_ONLY_KEY, None)  # the operator's pick (or the usual models) wins
         if "model_override" not in extra:
             payload.pop("model_override", None)
