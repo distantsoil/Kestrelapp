@@ -4,7 +4,9 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-10-19
+## [0.6.1] - 2026-10-19
+
+0.6.1 is the first release of these changes. The 0.6.0 tag was made, but its release was never published with installers.
 
 ### New
 

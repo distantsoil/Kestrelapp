@@ -620,3 +620,30 @@ def test_the_test_filter_keeps_every_sklearn_module_the_reranker_needs():
         "sklearn.utils._typedefs",
     ):
         assert need in kept, need
+
+
+def test_release_uploads_to_a_draft_and_publishes_it_last():
+    """Immutable releases (on for the public repo) refuse an upload to a published release. A
+    v0.6.0 release published from the web form before the build ended with no installers and a
+    tag that can never be reused, so the workflow drafts, uploads, then publishes."""
+    wf = _workflow("release.yml")
+    steps = wf["jobs"]["release"]["steps"]
+    gh = next(s for s in steps if str(s.get("uses", "")).startswith("softprops/"))
+    assert gh["with"]["draft"] is True
+    publish = next(s for s in steps if s.get("name") == "Publish the release")
+    assert steps.index(gh) < steps.index(publish)
+    assert f"steps.{gh['id']}.outputs.id" in publish["env"]["RELEASE_ID"]
+    # -F sends a JSON boolean; -f would send the string "false", which the API refuses.
+    assert "-F draft=false" in publish["run"]
+    assert '-z "$RELEASE_ID"' in publish["run"]
+
+
+def test_release_preflight_refuses_a_tag_that_already_has_a_release():
+    """A tag whose release is already published fails in preflight, before 35 minutes of builds
+    that could not be attached to it."""
+    wf = _workflow("release.yml")
+    steps = wf["jobs"]["preflight"]["steps"]
+    check = next(s for s in steps if s.get("name") == "No published release for this tag")
+    assert "github.event_name == 'push'" in check["if"]
+    assert "gh release view" in check["run"] and "exit 1" in check["run"]
+    assert "GH_TOKEN" in check["env"]
