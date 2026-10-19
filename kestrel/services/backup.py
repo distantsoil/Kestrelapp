@@ -571,7 +571,9 @@ def restore_backup(path: str | Path) -> RestoreResult:
     """
     src = Path(path)
     if not src.is_file():
-        raise InvalidBackupError(f"No such backup file: {src}")
+        # The message reaches a page; the path goes to the log only (D-SEC-1).
+        log.warning("restore_backup_missing", path=str(src))
+        raise InvalidBackupError("The backup file was not found.")
 
     with tempfile.TemporaryDirectory(prefix="kestrel-restore-") as tmp_str:
         staging = Path(tmp_str)

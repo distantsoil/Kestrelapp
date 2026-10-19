@@ -231,7 +231,7 @@ def test_restore_refuses_a_path_traversal_entry(tmp_path):
 
 
 def test_restore_refuses_a_missing_file():
-    with pytest.raises(InvalidBackupError, match="No such backup file"):
+    with pytest.raises(InvalidBackupError, match="The backup file was not found"):
         restore_backup("this/path/does/not/exist.zip")
 
 
@@ -385,3 +385,14 @@ def test_web_restore_escapes_the_archive_entry_name_in_its_error(tmp_path):
     # survives: "<img" is neutralized, so the payload cannot execute in the app's origin.
     assert "&lt;img src=x onerror=alert(1)&gt;" in r.text
     assert "<img src=x" not in r.text
+
+
+def test_a_missing_backup_file_is_reported_without_its_path(tmp_path):
+    """The message reaches a page (Settings > Restore), so it names no path (D-SEC-1)."""
+    from kestrel.services.backup import InvalidBackupError, restore_backup
+
+    missing = tmp_path / "secret-dir" / "gone.zip"
+    with pytest.raises(InvalidBackupError) as err:
+        restore_backup(missing)
+    assert "secret-dir" not in str(err.value) and "gone.zip" not in str(err.value)
+    assert str(err.value) == "The backup file was not found."
