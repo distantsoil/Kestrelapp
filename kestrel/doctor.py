@@ -651,7 +651,7 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
             f"on since {hm.acknowledged_at}; tiers: {routed or 'none (local models only)'}",
         )
     else:
-        rep.add("Hosted mode", INFO, "off (every tier runs locally; Tier 3 escalation only)")
+        rep.add("Hosted mode", INFO, "off (every tier runs locally; deeper reads only)")
         if external_rows:
             named = ", ".join(f"{r.tier} -> {r.backend}" for r in external_rows)
             rep.add(
@@ -710,7 +710,7 @@ def _check_hosted(rep: DoctorReport, s: Settings) -> None:
             WARN,
             f"{where}; no key saved",
             f"Add your {_backend_label(st.backend_name)} key in Settings > Hosted to enable "
-            "operator-confirmed Tier 3 escalation.",
+            "deeper reads.",
         )
 
 

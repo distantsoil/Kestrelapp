@@ -34,8 +34,8 @@ async def test_comp_range_insufficient_below_five(sm):
     assert rng.sufficient is False
     assert rng.n == 3
     assert rng.median is None  # no precise number is manufactured from three points
-    assert "insufficient data" in rng.summary()
-    assert "n=3" in rng.summary()
+    assert "not enough data yet" in rng.summary()
+    assert "3 of the 5 needed" in rng.summary()
 
 
 async def test_comp_range_sensible_at_twenty(sm):

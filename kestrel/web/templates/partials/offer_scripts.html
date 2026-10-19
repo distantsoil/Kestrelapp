@@ -3,8 +3,8 @@
 {% elif result %}
   <div class="panel" style="margin-top:.6rem">
     <p><strong>Situation read:</strong> {{ result.situation_read }}</p>
-    <p><strong>Walk-away (yours, echoed unchanged):</strong>
-      <span class="mono">{{ result.walk_away }}</span></p>
+    <p><strong>Walk-away (yours, unchanged):</strong>
+      <span class="mono" data-exact="{{ result.walk_away }}">{{ result.walk_away|typed_amount }}</span></p>
 
     {% if result.leverage_inventory %}
       <p class="muted"><strong>Leverage:</strong> {{ result.leverage_inventory|join('; ') }}</p>

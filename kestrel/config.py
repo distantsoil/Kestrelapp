@@ -299,10 +299,6 @@ class ConsultingSettings(BaseModel):
     max_trigger_age_days: int = 120
 
 
-class Scheduler(BaseModel):
-    enabled: bool = False
-
-
 class Learning(BaseModel):
     min_labels_for_calibration: int = 30
     few_shot_k: int = 3
@@ -459,7 +455,6 @@ class Settings(BaseSettings):
     scoring: Scoring = Scoring()
     thresholds: Thresholds = Thresholds()
     consulting: ConsultingSettings = ConsultingSettings()
-    scheduler: Scheduler = Scheduler()
     learning: Learning = Learning()
     stories: Stories = Stories()
     docs: Docs = Docs()

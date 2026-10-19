@@ -8,9 +8,11 @@ the server renders on <html> for the first paint."""
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import structlog
 from fastapi.templating import Jinja2Templates
@@ -21,6 +23,21 @@ from kestrel.db.engine import get_sessionmaker
 from kestrel.web.words import PLAIN, words
 
 log = structlog.get_logger()
+
+
+def _iso_to_local(ts: str | None) -> str:
+    """Convert an ISO timestamp string to a local date/time string for display.
+    Returns empty string for None/empty input. Format: YYYY-MM-DD HH:MM (24-hour)."""
+    if not ts:
+        return ""
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        # Convert to local timezone
+        local_dt = dt.astimezone()
+        return local_dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError, OverflowError):
+        return ts  # fallback to original string on parse error
+
 
 _templates: Jinja2Templates | None = None
 
@@ -92,7 +109,7 @@ NAV_GROUPS: tuple[tuple[str, tuple[NavItem, ...]], ...] = (
                 consulting_label="Leads",
             ),
             NavItem("Profile", "/profile", ("/profile", "/documents", "/renders"), "documents"),
-            NavItem("Interview prep", "/stories", ("/stories", "/prep", "/mock"), "interview"),
+            NavItem("My stories", "/stories", ("/stories", "/prep", "/mock"), "interview"),
             NavItem("Offers", "/offers", ("/offers",), "offers"),
         ),
     ),
@@ -387,9 +404,38 @@ def templates() -> Jinja2Templates:
             if k not in (_run_model.OVERRIDE_KEY, _run_model.LABEL_KEY)
         }
         t.env.filters["run_model_label"] = lambda c: _run_model.label_of(c)
-        t.env.filters["comma"] = lambda n: f"{n:,}" if isinstance(n, (int, float)) else n
+        t.env.filters["comma"] = lambda n: (
+            f"{int(n):,}" if isinstance(n, float) and n.is_integer() else
+            f"{n:,}" if isinstance(n, (int, float)) else n
+        )
+        t.env.filters["money"] = format_money
+        t.env.filters["typed_amount"] = format_typed_amount
+        t.env.filters["iso_to_local"] = lambda ts: _iso_to_local(ts)
         _templates = t
     return _templates
+
+
+def format_money(n: object) -> str:
+    """Whole dollars with a thousands separator: 210000.0 -> "$210,000". Anything that is not a
+    number is returned unchanged. The one money formatter for the Offers page."""
+    if isinstance(n, bool) or not isinstance(n, (int, float)):
+        return "" if n is None else str(n)
+    return f"${round(n):,}"
+
+
+_PLAIN_AMOUNT = re.compile(r"^\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?$")
+
+
+def format_typed_amount(text: object) -> str:
+    """A figure the operator typed, echoed. A plain amount (digits, optional $, commas, decimal
+    part) is shown as money with exactly the digits they typed (no rounding, no "k" expansion);
+    anything else comes back verbatim."""
+    raw = "" if text is None else str(text)
+    m = _PLAIN_AMOUNT.match(raw.strip())
+    if not m:
+        return raw
+    whole = int(m.group(1).replace(",", ""))
+    return f"${whole:,}{m.group(2) or ''}"
 
 
 def sessionmaker():

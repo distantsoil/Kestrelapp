@@ -87,7 +87,7 @@ async def _gather_few_shot(
 
 
 def _dimension_scores(dimensions) -> dict[str, float]:
-    return {name: getattr(dimensions, name).score for name in dimensions.model_fields}
+    return {name: getattr(dimensions, name).score for name in type(dimensions).model_fields}
 
 
 def _writeback_org_signals(org: Org | None, value, opp: Opportunity) -> None:

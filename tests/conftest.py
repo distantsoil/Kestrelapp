@@ -159,6 +159,18 @@ def _worker_unpaused():
     app.set_paused(False)
 
 
+@pytest.fixture(autouse=True)
+def _reset_desktop_bridge():
+    """The desktop_bridge handlers are process-global. A test that registers a handler (e.g. via
+    shell.run_desktop) must not leak it to subsequent tests."""
+    from kestrel.web import desktop_bridge
+
+    yield
+    desktop_bridge.set_focus_handler(None)
+    desktop_bridge.set_quit_handler(None)
+    desktop_bridge.set_reveal_handler(None)
+
+
 @pytest.fixture
 def browser_fallback(monkeypatch):
     """Point KESTREL_BROWSER_PATH at a fallback Chromium when Edge is absent; skip only if there

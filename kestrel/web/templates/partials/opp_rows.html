@@ -129,7 +129,7 @@
     {{ chip('Your call', 'needs_review', '1', f.needs_review) }}
     {{ chip('Scored', 'stage', 't2_done', f.stage == 't2_done', testid='evaluated') }}
     {{ chip('New today', 'new_today', '1', f.new_today) }}
-    {{ chip('Failed scoring (parked)', 'stage', 'quarantined', f.stage == 'quarantined', count=quarantined, testid='quarantined') }}
+    {{ chip("Couldn't score", 'stage', 'quarantined', f.stage == 'quarantined', count=quarantined, testid='quarantined') }}
     {{ chip('Hidden', 'hidden', '1', f.hidden_only, testid='hidden') }}
     {# Score again (D-UI-50) applies to the rows the current chips and search show on this
        page, so a chip (Failed scoring, Your call) is the selection. Swapped with the list. #}

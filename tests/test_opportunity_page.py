@@ -256,7 +256,7 @@ def test_tab_partials_return_their_content():
         assert 'data-tab="evaluation"' in ev.text
         assert "The model and the scoring rules agree" in ev.text
         assert "What would worry a hiring committee" in ev.text  # the gaps list under B
-        assert "3,100 tokens in" in ev.text and "kestrel-tier2" in ev.text
+        assert "3,100 tokens in" in ev.text and "a local model" in ev.text
 
         posting = c.get(f"/opportunities/{ids['opp']}/tab/posting")
         assert posting.status_code == 200

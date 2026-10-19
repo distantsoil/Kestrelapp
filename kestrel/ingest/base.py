@@ -1,7 +1,8 @@
 """The source-adapter contract. An adapter maps ONE platform's payload (with its counter-intuitive
 field names, SPEC.md Appendix A) into a list of canonical RawPosting objects. It never touches the
 database or the shared canonicalization; normalize.py does that. This clean seam is what lets the
-four ATS adapters be written independently."""
+ATS adapters (Greenhouse, Lever, Ashby, SmartRecruiters, Workday) and the JobSpy
+board adapter be written independently."""
 
 from __future__ import annotations
 

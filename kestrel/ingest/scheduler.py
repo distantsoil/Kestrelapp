@@ -1,8 +1,7 @@
 """Recurring-scan scheduling (SPEC.md 6.5). Every five minutes the worker enqueues `scrape` tasks
 for due, enabled sources, with guards: never enqueue for a source that already has a pending or
-leased scrape, and (kill switch) do nothing unless settings.scheduler.enabled is true (default
-false, so a fresh install never scrapes unattended). The AsyncIOScheduler wiring lives in the app
-lifespan (Phase 13/14); the pure functions here are what the pipeline and tests use."""
+leased scrape. The AsyncIOScheduler wiring lives in the app lifespan (Phase 13/14); the pure
+functions here are what the pipeline and tests use."""
 
 from __future__ import annotations
 

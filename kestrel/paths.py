@@ -33,6 +33,12 @@ def data_home() -> Path:
     override = os.environ.get("KESTREL_DATA_HOME")
     if override:
         return Path(override)
+    return default_data_home()
+
+
+def default_data_home() -> Path:
+    """The per-OS default data home, ignoring KESTREL_DATA_HOME (the single-instance lock compares
+    against it, and the installer's AppMutex belongs to this folder only)."""
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
         return Path(local) / APP_NAME

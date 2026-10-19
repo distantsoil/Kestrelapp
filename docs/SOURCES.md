@@ -9,7 +9,9 @@ right and this file needs updating.
 Every kind is added the same way on the Sources page: a name, a track, the kind, a cadence in
 hours, and a JSON config. The config is checked with the adapter's own `validate_config`, the same
 one the scan runner calls, so a config that would fail at scan time is refused before it is saved.
-Shipped example rows for every kind are in `kestrel/resources/config/sources.yml`, all disabled.
+The only row shipped in `kestrel/resources/config/sources.yml` is SAM.gov (disabled, and it needs a
+free key). Your job searches and SEC filings watch are generated from your profile, and company
+boards, feeds and portfolio pages you add yourself; the config shapes are listed below.
 
 ## Region
 
@@ -122,7 +124,8 @@ and that `validate_config` refuses each missing required key.
 4. `kestrel/ingest/dedup.py`: add the kind's precedence.
 5. `kestrel/ingest/catalog.py`: add the operator-facing description (the Help page test fails
    until you do, by design).
-6. `kestrel/resources/config/sources.yml`: one disabled example row.
+6. Add the config shape to the table above. Do not add a row to
+   `kestrel/resources/config/sources.yml` unless the kind needs one shipped (only SAM.gov does).
 7. `tests/fixtures/<kind>.json` and `tests/test_<kind>_adapter.py`.
 8. This file, and `SPEC.md` Appendix A with the verified payload shape.
 

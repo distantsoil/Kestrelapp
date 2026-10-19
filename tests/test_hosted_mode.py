@@ -411,7 +411,7 @@ def test_settings_hosted_mode_flow(monkeypatch):
         data={"backend.tier2": "frontier", "model.tier2": "", "backend.frontier": "local"},
     )
     assert "Not saved" in r.text and "model id is required" in r.text
-    assert "frontier must stay" in r.text
+    assert "deeper reads must stay on an online model service" in r.text
     st = _db_settings()
     assert "tier2" not in st.llm.hosted_tiers
     assert st.llm.tiers["frontier"].backend == "frontier"

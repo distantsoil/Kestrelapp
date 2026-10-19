@@ -22,6 +22,7 @@ from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.llm import providers as prov
+from kestrel.llm.service_name import service_name
 
 log = structlog.get_logger()
 
@@ -62,9 +63,26 @@ class ConnectOutcome:
         return f"{self.headline} {self.detail}".strip()
 
 
+# Plain names for tier and backend keys, as the Models and Bench pages use them
+# (kestrel.web.deps.tier_label, kestrel.web.words.PLAIN). Lower case: these sit inside sentences.
+_TIER_PLAIN = {
+    "tier1": "quick screen",
+    "tier2": "full review",
+    "tier3": "deeper read",
+    "frontier": "deeper reads",
+    "docsel": "document selection",
+    "trigger": "trigger classification",
+}
+
+
 def tier_label(tier: str) -> str:
-    """"tier3" reads "Tier 3"; the named tiers (frontier, docsel, trigger) keep their name."""
-    return f"Tier {tier[4:]}" if tier.startswith("tier") and tier[4:].isdigit() else tier
+    """A tier as the user knows it: "full review (Tier 2)", with the setting name beside the plain
+    one, or "deeper reads" for the hosted escalation backend. Never a bare internal key such as
+    "frontier" or "tier2"."""
+    plain = _TIER_PLAIN.get(tier)
+    if plain and tier.startswith("tier") and tier[4:].isdigit():
+        return f"{plain} (Tier {tier[4:]})"
+    return plain or tier
 
 
 def tiers_sentence(tier1: str | None, tier2: str | None) -> str:
@@ -220,8 +238,9 @@ async def connect_provider(
     if free_only and paid:
         # Mostly free with a paid override is allowed; it is never presented as all free.
         scope = (
-            "Defaults picked from free models only, but your paid override on "
-            f"{', '.join(tier_label(t) for t in paid)} is billed by {label}."
+            "Defaults picked from free models only, but your paid override for "
+            f"{', '.join(tier_label(t) for t in paid)} is billed by "
+            f"{service_name(backend.base_url)}."
         )
     elif free_only:
         scope = "Picked from free models only; to use paid models, connect again with the box " \
@@ -238,7 +257,7 @@ async def connect_provider(
     if "tier2" in paid:
         tier2 = f"{tier2} (paid override)"
     overrides = "".join(
-        f" {tier_label(t)} keeps your override {m}{' (paid)' if p else ''}."
+        f" Your override for {tier_label(t)} stays: {m}{' (paid)' if p else ''}."
         for t, m, p in ov.kept
     )
     if ov.dropped:

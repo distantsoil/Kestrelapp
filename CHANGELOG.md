@@ -4,9 +4,28 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-19
+
 ### New
 
 - The About page has a Check for updates button, with when it last checked, and a Release notes link beside the version number.
+- A Mock interview link on the prep pack and on the role page, so you can reach a mock interview without typing its address.
+- `kestrel-cli research "<company>"` now runs the same company research as the app, for a company Kestrel already knows. Results built from fewer than two sources are labeled insufficient instead of summarized.
+
+### Changed
+
+- Clearer wording throughout. Kestrel says "you" instead of "the operator", "1 page" instead of "1 pages", and shows local dates and times. Pages and buttons use plain names: "My stories", "Offers", "Use for deeper reads", "Couldn't score", and a plain hardware description. The sidebar names the model that is running in plain words.
+- The confirmation before a deeper read names the online service your text goes to, says what is included, and still shows the full text that will be sent.
+- The Offers page shows money in whole dollars, ranges as "$178,500 to $210,000", competing offers by company and role, and "not enough data yet (0 of the 5 needed)" when there is too little to compare. A walk-away amount you type is formatted, but never changed.
+- The About page and README credit all seven models Kestrel was built with: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and LongCat.
+
+### Fixed
+
+- Backups no longer contain the LAN shared key, and restoring a backup keeps the key this computer already has. On a different computer, set up LAN pairing again.
+- In confidential mode, your current employer is now hidden everywhere on the Offers page too: in the competing offers, the pursuit picker, the offer terms you typed, and the negotiation scripts.
+- `kestrel-cli bench` works in the installed app, and uses your own labels after `kestrel-cli goldset regen`.
+- Messages about online models no longer show internal names such as "frontier" or "tier2".
+- The Warm paths section no longer suggests importing LinkedIn connections, which Kestrel cannot do.
 
 ## [0.5.0] - 2026-10-18
 

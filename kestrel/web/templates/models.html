@@ -13,8 +13,8 @@
   {% endfor %}
   <a class="btn ghost{% if not since %} primary{% endif %}" href="/models?track={{ track }}">All</a>
 </div>
-<p class="muted">Which model has done the work at each tier and how it has done, from the
-operator's own evaluation rows. Agreement with operator labels is the only quality signal the model
+<p class="muted">Which model has done the work at each tier and how it has done, from your
+own evaluation rows. Agreement with your labels is the only quality signal the model
 does not report about itself. Every rate is shown beside the sample size it rests on; anything
 under five labeled evaluations says "too few to judge" rather than being shown as if it were solid.
 Switch tracks with the Emp/Con toggle in the top bar.</p>
@@ -34,11 +34,11 @@ Switch tracks with the Emp/Con toggle in the top bar.</p>
         {% set b = best[tier] %}
         {% if b %}
           {{ tier|tier_label }}: <b class="mono">{{ b.model }}</b> ({{ b.prompt_version }}) agrees with
-          the operator on {{ '%.0f'|format(b.agreement_rate * 100) }}% of {{ b.n_labeled }} labeled
+          you on {{ '%.0f'|format(b.agreement_rate * 100) }}% of {{ b.n_labeled }} labeled
           evaluations{% if b.mean_abs_score_error is not none %}, mean absolute score error
           {{ '%.2f'|format(b.mean_abs_score_error) }}{% endif %}.
         {% else %}
-          {{ tier|tier_label }}: {{ too_few(max_labeled[tier]) }} to say which model agrees with the operator.
+          {{ tier|tier_label }}: {{ too_few(max_labeled[tier]) }} to say which model agrees with you.
         {% endif %}
       {% endfor %}
     </p>
@@ -66,7 +66,7 @@ Switch tracks with the Emp/Con toggle in the top bar.</p>
     {% endif %}
   </div>
   <div class="panel">
-    <h2>Hosted (frontier) backend</h2>
+    <h2>Online model service</h2>
     {% if provider and provider.base_url %}
       <div class="formgrid">
         <label>Backend</label><div class="mono">{{ provider.backend_name }} ({{ provider.provider }},
@@ -92,8 +92,8 @@ Switch tracks with the Emp/Con toggle in the top bar.</p>
 {# ---------------------------------------------------------------------------- comparison table #}
 <div class="panel">
   <h2>Comparison by tier, model, and prompt version</h2>
-  <p class="muted">Click a column header to sort. Agreement is exact-verdict agreement with the
-  operator's latest label on the same opportunity; n_labeled is its denominator. Cost is summed
+  <p class="muted">Click a column header to sort. Agreement is exact-verdict agreement with
+  your latest label on the same opportunity; n_labeled is its denominator. Cost is summed
   from hosted transmissions; local models have no cost to sum and show "local".</p>
   <table class="data" id="model-compare">
     <thead>
@@ -166,13 +166,13 @@ Switch tracks with the Emp/Con toggle in the top bar.</p>
 <div class="panel">
   <h2>Recent evaluations</h2>
   <p class="muted">The last {{ history|length }} evaluations, newest first. "Agreed" compares the
-  model's verdict with the operator's latest label on the same opportunity; blank means no label
+  model's verdict with your latest label on the same opportunity; blank means no label
   yet.</p>
   <table class="data">
     <thead>
       <tr>
         <th>When</th><th>Opportunity</th><th>Step</th><th>Model</th><th>Verdict</th>
-        <th>Score</th><th>Operator</th><th>Agreed</th><th>Latency ms</th><th>Tokens</th><th>Cost</th>
+        <th>Score</th><th>Your label</th><th>Agreed</th><th>Latency ms</th><th>Tokens</th><th>Cost</th>
       </tr>
     </thead>
     <tbody>
@@ -221,8 +221,8 @@ Switch tracks with the Emp/Con toggle in the top bar.</p>
         <td class="muted">
           {% if not g.present %}Run <span class="mono">kestrel goldset regen --track {{ g.track }}</span>.
           {% elif g.placeholder %}Shipped placeholder: invented items, so agreement against it says
-          nothing about this operator's judgment. Label real items and regenerate.
-          {% else %}Regenerated from the operator's own labels.{% endif %}
+          nothing about your judgment. Label real items and regenerate.
+          {% else %}Regenerated from your own labels.{% endif %}
         </td>
       </tr>
       {% endfor %}

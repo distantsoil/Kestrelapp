@@ -108,9 +108,6 @@ consulting:
   min_trigger_confidence: 0.5
   max_trigger_age_days: 120
 
-scheduler:
-  enabled: false          # a fresh install does not start scraping unattended (SPEC.md 6.5)
-
 learning:
   min_labels_for_calibration: 30
   few_shot_k: 3

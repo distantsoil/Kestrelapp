@@ -88,7 +88,7 @@
         {% if render.defaults_used %}
           <span class="badge review" title="Kestrel could not use its picks for some parts, so it used your standard wording there">standard wording used</span>
         {% endif %}
-        <span class="pill mono">{{ render.page_count if render.page_count is not none else "-" }} pages</span>
+        <span class="pill mono">{{ render.page_count if render.page_count is not none else "-" }} {{ 'page' if (render.page_count == 1) else 'pages' }}</span>
         {% if render.pdf_path %}
           <a class="btn ghost" href="/renders/{{ render.id }}/download">Download PDF</a>
         {% endif %}
@@ -156,7 +156,7 @@
     {% endif %}
     {% if over_page_limit %}
       <div class="warnbox" style="margin-top:.6rem">
-        This document runs {{ render.page_count }} pages, over the {{ max_pages }}-page limit.
+        This document runs {{ render.page_count }} {{ 'page' if (render.page_count == 1) else 'pages' }}, over the {{ max_pages }}-page limit.
         To shorten it, hide a part below or swap in a shorter wording.
       </div>
     {% endif %}

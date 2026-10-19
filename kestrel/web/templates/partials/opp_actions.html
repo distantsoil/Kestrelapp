@@ -65,6 +65,7 @@
     {% if prep_ready %}
     <div>
       <a class="btn primary" href="/prep/{{ opp.id }}" data-testid="open-interview-prep">Open {{ words(opp.track).interview_prep|lower }}</a>
+      <a class="btn ghost" href="/mock/{{ opp.id }}" style="margin-left:.5rem">Mock interview</a>
     </div>
     {% endif %}
 

@@ -47,6 +47,12 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
+            PKG_VERSION="$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('kestrel/__init__.py').read())[1])")"
+            # A prerelease tag (v0.6.0-rc.1) is compared on its base version (0.6.0).
+            if [ "${VERSION%%-*}" != "$PKG_VERSION" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match kestrel.__version__ ($PKG_VERSION) in kestrel/__init__.py. Set __version__ to ${VERSION%%-*} and tag again."
+              exit 1
+            fi
           else
             VERSION="$(python3 -c "import re; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('kestrel/__init__.py').read())[1])")"
           fi

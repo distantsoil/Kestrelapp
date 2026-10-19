@@ -1,4 +1,4 @@
-"""Declarative base, the ISO8601-UTC timestamp helper, and the created/updated mixin.
+"""Declarative base and the ISO8601-UTC timestamp helpers.
 
 Timestamps are stored as ISO8601 UTC TEXT (SPEC.md 4). This is lexicographically sortable, so
 `lease_until < now` and next-action-due comparisons work as plain string comparisons."""
@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase
 
 
 def utcnow() -> datetime:
@@ -28,8 +27,3 @@ def utcnow_iso() -> str:
 
 class Base(DeclarativeBase):
     pass
-
-
-class TimestampMixin:
-    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
-    updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso, onupdate=utcnow_iso)

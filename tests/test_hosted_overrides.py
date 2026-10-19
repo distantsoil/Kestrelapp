@@ -176,7 +176,9 @@ def test_override_flow_save_all_label_connect_rerun_and_reset():
     assert 'data-testid="label-tier2">(Override)<' in body
     # A paid override is allowed with Free models only on, and labeled and announced as billed.
     assert 'data-testid="label-frontier">(Override · paid)<' in body
-    assert f"frontier {_PAID} (paid)" in body and "Billed: frontier" in body
+    assert f"deeper reads: {_PAID} (paid)" in body
+    assert "Billed: a paid model is now used for deeper reads" in body
+    assert "frontier" not in body.split("Saved as override")[1].split("</div>")[0]
     assert "although Free models only is on" in body
     assert 'data-testid="label-tier1">Default<' in body
     assert 'data-testid="reset-tier2"' in body and 'data-testid="reset-tier1"' not in body
@@ -189,10 +191,11 @@ def test_override_flow_save_all_label_connect_rerun_and_reset():
     with respx.mock as router:
         r = _connect(client, router)
     # Each kept override is named, the paid one marked, and the scope never claims all free.
-    assert f"Tier 2 keeps your override {_NEMOTRON}." in r.text
-    assert f"frontier keeps your override {_PAID} (paid)." in r.text
+    assert f"Your override for full review (Tier 2) stays: {_NEMOTRON}." in r.text
+    assert f"Your override for deeper reads stays: {_PAID} (paid)." in r.text
     assert "Picked from free models only" not in r.text
-    assert "your paid override on frontier is billed" in r.text
+    assert "your paid override for deeper reads is billed by openrouter.ai." in r.text
+    assert "override on frontier" not in r.text and "frontier keeps" not in r.text
     s = _db_settings()
     assert s.llm.hosted_tiers["tier2"].model == _NEMOTRON
     assert s.llm.tiers["frontier"].model == _PAID
@@ -216,8 +219,9 @@ def test_unknown_id_and_too_small_context_are_refused_by_name():
             data={"model.tier2": "made/up-model", "save.tier2": "on",
                   "model.tier3": _GEMMA, "save.tier3": "on"},
         ).text
-    assert "Not saved" in body and "made/up-model" in body and "not in frontier" in body
-    assert "tier3: google/gemma-3-27b-it:free refused, context 8,192" in body
+    assert "Not saved" in body and "made/up-model" in body
+    assert "is not in the model list from" in body
+    assert "deeper read (Tier 3): google/gemma-3-27b-it:free refused, context 8,192" in body
     assert _db_settings().llm.hosted_tiers["tier2"].model == before
     assert _state()[1] == {}
 
@@ -301,7 +305,7 @@ def test_bench_has_no_free_text_model_entry_and_offers_hosted_models_after_load(
 
     # Promoting a hosted pick saves it as that tier's override.
     body = client.post("/bench/promote", data={"tier": "tier2", "model": f"hosted:{_NEMOTRON}"})
-    assert "Saved as override: tier2" in body.text
+    assert "Saved as override: full review (Tier 2)" in body.text
     assert _db_settings().llm.hosted_tiers["tier2"].model == _NEMOTRON
     assert set(_state()[1]) == {"tier2"}
 
@@ -353,13 +357,13 @@ def test_free_only_connect_keeps_a_paid_tier1_override_and_says_so_in_the_headli
         body = client.post("/models/hosted/overrides",
                            data={"model.tier1": _PAID, "save.tier1": "on"}).text
     assert 'data-testid="label-tier1">(Override · paid)<' in body
-    assert "Billed: tier1 now runs on a paid model" in body
+    assert "Billed: a paid model is now used for quick screen (Tier 1)" in body
     assert _state()[1]["tier1"]["free"] is False
     with respx.mock as router:
         r = _connect(client, router)
     head = r.text.split('data-connect-ok="true"')[1]
     assert f"Tier 1 will use {_PAID} (paid override)" in head
-    assert f"Tier 1 keeps your override {_PAID} (paid)." in head
+    assert f"Your override for quick screen (Tier 1) stays: {_PAID} (paid)." in head
     assert "Picked from free models only" not in head
     assert _db_settings().llm.hosted_tiers["tier1"].model == _PAID
 

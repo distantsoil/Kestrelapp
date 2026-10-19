@@ -1,0 +1,80 @@
+name: Report a problem
+description: Something in Kestrel did not work the way you expected.
+title: "Problem: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. You do not need to be technical; plain words are perfect.
+
+        **Everything you post here is public**, including pictures. Please leave out your name, contact details, resume text, employers, the jobs you are applying to, any online model key, and the diagnostics file from Kestrel's About page. Kestrel is made by one person, so this is not a help desk, but every report is read and helps shape future releases.
+  - type: textarea
+    id: doing
+    attributes:
+      label: What were you doing?
+      placeholder: For example, "I clicked Download PDF on a tailored resume."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened instead?
+      description: If Kestrel showed a message, copy its exact wording here.
+    validations:
+      required: true
+  - type: dropdown
+    id: often
+    attributes:
+      label: Does it happen every time?
+      options:
+        - Every time
+        - Sometimes
+        - Only once so far
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Kestrel version
+      description: Shown at the top of Kestrel's About page.
+      placeholder: "0.5.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: Your computer
+      options:
+        - Windows
+        - Mac
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: ai
+    attributes:
+      label: Where does Kestrel's AI run?
+      options:
+        - On this computer (Local)
+        - Online with my own key (Hosted)
+        - Both
+        - Not sure
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else? (optional)
+      description: A screenshot can help. Crop or cover names, companies and job titles first. On the About page, leave out the data folder line, which shows your computer's user name.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before you submit
+      options:
+        - label: I have left out my personal details and did not attach the diagnostics file.
+          required: true

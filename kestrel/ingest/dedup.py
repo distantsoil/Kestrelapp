@@ -1,7 +1,7 @@
 """Deduplication (SPEC.md 5.5): exact content hash, near-exact title-token Jaccard within an org,
 and canonical-source priority (company ATS > company page > Indeed > Google > ZipRecruiter >
-LinkedIn > Glassdoor). Semantic dedup (nomic-embed cosine > 0.93) runs after the embed task
-computes vectors; it is not done here."""
+LinkedIn > Glassdoor). There is no semantic (embedding) dedup pass: dedup is the
+content hash of org, title and description plus the title-token Jaccard grouping."""
 
 from __future__ import annotations
 

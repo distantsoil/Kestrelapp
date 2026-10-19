@@ -10,7 +10,7 @@
     {% set status = statuses[s.key] %}
     <li class="{{ 'now' if s.key == key else status }}" data-ob-step="{{ s.key }}" data-status="{{ status }}"
         {% if s.key == key %}aria-current="step"{% endif %}>
-      {% if s.key in reachable and s.key != key %}<a href="/onboarding?step={{ s.key }}">{% endif %}{{ loop.index }}. {{ s.title }}{% if status == 'ok' %} &#10003;{% elif status == 'skipped' %} (skipped){% endif %}{% if s.key in reachable and s.key != key %}</a>{% endif %}
+      {% if s.key in reachable and s.key != key %}<a href="/onboarding?step={{ s.key }}">{% endif %}{{ loop.index }}. {{ s.title }}{% if status == 'ok' %} &#10003;{% elif status == 'skipped' and not onboarding_complete %} (skipped){% endif %}{% if s.key in reachable and s.key != key %}</a>{% endif %}
     </li>
     {% endfor %}
   </ol>

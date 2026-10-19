@@ -473,11 +473,11 @@ def build_steps(st: SetupState, cat: profiles.ModelCatalog) -> list[StepState]:
 
     # 3. Hardware profile
     if not local:
-        steps.append(_skipped(3, "profile", f"Hardware profile: {st.profile}"))
+        steps.append(_skipped(3, "profile", f"Hardware profile: {prof.description}"))
     else:
         steps.append(
             StepState(
-                "profile", 3, f"Hardware profile: {st.profile}",
+                "profile", 3, f"Hardware profile: {prof.description}",
                 "ok" if st.profile_recorded else "todo",
                 detail=prof.description,
                 explanation=_join_sentences(
@@ -601,7 +601,7 @@ def build_steps(st: SetupState, cat: profiles.ModelCatalog) -> list[StepState]:
             + (
                 "Required for Hosted and Both."
                 if st.hosted_needed
-                else "Optional for Local: it enables Tier 3 escalation only."
+                else "Optional for Local: it enables deeper reads only."
             ),
             link="/settings#hosted",
             link_label="Add a key" if not keys else "Settings > Hosted",

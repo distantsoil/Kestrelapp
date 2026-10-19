@@ -334,9 +334,9 @@ Task types: `scrape`, `normalize`, `embed`, `t1`, `t2`, `t3`, `doc_select`, `ren
 `research`, `contacts`, `liveness`, `calibrate`, `train_reranker`, `consolidate_stories`,
 `prep_pack`, `negotiation`, `trigger_classify`, `pursuit_sweep`.
 
-**`embed` is enqueued by `normalize`, unconditionally, for every opportunity.** Three separate
-subsystems depend on vectors existing: semantic dedup (§5.5 pass 3), the reranker's PCA features
-(`SPEC-MODULES.md` §5.4), and MCP semantic search. If nothing enqueues `embed`, all three fail
+**`embed` is enqueued by `normalize`, unconditionally, for every opportunity.** Two separate
+subsystems depend on vectors existing: the reranker's PCA features
+(`SPEC-MODULES.md` §5.4), and MCP semantic search. If nothing enqueues `embed`, both fail
 silently and late.
 
 **`pursuit_sweep`** runs daily from the scheduler and is what makes next-action and ghosting
@@ -543,9 +543,11 @@ Three passes, cheapest first.
    tracking parameters.
 2. **Near-exact.** Within a bucket keyed by normalized org plus the first four significant title
    tokens, token-set Jaccard above 0.85 groups them.
-3. **Semantic.** Remaining same-org candidates compared by `nomic-embed-text` cosine above 0.93.
-   This catches the same role on Indeed, LinkedIn, and the company's own Workday with different
-   boilerplate.
+3. **Semantic (not built).** An embedding pass (`nomic-embed-text` cosine above 0.93) over
+   remaining same-org candidates was specified but no code does it. Dedup today is the hash of
+   org, title and normalized description (pass 1) plus the title-token Jaccard grouping (pass 2).
+   A same role on two boards with different boilerplate is therefore not merged unless the titles
+   match closely.
 
 **Canonical priority:** company ATS (Greenhouse/Lever/Ashby/Workday/SmartRecruiters) > company
 page > Indeed > Google > ZipRecruiter > LinkedIn > Glassdoor. Apply direct where possible, and
@@ -621,10 +623,13 @@ change. Every rejection records the rule that fired.
 > **Critical implementation constraint, and the reason these rules look the way they do.**
 > `simpleeval` does **not** support generator expressions (`GeneratorExp`) at all, and supports
 > comprehensions only under `EvalWithCompoundTypes`. A rule written as
-> `any(t.lower() in opp.title.lower() for t in profile.target_titles)` raises
-> `FeatureNotAvailable` **at config load**, which would make the shipped `filters.yml` fail on
-> first run. Every list operation is therefore expressed as a **whitelisted helper function**.
-> Do not reintroduce generator expressions into this file.
+> `any(t.lower() in opp.title.lower() for t in profile.target_titles)` would make the shipped
+> `filters.yml` fail on first run. Every list operation is therefore expressed as a **whitelisted helper function**.
+> Do not reintroduce generator expressions into this file. The load-bearing guard is an AST check
+> in `kestrel/rules/helpers.py` (`_assert_no_comprehensions`, banning generator expressions,
+> comprehensions and lambdas), which rejects such a rule at config load with a clear message
+> naming the rule. It is not left to `simpleeval` to raise. Do not remove or loosen it; a test
+> guards it.
 
 ```yaml
 employment:
@@ -751,7 +756,7 @@ trips a staleness rule) rather than raising.
 | `org_signal_count(org, days)` | int |
 
 Builtins: `len`, `min`, `max`, `abs`. **No `any`, no `all`**, because their useful form requires
-a generator expression, which `simpleeval` cannot parse.
+a generator expression, which the AST guard in `kestrel/rules/helpers.py` rejects.
 
 A rule referencing anything outside this set fails at **config load** with a message naming the
 rule and the unknown symbol, not at runtime. Ship a test that loads the packaged `filters.yml`
@@ -943,9 +948,9 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
 five minutes it enqueues `scrape` tasks for due, enabled sources.
 
 Guards: never enqueue for a source with a pending or leased scrape; stagger enqueues by 60
-seconds; auto-disable and surface a source after three consecutive failures. A global
-`settings.scheduler.enabled` kill switch defaults to **false**, so a fresh install does not
-start scraping unattended.
+seconds; auto-disable and surface a source after three consecutive failures. A fresh install
+does not start scraping unattended because all sources ship disabled; the operator enables
+sources explicitly or sets a run schedule to start automatic scans.
 
 **Run schedule.** Beside the per-source cadence, the Runs page offers one schedule for the
 whole scan, in the operator's local time: off (default), daily at a time, or weekly on a
@@ -956,7 +961,7 @@ the local date or ISO week it last fired). When the schedule is due and the app 
 or not, with the same guards as above, and records the firing so a restart inside the same
 day or week does not fire twice. A due time that passed while the app was closed fires once
 at the next start that same day (daily) or week (weekly), never for earlier periods. The
-schedule is independent of `settings.scheduler.enabled` and of every source's cadence; it
+schedule is independent of every source's cadence; it
 changes neither. It runs in the desktop app (and `kestrel serve` only when started with the
 scheduler), never from a one-shot CLI run.
 
@@ -1324,7 +1329,8 @@ one-shot probe per model asserting no thinking span survives.
 `kestrel bench`, also a UI page. Accepts `--models` and `--prompt-version` so exactly one
 variable changes per comparison. Reports per model and per track:
 
-- First-attempt JSON validity rate (target above 98%)
+- First-attempt JSON validity rate (a target above 98%; the code measures and reports it but does
+  not enforce it)
 - Mean tokens in and out, mean latency, items per minute at configured concurrency
 - Agreement with the gold set: exact-verdict match rate and mean absolute score error
 - Projected wall-clock for a 500-item run

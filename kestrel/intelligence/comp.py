@@ -35,7 +35,7 @@ class CompRange:
 
     def summary(self) -> str:
         if not self.sufficient:
-            return f"insufficient data (n={self.n}, need >={MIN_OBSERVATIONS})"
+            return f"not enough data yet ({self.n} of the {MIN_OBSERVATIONS} needed)"
         band = f"${self.p25:,.0f}-${self.p75:,.0f}" if self.p25 is not None else ""
         return (
             f"median ${self.median:,.0f} per {self.interval} (n={self.n}, {self.scope}; "

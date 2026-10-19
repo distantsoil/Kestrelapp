@@ -13,7 +13,7 @@ database. Restore is on <a href="/settings">Settings</a> under the LAN &amp; bac
     <a class="btn primary" href="/backup/download">Download a backup</a>
     <h3 style="margin-top:1rem">What it contains</h3>
     <ul>
-      <li>The database <span class="mono">kestrel.db</span> with its WAL and SHM files: every
+      <li>The database <span class="mono">kestrel.db</span>, as one consistent copy: every
       opportunity, evaluation, pursuit, story, label, and document master and variant.</li>
       <li>Every <span class="mono">*.yml</span> under <span class="mono">{{ config_dir }}</span>:
       settings, filters, sources, and your profile.</li>
@@ -23,6 +23,9 @@ database. Restore is on <a href="/settings">Settings</a> under the LAN &amp; bac
     <ul>
       <li>Your saved keys: no API key, no shared LAN secret, no online-model key. Keys are
       re-entered in Settings after a reinstall, by design.</li>
+      <li>The LAN shared secret is taken out of the database copy before it is zipped. Restoring
+      keeps the secret this computer already has, so on a different computer, set up LAN pairing
+      again on Settings, LAN &amp; backup tab.</li>
       <li>Logs, the learned ranking, the computer check, and the downloaded AI models. Open Setup
       to rebuild the models.</li>
     </ul>

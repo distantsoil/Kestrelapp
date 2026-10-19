@@ -100,7 +100,8 @@ def test_read_tools_return_seeded_data():
     assert shortlist[0]["title"] == "VP of IT"
     # get_comp_intel reports the sample size and refuses below five (constraint 6).
     assert comp["n"] == 3 and comp["sufficient"] is False
-    assert "insufficient" in (comp["insufficient_message"] or "").lower()
+    msg = (comp["insufficient_message"] or "").lower()
+    assert "not enough data yet" in msg and "3 of the 5 needed" in msg  # the count stays stated
     # get_opportunity returns the full record with its evaluation.
     assert opp["id"] == 1 and opp["verdict"] == "apply"
 

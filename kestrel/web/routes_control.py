@@ -42,6 +42,33 @@ from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
 
+
+def _model_display_name(model_name: str) -> str:
+    """Return a human-readable display name for a model.
+
+    - Kestrel derived models (kestrel-tier1/2/3/docsel) show their plain tier label.
+    - Other models have trailing :latest dropped.
+    """
+    if model_name.startswith("kestrel-"):
+        # Extract tier: kestrel-tier1, kestrel-tier2, kestrel-tier3, kestrel-docsel
+        suffix = model_name[len("kestrel-"):]
+        if suffix.startswith("tier"):
+            digits = "".join(ch for ch in suffix if ch.isdigit())
+            if digits:
+                key = f"tier{digits}"
+                plain = PLAIN.get(key)
+                if plain:
+                    return plain
+        elif suffix == "docsel":
+            return "Doc select"
+        # Fallback: return without kestrel- prefix
+        return suffix
+    # Drop trailing :latest for other models
+    if model_name.endswith(":latest"):
+        return model_name[:-7]
+    return model_name
+
+
 router = APIRouter()
 
 
@@ -423,7 +450,8 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
     if mode == "hosted":
         tier2 = settings.llm.hosted_tiers.get("tier2") or settings.llm.tiers.get("tier2")
         name = tier2.model if tier2 else "hosted"
-        return {"state": "good", "label": f"Hosted mode · {name}", "loaded": [], "up": None}
+        displayed = _model_display_name(name)
+        return {"state": "good", "label": f"Hosted mode · {displayed}", "loaded": [], "up": None}
     if not ollama_needed(settings):  # no tier on Ollama: its absence is not a fault (D-SETUP-8)
         return {"state": "idle", "label": "Ollama not needed", "loaded": [], "up": None}
     ps = await _probe_ollama(settings.llm.ollama_native_url)
@@ -432,7 +460,9 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
     if ps["loaded"]:
         shown = ps["loaded"][0]
         extra = f" +{len(ps['loaded']) - 1}" if len(ps["loaded"]) > 1 else ""
-        return {"state": "good", "label": f"Ollama · {shown}{extra} loaded", "loaded": ps["loaded"],
+        displayed = _model_display_name(shown)
+        label = f"Ollama · {displayed}{extra} loaded"
+        return {"state": "good", "label": label, "loaded": ps["loaded"],
                 "up": True}
     return {"state": "idle", "label": "Ollama up · no model loaded", "loaded": [], "up": True}
 

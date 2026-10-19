@@ -2,7 +2,7 @@
 # the operator's profile (kestrel/ingest/generated.py), and company boards, feeds and PE portfolio
 # pages are added on the Sources page, so the only source shipped here is SAM.gov, which needs a
 # key the operator saves under Sources > Advanced. Shipped DISABLED: a fresh install must not
-# scrape unattended (see also scheduler.enabled=false).
+# scrape unattended (a fresh install has all sources disabled).
 
 employment: []
 

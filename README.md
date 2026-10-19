@@ -61,7 +61,7 @@ This beta is not code-signed yet, so Windows and macOS warn the first time; sign
 
 ## License and support
 
-Built with Claude, Qwen and NVIDIA Nemotron. Free for any noncommercial use under the
+Built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and LongCat. Free for any noncommercial use under the
 [PolyForm Noncommercial License 1.0.0](LICENSE.md) (Copyright 2026 M Crowle-Groves). You may not
 sell it or build a paid product on it. Report issues on
 [GitHub](https://github.com/distantsoil/Kestrelapp/issues). If Kestrel helps you,

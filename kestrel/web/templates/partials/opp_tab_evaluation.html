@@ -42,7 +42,7 @@
       {% elif ev.needs_review %}The model's score and the weighted score disagree. Your call: the word you pick teaches the ranker.
       {% elif ev.tier == 1 %}A quick screen only; the full read has not run yet.
       {% else %}The model and the scoring rules agree: {{ fit.word }}.{% endif %}
-      Scored by {{ ev.model or 'unknown model' }}{% if ev.created_at %} at {{ ev.created_at[:16]|replace('T', ' ') }} UTC{% endif %}{% if ev.prompt_version %}, prompt {{ ev.prompt_version }}{% endif %}{% if ev.prompt_tokens %}, {{ ev.prompt_tokens|comma }} tokens in{% endif %}.
+      Scored by {% if ev.model and 'kestrel-' in ev.model %}a local model{% elif ev.model %}{{ ev.model }}{% else %}a model{% endif %}{% if ev.created_at %} at {{ ev.created_at[:16]|replace('T', ' ') }} UTC{% endif %}{% if ev.prompt_version %}, prompt {{ ev.prompt_version }}{% endif %}{% if ev.prompt_tokens %}, {{ ev.prompt_tokens|comma }} tokens in{% endif %}.
       {% if ev.forced_by %}{{ forced_words(ev.forced_by) }}{% endif %}
     </div>
   </div>

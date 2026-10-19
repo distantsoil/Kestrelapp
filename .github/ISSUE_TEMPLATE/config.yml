@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Guides and docs
+    url: https://kestrelapp.co/guides
+    about: Quick answers for setting up and using Kestrel, including common fixes.
+  - name: How to report a problem
+    url: https://kestrelapp.co/docs/report-a-problem
+    about: What to include, and what to keep private.

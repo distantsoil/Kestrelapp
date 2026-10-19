@@ -12,7 +12,7 @@
   {% for row in offers %}
     {% set b = row.benchmark %}
     <div class="panel">
-      <h3>{{ row.org_name or 'Unknown org' }} · {{ row.opp.title if row.opp else 'Untitled' }}
+      <h3>{{ row.org_name or 'Unknown org' }} · {{ row.title_shown or 'Untitled' }}
         <span class="pill">{{ row.offer.status }}</span>
         {% if consulting_enabled() %}<span class="muted">({{ row.track }})</span>{% endif %}
       </h3>
@@ -20,22 +20,22 @@
       <div class="formgrid">
         {% if row.track == 'consulting' %}
           <label>Day rate</label>
-          <div class="mono">{% if row.offer.day_rate %}${{ row.offer.day_rate|comma }}{% else %}-{% endif %}</div>
+          <div class="mono">{% if row.offer.day_rate %}{{ row.offer.day_rate|money }}{% else %}-{% endif %}</div>
           <label>Days / duration</label>
           <div>{{ row.offer.days_committed or '-' }} days over {{ row.offer.duration_weeks or '-' }} weeks</div>
           <label>Payment terms</label>
-          <div>{{ row.offer.payment_terms or '-' }}</div>
+          <div>{{ row.terms.payment_terms or '-' }}</div>
           <label>Exclusivity</label>
-          <div>{{ row.offer.exclusivity or '-' }}</div>
+          <div>{{ row.terms.exclusivity or '-' }}</div>
         {% else %}
           <label>Base</label>
-          <div class="mono">{% if row.offer.base %}${{ row.offer.base|comma }}{% else %}-{% endif %}</div>
+          <div class="mono">{% if row.offer.base %}{{ row.offer.base|money }}{% else %}-{% endif %}</div>
           <label>Bonus target</label>
           <div>{% if row.offer.bonus_target_pct %}{{ row.offer.bonus_target_pct }}%{% else %}-{% endif %}</div>
           <label>Equity</label>
-          <div>{{ row.offer.equity_description or '-' }}</div>
+          <div>{{ row.terms.equity_description or '-' }}</div>
           <label>Level</label>
-          <div>{{ row.offer.level_title or '-' }}</div>
+          <div>{{ row.terms.level_title or '-' }}</div>
         {% endif %}
       </div>
 
@@ -46,9 +46,9 @@
         {% if b.stated_band %}
           <p style="margin-top:.4rem">Stated band:
             <span class="mono">
-              {% if b.stated_band[0] %}${{ b.stated_band[0]|comma }}{% else %}-{% endif %}
-              –
-              {% if b.stated_band[1] %}${{ b.stated_band[1]|comma }}{% else %}-{% endif %}
+              {% if b.stated_band[0] %}{{ b.stated_band[0]|money }}{% else %}-{% endif %}
+              to
+              {% if b.stated_band[1] %}{{ b.stated_band[1]|money }}{% else %}-{% endif %}
             </span>
             {% if b.inside_stated_band is not none %}
               <span class="{% if b.inside_stated_band %}covered{% else %}gap{% endif %}">
@@ -58,12 +58,12 @@
         {% endif %}
         {% if b.competing %}
           <p class="muted">Real open competing offers:
-            {% for c in b.competing %}pursuit {{ c.pursuit_id }} ({{ c.status }}{% if c.value %},
-              ${{ c.value|comma }}{% endif %}){% if not loop.last %}; {% endif %}{% endfor %}</p>
+            {% for c in b.competing %}{{ c.org_name or 'Unknown org' }} · {{ c.title or 'Untitled' }}
+              ({{ c.status }}{% if c.value %}, {{ c.value|money }}{% endif %}){% if not loop.last %}; {% endif %}{% endfor %}</p>
         {% endif %}
         {% if b.history %}
           <p class="muted">Your own accepted history:
-            {% for h in b.history %}{% if h.value %}${{ h.value|comma }}{% else %}n/a{% endif %}
+            {% for h in b.history %}{% if h.value %}{{ h.value|money }}{% else %}n/a{% endif %}
               {% if not loop.last %}; {% endif %}{% endfor %}</p>
         {% endif %}
       {% endif %}
@@ -81,7 +81,7 @@
         <input type="hidden" name="track" value="{{ row.track }}">
         <div class="formgrid">
           {% for axis in qual_axes %}
-            <label for="qual-{{ row.offer.id }}-{{ axis }}">{{ axis.replace('_', ' ') }} (0-5)</label>
+            <label for="qual-{{ row.offer.id }}-{{ axis }}">{{ axis_labels.get(axis, axis.replace('_', ' ')) }} (0-5)</label>
             <input type="number" id="qual-{{ row.offer.id }}-{{ axis }}"
                    name="qual_{{ axis }}" min="0" max="5" step="0.5"
                    value="{{ row.offer.qual_json[axis] if row.offer.qual_json else '' }}"
@@ -117,7 +117,7 @@
           <thead>
             <tr>
               <th>Offer</th>
-              {% for axis in matrix.axes %}<th>{{ axis.replace('_', ' ') }}</th>{% endfor %}
+              {% for axis in matrix.axes %}<th>{{ axis_labels.get(axis, axis.replace('_', ' ')) }}</th>{% endfor %}
               <th>Weighted total</th>
             </tr>
           </thead>
@@ -152,7 +152,7 @@
             hx-disabled-elt="find button" data-busy-text="Saving your weights.">
         <div class="formgrid">
           {% for axis in axes %}
-            <label for="w-{{ axis }}">{{ axis.replace('_', ' ') }}</label>
+            <label for="w-{{ axis }}">{{ axis_labels.get(axis, axis.replace('_', ' ')) }}</label>
             <input type="number" id="w-{{ axis }}" name="{{ axis }}" min="0" step="0.5"
                    value="{{ weights[axis] if weights.get(axis) is not none else '' }}"
                    placeholder="equal">

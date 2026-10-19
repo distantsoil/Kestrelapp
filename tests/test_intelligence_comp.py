@@ -79,4 +79,4 @@ async def test_refuses_below_five(sm):
     assert rng.median is None and rng.p25 is None
     d = rng.as_dict()
     assert d["sufficient"] is False
-    assert "insufficient data" in d["insufficient_message"]
+    assert "not enough data yet" in d["insufficient_message"]

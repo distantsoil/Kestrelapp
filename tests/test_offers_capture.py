@@ -220,7 +220,7 @@ async def test_two_offers_produce_a_comparison_matrix_with_both_parts():
 
     assert r.status_code == 200
     assert "Comparison matrix" in r.text
-    for axis in ("total first year", "four year value", "level scope", "org risk"):
+    for axis in ("total first-year comp", "four-year value", "level and scope", "company risk"):
         assert axis in r.text.lower()
 
 

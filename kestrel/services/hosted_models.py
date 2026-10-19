@@ -33,6 +33,7 @@ from kestrel.config import BackendConfig, HostedModelCaps, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.llm import providers as prov
+from kestrel.llm.service_name import service_name
 from kestrel.services.setting_overrides import (
     HOSTED_MODEL_DEFAULTS_KEY,
     HOSTED_MODEL_OVERRIDES_KEY,
@@ -315,6 +316,13 @@ def _override_paid(ov: Any) -> bool:
     return not prov.is_free_variant(str(ov.get("model") or ""))
 
 
+def _label(tier: str) -> str:
+    """A tier's plain name for messages the user reads (never "tier2" or "frontier")."""
+    from kestrel.services.hosted_connect import tier_label
+
+    return tier_label(tier)
+
+
 @dataclass
 class SaveResult:
     saved: list[str]
@@ -331,8 +339,8 @@ class SaveResult:
             # A paid override is allowed ("mostly free, with a paid frontier"), never silent.
             scope = " although Free models only is on" if self.free_only else ""
             parts.append(
-                f"Billed: {', '.join(self.paid)} now runs on a paid model{scope}, so the "
-                "provider charges for every call to it."
+                f"Billed: a paid model is now used for {', '.join(_label(t) for t in self.paid)}"
+                f"{scope}, so the provider charges for every call to it."
             )
         if self.refused:
             parts.append("Not saved: " + "; ".join(self.refused) + ".")
@@ -371,15 +379,18 @@ async def _save_overrides(
     saved_infos: list[prov.ModelInfo] = []
     for tier, model_id in picks.items():
         if tier not in ASSIGNABLE_TIERS:
-            result.refused.append(f"{tier}: not a hosted tier")
+            result.refused.append(f"{_label(tier)}: not a tier that runs online")
             continue
         info = by_id.get(model_id)
         if info is None:
-            result.refused.append(f"{tier}: {model_id!r} is not in {backend_name}'s model list")
+            result.refused.append(
+                f"{_label(tier)}: {model_id!r} is not in the model list from "
+                f"{service_name(backend.base_url)}"
+            )
             continue
         why = block_reason(info, tier, backend)
         if why:
-            result.refused.append(f"{tier}: {model_id} refused, {why}")
+            result.refused.append(f"{_label(tier)}: {model_id} refused, {why}")
             continue
         if tier not in defaults:
             # Record what ran before the first override, so Reset has something to restore.
@@ -393,7 +404,7 @@ async def _save_overrides(
         overrides[tier] = {
             "backend": backend_name, "model": model_id, "at": utcnow_iso(), "free": free
         }
-        result.saved.append(f"{tier} {model_id}" + ("" if free else " (paid)"))
+        result.saved.append(f"{_label(tier)}: {model_id}" + ("" if free else " (paid)"))
         saved_infos.append(info)
         if not free:
             result.paid.append(tier)

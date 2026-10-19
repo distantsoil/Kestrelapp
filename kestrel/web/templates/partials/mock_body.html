@@ -37,8 +37,8 @@
             {% for k, v in (h.mean_scores or {}).items() %}<span class="pill">{{ k }} {{ v }}</span>{% endfor %}
             {% if not h.mean_scores %}<span class="muted">no scores yet</span>{% endif %}
           </td>
-          <td class="mono">{{ (h.started_at or '')[:16] }}</td>
-          <td class="mono">{{ (h.ended_at or '')[:16] if h.ended_at else 'open' }}</td>
+          <td class="mono">{{ h.started_at | iso_to_local if h.started_at else 'not yet' }}</td>
+          <td class="mono">{{ h.ended_at | iso_to_local if h.ended_at else 'open' }}</td>
         </tr>
       {% endfor %}
     </tbody>

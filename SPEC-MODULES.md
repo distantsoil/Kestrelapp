@@ -66,7 +66,7 @@ selection schema: present means included. A layout's `section_order` may name th
 that order. `education` also prints legacy `credential` sections under the same heading.
 
 **`doc_layout`** — `id`, `key` unique, `label`, `description` (shown to the model during
-selection), `template_file`, `section_order` json, `max_roles_shown`.
+selection), `template_file` (stored but never read; unused), `section_order` json, `max_roles_shown`.
 
 Ship eight:
 
@@ -123,7 +123,9 @@ json (per-slot model reason), `template`, `pdf_path`, `filename`, `page_count`,
 
 ### 1.3 Selection flow
 
-1. An opportunity reaches an `apply`/`pursue` verdict. A `doc_select` task is queued.
+1. Selection runs on demand: `kestrel render <master> --opportunity <id>` or the Tailor page on
+   the role. Nothing queues a `doc_select` task today, so an `apply`/`pursue` verdict does not
+   trigger it by itself.
 2. The prompt receives the key requirements from evaluation Block B (employment) or the
    engagement thesis from Block B (consulting), plus, for each slot, the available variants as
    `{key, tags, text}`.
@@ -180,7 +182,9 @@ json (per-slot model reason), `template`, `pdf_path`, `filename`, `page_count`,
   (D-PRIV-1).
 - A `?preview` route renders the identical HTML in the browser. Not an approximation.
 - **Page-count guard:** count pages after generation; over `settings.docs.max_pages` warns and
-  suggests which optional slots to hide, ranked by the model's own rationale confidence.
+  suggests which optional slots to hide. The suggestions are every optional slot that is currently
+  shown, in catalog order. They are not ranked by confidence; the selection prompt returns no
+  per-slot confidence to rank by.
 - Filename: `{LastName}_{Org}_{RoleSlug}.pdf`.
 
 ### 1.5 Import
