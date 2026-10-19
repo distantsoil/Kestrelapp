@@ -349,7 +349,7 @@ def test_default_home_reached_through_an_alias_is_canonical(monkeypatch, tmp_pat
         _alias_dir(real_base, alias_base)
     except OSError as exc:  # symlinks can be refused by policy; nothing to test then
         pytest.skip(f"cannot create a directory alias here: {exc}")
-    monkeypatch.setenv("KESTREL_DATA_HOME", str(alias_base / home.name))
+    monkeypatch.setenv("KESTREL_DATA_HOME", str(alias_base / home.relative_to(real_base)))
     assert shell._mutex_name() == shell.MUTEX_NAME
 
 
