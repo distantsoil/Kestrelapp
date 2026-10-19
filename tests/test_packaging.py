@@ -633,7 +633,9 @@ def test_release_uploads_to_a_draft_and_publishes_it_last():
     publish = next(s for s in steps if s.get("name") == "Publish the release")
     assert steps.index(gh) < steps.index(publish)
     assert f"steps.{gh['id']}.outputs.id" in publish["env"]["RELEASE_ID"]
-    assert "draft=false" in publish["run"]
+    # -F sends a JSON boolean; -f would send the string "false", which the API refuses.
+    assert "-F draft=false" in publish["run"]
+    assert '-z "$RELEASE_ID"' in publish["run"]
 
 
 def test_release_preflight_refuses_a_tag_that_already_has_a_release():

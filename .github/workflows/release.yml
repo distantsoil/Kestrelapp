@@ -69,8 +69,8 @@ jobs:
       - name: No published release for this tag
         # The public repo has immutable releases: a published release takes no more uploads and
         # its tag can never be reused. A release made from the web form for this tag would waste
-        # every build below, so stop here. A draft is invisible to this read-only token, which is
-        # right: the release job reuses it.
+        # every build below, so stop here. A draft is invisible to this read-only token, so a
+        # draft left by a failed run does not block a re-run.
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
@@ -288,7 +288,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.gh_release.outputs.id }}
-        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
+        run: |
+          if [ -z "$RELEASE_ID" ]; then
+            echo "::error::The release step returned no release id, so nothing was published."
+            exit 1
+          fi
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
 
   website:
     name: Publish latest.json
