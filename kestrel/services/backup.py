@@ -379,9 +379,17 @@ def _stage_backup(src: Path, staging: Path) -> None:
                 with zf.open(info) as fsrc, open(dest, "wb") as fdst:
                     shutil.copyfileobj(fsrc, fdst)
             except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
-                # An encrypted or otherwise unreadable member is a bad archive, not a 500.
+                # An encrypted or otherwise unreadable member is a bad archive, not a 500. The
+                # message reaches a page, so the error text (it can name a path) goes to the log
+                # only (D-SEC-1).
+                log.warning(
+                    "restore_entry_unreadable",
+                    entry=info.filename,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
                 raise InvalidBackupError(
-                    f"Could not read {info.filename} from the backup: {exc}"
+                    f"Could not read {info.filename} from the backup ({type(exc).__name__})."
                 ) from exc
 
     _validate_staged_db(staging / DB_NAME)

@@ -396,3 +396,22 @@ def test_a_missing_backup_file_is_reported_without_its_path(tmp_path):
         restore_backup(missing)
     assert "secret-dir" not in str(err.value) and "gone.zip" not in str(err.value)
     assert str(err.value) == "The backup file was not found."
+
+
+def test_an_unreadable_backup_entry_is_reported_without_the_error_text(tmp_path, monkeypatch):
+    """An OSError while unpacking carries a staging path; the page gets the entry and the error
+    type only (D-SEC-1)."""
+    from kestrel.services import backup
+
+    zpath = tmp_path / "b.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("kestrel.db", b"x")
+
+    def refuse(fsrc, fdst):
+        raise PermissionError(13, "Permission denied", r"C:\secret-dir\staging\kestrel.db")
+
+    monkeypatch.setattr(backup.shutil, "copyfileobj", refuse)
+    with pytest.raises(InvalidBackupError) as err:
+        restore_backup(zpath)
+    assert "secret-dir" not in str(err.value) and "Permission denied" not in str(err.value)
+    assert str(err.value) == "Could not read kestrel.db from the backup (PermissionError)."
