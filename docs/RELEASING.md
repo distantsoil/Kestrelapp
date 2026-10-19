@@ -16,9 +16,17 @@ signing secrets exist.
 3. Tag and push:
 
    ```bash
-   git tag v0.2.0
+   git tag -a v0.2.0 -m "Kestrel 0.2.0"
    git push origin v0.2.0
    ```
+
+   **Never use the Releases page's "Draft a new release" form.** The public repository has
+   immutable releases on: a published release takes no more uploads, and its tag can never be
+   used again, even after the release is deleted. A release published from the form before the
+   build ends is stuck with no installers, and the version has to move on. This happened to
+   0.6.0, which shipped as 0.6.1. The workflow creates the release as a draft, attaches every
+   installer, and then publishes it. Preflight fails at once if a release for the tag is already
+   published.
 
 4. `.github/workflows/release.yml` runs three build jobs and then a release job:
 

@@ -66,6 +66,19 @@ jobs:
             echo "::error::WEBSITE_TOKEN is empty. Add a token with write access to the website repo as the WEBSITE_TOKEN secret (docs/RELEASING.md), then re-run."
             exit 1
           fi
+      - name: No published release for this tag
+        # The public repo has immutable releases: a published release takes no more uploads and
+        # its tag can never be reused. A release made from the web form for this tag would waste
+        # every build below, so stop here. A draft is invisible to this read-only token, which is
+        # right: the release job reuses it.
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::A release for $GITHUB_REF_NAME is already published, so the installers cannot be attached to it. Releases are made by pushing a tag, never from the Draft a new release form (docs/RELEASING.md). Delete that release and tag the next version."
+            exit 1
+          fi
 
   linux:
     name: Linux AppImage
@@ -257,7 +270,10 @@ jobs:
           rm RELEASE_NOTES.md
           cat RELEASE_BODY.md
       - uses: softprops/action-gh-release@v3
+        id: gh_release
         with:
+          # A draft first: immutable releases refuse uploads once published.
+          draft: true
           generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: artifacts/RELEASE_BODY.md
@@ -267,6 +283,12 @@ jobs:
             artifacts/Kestrel-*-x86_64.AppImage
             artifacts/SHA256SUMS.txt
             artifacts/SIGNING.txt
+      - name: Publish the release
+        # Every installer is attached, so the release can now be published (and locked).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.gh_release.outputs.id }}
+        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
 
   website:
     name: Publish latest.json
