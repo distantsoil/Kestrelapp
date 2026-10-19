@@ -63,7 +63,7 @@ def test_employment_builds_a_metro_and_a_remote_search_that_validate():
 
 def test_generated_searches_skip_ziprecruiter_but_a_custom_source_may_name_it():
     # D-SRC-4: ZipRecruiter 403s every JobSpy search behind Cloudflare and JobSpy hides it.
-    assert SITES == ["indeed", "google"]
+    assert SITES == ["indeed", "glassdoor"]  # Google Jobs returns nothing through JobSpy
     specs = build_specs({"employment": EMP}, ("employment",), "pat@example.com")
     assert specs and all("zip_recruiter" not in s.config["site_name"] for s in specs)
     JobSpyAdapter().validate_config(
@@ -398,3 +398,13 @@ def test_the_data_policy_404_is_explained_in_plain_words():
                            "training)", "https://openrouter.ai/api/v1/chat/completions")
     assert "overrides your OpenRouter account setting" in str(e)
     assert "Pick a paid model" in str(e)
+
+
+def test_generated_searches_ask_glassdoor_and_drop_the_google_term():
+    specs = [s for s in build_specs({"employment": EMP}, ("employment",), "pat@example.com")
+             if s.kind == "jobspy"]
+    assert specs
+    for s in specs:
+        assert "glassdoor" in s.config["site_name"] and "google" not in s.config["site_name"]
+        assert "google_search_term" not in s.config
+        JobSpyAdapter().validate_config(s.config)

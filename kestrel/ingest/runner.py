@@ -9,6 +9,7 @@ Any recoverable error makes the run `partial` with a clear message and NEVER abo
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 import structlog
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Notification, ScrapeRun, Source, Task
+from kestrel.ingest import board_discovery
 from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import AdapterError, SourceConfigError
 from kestrel.ingest.http import HttpClient
@@ -71,6 +73,12 @@ async def run_source(
             adapter.validate_config(source.config)
             postings = await adapter.fetch(source.config, http)
             counts["fetched"] = len(postings)
+            # Postings per board (JobSpy tags each with its site), so the Sources page can say
+            # when a board found nothing instead of hiding it in the total (D-SRC-4).
+            sites = ((p.raw or {}).get("site") for p in postings)
+            by_site = Counter(site for site in sites if site)
+            if by_site:
+                counts["by_site"] = dict(by_site)
         except (SourceConfigError, AdapterError) as exc:  # expected recoverable failure
             error = f"{type(exc).__name__}: {exc}"
             source.consecutive_failures += 1
@@ -136,6 +144,20 @@ async def run_source(
                 source.consecutive_failures += 1
             else:  # any success, an empty one included, clears the failing state (D-UI-33)
                 source.consecutive_failures = 0
+
+        if postings and source_kind == "jobspy":
+            # A search's postings name company boards to watch (D-SRC-7). Finding none, or
+            # failing to, never changes how the run itself went.
+            try:
+                counts["boards_found"] = await board_discovery.discover_boards(
+                    session, postings, search=source, http=http
+                )
+                await session.commit()
+            except Exception as exc:
+                await session.rollback()
+                await session.refresh(source)
+                await session.refresh(run)
+                log.warning("board_discovery_failed", source=source_name, error=str(exc))
 
         status = "partial" if (error or counts["errors"]) else "ok"
         if source.consecutive_failures >= 3 and source.enabled:

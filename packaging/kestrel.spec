@@ -74,13 +74,21 @@ for pkg in collect_all_pkgs:
     binaries += b
     hiddenimports += h
 
-# JobSpy's TLS library (tls_client) loads tls-client-64.dll (and its .so/.dylib siblings) from its
-# own dependencies/ folder with ctypes. Those are not Python modules, so the static graph never
-# saw them: every packaged build failed every job search with "Failed to load dynlib/dll", and the
-# startup preload that keeps the native load order safe (D-PKG-2) was failing quietly on the same
-# missing file (D-PKG-4). collect_dynamic_libs keeps the package-relative path tls_client expects.
-if importlib.util.find_spec("tls_client") is not None:
-    binaries += collect_dynamic_libs("tls_client")
+# JobSpy 1.3.0 talks to the boards through curl_cffi (libcurl-impersonate), which replaced the
+# tls_client Go library of 1.1.x (D-PKG-4, amended). curl_cffi is a cffi extension (_wrapper) plus
+# a delvewheel-repaired sibling folder `curl_cffi.libs` holding libcurl-impersonate; its __init__
+# adds that folder, resolved as ../curl_cffi.libs next to the package, to the DLL search path.
+# pyinstaller-hooks-contrib 2026.6 has no curl_cffi hook, and the folder is not a Python package,
+# so collect_all("curl_cffi") alone would miss it and every packaged job search would fail to load
+# the library. The folder goes to the bundle root, which is where ../curl_cffi.libs resolves.
+if importlib.util.find_spec("curl_cffi") is not None:
+    _curl_d, _curl_b, _curl_h = collect_all("curl_cffi", filter_submodules=_keep)
+    datas += _curl_d
+    binaries += _curl_b
+    hiddenimports += _curl_h + ["_cffi_backend"]
+    _curl_libs = Path(importlib.util.find_spec("curl_cffi").origin).parent.parent / "curl_cffi.libs"
+    if _curl_libs.is_dir():
+        binaries += [(str(f), "curl_cffi.libs") for f in _curl_libs.iterdir() if f.is_file()]
 
 # Starlette imports its multipart backend by string at request time, so the static graph misses it
 # and form posts fail only in the frozen app. Both names ship: the package renamed itself to

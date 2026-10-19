@@ -57,7 +57,7 @@ instructions are in [docs/LINUX.md](LINUX.md).
 Two tracks, each with its own sources:
 
 **Employment track:**
-- Job boards via `python-jobspy`: Indeed, Glassdoor, ZipRecruiter, Google Jobs, Dice (all public). LinkedIn is not searched.
+- Job boards via `python-jobspy`: Indeed and Glassdoor (public). Google Jobs and ZipRecruiter are not searched by default because they return nothing through JobSpy. LinkedIn is not searched.
 - ATS platforms: Lever, Greenhouse, Workday, SmartRecruiters, Ashby (via public JSON endpoints)
 - SEC EDGAR trigger: new C-suite filings matching your geographic and industry preferences
 
@@ -72,8 +72,7 @@ Configure sources and profiles in the Settings page (gear icon) or via the comma
 ## Where the opportunities come from
 
 Every source has a kind, fixed in code: five ATS boards (Greenhouse, Lever, Ashby, Workday,
-SmartRecruiters), the JobSpy aggregator (Indeed, Glassdoor, ZipRecruiter, Google Jobs,
-Dice), and four consulting signal sources (SEC EDGAR 8-K filings, SAM.gov procurement notices,
+SmartRecruiters), the JobSpy aggregator (Indeed and Glassdoor), and four consulting signal sources (SEC EDGAR 8-K filings, SAM.gov procurement notices,
 RSS/Atom feeds, PE portfolio pages), plus manual capture by paste. The Help
 page in the app lists each kind with what it scans, what you must provide, its rate limit and its
 region, generated from the adapter registries. The same table, with the steps for adding a new
@@ -82,6 +81,30 @@ adapter, is in [`SOURCES.md`](SOURCES.md).
 The shipped configuration is US-centric (JobSpy defaults to the USA, SEC EDGAR and SAM.gov are US
 federal). The boards themselves work worldwide: change the search
 location and your profile's `geo_rules` and the pipeline runs unchanged.
+
+### Company boards Kestrel finds for you
+
+Greenhouse, Lever, Ashby, Workday and SmartRecruiters cannot be searched across companies; each
+company has its own board. When a job from your searches links to one, Kestrel starts reading that
+company's board directly, once a day, up to 40 companies. The Sources page lists them as "found in
+your searches", and you can turn any company off. It stays off.
+
+A company board brings in every opening at the company, not only yours. So Kestrel scores the ones
+that look like your field and level first, and the rest wait in the background. They are scored
+when Kestrel is otherwise idle, up to 200 a day, and nothing is thrown away. "Score everything
+now" on the Sources page scores the waiting ones at once. It can take hours of computer time, and
+on an online model each role costs money, so it asks first.
+
+**Teach it what you go for: import your past applications.** Kestrel learns your field from the
+titles of roles you have shortlisted and applied for. On a new install it only knows your target
+titles, and those miss a lot: tested on one person's real history, titles alone would have held
+back about a third of the roles they actually applied for, and their history brought that down to
+a few in a hundred. Import your applied history ("Import past applications" on the Applications page) and the
+first company boards are sorted with that knowledge from day one.
+
+If you change your profile (the seniority floor, excluded titles, pay floor or locations), Kestrel
+re-checks the roles its rules set aside under the old settings, and brings back the ones that now
+pass. The save message says how many it is checking.
 
 ## Importing your resume and capability statement
 

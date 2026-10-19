@@ -46,7 +46,7 @@ from kestrel.ingest.adapters.jobspy import DEFAULT_SITES
 log = structlog.get_logger()
 
 ORIGIN = "generated"
-MAX_QUERY_CHARS = 220  # Indeed and Google start dropping or rejecting terms beyond this
+MAX_QUERY_CHARS = 220  # Indeed and Glassdoor start dropping or rejecting terms beyond this
 # A ceiling on generated searches (hard rule 7, review finding 11): titles times metros grows
 # fast, and every search is two boards every twelve hours. Beyond this the earliest metros and
 # the remote search win, and the Sources page says some were left out.
@@ -57,6 +57,11 @@ MAX_GENERATED = 12
 # A custom JobSpy source on Settings > Sources can still name `zip_recruiter` in its site_name
 # (D-SRC-4).
 # LinkedIn is not here and never will be (D-SRC-5): it does not allow automated access.
+# Google Jobs is not here either: through JobSpy it returns no postings ("Google returned no job
+# data", checked on 1.1.82 and 1.3.0), so it was a request per search that found nothing. A
+# custom source can still name `google` and `google_search_term`. Glassdoor answers every
+# search the generator builds: a metro ("City, ST"), a country with is_remote ("United
+# States"), and the consulting fallback location, so it is asked everywhere.
 SITES = list(DEFAULT_SITES)
 # Shown beside the generated searches (Sources page, onboarding review). The boards Kestrel
 # searches are US-centric, and the Sources page cannot promise more than that.
@@ -336,7 +341,6 @@ def _build(
                     name=f"Jobs near {mname}{_suffix(i, len(queries))}",
                     config={
                         "site_name": SITES, "search_term": q,
-                        "google_search_term": f"{titles[0]} jobs near {where} since last week",
                         "location": where, "distance": 50, "results_wanted": 100,
                         "hours_old": 168, "country_indeed": "USA",
                         "description_format": "markdown", "enforce_annual_salary": True,
@@ -353,7 +357,6 @@ def _build(
                     config={
                         # Indeed allows hours_old OR is_remote, not both (CLAUDE.md trap).
                         "site_name": SITES, "search_term": q,
-                        "google_search_term": f"remote {titles[0]} jobs",
                         "location": "United States" if "US" in countries else countries[0],
                         "is_remote": True, "results_wanted": 100, "country_indeed": "USA",
                         "description_format": "markdown", "enforce_annual_salary": True,
@@ -521,7 +524,7 @@ async def _retire(session: AsyncSession, row: Source) -> None:
         await session.delete(row)
 
 
-_BOARD_NAMES = {"indeed": "Indeed", "google": "Google"}
+_BOARD_NAMES = {"indeed": "Indeed", "glassdoor": "Glassdoor"}
 
 
 async def variants_view(session: AsyncSession) -> dict[str, Any]:

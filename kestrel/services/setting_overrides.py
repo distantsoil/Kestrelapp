@@ -47,7 +47,9 @@ TRANSIENT_KEYS = frozenset({
 # `tier0_override.` is Score this role anyway (kestrel.services.tier0_override, D-UI-74),
 # `run_model.pending.` a run's one-run model waiting for Tier 0 (kestrel.services.run_model,
 # D-UI-72), and `sources.title_variants_removed` the search variants taken out (D-TTL-2).
-NON_CONFIG_PREFIXES: tuple[str, ...] = ("prep_notes.", "tier0_override.", "run_model.pending.")
+NON_CONFIG_PREFIXES: tuple[str, ...] = (
+    "prep_notes.", "tier0_override.", "run_model.pending.", "tier0_recheck.",
+)
 STATE_KEYS = frozenset({
     "stories.last_build", "ui.guides_dismissed", "ui.asks_dismissed",
     # Stamps and choices the app keeps for itself, never configuration (review finding 15):

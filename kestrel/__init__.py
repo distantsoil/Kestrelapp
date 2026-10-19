@@ -33,24 +33,8 @@ def _pin_native_thread_pools() -> None:
 
 _pin_native_thread_pools()
 
-
-def _preload_tls_client() -> None:
-    """Load JobSpy's Go TLS library before any other native runtime, on Windows (D-PKG-2).
-
-    Measured on Windows 11 (2026-10-15): with onnxruntime, scipy.stats and cryptography already
-    loaded, loading tls_client's Go DLL kills the process with 0x80000003, in the running app (a
-    JobSpy scrape after an in-process embedding) and in PyInstaller's dependency scan alike.
-    Loaded FIRST, the same four coexist. JobSpy imports it lazily, so nothing else guarantees the
-    order; this module runs before any kestrel submodule, which makes it the one place that does.
-    Windows only (no crash elsewhere), and best effort: a missing or broken tls_client only
-    disables JobSpy sources, which already report their own import errors.
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        import tls_client  # noqa: F401
-    except (ImportError, OSError):  # not installed, or its DLL will not load: JobSpy says so
-        pass
-
-
-_preload_tls_client()
+# D-PKG-2 (amended): this module used to preload JobSpy's tls_client Go DLL on Windows, because
+# loading it after onnxruntime, scipy.stats and cryptography killed the process (0x80000003).
+# JobSpy 1.3.0 dropped tls_client for curl_cffi (libcurl-impersonate, a C extension, no Go
+# runtime). Measured 2026-10-18: the same combination loads cleanly in either order, so no
+# preload is warranted and none is kept. tests/test_native_load_order.py guards that.

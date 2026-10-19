@@ -28,6 +28,7 @@ import asyncio
 from collections import defaultdict
 from html import escape
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -39,7 +40,9 @@ from kestrel.llm.prompts import all_versions
 from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 
+log = structlog.get_logger()
 router = APIRouter()
 
 # The evaluation tiers a comparison run is meaningful for (embed/docsel/trigger are not verdict-
@@ -216,7 +219,13 @@ async def promote(request: Request):
                 row.value = model
             await s.commit()
     except Exception as exc:  # noqa: BLE001 -- surface as a warnbox, never a 500
-        return HTMLResponse(f'<div class="warnbox">Could not save: {escape(str(exc))}</div>')
+        log.warning(
+            "bench_promote_save_failed", tier=tier, model=model,
+            error_type=type(exc).__name__, error=str(exc),
+        )
+        return HTMLResponse(
+            f'<div class="warnbox">Could not save: {escape(plain_error(exc))}</div>'
+        )
     ctx = {"tier": tier, "model": model, "key": key}
     return templates().TemplateResponse(request, "partials/bench_promote_result.html", ctx)
 

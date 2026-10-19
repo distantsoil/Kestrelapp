@@ -21,6 +21,9 @@ on:
       - AGENTS.md
       - "docs/images/**"
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

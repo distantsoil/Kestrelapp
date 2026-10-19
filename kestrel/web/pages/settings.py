@@ -30,6 +30,7 @@ from kestrel.rules import helpers
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.auth import SETTING_KEY as SHARED_SECRET_KEY
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.uploads import closing_upload
 
 # Settings > Appearance (docs/UI_PROPOSAL.html): the two shipped schemes with their swatches.
@@ -313,8 +314,10 @@ async def restore_from_upload(request: Request):
         async with closing_upload(upload):
             data = await upload.read()
     except OSError as exc:
+        log.warning("restore_upload_read_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Could not read the upload: {html.escape(str(exc))}</div>'
+            f'<div class="warnbox">Could not read the upload: '
+            f"{html.escape(plain_error(exc))}</div>"
         )
 
     # `InvalidBackupError` messages quote the archive's own entry names, which the uploader fully
@@ -353,8 +356,10 @@ async def restore_from_upload(request: Request):
         except InvalidBackupError as exc:
             return HTMLResponse(f'<div class="warnbox">{html.escape(str(exc))}</div>')
         except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
+            log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
             return HTMLResponse(
-                f'<div class="warnbox">Restore failed: {html.escape(str(exc))}</div>'
+                f'<div class="warnbox">Restore failed: '
+                f"{html.escape(plain_error(exc))}</div>"
             )
         try:
             # A backup from an older Kestrel is on an older schema. Startup migrates; a restore in
@@ -362,7 +367,7 @@ async def restore_from_upload(request: Request):
             # here is a lock or a broken migration; the previous data is in the snapshot.
             await asyncio.to_thread(migrate.run_migrations)
         except (CommandError, SQLAlchemyError, OSError) as exc:
-            log.warning("restore_migration_failed", error=f"{type(exc).__name__}: {exc}")
+            log.warning("restore_migration_failed", error_type=type(exc).__name__, error=str(exc))
             saved = html.escape(str(result.pre_restore_backup or "the Kestrel-backups folder"))
             return HTMLResponse(
                 '<div class="warnbox">The backup was restored, but bringing it up to date with '

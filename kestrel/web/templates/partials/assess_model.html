@@ -90,11 +90,26 @@
                                             : f.dataset.currentLabel);
         const out = document.getElementById('assessment');
         if (out) {
-          out.innerHTML = '<div class="assess-running" role="status" aria-live="polite"'
-            + ' data-testid="assess-running"><span class="assess-spinner" aria-hidden="true"></span>'
-            + '<span><b>Assessing' + (name ? ' with ' + name.trim().split(' (')[0] : '') + '.</b> '
-            + '<span class="muted">Running for <span class="assess-elapsed">0s</span>. Free and'
-            + ' local models can take a few minutes; the result appears here.</span></span></div>';
+          const label = name ? ' with ' + name.trim().split(' (')[0] : '';
+          const mk = (tag, cls) => { const n = document.createElement(tag);
+                                     if (cls) n.className = cls; return n; };
+          const panel = mk('div', 'assess-running');
+          panel.setAttribute('role', 'status');
+          panel.setAttribute('aria-live', 'polite');
+          panel.dataset.testid = 'assess-running';
+          const spin = mk('span', 'assess-spinner');
+          spin.setAttribute('aria-hidden', 'true');
+          const body = mk('span');
+          const bold = mk('b');
+          bold.textContent = 'Assessing' + label + '.';
+          const muted = mk('span', 'muted');
+          const elapsed = mk('span', 'assess-elapsed');
+          elapsed.textContent = '0s';
+          muted.append('Running for ', elapsed, '. Free and local models can take a few minutes;'
+            + ' the result appears here.');
+          body.append(bold, ' ', muted);
+          panel.append(spin, body);
+          out.replaceChildren(panel);
           const t0 = Date.now(), el = out.querySelector('.assess-elapsed');
           const timer = setInterval(() => {
             if (!document.body.contains(el)) { clearInterval(timer); return; }
@@ -111,9 +126,13 @@
                       if (opener.dataset.label) opener.textContent = opener.dataset.label; }
         const out = document.getElementById('assessment');
         if (out && !e.detail.successful) {
-          out.innerHTML = '<div class="warnbox" role="alert">The assessment did not finish ('
+          const warn = document.createElement('div');
+          warn.className = 'warnbox';
+          warn.setAttribute('role', 'alert');
+          warn.textContent = 'The assessment did not finish ('
             + (e.detail.xhr ? e.detail.xhr.status : 'no reply') + '). Try again, or pick another'
-            + ' model.</div>';
+            + ' model.';
+          out.replaceChildren(warn);
         }
         dlg.remove();
       });

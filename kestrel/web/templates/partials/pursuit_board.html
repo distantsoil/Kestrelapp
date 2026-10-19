@@ -4,7 +4,7 @@
     <thead><tr><th>{{ words(track).role | capitalize }}</th><th>Org</th><th>Status</th><th>{{ words(track).applied_done }}</th><th>Next action</th><th>Due</th><th title="Once applied, a new posting of the same role is hidden on arrival as a re-post. Tick to see such listings anyway (aggregators that re-list one title).">Re-posts</th></tr></thead>
     <tbody>
       {% for c in cards %}
-        <tr>
+        <tr data-search="{{ c.search }}" data-col="{{ c.column }}" data-closed="{{ 1 if c.closed else 0 }}" data-ord="{{ loop.index }}" data-company="{{ (c.org_name or '')|lower }}" data-activity="{{ c.pursuit.last_activity_at or '' }}" data-applied="{{ c.pursuit.applied_at or '' }}">
           <td><a href="/opportunities/{{ c.opp.id }}">{{ c.opp.title or 'Untitled' }}</a></td>
           <td>{{ c.org_name or '' }}</td>
           <td><span class="pill">{{ stage_name(c.pursuit.status, track) }}</span></td>
@@ -21,10 +21,10 @@
   <div class="kanban four" data-testid="board" data-track="{{ track }}">
     {% for column in columns %}
       <div class="col" data-col="{{ column.col.key }}" data-status="{{ column.col.first }}">
-        <h3>{{ column.col.label }} <span class="muted">{{ column.cards|length }}</span></h3>
+        <h3>{{ column.col.label }} <span class="muted ccount" data-total="{{ column.cards|length }}">{{ column.cards|length }}</span></h3>
         {% for c in column.cards %}
           {% set pid = c.pursuit.id %}
-          <div class="card pcard {% if c.overdue %}overdue{% endif %}" draggable="true" data-id="{{ pid }}" data-col="{{ column.col.key }}">
+          <div class="card pcard {% if c.overdue %}overdue{% endif %}" draggable="true" data-id="{{ pid }}" data-col="{{ column.col.key }}" data-search="{{ c.search }}" data-closed="{{ 1 if c.closed else 0 }}">
             <span class="grip" aria-hidden="true" title="Drag this card to another column">⠿</span>
             <div><a href="/opportunities/{{ c.opp.id }}" draggable="false">{{ c.opp.title or 'Untitled' }}</a></div>
             <div class="meta">{{ c.org_name or 'unknown' }}</div>

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import html
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from starlette.background import BackgroundTask
@@ -20,8 +21,10 @@ from starlette.background import BackgroundTask
 from kestrel import paths
 from kestrel.services import backup as backup_service
 from kestrel.web.deps import templates
+from kestrel.web.errors import plain_error
 from kestrel.web.uploads import closing_upload
 
+log = structlog.get_logger()
 router = APIRouter()
 
 
@@ -45,8 +48,10 @@ async def download_backup():
     try:
         archive = await asyncio.to_thread(backup_service.create_backup_to_temp)
     except OSError as exc:
+        log.warning("backup_build_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Could not build the backup: {html.escape(str(exc))}</div>',
+            f'<div class="warnbox">Could not build the backup: '
+            f"{html.escape(plain_error(exc))}</div>",
             status_code=500,
         )
     return FileResponse(
@@ -89,16 +94,19 @@ async def import_profile(request: Request):
         async with closing_upload(upload):
             data = await upload.read()
     except OSError as exc:
+        log.warning("profile_upload_read_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Could not read the upload: {html.escape(str(exc))}</div>'
+            f'<div class="warnbox">Could not read the upload: '
+            f"{html.escape(plain_error(exc))}</div>"
         )
     try:
         result = await asyncio.to_thread(backup_service.import_profile, data)
     except backup_service.InvalidProfileError as exc:
         return HTMLResponse(f'<div class="warnbox">{html.escape(str(exc))}</div>')
     except OSError as exc:
+        log.warning("profile_import_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Import failed: {html.escape(str(exc))}</div>'
+            f'<div class="warnbox">Import failed: {html.escape(plain_error(exc))}</div>'
         )
     kept = (
         f" The previous file is at <span class=\"mono\">{html.escape(str(result.previous_backup))}"

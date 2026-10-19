@@ -12,6 +12,7 @@ generation is local-required (CLAUDE.md environment split)."""
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -397,11 +398,12 @@ async def swap(request: Request, render_id: int):
         config = dict(render.config or {})
         allowed, current = _choice_for(catalog, config, slot_key)
         if allowed is None:
-            return HTMLResponse(f"unknown slot key: {slot_key!r}", status_code=400)
+            return HTMLResponse(f"unknown slot key: {html.escape(repr(slot_key))}", status_code=400)
         if variant_key not in allowed:
             return HTMLResponse(
-                f"variant key {variant_key!r} is not one of slot {slot_key!r}'s variants "
-                f"({', '.join(sorted(allowed))}); nothing was changed",
+                f"variant key {html.escape(repr(variant_key))} is not one of slot "
+                f"{html.escape(repr(slot_key))}'s variants "
+                f"({html.escape(', '.join(sorted(allowed)))}); nothing was changed",
                 status_code=400,
             )
         model_choice = await _model_choice(s, render, slot_key, current)
@@ -488,7 +490,9 @@ async def edit_wording(request: Request, render_id: int):
                 )
             ).scalars().first()
             if slot is None:
-                return HTMLResponse(f"unknown slot key: {slot_key!r}", status_code=400)
+                return HTMLResponse(
+                    f"unknown slot key: {html.escape(repr(slot_key))}", status_code=400
+                )
             variants = (
                 await s.execute(select(DocVariant).where(DocVariant.doc_slot_id == slot.id))
             ).scalars().all()

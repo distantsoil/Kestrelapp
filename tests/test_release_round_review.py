@@ -165,7 +165,7 @@ async def test_2_the_scrape_is_called_with_an_explicit_board_list(monkeypatch):
 
     monkeypatch.setattr(jobspy, "scrape_jobs", fake_scrape)
     await JobSpyAdapter().fetch({"search_term": "analyst"})
-    assert seen["site_name"] == ["indeed", "google"]
+    assert seen["site_name"] == ["indeed", "glassdoor"]
 
 
 def test_2_linkedin_is_refused_anywhere_in_the_list():
@@ -205,7 +205,7 @@ def test_2_a_linkedin_only_source_stays_off_says_why_and_offers_the_default_boar
         assert _run(lambda s: s.get(Source, sid)).enabled is False  # Turn on did not turn it on
         c.post(f"/sources/{sid}/default-boards")
     src = _run(lambda s: s.get(Source, sid))
-    assert src.enabled is True and src.config["site_name"] == ["indeed", "google"]
+    assert src.enabled is True and src.config["site_name"] == ["indeed", "glassdoor"]
     assert NO_BOARDS_KEY not in src.config
 
 

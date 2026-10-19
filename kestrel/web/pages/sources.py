@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.enums import SOURCE_KINDS, TRACKS
 from kestrel.db.models import ScrapeRun, Source
+from kestrel.ingest import board_discovery
 from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import SourceConfigError
 from kestrel.ingest.generated import SEC_TITLES_LABEL, sec_titles_opt_in
@@ -141,6 +142,50 @@ async def _latest_runs(session: AsyncSession, sources: list[Source]) -> dict[int
     return latest
 
 
+async def _site_lines(
+    session: AsyncSession, sources: list[Source], runs: dict[int, ScrapeRun]
+) -> dict[int, list[dict]]:
+    """Per job board postings from a JobSpy search's last run: [{"label": "Indeed", "count": 98}].
+
+    JobSpy tags each row with raw["site"]. A run that records `counts["by_site"]` is read from
+    there; otherwise the count is the search's stored postings the last run saw (first seen, or
+    seen again, since it started), grouped by that tag. Every board the search asks appears, so
+    a board that returned nothing shows 0 and is flagged on the row. A posting another search or
+    board saw first is not counted here, so the figure can run low but never invents a result."""
+    from kestrel.analytics.run_summary import _SITE_WORDS
+    from kestrel.db.models import Opportunity
+    from kestrel.ingest.adapters.jobspy import _sites
+
+    out: dict[int, list[dict]] = {}
+    for src in sources:
+        run = runs.get(src.id)
+        if src.kind != "jobspy" or run is None or run.status == "running":
+            continue
+        asked = _sites(src.config or {})
+        by_site = (run.counts or {}).get("by_site")
+        if not isinstance(by_site, dict):
+            raws = (
+                await session.execute(
+                    select(Opportunity.raw).where(
+                        Opportunity.source_id == src.id,
+                        Opportunity.last_seen_at >= run.started_at,
+                    )
+                )
+            ).scalars().all()
+            by_site = {}
+            for raw in raws:
+                site = str((raw or {}).get("site") or "").lower()
+                if site:
+                    by_site[site] = by_site.get(site, 0) + 1
+        names = [*asked, *(s for s in by_site if s not in asked)]
+        out[src.id] = [
+            {"label": _SITE_WORDS.get(n, n.replace("_", " ").title()),
+             "count": int(by_site.get(n, 0))}
+            for n in names
+        ]
+    return out
+
+
 async def _summaries(session: AsyncSession) -> dict[str, str]:
     """Plain-English line per generated search, recomputed from the profile (see module doc).
     A profile that cannot be read yields no summaries; rows then show their names."""
@@ -174,6 +219,28 @@ def _sam_status() -> dict:
     return {"present": present, "masked": masked(secret_value(SAM_ENV)) if present else ""}
 
 
+async def _lane_ctx(session: AsyncSession) -> dict:
+    """Roles from found company boards waiting to be scored when Kestrel is idle (D-SRC-8), and
+    what scoring them all now would cost (D-SRC-9), stated before the operator confirms."""
+    from kestrel.pipeline import lane
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    waiting = await lane.waiting_count(session)
+    if not waiting:
+        return {"waiting": 0}
+    secs, measured = await lane.seconds_per_role(session)
+    try:
+        hosted = lane.scores_on_hosted(await load_settings_with_db(session))
+    except Exception:  # an unreadable setting must not take the page down; say the cautious thing
+        hosted = True
+    minutes = max(1, round(waiting * secs / 60))
+    return {
+        "waiting": waiting, "seconds": round(secs), "measured": measured, "hosted": hosted,
+        "minutes": minutes,
+        "time": f"{minutes} minutes" if minutes < 120 else f"about {round(minutes / 60)} hours",
+    }
+
+
 async def _panel_ctx(
     session: AsyncSession,
     *,
@@ -192,9 +259,12 @@ async def _panel_ctx(
     ctx = {
         "sources": own,
         "generated": generated,
+        "found_boards": sum(1 for src in own if src.origin == board_discovery.DISCOVERED),
+        "found_cap": board_discovery.MAX_DISCOVERED,
         "generated_on": any(s.enabled for s in generated),
         "summaries": await _summaries(session) if generated else {},
         "runs": runs,
+        "site_lines": await _site_lines(session, sources, runs),
         "config_text": config_text,
         "kinds": _visible_kinds(enabled_tracks),
         "tracks": enabled_tracks,
@@ -208,6 +278,7 @@ async def _panel_ctx(
         "edit_error": edit_error,
         "signal_kinds": SIGNAL_SOURCE_KINDS,
     }
+    ctx["lane"] = await _lane_ctx(session)
     ctx.update(extra)
     # Advanced opens itself when it has something to say (a lookup result, a saved key, an error).
     ctx["advanced_open"] = bool(
@@ -298,6 +369,25 @@ async def toggle_searches(request: Request):
         await rebuild_generated_sources(s, enable=enable)
         await s.commit()
         ctx = await _panel_ctx(s)
+    return _panel(request, ctx)
+
+
+@router.post("/sources/score-everything", response_class=HTMLResponse)
+async def score_everything_now(request: Request):
+    """The one-shot "Score everything now" (D-SRC-9): every role waiting in the background lane
+    joins the normal flow. It does not stay on; the daily cap and the idle rule resume after."""
+    from kestrel.pipeline import lane
+
+    form = await request.form()
+    if str(form.get("confirm") or "") != "1":  # only the confirmation panel sends this
+        async with sessionmaker()() as s:
+            ctx = await _panel_ctx(s)
+        return _panel(request, ctx, 400)
+    n = await lane.release_all(sessionmaker())
+    async with sessionmaker()() as s:
+        msg = (f"Scoring {n} waiting role{'' if n == 1 else 's'} now." if n
+               else "No roles were waiting.")
+        ctx = await _panel_ctx(s, lane_message=msg)
     return _panel(request, ctx)
 
 
@@ -568,7 +658,7 @@ async def use_default_boards(request: Request, source_id: int):
         src.consecutive_failures = 0
         await s.commit()
         ctx = await _panel_ctx(
-            s, run_message={"id": source_id, "text": "Now searching Indeed and Google."}
+            s, run_message={"id": source_id, "text": "Now searching Indeed and Glassdoor."}
         )
     return _panel(request, ctx)
 

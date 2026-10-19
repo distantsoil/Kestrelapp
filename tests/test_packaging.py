@@ -558,11 +558,14 @@ def test_every_package_data_file_is_shipped():
     assert not missing, f"package data not shipped by packaging/kestrel.spec: {missing}"
 
 
-def test_the_spec_ships_jobspys_tls_library():
-    """D-PKG-4: tls_client loads a native library from its own package folder at import. The
-    collect_all loop does not pick it up, so a frozen build could not search at all."""
+def test_the_spec_ships_jobspys_curl_cffi_library():
+    """D-PKG-4 (amended): JobSpy 1.3.0 loads libcurl-impersonate from curl_cffi.libs, a sibling
+    folder that is not a Python package, so it must be added to the bundle by name. tls_client is
+    gone from JobSpy and from the spec."""
     spec = SPEC.read_text(encoding="utf-8")
-    assert 'collect_dynamic_libs("tls_client")' in spec
+    assert 'collect_all("curl_cffi"' in spec
+    assert "curl_cffi.libs" in spec
+    assert "tls_client" not in spec.replace("tls_client Go library", "")
 
 
 def test_the_spec_skips_third_party_test_suites_and_unused_deprecated_modules():

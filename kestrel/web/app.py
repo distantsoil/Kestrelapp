@@ -335,7 +335,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.interview.story_task import drain_story_builds
     from kestrel.learning.reranker import check_drift
     from kestrel.llm.client import LLMClient
-    from kestrel.pipeline import runlog
+    from kestrel.pipeline import recheck, runlog
     from kestrel.pipeline.tier0 import run_tier0_batch
     from kestrel.pipeline.tier1 import handle_t1
     from kestrel.pipeline.tier2 import handle_t2
@@ -396,6 +396,9 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # Tier 0 below is what turns their new postings into pipeline work.
                 scr = await worker.drain_scrapes()
                 await cycle.record_scrapes(scr)
+                # Roles the rules set aside under an older profile get another look (rules
+                # only); those that now pass are sent back through the sweep below.
+                await recheck.drain(sm, settings=settings, stop=stop)
                 counts = await run_tier0_batch(sm, settings=settings)
                 await cycle.record("tier0", counts, did_work=counts.get("seen", 0) > 0)
                 emb, t1, t2 = TierStats(), TierStats(), TierStats()
@@ -407,6 +410,12 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 await cycle.record("tier1", runlog.tier_counts(t1), did_work=t1.completed > 0)
                 await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
                 await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0)
+                # Idle after every normal tier: free the day's share of roles waiting in the
+                # background lane (found company boards); they then drain tier by tier.
+                lane_n = await worker.release_lane()
+                if lane_n:
+                    await worker.drain_tier("t1", settings.concurrency.tier1, handle_t1, t1)
+                    await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
                 # Stories the operator asked to build from the My stories page (queued, never run
                 # on the request thread).
                 # A pause mid-cycle (finding 2): each drain above finished its leased task and

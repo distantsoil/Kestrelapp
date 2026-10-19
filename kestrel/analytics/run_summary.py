@@ -15,7 +15,7 @@ status rail. Sibling of kestrel.analytics.progress, whose `scoring_progress` sha
                                   #   paused | idle
       "searches_total", "searches_done", "searches_failed", "searches_partial",
       "searches_cut_off": int,    # cut off: started, never finished, run closed (R11)
-      "current_search": str | None,  # "Operations Analyst on Indeed and Google" (redacted)
+      "current_search": str | None,  # "Operations Analyst on Indeed and Glassdoor" (redacted)
       "problems": [{"name", "why"}],  # searches that failed or partly failed (R4)
       "found_new": int,           # new roles this run's searches stored (signals: promoted
                                   #   plus postings, R5)
@@ -140,7 +140,7 @@ def _join_and(names: list[str]) -> str:
 
 
 def board_label(kind: str | None, config: dict | None) -> str:
-    """The board a search runs on, in words: "Indeed and Google", "Greenhouse"."""
+    """The board a search runs on, in words: "Indeed and Glassdoor", "Greenhouse"."""
     if kind == "jobspy":
         sites = (config or {}).get("site_name") or []
         if isinstance(sites, str):
@@ -157,7 +157,7 @@ def search_term(name: str | None, config: dict | None) -> str:
 
 
 def search_label(name: str | None, kind: str | None, config: dict | None) -> str:
-    """"Operations Analyst on Indeed and Google"."""
+    """"Operations Analyst on Indeed and Glassdoor"."""
     return f"{search_term(name, config)} on {board_label(kind, config)}"
 
 

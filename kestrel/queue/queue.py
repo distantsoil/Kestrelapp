@@ -60,6 +60,16 @@ def _claim_state(now: str) -> ColumnElement[bool]:
     )
 
 
+def in_lane() -> ColumnElement[bool]:
+    """A scoring task waiting in the background lane (D-SRC-8): a role from a found company
+    board the smart filter did not keep. Never claimable until the lane releases it, unless the
+    operator asked for the role (Score anyway, Score again)."""
+    return and_(
+        func.coalesce(func.json_extract(Task.payload, "$.lane"), 0) == 1,
+        ~requested_by_operator(),
+    )
+
+
 def claimable(now: str, *, include_held: bool = False) -> ColumnElement[bool]:
     """What lease() may claim at `now`: a pending row, or a leased one whose lease has expired
     while attempts remain. An attempts-exhausted expired task (a worker that crashed without
@@ -69,7 +79,7 @@ def claimable(now: str, *, include_held: bool = False) -> ColumnElement[bool]:
     A task of a switched-off track is never claimable (D-UI-68): that track does not scan or
     score, and its tasks wait, unchanged, until it is switched back on. `include_held` drops
     that hold, for Cancel scan, which stops held scrapes too (review finding 1)."""
-    can = _claim_state(now)
+    can = and_(_claim_state(now), ~in_lane())
     free = None if include_held else not_held()
     return can if free is None else and_(can, free)
 

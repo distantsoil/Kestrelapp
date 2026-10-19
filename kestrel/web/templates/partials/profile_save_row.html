@@ -9,7 +9,7 @@
   {% else %}
   <button class="btn primary" type="submit" {% if profile_problem %}disabled{% endif %}>Save</button>
   {% endif %}
-  {% if saved %}<span class="saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}</span>{% endif %}
+  {% if saved %}<span class="saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>{% endif %}
   {% if problem %}<span class="warnbox" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>{% endif %}
 </div>
 <p class="muted" style="margin:.4rem 0 0"><small>Saving rewrites profile.yml from these fields.

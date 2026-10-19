@@ -22,7 +22,7 @@
   {% endif %}
 {%- endmacro %}
 
-{% macro health(src, run, run_message) -%}
+{% macro health(src, run, run_message, site_lines=none) -%}
   {% if src.kind == 'jobspy' and (src.config or {}).get('no_boards') %}
     <div class="warnbox" style="font-size:.78rem; padding:.3rem .5rem" data-testid="no-boards">
       Off: this search named only LinkedIn, which Kestrel does not search, so it has no job
@@ -39,6 +39,14 @@
   {% elif run %}
     <span class="pill {{ 'covered' if run.status == 'ok' else 'gap' }}">{{ run.status }}</span>
     {% if run.counts %}<div class="muted mono" style="font-size:.75rem">{{ run.counts | run_counts }}</div>{% endif %}
+    {% if site_lines %}
+      <div class="muted" style="font-size:.75rem" data-testid="site-counts">
+        {% for site in site_lines %}{{ site.label }} {{ site.count }}{{ ", " if not loop.last }}{% endfor %}
+      </div>
+      {% for site in site_lines if site.count == 0 %}
+        <div class="warnbox" style="margin-top:.3rem; font-size:.78rem; padding:.3rem .5rem" data-testid="site-empty">{{ site.label }} found nothing this run.</div>
+      {% endfor %}
+    {% endif %}
     {% if run.counts | run_model_label %}<div class="muted" style="font-size:.75rem" data-testid="run-model-used">on {{ run.counts | run_model_label }}</div>{% endif %}
   {% else %}
     <span class="muted">no runs yet</span>

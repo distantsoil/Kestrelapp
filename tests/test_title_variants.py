@@ -116,7 +116,7 @@ def test_profile_lists_variants_and_a_removal_sticks(monkeypatch):
         body = client.get("/profile/title-variants").text
         assert 'data-testid="title-variants-used"' in body
         assert "Director of Information Technology" in body
-        assert "searched on every board (Indeed and Google)" in body
+        assert "searched on every board (Indeed and Glassdoor)" in body
         assert "—" not in body
         r = client.post("/title-variants/remove", data={"variant": "Director of Technology"})
         assert 'data-testid="title-variants-removed"' in r.text

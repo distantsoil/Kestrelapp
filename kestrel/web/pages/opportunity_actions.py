@@ -34,12 +34,24 @@ import httpx
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.enums import ARCHIVE_REASONS, PURSUIT_STATUS, valid_pursuit_status
-from kestrel.db.models import DocMaster, Opportunity, Org, PrepPack, Pursuit, VerdictOverride
+from kestrel.db.models import (
+    DocMaster,
+    EngagementOffer,
+    Notification,
+    Offer,
+    Opportunity,
+    Org,
+    Outcome,
+    PrepPack,
+    Pursuit,
+    StatusEvent,
+    VerdictOverride,
+)
 from kestrel.ingest.http import HttpClient
 from kestrel.llm.client import LLMClient
 from kestrel.research.company import research_org
@@ -48,6 +60,7 @@ from kestrel.research.excerpts import acquire_excerpts
 from kestrel.services.org_research import run_org_research
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.fit import GOOD, NOT_FIT, verdict_for_fit
 from kestrel.web.queries import latest_evaluation, record_override
 from kestrel.web.words import words
@@ -142,6 +155,12 @@ async def _render(
 # ====================================================================== the decision panel
 _POSITIVE = ("apply", "pursue")
 
+# Every label an Add writes carries one of these reasons, so Remove can take back exactly the
+# labels the Add wrote and leave every other judgment alone (D-UI-75).
+ADD_REASON = "Added to my shortlist."
+ADD_REASON_WITH_MODEL = "Added to my shortlist, siding with the model."
+ADD_REASONS = (ADD_REASON, ADD_REASON_WITH_MODEL)
+
 
 async def _latest_label(
     session: AsyncSession, opp_id: int, ev_id: int | None
@@ -178,17 +197,18 @@ async def record_add_label(
         return None
     good_verdict, good_score = verdict_for_fit(GOOD, opp.track)
     if ev is not None and ev.tier != 1 and ev.verdict in _POSITIVE:
-        return await record_override(session, opp_id=opp.id, mode="agree", commit=commit)
+        return await record_override(
+            session, opp_id=opp.id, mode="agree", reason=ADD_REASON, commit=commit
+        )
     if ev is not None and ev.needs_review and ev.verdict_model in _POSITIVE:
         score = ev.score if ev.score is not None and ev.score >= good_score else good_score
         return await record_override(
             session, opp_id=opp.id, mode="override", operator_verdict=ev.verdict_model,
-            operator_score=score, reason="Added to my shortlist, siding with the model.",
-            commit=commit,
+            operator_score=score, reason=ADD_REASON_WITH_MODEL, commit=commit,
         )
     return await record_override(
         session, opp_id=opp.id, mode="override", operator_verdict=good_verdict,
-        operator_score=good_score, reason="Added to my shortlist.", commit=commit,
+        operator_score=good_score, reason=ADD_REASON, commit=commit,
     )
 
 
@@ -241,6 +261,40 @@ async def add_to_list(session: AsyncSession, opp: Opportunity) -> tuple[Pursuit 
     return pursuit, f"Added to your {words(opp.track)['list']} ({_status_word(pursuit)})."
 
 
+async def remove_from_list(session: AsyncSession, opp: Opportunity) -> str:
+    """Undo an Add, at any stage, in ONE transaction (D-UI-75). The pursuit goes with its status
+    history, outcome and offers, so a role added by mistake, or tracked as the wrong application,
+    leaves nothing in the board, the funnel or the training signal. The labels the Add wrote go
+    too (they carry ADD_REASONS); every other judgment stays, so the learning loop reads the
+    operator's word from before the mistake. A notification about the role stays, unlinked."""
+    where = words(opp.track)["on_list"].replace("my", "your")
+    pursuit = (
+        await session.execute(select(Pursuit).where(Pursuit.opportunity_id == opp.id))
+    ).scalar_one_or_none()
+    if pursuit is None:
+        return f"Not {where}."
+    for model in (StatusEvent, Outcome, Offer, EngagementOffer):
+        await session.execute(delete(model).where(model.pursuit_id == pursuit.id))
+    await session.execute(
+        update(Notification).where(Notification.pursuit_id == pursuit.id).values(pursuit_id=None)
+    )
+    await session.execute(
+        delete(VerdictOverride).where(
+            VerdictOverride.opportunity_id == opp.id, VerdictOverride.reason.in_(ADD_REASONS)
+        )
+    )
+    # Hidden as applied (the applied-history import) was part of the same mistake: unhide it, or
+    # the role stays hidden and every re-post of it is hidden as applied (normalize.py).
+    if opp.archive_reason == "applied":
+        opp.archived_at = None
+        opp.archive_reason = None
+        if opp.stage_reason == "Imported applied history":
+            opp.stage_reason = None
+    await session.delete(pursuit)
+    await session.commit()
+    return f"Removed from your {words(opp.track)['list']}."
+
+
 async def _decision(
     request: Request,
     session: AsyncSession,
@@ -283,9 +337,35 @@ async def add(request: Request, opp_id: int) -> HTMLResponse:
                 pursuit, text = await add_to_list(s, opp)
                 message, error = (text, None) if pursuit is not None else (None, text)
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
-            log.warning("add_to_list.failed", opp_id=opp_id, error=str(exc))
+            log.warning(
+                "add_to_list.failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not add it to your shortlist: {exc}"
+            error = f"Could not add it to your shortlist: {plain_error(exc)}"
+        return await _decision(request, s, opp_id, message=message, error=error)
+
+
+@router.post("/opportunities/{opp_id}/remove", response_class=HTMLResponse)
+async def remove(request: Request, opp_id: int) -> HTMLResponse:
+    """Remove from my shortlist: the undo for Add, then the panel re-rendered."""
+    message: str | None = None
+    error: str | None = None
+    opp: Opportunity | None = None
+    async with sessionmaker()() as s:
+        try:
+            opp = await s.get(Opportunity, opp_id)
+            if opp is None:
+                error = "Opportunity not found."
+            else:
+                message = await remove_from_list(s, opp)
+        except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "remove_from_list.failed", opp_id=opp_id,
+                error_type=type(exc).__name__, error=str(exc),
+            )
+            await s.rollback()
+            where = words(opp.track if opp else None)["list"]
+            error = f"Could not remove it from your {where}: {plain_error(exc)}"
         return await _decision(request, s, opp_id, message=message, error=error)
 
 
@@ -309,9 +389,11 @@ async def not_for_me(request: Request, opp_id: int) -> HTMLResponse:
                 await s.commit()  # the hide and its label land together
                 message = "Hidden as not for you. The Hidden chip shows it again."
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
-            log.warning("not_for_me.failed", opp_id=opp_id, error=str(exc))
+            log.warning(
+                "not_for_me.failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not hide it: {exc}"
+            error = f"Could not hide it: {plain_error(exc)}"
         return await _decision(request, s, opp_id, message=message, error=error)
 
 
@@ -334,8 +416,11 @@ async def restore(request: Request, opp_id: int) -> HTMLResponse:
                 await s.commit()
                 message = "Back in the active pipeline."
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "restore_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not unhide: {exc}"
+            error = f"Could not unhide: {plain_error(exc)}"
         return await _decision(request, s, opp_id, message=message, error=error)
 
 
@@ -357,8 +442,11 @@ async def shortlist(request: Request, opp_id: int) -> HTMLResponse:
                 pursuit, text = await add_to_list(s, opp)
                 message, error = (text, None) if pursuit is not None else (None, text)
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "shortlist_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not add it to your shortlist: {exc}"
+            error = f"Could not add it to your shortlist: {plain_error(exc)}"
         return await _render(request, s, opp_id, message=message, error=error)
 
 
@@ -384,7 +472,10 @@ async def tailor(request: Request, opp_id: int) -> HTMLResponse:
             if opp is None:
                 error = "Opportunity not found."
         except Exception as exc:  # a route must never 500, read paths included
-            error = f"Could not load document masters: {exc}"
+            log.warning(
+                "tailor_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
+            error = f"Could not load document masters: {plain_error(exc)}"
         ctx = await _context(s, opp_id, message=message, error=error)
         if ctx["opp"] is not None and not ctx["masters"] and error is None:
             ctx["message"] = f"No active document masters for the {ctx['opp'].track} track yet."
@@ -422,8 +513,11 @@ async def research(request: Request, opp_id: int) -> HTMLResponse:
                         n = len(record.signals or [])
                         message = f"Research complete for {org.name}: {n} signal(s) captured."
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "research_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Research failed: {exc}"
+            error = f"Research failed: {plain_error(exc)}"
         return await _render(request, s, opp_id, message=message, error=error)
 
 
@@ -478,8 +572,11 @@ async def find_contacts(request: Request, opp_id: int) -> HTMLResponse:
                         else:
                             message = f"Found {len(created)} contact(s) for {org.name}."
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "find_contacts_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Contact discovery failed: {exc}"
+            error = f"Contact discovery failed: {plain_error(exc)}"
         return await _render(request, s, opp_id, message=message, error=error)
 
 
@@ -503,8 +600,11 @@ async def prep_pack(request: Request, opp_id: int) -> HTMLResponse:
                 message = "Your interview prep is ready."
                 prep_ready = True
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "prep_pack_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not build the interview prep: {exc}"
+            error = f"Could not build the interview prep: {plain_error(exc)}"
         return await _render(
             request, s, opp_id, message=message, error=error, prep_ready=prep_ready
         )
@@ -541,8 +641,11 @@ async def archive(request: Request, opp_id: int) -> HTMLResponse:
                 why = f" ({ARCHIVE_REASONS[reason].lower()})" if reason else ""
                 message = f"Hidden{why}. Out of the active pipeline; find it under Hidden."
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "archive_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not hide: {exc}"
+            error = f"Could not hide: {plain_error(exc)}"
         return await _render(request, s, opp_id, message=message, error=error)
 
 
@@ -564,6 +667,9 @@ async def unarchive(request: Request, opp_id: int) -> HTMLResponse:
                 await s.commit()
                 message = "Unhidden. Back in the active pipeline."
         except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "unarchive_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
+            )
             await s.rollback()
-            error = f"Could not unhide: {exc}"
+            error = f"Could not unhide: {plain_error(exc)}"
         return await _render(request, s, opp_id, message=message, error=error)

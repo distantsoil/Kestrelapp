@@ -22,10 +22,12 @@ still get the dashboard; the onboarding tests switch it back on."""
 from __future__ import annotations
 
 import asyncio
+import html
 import re
 from typing import Any
 from urllib.parse import quote
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
@@ -37,7 +39,9 @@ from kestrel.services import onboarding as ob
 from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 
+log = structlog.get_logger()
 router = APIRouter()
 
 ACTIONS = ("pull", "build", "verify", "check", "cancel")
@@ -163,9 +167,12 @@ async def setup_profile(request: Request):
     try:
         await asyncio.to_thread(ss.record_profile, name)
     except KeyError as exc:
-        return HTMLResponse(str(exc), status_code=400)
+        return HTMLResponse(html.escape(str(exc)), status_code=400)
     except OSError as exc:
-        return HTMLResponse(f"could not record the profile: {exc}", status_code=500)
+        log.warning("setup_profile_record_failed", error_type=type(exc).__name__, error=str(exc))
+        return HTMLResponse(
+            f"could not record the profile: {html.escape(plain_error(exc))}", status_code=500
+        )
     msg = f"Profile {name} recorded."
     if request.headers.get("HX-Request"):
         return await _system_partial(request, await setup_state(), message=msg)

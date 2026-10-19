@@ -97,3 +97,24 @@ async def test_fetch_runs_scrape_and_maps(monkeypatch):
     assert (
         len(postings) == 1 and postings[0].title == "Head of IT" and postings[0].is_remote is True
     )
+
+
+def test_every_parameter_kestrel_forwards_exists_in_jobspys_scrape_jobs():
+    """JobSpy 1.3.0 signature check, offline: a renamed or removed parameter would otherwise
+    surface as a TypeError at scan time, inside a try that reports it as a failed search."""
+    import inspect
+
+    import jobspy
+
+    from kestrel.ingest.adapters.jobspy import _JOBSPY_PARAMS
+
+    accepted = set(inspect.signature(jobspy.scrape_jobs).parameters)
+    assert _JOBSPY_PARAMS <= accepted, sorted(_JOBSPY_PARAMS - accepted)
+
+
+def test_default_boards_are_indeed_and_glassdoor_never_linkedin_or_google():
+    from kestrel.ingest.adapters.jobspy import DEFAULT_SITES, _sites
+
+    assert DEFAULT_SITES == ("indeed", "glassdoor")
+    assert _sites({"site_name": ["linkedin"]}) == ["indeed", "glassdoor"]
+    assert _sites({"site_name": ["google"]}) == ["google"]  # a custom source may still name it

@@ -168,8 +168,9 @@ _DESCRIPTIONS: dict[str, dict] = {
         "category": CATEGORY_AGGREGATOR,
         "track": "either",
         "fetches": (
-            "Public search results from Indeed, Glassdoor, ZipRecruiter, Google Jobs and "
-            "Dice through the python-jobspy library, run off the event loop. Nothing is fetched "
+            "Public search results from Indeed and Glassdoor, plus ZipRecruiter, Google Jobs and "
+            "Dice when they answer (ZipRecruiter and Google Jobs currently return nothing), "
+            "through the python-jobspy library, run off the event loop. Nothing is fetched "
             "behind a login."
         ),
         "provide": (
@@ -179,7 +180,7 @@ _DESCRIPTIONS: dict[str, dict] = {
             "easy_apply per source."
         ),
         "config_example": {
-            "site_name": ["indeed", "google"],
+            "site_name": ["indeed", "glassdoor"],
             "search_term": '"operations analyst"',
             "location": "Columbus, OH",
             "results_wanted": 100,

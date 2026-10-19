@@ -330,7 +330,7 @@ def _stage_backup(src: Path, staging: Path) -> None:
     try:
         zf = zipfile.ZipFile(src)
     except zipfile.BadZipFile as exc:
-        raise InvalidBackupError(f"Not a valid zip file: {src}") from exc
+        raise InvalidBackupError("Not a valid zip file.") from exc
     with zf:
         names = set(zf.namelist())
         if DB_NAME not in names:

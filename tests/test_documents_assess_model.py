@@ -177,7 +177,7 @@ def test_assess_shows_a_running_state_outside_the_closed_popup_and_the_picker_fi
         master_id=1, doc_word="resume", current_label="deepseek (online)",
         hosted_models=[_M(i) for i in range(12)], hosted_reasons={}, local_models=[],
         hosted_label="OpenRouter", hosted_prefix="")
-    assert 'data-testid="assess-running"' in html and "assess-elapsed" in html
+    assert "dataset.testid = 'assess-running'" in html and "assess-elapsed" in html
     assert "Assessing…" in html and 'data-current-label="deepseek (online)"' in html
     assert 'role="combobox"' in html and "model-search" not in html
     assert "Type to filter models" not in html and 'role="listbox"' in html
