@@ -10,6 +10,9 @@ import importlib
 import os
 import subprocess
 import sys
+import threading
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -433,6 +436,106 @@ def test_windows_same_data_home_cannot_hold_twice(monkeypatch, tmp_path):
 def test_tray_start_is_a_log_line_not_a_crash_without_a_display(shell, monkeypatch):
     monkeypatch.setitem(sys.modules, "pystray", None)  # ImportError on import
     assert shell.start_tray() is False
+    assert shell.icon is None
+
+
+class _FakeIcon:
+    """Records which thread touched it, the way AppKit would care on macOS."""
+
+    def __init__(self, *args, **kwargs):
+        self.calls: list[tuple[str, str]] = []
+        self._visible = False
+
+    def _log(self, what: str) -> None:
+        self.calls.append((what, threading.current_thread().name))
+
+    def run(self, setup=None):
+        self._log("run")
+
+    def run_detached(self, setup=None):
+        self._log("run_detached")
+
+    def stop(self):
+        self._log("stop")
+
+    def update_menu(self):
+        self._log("update_menu")
+
+    @property
+    def visible(self):
+        return self._visible
+
+    @visible.setter
+    def visible(self, value):
+        self._log(f"visible={value}")
+        self._visible = value
+
+
+def _fake_pystray():
+    class _Menu:
+        SEPARATOR = object()
+
+        def __init__(self, *items):
+            self.items = items
+
+    return types.SimpleNamespace(Icon=_FakeIcon, Menu=_Menu, MenuItem=lambda *a, **k: (a, k))
+
+
+def _quiet_tray(shell, monkeypatch, *, macos: bool):
+    monkeypatch.setattr(shell, "IS_MACOS", macos)
+    monkeypatch.setattr(shell, "_icons", lambda: {"idle": object()})
+    monkeypatch.setattr(shell, "_tooltip_poller", lambda: None)
+    monkeypatch.setitem(sys.modules, "pystray", _fake_pystray())
+
+
+def test_macos_tray_is_built_on_the_main_thread_not_its_own(shell, monkeypatch):
+    # macOS 27 kills the app when a status item's menu is set off the main thread (0.6.1 crash:
+    # NSStatusItem setMenu: from the "tray" thread, BSServiceMainRunLoopQueue assertBarrier).
+    _quiet_tray(shell, monkeypatch, macos=True)
+    assert shell.start_tray() is True
+    main = threading.current_thread().name
+    assert shell.icon.calls == [("run_detached", main), ("visible=True", main)]
+
+
+def test_windows_and_linux_tray_still_runs_its_own_loop(shell, monkeypatch):
+    _quiet_tray(shell, monkeypatch, macos=False)
+    assert shell.start_tray() is True
+    for _ in range(100):
+        if shell.icon.calls:
+            break
+        time.sleep(0.01)
+    assert shell.icon.calls == [("run", "tray")]
+
+
+def test_macos_tray_changes_from_a_thread_are_queued_to_the_main_loop(shell, monkeypatch):
+    queued: list = []
+    tools = types.ModuleType("PyObjCTools")
+    tools.AppHelper = types.SimpleNamespace(callAfter=queued.append)
+    monkeypatch.setitem(sys.modules, "PyObjCTools", tools)
+    monkeypatch.setattr(shell, "IS_MACOS", True)
+    ran: list = []
+    worker = threading.Thread(target=shell._on_tray_thread, args=(lambda: ran.append(1),))
+    worker.start()
+    worker.join()
+    assert ran == [] and len(queued) == 1  # not run on the worker thread
+    queued[0]()
+    assert ran == [1]
+
+
+def test_macos_quit_hides_the_tray_instead_of_stopping_the_shared_loop(shell, monkeypatch):
+    # pystray's stop() on macOS calls NSApp.stop_, which is pywebview's loop, not the tray's.
+    monkeypatch.setattr(shell, "IS_MACOS", True)
+    monkeypatch.setattr(shell, "_on_tray_thread", lambda fn: fn())
+    fake = _FakeIcon()
+    fake._visible = True
+    monkeypatch.setattr(shell, "icon", fake)
+    shell._begin_quit()
+    assert [what for what, _ in fake.calls] == ["visible=False"]
+
+
+def test_macos_browser_fallback_runs_without_a_tray(shell, monkeypatch):
+    _quiet_tray(shell, monkeypatch, macos=True)
+    assert shell.start_tray(with_window=False) is False
     assert shell.icon is None
 
 

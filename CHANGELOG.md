@@ -4,6 +4,10 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Kestrel no longer closes the moment it opens on macOS 27. The menu-bar icon was set up off the main thread, which macOS 27 does not allow.
+
 ## [0.6.1] - 2026-10-19
 
 0.6.1 is the first release of these changes. The 0.6.0 tag was made, but its release was never published with installers.
