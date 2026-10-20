@@ -1158,9 +1158,12 @@ when that is unset a hosted default (`tier1` and `trigger` 1200, `tier2` and `ti
 `docsel` 4000; `config.HOSTED_MAX_TOKENS`), and that value is a **floor** under the prompt's own: a hosted
 reasoning model spends output tokens thinking before it writes, and the local 300 and 4000
 quarantined every reply with `finish_reason: length`. A cap bounds the bill, it does not set it.
-Local tier budgets and Tier 3 escalation (the `frontier` tier) are unchanged. A length stop on a
-request that already had reasoning off says the reply needs more output tokens and names the
-setting; it never suggests lowering the reasoning effort.
+Local tier budgets and Tier 3 escalation (the `frontier` tier) are unchanged. **The floor follows
+the backend, not the mode (D-LLM-7):** a tier whose backend is external gets the same floor
+(and its own `llm.tiers.<tier>.max_tokens`, if larger) even while the run mode is local, so a
+tier pointed at a paid model by a settings edit is not left on the local 300 and 4000. A length
+stop on a request that already had reasoning off says the reply needs more output tokens and
+names the setting; it never suggests lowering the reasoning effort.
 
 ### 8.1.1 Embeddings: two engines, both on the machine
 
@@ -1351,6 +1354,16 @@ one-shot probe per model asserting no thinking span survives.
   with at least half of the output tokens spent reasoning, is re-asked once with OpenRouter's
   `reasoning: {enabled: false}` (when the operator has set no effort); a second overrun
   quarantines with the D-LLM-1 message naming the setting that raises the budget.
+- **A reply cut off at its cap is asked again once, larger (D-LLM-7).** A `length` stop that is not
+  a loop and not a reasoning overrun (a long legitimate answer cut mid-object) is retried once
+  with twice the output budget the request carried, capped at the model's context window minus the
+  input it was billed for (`hosted_model_caps`); with no room to grow it quarantines at once. A
+  second cut-off quarantines with the raw reply kept, the limit it hit named (`max_tokens N`,
+  which the Pipeline reads as "the reply ran out of room") and a note that it was retried. This
+  retry is separate from the schema repair: it neither uses nor is counted against it, a repair
+  after it keeps the larger budget, and both attempts' tokens and cost go in the record. The
+  reasoning-off re-ask and this retry are each taken at most once per call, so a call makes at
+  most three attempts before the one repair.
 
 ### 8.6 Benchmark harness
 

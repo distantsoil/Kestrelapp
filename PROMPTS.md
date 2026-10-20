@@ -56,7 +56,13 @@ And configure every call with:
 - **An adequate `num_ctx` on the model itself** (SPEC §8.2, sized per tier). The OpenAI-compatible endpoint
   cannot set it, so it must be baked into a derived model with a Modelfile. A model at its
   default context silently truncates the job description and every downstream score is wrong.
-- A hard `max_tokens` so a runaway generation cannot stall a run
+- A hard `max_tokens` so a runaway generation cannot stall a run. **Failure mode, reply cut off
+  at the cap (D-LLM-7):** a `finish_reason: length` reply that is not a loop and not a reasoning
+  overrun is asked again **once** with twice the output budget (capped at the model's context
+  minus the input; no retry when nothing larger fits). This is separate from the one schema
+  repair and does not consume it. A second cut-off quarantines with the raw reply kept and the
+  limit named. A tier whose backend is external gets the hosted floor (`HOSTED_MAX_TOKENS`)
+  whatever the run mode.
 
 Strip any `<think>…</think>` or `<thinking>…</thinking>` span from the response before parsing,
 unconditionally.
@@ -897,7 +903,9 @@ a resume past about five pages overflows it; a long CV is a known limit either w
 
 **Guard re-ask:** any chat-completions reply that stopped at the cap with the budget spent on
 reasoning and nothing written is re-asked once with reasoning off, when that changes the request
-(a hosted provider that takes the switch, no operator-set effort), before it quarantines.
+(a hosted provider that takes the switch, no operator-set effort), before it quarantines. A reply
+cut off mid-object with no loop and no reasoning overrun is asked again once with twice the output
+budget, capped at the model's context minus the input (D-LLM-7); see SPEC.md 8.5.
 
 Replaces `resume_import/v1` (D-IMPORT-3). That prompt asked the model to write the whole resume
 back as JSON, every bullet verbatim plus up to two rewordings, so its output was about four times

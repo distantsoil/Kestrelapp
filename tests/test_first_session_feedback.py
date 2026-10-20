@@ -57,7 +57,9 @@ def test_a_length_stop_raises_model_declined_not_an_empty_answer(monkeypatch):
 @respx.mock
 def test_guard_quarantines_a_truncated_reply_without_a_repair_call(monkeypatch):
     """The 0.2.0 import made two calls of ~24 s each and then said "invalid JSON: Expecting
-    value". A repair at the same cap cannot help, so there is one call and the real reason."""
+    value". A repair at the same cap cannot help, so a reply cut at its cap is asked again ONCE at
+    twice the budget (D-LLM-7, not a schema repair: same messages, no echo), then quarantined with
+    the real reason."""
     from kestrel.llm.guard import run_guarded
     from kestrel.llm.schemas import P7ResumeImport
 
@@ -70,7 +72,10 @@ def test_guard_quarantines_a_truncated_reply_without_a_repair_call(monkeypatch):
     res = asyncio.run(run_guarded(client, tier="frontier", model_cls=P7ResumeImport,
                                   messages=[{"role": "user", "content": "x"}], max_tokens=4000,
                                   allow_external=True))
-    assert route.call_count == 1
+    assert route.call_count == 2  # the first call and the one larger-budget retry, never a third
+    sent = [json.loads(c.request.content) for c in route.calls]
+    assert sent[1]["max_tokens"] == 2 * sent[0]["max_tokens"]
+    assert sent[1]["messages"] == sent[0]["messages"]  # a retry, not a repair
     assert not res.ok and res.quarantined
     assert "invalid JSON" not in (res.error or "") and "max_tokens" in (res.error or "")
 
@@ -388,4 +393,5 @@ def test_no_re_ask_when_the_operator_set_an_effort_or_the_cut_was_not_reasoning(
     res = asyncio.run(run_guarded(LLMClient(get_settings()), tier="frontier",
                                   model_cls=P7Outline, max_tokens=3000, allow_external=True,
                                   messages=[{"role": "user", "content": "x"}]))
-    assert res.quarantined and route.call_count == 1  # a real truncation: no re-ask helps
+    # A real truncation: no reasoning re-ask helps, but the one larger-budget retry (D-LLM-7) runs.
+    assert res.quarantined and route.call_count == 2

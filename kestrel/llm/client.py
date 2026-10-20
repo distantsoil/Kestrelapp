@@ -680,6 +680,8 @@ class ModelDeclined(RuntimeError):
         *,
         reasoning_exhausted: bool = False,
         degenerate: bool = False,
+        truncated: bool = False,
+        sent_max_tokens: int | None = None,
         content: str = "",
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
@@ -695,6 +697,11 @@ class ModelDeclined(RuntimeError):
         # The reply was a generation loop (one value repeated until the cap, D-LLM-2): a failed
         # attempt, so the guard makes its one repair rather than quarantining at once.
         self.degenerate = degenerate
+        # The reply was cut at the output cap with no sign of a loop or of reasoning eating the
+        # budget: a longer answer than the cap allowed. The guard retries it once with a larger
+        # budget (D-LLM-7); `sent_max_tokens` is the cap this request actually carried.
+        self.truncated = truncated
+        self.sent_max_tokens = sent_max_tokens
         self.content = content
         # What the declined call cost: it was accepted and billed, so the guard adds it to the
         # transmission record like any other attempt.
@@ -733,6 +740,13 @@ def _complete_json(content: str) -> bool:
 
 
 REASONING_RETRY_SHARE = 0.5
+
+
+def choices_finish(data: dict) -> str | None:
+    """The first choice's finish_reason of a chat-completions reply, or None."""
+    choices = data.get("choices") or [{}]
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    return first.get("finish_reason")
 
 
 def reasoning_exhausted(data: dict) -> bool:
@@ -919,6 +933,17 @@ class LLMClient:
             and tier in self.settings.llm.hosted_tiers
         )
 
+    def _external_floor(self, tier: str, backend: BackendConfig) -> int | None:
+        """The hosted output floor (config.HOSTED_MAX_TOKENS) for a tier whose backend is
+        external, whatever the run mode (D-LLM-7). The prompt's own max_tokens is sized for the
+        local models, and a paid reasoning model spends tokens thinking before it writes; a tier
+        pointed at an external backend while the mode is local (a settings.yml edit, a legacy
+        row) needs the same room. None for a local backend and for tiers with no hosted floor
+        (the frontier tier keeps its own budget)."""
+        from kestrel.config import HOSTED_MAX_TOKENS
+
+        return HOSTED_MAX_TOKENS.get(tier) if backend.external else None
+
     def _reasoning_off(
         self, tier: str, backend: BackendConfig, reasoning_hint: str | None
     ) -> bool:
@@ -1041,10 +1066,15 @@ class LLMClient:
         temp = temperature if temperature is not None else tcfg.temperature
         max_out = max_tokens if max_tokens is not None else tcfg.max_tokens
         hosted_tier = self._hosted_tier(tier, backend)
+        floor = self._external_floor(tier, backend)
         if hosted_tier and tcfg.max_tokens is not None and max_out is not None:
             # Under Hosted mode the tier's budget (HOSTED_MAX_TOKENS unless the operator set
             # one) is a floor under the prompt's, which is sized for the local models (D-LLM-1).
             max_out = max(max_out, tcfg.max_tokens)
+        elif floor is not None and max_out is not None:
+            # An external backend outside Hosted mode (D-LLM-7): the same floor.
+            max_out = max(max_out, floor, tcfg.max_tokens or 0)
+            hosted_tier = True
         if (
             max_tokens_cap is not None
             and max_out is not None
@@ -1159,7 +1189,11 @@ class LLMClient:
         elif backend.protocol == "messages":
             problem = messages_stop_problem(data)
             if problem:
-                raise ModelDeclined(problem, json.dumps(data)[:4000], **spent)
+                raise ModelDeclined(
+                    problem, json.dumps(data)[:4000],
+                    truncated=data.get("stop_reason") == "max_tokens",
+                    sent_max_tokens=body.get("max_tokens"), **spent,
+                )
             content = messages_output_text(data)
             prompt_tokens = usage.get("input_tokens", 0)
             completion_tokens = usage.get("output_tokens", 0)
@@ -1169,7 +1203,11 @@ class LLMClient:
                 data,
                 body.get("max_tokens") or body.get("max_completion_tokens"),
                 reasoning_off=self._reasoning_off(tier, backend, reasoning_hint),
-                setting=f"llm.hosted_tiers.{tier}.max_tokens" if hosted_tier else None,
+                setting=(
+                    f"llm.hosted_tiers.{tier}.max_tokens"
+                    if self._hosted_tier(tier, backend)
+                    else f"llm.tiers.{tier}.max_tokens" if hosted_tier else None
+                ),
             )
             text = message.get("content") or ""
             if problem and not _complete_json(text):
@@ -1189,7 +1227,12 @@ class LLMClient:
                     # guard spend its one repair on it (D-LLM-2).
                     raise ModelDeclined(f"{loop}; {problem}", json.dumps(data)[:4000],
                                         degenerate=True, content=text, **spent)
-                raise ModelDeclined(problem, json.dumps(data)[:4000], **spent)
+                raise ModelDeclined(
+                    problem, json.dumps(data)[:4000],
+                    truncated=(choices_finish(data) == "length"),
+                    sent_max_tokens=body.get("max_tokens") or body.get("max_completion_tokens"),
+                    **spent,
+                )
             if message.get("refusal"):
                 # OpenAI structured outputs: a safety refusal comes back in `refusal` with a null
                 # `content`; without this it would quarantine as "invalid JSON" and lose the reason.
