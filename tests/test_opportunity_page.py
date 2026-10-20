@@ -421,3 +421,33 @@ def test_tailor_is_disabled_with_a_reason_when_no_master_exists():
     assert "no active document master for the employment track" in page
     assert "/renders/new?master_id=" not in page
     assert "disabled" in docs and "No active document master" in docs
+
+
+def test_posting_tab_states_why_a_posting_closed_and_when_it_looked_closed_once():
+    """D-INTEL-1: a closed posting says why; one expired read says it will be checked again."""
+    from sqlalchemy import update
+
+    ids = asyncio.run(_seed())
+
+    async def _set(**values):
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            await s.execute(
+                update(Opportunity).where(Opportunity.id == ids["opp"]).values(**values)
+            )
+            await s.commit()
+        await engine.dispose()
+
+    asyncio.run(_set(liveness="live", liveness_strikes=1))
+    with _client() as c:
+        once = c.get(f"/opportunities/{ids['opp']}/tab/posting").text
+    assert 'data-testid="liveness-strike"' in once and "Looked closed once" in once
+    assert 'data-testid="closed-reason"' not in once
+
+    asyncio.run(_set(liveness="closed", liveness_strikes=2, closed_reason="http_404"))
+    with _client() as c:
+        closed = c.get(f"/opportunities/{ids['opp']}/tab/posting").text
+    assert "The posting page returned not found twice." in closed
+    assert 'data-testid="liveness-strike"' not in closed
+    assert "\u2014" not in closed.split('data-testid="liveness-pill"')[1][:400]

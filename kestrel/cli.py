@@ -1156,6 +1156,7 @@ async def _export(fmt: str, track: str | None, out: str | None) -> None:
                     "score": ev.score if ev else None,
                     "ghost_score": o.ghost_score,
                     "liveness": o.liveness,
+                    "closed_reason": o.closed_reason,
                     "url": o.url,
                 }
             )

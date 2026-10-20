@@ -48,7 +48,7 @@ def _opp_summary(
         "org": redact_name(opp.org_name, mapping or {}, enabled=conf), "track": opp.track,
         "stage": opp.stage, "verdict": ev.verdict if ev else None,
         "score": ev.score if ev else None, "ghost_score": opp.ghost_score,
-        "liveness": opp.liveness, "url": opp.url,
+        "liveness": opp.liveness, "closed_reason": opp.closed_reason, "url": opp.url,
     }
 
 

@@ -13,9 +13,10 @@ def test_db_upgrade_then_current():
     result = runner.invoke(app, ["db", "upgrade"])
     assert result.exit_code == 0, result.output
     # head advanced with the operator's qualitative ratings for the offer comparison,
-    # then the `egressed` column that records whether a payload ever reached the provider
-    assert "0019" in result.output
+    # then the `egressed` column that records whether a payload ever reached the provider,
+    # then the liveness strike count and close reason (two reads before a posting closes)
+    assert "0020" in result.output
 
     current = runner.invoke(app, ["db", "current"])
     assert current.exit_code == 0
-    assert "0019" in current.output
+    assert "0020" in current.output

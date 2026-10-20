@@ -662,10 +662,19 @@ starts on day one regardless.
 A `liveness` task re-fetches the URL of every shortlisted and applied opportunity on a cadence
 (default every 3 days).
 
-- HTTP 404 or 410 → `closed`
-- Page text matching "no longer accepting", "position filled", "this job is closed" → `closed`
-- ATS API no longer returning the id → `closed`
-- Otherwise → `live`, timestamp updated
+An *expired read* is any of:
+
+- HTTP 404 or 410 (`http_404`, `http_410`)
+- Page text matching "no longer accepting", "position filled", "this job is closed" (`page_text`)
+- ATS API no longer returning the id (`ats_missing`; reserved, not implemented)
+
+**A posting closes only on the second consecutive expired read** (D-INTEL-1). The first expired
+read sets `liveness_strikes` to 1, leaves `liveness` unchanged and stamps `liveness_checked_at`;
+the row is read again after `liveness.recheck_hours` (default 24) instead of the cadence. The
+second consecutive expired read sets `closed`, stores the `closed_reason`, and raises the
+notification, which states the reason in plain words. A live read resets `liveness_strikes` to 0
+and clears `closed_reason`. A transient failure (5xx, 429, 403, a network error) changes neither
+the state nor the strike count. Otherwise → `live`, timestamp updated.
 
 A shortlisted opportunity going closed raises a notification. Prevents preparing for something
 that no longer exists, and the close date is useful data for the ghost model.

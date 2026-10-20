@@ -60,6 +60,11 @@ STAGES = (
 
 LIVENESS = ("live", "closed", "unknown", "unchecked")
 
+# Why a posting was marked closed (opportunity.closed_reason). A posting closes only on the second
+# consecutive expired read (D-INTEL-1). `ats_missing` (the ATS no longer lists the id) is reserved,
+# not implemented.
+CLOSED_REASONS = ("http_404", "http_410", "page_text", "ats_missing")
+
 VERDICTS = ("apply", "pursue", "consider", "pass", "keep", "kill")
 
 # No code sets "failed" today (a task goes to "dead" after its last attempt); it stays because

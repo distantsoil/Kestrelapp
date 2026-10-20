@@ -325,6 +325,7 @@ class Docs(BaseModel):
 
 class Liveness(BaseModel):
     cadence_days: int = 3
+    recheck_hours: int = 24  # a posting with one expired read is read again after this long
 
 
 class Notify(BaseModel):

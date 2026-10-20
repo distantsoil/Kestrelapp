@@ -137,6 +137,9 @@ class Opportunity(Base):
     is_canonical: Mapped[bool] = mapped_column(Boolean, default=True)
     liveness: Mapped[str] = mapped_column(String, default="unchecked")
     liveness_checked_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Consecutive "expired" reads (404/410/closed text); a posting closes on the second (D-INTEL-1).
+    liveness_strikes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    closed_reason: Mapped[str | None] = mapped_column(String, nullable=True)  # enums.CLOSED_REASONS
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     stage: Mapped[str] = mapped_column(String, default="new", index=True)
     stage_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

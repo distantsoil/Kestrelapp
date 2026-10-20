@@ -252,6 +252,8 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | is_canonical | bool | |
 | liveness | enum | `live` \| `closed` \| `unknown` \| `unchecked` |
 | liveness_checked_at | ts | |
+| liveness_strikes | int | consecutive expired reads; a posting closes on the second (SPEC-MODULES 6.3) |
+| closed_reason | enum? | `http_404` \| `http_410` \| `page_text` \| `ats_missing` (reserved) |
 | raw | json | untouched source payload |
 | stage | enum | `new` \| `t0_pass` \| `t0_reject` \| `t1_pass` \| `t1_reject` \| `t2_done` \| `t3_done` \| `error` \| `quarantined` |
 | stage_reason | text | |
