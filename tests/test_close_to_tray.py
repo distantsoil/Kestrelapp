@@ -41,6 +41,9 @@ def shell(monkeypatch):
     monkeypatch.setattr(shell, "server", _Server())
     monkeypatch.setattr(shell, "_quitting", False)
     monkeypatch.setattr(shell, "_toast_shown", False)
+    # The quit here is the tray's own-loop one (stop()); the macOS shared-loop path hides the item
+    # instead and is covered in test_platform.py, so this runs the same on a macOS host.
+    monkeypatch.setattr(shell, "IS_MACOS", False)
     return shell
 
 
