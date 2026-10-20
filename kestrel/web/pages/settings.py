@@ -396,6 +396,20 @@ async def restore_from_upload(request: Request):
     )
 
 
+def _copy_row(value: str, *, code_testid: str, button_testid: str, label: str) -> str:
+    """A value shown as selectable text with a one-click Copy beside it (#26). Escaped for both
+    the text and the attribute. Deliberately not an anchor: the join URL carries the secret, and a
+    click would land it in the desktop browser's history (D-UI-79)."""
+    safe = html.escape(value, quote=True)
+    return (
+        '<div class="copyrow">'
+        f'<code class="mono" data-testid="{code_testid}">{safe}</code>'
+        f'<button type="button" class="btn ghost small" data-testid="{button_testid}" '
+        f'data-path="{safe}" @click="navigator.clipboard.writeText($el.dataset.path)" '
+        f'title="Copy {label}">Copy</button></div>'
+    )
+
+
 @router.post("/settings/lan/secret", response_class=HTMLResponse)
 async def generate_secret(request: Request):
     """Generate (or rotate) the LAN shared secret and show the QR a phone can scan to join.
@@ -421,25 +435,32 @@ async def generate_secret(request: Request):
         port = request.url.port or 8765
     except (ValueError, OSError):
         host, port = None, 8765
+    secret_row = _copy_row(
+        token, code_testid="lan-secret", button_testid="copy-secret", label="the secret"
+    )
     if host is None:
         return HTMLResponse(
-            f'<code class="mono">{html.escape(token)}</code>'
+            f"{secret_row}"
             '<p class="muted">No LAN address was detected, so there is no join link to show. '
             "Pass the key as the X-Kestrel-Key header.</p>"
         )
     url = join_url(host, port, token)
     svg = qr_svg(url)
     qr_block = (
-        f'<div style="margin:.6rem 0">{svg}</div>'
+        f'<div class="qr" data-testid="lan-qr">{svg}</div>'
         if svg
         else '<p class="muted">QR rendering is unavailable; use the link below.</p>'
     )
+    url_row = _copy_row(
+        url, code_testid="join-url", button_testid="copy-join-url", label="the join link"
+    )
     return HTMLResponse(
-        f'<code class="mono">{html.escape(token)}</code>'
+        f"{secret_row}"
         f"{qr_block}"
-        f'<p class="muted">Scan this on a phone that is on the same network, or open '
-        f'<span class="mono">{html.escape(url)}</span> once. Any device holding the previous key '
-        f"has just been locked out.</p>"
+        '<p class="muted">Scan the code on a phone that is on the same network, or copy the join '
+        "link below and paste it into that phone's browser once. Any device holding the previous "
+        "key has just been locked out.</p>"
+        f"{url_row}"
     )
 
 

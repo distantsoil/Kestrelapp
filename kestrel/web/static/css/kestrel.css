@@ -28,6 +28,7 @@
   --fs-xs: 11px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 17px; --fs-xl: 22px;
   --radius: 8px; --radius-lg: 10px;
   --side-w: 220px;
+  --qr-bg: #FFFFFF; --qr-ink: #111111; /* the join QR is dark on light in every scheme (#28) */
   color-scheme: light;
   /* legacy aliases */
   --bg: var(--paper); --bg-alt: var(--warm); --panel: var(--paper); --border: var(--line);
@@ -44,6 +45,7 @@
     --bad: #E0564D; --bad-tint: rgba(224, 86, 77, .16);
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
     --backdrop: rgba(0, 0, 0, .6);
+    --qr-bg: #FFFFFF; --qr-ink: #111111; /* the join QR is dark on light in every scheme (#28) */
     color-scheme: dark;
   }
 }
@@ -57,6 +59,7 @@
   --bad: #E0564D; --bad-tint: rgba(224, 86, 77, .16);
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
   --backdrop: rgba(0, 0, 0, .6);
+  --qr-bg: #FFFFFF; --qr-ink: #111111; /* the join QR is dark on light in every scheme (#28) */
   color-scheme: dark;
 }
 
@@ -65,18 +68,21 @@
   --accent: #0F8F7E; --accent-deep: #0B6E61; --accent-tint: #DDF3EF;
   --action: #0F8F7E; --action-fg: #FFFFFF;
   --paper: #FFFFFF; --warm: #F4F6F7; --line: #E0E5E8; --ink: #17191C; --muted: #60676E;
+  --qr-bg: #FFFFFF; --qr-ink: #111111; /* the join QR is dark on light in every scheme (#28) */
 }
 @media (prefers-color-scheme: dark) {
   :root[data-scheme="teal"]:not([data-theme="light"]) {
     --accent: #2CC4AE; --accent-deep: #5ED8C6; --accent-tint: #113A35;
     --action: #2CC4AE; --action-fg: #07201C;
     --paper: #17191D; --warm: #111316; --line: #2B3036; --ink: #EDEFF2; --muted: #9CA3AB;
+    --qr-bg: #FFFFFF; --qr-ink: #111111; /* the join QR is dark on light in every scheme (#28) */
   }
 }
 :root[data-scheme="teal"][data-theme="dark"] {
   --accent: #2CC4AE; --accent-deep: #5ED8C6; --accent-tint: #113A35;
   --action: #2CC4AE; --action-fg: #07201C;
   --paper: #17191D; --warm: #111316; --line: #2B3036; --ink: #EDEFF2; --muted: #9CA3AB;
+  --qr-bg: #FFFFFF; --qr-ink: #111111; /* the join QR is dark on light in every scheme (#28) */
 }
 
 /* ------------------------------------------------------------------------------------ base */
@@ -802,6 +808,10 @@ table.data th { background: transparent; }
 .phead { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .kanban.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .kanban .pcard { display: grid; gap: 4px; }
+/* The window allows text selection app-wide (text_select=True, #26); a draggable card must not
+   start a selection instead of a drag. Fields inside it stay editable. */
+.pcard { user-select: none; -webkit-user-select: none; }
+.pcard input, .pcard textarea { user-select: text; -webkit-user-select: text; }
 .pcard .stagesel { display: flex; align-items: center; gap: 6px; }
 .pcard .stagesel select { min-width: 0; flex: 1; padding: 2px 4px; font-size: var(--fs-sm); }
 .pactions { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; margin-top: 2px; }
@@ -1202,3 +1212,13 @@ details.fitgroup[open] > summary.fitgroup-head > .quiet { visibility: hidden; }
 
 /* Column counts on the Applications board, rewritten as filters change (D-UI-76). */
 .ccount { font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------- LAN join block (#28, #26) */
+/* The QR is never themed or inverted: dark modules on a light ground with a quiet zone, so a
+   phone reads it in light, dark and teal alike. */
+.qr { display: inline-block; background: var(--qr-bg); padding: 8px; border-radius: var(--radius);
+  border: 1px solid var(--line); line-height: 0; }
+.qr svg { display: block; }
+.qr svg .qrline { stroke: var(--qr-ink); }
+.copyrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: .4rem 0; }
+.copyrow code { user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }

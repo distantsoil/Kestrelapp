@@ -353,3 +353,57 @@ def test_x_forwarded_for_cannot_forge_loopback():
         for header in ("X-Forwarded-For", "X-Real-IP"):
             r = c.get("/opportunities", headers={header: "127.0.0.1"})
             assert r.status_code == 401, f"{header} forged the loopback exemption"
+
+
+# ------------------------------------------------------------------ the join block (#28, #26)
+def _join_block(monkeypatch) -> str:
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    with _client() as c:
+        r = c.post("/settings/lan/secret")
+    assert r.status_code == 200
+    return r.text
+
+
+def test_join_block_puts_the_qr_on_a_fixed_light_ground(monkeypatch):
+    """#28: the code is dark modules on a transparent SVG, so a dark page showed through it and
+    phones could not read it. It now sits in .qr, whose ground is a token that is light in every
+    scheme (never inverted: many scanners refuse an inverted code)."""
+    body = _join_block(monkeypatch)
+    assert '<div class="qr"' in body and "<svg" in body.split('<div class="qr"', 1)[1]
+
+
+def test_join_block_secret_and_url_copy_with_one_click_and_are_not_links(monkeypatch):
+    """#26: the secret and the join URL each have a Copy button. The URL is selectable text and
+    never an anchor: a click would put the secret in the desktop browser's history."""
+    body = _join_block(monkeypatch)
+    assert body.count("navigator.clipboard.writeText($el.dataset.path)") == 2
+    assert 'data-testid="copy-secret"' in body and 'data-testid="copy-join-url"' in body
+    assert "<a " not in body and "href=" not in body
+    url = body.split('data-testid="join-url">', 1)[1].split("</code>", 1)[0]
+    assert url.startswith("http://192.168.1.20:") and "/auth?key=" in url
+    secret = body.split('data-testid="lan-secret">', 1)[1].split("</code>", 1)[0]
+    assert secret and url.endswith(secret)
+    assert f'data-path="{secret}"' in body and f'data-path="{url}"' in body
+
+
+def test_join_block_escapes_what_it_prints(monkeypatch):
+    monkeypatch.setattr(auth, "generate_key", lambda: '"><script>x</script>')
+    body = _join_block(monkeypatch)
+    assert "<script>x</script>" not in body and "&lt;script&gt;" in body
+    assert 'data-path=""><script' not in body
+
+
+def test_join_block_without_a_lan_address_still_copies_the_secret(monkeypatch):
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: None)
+    with _client() as c:
+        body = c.post("/settings/lan/secret").text
+    assert 'data-testid="copy-secret"' in body and 'class="qr"' not in body
+
+
+def test_settings_page_shows_an_existing_secret_with_a_copy_button(monkeypatch):
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    with _client() as c:
+        c.post("/settings/lan/secret")
+        page = c.get("/settings").text
+    block = page.split('id="secret"', 1)[1].split("</div>", 2)[0]
+    assert 'data-testid="lan-secret"' in block and 'data-testid="copy-secret"' in block

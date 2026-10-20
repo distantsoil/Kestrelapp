@@ -691,6 +691,10 @@ def run_desktop() -> int:
         window = webview.create_window(
             f"Kestrel {__version__}", url=url, width=width, height=height,
             min_size=(960, 640),
+            # pywebview blocks text selection app-wide unless asked (#26): the LAN secret, a
+            # path or an error message could not be selected or copied. Draggable board cards
+            # opt out in CSS (.pcard) so a drag never starts a selection.
+            text_select=True,
         )
     except Exception as exc:
         if IS_WINDOWS:  # the packaged product: a missing WebView2 is a real failure, as before

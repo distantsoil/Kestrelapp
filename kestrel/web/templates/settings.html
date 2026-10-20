@@ -271,7 +271,9 @@
       {% if lan_secret %}Rotate shared secret{% else %}Generate shared secret{% endif %}</button>
     <span class="muted">Rotating takes effect immediately and locks out any device using the old
     one. That is the only way to revoke access.</span>
-    <div id="secret" class="mono">{% if lan_secret %}<code>{{ lan_secret }}</code>{% endif %}</div>
+    <div id="secret" class="mono">{% if lan_secret %}<div class="copyrow"><code class="mono" data-testid="lan-secret">{{ lan_secret }}</code>
+      <button type="button" class="btn ghost small" data-testid="copy-secret" data-path="{{ lan_secret }}"
+              @click="navigator.clipboard.writeText($el.dataset.path)" title="Copy the secret">Copy</button></div>{% endif %}</div>
     <div hx-get="/settings/mcp" hx-trigger="intersect once" hx-swap="outerHTML"><p class="muted">Loading the MCP switch...</p></div>
     <h2 style="margin-top:1.2rem">Backup</h2>
     <p class="muted">Your data lives at <span class="mono">{{ data_dir }}</span>. Back up with

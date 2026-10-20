@@ -201,6 +201,9 @@ def test_window_opens_large_but_not_maximized_with_a_minimum_size():
     src = (ROOT / "kestrel" / "desktop" / "shell.py").read_text(encoding="utf-8")
     call = src.split("webview.create_window(")[1].split(")\n")[0]
     assert "maximized" not in call and "min_size=" in call and "_initial_size" in src
+    # #26: pywebview blocks text selection app-wide unless asked, so the LAN secret and join link
+    # (and every id, error and path on a page) could not be selected or copied.
+    assert "text_select=True" in call
     assert _initial_size((1920, 1080)) == (1600, 932)
     assert _initial_size((1280, 720)) == (1152, 640)  # never below the minimum
     assert _initial_size((3840, 2160)) == (1600, 1000)
