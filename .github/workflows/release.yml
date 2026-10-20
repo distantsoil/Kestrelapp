@@ -274,6 +274,7 @@ jobs:
         with:
           # A draft first: immutable releases refuse uploads once published.
           draft: true
+          name: Kestrel ${{ github.ref_name }}
           generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: artifacts/RELEASE_BODY.md
