@@ -49,6 +49,9 @@ fi
 
 # ------------------------------------------------------------------ 1. the one-folder build
 if [ "${1:-}" != "--skip-build" ]; then
+    echo "==> bundled embedding model (kestrel.spec refuses to build without it)"
+    (cd "$ROOT" && { "$PYTHON" scripts/fetch_embed_model.py --check ||
+        "$PYTHON" scripts/fetch_embed_model.py; })
     echo "==> PyInstaller one-folder build"
     (cd "$ROOT" && "$PYTHON" -m PyInstaller packaging/kestrel.spec --noconfirm)
 fi

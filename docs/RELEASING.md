@@ -59,7 +59,12 @@ choice and always builds and publishes all three.
 
 Every script runs PyInstaller itself and takes `--skip-build` (`-SkipBuild` on Windows) when
 `dist/` already holds the build. `PYTHON` names the interpreter with kestrel and pyinstaller
-installed (`uv sync --extra dev` installs both).
+installed (`uv sync --extra dev` installs both). The scripts also fetch the bundled embedding
+model (`scripts/fetch_embed_model.py`, about 90 MB, never committed) when
+`fetch_embed_model.py --check` says it is missing, because `kestrel.spec` refuses to build without
+it; run `uv run python scripts/fetch_embed_model.py` yourself first to do it ahead of time or
+offline (`--archive`). The dmg script uses `diskutil image create` when macOS has it and
+`hdiutil create` otherwise (hdiutil is deprecated on macOS 27; the diskutil flags are unverified).
 
 ```bash
 PYTHON=.venv/bin/python packaging/build_appimage.sh      # Linux

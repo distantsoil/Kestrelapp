@@ -519,7 +519,12 @@ def test_dmg_script_names_the_artifact_and_gates_signing():
     sh = (PACKAGING / "build_dmg.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in sh
     assert "Kestrel-${VERSION}.dmg" in sh
-    assert "hdiutil create" in sh and "UDZO" in sh
+    # #40: hdiutil is deprecated on macOS 27. Probe for diskutil first, fall back to hdiutil.
+    assert "diskutil image create" in sh and "hdiutil create" in sh and "UDZO" in sh
+    code = _code(PACKAGING / "build_dmg.sh")  # comments cannot satisfy the order check
+    probe = code.index("diskutil image create --help")
+    assert probe < code.index("diskutil image create from") < code.index("hdiutil create")
+    assert "UNVERIFIED" in sh  # the diskutil flags are not yet checked on macOS 27
     assert "ln -s /Applications" in sh
     assert "APPLE_SIGNING_IDENTITY" in sh and "UNSIGNED" in sh
     for var in ("APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD"):
@@ -696,3 +701,25 @@ def test_tray_pngs_have_no_orange_pixel():
             if px[3] == 255 and _is_orange(px[0], px[1], px[2])
         ]
         assert not bad, f"{name} has {len(bad)} orange pixels, e.g. {bad[0]}"
+
+
+# ------------------------------------------------------ the embed model on a fresh clone (#41)
+def test_every_build_script_fetches_the_embed_model_before_pyinstaller():
+    """kestrel.spec refuses to build without kestrel/resources/embed_model/*, and the model is
+    never committed, so a fresh clone failed inside PyInstaller. Each local build script now
+    checks for it and fetches it first (release.yml already does)."""
+    for name, runner in (
+        ("build_dmg.sh", "PyInstaller packaging/kestrel.spec"),
+        ("build_appimage.sh", "PyInstaller packaging/kestrel.spec"),
+        ("build_windows.ps1", "PyInstaller packaging\\kestrel.spec"),
+    ):
+        text = _code(PACKAGING / name)
+        assert "fetch_embed_model.py" in text, name
+        assert "--check" in text.split("fetch_embed_model.py", 1)[1][:60], name
+        assert text.index("fetch_embed_model.py") < text.index(runner), name
+
+
+def test_releasing_doc_mentions_the_embed_model_for_local_builds():
+    doc = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+    local = doc.split("### Building locally", 1)[1].split("\n## ", 1)[0]
+    assert "fetch_embed_model.py" in local

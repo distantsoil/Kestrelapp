@@ -40,6 +40,9 @@ if [ "${1:-}" != "--skip-build" ]; then
         echo "==> packaging/kestrel.icns missing; generating it from the 512 px mark"
         (cd "$ROOT" && "$PYTHON" scripts/make_icons.py --icns)
     fi
+    echo "==> bundled embedding model (kestrel.spec refuses to build without it)"
+    (cd "$ROOT" && { "$PYTHON" scripts/fetch_embed_model.py --check ||
+        "$PYTHON" scripts/fetch_embed_model.py; })
     echo "==> PyInstaller one-folder build + BUNDLE"
     (cd "$ROOT" && "$PYTHON" -m PyInstaller packaging/kestrel.spec --noconfirm)
 fi
@@ -88,7 +91,19 @@ ln -s /Applications "$STAGE/Applications"
 
 echo "==> writing $DMG"
 rm -f "$DMG"
-hdiutil create -volname "Kestrel $VERSION" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ "$DMG"
+# hdiutil create is deprecated as of macOS 27 in favor of `diskutil image`. Probe for the new tool
+# and use it when it is there; otherwise (older macOS, and every runner today) use hdiutil.
+# UNVERIFIED: the `diskutil image create from` flags below are written from the macOS 27 release
+# notes and have not been run on a macOS 27 host (issue #40). If that call fails for any reason the
+# build says so and falls back to hdiutil, so a wrong flag can never block a release.
+if diskutil image create --help >/dev/null 2>&1 &&
+    diskutil image create from --format UDZO --volumeName "Kestrel $VERSION" "$STAGE" "$DMG"; then
+    :
+else
+    echo "==> diskutil image create unavailable or failed; using hdiutil create"
+    rm -f "$DMG"
+    hdiutil create -volname "Kestrel $VERSION" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ "$DMG"
+fi
 
 # ------------------------------------------------------------------ 4. notarize (optional)
 if [ "$SIGNED" = 1 ]; then
