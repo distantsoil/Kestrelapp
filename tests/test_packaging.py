@@ -524,7 +524,7 @@ def test_dmg_script_names_the_artifact_and_gates_signing():
     code = _code(PACKAGING / "build_dmg.sh")  # comments cannot satisfy the order check
     probe = code.index("diskutil image create --help")
     assert probe < code.index("diskutil image create from") < code.index("hdiutil create")
-    assert "UNVERIFIED" in sh  # the diskutil flags are not yet checked on macOS 27
+    assert "VERIFIED on macOS 27" in sh  # the diskutil path ran on a real macOS 27 host
     assert "ln -s /Applications" in sh
     assert "APPLE_SIGNING_IDENTITY" in sh and "UNSIGNED" in sh
     for var in ("APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD"):

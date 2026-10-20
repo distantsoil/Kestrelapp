@@ -93,9 +93,9 @@ echo "==> writing $DMG"
 rm -f "$DMG"
 # hdiutil create is deprecated as of macOS 27 in favor of `diskutil image`. Probe for the new tool
 # and use it when it is there; otherwise (older macOS, and every runner today) use hdiutil.
-# UNVERIFIED: the `diskutil image create from` flags below are written from the macOS 27 release
-# notes and have not been run on a macOS 27 host (issue #40). If that call fails for any reason the
-# build says so and falls back to hdiutil, so a wrong flag can never block a release.
+# VERIFIED on macOS 27.0.1 (Apple Silicon), 2026-10-20: the `diskutil image create from` call below
+# wrote the dmg with no fallback (issue #40). If that call fails for any reason the build says so
+# and falls back to hdiutil, so a changed flag can never block a release.
 if diskutil image create --help >/dev/null 2>&1 &&
     diskutil image create from --format UDZO --volumeName "Kestrel $VERSION" "$STAGE" "$DMG"; then
     :
