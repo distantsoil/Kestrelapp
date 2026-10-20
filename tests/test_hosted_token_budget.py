@@ -250,3 +250,20 @@ def test_an_external_tier_in_local_mode_gets_the_hosted_floor(monkeypatch):
     # A local backend keeps the prompt's own cap, and the frontier tier its own budget.
     assert LLMClient(s)._external_floor("tier1", s.llm.backends["local"]) is None
     assert LLMClient(s)._external_floor("frontier", s.llm.backends["frontier"]) is None
+
+
+@respx.mock
+def test_a_cut_off_reply_on_a_local_model_is_not_retried_larger():
+    # A local model's num_ctx is sized per tier (SPEC 8.2): a doubled output budget could push the
+    # prompt past it, and Ollama truncates silently. A local cut-off quarantines at once instead.
+    s = get_settings().model_copy(deep=True)
+    assert s.llm.mode == "local"
+    route = respx.post(url__regex=r".*/chat/completions$").mock(
+        side_effect=[_reply(_CUT), _reply(_OK, "stop")]
+    )
+    res = asyncio.run(run_guarded(
+        LLMClient(s), tier="tier1", messages=MSG, model_cls=P1Triage, max_tokens=300
+    ))
+    assert route.call_count == 1
+    assert res.quarantined and not res.ok
+    assert "already retried" not in (res.error or "")

@@ -682,6 +682,7 @@ class ModelDeclined(RuntimeError):
         degenerate: bool = False,
         truncated: bool = False,
         sent_max_tokens: int | None = None,
+        external: bool = False,
         content: str = "",
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
@@ -702,6 +703,10 @@ class ModelDeclined(RuntimeError):
         # budget (D-LLM-7); `sent_max_tokens` is the cap this request actually carried.
         self.truncated = truncated
         self.sent_max_tokens = sent_max_tokens
+        # Whether the backend was external. Only an external reply is retried larger: a local
+        # model's num_ctx is sized per tier (SPEC 8.2), and a doubled output budget could push the
+        # prompt past it, which Ollama truncates silently.
+        self.external = external
         self.content = content
         # What the declined call cost: it was accepted and billed, so the guard adds it to the
         # transmission record like any other attempt.
@@ -1192,7 +1197,7 @@ class LLMClient:
                 raise ModelDeclined(
                     problem, json.dumps(data)[:4000],
                     truncated=data.get("stop_reason") == "max_tokens",
-                    sent_max_tokens=body.get("max_tokens"), **spent,
+                    sent_max_tokens=body.get("max_tokens"), external=backend.external, **spent,
                 )
             content = messages_output_text(data)
             prompt_tokens = usage.get("input_tokens", 0)
@@ -1231,7 +1236,7 @@ class LLMClient:
                     problem, json.dumps(data)[:4000],
                     truncated=(choices_finish(data) == "length"),
                     sent_max_tokens=body.get("max_tokens") or body.get("max_completion_tokens"),
-                    **spent,
+                    external=backend.external, **spent,
                 )
             if message.get("refusal"):
                 # OpenAI structured outputs: a safety refusal comes back in `refusal` with a null

@@ -72,9 +72,11 @@ def length_retry_budget(client: Any, tier: str, exc: Any) -> int | None:
     """The output budget for the one retry of a reply cut off at its cap (D-LLM-7): twice what
     the cut-off request carried, capped at the model's context window minus the input it was
     billed for when the provider's model list gave one (hosted_model_caps). None when the request
-    did not say what it carried, or when no larger budget fits: the caller quarantines."""
+    did not say what it carried, when no larger budget fits, or when the backend is local (its
+    num_ctx is sized per tier, SPEC 8.2, and a larger output could truncate the prompt silently):
+    the caller quarantines."""
     sent = getattr(exc, "sent_max_tokens", None)
-    if not sent:
+    if not sent or not getattr(exc, "external", False):
         return None
     want = int(sent) * 2
     try:

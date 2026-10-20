@@ -1355,7 +1355,8 @@ one-shot probe per model asserting no thinking span survives.
   `reasoning: {enabled: false}` (when the operator has set no effort); a second overrun
   quarantines with the D-LLM-1 message naming the setting that raises the budget.
 - **A reply cut off at its cap is asked again once, larger (D-LLM-7).** A `length` stop that is not
-  a loop and not a reasoning overrun (a long legitimate answer cut mid-object) is retried once
+  a loop and not a reasoning overrun (a long legitimate answer cut mid-object) on an **external**
+  backend is retried once
   with twice the output budget the request carried, capped at the model's context window minus the
   input it was billed for (`hosted_model_caps`); with no room to grow it quarantines at once. A
   second cut-off quarantines with the raw reply kept, the limit it hit named (`max_tokens N`,
@@ -1363,7 +1364,9 @@ one-shot probe per model asserting no thinking span survives.
   retry is separate from the schema repair: it neither uses nor is counted against it, a repair
   after it keeps the larger budget, and both attempts' tokens and cost go in the record. The
   reasoning-off re-ask and this retry are each taken at most once per call, so a call makes at
-  most three attempts before the one repair.
+  most three attempts before the one repair. A local backend is never retried larger: its
+  `num_ctx` is sized per tier (8.2), and a doubled output budget could push the prompt past it,
+  which Ollama truncates silently; a local cut-off quarantines at once.
 
 ### 8.6 Benchmark harness
 
