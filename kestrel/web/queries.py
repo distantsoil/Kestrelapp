@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from kestrel.db.base import iso, utcnow_iso
+from kestrel.db.enums import APPLIED_OR_LATER
 from kestrel.db.models import (
     Contact,
     DocMaster,
@@ -35,6 +36,7 @@ from kestrel.db.models import (
 )
 from kestrel.services import run_model
 from kestrel.web.fit import (
+    GROUP_APPLIED,
     GROUP_FAILED,
     GROUP_MAYBE,
     GROUP_NEW,
@@ -102,14 +104,18 @@ class OppRow:
     # list query already joins, so it costs no extra statement.
     summary: str | None = None
     pursuit_id: int | None = None
+    # The pursuit's status (grouped list only), so a row can say "applied" instead of "on my
+    # shortlist" (D-UI-51 amended).
+    pursuit_status: str | None = None
     # The operator's word for this row (kestrel.web.fit), from fit_for over the latest
     # evaluation; `mine` is the fit word of the operator's latest label, if any.
     fit: Fit | None = None
     mine: str | None = None
-    # Grouped list, unscored rows only: where the role is in the scoring queue (D-UI-51):
-    # "running" (a task is leased), "waiting" (pending, or nothing queued yet), "failed"
-    # (parked in Scoring failed) or "stuck" (re-queued once at startup and still unscored with
-    # nothing queued, D-UI-56). None for a scored row.
+    # Grouped list, unscored rows only: where the role is in the scoring queue (D-UI-51, D-UI-81):
+    # "running" (a task is leased), "queued" (a task is pending), "background" (its task waits in
+    # the background lane), "held" (its track is switched off), "not_queued" (no task yet),
+    # "failed" (parked in Scoring failed) or "stuck" (re-queued once at startup and still
+    # unscored with nothing queued, D-UI-56). None for a scored row.
     scoring: str | None = None
     # Scoring failed rows only: the latest quarantine error in plain words (fit.failure_words).
     failed_reason: str | None = None
@@ -212,9 +218,10 @@ _T2_VERDICTS = ("apply", "pursue", "consider", "pass")
 _PARKED_STAGES = ("quarantined", "error")
 # Group order on the Pipeline page, as kestrel.web.fit names them. Being scored and Scoring
 # failed sit ahead of Not a fit (hard rule 4): a quarantined row or a Tier 1 keep awaiting Tier 2
-# must never be pages deep behind hundreds of Tier 0 rejects. The index is the CASE value
-# _group_expr returns.
-GROUP_ORDER = (GROUP_WORTH, GROUP_MAYBE, GROUP_NEW, GROUP_FAILED, GROUP_NOT_FIT)
+# must never be pages deep behind hundreds of Tier 0 rejects. Applied follows Worth a look and
+# Maybe: roles the operator already acted on, off the review queue (D-UI-51 amended). The index is
+# the CASE value _group_expr returns.
+GROUP_ORDER = (GROUP_WORTH, GROUP_MAYBE, GROUP_APPLIED, GROUP_NEW, GROUP_FAILED, GROUP_NOT_FIT)
 _G = {key: i for i, key in enumerate(GROUP_ORDER)}
 # Task types that score a role, and the stages a task can be in while it is live.
 _SCORING_TASKS = ("embed", "t1", "t2", "t3", "rescore")
@@ -417,7 +424,8 @@ def _group_expr():
     errored) with no live scoring task is Scoring failed (D-UI-56); a role not scored yet
     (parked but queued again, new, or waiting on a tier) is Being scored whatever anyone said, so a
     role passed and then re-scored into quarantine is never hidden in Not a fit (hard rule 4);
-    then a role with an open pursuit (on the shortlist, not closed) is Worth a look; then the
+    then a role with an open pursuit (on the shortlist, not closed) is Applied once its status
+    is applied or later and Worth a look before that; then the
     operator's latest label (apply/pursue, consider, pass); then the model (D-UI-51). The
     statement must outer-join Pursuit and the latest VerdictOverride (`_with_operator`). Must
     agree with row_fit row for row (tests/test_pipeline_view.py checks)."""
@@ -432,6 +440,14 @@ def _group_expr():
     return case(
         (failed_scoring_clause(), _G[GROUP_FAILED]),
         (being_scored, _G[GROUP_NEW]),
+        (
+            and_(
+                Pursuit.id.is_not(None),
+                Pursuit.closed_at.is_(None),
+                Pursuit.status.in_(sorted(APPLIED_OR_LATER)),
+            ),
+            _G[GROUP_APPLIED],
+        ),
         (and_(Pursuit.id.is_not(None), Pursuit.closed_at.is_(None)), _G[GROUP_WORTH]),
         (mine.in_(("apply", "pursue")), _G[GROUP_WORTH]),
         (mine == "consider", _G[GROUP_MAYBE]),
@@ -468,6 +484,7 @@ def row_fit(
     ev: Evaluation | None,
     *,
     pursued: bool = False,
+    pursuit_status: str | None = None,
     operator_verdict: str | None = None,
     live: bool = False,
 ) -> Fit:
@@ -478,16 +495,24 @@ def row_fit(
     fit = fit_for(ev, opp.stage, t0_rules=t0_rules(opp), live=live)
     if fit.group in (GROUP_NEW, GROUP_FAILED):  # outranks the operator's label (_group_expr)
         return fit
-    group = operator_group(operator_verdict, pursued=pursued)
+    group = operator_group(operator_verdict, pursued=pursued, pursuit_status=pursuit_status)
     return replace(fit, group=group) if group and group != fit.group else fit
 
 
 async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
-    """Fill `scoring` on the unscored rows in a few statements: "failed" (with `failed_reason`)
-    for a Scoring failed row, "running" when one of its scoring tasks is leased, "waiting" when
-    one is pending or the role awaits its first scoring, "stuck" when the startup orphan sweep
-    already re-queued it once and it still has nothing queued (pipeline.orphans, D-UI-56). Hard
-    rule 4: an unscored row always says where it is, never a blank or a dash."""
+    """Fill `scoring` on the unscored rows in a few statements. Hard rule 4: an unscored row
+    always says where it is and why, never a blank or a dash.
+
+    - "failed" (with `failed_reason`): parked in Scoring failed.
+    - "running": one of its scoring tasks is leased.
+    - "held": its track is switched off, so its task waits unclaimed (D-UI-68).
+    - "background": its task sits in the background lane (a company-board role the smart filter
+      did not keep, D-SRC-8) and is not claimed until the lane releases it; on an online model it
+      waits for Score everything now (D-SRC-8 amended).
+    - "queued": a task is pending and the worker will claim it.
+    - "stuck": the startup orphan sweep already re-queued it once and nothing is queued
+      (pipeline.orphans, D-UI-56).
+    - "not_queued": no task yet (it awaits its first pass through the pipeline)."""
     failed = [r for r in rows if r.fit and r.fit.group == GROUP_FAILED]
     if failed:
         reasons = await failure_reasons(session, [r.opp.id for r in failed])
@@ -498,31 +523,49 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
     if not todo:
         return
     from kestrel.pipeline.orphans import stuck_ids
+    from kestrel.queue.queue import requested_by_operator
+    from kestrel.services.tracks import switched_off_tracks
 
     stuck = await stuck_ids(session)
+    off = set(switched_off_tracks())
+    track_of = {r.opp.id: r.opp.track for r in todo}
     oid = func.json_extract(Task.payload, "$.opportunity_id")
+    lane_flag = func.coalesce(func.json_extract(Task.payload, "$.lane"), 0)
     live = (
         await session.execute(
-            select(oid, Task.status).where(
+            select(oid, Task.status, lane_flag, requested_by_operator()).where(
                 Task.type.in_(_SCORING_TASKS),
                 Task.status.in_(("pending", "leased")),
                 oid.in_([r.opp.id for r in todo]),
             )
         )
     ).all()
-    leased = {int(o) for o, st in live if st == "leased" and o is not None}
-    queued = {int(o) for o, _st in live if o is not None}
+    # Per role, the most explanatory state among its live tasks.
+    rank = {"running": 0, "held": 1, "background": 2, "queued": 3}
+    state: dict[int, str] = {}
+    for o, status, lane_on, asked in live:
+        if o is None:
+            continue
+        o = int(o)
+        if status == "leased":
+            this = "running"
+        elif track_of.get(o) in off and not asked:
+            this = "held"
+        elif int(lane_on or 0) == 1 and not asked:
+            this = "background"
+        else:
+            this = "queued"
+        if o not in state or rank[this] < rank[state[o]]:
+            state[o] = this
     for r in todo:
         # A live task wins over a parked stage: a quarantined role queued to score again stays
-        # quarantined until its task runs (queue.rescore), and is waiting, not failed.
-        if r.opp.id in leased:
-            r.scoring = "running"
-        elif r.opp.id in queued:
-            r.scoring = "waiting"
+        # quarantined until its task runs (queue.rescore), and is queued, not failed.
+        if r.opp.id in state:
+            r.scoring = state[r.opp.id]
         elif r.opp.id in stuck:
             r.scoring = "stuck"
         else:
-            r.scoring = "waiting"
+            r.scoring = "not_queued"
 
 
 async def failure_reasons(session: AsyncSession, opp_ids: list[int]) -> dict[int, str]:
@@ -660,7 +703,7 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
     stmt = _with_operator(
         _base_stmt(
             f, Opportunity, Evaluation, Org.name, Source.name, Pursuit.id, Pursuit.closed_at,
-            VerdictOverride.operator_verdict, VerdictOverride.operator_score,
+            Pursuit.status, VerdictOverride.operator_verdict, VerdictOverride.operator_score,
             live_scoring_exists().label("live"),
         )
     ).order_by(grp, order, Opportunity.id.desc())
@@ -684,11 +727,12 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
         OppRow(
             opp=o, ev=e, org_name=on, source_name=sn, summary=row_summary(e),
             pursuit_id=pid,
-            fit=row_fit(o, e, pursued=pid is not None and closed is None, operator_verdict=ov,
-                        live=bool(lv)),
+            pursuit_status=pstatus if pid is not None and closed is None else None,
+            fit=row_fit(o, e, pursued=pid is not None and closed is None,
+                        pursuit_status=pstatus, operator_verdict=ov, live=bool(lv)),
             mine=fit_word_for_verdict(ov, os_),
         )
-        for (o, e, on, sn, pid, closed, ov, os_, lv) in rows
+        for (o, e, on, sn, pid, closed, pstatus, ov, os_, lv) in rows
     ]
     await scoring_states(session, out)
     failed_ids: list[int] = []

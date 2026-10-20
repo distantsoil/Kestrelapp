@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from kestrel.db.enums import APPLIED_OR_LATER
+
 STRONG = "strong fit"
 GOOD = "good fit"
 MAYBE = "maybe"
@@ -37,12 +39,14 @@ FIT_WORDS: tuple[str, ...] = (STRONG, GOOD, MAYBE, NOT_FIT)
 
 GROUP_WORTH = "worth"
 GROUP_MAYBE = "maybe"
+GROUP_APPLIED = "applied"
 GROUP_NOT_FIT = "not_fit"
 GROUP_NEW = "new"
 GROUP_FAILED = "failed"
 GROUP_LABELS = {
     GROUP_WORTH: "Worth a look",
     GROUP_MAYBE: "Maybe",
+    GROUP_APPLIED: "Applied",
     GROUP_NOT_FIT: "Not a fit",
     GROUP_NEW: "Being scored",
     GROUP_FAILED: "Scoring failed",
@@ -266,16 +270,20 @@ def fit_for(
     return Fit(NEW, GROUP_NEW, _TONE[NEW], None, "")
 
 
-def operator_group(operator_verdict: str | None, *, pursued: bool = False) -> str | None:
+def operator_group(
+    operator_verdict: str | None, *, pursued: bool = False, pursuit_status: str | None = None
+) -> str | None:
     """The group the operator's own decision puts a role in, or None to let the model decide
     (D-UI-51). Applies only to a role already scored: one still being scored or failed (fit_for's
     GROUP_NEW or GROUP_FAILED: unscored, quarantined, waiting on a tier) stays there, so callers
     check that before this (kestrel.web.queries.row_fit). A role on the shortlist (an open
-    pursuit; a closed one has left the shortlist) is always Worth a look; otherwise the
-    operator's latest label outranks the model: apply/pursue to Worth a look, consider to Maybe,
-    pass to Not a fit. kestrel.web.queries._group_expr is the same rule in SQL."""
+    pursuit; a closed one has left the shortlist) is Worth a look while it is only shortlisted
+    and Applied once its status is applied or later (db.enums.APPLIED_OR_LATER, D-UI-51 amended);
+    otherwise the operator's latest label outranks the model: apply/pursue to Worth a look,
+    consider to Maybe, pass to Not a fit. kestrel.web.queries._group_expr is the same rule in
+    SQL."""
     if pursued:
-        return GROUP_WORTH
+        return GROUP_APPLIED if pursuit_status in APPLIED_OR_LATER else GROUP_WORTH
     if operator_verdict in ("apply", "pursue"):
         return GROUP_WORTH
     if operator_verdict == "consider":

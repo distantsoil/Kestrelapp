@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm.exc import StaleDataError
 
 from kestrel.db.enums import ARCHIVE_REASONS
+from kestrel.pipeline import lane
 from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
@@ -210,6 +211,11 @@ async def opportunities(request: Request):
         # Only when the list is empty: is that "nothing matches" or "nothing ingested yet"?
         has_any = True if (page.total or n_not_fit) else await any_opportunities(s, f.track)
         running = await run_active(s)
+        # Roles waiting in the background lane explain themselves under Being scored (#34): how
+        # many, and whether they start on their own or only on Score everything now.
+        being_scored = page.group_counts.get(GROUP_NEW, 0)
+        background = await lane.waiting_count(s, f.track) if being_scored else 0
+        background_hosted = bool(background) and lane.scores_on_hosted(settings)
     query = dict(request.query_params)
     groups = _groups(page)
     ctx = {
@@ -229,7 +235,9 @@ async def opportunities(request: Request):
         "carried": {k: query[k] for k in _CARRIED if query.get(k)},
         "archive_reasons": ARCHIVE_REASONS,
         # The header's "N open · M still being scored" (D-UI-51) and the Score again selection.
-        "being_scored": page.group_counts.get(GROUP_NEW, 0),
+        "being_scored": being_scored,
+        "background": background,
+        "background_hosted": background_hosted,
         "scoring_failed": page.group_counts.get(GROUP_FAILED, 0),
         "page_ids": [r.opp.id for r in page.rows],
     }
@@ -366,6 +374,7 @@ def decision_extras(detail: dict) -> dict:
     fit = row_fit(
         opp, ev,
         pursued=detail.get("pursuit") is not None and detail["pursuit"].closed_at is None,
+        pursuit_status=detail["pursuit"].status if detail.get("pursuit") is not None else None,
         operator_verdict=override.operator_verdict if override is not None else None,
     )
     model_word = rules_word = None

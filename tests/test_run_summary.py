@@ -142,12 +142,14 @@ def test_switch_has_two_tabs_no_both_and_a_badge_per_track():
         assert 'id="nav-count-track-employment"' in switch
         assert 'id="nav-count-track-consulting"' in switch
         counts = c.get("/status/counts").text
-    # Employment: one Worth a look (the consider is Maybe). Consulting: one plus one follow-up.
+    # Employment: one Worth a look (the consider is Maybe). Consulting: its role is an open
+    # pursuit at outreach_sent, so it is Applied (#37) and off Worth a look; the follow-up due
+    # today is the one thing waiting.
     # R12: the badge keeps its tooltip through the out-of-band swap.
     assert ('<span id="nav-count-track-employment" class="n" hx-swap-oob="true"'
             f'{_TIP}>1</span>') in counts
     assert ('<span id="nav-count-track-consulting" class="n" hx-swap-oob="true"'
-            f'{_TIP}>2</span>') in counts
+            f'{_TIP}>1</span>') in counts
 
 
 def test_one_track_has_no_switch_and_no_track_badges():

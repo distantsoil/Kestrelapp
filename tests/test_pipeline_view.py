@@ -246,7 +246,7 @@ def test_list_groups_rows_by_fit_with_one_word_and_one_number_per_row():
     d = _row(html, ids["d"])
     # Unscored: grey with a dashed stripe and a pill that says where it is, never a dash.
     assert 'class="it stripe wait"' in d and 'data-fit="new"' in d
-    assert 'data-scoring="waiting">waiting</span>' in d
+    assert 'data-scoring="not_queued">not queued</span>' in d
     assert 'class="sum"></div>' in d and 'class="score wait" data-fit-score></span>' in d
     k = _row(html, ids["k"])
     assert 'class="it stripe bad tinted"' in k and 'data-fit="not a fit"' in k
@@ -279,10 +279,13 @@ def test_the_sql_grouping_agrees_with_fit_for_row_for_row():
         p = _opp(org, src, "p", stage="t0_reject", stage_reason="blocker:comp_floor: below")
         t1 = _opp(org, src, "t1", stage="t1_pass")
         m = _opp(org, src, "m")
-        s.add_all([r, p, t1, m])
+        ap = _opp(org, src, "ap")  # an open pursuit at `applied`: its own group (D-UI-51)
+        s.add_all([r, p, t1, m, ap])
         await s.flush()
         s.add(_ev(t1, tier=1, verdict="keep", verdict_model="keep", score=None))
         s.add(_ev(m, verdict="consider", verdict_model="consider", score=2.4))
+        s.add(_ev(ap))
+        s.add(Pursuit(opportunity_id=ap.id, track="employment", status="applied"))
         await s.commit()
         return r.id, p.id, t1.id, m.id
 
@@ -293,18 +296,20 @@ def test_the_sql_grouping_agrees_with_fit_for_row_for_row():
     for row in pg.rows:
         model = fit.fit_for(row.ev, row.opp.stage, t0_rules=t0_rules(row.opp))
         # a has a pursuit: Worth a look whatever the model said (D-UI-51).
-        assert row.fit.word == model.word and row.fit.group == (
-            fit.GROUP_WORTH if row.pursuit_id else model.group
-        )
+        want = fit.GROUP_WORTH if row.pursuit_id else model.group
+        if row.pursuit_status == "applied":
+            want = fit.GROUP_APPLIED
+        assert row.fit.word == model.word and row.fit.group == want
     groups = [row.fit.group for row in pg.rows]
-    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_NEW, fit.GROUP_FAILED, fit.GROUP_NOT_FIT]
+    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NEW,
+             fit.GROUP_FAILED, fit.GROUP_NOT_FIT]
     assert groups == sorted(groups, key=order.index)  # rows arrive in group order
     assert by_id[m_id].fit.word == fit.MAYBE and by_id[t1_id].fit.word == fit.NEW
     assert by_id[r_id].fit.why == "title rule" and by_id[p_id].fit.why == "pay rule"
-    assert pg.group_counts == {fit.GROUP_WORTH: 3, fit.GROUP_MAYBE: 1, fit.GROUP_NOT_FIT: 3,
-                               fit.GROUP_NEW: 2, fit.GROUP_FAILED: 1}
+    assert pg.group_counts == {fit.GROUP_WORTH: 3, fit.GROUP_MAYBE: 1, fit.GROUP_APPLIED: 1,
+                               fit.GROUP_NOT_FIT: 3, fit.GROUP_NEW: 2, fit.GROUP_FAILED: 1}
     # The paged total leaves Not a fit out (D-UI-62); its note covers the whole filter set.
-    assert pg.rule_rejects == 2 and pg.total == 7
+    assert pg.rule_rejects == 2 and pg.total == 8
     assert sorted(pg.not_fit_rules) == [("pay", 1), ("title", 1)]
     with _client() as c:
         html = _get(c, "/opportunities")
@@ -1101,7 +1106,7 @@ def test_operator_decisions_outrank_the_model_in_sql_and_in_row_fit_alike():
         assert by_id[new[key]].fit.group == group, key
     # The model's word and tone stay on the row; only the group follows the operator.
     assert by_id[new["lo"]].fit.word == fit.NOT_FIT and by_id[new["dn"]].fit.word == fit.STRONG
-    assert by_id[new["un"]].fit.word == fit.NEW and by_id[new["un"]].scoring == "waiting"
+    assert by_id[new["un"]].fit.word == fit.NEW and by_id[new["un"]].scoring == "not_queued"
     assert by_id[new["rq"]].fit.word == fit.NEW and by_id[new["rq"]].scoring == "failed"
     # SQL and row_fit agree: rows arrive in group order and the counts match the rows.
     order = list(fit.GROUP_LABELS)
@@ -1209,7 +1214,7 @@ def test_scoring_failed_is_its_own_group_with_the_reason_and_score_again():
     by_id = {r.opp.id: r for r in pg.rows}
     assert by_id[ids["e"]].fit.group == fit.GROUP_FAILED
     assert by_id[er_id].fit.group == fit.GROUP_FAILED
-    assert by_id[rq_id].fit.group == fit.GROUP_NEW and by_id[rq_id].scoring == "waiting"
+    assert by_id[rq_id].fit.group == fit.GROUP_NEW and by_id[rq_id].scoring == "queued"
     # The newest quarantine speaks; no quarantine at all reads the fallback.
     assert by_id[ids["e"]].failed_reason == "the model repeated itself"
     assert by_id[er_id].failed_reason == "scoring did not finish"
@@ -1235,7 +1240,7 @@ def test_scoring_failed_is_its_own_group_with_the_reason_and_score_again():
     assert "the model repeated itself" in e and 'data-testid="row-score-again"' in e
     assert f'data-score-again="{ids["e"]}"' in e and ">Score again</button>" in e
     rq_row = _row(html, rq_id)
-    assert 'data-scoring="waiting"' in rq_row and "row-score-again" not in rq_row
+    assert 'data-scoring="queued"' in rq_row and "row-score-again" not in rq_row
     assert "—" not in html
 
 
@@ -1289,3 +1294,238 @@ def test_remove_unhides_a_role_imported_as_applied_and_speaks_consulting():
         return opp.archived_at, opp.archive_reason, opp.stage_reason
 
     assert asyncio.run(_with_session(row)) == (None, None, None)
+
+
+# ------------------------------------------------------- WP-09: Applied group (#37)
+async def _seed_applied(ids: dict[str, int]) -> dict[str, int]:
+    """ap: an apply verdict with an open pursuit at `applied`. iv: the same at `interviewing`.
+    rj: a rejected (closed) pursuit on a maybe. All three outrank nothing they should not."""
+    async def go(s):
+        org = (await s.execute(select(Org))).scalars().first()
+        src = (await s.execute(select(Source))).scalars().first()
+        ap, iv, rj = (_opp(org, src, k) for k in ("ap", "iv", "rj"))
+        s.add_all([ap, iv, rj])
+        await s.flush()
+        s.add_all([_ev(ap), _ev(iv), _ev(rj, verdict="consider", verdict_model="consider",
+                                         score=3.2)])
+        s.add_all([
+            Pursuit(opportunity_id=ap.id, track="employment", status="applied"),
+            Pursuit(opportunity_id=iv.id, track="employment", status="interviewing"),
+            Pursuit(opportunity_id=rj.id, track="employment", status="rejected",
+                    closed_at=iso(_now())),
+        ])
+        await s.commit()
+        return {"ap": ap.id, "iv": iv.id, "rj": rj.id}
+
+    return await _with_session(go)
+
+
+def test_applied_roles_leave_worth_a_look_for_their_own_group_with_a_status_pill():
+    ids = asyncio.run(_seed())
+    new = asyncio.run(_seed_applied(ids))
+    with _client() as c:
+        html = _get(c, "/opportunities")
+    worth = html.split('<section class="fitgroup" data-group="worth"')[1].split("</section>")[0]
+    applied = html.split('<section class="fitgroup" data-group="applied"')[1].split("</section>")[0]
+    # The shortlisted role stays in Worth a look; the applied and interviewing ones moved.
+    assert f'id="row-{ids["a"]}"' in worth
+    assert f'id="row-{new["ap"]}"' not in worth and f'id="row-{new["iv"]}"' not in worth
+    assert f'id="row-{new["ap"]}"' in applied and f'id="row-{new["iv"]}"' in applied
+    assert "Applied · 2" in html and "Worth a look · 2" in html
+    # Order: Worth a look, Maybe, Applied, Being scored, Scoring failed, Not a fit.
+    sec = '<section class="fitgroup" data-group="'
+    assert html.index(sec + 'worth') < html.index(sec + 'applied') < html.index(
+        sec + 'new') < html.index(sec + 'failed')
+    row = _row(html, new["ap"])
+    assert 'data-group="applied"' in row
+    assert 'data-testid="pursuit-status">applied</span>' in row
+    assert 'data-testid="on-shortlist"' not in row
+    assert 'data-testid="pursuit-status">interviewing</span>' in _row(html, new["iv"])
+    # A shortlisted role still shows the shortlist pill, not a status.
+    assert 'data-testid="on-shortlist">on my shortlist</span>' in _row(html, ids["a"])
+    # A closed pursuit is off the shortlist: the model's own group (Maybe), no status pill.
+    rj = _row(html, new["rj"])
+    assert 'data-group="maybe"' in rj and "pursuit-status" not in rj
+
+
+def test_sql_and_python_grouping_agree_for_applied_statuses():
+    from kestrel.web import fit
+    from kestrel.web.queries import row_fit
+
+    ids = asyncio.run(_seed())
+    new = asyncio.run(_seed_applied(ids))
+
+    async def status_map(s):
+        return {p.opportunity_id: p for p in (await s.execute(select(Pursuit))).scalars()}
+
+    pursuits = asyncio.run(_with_session(status_map))
+    pg = asyncio.run(_with_session(_whole_list))
+    by_id = {r.opp.id: r for r in pg.rows}
+    assert by_id[new["ap"]].fit.group == fit.GROUP_APPLIED
+    assert by_id[new["iv"]].fit.group == fit.GROUP_APPLIED
+    assert by_id[new["rj"]].fit.group == fit.GROUP_MAYBE and by_id[ids["a"]].fit.group == (
+        fit.GROUP_WORTH)
+    assert by_id[new["ap"]].pursuit_status == "applied"
+    for r in pg.rows:
+        p = pursuits.get(r.opp.id)
+        assert r.fit == row_fit(
+            r.opp, r.ev, pursued=p is not None and p.closed_at is None,
+            pursuit_status=p.status if p is not None else None,
+        ), r.opp.id
+    for g in fit.GROUP_LABELS:
+        assert pg.group_counts[g] == sum(1 for r in pg.rows if r.fit.group == g), g
+    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NEW,
+             fit.GROUP_FAILED, fit.GROUP_NOT_FIT]
+    groups = [r.fit.group for r in pg.rows]
+    assert groups == sorted(groups, key=order.index)
+
+
+def test_operator_group_for_every_applied_or_later_status():
+    from kestrel.db.enums import APPLIED_OR_LATER
+    from kestrel.web import fit
+
+    for status in sorted(APPLIED_OR_LATER):
+        assert fit.operator_group(None, pursued=True, pursuit_status=status) == (
+            fit.GROUP_APPLIED), status
+    assert fit.operator_group(None, pursued=True, pursuit_status="shortlisted") == fit.GROUP_WORTH
+    assert fit.operator_group(None, pursued=True) == fit.GROUP_WORTH
+    # A closed pursuit (pursued=False) falls through to the operator's label or the model.
+    assert fit.operator_group("consider", pursued=False, pursuit_status="rejected") == (
+        fit.GROUP_MAYBE)
+
+
+def test_review_card_and_badges_exclude_applied_roles():
+    from kestrel.analytics.today import worth_a_look
+
+    ids = asyncio.run(_seed())
+    asyncio.run(_seed_applied(ids))
+
+    async def counts(s):
+        return (await worth_a_look(s, "employment"))["n"]
+
+    n = asyncio.run(_with_session(counts))
+    with _client() as c:
+        html = _get(c, "/opportunities")
+        counts = c.get("/status/counts").text
+    worth_header = int(re.search(r"Worth a look · (\d+)", html).group(1))
+    assert n == worth_header == 2  # a and b; ap and iv are Applied now
+    assert re.search(r'id="nav-count-shortlist"[^>]*>2<', counts)  # the badge agrees
+
+
+# ------------------------------------------------------- WP-09: scoring states (#34)
+def _lane_task(opp_id, **extra):
+    from kestrel.db.models import Task
+    from kestrel.pipeline import lane
+
+    return Task(type="t1", priority=lane.LANE_PRIORITY,
+                payload={"opportunity_id": opp_id, **lane.lane_extra(0.0), **extra})
+
+
+def test_unscored_rows_say_why_background_queued_running_and_not_queued():
+    from kestrel.db.models import Task
+
+    ids = asyncio.run(_seed())
+
+    async def more(s):
+        org = (await s.execute(select(Org))).scalars().first()
+        src = (await s.execute(select(Source))).scalars().first()
+        bg = _opp(org, src, "bg", stage="t0_pass")
+        qd = _opp(org, src, "qd", stage="t0_pass")
+        s.add_all([bg, qd])
+        await s.flush()
+        s.add(_lane_task(bg.id))
+        s.add(Task(type="t1", payload={"opportunity_id": qd.id}, status="pending"))
+        s.add(Task(type="t2", payload={"opportunity_id": ids["d"]}, status="leased"))
+        await s.commit()
+        return bg.id, qd.id
+
+    bg_id, qd_id = asyncio.run(_with_session(more))
+    with _client() as c:
+        html = _get(c, "/opportunities")
+    assert 'data-scoring="background">background</span>' in _row(html, bg_id)
+    assert 'data-scoring="queued">queued</span>' in _row(html, qd_id)
+    assert 'data-scoring="running">scoring…</span>' in _row(html, ids["d"])
+    # No task at all: it says so instead of "waiting".
+    async def lone(s):
+        org = (await s.execute(select(Org))).scalars().first()
+        src = (await s.execute(select(Source))).scalars().first()
+        o = _opp(org, src, "nq", stage="t0_pass")
+        s.add(o)
+        await s.commit()
+        return o.id
+
+    nq = asyncio.run(_with_session(lone))
+    with _client() as c:
+        html = _get(c, "/opportunities")
+    assert 'data-scoring="not_queued">not queued</span>' in _row(html, nq)
+
+
+def test_a_role_on_a_switched_off_track_reads_held():
+    from kestrel.db.models import Task
+    from kestrel.services import tracks
+
+    ids = asyncio.run(_seed())
+
+    async def hold(s):
+        s.add(Task(type="t1", payload={"opportunity_id": ids["d"]}, status="pending"))
+        await s.commit()
+
+    asyncio.run(_with_session(hold))
+    try:
+        with _client() as c:
+            orig = tracks.switched_off_tracks
+            tracks.switched_off_tracks = lambda: ("employment",)  # type: ignore[assignment]
+            try:
+                html = _get(c, "/opportunities")
+            finally:
+                tracks.switched_off_tracks = orig  # type: ignore[assignment]
+    finally:
+        tracks.forget_cache()
+    assert 'data-scoring="held">held</span>' in _row(html, ids["d"])
+
+
+def test_being_scored_header_explains_the_background_roles(monkeypatch):
+    from kestrel.pipeline import lane
+
+    ids = asyncio.run(_seed())
+
+    async def bg(s):
+        org = (await s.execute(select(Org))).scalars().first()
+        src = (await s.execute(select(Source))).scalars().first()
+        for i in range(3):
+            o = _opp(org, src, f"bg{i}", stage="t0_pass")
+            s.add(o)
+            await s.flush()
+            s.add(_lane_task(o.id))
+        await s.commit()
+
+    asyncio.run(_with_session(bg))
+    with _client() as c:
+        html = _get(c, "/opportunities")
+        note = html.split('data-testid="background-note"')[1].split("</div>")[0]
+        assert "3 roles from company boards" in note and "when Kestrel is idle" in note
+        assert "Score everything now" not in note
+        monkeypatch.setattr(lane, "scores_on_hosted", lambda settings: True)
+        hosted = c.get("/opportunities").text
+    note = hosted.split('data-testid="background-note"')[1].split("</div>")[0]
+    assert "online model" in note and "Score everything now" in note and 'href="/sources"' in note
+    assert "—" not in note
+    assert ids["d"]  # the base fixture still renders
+
+
+def test_list_polls_only_while_a_run_is_in_flight():
+    from kestrel.db.models import Task
+
+    ids = asyncio.run(_seed())
+    with _client() as c:
+        quiet = c.get("/opportunities").text
+    assert 'hx-trigger="pipelineRefresh from:body"' in quiet
+
+    async def go(s):
+        s.add(Task(type="t2", payload={"opportunity_id": ids["d"]}, status="pending"))
+        await s.commit()
+
+    asyncio.run(_with_session(go))
+    with _client() as c:
+        busy = c.get("/opportunities").text
+    assert 'hx-trigger="pipelineRefresh from:body, every 10s' in busy

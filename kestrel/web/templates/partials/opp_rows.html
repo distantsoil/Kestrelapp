@@ -1,8 +1,8 @@
 {# The swappable half of the pipeline page: the search box and the Newest / Best fit toggle, the
-   chips, the rows in their fit groups (Worth a look, Maybe, Being scored, Scoring failed; D-UI-45,
-   D-UI-51, D-UI-56), then Not a fit as its own section outside the paging (D-UI-62). Scored rows are tinted in their fit tone with the score in that tone;
+   chips, the rows in their fit groups (Worth a look, Maybe, Applied, Being scored, Scoring failed;
+   D-UI-45, D-UI-51, D-UI-56), then Not a fit as its own section outside the paging (D-UI-62). Scored rows are tinted in their fit tone with the score in that tone;
    unscored rows are grey with a dashed stripe and a pill that says where they are in the queue
-   (scoring…, waiting, failed, stuck), never a dash. Every group with rows anywhere shows its header and its total count; a group whose
+   (scoring…, queued, background, held, not queued, failed, stuck; D-UI-81), never a dash. Every group with rows anywhere shows its header and its total count; a group whose
    rows are on another page links there, the pager. Every verdict word on a row comes from kestrel.web.fit (row.fit). HTMX replaces this whole block on every chip click, keystroke, sort change, and page
    turn, so the hidden inputs below always reflect the current filters and a chip only has to
    override its own parameter (hx-vals wins over the included form). #}
@@ -40,13 +40,14 @@
         <div class="t">
           <span>{{ r.opp.title or '(untitled)' }}</span>
           {% if unscored %}
-            {% set st = r.scoring or 'waiting' %}
-            <span class="pill wait" data-fit="new" data-scoring="{{ st }}">{{ {'running': 'scoring…', 'failed': 'failed', 'stuck': 'stuck'}.get(st, 'waiting') }}</span>
+            {% set st = r.scoring or 'not_queued' %}
+            <span class="pill wait" title="{{ {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A company-board role the smart filter did not keep. It scores in the background when Kestrel is idle.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.'}.get(st, '') }}" data-fit="new" data-scoring="{{ st }}">{{ {'running': 'scoring…', 'queued': 'queued', 'background': 'background', 'held': 'held', 'not_queued': 'not queued', 'failed': 'failed', 'stuck': 'stuck'}.get(st, 'queued') }}</span>
           {% else %}
             <span class="pill {{ ft.tone }}" data-fit="{{ ft.word }}">{{ ft.word }}</span>
           {% endif %}
           {% if r.mine and r.mine != ft.word %}<span class="pill grey" data-mine="{{ r.mine }}" title="The word you picked">you said {{ r.mine }}</span>{% endif %}
-          {% if r.pursuit_id %}<span class="pill grey" data-testid="on-shortlist">{{ words(r.opp.track).on_list }}</span>{% endif %}
+          {% if r.pursuit_id and r.pursuit_status and ft.group == 'applied' %}<span class="pill ok" title="Where this application stands" data-testid="pursuit-status">{{ r.pursuit_status|replace('_', ' ') }}</span>
+          {% elif r.pursuit_id %}<span class="pill grey" data-testid="on-shortlist">{{ words(r.opp.track).on_list }}</span>{% endif %}
           {% if r.opp.archived_at %}<span class="pill grey" data-reason="{{ r.opp.archive_reason or '' }}">hidden{% if r.opp.archive_reason %}: {{ archive_reasons.get(r.opp.archive_reason, r.opp.archive_reason)|lower }}{% endif %}{% if r.opp.stage_reason and r.opp.stage_reason.startswith('Re-post') %} ({{ r.opp.stage_reason|lower }}){% endif %}</span>{% endif %}
           {% if r.ev and r.ev.legitimacy and r.ev.legitimacy.status == 'suspect' %}<span class="pill bad">check the posting</span>
           {% elif r.ev and r.ev.legitimacy and r.ev.legitimacy.status == 'reject' %}<span class="pill bad">may not be a real opening</span>{% endif %}
@@ -87,7 +88,8 @@
 {% if notfit_only %}{{ notfit_rows(nf) }}{% else %}
 {% set swap = 'hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true"' %}
 <div id="pipeline-list"
-     hx-get="/opportunities?{{ query|urlencode }}" hx-trigger="pipelineRefresh from:body"
+     hx-get="/opportunities?{{ query|urlencode }}"
+     hx-trigger="pipelineRefresh from:body{% if running %}, every 10s [!document.activeElement || document.activeElement.id !== 'pipeline-q']{% endif %}"
      hx-target="this" hx-swap="outerHTML">
 
   <form id="pipeline-form" role="search" method="get" action="/opportunities"
@@ -156,6 +158,18 @@
   {% for g in groups %}
       <section class="fitgroup" data-group="{{ g.key }}"{% if g.key == 'failed' %} id="scoring-failed"{% endif %}>
         <div class="fitgroup-head"><span>{{ g.label }} · {{ g.count }}{% if g.key == 'new' and running %} <span class="ring" title="A run is active" data-testid="being-scored-ring"></span>{% endif %}</span><span class="quiet">{{ 'best fit first' if f.sort == 'score' else 'newest first' }}</span></div>
+        {% if g.key == 'new' and background %}
+          {# Why some of these have not started (#34): the background lane's roles. #}
+          <div class="fitgroup-explain" data-testid="background-note">
+            <span class="muted">
+            {%- if background_hosted -%}
+              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'is' if background == 1 else 'are' }} waiting. Your scoring runs on an online model, so they score only when you choose Score everything now on <a href="/sources">Sources</a>.
+            {%- else -%}
+              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'scores' if background == 1 else 'score' }} in the background when Kestrel is idle. <a href="/sources">Sources</a> can score {{ 'it' if background == 1 else 'them' }} now.
+            {%- endif -%}
+            </span>
+          </div>
+        {% endif %}
         {% if g.key == 'failed' %}
           {# Scoring failed (D-UI-56): what happened, and one Score again for the whole group. #}
           <div class="fitgroup-explain" data-testid="failed-explain">

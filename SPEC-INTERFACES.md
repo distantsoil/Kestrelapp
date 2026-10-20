@@ -340,7 +340,16 @@ The main working surface. Server-side pagination and filtering over several thou
 - HTMX inline row expansion showing the evaluation blocks without navigating away.
 - Bulk actions: shortlist, archive, re-evaluate, escalate to Tier 3, mark reviewed.
 - Row badges: ghost score, legitimacy, needs-review divergence, liveness, prompt-version staleness.
-- Fit groups in order (Worth a look, Maybe, Being scored, Scoring failed) page together. **Not a
+- Fit groups in order (Worth a look, Maybe, Applied, Being scored, Scoring failed) page
+  together. **Applied** (D-UI-51 amended, #37) holds a role with an open pursuit at `applied` or
+  later (`APPLIED_OR_LATER`): it leaves Worth a look, Today's Review count and the Pipeline badge,
+  and its row shows the pursuit status as a pill ("applied", "interviewing") instead of "on my
+  shortlist". A merely shortlisted role stays in Worth a look. An unscored row's pill says why
+  (D-UI-81, #34): scoring now, queued, background (a company-board role waiting in the lane),
+  held (its track is switched off), not queued, failed or stuck. Under the Being scored header a
+  note counts the background roles: they score when Kestrel is idle, or, when Tier 1 or Tier 2
+  runs on an online model, only when the operator chooses Score everything now on Sources. The
+  list refreshes every 10 seconds while a run is in flight (not while the search box has focus). **Not a
   fit is its own section below them** (D-UI-62): "Not a fit · N" with a note over the whole
   filter set ("49 set aside by your rules before any model ran (location 31, title 18); 0 scored
   low by the model."), a Show N button that loads its rows with their own paging
