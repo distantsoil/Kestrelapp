@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,6 +65,7 @@ def _opp(org, src, i, **kw) -> Opportunity:
     base = dict(
         track="employment", opp_type="job_posting", org_id=org.id, source_id=src.id,
         title=f"VP of IT {i}", org_name=org.name, url=f"https://x/pipe-{i}", stage="t2_done",
+        description_md="Own IT strategy, security and vendors.",
         first_seen_at=iso(_seen_today()), seen_count=3, location_raw="Austin, TX",
         remote_type="hybrid", comp_min=230000, comp_max=260000, comp_currency="USD",
         comp_interval="year",
@@ -982,6 +984,12 @@ def test_nav_counts_agree_with_the_chips():
         s.add(_ev(a, needs_review=False))
         # h is hidden: its evaluation flagged for review must not count.
         s.add(_ev(h, needs_review=True, verdict="consider"))
+        # z: an evaluated role with no description: Calibrate cannot ask about it (#32).
+        z = _opp(SimpleNamespace(id=a.org_id, name=_EMPLOYER), SimpleNamespace(id=a.source_id),
+                 "z", description_md=None)
+        s.add(z)
+        await s.flush()
+        s.add(_ev(z, verdict="consider"))
         await s.commit()
 
     asyncio.run(_with_session(flag_more))
@@ -994,11 +1002,11 @@ def test_nav_counts_agree_with_the_chips():
     # Finding 12: no nav badge shows Your call, so no out-of-band span (it had no target).
     assert "needs_review" not in status
     assert 'id="nav-count-needs_review"' not in counts
-    # calibrate: the page's own pool (learning.active.rank_uncertain), which counts every
-    # unlabeled tier-2 role on the track, hidden ones included (R8): a, b, h, k on the
-    # Employment tab; c is consulting. /api/status counts every track.
-    assert status["calibrate"] == 5
-    assert '<span id="nav-count-calibrate" class="n" hx-swap-oob="true">4</span>' in counts
+    # calibrate: the page's own pool (learning.active.rank_uncertain): unlabeled tier-2 roles
+    # on the track that have a description and are not hidden (#32): a, b, k on the Employment
+    # tab (h is hidden; z has no description); c is consulting. /api/status counts every track.
+    assert status["calibrate"] == 4
+    assert '<span id="nav-count-calibrate" class="n" hx-swap-oob="true">3</span>' in counts
 
 
 @pytest.mark.skipif(not hasattr(__import__("time"), "tzset"), reason="TZ switching is POSIX only")

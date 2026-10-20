@@ -417,3 +417,35 @@ async def test_outcomes_report_non_discrimination(sm):
         report = await outcomes_mod.analyze_outcomes(s, "employment")
     assert report.discriminating is False
     assert "not discriminating" in report.headline.lower()
+
+
+async def test_active_learning_skips_roles_without_a_description_or_archived(sm):
+    """Calibrate asks the operator to judge a role, so a role with nothing to read (no
+    description, or only whitespace) or one already hidden is never queued (#32)."""
+    settings = get_settings()
+    async with sm() as s:
+        org = Org(name="A", normalized_name="a")
+        src = Source(track="employment", kind="greenhouse", name="s", enabled=True)
+        s.add_all([org, src])
+        await s.flush()
+        ids: dict[str, int] = {}
+        cases = {
+            "ok": dict(description_md="Own IT strategy."),
+            "none": dict(description_md=None),
+            "empty": dict(description_md=""),
+            "blank": dict(description_md="  \n\t "),
+            "archived": dict(description_md="Own IT.", archived_at="2026-07-21T00:00:00+00:00"),
+        }
+        for name, kw in cases.items():
+            opp = Opportunity(track="employment", opp_type="job_posting", org_id=org.id,
+                              source_id=src.id, title="VP of IT", stage="t2_done",
+                              first_seen_at="2026-07-20T00:00:00.000000+00:00", **kw)
+            s.add(opp)
+            await s.flush()
+            ids[name] = opp.id
+            s.add(Evaluation(opportunity_id=opp.id, tier=2, track="employment",
+                             verdict="consider", score=3.9, weighted_score=3.5))
+        await s.commit()
+    async with sm() as s:
+        ranked = await rank_uncertain(s, "employment", settings, limit=10)
+    assert [u.opportunity.id for u in ranked] == [ids["ok"]]

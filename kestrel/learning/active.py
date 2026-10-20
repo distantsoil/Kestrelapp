@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
@@ -33,13 +33,23 @@ class UncertainItem:
     components: dict
 
 
+def calibratable() -> ColumnElement[bool]:
+    """The one predicate for what Calibrate may ask about (#32): the role has a description to
+    read (non-blank after trimming every kind of whitespace) and is not hidden. Shared with the
+    sidebar badge (routes_control._nav_counts) so the count always equals the page."""
+    return and_(
+        func.length(func.trim(Opportunity.description_md, " \t\r\n")) > 0,
+        Opportunity.archived_at.is_(None),
+    )
+
+
 async def _latest_evals(session: AsyncSession, track: str) -> dict[int, Evaluation]:
     rows = (
         (
             await session.execute(
                 select(Evaluation)
                 .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
-                .where(Opportunity.track == track, Evaluation.tier == 2)
+                .where(Opportunity.track == track, Evaluation.tier == 2, calibratable())
                 .order_by(Evaluation.id)
             )
         )

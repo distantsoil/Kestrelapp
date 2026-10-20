@@ -216,7 +216,8 @@ def test_status_counts_are_out_of_band_badges_that_hide_at_zero():
             sr = (await s.execute(select(Source))).scalar_one()
             opp = Opportunity(track="employment", opp_type="job_posting", org_id=o.id,
                               source_id=sr.id, title="VP IT", org_name="Acme",
-                              url="https://x/1", stage="t2_done")
+                              url="https://x/1", stage="t2_done",
+                              description_md="Own IT strategy.")
             s.add(opp)
             await s.flush()
             s.add(Evaluation(opportunity_id=opp.id, tier=2, track="employment",

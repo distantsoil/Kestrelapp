@@ -532,9 +532,11 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
     - `unrated` (Pipeline, D-UI-61): roles not yet rated, the Pipeline's own Being scored
       group (queries._group_expr), so the badge and that group's header always agree.
     - `calibrate`: Calibrate's candidate pool (learning.active.rank_uncertain before ranking):
-      roles on the track with a Tier 2 evaluation and no label or override on the track.
+      roles on the track with a Tier 2 evaluation, a description, not hidden (active.calibratable,
+      #32) and no label or override on the track.
       Ranking loads embeddings, which is too much for a 30 s poll, so the pool is counted."""
     from kestrel.analytics.today import worth_a_look
+    from kestrel.learning.active import calibratable
     from kestrel.web.fit import GROUP_NEW
     from kestrel.web.queries import GROUP_ORDER, OppFilters, _base_stmt, _group_expr, _with_operator
 
@@ -556,6 +558,7 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
         .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
         .where(
             Evaluation.tier == 2,
+            calibratable(),
             Evaluation.opportunity_id.not_in(labeled.union(overridden)),
         )
     )
