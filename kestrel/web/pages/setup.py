@@ -165,19 +165,24 @@ async def setup_mode(request: Request):
 async def setup_profile(request: Request):
     form = await request.form()
     name = str(form.get("profile") or "").strip()
+    # The Settings > Models panel swaps only a status line, and htmx never swaps a 4xx/5xx body,
+    # so its failures answer 200 with the message (#36 review); other callers keep the old codes.
+    from_models = form.get("from") == "models" and bool(request.headers.get("HX-Request"))
+
+    def _fail(text: str, code: int) -> HTMLResponse:
+        if from_models:
+            return HTMLResponse(f'<p role="status" class="bad">{text}</p>')
+        return HTMLResponse(text, status_code=code)
+
     try:
         await asyncio.to_thread(ss.record_profile, name)
     except KeyError as exc:
         # A fixed sentence with the submitted name, never the exception's own text (D-SEC-1).
         log.info("setup_profile_unknown", profile=name, error=str(exc))
-        return HTMLResponse(
-            f"Unknown hardware profile: {html.escape(name)}.", status_code=400
-        )
+        return _fail(f"Unknown hardware profile: {html.escape(name)}.", 400)
     except OSError as exc:
         log.warning("setup_profile_record_failed", error_type=type(exc).__name__, error=str(exc))
-        return HTMLResponse(
-            f"could not record the profile: {html.escape(plain_error(exc))}", status_code=500
-        )
+        return _fail(f"could not record the profile: {html.escape(plain_error(exc))}", 500)
     msg = f"Profile {name} recorded."
     if request.headers.get("HX-Request"):
         return await _system_partial(request, await setup_state(), message=msg)

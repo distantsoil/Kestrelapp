@@ -89,7 +89,7 @@
 {% set swap = 'hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true"' %}
 <div id="pipeline-list"
      hx-get="/opportunities?{{ query|urlencode }}"
-     hx-trigger="pipelineRefresh from:body{% if running %}, every 10s [!document.activeElement || document.activeElement.id !== 'pipeline-q']{% endif %}"
+     hx-trigger="pipelineRefresh from:body{% if polling %}, every 10s [(!document.activeElement || document.activeElement.id !== 'pipeline-q') && !(document.querySelector('[data-testid=not-fit-show]') && document.getElementById('not-fit-rows') && document.getElementById('not-fit-rows').childElementCount)]{% endif %}"
      hx-target="this" hx-swap="outerHTML">
 
   <form id="pipeline-form" role="search" method="get" action="/opportunities"

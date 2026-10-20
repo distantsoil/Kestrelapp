@@ -25,6 +25,7 @@
   <form method="post" action="/setup/profile" hx-post="/setup/profile"
         hx-target="#models-profile-result" hx-select="[role=status]" hx-swap="innerHTML"
         style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+    <input type="hidden" name="from" value="models">
     <select name="profile" aria-label="Hardware profile" data-testid="profile-select">
       {% for name in profile_names %}<option value="{{ name }}"{% if name == active_profile %} selected{% endif %}>{{ name }}</option>{% endfor %}
     </select>

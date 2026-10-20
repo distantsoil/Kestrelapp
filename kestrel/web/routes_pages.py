@@ -194,6 +194,12 @@ async def _redact_rows(s, settings, rows) -> None:
 
 @router.get("/opportunities", response_class=HTMLResponse)
 async def opportunities(request: Request):
+    from sqlalchemy import select
+
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.models import Task
+    from kestrel.queue.queue import in_flight
+    from kestrel.services.tracks import switched_off_tracks
     from kestrel.web.routes_control import run_active
 
     f = page_filters(request.query_params, request)
@@ -215,6 +221,13 @@ async def opportunities(request: Request):
         # many, and whether they start on their own or only on Score everything now.
         being_scored = page.group_counts.get(GROUP_NEW, 0)
         background = await lane.waiting_count(s, f.track) if being_scored else 0
+        if f.track and f.track in set(switched_off_tracks()):
+            background = 0  # a switched-off track's rows say "held"; the lane note would mislead
+        # Refresh while ANY live work exists (queue.in_flight), not only a scrape or t1/t2 run:
+        # embed, Tier 3 and Score again rows also change state (#34 review).
+        polling = running or bool(
+            (await s.execute(select(Task.id).where(in_flight(utcnow_iso())).limit(1))).first()
+        )
         background_hosted = bool(background) and lane.scores_on_hosted(settings)
     query = dict(request.query_params)
     groups = _groups(page)
@@ -223,6 +236,7 @@ async def opportunities(request: Request):
         "groups": groups,
         "not_fit": {"count": n_not_fit, "note": not_fit_note(page), "page": nf_page},
         "running": running,
+        "polling": polling,
         "f": f,
         "stages": _STAGES,
         "verdicts": _VERDICTS,

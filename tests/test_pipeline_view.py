@@ -1529,3 +1529,48 @@ def test_list_polls_only_while_a_run_is_in_flight():
     with _client() as c:
         busy = c.get("/opportunities").text
     assert 'hx-trigger="pipelineRefresh from:body, every 10s' in busy
+
+
+def test_background_note_is_hidden_when_the_track_is_switched_off(monkeypatch):
+    # A switched-off track's rows say "held"; a note saying they score when idle would mislead.
+    from kestrel.services import tracks
+
+    asyncio.run(_seed())
+
+    async def bg(s):
+        org = (await s.execute(select(Org))).scalars().first()
+        src = (await s.execute(select(Source))).scalars().first()
+        o = _opp(org, src, "bg-held", stage="t0_pass")
+        s.add(o)
+        await s.flush()
+        s.add(_lane_task(o.id))
+        await s.commit()
+
+    asyncio.run(_with_session(bg))
+    monkeypatch.setattr(tracks, "switched_off_tracks", lambda *a, **k: ["employment"])
+    with _client() as c:
+        html = _get(c, "/opportunities?track=employment")
+    assert 'data-testid="background-note"' not in html
+
+
+def test_the_list_refreshes_while_any_task_is_live_and_pauses_on_open_not_a_fit():
+    # Embed, Tier 3 and Score again work also changes rows, so polling follows queue.in_flight,
+    # not only a scrape or t1/t2 run; and it never collapses a Not a fit list the user opened.
+    from kestrel.db.models import Task
+
+    def trigger(html: str) -> str:
+        return html.split('id="pipeline-list"')[1].split('hx-trigger="')[1].split('"')[0]
+
+    asyncio.run(_seed())
+    with _client() as c:
+        idle = trigger(_get(c, "/opportunities"))
+    assert "every 10s" not in idle
+
+    async def live(s):
+        s.add(Task(type="embed", payload={}))
+        await s.commit()
+
+    asyncio.run(_with_session(live))
+    with _client() as c:
+        busy = trigger(_get(c, "/opportunities"))
+    assert "every 10s" in busy and "not-fit-rows" in busy

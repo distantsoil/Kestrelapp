@@ -583,3 +583,16 @@ def test_settings_models_profile_change_uses_the_setup_handler():
     pick = names[0].split('"')[0]
     r = client.post("/setup/profile", data={"profile": pick}, headers={"HX-Request": "true"})
     assert r.status_code == 200 and "recorded" in r.text
+
+
+def test_settings_models_profile_failure_shows_a_status_line_not_an_error_code():
+    # htmx never swaps a 4xx body, so the Models panel's failures answer 200 with the message;
+    # the System tab and plain posts keep the old status codes.
+    client = _fresh_app()
+    r = client.post("/setup/profile", data={"profile": "no-such", "from": "models"},
+                    headers={"HX-Request": "true"})
+    assert r.status_code == 200 and 'role="status"' in r.text
+    assert "Unknown hardware profile" in r.text
+    plain = client.post("/setup/profile", data={"profile": "no-such"},
+                        headers={"HX-Request": "true"})
+    assert plain.status_code == 400
