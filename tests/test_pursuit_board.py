@@ -614,3 +614,75 @@ def test_add_by_a_malformed_url_is_a_notice_not_a_500():
         r = c.post("/pursuits/add", data={"url": "https://exa mple.com:99999/x"},
                    headers={"HX-Request": "true"})
     assert r.status_code == 200 and "Could not read that page" in r.text
+
+
+# ------------------------------------------------------------ Remove on the card (#23, D-UI-75)
+def test_card_remove_deletes_the_pursuit_like_the_panel_and_returns_the_board():
+    from kestrel.db.models import Notification, Offer, Outcome, VerdictOverride
+    from kestrel.web.pages.opportunity_actions import ADD_REASONS
+
+    c = _fresh()
+    opp_id, pid = _seed(status="applied", title="Wrong role")
+    _other_opp, other_pid = _seed(status="shortlisted", title="Keeper")
+
+    async def extras(s):
+        s.add_all([
+            StatusEvent(pursuit_id=pid, from_status="shortlisted", to_status="applied"),
+            Outcome(pursuit_id=pid, opportunity_id=opp_id, final_status="rejected"),
+            Offer(pursuit_id=pid, base=150000),
+            Notification(kind="liveness", title="Closed", opportunity_id=opp_id, pursuit_id=pid),
+            VerdictOverride(opportunity_id=opp_id, operator_verdict="agree",
+                            reason=sorted(ADD_REASONS)[0]),
+            VerdictOverride(opportunity_id=opp_id, operator_verdict="agree", reason="my own"),
+        ])
+        await s.commit()
+
+    _run(extras)
+    with c:
+        html = c.get("/pursuits").text
+        assert f'hx-post="/pursuits/{pid}/remove"' in html
+        assert f'hx-post="/pursuits/{other_pid}/remove"' in html
+        r = c.post(f"/pursuits/{pid}/remove", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        assert 'data-testid="board"' in r.text and "Wrong role" not in r.text
+        assert "Keeper" in r.text and "Removed from your shortlist." in r.text
+        assert 'hx-swap-oob="true"' in r.text  # the sidebar badges move with the board
+        missing = c.post("/pursuits/999999/remove", headers={"HX-Request": "true"})
+        assert missing.status_code == 200 and 'data-testid="board-notice"' in missing.text
+
+    async def left(s):
+        n_p = len((await s.execute(select(Pursuit).where(Pursuit.id == pid))).all())
+        ev = len((await s.execute(select(StatusEvent).where(StatusEvent.pursuit_id == pid))).all())
+        out = len((await s.execute(select(Outcome).where(Outcome.pursuit_id == pid))).all())
+        off = len((await s.execute(select(Offer).where(Offer.pursuit_id == pid))).all())
+        note = (await s.execute(select(Notification))).scalar_one()
+        reasons = [
+            v.reason for v in (await s.execute(select(VerdictOverride))).scalars().all()
+        ]
+        return n_p, ev, out, off, note.pursuit_id, reasons
+
+    assert _run(left) == (0, 0, 0, 0, None, ["my own"])
+    assert _pursuit(other_pid)[0] is not None
+
+
+def test_card_remove_confirm_is_stage_aware_and_speaks_each_track():
+    c = _fresh(consulting=True)
+    _seed(status="shortlisted", title="Fresh role")
+    _seed(status="applied", title="Applied role")
+    _seed(track="consulting", status="shortlisted", title="Fresh lead")
+    _seed(track="consulting", status="proposal_sent", title="Late lead")
+    with c:
+        emp = c.get("/pursuits").text
+        con = c.get("/pursuits?track=consulting").text
+
+    def confirm(html: str, title: str) -> str:
+        card = html.split(f">{title}</a>", 1)[1].split('class="card pcard', 1)[0]
+        tag = card.split("/remove", 1)[1].split(">", 1)[0]
+        return tag.split('hx-confirm="', 1)[1].split('"', 1)[0]
+
+    assert confirm(emp, "Fresh role") == "Remove this from your shortlist?"
+    assert confirm(emp, "Applied role").startswith("Remove this from your shortlist? Its status")
+    assert "cannot be undone" in confirm(emp, "Applied role")
+    assert confirm(con, "Fresh lead") == "Remove this from your leads?"
+    assert confirm(con, "Late lead").startswith("Remove this from your leads? Its status")
+    assert ">Remove from my shortlist<" in emp and ">Remove from my leads<" in con

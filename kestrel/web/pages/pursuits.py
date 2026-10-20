@@ -10,6 +10,7 @@ import html
 import re
 from datetime import date, timedelta
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -24,6 +25,7 @@ from kestrel.web.deps import active_track, sessionmaker, templates, track_is_con
 from kestrel.web.redact import confidential, redact_name, redact_text
 
 router = APIRouter()
+log = structlog.get_logger()
 
 
 def _search_text(*parts: str | None) -> str:
@@ -259,6 +261,45 @@ async def move_status(request: Request, pursuit_id: int):
     if err:
         return HTMLResponse(html.escape(err), status_code=400)
     return HTMLResponse("", status_code=204)
+
+
+@router.post("/pursuits/{pursuit_id}/remove", response_class=HTMLResponse)
+async def remove_card(request: Request, pursuit_id: int):
+    """Remove from my shortlist / leads, from the board card (#23). The same full undo as the
+    decision panel's Remove (D-UI-75, opportunity_actions.remove_from_list): the pursuit with its
+    history, outcome and offers goes in one transaction. Answers with the board plus the sidebar
+    badges out of band. Always 200: HTMX does not swap a 4xx body, so a failure is a notice."""
+    from kestrel.web.errors import plain_error
+    from kestrel.web.pages.opportunity_actions import remove_from_list
+    from kestrel.web.routes_api import oob_nav_counts
+    from kestrel.web.words import words
+
+    track = active_track(request)
+    notice: dict
+    async with sessionmaker()() as s:
+        try:
+            p = await s.get(Pursuit, pursuit_id)
+            opp = await s.get(Opportunity, p.opportunity_id) if p is not None else None
+            if p is None or opp is None:
+                notice = {"ok": False, "text": "That card is no longer on the board."}
+            else:
+                track = p.track
+                notice = {"ok": True, "text": await remove_from_list(s, opp)}
+        except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "board_remove.failed", pursuit_id=pursuit_id,
+                error_type=type(exc).__name__, error=str(exc),
+            )
+            await s.rollback()
+            notice = {
+                "ok": False,
+                "text": f"Could not remove it from your {words(track)['list']}: {plain_error(exc)}",
+            }
+        oob = await oob_nav_counts(s)
+    resp = await _render_board(request, track, notice=notice)
+    resp.body += oob.encode("utf-8")
+    resp.headers["content-length"] = str(len(resp.body))
+    return resp
 
 
 @router.post("/pursuits/{pursuit_id}/act/{verb}", response_class=HTMLResponse)

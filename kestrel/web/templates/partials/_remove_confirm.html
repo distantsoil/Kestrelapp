@@ -1,0 +1,6 @@
+{# The confirmation for Remove from my shortlist / leads (D-UI-75), shared by the decision panel
+   and the Applications board card (#23) so both always ask the same thing. Past the first column
+   it deletes real history, so it says so. #}
+{% macro remove_confirm(w, pursuit) -%}
+Remove this from your {{ w.list }}?{% if pursuit.status != 'shortlisted' %} Its status history, notes, outcome and offers are deleted too. This cannot be undone.{% elif pursuit.notes_md or pursuit.next_action %} Its notes and next action are deleted too.{% endif %}
+{%- endmacro %}

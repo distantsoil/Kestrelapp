@@ -1,3 +1,4 @@
+{% from "partials/_remove_confirm.html" import remove_confirm %}
 {% if notice %}<p class="pnotice {% if not notice.ok %}bad{% endif %}" role="status" data-testid="board-notice">{{ notice.text }}</p>{% endif %}
 {% if view == 'table' %}
   <table class="data">
@@ -102,6 +103,9 @@
               {% elif column.col.key == 'closed' and c.pursuit.outcome %}
                 <div class="meta">Outcome recorded</div>
               {% endif %}
+              <button class="btn small" type="button" draggable="false" data-testid="board-remove"
+                      hx-post="/pursuits/{{ pid }}/remove" hx-target="#board" hx-swap="innerHTML"
+                      hx-confirm="{{ remove_confirm(words(track), c.pursuit) }}">{{ words(track).remove_from_list }}</button>
             </div>
           </div>
         {% else %}
