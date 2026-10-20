@@ -654,3 +654,45 @@ def test_release_preflight_refuses_a_tag_that_already_has_a_release():
     assert "github.event_name == 'push'" in check["if"]
     assert "gh release view" in check["run"] and "exit 1" in check["run"]
     assert "GH_TOKEN" in check["env"]
+
+
+# ------------------------------------------------------------------------- tray icons (#39)
+_ORANGE_HEXES = ("EE8A4E", "C9551F", "D4622A")
+
+
+def test_mark_svgs_carry_no_retired_orange():
+    """Orange #D4622A is retired as a brand color (D-UI-53). The light tray mark still had the old
+    orange bird gradient, so the idle tray icon stayed orange."""
+    for name in ("kestrel-mark.svg", "kestrel-mark-light.svg"):
+        svg = (ROOT / "docs" / "images" / name).read_text(encoding="utf-8").upper()
+        for hex_ in _ORANGE_HEXES:
+            assert hex_ not in svg, f"{name} still contains {hex_}"
+
+
+def _is_orange(r: int, g: int, b: int) -> bool:
+    import colorsys
+
+    h, s, _v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return 10 <= h * 360 <= 30 and s > 0.4 and r > b + 60
+
+
+def test_the_orange_detector_flags_orange_and_spares_indigo_and_the_attention_red():
+    assert _is_orange(0xD4, 0x62, 0x2A) and _is_orange(0xEE, 0x8A, 0x4E)
+    assert not _is_orange(0x4F, 0x5B, 0xD5) and not _is_orange(0x7B, 0x86, 0xF0)
+    assert not _is_orange(0xB3, 0x26, 0x1E)  # the attention dot, hue about 3 degrees
+
+
+def test_tray_pngs_have_no_orange_pixel():
+    """Regenerate with `uv run python scripts/make_icons.py` after any change to the marks."""
+    from PIL import Image
+
+    icons = ROOT / "kestrel" / "resources" / "icons"
+    names = ("tray-idle.png", "tray-working.png", "tray-working_att.png")
+    for name in names:
+        im = Image.open(icons / name).convert("RGBA")
+        bad = [
+            px[:3]
+            for px in im.getdata()
+            if px[3] == 255 and _is_orange(px[0], px[1], px[2])
+        ]
+        assert not bad, f"{name} has {len(bad)} orange pixels, e.g. {bad[0]}"
