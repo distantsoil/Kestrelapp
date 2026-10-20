@@ -30,7 +30,10 @@ APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb3
 # a mismatch means upstream moved and someone must look at the new runtime and bump this on
 # purpose. The runtime is what makes the AppImage fall back to extract-and-run when FUSE is absent.
 RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
-RUNTIME_SHA256="156f4bdbde9c52d01814600013e0a273f0118dc2de98975f3c8c63427ec79074"
+# 2026-10-19: upstream rebuilt `continuous` (commit fedfad51, its build 39320578745). Checked
+# before bumping: GitHub's digest for the asset equals this hash; the file is a 944,632-byte
+# ELF. Previous: 156f4bdbde9c52d01814600013e0a273f0118dc2de98975f3c8c63427ec79074.
+RUNTIME_SHA256="617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46"
 
 VERSION="$(sed -nE 's/^__version__ = "([^"]+)"$/\1/p' "$ROOT/kestrel/__init__.py")"
 if [ -z "$VERSION" ]; then
