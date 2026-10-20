@@ -638,6 +638,13 @@ def test_release_uploads_to_a_draft_and_publishes_it_last():
     assert '-z "$RELEASE_ID"' in publish["run"]
 
 
+def test_release_is_titled_with_the_product_name():
+    # softprops falls back to the bare tag ("v0.6.1"); earlier releases read "Kestrel v0.x".
+    steps = _workflow("release.yml")["jobs"]["release"]["steps"]
+    gh = next(s for s in steps if str(s.get("uses", "")).startswith("softprops/"))
+    assert gh["with"]["name"] == "Kestrel ${{ github.ref_name }}"
+
+
 def test_release_preflight_refuses_a_tag_that_already_has_a_release():
     """A tag whose release is already published fails in preflight, before 35 minutes of builds
     that could not be attached to it."""
