@@ -55,6 +55,7 @@ server_thread: threading.Thread | None = None
 _quitting = False  # F1: window.destroy() re-fires `closing`; the handler allows it when quitting
 _toast_shown = False
 _port = 0
+_last_status: dict = {}  # the tooltip poller's last /api/status, for the macOS menu (no HTTP there)
 
 ERROR_ALREADY_EXISTS = 183
 MUTEX_NAME = "Local\\Kestrel"  # Local\ not Global\ (Global needs a privilege, blocks a 2nd user)
@@ -241,13 +242,28 @@ def _on_tray_thread(fn) -> None:
     """Run a change to the tray icon where its toolkit allows it. On macOS every AppKit call must
     happen on the main thread, which pywebview's Cocoa loop owns; macOS 27 kills the app outright
     on a status-item change from any other thread. So there the call is queued onto the main run
-    loop. Elsewhere pystray is thread-safe and the call runs at once."""
-    if IS_MACOS:
+    loop (or run at once when already on it). Elsewhere pystray is thread-safe and the call runs
+    at once."""
+    if IS_MACOS and threading.current_thread() is not threading.main_thread():
         from PyObjCTools import AppHelper
 
         AppHelper.callAfter(fn)
     else:
         fn()
+
+
+def _menu_action(fn):
+    """A tray menu callback. On macOS AppKit calls it on the main thread, where a blocking call
+    freezes the window, and window.evaluate_js waits on that same thread forever. So there it
+    runs on a short-lived thread, as every callback did before the tray joined the main loop."""
+
+    def handler(_icon, _item) -> None:
+        if IS_MACOS:
+            threading.Thread(target=fn, name="tray-action", daemon=True).start()
+        else:
+            fn()
+
+    return handler
 
 
 def _notify(title: str, body: str) -> None:
@@ -444,7 +460,10 @@ def _tooltip_poller() -> None:
             _poll_update_status()
         tick += 1
         try:
-            tip, state = _tooltip(_status())
+            status = _status()
+            _last_status.clear()
+            _last_status.update(status)
+            tip, state = _tooltip(status)
             if icon is not None:
                 image = imgs.get(state, imgs["idle"])
 
@@ -499,7 +518,9 @@ def _build_tray(pystray) -> None:
     imgs = _icons()
 
     def _paused_checked(item) -> bool:
-        return bool(_status().get("paused"))
+        # On macOS the menu is built on the main thread: read the poller's last answer, no HTTP.
+        status = _last_status if IS_MACOS else _status()
+        return bool(status.get("paused"))
 
     global icon
     icon = pystray.Icon(
@@ -507,22 +528,23 @@ def _build_tray(pystray) -> None:
         imgs["idle"],
         f"Kestrel {__version__}",
         menu=pystray.Menu(
-            pystray.MenuItem("Open", lambda i, item: show_window(), default=True),
+            pystray.MenuItem("Open", _menu_action(lambda: show_window()), default=True),
             pystray.MenuItem(
                 lambda item: f"Update available ({_update_version})",
-                lambda i, item: _show_update_dialog(),
+                _menu_action(lambda: _show_update_dialog()),
                 visible=lambda item: _update_version is not None,
             ),
-            pystray.MenuItem("Pause worker", lambda i, item: _post("/api/worker/pause"),
+            pystray.MenuItem("Pause worker", _menu_action(lambda: _post("/api/worker/pause")),
                              checked=_paused_checked),
-            pystray.MenuItem("Resume worker", lambda i, item: _post("/api/worker/resume")),
-            pystray.MenuItem("Run scan now", lambda i, item: _post("/api/scan/now")),
+            pystray.MenuItem("Resume worker", _menu_action(lambda: _post("/api/worker/resume"))),
+            pystray.MenuItem("Run scan now", _menu_action(lambda: _post("/api/scan/now"))),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Recent notifications", lambda i, item: show_window()),
-            pystray.MenuItem("Open data folder", lambda i, item: _open_folder(paths.data_dir())),
-            pystray.MenuItem("Open logs", lambda i, item: _open_folder(paths.logs_dir())),
+            pystray.MenuItem("Recent notifications", _menu_action(lambda: show_window())),
+            pystray.MenuItem("Open data folder",
+                             _menu_action(lambda: _open_folder(paths.data_dir()))),
+            pystray.MenuItem("Open logs", _menu_action(lambda: _open_folder(paths.logs_dir()))),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit", lambda i, item: do_quit()),
+            pystray.MenuItem("Quit", _menu_action(lambda: do_quit())),
         ),
     )
     if IS_MACOS:

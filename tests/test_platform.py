@@ -522,6 +522,55 @@ def test_macos_tray_changes_from_a_thread_are_queued_to_the_main_loop(shell, mon
     assert ran == [1]
 
 
+def test_macos_tray_change_on_the_main_thread_runs_at_once(shell, monkeypatch):
+    # on_closing runs on the main thread; a queued hide could miss the loop's last turn.
+    monkeypatch.setattr(shell, "IS_MACOS", True)
+    ran: list = []
+    shell._on_tray_thread(lambda: ran.append(1))
+    assert ran == [1]
+
+
+def test_macos_menu_actions_leave_the_main_thread(shell, monkeypatch):
+    # AppKit calls menu actions on the main thread; window.evaluate_js waits on that thread, so
+    # "Update available" would freeze the app if the action ran there.
+    monkeypatch.setattr(shell, "IS_MACOS", True)
+    release = threading.Event()
+    seen: list[str] = []
+
+    def slow() -> None:
+        seen.append(threading.current_thread().name)
+        release.wait(5)
+
+    started = time.monotonic()
+    shell._menu_action(slow)(None, None)
+    assert time.monotonic() - started < 1.0  # returned without waiting for the action
+    release.set()
+    for _ in range(100):
+        if seen:
+            break
+        time.sleep(0.01)
+    assert seen == ["tray-action"]
+
+
+def test_windows_menu_actions_run_in_place(shell, monkeypatch):
+    monkeypatch.setattr(shell, "IS_MACOS", False)
+    seen: list[str] = []
+    shell._menu_action(lambda: seen.append(threading.current_thread().name))(None, None)
+    assert seen == [threading.current_thread().name]
+
+
+def test_macos_paused_check_reads_the_last_status_without_http(shell, monkeypatch):
+    _quiet_tray(shell, monkeypatch, macos=True)
+    monkeypatch.setattr(shell, "_status", lambda: pytest.fail("HTTP on the main thread"))
+    monkeypatch.setattr(shell, "_last_status", {"paused": True})
+    items: list = []
+    real = shell.sys.modules["pystray"]
+    real.MenuItem = lambda *a, **k: items.append((a, k)) or (a, k)
+    assert shell.start_tray() is True
+    checked = next(k["checked"] for a, k in items if k.get("checked"))
+    assert checked(None) is True
+
+
 def test_macos_quit_hides_the_tray_instead_of_stopping_the_shared_loop(shell, monkeypatch):
     # pystray's stop() on macOS calls NSApp.stop_, which is pywebview's loop, not the tray's.
     monkeypatch.setattr(shell, "IS_MACOS", True)
