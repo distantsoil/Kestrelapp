@@ -449,6 +449,19 @@ def test_empty_state_points_at_sources_and_setup_when_nothing_was_ingested():
 
 
 # ----------------------------------------------------------------------------------- drawer
+def test_drawer_open_full_page_link_sits_in_the_header_bar_beside_close():
+    """#35: Open full page was a quiet button under the decision panel; it now sits in the header
+    bar, a normal button, next to Close."""
+    ids = asyncio.run(_seed())
+    with _client() as c:
+        html = c.get(f"/opportunities/{ids['b']}/drawer").text
+    bar = html.split('<div class="bar">', 1)[1].split("</div>", 1)[0]
+    link = f'<a class="btn" href="/opportunities/{ids["b"]}" data-testid="drawer-open">'
+    assert link in bar and ">Open full page<" in bar
+    assert bar.index("drawer-open") < bar.index('aria-label="Close"')
+    assert html.count('data-testid="drawer-open"') == 1
+
+
 def test_drawer_has_the_fit_card_two_actions_and_the_disagree_control():
     ids = asyncio.run(_seed())
     with _client() as c:

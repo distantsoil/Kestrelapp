@@ -7,6 +7,7 @@
     <h3>{{ title_display }}</h3>
     <span class="pill {{ 'wait' if fit.word == 'new' else fit.tone }}" data-fit="{{ fit.word }}">{{ 'being scored' if fit.word == 'new' else fit.word }}</span>
     <span class="sp"></span>
+    <a class="btn" href="/opportunities/{{ opp.id }}" data-testid="drawer-open">Open full page</a>
     <button class="btn quiet" type="button" @click="close()" aria-label="Close">Close</button>
   </div>
   <div class="quiet" style="font-size:var(--fs-sm)">
@@ -14,5 +15,4 @@
     {%- if ev %} · scored {{ (ev.created_at or '')[:10] }}{% endif %}
   </div>
   {% include "partials/opp_decision.html" %}
-  <p style="margin:10px 0 0"><a class="btn quiet" href="/opportunities/{{ opp.id }}" data-testid="drawer-open">Open full page</a></p>
 </div>
