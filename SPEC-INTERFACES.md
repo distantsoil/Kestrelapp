@@ -445,7 +445,10 @@ CRUD, health, last run, counts, errors, run-now, cadence. JobSpy parameter-confl
 before save. Slug validation for ATS sources (a Lever 404 is caught here, not silently later).
 
 **`/settings`**
-Models and backends per tier with a test button. Concurrency. Thresholds. The oldest posting
+The **Models** tab (#36) lists the effective model per tier and where it runs, changes the local
+hardware profile (the existing `POST /setup/profile`), and embeds the hosted per-tier override
+panel (D-UI-42, the existing `/models/hosted/overrides` routes); it adds no write route of its
+own, so a change there has the same effect as on the Models or System page. Concurrency. Thresholds. The oldest posting
 and the oldest consulting event Tier 0 keeps (`max_posting_age_days`,
 `consulting.max_trigger_age_days`, on Core, D-UI-73). Scoring weights per
 track, with proposed recalibration when available. Profile editors are on `/profile`. Filter-rule editor

@@ -4,7 +4,7 @@
 <h1>Settings</h1>
 {# D-PRIV-1: above the tabs, so it shows on whichever tab the page opens on. #}
 {% include "partials/employer_banner.html" %}
-<div x-data="{ tabs: {'#appearance': 'appearance', '#hosted': 'hosted', '#applied': 'applied', '#system': 'system', '#core': 'core'}, tab: null }"
+<div x-data="{ tabs: {'#appearance': 'appearance', '#hosted': 'hosted', '#applied': 'applied', '#system': 'system', '#core': 'core', '#models': 'models'}, tab: null }"
      x-init="tab = tabs[location.hash] || 'filters'"
      @hashchange.window="tab = tabs[location.hash] || tab">
   <div class="tabs">
@@ -171,17 +171,13 @@
     {% endfor %}
   </section>
 
-  <section x-show="tab==='models'" x-cloak>
+  <section x-show="tab==='models'" x-cloak id="models">
+    {# Settings > Models (#36): loads the effective per-tier models, the hardware profile and the
+       hosted override panel, all through the routes the Models and System pages already use. #}
     <h2>Models per tier</h2>
-    <table class="data">
-      <thead><tr><th>Tier</th><th>Model</th><th></th></tr></thead>
-      <tbody>
-        {% for tier, cfg in settings.llm.tiers.items() %}
-          <tr><td class="mono">{{ tier }}</td><td>{{ cfg.model }}</td>
-            <td><button class="btn ghost" disabled title="Test needs the local model running">Test</button></td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div hx-get="/settings/models" hx-trigger="intersect once" hx-swap="outerHTML">
+      <p class="muted">Loading the models...</p>
+    </div>
   </section>
 
   <section x-show="tab==='hosted'" x-cloak>

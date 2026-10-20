@@ -511,3 +511,75 @@ def test_picker_labels_each_models_json_mode_and_a_json_mode_override_is_sent_js
                                max_tokens=300, schema=json_schema_for(P1Triage),
                                caps=caps[_PROMPT_ONLY])
     assert "response_format" not in plain and plain["repetition_penalty"] == 1.05
+
+
+# ------------------------------------------------------- Settings > Models (#36, WP-12)
+def test_settings_models_tab_lazy_loads_the_panel_not_a_static_table(monkeypatch):
+    client = _fresh_app()
+    body = client.get("/settings").text
+    tab = body.split("x-show=\"tab==='models'\" x-cloak")[1].split("</section>")[0]
+    assert 'hx-get="/settings/models"' in tab and 'hx-trigger="intersect once"' in tab
+    assert "disabled title=\"Test needs the local model running\"" not in body  # dead button gone
+    assert "<table" not in tab  # the panel arrives lazily
+
+
+def test_settings_models_panel_shows_effective_tiers_profile_and_the_override_loader(
+    monkeypatch,
+):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client = _fresh_app()
+    panel = client.get("/settings/models").text
+    assert 'data-testid="settings-models"' in panel
+    for tier in ("tier1", "tier2"):
+        assert f'data-testid="effective-{tier}"' in panel
+    # The hardware profile select posts to the existing handler; no new write route.
+    assert 'hx-post="/setup/profile"' in panel and 'name="profile"' in panel
+    # The override panel is the Models page partial, loaded lazily from its existing route.
+    assert 'hx-get="/models/hosted/overrides"' in panel
+    # One #hosted-overrides at most on the Settings document (the loader, not a copy).
+    assert client.get("/settings").text.count('id="hosted-overrides"') == 0
+
+
+def test_override_partial_says_connect_one_when_no_backend_and_pickers_when_connected(
+    monkeypatch,
+):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client = _fresh_app()
+    none = client.get("/models/hosted/overrides").text
+    assert 'data-testid="override-open"' in none  # frontier ships assigned, so a picker exists
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test-key")
+    with respx.mock as router:
+        _connect(client, router)
+    connected = client.get("/models/hosted/overrides").text
+    assert 'data-testid="override-open"' in connected
+    assert 'data-testid="label-tier2">Default<' in connected
+
+
+def test_saving_from_the_settings_tab_hits_the_same_handler_as_the_models_page():
+    client = _fresh_app()
+    with respx.mock as router:
+        _connect(client, router)
+    panel = client.get("/settings/models").text
+    assert "/models/hosted/overrides" in panel  # the loader the tab embeds
+    with respx.mock as router:
+        _mock(router)
+        opened = client.get("/models/hosted/overrides?open=1").text
+    assert 'hx-post="/models/hosted/overrides"' in opened  # the very form the Models page posts
+    with respx.mock as router:
+        _mock(router)
+        saved = client.post(
+            "/models/hosted/overrides", data={"model.tier2": _NEMOTRON, "save.tier2": "on"}
+        ).text
+    assert 'data-testid="label-tier2">(Override)<' in saved
+    assert _db_settings().llm.hosted_tiers["tier2"].model == _NEMOTRON
+    assert _NEMOTRON in client.get("/settings/models").text  # the tab shows the new assignment
+
+
+def test_settings_models_profile_change_uses_the_setup_handler():
+    client = _fresh_app()
+    panel = client.get("/settings/models").text
+    names = [n for n in panel.split('name="profile"')[1].split("</select>")[0].split('value="')[1:]]
+    assert names
+    pick = names[0].split('"')[0]
+    r = client.post("/setup/profile", data={"profile": pick}, headers={"HX-Request": "true"})
+    assert r.status_code == 200 and "recorded" in r.text

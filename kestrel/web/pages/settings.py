@@ -1065,6 +1065,33 @@ def _ledger_partial(request: Request, ctx: dict) -> HTMLResponse:
     return templates().TemplateResponse(request, "partials/learning_ledger.html", ctx)
 
 
+@router.get("/settings/models", response_class=HTMLResponse)
+async def models_panel(request: Request):
+    """Settings > Models (#36): the effective model per tier, the hardware profile select and a
+    loader for the hosted overrides panel. Read-only: every change posts to a route the Models or
+    System page already owns (/setup/profile, /models/hosted/overrides)."""
+    from kestrel.llm import profiles
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    effective = []
+    for tier, cfg in sorted(settings.llm.tiers.items()):
+        backend = settings.llm.backends.get(cfg.backend)
+        external = bool(backend and backend.external)
+        label = next(
+            (p["label"] for p in prov.PRESETS.values() if p["backend"] == cfg.backend), cfg.backend
+        )
+        effective.append(
+            {"tier": tier, "model": cfg.model, "external": external, "provider": label}
+        )
+    ctx = {
+        "effective": effective,
+        "profile_names": profiles.load_catalog().names(),
+        "active_profile": _active_profile_name(),
+    }
+    return templates().TemplateResponse(request, "partials/settings_models.html", ctx)
+
+
 @router.get("/settings/learning", response_class=HTMLResponse)
 async def learning_ledger(request: Request):
     async with sessionmaker()() as s:
