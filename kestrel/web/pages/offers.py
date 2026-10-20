@@ -19,6 +19,7 @@ from html import escape
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -46,6 +47,7 @@ from kestrel.negotiation.scripts import ScriptResult, draft_scripts
 from kestrel.privacy import EmployerMap
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.redact import confidential_once, redact_json, redact_name, redact_text
 
 # Human-readable labels for comparison matrix axes
@@ -58,6 +60,8 @@ AXIS_LABELS = {
     "org_risk": "Company risk",
     "trajectory_fit": "Fit with where you are headed",
 }
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -529,5 +533,8 @@ async def scripts(request: Request, pursuit_id: int):
         else:
             ctx = {"error": None, "result": result}
     except Exception as exc:  # a model that is not running must not 500 the page
-        ctx = {"error": f"Scripts need the local model running: {exc}", "result": None}
+        log.warning("offer_scripts_failed", pursuit_id=pursuit_id, error_type=type(exc).__name__,
+                    error=str(exc))
+        ctx = {"error": f"Scripts need the local model running: {plain_error(exc)}",
+               "result": None}
     return templates().TemplateResponse(request, "partials/offer_scripts.html", ctx)

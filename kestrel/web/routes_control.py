@@ -39,6 +39,7 @@ from kestrel.services.setting_overrides import (
 )
 from kestrel.web.app import current_run_mode, is_paused, set_paused
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
 
@@ -90,7 +91,7 @@ async def run_now(mode: str | None = None):
             await queue_run_mode(s, chosen)
             await s.commit()
         except HostedModeError as exc:
-            return JSONResponse({"queued": False, "reason": str(exc)}, status_code=400)
+            return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return JSONResponse(
                 {"queued": False, "reason": "the queue changed while queuing; try again"},

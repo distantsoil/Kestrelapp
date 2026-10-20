@@ -44,6 +44,7 @@ from kestrel import setup as setup_cli
 from kestrel.config import Settings, hosted_mode_problem
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
+from kestrel.errors import UserFacingError
 from kestrel.llm import profiles
 from kestrel.llm import providers as prov
 from kestrel.llm.client import OllamaClient
@@ -623,7 +624,7 @@ def _skipped(number: int, key: str, title: str) -> StepState:
 
 
 # ===================================================================================== actions
-class ActionBusy(RuntimeError):
+class ActionBusy(UserFacingError, RuntimeError):
     """Another action is still running; the route answers 409."""
 
 
@@ -707,9 +708,14 @@ def start_action(name: str, work: Callable[[Action], None]) -> Action:
         try:
             work(act)
         except Exception as exc:  # the thread must report, never die silently
-            act.error = f"{type(exc).__name__}: {exc}"
+            # The action log is shown on the page: the type name, plus the text only when
+            # Kestrel wrote it. The raw exception (it can name a path) goes to the log only.
+            act.error = (
+                f"{type(exc).__name__}: {exc}" if isinstance(exc, UserFacingError)
+                else f"{type(exc).__name__}; the details are in the log"
+            )
             act.log(f"failed: {act.error}")
-            log.warning("setup_action_failed", action=name, error=act.error)
+            log.warning("setup_action_failed", action=name, error=f"{type(exc).__name__}: {exc}")
             act.status = "failed"
         else:
             act.status = "done"

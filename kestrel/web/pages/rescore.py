@@ -89,7 +89,7 @@ async def _hosted_models(settings) -> tuple[str, str | None, list, list, dict, s
     try:
         raw = await hm.fetch_models(name, backend)
     except hm.ModelListError as exc:
-        return label, name, [], [], {}, str(exc)
+        return label, name, [], [], {}, plain_error(exc)
     raw = [m for m in raw if (m.json_mode or "schema") in _JSON_MODES]
     picker = hm.picker_models(raw)
     reasons = {m.id: why for m in picker if (why := hm.block_reason(m, _TIER, backend))}

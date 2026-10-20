@@ -174,9 +174,10 @@
       <div id="update-banner" hx-get="/updates/banner" hx-trigger="load, every 300s, updates-changed from:body"
            hx-swap="innerHTML"></div>
       <div id="update-modal"></div>
-      {# A one-line notice carried by a redirect (?msg=), e.g. a refused or partial reset.
-         Autoescaped: the text comes from the URL. #}
-      {% set flash = request.query_params.get('msg') if request is defined else None %}
+      {# A one-line notice carried by a redirect (?msg=<code>), e.g. a refused or partial reset.
+         The URL carries a code only; the sentence is looked up (kestrel/web/flash.py), so an
+         unknown code shows nothing (WP-08, #21). #}
+      {% set flash = flash_text(request.query_params.get('msg')) if request is defined else None %}
       {% if flash %}<div class="warnbox" role="status" data-testid="flash" style="margin-bottom:.8rem">{{ flash }}</div>{% endif %}
       {% include "partials/guide_strip.html" %}
       {% block content %}{% endblock %}

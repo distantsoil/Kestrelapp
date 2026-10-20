@@ -122,7 +122,8 @@ def _available_models(settings) -> tuple[list[str], str | None]:
         )
         return client.list_models(), None
     except Exception as exc:  # noqa: BLE001 -- deliberately broad: any reachability failure degrades
-        return [], f"The AI engine is not running ({exc})."
+        log.info("bench_local_models_unreachable", error_type=type(exc).__name__, error=str(exc))
+        return [], f"The AI engine is not running ({plain_error(exc)})."
 
 
 HOSTED_PREFIX = "hosted:"
@@ -141,7 +142,7 @@ async def _hosted_models(settings, *, fetch: bool) -> tuple[str, list, str | Non
     try:
         return label, hm.picker_models(await hm.fetch_models(name, backend)), None
     except hm.ModelListError as exc:
-        return label, [], str(exc)
+        return label, [], plain_error(exc)
 
 
 async def _page_ctx(request: Request) -> dict:
@@ -191,7 +192,10 @@ async def run(request: Request):
             ctx["rows"] = await _comparison_rows(s)
     except Exception as exc:  # noqa: BLE001 -- a DB hiccup must render a message, never a 500
         ctx["rows"] = []
-        ctx["notice"] = f"{NO_HARNESS_NOTICE} Also could not read stored evaluations: {exc}"
+        log.warning("bench_rows_failed", error_type=type(exc).__name__, error=str(exc))
+        ctx["notice"] = (
+            f"{NO_HARNESS_NOTICE} Also could not read stored evaluations: {plain_error(exc)}"
+        )
     return templates().TemplateResponse(request, "partials/bench_table.html", ctx)
 
 
@@ -244,7 +248,7 @@ async def _promote_hosted(tier: str, model_id: str) -> HTMLResponse:
         try:
             models = await hm.fetch_models(name, backend)
         except hm.ModelListError as exc:
-            return HTMLResponse(f'<div class="warnbox">{escape(str(exc))}</div>')
+            return HTMLResponse(f'<div class="warnbox">{escape(plain_error(exc))}</div>')
         result = await hm.save_overrides(s, settings, name, backend, {tier: model_id}, models)
     box = "warnbox" if result.refused else "okbox"
     return HTMLResponse(

@@ -22,7 +22,7 @@
 
   <section x-show="tab==='system'" x-cloak id="system">
     {# Settings > System (D-UI-31): the machine checks and Restart onboarding. #}
-    <div hx-get="/settings/system{% if query.msg %}?msg={{ query.msg | urlencode }}{% endif %}" hx-trigger="intersect once" hx-swap="outerHTML">
+    <div hx-get="/settings/system{% if flash_text(query.msg) %}?msg={{ query.msg | urlencode }}{% endif %}" hx-trigger="intersect once" hx-swap="outerHTML">
       <p class="muted">Checking this machine...</p>
     </div>
   </section>

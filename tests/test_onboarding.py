@@ -516,7 +516,7 @@ def test_restart_clear_needs_reset_typed_then_clears_and_keeps_keys():
     _seed_operator_data(c)
     r = c.post("/onboarding/restart", data={"choice": "clear", "confirm": "reset",
                                             "keep_keys": "on"}, follow_redirects=False)
-    assert r.status_code == 303 and "Nothing%20was%20cleared" in r.headers["location"]
+    assert r.status_code == 303 and "msg=reset_confirm_needed" in r.headers["location"]
     assert (paths.config_dir() / "profile.yml").exists()  # nothing touched
 
     before = _backups()

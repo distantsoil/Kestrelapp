@@ -13,6 +13,7 @@ carries only the key, never operator or opportunity data."""
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,9 @@ from kestrel.llm import providers as prov
 from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -106,7 +110,7 @@ async def _overrides_ctx(
     try:
         models = hm.picker_models(await hm.fetch_models(name, backend, refresh=refresh))
     except hm.ModelListError as exc:
-        ctx["ov_error"] = str(exc)
+        ctx["ov_error"] = plain_error(exc)
         return ctx
     if not models:
         ctx["ov_error"] = (
@@ -142,7 +146,10 @@ async def _load(track: str | None, since_days: int | None) -> dict:
     try:
         bench: BenchStatus = bench_summary()
     except Exception as exc:  # noqa: BLE001 -- the gold-set listing is a note, never a 500
-        bench = BenchStatus(persisted=False, note=f"Gold sets could not be read ({exc}).")
+        log.warning("bench_gold_sets_unreadable", error_type=type(exc).__name__, error=str(exc))
+        bench = BenchStatus(
+            persisted=False, note=f"Gold sets could not be read ({plain_error(exc)})."
+        )
     return {
         "rows": rows,
         "tiers": tiers,
@@ -217,7 +224,7 @@ async def overrides_save(request: Request):
             models = await hm.fetch_models(name, backend)
         except hm.ModelListError as exc:
             ctx = await _overrides_ctx(
-                s, settings, message=f"Nothing saved. {exc}", ok=False
+                s, settings, message=f"Nothing saved. {plain_error(exc)}", ok=False
             )
             return _overrides_partial(request, ctx)
         result = await hm.save_overrides(s, settings, name, backend, picks, models)

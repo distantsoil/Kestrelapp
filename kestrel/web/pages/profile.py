@@ -4,12 +4,16 @@ it. Documents is one tab; the others edit profile.yml through kestrel.services.p
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from kestrel.services import profile_edit as pe
 from kestrel.web.deps import templates
+from kestrel.web.errors import plain_error
 from kestrel.web.pages.documents import documents_context
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -142,9 +146,10 @@ async def profile_save(request: Request, track: str, section: str):
         searches_updated = await _rebuild_searches()
         rechecking = await _queue_recheck([track])
     except pe.ProfileEditError as exc:
-        problem = str(exc)
+        problem = plain_error(exc)
     except OSError as exc:
-        problem = f"Could not write profile.yml: {exc}"
+        log.warning("profile_write_failed", error_type=type(exc).__name__, error=str(exc))
+        problem = f"Could not write profile.yml: {plain_error(exc)}"
     ctx = {**_section_ctx(track), "saved": problem is None, "problem": problem,
            "searches_updated": searches_updated, "rechecking": rechecking}
     resp = templates().TemplateResponse(request, f"partials/profile_{section}.html", ctx)

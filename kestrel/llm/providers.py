@@ -36,6 +36,7 @@ import structlog
 
 from kestrel import paths
 from kestrel.config import BackendConfig, HostedModelCaps, Settings
+from kestrel.errors import UserFacingError
 from kestrel.llm.client import ANTHROPIC_VERSION, raise_for_provider_status
 
 log = structlog.get_logger()
@@ -212,21 +213,25 @@ def masked(value: str) -> str:
     return f"{'*' * 8}{value[-4:]}"
 
 
+class SecretWriteError(UserFacingError, ValueError):
+    """write_secret refused the name or value; the message is authored and holds no key."""
+
+
 def write_secret(env_name: str, value: str) -> None:
     """Persist one secret to `<data home>/.env` and Kestrel's private key store. The file is the
     only place a key may live (CLAUDE.md); it is created 0600 where the platform honors modes. The
     value is never logged. An empty value removes the key."""
     if not _ENV_NAME_RE.match(env_name):
-        raise ValueError(f"refusing to write an unsafe env var name: {env_name!r}")
+        raise SecretWriteError("refusing to write an unsafe env var name")
     if any(ch in value for ch in "\r\n"):
-        raise ValueError("a key cannot contain line breaks")
+        raise SecretWriteError("a key cannot contain line breaks")
     from dotenv import set_key, unset_key
 
     from kestrel.config import _dotenv_state, is_secret_name
 
     if not is_secret_name(env_name):
-        raise ValueError(
-            f"{env_name} is not a key name (it must end in _KEY, _TOKEN, _SECRET or _PASSWORD)"
+        raise SecretWriteError(
+            "that is not a key name (it must end in _KEY, _TOKEN, _SECRET or _PASSWORD)"
         )
 
     path = paths.dotenv_path()

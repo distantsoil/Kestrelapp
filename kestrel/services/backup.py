@@ -45,6 +45,7 @@ from pathlib import Path
 import structlog
 
 from kestrel import paths
+from kestrel.errors import UserFacingError, yaml_where
 
 log = structlog.get_logger()
 
@@ -70,7 +71,7 @@ _REQUIRED_TABLES = frozenset({"opportunity", "task", "evaluation"})
 PRE_RESTORE_KEEP = 3
 
 
-class InvalidBackupError(ValueError):
+class InvalidBackupError(UserFacingError, ValueError):
     """A zip that does not look like (or safely extract as) a Kestrel backup. Raised before any
     write to the real data directory, so refusing it leaves nothing touched."""
 
@@ -224,7 +225,7 @@ PROFILE_BAK = "profile.yml.bak"
 _PROFILE_INCOMING = "profile.yml.incoming"
 
 
-class InvalidProfileError(ValueError):
+class InvalidProfileError(UserFacingError, ValueError):
     """An uploaded profile that is not UTF-8 YAML with at least one track block that
     `load_profile` accepts. Raised before (or, for the final load check, rolled back after) any
     change to the real profile.yml, so a refused import leaves the previous profile in place."""
@@ -272,7 +273,8 @@ def import_profile(data: bytes) -> ProfileImportResult:
     try:
         parsed = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise InvalidProfileError(f"The file is not valid YAML: {exc}") from exc
+        log.info("profile_upload_invalid_yaml", error=str(exc))
+        raise InvalidProfileError(f"The file is not valid YAML{yaml_where(exc)}.") from exc
     if not isinstance(parsed, dict):
         raise InvalidProfileError("profile.yml must be a YAML mapping with track blocks.")
     present = [t for t in TRACKS if isinstance(parsed.get(t), dict)]

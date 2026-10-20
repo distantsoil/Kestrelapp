@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -47,6 +48,9 @@ from kestrel.ingest.generated import SEC_TITLES_LABEL, sec_titles_opt_in
 from kestrel.ingest.signal_sources import SIGNAL_SOURCE_KINDS, get_signal_source
 from kestrel.services import tracks as tracks_svc
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -70,14 +74,14 @@ def _validate_source_config(kind: str, config: dict) -> str | None:
         try:
             adapter.validate_config(config)
         except SourceConfigError as exc:
-            return str(exc)
+            return plain_error(exc)
         return None
     signal_source = get_signal_source(kind)
     if signal_source is not None:
         try:
             signal_source.validate_config(config)
         except SourceConfigError as exc:
-            return str(exc)
+            return plain_error(exc)
     return None
 
 
@@ -87,7 +91,7 @@ def _parse_config(raw: str) -> tuple[dict, str | None]:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        return {}, f"config must be valid JSON: {exc}"
+        return {}, f"config must be valid JSON (line {exc.lineno}, column {exc.colno})"
     if not isinstance(parsed, dict):
         return {}, "config must be a JSON object (e.g. {\"token\": \"...\"})"
     return parsed, None
@@ -503,7 +507,7 @@ async def save_sam_key(request: Request):
         write_secret(SAM_ENV, key)
     except (ValueError, OSError) as exc:
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, sam_message={"ok": False, "text": str(exc)})
+            ctx = await _panel_ctx(s, sam_message={"ok": False, "text": plain_error(exc)})
         return _panel(request, ctx, 400)
 
     async with sessionmaker()() as s:
@@ -834,7 +838,9 @@ async def _trigger_run(
             text += f" ({outcome.error})"
         return text
     except Exception as exc:  # never let a dead network/model/adapter 500 the run-now button
-        return f"queued, but the run failed immediately: {type(exc).__name__}: {exc}"
+        log.warning("run_now_failed_immediately", source_id=source_id,
+                    error_type=type(exc).__name__, error=str(exc))
+        return f"queued, but the run failed immediately: {plain_error(exc)}"
 
 
 # ------------------------------------------------------------------ Settings > Tracks I use

@@ -8,6 +8,8 @@ from __future__ import annotations
 import sqlite3
 import zipfile
 
+from kestrel.errors import UserFacingError, plain_os_reason
+
 GENERIC = "an unexpected problem; the details are in the log"
 
 
@@ -17,13 +19,13 @@ def _generic(exc: BaseException) -> str:
 
 
 def plain_error(exc: BaseException) -> str:
-    """A short, safe reason: the OS reason without its file name, else a generic sentence."""
-    if isinstance(exc, PermissionError):
-        return "permission was denied"
-    if isinstance(exc, FileNotFoundError):
-        return "the file was not found"
+    """A short, safe reason: a Kestrel-authored message as written (UserFacingError), the OS
+    reason without its file name, else a generic sentence. Never the text of any other
+    exception."""
+    if isinstance(exc, UserFacingError):
+        return str(exc)
     if isinstance(exc, OSError):
-        return (exc.strerror or "a file could not be read or written").lower()
+        return plain_os_reason(exc)
     if isinstance(exc, (zipfile.BadZipFile, zipfile.LargeZipFile)):
         return "the file is not a usable zip archive"
     if isinstance(exc, sqlite3.Error):

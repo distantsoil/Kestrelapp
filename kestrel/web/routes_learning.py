@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,9 @@ from kestrel.learning.active import rank_uncertain
 from kestrel.learning.capture import record_label
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -34,7 +38,9 @@ async def _promotion_panel_data(
     try:
         return await reranker_mod.promotion_status(session, track, settings), None
     except Exception as exc:  # a status panel must degrade gracefully, never crash the page
-        return None, f"Promotion status unavailable: {exc}"
+        log.warning("promotion_status_failed", track=track, error_type=type(exc).__name__,
+                    error=str(exc))
+        return None, f"Promotion status unavailable: {plain_error(exc)}"
 
 
 @router.get("/calibrate", response_class=HTMLResponse)

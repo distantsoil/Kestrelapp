@@ -23,6 +23,7 @@ from pydantic_settings import (
 )
 
 from kestrel import paths
+from kestrel.errors import UserFacingError
 
 
 # ------------------------------------------------------------------------------- LLM settings
@@ -594,7 +595,7 @@ def load_dotenv_into_environ() -> bool:
     return True
 
 
-class HostedModeError(ValueError):
+class HostedModeError(UserFacingError, ValueError):
     """Mode "hosted" was asked for explicitly but cannot run; str(exc) is the reason."""
 
 

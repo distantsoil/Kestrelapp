@@ -24,7 +24,12 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import structlog
+
+from kestrel.errors import UserFacingError
 from kestrel.llm.profiles import no_console_window
+
+log = structlog.get_logger()
 
 MAX_BYTES = 10 * 1024 * 1024  # hard limit, checked before any parser sees the bytes
 SUPPORTED = (".md", ".txt", ".docx", ".pdf", ".doc")
@@ -40,7 +45,7 @@ _DOC_HELP = (
 )
 
 
-class ConvertError(ValueError):
+class ConvertError(UserFacingError, ValueError):
     """Base for every conversion failure the operator should see as a message, never a 500."""
 
 
@@ -126,12 +131,17 @@ def _convert_docx(data: bytes, *, source_format: str) -> ConvertResult:
         from docx.table import Table
         from docx.text.paragraph import Paragraph
     except ImportError as exc:  # pragma: no cover - dependency is declared in pyproject
-        raise ConvertError(f"python-docx is not installed: {exc}") from exc
+        log.warning("convert_dependency_missing", library="python-docx", error=str(exc))
+        raise ConvertError("python-docx is not installed.") from exc
 
     try:
         document = docx.Document(io.BytesIO(data))
     except Exception as exc:  # a corrupt zip or a non-OOXML file wearing a .docx extension
-        raise ConvertError(f"Could not read the .docx file: {type(exc).__name__}: {exc}") from exc
+        log.info("convert_docx_unreadable", error_type=type(exc).__name__, error=str(exc))
+        raise ConvertError(
+            f"Could not read the .docx file ({type(exc).__name__}). It may be damaged or not "
+            "a Word document."
+        ) from exc
 
     lines: list[str] = []
     warnings: list[str] = []
@@ -249,7 +259,8 @@ def _convert_pdf(data: bytes) -> ConvertResult:
     try:
         from pypdf import PdfReader
     except ImportError as exc:  # pragma: no cover
-        raise ConvertError(f"pypdf is not installed: {exc}") from exc
+        log.warning("convert_dependency_missing", library="pypdf", error=str(exc))
+        raise ConvertError("pypdf is not installed.") from exc
 
     try:
         reader = PdfReader(io.BytesIO(data))
@@ -262,7 +273,10 @@ def _convert_pdf(data: bytes) -> ConvertResult:
     except ConvertError:
         raise
     except Exception as exc:  # malformed PDF
-        raise ConvertError(f"Could not read the PDF: {type(exc).__name__}: {exc}") from exc
+        log.info("convert_pdf_unreadable", error_type=type(exc).__name__, error=str(exc))
+        raise ConvertError(
+            f"Could not read the PDF ({type(exc).__name__}). It may be damaged."
+        ) from exc
 
     pages, dropped = _drop_page_furniture(pages)
     vocabulary = {w.lower() for w in _WORD_RE.findall("\n".join(pages))}
@@ -405,12 +419,17 @@ def _convert_doc(data: bytes, name: str) -> ConvertResult:
                 **no_console_window(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ConvertError(f"LibreOffice could not convert {name!r}: {exc}") from exc
+            log.warning("convert_soffice_failed", error_type=type(exc).__name__, error=str(exc))
+            raise ConvertError(
+                f"LibreOffice could not convert {name!r} ({type(exc).__name__})."
+            ) from exc
         produced = out_dir / "input.docx"
         if proc.returncode != 0 or not produced.exists():
             detail = (proc.stderr or proc.stdout or "").strip()[-300:]
+            log.warning("convert_soffice_exit", exit_code=proc.returncode, detail=detail)
             raise ConvertError(
-                f"LibreOffice could not convert {name!r} (exit {proc.returncode}). {detail}"
+                f"LibreOffice could not convert {name!r} (exit {proc.returncode}). "
+                "The details are in the log."
             )
         result = _convert_docx(produced.read_bytes(), source_format="doc")
     result.warnings.append("Converted from legacy .doc via LibreOffice; check the formatting.")

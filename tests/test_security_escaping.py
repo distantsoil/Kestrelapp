@@ -120,3 +120,107 @@ def test_unknown_setup_profile_names_it_without_the_exception_text():
     assert r.status_code == 400
     assert r.text == "Unknown hardware profile: &lt;b&gt;nope&lt;/b&gt;."
 
+
+
+# ------------------------------------------------------------------ WP-08 (#21): remaining sinks
+def _raise_secret(*_a, **_k):
+    raise RuntimeError(SECRET_PATH)
+
+
+async def _araise_secret(*_a, **_k):
+    raise RuntimeError(SECRET_PATH)
+
+
+def test_msg_param_never_echoes_arbitrary_text():
+    c = _fresh()
+    r = c.get("/settings/system?msg=Your+account+is+locked+call+555-0100")
+    assert "555-0100" not in r.text and "account is locked" not in r.text
+    r = c.get("/settings?msg=Your+account+is+locked+call+555-0100")
+    assert "555-0100" not in r.text and 'data-testid="flash"' not in r.text
+
+
+def test_msg_param_renders_only_a_known_code():
+    from kestrel.web.flash import FLASH_MESSAGES
+
+    code = "reset_confirm_needed"
+    c = _fresh()
+    r = c.get(f"/settings/system?msg={code}")
+    assert FLASH_MESSAGES[code] in r.text
+    r = c.get(f"/settings?msg={code}")
+    assert FLASH_MESSAGES[code] in r.text and 'data-testid="flash"' in r.text
+
+
+def test_flash_messages_have_no_em_dash_and_redirects_carry_codes_only():
+    from kestrel.web.flash import FLASH_MESSAGES
+
+    assert all("—" not in m for m in FLASH_MESSAGES.values())
+    r = _fresh().post("/setup/mode", data={"mode": "local"}, follow_redirects=False)
+    assert r.headers["location"].split("?msg=")[1].split("#")[0] in FLASH_MESSAGES
+
+
+def test_user_facing_error_text_is_shown_and_others_are_not():
+    from kestrel.errors import UserFacingError
+    from kestrel.web.errors import plain_error
+
+    assert plain_error(UserFacingError("Pick a model first.")) == "Pick a model first."
+    assert SECRET_PATH not in plain_error(ValueError(SECRET_PATH))
+
+
+def test_render_review_failure_shows_no_exception_text(monkeypatch):
+    from kestrel.docs import service
+
+    monkeypatch.setattr(service, "render_document", _araise_secret)
+    r = _fresh().get("/renders/new?master_id=1")
+    assert "secret-dir" not in r.text and SECRET_PATH not in r.text
+
+
+def test_run_page_load_failure_shows_no_exception_text(monkeypatch):
+    from kestrel.db.models import Run
+    from kestrel.web.pages import runs_detail
+
+    _fresh()
+
+    class _S:
+        async def get(self, *_a, **_k):
+            raise RuntimeError(SECRET_PATH)
+
+    class _Ctx:
+        async def __aenter__(self):
+            return _S()
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(runs_detail, "sessionmaker", lambda: (lambda: _Ctx()))
+    assert Run
+    r = _fresh().get("/runs/1")
+    assert "secret-dir" not in r.text
+
+
+def test_prep_build_failure_shows_no_exception_text(monkeypatch):
+    from kestrel.interview import prep as prep_mod
+
+    monkeypatch.setattr(prep_mod, "assemble_prep_pack", _araise_secret)
+    c = _fresh()
+    opp_id, _pid = _seed(track="employment", status="shortlisted")
+    r = c.post(f"/prep/{opp_id}/build")
+    assert "secret-dir" not in r.text
+
+
+def test_convert_errors_carry_no_library_text():
+    import pytest
+
+    from kestrel.docs.convert import ConvertError, convert_to_markdown
+
+    with pytest.raises(ConvertError) as err:
+        convert_to_markdown(b"PK\x03\x04 not really a docx", filename="resume.docx")
+    assert "File is not a zip file" not in str(err.value)  # the library's own text
+
+
+def test_hosted_key_write_refusal_is_authored(monkeypatch):
+    from kestrel.llm import providers as prov
+
+    monkeypatch.setattr(prov, "write_secret", lambda *_a, **_k: (_ for _ in ()).throw(
+        ValueError(SECRET_PATH)))
+    r = _fresh().post("/settings/hosted/key", data={"backend": "openrouter", "api_key": "k"})
+    assert "secret-dir" not in r.text

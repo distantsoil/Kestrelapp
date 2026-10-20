@@ -354,7 +354,7 @@ async def restore_from_upload(request: Request):
                 # with every request on uvicorn's one loop, so they run in a thread.
                 result = await asyncio.to_thread(restore_backup, tmp_zip)
         except InvalidBackupError as exc:
-            return HTMLResponse(f'<div class="warnbox">{html.escape(str(exc))}</div>')
+            return HTMLResponse(f'<div class="warnbox">{html.escape(plain_error(exc))}</div>')
         except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
             log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
             return HTMLResponse(
@@ -640,7 +640,7 @@ async def hosted_save_key(request: Request):
         try:
             prov.write_secret(backend.api_key_env, value)
         except ValueError as exc:
-            ctx = await _hosted_ctx(s, settings, message=str(exc), ok=False, return_to=back)
+            ctx = await _hosted_ctx(s, settings, message=plain_error(exc), ok=False, return_to=back)
             return _hosted_partial(request, ctx)
         settings = await load_settings_with_db(s)
         label = _backend_label(backend_name)
@@ -693,7 +693,7 @@ async def _keybox_op(op: str, backend, label: str, value: str) -> dict:
         try:
             prov.write_secret(backend.api_key_env, "")
         except ValueError as exc:
-            return {"ok": False, "text": f"The {label} key was not removed: {exc}."}
+            return {"ok": False, "text": f"The {label} key was not removed: {plain_error(exc)}."}
         return {"ok": True, "text": f"{label} key removed."}
     if not value and not saved:
         return {"ok": False, "text": f"Paste your {label} key first."}
@@ -704,7 +704,7 @@ async def _keybox_op(op: str, backend, label: str, value: str) -> dict:
         try:
             prov.write_secret(backend.api_key_env, value)
         except ValueError as exc:
-            return {"ok": False, "text": f"The {label} key was not saved: {exc}."}
+            return {"ok": False, "text": f"The {label} key was not saved: {plain_error(exc)}."}
         tail = key_tail(backend.model_copy(update={"api_key": value}))
         ending = f", ending in {tail}" if tail else ""  # a key of 8 or fewer shows none of it
         return {"ok": True, "text": f"{label} key saved{ending}. Press Test "
@@ -752,7 +752,9 @@ async def hosted_test(request: Request):
             try:
                 models = prov.models_fit_for_tier3(await prov.list_models(backend), backend)
             except (RuntimeError, ValueError, KeyError) as exc:
-                model_error = f"{type(exc).__name__}: {exc}"
+                log.info("hosted_models_list_failed", backend=backend_name,
+                         error_type=type(exc).__name__, error=str(exc))
+                model_error = f"{type(exc).__name__}: {plain_error(exc)}"
         if free_only:
             # Zero-priced for both prompt and completion. Only OpenRouter reports pricing, so
             # on any other backend this filter empties the list and the partial says so.
@@ -1302,6 +1304,6 @@ async def mcp_switch(request: Request):
         except Exception as exc:
             log.warning("mcp_switch_failed", on=on, error=f"{type(exc).__name__}: {exc}")
             message, ok = ("The MCP server could not be "
-                           f"{'started' if on else 'stopped'}: {exc}"), False
+                           f"{'started' if on else 'stopped'}: {plain_error(exc)}"), False
         ctx = await _mcp_ctx(s, message=message, ok=ok)
     return templates().TemplateResponse(request, "partials/mcp_switch.html", ctx)

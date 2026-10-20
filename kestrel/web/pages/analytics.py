@@ -14,6 +14,7 @@ page never 500s for that reason; it degrades to `collect_metrics` plus a plain n
 from __future__ import annotations
 
 import httpx
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
@@ -23,6 +24,9 @@ from kestrel.analytics.summary import honest_summary
 from kestrel.llm.client import LLMClient
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -49,7 +53,10 @@ async def _load(track: str, *, narrative: bool = False) -> dict:
             metrics = summary.metrics
         except Exception as exc:  # a problem outside honest_summary's own model-call guard
             metrics = await collect_metrics(s, track)
-            model_note = f"Summary unavailable ({exc}); showing computed metrics only."
+            log.warning("analytics_summary_failed", error_type=type(exc).__name__, error=str(exc))
+            model_note = (
+                f"Summary unavailable ({plain_error(exc)}); showing computed metrics only."
+            )
         fn = await funnel(s, track)
     return {"summary": summary, "metrics": metrics, "fn": fn, "model_note": model_note}
 

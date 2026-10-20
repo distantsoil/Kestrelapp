@@ -6,6 +6,7 @@ page."""
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import replace
 
@@ -18,6 +19,7 @@ from kestrel.db.enums import ARCHIVE_REASONS
 from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.fit import (
     FAILED_NOTE,
     FIT_WORDS,
@@ -576,7 +578,7 @@ async def _tier3_card(s, settings, opp_id: int) -> dict:
         preview = await build_escalation_preview(s, settings, opp_id)
     except Exception as exc:  # the card must say why; the page itself must still render
         log.warning("tier3.preview_failed", opp_id=opp_id, error=str(exc))
-        card["unavailable"] = f"estimate unavailable: {exc}"
+        card["unavailable"] = f"estimate unavailable: {plain_error(exc)}"
         return card
     if preview.error:
         card["unavailable"] = preview.error
@@ -877,7 +879,9 @@ async def runs_now(request: Request):
             await queue_run_mode(s, mode)
             await s.commit()
         except HostedModeError as exc:
-            return HTMLResponse(f'<span class="warnbox">Not queued: {exc}.</span>')
+            return HTMLResponse(
+                f'<span class="warnbox">Not queued: {html.escape(plain_error(exc))}.</span>'
+            )
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return HTMLResponse(
                 '<span class="warnbox">Not queued: the queue changed while queuing; try '

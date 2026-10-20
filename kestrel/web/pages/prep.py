@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import select
@@ -22,6 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.db.models import Opportunity, Org, PrepPack, Story
 from kestrel.interview.notes import get_notes, save_notes
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -155,7 +159,9 @@ async def build(request: Request, opportunity_id: int):
             if built is None:
                 build_error = "Opportunity not found."
         except Exception as exc:  # defends the write path the same way the PDF/import paths do
-            build_error = f"Could not prepare this interview: {exc}"
+            log.warning("prep_build_failed", opportunity_id=opportunity_id,
+                        error_type=type(exc).__name__, error=str(exc))
+            build_error = f"Could not prepare this interview: {plain_error(exc)}"
         ctx = await _context(request, s, opportunity_id)
     ctx["build_error"] = build_error
     return templates().TemplateResponse(request, "partials/prep_pack.html", ctx)
@@ -179,7 +185,9 @@ async def render_pdf(request: Request, prep_pack_id: int):
         try:
             await render_prep_pack_pdf(s, prep_pack_id)
         except Exception as exc:  # e.g. Playwright/Edge not installed on this machine
-            pdf_error = f"PDF render needs the local Edge/Playwright pipeline: {exc}"
+            log.warning("prep_pdf_failed", prep_pack_id=prep_pack_id,
+                        error_type=type(exc).__name__, error=str(exc))
+            pdf_error = f"PDF render needs the local Edge/Playwright pipeline: {plain_error(exc)}"
         ctx = await _context(request, s, opportunity_id)
     ctx["pdf_error"] = pdf_error
     return templates().TemplateResponse(request, "partials/prep_pack.html", ctx)

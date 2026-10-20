@@ -9,8 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from kestrel.errors import UserFacingError
 
-class SourceConfigError(ValueError):
+
+class SourceConfigError(UserFacingError, ValueError):
     """A source config is structurally invalid. Raised at config load / source creation, never at
     scan time, so a dead config never silently produces an empty run."""
 

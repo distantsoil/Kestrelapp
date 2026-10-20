@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 from kestrel import paths
 from kestrel.config import UI_SCHEMES
 from kestrel.db.engine import get_sessionmaker
+from kestrel.web.flash import flash_text
 from kestrel.web.words import PLAIN, words
 
 log = structlog.get_logger()
@@ -375,6 +376,7 @@ def templates() -> Jinja2Templates:
         t.env.globals["ui_scheme"] = ui_scheme
         t.env.globals["guide_for"] = guide_for
         t.env.globals["words"] = words
+        t.env.globals["flash_text"] = flash_text
         from kestrel.ingest.generated import US_NOTE
 
         t.env.globals["us_note"] = US_NOTE

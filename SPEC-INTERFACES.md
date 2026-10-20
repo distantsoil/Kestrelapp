@@ -252,6 +252,14 @@ unclaimed), and its open pursuits are never hidden: Today's Act card and Applica
 track and link to its board (D-UI-68). Work the operator asked for (Score again, a Retry, an MCP
 scan) is never held by the switch.
 
+**Error and notice text (D-SEC-2).** A response never carries exception text, a file path or a
+URL taken from an exception. The route logs the exception (`error_type`, `error`, the ids) and
+shows an authored sentence plus `plain_error(exc)` (`kestrel/web/errors.py`), which returns an
+exception's own message only when it is a `UserFacingError` (`kestrel/errors.py`), a type whose
+text Kestrel wrote. A redirect notice travels as `?msg=<code>`, never as text: the page looks
+the code up in `kestrel/web/flash.py` and shows nothing for a code it does not know, so a
+crafted link cannot display a message of its own.
+
 ### 2.1 Pages
 
 **`/` Dashboard**

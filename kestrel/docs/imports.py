@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant, Profile
+from kestrel.errors import UserFacingError
 from kestrel.llm.guard import run_prompt
 from kestrel.llm.prompts import load_prompt
 
@@ -559,7 +560,7 @@ async def propose_import(
     return ImportProposal(value=value, flags=flags, source_format=source_format)
 
 
-class ImportRejected(ValueError):
+class ImportRejected(UserFacingError, ValueError):
     """accept_import refused because the proposal did not pass its own re-validation."""
 
 

@@ -619,7 +619,9 @@ async def suggest_slot_variants(request: Request, slot_id: int):
                     )
                 await s.commit()  # a refusal or quarantine row the call staged
             except Exception as exc:  # a model that is not running must not 500 the page
-                ctx["error"] = f"Could not reach the model: {type(exc).__name__}: {exc}"
+                log.warning("variant_suggest_failed", error_type=type(exc).__name__,
+                            error=str(exc))
+                ctx["error"] = f"Could not reach the model: {plain_error(exc)}"
     if (ctx["error"] or "").startswith("hosted send refused"):
         ctx["error"] = ("Not sent: confidential mode is on and no current employer is chosen, "
                         "so your employer's name would leave this machine. Choose it under "
@@ -1123,7 +1125,7 @@ async def _hosted_assess_models(settings) -> tuple[str, list, list, dict, str | 
     try:
         raw = await hm.fetch_models(name, backend)
     except hm.ModelListError as exc:
-        return label, [], [], {}, str(exc)
+        return label, [], [], {}, plain_error(exc)
     from kestrel.docs.assess import VERSION
     from kestrel.llm.prompts import load_prompt
 
@@ -1249,7 +1251,7 @@ async def assess(request: Request, master_id: int):
     except Exception as exc:  # a model that is not running must not 500 the page
         log.warning("resume_assess_route_failed", master_id=master_id,
                     error=f"{type(exc).__name__}: {exc}")
-        ctx["error"] = f"Could not reach the model: {type(exc).__name__}: {exc}"
+        ctx["error"] = f"Could not reach the model: {plain_error(exc)}"
     return templates().TemplateResponse(request, "partials/doc_assessment.html", ctx)
 
 
@@ -1307,10 +1309,12 @@ async def _read_source(form) -> dict:
                     convert_mod.convert_to_markdown, data, filename=filename
                 )
             except ConvertError as exc:
-                ctx["error"] = str(exc)
+                ctx["error"] = plain_error(exc)  # authored; the library text is in the log
                 return ctx
             except Exception as exc:  # a parser crash on a hostile file is a message, not a 500
-                ctx["error"] = f"Could not read {filename!r}: {type(exc).__name__}: {exc}"
+                log.warning("import_upload_unreadable", error_type=type(exc).__name__,
+                            error=str(exc))
+                ctx["error"] = f"Could not read {filename!r}: {plain_error(exc)}"
                 return ctx
             ctx.update(markdown=converted.markdown.strip(), warnings=list(converted.warnings),
                        source_format=converted.source_format)
@@ -1463,7 +1467,8 @@ async def import_markdown(request: Request):
         ctx.update({"proposal": proposal, "error": proposal.error})
         ctx["current_offer"] = _current_offer(proposal, ctx["track"])
     except Exception as exc:  # a model that is not running must not 500 the page
-        ctx["error"] = f"Import could not reach the model: {type(exc).__name__}: {exc}"
+        log.warning("import_propose_failed", error_type=type(exc).__name__, error=str(exc))
+        ctx["error"] = f"Import could not reach the model: {plain_error(exc)}"
     ctx["retryable"] = ctx["error"] is not None
     return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
 
@@ -1541,7 +1546,7 @@ async def import_accept(request: Request):
         )
     except ImportRejected as exc:
         return HTMLResponse(
-            f'<div class="warnbox">Rejected at the write boundary: {escape(str(exc))}</div>'
+            f'<div class="warnbox">Rejected at the write boundary: {escape(plain_error(exc))}</div>'
         )
     except Exception as exc:  # bad/absent proposal JSON, or a DB error
         log.warning("import_accept_failed", error_type=type(exc).__name__, error=str(exc))

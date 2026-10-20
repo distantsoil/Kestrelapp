@@ -102,7 +102,7 @@ async def import_profile(request: Request):
     try:
         result = await asyncio.to_thread(backup_service.import_profile, data)
     except backup_service.InvalidProfileError as exc:
-        return HTMLResponse(f'<div class="warnbox">{html.escape(str(exc))}</div>')
+        return HTMLResponse(f'<div class="warnbox">{html.escape(plain_error(exc))}</div>')
     except OSError as exc:
         log.warning("profile_import_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
