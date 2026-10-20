@@ -34,7 +34,9 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -55,7 +57,11 @@ server_thread: threading.Thread | None = None
 _quitting = False  # F1: window.destroy() re-fires `closing`; the handler allows it when quitting
 _toast_shown = False
 _port = 0
-_last_status: dict = {}  # the tooltip poller's last /api/status, for the macOS menu (no HTTP there)
+_last_status: dict[str, Any] = {}  # the poller's last /api/status, for the macOS menu (no HTTP)
+# True when the tray's own run() is the main loop (the macOS browser fallback, where there is no
+# window loop to join). Then a quit must stop() the icon to return the main thread; with a window
+# the icon shares pywebview's loop and stop() would end that loop under the window instead.
+_tray_owns_loop = False
 
 ERROR_ALREADY_EXISTS = 183
 MUTEX_NAME = "Local\\Kestrel"  # Local\ not Global\ (Global needs a privilege, blocks a 2nd user)
@@ -238,7 +244,7 @@ CLOSE_TO_TRAY_BODY = (
 )
 
 
-def _on_tray_thread(fn) -> None:
+def _on_tray_thread(fn: Callable[[], None]) -> None:
     """Run a change to the tray icon where its toolkit allows it. On macOS every AppKit call must
     happen on the main thread, which pywebview's Cocoa loop owns; macOS 27 kills the app outright
     on a status-item change from any other thread. So there the call is queued onto the main run
@@ -252,12 +258,12 @@ def _on_tray_thread(fn) -> None:
         fn()
 
 
-def _menu_action(fn):
+def _menu_action(fn: Callable[[], None]) -> Callable[[Any, Any], None]:
     """A tray menu callback. On macOS AppKit calls it on the main thread, where a blocking call
     freezes the window, and window.evaluate_js waits on that same thread forever. So there it
     runs on a short-lived thread, as every callback did before the tray joined the main loop."""
 
-    def handler(_icon, _item) -> None:
+    def handler(_icon: Any, _item: Any) -> None:
         if IS_MACOS:
             threading.Thread(target=fn, name="tray-action", daemon=True).start()
         else:
@@ -288,11 +294,13 @@ def _begin_quit() -> None:
         server.should_exit = True
     if icon is not None:
         try:
-            if IS_MACOS:
+            if IS_MACOS and not _tray_owns_loop:
                 # The icon shares pywebview's NSApplication, and pystray's stop() would stop that
                 # loop under the window. Hide the item; it goes with the process.
                 _on_tray_thread(lambda: setattr(icon, "visible", False))
             else:
+                # The icon's own loop (its thread, or the main thread in the browser fallback):
+                # stop() ends it and, in the fallback, hands the main thread back to _finish_quit.
                 icon.stop()
         except Exception as exc:
             log.debug("tray_stop_failed", error=str(exc))
@@ -453,6 +461,7 @@ def _show_update_dialog() -> None:
 
 
 def _tooltip_poller() -> None:
+    global _last_status
     imgs = _icons()
     tick = 0
     while not _quitting:
@@ -461,8 +470,10 @@ def _tooltip_poller() -> None:
         tick += 1
         try:
             status = _status()
-            _last_status.clear()
-            _last_status.update(status)
+            # One rebinding, never clear() then update(): the macOS menu reads this dict on the
+            # main thread and must never see it half filled.
+            paused_changed = bool(status.get("paused")) != bool(_last_status.get("paused"))
+            _last_status = status
             tip, state = _tooltip(status)
             if icon is not None:
                 image = imgs.get(state, imgs["idle"])
@@ -472,6 +483,11 @@ def _tooltip_poller() -> None:
                     icon.icon = image
 
                 _on_tray_thread(_apply)
+                if paused_changed:
+                    # The "Pause worker" check is read when the menu is built, and on macOS the
+                    # menu is built once (before this poller has an answer) and again only on
+                    # update_menu. Without this a paused worker shows as running.
+                    _on_tray_thread(icon.update_menu)
         except Exception as exc:
             log.debug("tooltip_poll_error", error=str(exc))
         time.sleep(4.0)
@@ -494,36 +510,38 @@ def _initial_size(screen: tuple[int, int] | None = None) -> tuple[int, int]:
 
 
 def start_tray(*, with_window: bool = True) -> bool:
-    """Start the tray icon on its own thread. False (with a log line, never a crash) when this
-    machine cannot host one: pystray's import on Linux needs an X display or an appindicator/GTK
-    stack, and a headless session or an SSH shell has neither. Kestrel runs without a tray.
-    On macOS the icon lives on the window's Cocoa loop, so without a window there is no tray."""
-    if IS_MACOS and not with_window:
-        log.info("tray_unavailable", error="no Cocoa loop without the window")
-        return False
+    """Start the tray icon. False (with a log line, never a crash) when this machine cannot host
+    one: pystray's import on Linux needs an X display or an appindicator/GTK stack, and a headless
+    session or an SSH shell has neither. Kestrel runs without a tray, and `icon` stays None so a
+    window close is a real quit (on_closing) rather than a hide to an item that is not there.
+    On macOS the icon joins the window's Cocoa loop when there is one; without a window (the
+    browser fallback) the icon's own run() becomes the main loop, which the caller enters, and
+    _tray_owns_loop records that a quit must stop() it."""
+    global icon
     try:
         import pystray
     except Exception as exc:  # Xlib raises DisplayNameError, not ImportError, with no DISPLAY
         log.warning("tray_unavailable", error=f"{type(exc).__name__}: {exc}")
         return False
     try:
-        _build_tray(pystray)
-    except Exception as exc:  # a backend that imports but cannot create an icon
+        _build_tray(pystray, with_window=with_window)
+    except Exception as exc:  # a backend that imports but cannot create or show an icon
+        icon = None  # never a half-started icon that on_closing would hide the window behind
         log.warning("tray_unavailable", error=f"{type(exc).__name__}: {exc}")
         return False
     return True
 
 
-def _build_tray(pystray) -> None:
+def _build_tray(pystray: Any, *, with_window: bool) -> None:
     imgs = _icons()
 
-    def _paused_checked(item) -> bool:
+    def _paused_checked(item: Any) -> bool:
         # On macOS the menu is built on the main thread: read the poller's last answer, no HTTP.
         status = _last_status if IS_MACOS else _status()
         return bool(status.get("paused"))
 
-    global icon
-    icon = pystray.Icon(
+    global icon, _tray_owns_loop
+    new_icon = pystray.Icon(
         "kestrel",
         imgs["idle"],
         f"Kestrel {__version__}",
@@ -547,16 +565,36 @@ def _build_tray(pystray) -> None:
             pystray.MenuItem("Quit", _menu_action(lambda: do_quit())),
         ),
     )
-    if IS_MACOS:
+    if IS_MACOS and with_window:
         # pystray's run() would start a second NSApplication loop on this thread and build the
         # menu off the main thread, which macOS 27 kills at launch. run_detached() joins the loop
         # pywebview runs; this is called on the main thread, so the menu and the item are built
         # here, before webview.start().
-        icon.run_detached(setup=lambda _icon: None)
-        icon.visible = True
+        new_icon.run_detached(setup=lambda _icon: None)
+        new_icon.visible = True
+    elif IS_MACOS:
+        # No window loop to join: the icon's own run() is the main loop. _run_in_browser enters
+        # it on the main thread (run_tray_loop), so nothing starts here.
+        _tray_owns_loop = True
     else:
-        threading.Thread(target=icon.run, name="tray", daemon=True).start()
+        threading.Thread(target=new_icon.run, name="tray", daemon=True).start()
+    # Published only once it is showing (or ready to run): a failure above leaves `icon` None.
+    icon = new_icon
     threading.Thread(target=_tooltip_poller, name="tray-tooltip", daemon=True).start()
+
+
+def run_tray_loop() -> None:
+    """Run the tray's own loop on the calling (main) thread until a quit stops it. Only when
+    _tray_owns_loop: the macOS browser fallback, where AppKit needs the main thread and there is
+    no window loop to share. The item is shown here, on this thread, before the loop starts, the
+    same order as the window path (run_detached then visible, then the loop). pystray's loop
+    installs its own Ctrl+C handler (NSApp terminate), so on this path Ctrl+C ends the process at
+    once rather than through the drain; the tray's Quit and the in-app Quit button are the
+    graceful paths, and an expired lease is picked up at the next launch (hard rule 5)."""
+    if icon is None or not _tray_owns_loop:
+        return
+    icon.visible = True
+    icon.run(setup=lambda _icon: None)  # blocks until icon.stop() from _begin_quit
 
 
 # --------------------------------------------------------------------------- preflight (trap 7)
@@ -712,8 +750,10 @@ def _finish_quit() -> int:
 def _run_in_browser(url: str) -> int:
     """The no-window path (macOS/Linux without a pywebview backend): print the URL, open the
     default browser, keep the server in the foreground until Ctrl+C or a tray/API quit, then run
-    the same graceful shutdown the window path does."""
-    from kestrel.web.desktop_bridge import set_focus_handler
+    the same graceful shutdown the window path does. The tray and the in-app Quit button are
+    wired here too: a packaged app on this path has no terminal, so without them nothing could
+    end the process but a force quit."""
+    from kestrel.web.desktop_bridge import set_focus_handler, set_quit_handler
 
     print(f"Kestrel is running at {url}  (Ctrl+C to quit)")
     try:
@@ -723,15 +763,32 @@ def _run_in_browser(url: str) -> int:
     # A second launch's /api/focus brings the UI back by opening a tab, the closest thing to a
     # raise when there is no window to raise.
     set_focus_handler(lambda: webbrowser.open(url))
+    set_quit_handler(do_quit)  # the in-app "Quit Kestrel" button (D-UI-27)
     start_tray(with_window=False)
     try:
-        while not _quitting and server_thread is not None and server_thread.is_alive():
-            time.sleep(0.5)
+        if _tray_owns_loop:
+            # The wait loop below also ended when the server died; keep that while the tray
+            # loop holds the main thread.
+            threading.Thread(target=_quit_when_server_stops, name="server-watch",
+                             daemon=True).start()
+            run_tray_loop()
+        else:
+            while not _quitting and server_thread is not None and server_thread.is_alive():
+                time.sleep(0.5)
     except KeyboardInterrupt:
         log.info("ctrl_c")
     do_quit()
     set_focus_handler(None)
+    set_quit_handler(None)
     return _finish_quit()
+
+
+def _quit_when_server_stops() -> None:
+    if server_thread is not None:
+        server_thread.join()
+    if not _quitting:
+        log.warning("server_stopped_quitting")
+        do_quit()
 
 
 def _configure_logging() -> None:
