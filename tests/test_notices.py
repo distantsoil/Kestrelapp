@@ -61,3 +61,18 @@ def test_spec_bundles_notices_and_ships_lgpl_as_plain_files():
     assert not re.search(r"^\s*(from|import)\s+kestrel\b", spec, re.MULTILINE)
     assert "len(_closure) < 50" in spec
     assert 'module_collection_mode={"pystray": "py", "Xlib": "py"}' in spec
+
+
+def test_linux_notices_name_the_appimage_runtime_and_its_mit_license(tmp_path):
+    """The AppImage embeds AppImage/type2-runtime (MIT, statically linked with its own
+    libraries), which no Python metadata describes, so the build passes its notice in (#44)."""
+    from tests.test_packaging import PACKAGING, ROOT
+
+    notice = PACKAGING / "linux" / "RUNTIME-NOTICE.txt"
+    text = notices.build_notices(runtime_notice=notice)
+    assert "type2-runtime" in text and "MIT License" in text
+    assert "Permission is hereby granted" in text
+    assert "type2-runtime" not in notices.build_notices()  # other platforms ship no runtime
+    spec = (ROOT / "packaging" / "kestrel.spec").read_text(encoding="utf-8")
+    assert "runtime_notice=" in spec and "RUNTIME-NOTICE.txt" in spec
+    assert 'sys.platform == "linux"' in spec  # only the Linux build embeds the runtime

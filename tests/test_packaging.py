@@ -723,3 +723,56 @@ def test_releasing_doc_mentions_the_embed_model_for_local_builds():
     doc = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
     local = doc.split("### Building locally", 1)[1].split("\n## ", 1)[0]
     assert "fetch_embed_model.py" in local
+
+
+# ------------------------------------------------------------ the vendored AppImage runtime (#44)
+VENDORED_RUNTIME = PACKAGING / "linux" / "runtime-x86_64"
+
+
+def _runtime_pin() -> str:
+    sh = (PACKAGING / "build_appimage.sh").read_text(encoding="utf-8")
+    return re.search(r'^RUNTIME_SHA256="([0-9a-f]{64})"', sh, re.MULTILINE).group(1)
+
+
+def test_the_vendored_runtime_matches_the_pinned_hash():
+    """Upstream rebuilds its moving `continuous` asset, and every rebuild used to stop a Linux
+    release until someone looked at the new file. The reviewed runtime now lives in the repo; a
+    bump must change this file and RUNTIME_SHA256 together (docs/RELEASING.md)."""
+    import hashlib
+
+    data = VENDORED_RUNTIME.read_bytes()
+    assert data[:4] == b"\x7fELF"
+    assert hashlib.sha256(data).hexdigest() == _runtime_pin()
+
+
+def test_the_vendored_runtime_is_marked_binary_so_git_never_rewrites_it():
+    attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    rules = [ln.split() for ln in attrs if ln.strip() and not ln.lstrip().startswith("#")]
+    assert ["packaging/linux/runtime-x86_64", "binary"] in rules
+    # Last matching line wins, so the override has to come after the `* text=auto eol=lf` rule.
+    flat = [r[0] for r in rules]
+    assert flat.index("packaging/linux/runtime-x86_64") > flat.index("*")
+
+
+def test_appimage_resolves_the_runtime_override_then_vendored_then_download():
+    code = _code(PACKAGING / "build_appimage.sh")
+    override = code.index('if [ -n "${APPIMAGE_RUNTIME_FILE:-}" ]')
+    vendored = code.index('elif [ -f "$VENDORED_RUNTIME" ]')
+    download = code.index('curl -fsSL --retry 3 -o "$RUNTIME" "$RUNTIME_URL"')
+    assert override < vendored < download
+    # The vendored file is used only when its hash matches the pin; a stale one falls through.
+    assert "sha256sum -c --status" in code[vendored:download]
+
+
+def test_the_runtime_notice_carries_the_mit_text_and_travels_with_the_appimage():
+    notice = (PACKAGING / "linux" / "RUNTIME-NOTICE.txt").read_text(encoding="utf-8")
+    assert "type2-runtime" in notice and "MIT License" in notice
+    assert "Permission is hereby granted, free of charge" in notice
+    assert _runtime_pin() in notice  # says which runtime build it describes
+    assert "RUNTIME-NOTICE.txt" in _code(PACKAGING / "build_appimage.sh")  # copied into the AppDir
+
+
+def test_releasing_doc_explains_how_to_bump_the_vendored_runtime():
+    doc = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+    assert "packaging/linux/runtime-x86_64" in doc and "RUNTIME_SHA256" in doc
+    assert "RUNTIME-NOTICE.txt" in doc

@@ -12,3 +12,7 @@
 # git will mangle it on checkout and tiktoken will fall back to a network fetch (see FINDINGS F2).
 spike/vendor/tiktoken_cache/** binary
 kestrel/resources/tiktoken_cache/** binary
+
+# The vendored AppImage runtime (#44): a reviewed ELF, hash-pinned in packaging/build_appimage.sh.
+# Must stay AFTER the `* text=auto` rule so git never touches its bytes.
+packaging/linux/runtime-x86_64 binary

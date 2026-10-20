@@ -109,9 +109,12 @@ def _third_party_notices_file(dist: md.Distribution) -> str | None:
     return None
 
 
-def build_notices(model_notice: Path | None = None) -> str:
+def build_notices(model_notice: Path | None = None, runtime_notice: Path | None = None) -> str:
     """The notices text. `model_notice` is the bundled embedding model's NOTICE.txt, appended as
-    its own section when the file exists (the build passes it; a source checkout finds it)."""
+    its own section when the file exists (the build passes it; a source checkout finds it).
+    `runtime_notice` is the AppImage runtime's notice (packaging/linux/RUNTIME-NOTICE.txt), which
+    no Python metadata describes; only the Linux build passes it, because only it embeds the
+    runtime."""
     from packaging.utils import canonicalize_name
 
     parts = [
@@ -186,12 +189,16 @@ def build_notices(model_notice: Path | None = None) -> str:
             parts += [f"--- {name} ThirdPartyNotices.txt ---", tpn, ""]
     if model_notice is not None and model_notice.is_file():
         parts += [_RULE, model_notice.read_text(encoding="utf-8").strip(), ""]
+    if runtime_notice is not None and runtime_notice.is_file():
+        parts += [_RULE, runtime_notice.read_text(encoding="utf-8").strip(), ""]
     return "\n".join(parts) + "\n"
 
 
-def write_notices(path: Path, model_notice: Path | None = None) -> Path:
+def write_notices(
+    path: Path, model_notice: Path | None = None, runtime_notice: Path | None = None
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_notices(model_notice), encoding="utf-8")
+    path.write_text(build_notices(model_notice, runtime_notice), encoding="utf-8")
     return path
 
 

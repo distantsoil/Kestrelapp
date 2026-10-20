@@ -7,6 +7,7 @@
 # Environment:
 #   PYTHON          the interpreter with kestrel + pyinstaller installed (default: python)
 #   APPIMAGETOOL    a local appimagetool to use instead of downloading the pinned one
+#   APPIMAGE_RUNTIME_FILE  a runtime to use instead of the vendored one (packaging/linux/)
 #
 # The AppDir is laid out as usr/lib/kestrel/<one-folder> with an AppRun that execs the frozen
 # binary and forwards every argument (so the AppImage is also the CLI). The result needs libfuse2
@@ -76,6 +77,10 @@ install -m 0644 "$ROOT/kestrel/web/static/icon-512.png" "$APPDIR/kestrel.png"
 install -m 0644 "$ROOT/kestrel/web/static/icon-512.png" \
     "$APPDIR/usr/share/icons/hicolor/512x512/apps/kestrel.png"
 ln -s kestrel.png "$APPDIR/.DirIcon"
+# The runtime is MIT and statically links other libraries: its notice travels inside the AppImage.
+mkdir -p "$APPDIR/usr/share/doc/kestrel"
+install -m 0644 "$ROOT/packaging/linux/RUNTIME-NOTICE.txt" \
+    "$APPDIR/usr/share/doc/kestrel/RUNTIME-NOTICE.txt"
 
 # ------------------------------------------------------------------ 3. appimagetool
 if [ -n "${APPIMAGETOOL:-}" ]; then
@@ -90,9 +95,21 @@ else
     fi
     chmod +x "$TOOL"
 fi
+# Resolution order: APPIMAGE_RUNTIME_FILE, then the reviewed runtime vendored in the repository
+# (used only when its sha256 matches the pin, so a stale or edited file falls through), then a
+# download verified against the same pin. Normal builds therefore need no network for the runtime
+# and an upstream rebuild of `continuous` cannot stop a release (#44).
+VENDORED_RUNTIME="$ROOT/packaging/linux/runtime-x86_64"
 if [ -n "${APPIMAGE_RUNTIME_FILE:-}" ]; then
     RUNTIME="$APPIMAGE_RUNTIME_FILE"
+elif [ -f "$VENDORED_RUNTIME" ] &&
+    echo "$RUNTIME_SHA256  $VENDORED_RUNTIME" | sha256sum -c --status; then
+    echo "==> using the vendored AppImage runtime (sha256 matches the pin)"
+    RUNTIME="$VENDORED_RUNTIME"
 else
+    if [ -f "$VENDORED_RUNTIME" ]; then
+        echo "==> the vendored runtime does not match RUNTIME_SHA256; downloading the pinned one" >&2
+    fi
     mkdir -p "$BUILD_DIR"
     RUNTIME="$BUILD_DIR/runtime-x86_64"
     if [ ! -f "$RUNTIME" ] || ! echo "$RUNTIME_SHA256  $RUNTIME" | sha256sum -c --status; then
