@@ -115,6 +115,7 @@ _SITE_WORDS = {
 _KIND_WORDS = {
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby", "workday": "Workday",
     "smartrecruiters": "SmartRecruiters", "rippling": "Rippling", "adp": "ADP Workforce Now",
+    "paylocity": "Paylocity",
     "sec_edgar": "SEC filings", "sam_gov": "SAM.gov",
     "rss": "a feed", "pe_portfolio": "PE portfolio pages", "manual": "a pasted posting",
 }

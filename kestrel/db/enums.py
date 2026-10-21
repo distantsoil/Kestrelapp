@@ -24,6 +24,7 @@ SOURCE_KINDS = (
     "smartrecruiters",
     "rippling",
     "adp",
+    "paylocity",
     "page",
     "rss",
     "sec_edgar",

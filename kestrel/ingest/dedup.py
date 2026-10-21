@@ -25,6 +25,7 @@ _PRIORITY = {
     "smartrecruiters": 0,
     "rippling": 0,
     "adp": 0,
+    "paylocity": 0,
     "page": 1,
     "indeed": 2,
     "jobspy": 2,

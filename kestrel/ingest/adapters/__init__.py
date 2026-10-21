@@ -7,6 +7,7 @@ from kestrel.ingest.adapters.ashby import AshbyAdapter
 from kestrel.ingest.adapters.greenhouse import GreenhouseAdapter
 from kestrel.ingest.adapters.jobspy import JobSpyAdapter
 from kestrel.ingest.adapters.lever import LeverAdapter
+from kestrel.ingest.adapters.paylocity import PaylocityAdapter
 from kestrel.ingest.adapters.rippling import RipplingAdapter
 from kestrel.ingest.adapters.smartrecruiters import SmartRecruitersAdapter
 from kestrel.ingest.adapters.workday import WorkdayAdapter
@@ -35,6 +36,7 @@ for _adapter in (
     SmartRecruitersAdapter(),
     RipplingAdapter(),
     AdpAdapter(),
+    PaylocityAdapter(),
     JobSpyAdapter(),
 ):
     register(_adapter)

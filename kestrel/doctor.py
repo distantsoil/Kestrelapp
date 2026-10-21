@@ -500,7 +500,9 @@ def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
         )
 
 
-_ATS_KINDS = ("greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp")
+_ATS_KINDS = (
+    "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp", "paylocity",
+)
 
 
 async def _probe_ats(settings) -> list[tuple[str, str, str]]:

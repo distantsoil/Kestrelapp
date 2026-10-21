@@ -39,12 +39,14 @@ PLATFORMS = {
     "smartrecruiters": "SmartRecruiters",
     "rippling": "Rippling",
     "adp": "ADP Workforce Now",
+    "paylocity": "Paylocity",
 }
 # The config key that names the company, per kind, and whether the platform treats it as case
 # sensitive (the Ashby and SmartRecruiters adapters pass it through unchanged).
 _KEY = {
     "greenhouse": "token", "lever": "company", "ashby": "token", "smartrecruiters": "company",
     "rippling": "slug", "adp": "cid",
+    "paylocity": "board_id",
 }
 _CASE_SENSITIVE = {"ashby", "smartrecruiters"}  # adp cids are UUIDs: compared lowercased
 
@@ -111,6 +113,11 @@ def board_from_url(url: str | None) -> BoardRef | None:
     if host == "ats.rippling.com":
         slug = _slug(first)
         return BoardRef("rippling", {"slug": slug}) if slug else None
+    if host == "recruiting.paylocity.com":
+        if len(segs) >= 3 and segs[0].lower() == "recruiting" and segs[1].lower() == "jobs":
+            if segs[2].lower() == "all" and len(segs) >= 4 and _UUID.match(segs[3]):
+                return BoardRef("paylocity", {"board_id": segs[3].lower()})
+        return None
     if host == "workforcenow.adp.com" and parts.path.lower().endswith("/recruitment.html"):
         query = parse_qs(parts.query)
         cid = (query.get("cid") or [""])[0]
@@ -207,7 +214,7 @@ async def discover_boards(
         config = dict(ref.config)
         if ref.kind == "workday":
             config["company"] = company
-        elif ref.kind in ("ashby", "rippling", "adp"):
+        elif ref.kind in ("ashby", "rippling", "adp", "paylocity"):
             config["company_name"] = company
         session.add(Source(
             track=search.track, kind=ref.kind, name=f"{company} jobs ({PLATFORMS[ref.kind]})",

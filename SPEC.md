@@ -437,6 +437,7 @@ Guardrails, all of which must be enforced rather than discovered:
 | Ashby | `GET https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` | 200 |
 | **Workday** | `POST https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` body `{"limit":20,"offset":0,"searchText":""}` | 200, 2000 postings |
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
+| **Paylocity Recruiting** | `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` (JSON in `window.pageData`) | 200, HTML (verified 2026-10-21) |
 | **ADP Workforce Now** | `GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&$top=20&$skip=1` | 200, no auth (verified 2026-10-21) |
 | **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
@@ -1587,6 +1588,38 @@ detail `GET .../job-requisitions/{itemID}?cid={cid}&ccId={ccId}&lang=en_US&local
 returns the same object plus `requisitionDescription` (HTML). The public posting page is
 `https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid={cid}&ccId={ccId}&jobId={ExternalJobID}&lang=en_US`
 (a script-rendered page; its content was not fetched, only the JSON above).
+
+### Paylocity Recruiting
+
+No JSON API was found for a job list. `GET https://recruiting.paylocity.com/recruiting/v2/api/feed/jobs/{id}`
+answers `200` with `{"displayName", "vidGridId", "showVideo", "jobs": []}` for every public board
+tried (three), including one that lists 11 postings on its page, so it is not used. The public
+careers page is the source: `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` → `200`
+HTML (no login, no challenge, no script needed) whose inline script assigns the board to
+`window.pageData = {...};`. Verified 2026-10-21 against one public board (11 postings).
+`recruiting.paylocity.com/robots.txt` is a 404 (no rules). `{id}` is the board GUID in the page link
+(`.../recruiting/jobs/All/{id}` or `.../All/{id}/{Name}`).
+
+```
+window.pageData = { "ModuleTitle": "...", "ModuleId": "...", "Jobs": [ ... ], "Locations": [...],
+                    "Departments": [...], "LeadJoinUrl": ..., ... }
+```
+
+Per job in `Jobs[]`: `JobId` (integer), `JobTitle`, `LocationName`, `ShouldDisplayLocation`,
+`PublishedDate` (ISO datetime with the correct offset), `Description` (a ~110 character plain
+snippet, **not** the body), `IsInternal`, `HiringDepartment`, `JobLocation` (`{LocationId, ModuleId,
+Name, Address, Address2, Metro, City, State, Zip, Country, County, SmartyAddressId}`), `IsRemote`,
+`IndeedRemoteType`. `ModuleTitle` is the employer name.
+
+**Gotchas:** the data is JSON inside an HTML script, read by locating `window.pageData = ` and
+decoding one JSON value from there (never by a regex over the JSON). The list's `Description` is a
+truncated snippet; the body comes from the posting page
+`GET https://recruiting.paylocity.com/Recruiting/Jobs/Details/{JobId}` → `200` HTML with one
+`<script type="application/ld+json">` schema.org `JobPosting` (`title`, `datePosted`,
+`hiringOrganization.name`, `description` as HTML, `jobLocation.address`). **Its `datePosted` has a
+wrong UTC offset (the local clock time labelled `-05:00` after adding five hours), so the date is
+taken from the list's `PublishedDate`.** The posting link carries only `JobId`, not the board id, so
+board discovery can follow an `.../Jobs/All/{id}` link but not a `.../Jobs/Details/{JobId}` one.
 
 ### SEC EDGAR full-text search — consulting trigger events
 

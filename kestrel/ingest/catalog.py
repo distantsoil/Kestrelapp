@@ -200,6 +200,25 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "1 request/second (list and detail alike).",
         "region": _WORLDWIDE,
     },
+    "paylocity": {
+        "name": "Paylocity",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public careers page for one employer, recruiting.paylocity.com/recruiting/jobs/"
+            "All/{board_id}, whose page data lists every posting, plus one request per posting "
+            "page for the description, up to max_results (default 200). Paylocity has no JSON "
+            "list, so the page's own embedded data is read. Nothing is fetched behind a login."
+        ),
+        "provide": (
+            "The board id (a GUID) from the employer's careers link "
+            "(recruiting.paylocity.com/recruiting/jobs/All/{board_id}). Optionally company_name "
+            "and max_results."
+        ),
+        "config_example": {"board_id": "00000000-0000-4000-8000-000000000000"},
+        "rate_limit": "1 request/second (list and detail alike).",
+        "region": _WORLDWIDE,
+    },
     "jobspy": {
         "name": "Job boards via JobSpy",
         "category": CATEGORY_AGGREGATOR,
@@ -406,7 +425,8 @@ def _ordered_kinds() -> list[str]:
     """Registered adapter kinds, then registered signal kinds, then the table-only kinds, each in
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
-        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp", "jobspy",
+        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
+        "paylocity", "jobspy",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())
