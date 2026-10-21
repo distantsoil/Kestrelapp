@@ -21,8 +21,9 @@
     <p class="quiet">Marking this role Applied writes the questions an interviewer is likely to ask. Until then the prep pack uses the questions from the scored review.</p>
   {% endif %}
   {% if qnote %}<p class="quiet" role="status" data-testid="questions-note">{{ qnote }}</p>{% endif %}
+  {% if qview.applied %}
   <button type="button" class="btn" data-testid="questions-regenerate"
           hx-post="/opportunities/{{ opp_id }}/questions/regenerate"
           hx-target="#questions-card" hx-swap="outerHTML"
-          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>
+          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>{% endif %}
 </div>

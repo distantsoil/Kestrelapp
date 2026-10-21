@@ -457,7 +457,7 @@ async def run_summary(
         select(Quarantine.opportunity_id, Quarantine.created_at, Quarantine.error,
                Opportunity.title)
         .join(Opportunity, Opportunity.id == Quarantine.opportunity_id)
-        .where(or_(Quarantine.tier == 2, and_(Quarantine.tier > 2, ~has_t2)),
+        .where(or_(Quarantine.tier == 2, and_(Quarantine.tier == 3, ~has_t2)),
                _in_window(Quarantine.created_at, start, end))
         .order_by(Quarantine.created_at, Quarantine.id)
     )

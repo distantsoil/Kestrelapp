@@ -274,7 +274,7 @@ async def move_to_status(
     - Entering the applied status also queues the role's interview questions (P14), once.
     - Entering a closed status sets closed_at; leaving one clears it, so a reopened card is
       open again everywhere (Today, the quiet count)."""
-    from kestrel.db.enums import valid_pursuit_status
+    from kestrel.db.enums import APPLIED_OR_LATER, valid_pursuit_status
 
     if not valid_pursuit_status(p.track, to_status):
         return f"'{to_status}' is not a stage for {p.track} cards; nothing was changed."
@@ -296,6 +296,12 @@ async def move_to_status(
             p.next_action_at = (start + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
         # Likely interview questions for this role (P14, D-INTERVIEW-1): one queued task, only
         # here, so a bulk import of past applications (applied_import) never fires a model call.
+        from kestrel.interview.question_task import request_interview_questions
+
+        await request_interview_questions(session, p.opportunity_id, p.id)
+    elif to_status in APPLIED_OR_LATER and to_status not in closed:
+        # A card dragged straight past Applied (to Screening or Interviewing) still gets its
+        # list; the request is once per role, so moving back and forth adds nothing.
         from kestrel.interview.question_task import request_interview_questions
 
         await request_interview_questions(session, p.opportunity_id, p.id)

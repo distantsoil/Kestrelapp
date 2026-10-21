@@ -1880,7 +1880,11 @@ error leaves the task to retry. A tier routed to a hosted backend goes through `
 
 Suggests job titles for the operator's Employment target titles (D-TTL-3). It runs as a queued
 `title_suggestions` task: after a resume import, about weekly, and after every 10 roles newly
-marked applied. It reruns over time and so learns from what the operator applied for.
+marked applied. It reruns over time and so learns from what the operator applied for. These
+automatic runs happen only when Tier 2 is local: when Tier 2 would go to an online model, nothing
+is sent until the operator clicks Suggest again, because no automatic pass may send the resume
+online without a user action. A failed or skipped pass is recorded, so it waits for the next
+weekly check rather than queuing again.
 
 **Inputs.** The operator's document (the newest active employment resume: summary, each role's
 header and context line, every bullet's default wording labeled with its slot key, the skills),

@@ -700,3 +700,17 @@ def test_pipeline_badge_counts_roles_not_yet_rated_and_the_ring_shows_only_while
     css = (Path(paths.web_static_dir()) / "css" / "kestrel.css").read_text("utf-8")
     motion = css.split("/* The nav ring beside the Pipeline badge")[1].split("/* About and Help")[0]
     assert "prefers-reduced-motion: reduce" in motion and "animation: none" in motion
+
+
+def test_a_prompt_quarantine_beyond_tier_3_is_not_a_scoring_failure():
+    """Quarantine tiers 8, 9, 13, 14 and 15 name prompts (interview questions, titles and
+    others), not scoring tiers: a role without a Tier 2 score whose question list failed must not
+    show as "Scoring failed" (Wave C review)."""
+    asyncio.run(_seed(_active_rows()))
+    base = _summary("employment")["failed"]
+    rows = _active_rows()
+    for opp_id, tier in ((7, 14), (8, 8), (7, 13)):  # roles with no Tier 2 score
+        rows.append(Quarantine(opportunity_id=opp_id, tier=tier, error="schema",
+                               created_at=_ago(minutes=2)))
+    asyncio.run(_seed(rows))
+    assert _summary("employment")["failed"] == base

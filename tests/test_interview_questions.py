@@ -480,14 +480,14 @@ def web(_isolate_data_home):
     return _client()
 
 
-def _seed_web() -> tuple[int, int]:
+def _seed_web(status: str = "shortlisted") -> tuple[int, int]:
     import asyncio
 
     from kestrel.db.engine import get_sessionmaker
 
     async def go():
         sm = get_sessionmaker()
-        return await _seed(sm)
+        return await _seed(sm, status=status)
 
     return asyncio.run(go())
 
@@ -497,11 +497,17 @@ def test_the_opportunity_page_shows_the_card_and_regenerate_queues_a_task(web):
 
     from kestrel.db.engine import forget_engine, get_sessionmaker
 
-    opp, pid = _seed_web()
-    page = web.get(f"/opportunities/{opp}")
+    # Only on Applied (#13 review): a shortlisted role shows no button, and the route refuses.
+    short, _ = _seed_web()
+    page = web.get(f"/opportunities/{short}")
     assert page.status_code == 200
     assert 'data-testid="questions-card"' in page.text
     assert "Marking this role Applied writes the questions" in page.text
+    assert 'data-testid="questions-regenerate"' not in page.text
+    refused = web.post(f"/opportunities/{short}/questions/regenerate")
+    assert "when you mark this role Applied" in refused.text
+
+    opp, pid = _seed_web("applied")
     r = web.post(f"/opportunities/{opp}/questions/regenerate")
     assert r.status_code == 200 and "Queued." in r.text
     again = web.post(f"/opportunities/{opp}/questions/regenerate")
@@ -519,7 +525,7 @@ def test_the_card_lists_the_set_and_a_role_off_the_list_has_no_card(web):
 
     from kestrel.db.engine import forget_engine, get_sessionmaker
 
-    opp, pid = _seed_web()
+    opp, pid = _seed_web("applied")
 
     async def store():
         sm = get_sessionmaker()
@@ -542,4 +548,39 @@ def test_the_card_lists_the_set_and_a_role_off_the_list_has_no_card(web):
     assert "—" not in html.split('id="questions-card"')[1].split("</div>\n")[0]
     assert 'data-testid="questions-card"' not in web.get(f"/opportunities/{lone}").text
     assert web.post(f"/opportunities/{lone}/questions/regenerate").text.count("Add this role") == 1
+    forget_engine()
+
+
+async def test_a_card_moved_straight_past_applied_still_gets_its_list(sm):
+    _opp, pid = await _seed(sm)
+    await _apply(sm, pid, "interviewing")
+    assert await _count(sm, Task, Task.type == qt.TASK_TYPE) == 1
+
+
+def test_remove_from_list_deletes_the_question_set_too(web):
+    # The set references the pursuit; leaving it made Remove fail on the foreign key (review).
+    import asyncio
+
+    from kestrel.db.engine import forget_engine, get_sessionmaker
+
+    opp, pid = _seed_web("applied")
+
+    async def store():
+        async with get_sessionmaker()() as s:
+            s.add(InterviewQuestionSet(
+                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v1",
+                questions=_QUESTIONS, created_at=utcnow_iso(),
+            ))
+            await s.commit()
+
+    asyncio.run(store())
+    r = web.post(f"/opportunities/{opp}/remove")
+    assert r.status_code == 200
+
+    async def left():
+        sm = get_sessionmaker()
+        return (await _count(sm, Pursuit, Pursuit.id == pid),
+                await _count(sm, InterviewQuestionSet, InterviewQuestionSet.pursuit_id == pid))
+
+    assert asyncio.run(left()) == (0, 0)
     forget_engine()

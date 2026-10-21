@@ -325,6 +325,19 @@ async def drain_interview_questions(
 
 
 # ------------------------------------------------------------------------------- page support
+async def is_applied(session: AsyncSession, opportunity_id: int) -> bool:
+    """Whether the role has reached Applied (or later, open): questions are only written then."""
+    from kestrel.db.enums import APPLIED_OR_LATER
+    from kestrel.db.models import Pursuit
+
+    p = (
+        await session.execute(select(Pursuit).where(Pursuit.opportunity_id == opportunity_id))
+    ).scalar_one_or_none()
+    return p is not None and p.closed_at is None and (
+        bool(p.applied_at) or p.status in APPLIED_OR_LATER
+    )
+
+
 async def question_view(session: AsyncSession, opportunity_id: int) -> dict:
     """What the opportunity page says about the role's questions: the active set with each
     question's story title, whether a task is queued or running, and whether the newest attempt
@@ -352,6 +365,7 @@ async def question_view(session: AsyncSession, opportunity_id: int) -> dict:
     ).scalar_one_or_none()
     failed = bool(newest_bad and (qset is None or newest_bad > qset.created_at))
     return {
+        "applied": await is_applied(session, opportunity_id),
         "questions": questions,
         "created_at": qset.created_at if qset is not None else None,
         "pending": await pending(session, opportunity_id),

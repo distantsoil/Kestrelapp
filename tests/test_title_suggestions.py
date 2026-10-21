@@ -8,6 +8,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace as NS
 
+import httpx
 import pytest
 from sqlalchemy import func, select
 
@@ -519,3 +520,29 @@ def test_onboarding_employment_step_carries_the_suggestions_slot():
     start = text.split("{% elif key == 'employment' %}")[1]
     step = start.split("{% elif key == 'consulting' %}")[0]
     assert 'hx-get="/profile/title-suggestions"' in step
+
+
+async def test_no_automatic_pass_when_tier_2_runs_online(sm, monkeypatch):
+    # An automatic pass would send the whole resume online with no user action (review).
+    await _seed_master(sm)
+
+    async def online(_s):
+        return True
+
+    monkeypatch.setattr(ts, "_runs_online", online)
+    assert not await ts.maybe_request(sm, force=True)
+    assert await _count(sm, Task, Task.type == ts.TASK_TYPE) == 0
+    async with sm() as s:
+        assert await ts.due(s) is None  # the skip is recorded, so it stays quiet for a week
+
+
+async def test_a_failed_pass_is_recorded_so_it_is_not_requeued_every_ten_minutes(sm):
+    await _seed_master(sm)
+
+    class _Broken(_Client):
+        async def complete(self, **kw):
+            raise httpx.ConnectError("no route")
+
+    await _run(sm, _Broken())
+    async with sm() as s:
+        assert await ts.due(s) is None

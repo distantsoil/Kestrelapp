@@ -53,7 +53,8 @@ def _unscored_waiting():
             Evaluation.opportunity_id == Opportunity.id, Evaluation.tier >= tier
         )
         has_q = exists().where(
-            Quarantine.opportunity_id == Opportunity.id, Quarantine.tier >= tier
+            Quarantine.opportunity_id == Opportunity.id,
+            Quarantine.tier.between(tier, 3),  # scoring tiers only; 14 and 15 are P14/P15
         )
         clauses.append(and_(Opportunity.stage == stage, ~has_eval, ~has_q))
     return and_(Opportunity.archived_at.is_(None), or_(*clauses))

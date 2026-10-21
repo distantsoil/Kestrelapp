@@ -151,13 +151,37 @@ async def maybe_request(sm: async_sessionmaker[AsyncSession], *, force: bool = F
     try:
         async with sm() as s:
             reason = await due(s)
-            if reason is None or not await request_title_suggestions(s, reason):
+            if reason is None:
+                return False
+            if await _runs_online(s):
+                # An automatic pass would send the whole resume to an online model without the
+                # user doing anything ("asks before anything goes to an online model"). On an
+                # online Tier 2 only Suggest again runs it; record the skip so this stays quiet.
+                await _record_run(s, added=0, status="skipped_online")
+                await s.commit()
+                return False
+            if not await request_title_suggestions(s, reason):
                 return False
             await s.commit()
             return True
     except Exception as exc:  # the cadence is a convenience; a failure waits for the next check
         log.warning("title_suggestions_check_failed", error_type=type(exc).__name__, error=str(exc))
         return False
+
+
+async def _runs_online(session: AsyncSession) -> bool:
+    """Whether P15's tier would go to an external backend with the settings in effect now."""
+    from kestrel.llm.prompts import load_prompt
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    settings = await load_settings_with_db(session)
+    tier = load_prompt(PROMPT).tier
+    llm = settings.llm
+    if llm.mode == "hosted" and tier in llm.hosted_tiers:
+        return True
+    tcfg = llm.tiers.get(tier)
+    backend = llm.backends.get(tcfg.backend) if tcfg is not None else None
+    return bool(backend is not None and backend.external)
 
 
 # --------------------------------------------------------------------------- the per-call schema
@@ -195,6 +219,19 @@ def _target_titles() -> list[str]:
 
     terms = load_state().tracks["employment"].get("employment_terms") or {}
     return [str(t).strip() for t in (terms.get("target_titles") or []) if str(t).strip()]
+
+
+async def _record_failure(sm: async_sessionmaker[AsyncSession]) -> None:
+    """Record a failed pass, so due() waits for the weekly cadence instead of re-queuing a new
+    task (and, on an online key out of credit, a new resume send) every ten minutes."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        async with sm() as s:
+            await _record_run(s, added=0, status="error")
+            await s.commit()
+    except SQLAlchemyError as exc:
+        log.warning("title_suggestions_record_failed", error_type=type(exc).__name__)
 
 
 async def _record_run(session: AsyncSession, *, added: int, status: str) -> None:
@@ -326,6 +363,7 @@ async def drain_title_suggestions(
             reason = f"{type(exc).__name__}: {exc}"
             log.warning("title_suggestions_failed", task=task.id, error=reason)
             await queue.fail(task.id, reason, worker_id=wid, retry=True)
+            await _record_failure(sm)
             continue
         finally:
             beat.cancel()
@@ -333,6 +371,7 @@ async def drain_title_suggestions(
                 await beat
         if outcome.status == "error":
             await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
+            await _record_failure(sm)
             continue
         await queue.complete(task.id, worker_id=wid)
         done += 1

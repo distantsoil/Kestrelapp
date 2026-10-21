@@ -686,9 +686,12 @@ async def accept_import(
     if track == "employment" and doc_kind == "resume":
         # Suggested target titles (P15, D-TTL-3): one queued run read from this resume. The
         # suggestions wait for an Accept; nothing is added to the profile here.
-        from kestrel.services.title_suggest import request_title_suggestions
+        # On an online Tier 2 it waits for Suggest again: the import did not ask to send the
+        # resume a second time.
+        from kestrel.services.title_suggest import _runs_online, request_title_suggestions
 
-        await request_title_suggestions(session, "import")
+        if not await _runs_online(session):
+            await request_title_suggestions(session, "import")
     await session.commit()
     return master.id
 

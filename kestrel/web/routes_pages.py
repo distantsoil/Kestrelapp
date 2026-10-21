@@ -763,7 +763,7 @@ async def regenerate_questions(request: Request, opp_id: int):
     from sqlalchemy.exc import SQLAlchemyError
 
     from kestrel.db.models import Pursuit
-    from kestrel.interview.question_task import request_interview_questions
+    from kestrel.interview.question_task import is_applied, request_interview_questions
 
     note: str | None = None
     async with sessionmaker()() as s:
@@ -773,6 +773,8 @@ async def regenerate_questions(request: Request, opp_id: int):
             ).scalar_one_or_none()
             if pursuit is None:
                 note = "Add this role to your list first."
+            elif not await is_applied(s, opp_id):
+                note = "The list is written when you mark this role Applied."
             else:
                 queued = await request_interview_questions(s, opp_id, pursuit.id, regenerate=True)
                 await s.commit()
