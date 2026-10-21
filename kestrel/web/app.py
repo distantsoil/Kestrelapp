@@ -342,6 +342,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.pipeline.tier2 import handle_t2
     from kestrel.pipeline.worker import TierStats, Worker
     from kestrel.services.setting_overrides import load_settings_with_db, take_run_mode
+    from kestrel.services.title_suggest import drain_title_suggestions, maybe_request
 
     sm = get_sessionmaker()
     async with httpx.AsyncClient() as http:
@@ -426,6 +427,10 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     # Likely questions for roles marked Applied (P14): the same Tier 2 model as
                     # the story build, so right after it keeps the tier drained (D-INTERVIEW-1).
                     await drain_interview_questions(sm, client, settings, stop=stop)
+                    # Suggested target titles (P15): queued after an import, weekly, or after 10
+                    # newly applied roles; Tier 2 again, so it stays inside the same drain.
+                    await maybe_request(sm)
+                    await drain_title_suggestions(sm, client, settings, stop=stop)
                 # Drift is a rolling window over the last 50 labels; checking it every idle
                 # cycle (5 s) loaded both reranker pickles and every Org and Source row on the
                 # UI's event loop for nothing. Once per interval, or after any Tier 1 work.

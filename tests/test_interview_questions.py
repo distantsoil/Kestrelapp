@@ -433,10 +433,11 @@ def test_the_p14_prompt_loads_and_registers():
     assert "—" not in spec.system + spec.user
 
 
-def test_the_migration_chain_and_active_index():
-    from kestrel.db.migrate import head_revision
+def test_the_migration_chains_onto_0020():
+    import importlib
 
-    assert head_revision() == "0021"
+    mod = importlib.import_module("kestrel.db.migrations.versions.0021_interview_question_set")
+    assert (mod.revision, mod.down_revision) == ("0021", "0020")
 
 
 async def test_one_active_set_per_pursuit_is_enforced_by_the_database(sm):

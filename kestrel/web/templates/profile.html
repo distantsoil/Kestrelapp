@@ -57,6 +57,8 @@ terms is rejected before any model sees it, so check Settings &gt; Filters after
     {% include "partials/profile_" ~ tab ~ ".html" %}
   </div>
   {% if tab == 'employment' %}
+    {# P15 (D-TTL-3): titles suggested from the resume, accepted one at a time. #}
+    <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
     {# D-TTL-2: loaded on its own so the Employment form stays one form. #}
     <div id="title-variants" hx-get="/profile/title-variants" hx-trigger="load" hx-swap="outerHTML"></div>
   {% endif %}

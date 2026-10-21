@@ -198,6 +198,25 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | consulting_terms | json | consulting track: `day_rate_floor`, `day_rate_target`, `min_engagement_days`, `max_concurrent`, `service_lines`, `target_org_size`, `target_sectors`, `excluded_sectors`, `travel_tolerance` |
 | updated_at | ts | |
 
+**`title_suggestion`** (P15, D-TTL-3) — job titles the model proposes for `employment_terms.target_titles`,
+for the operator to accept or dismiss. **Nothing is ever added to `target_titles` without an
+explicit Accept.**
+
+| column | type | notes |
+|---|---|---|
+| id | int pk | |
+| title | text | unique case-insensitively across every status, so a title never comes back once seen |
+| why | text | one sentence on why it fits, from the operator's own document |
+| evidence | json | `[{slot_key, text}]`: the operator's own bullets the title rests on (display only) |
+| status | enum | `suggested` \| `accepted` \| `dismissed` |
+| prompt_version | text | e.g. `title_suggest/v1` |
+| created_at, decided_at | ts | `decided_at` is set on Accept or Dismiss |
+
+A queued `title_suggestions` task writes the rows: after a resume import, about once a week, and
+after every 10 roles newly marked applied (a manual "Suggest again" also queues one). Accept adds
+the title through the same profile edit as the Employment form (so the generated searches and the
+Tier 0 re-check follow); Dismiss records it so it is never suggested again.
+
 ### 4.2 Sources and ingestion
 
 **`source`**

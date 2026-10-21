@@ -324,3 +324,33 @@ def save_section(track: str, section: str, values: dict) -> Path:
         raise ProfileEditError("The saved profile could not be loaded; the previous file was kept.")
     log.info("profile_saved", track=track, section=section)
     return target
+
+
+def _same_title(a: str, b: str) -> bool:
+    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+
+
+def add_target_title(title: str) -> bool:
+    """Add one title to the employment track's target titles, keeping every other term as it is
+    (the Employment form's save, for one title: P15 Accept, D-TTL-3). True when the title was
+    added, False when an equal one (ignoring case and spacing) was already there. A profile with
+    no employment terms yet gets the blank terms a form save would write, so the new file filters
+    nothing but the titles. Raises ProfileEditError when profile.yml cannot be read or written."""
+    title = " ".join(title.split())
+    if not title:
+        raise ProfileEditError("A title cannot be empty.")
+    state = load_state()
+    if state.problem:
+        raise ProfileEditError(state.problem)
+    terms = dict(state.tracks["employment"].get("employment_terms") or {})
+    titles = [str(t) for t in (terms.get("target_titles") or [])]
+    if any(_same_title(title, t) for t in titles):
+        return False
+    terms["target_titles"] = [*titles, title]
+    terms.setdefault("anti_titles", [])
+    terms.setdefault("excluded_employment_types", [])
+    terms.setdefault("seniority_floor", "")
+    for key in EMPLOYMENT_INTS:
+        terms.setdefault(key, None)
+    save_section("employment", "employment", {"employment_terms": terms})
+    return True

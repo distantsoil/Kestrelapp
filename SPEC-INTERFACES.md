@@ -424,6 +424,13 @@ the generated searches also ask for (D-TTL-2: up to 3 per target title, 9 in all
 the searches without them and never past the generated-search cap), states that each variant is searched on every board, and lets each one be
 removed or searched again (`GET /profile/title-variants`, `POST /title-variants/remove|restore`;
 removals are the `sources.title_variants_removed` setting row).
+Above it, **Suggested titles** (P15, D-TTL-3, #31; also under the Employment step of onboarding)
+is an expandable list of titles the model proposes from the resume, each with a one-line reason
+and the operator's own bullets it rests on. **Accept** adds the title to the target titles through
+the same profile edit as the form (the generated searches and the Tier 0 re-check follow);
+**Dismiss** keeps it from ever being suggested again; **Suggest again** queues a pass. Nothing is
+added without an Accept (`GET /profile/title-suggestions`, `POST /title-suggestions/{id}/accept|
+dismiss|refresh`).
 
 **`/renders/{id}` Render review**
 Chosen variant beside alternatives per slot with the model's rationale, one-click swap writing a

@@ -190,6 +190,8 @@
 
 {% elif key == 'employment' %}
   {% with ob_save_label = 'Save job terms and continue' %}{% include "partials/profile_employment.html" %}{% endwith %}
+  {# P15: titles suggested from the resume, accepted one at a time (D-TTL-3). #}
+  <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
   {{ nav(primary=False, skip=True) }}
 
 {% elif key == 'consulting' %}

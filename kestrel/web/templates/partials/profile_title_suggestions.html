@@ -1,0 +1,34 @@
+{# Suggested target titles (P15, D-TTL-3): proposals from the resume, never added on their own.
+   Accept saves the title to the Employment target titles; Dismiss keeps it from coming back.
+   Theme tokens only (kestrel.css). #}
+<div id="title-suggestions" class="panel" data-testid="title-suggestions"
+     hx-get="/profile/title-suggestions" hx-trigger="titleSuggestionsChanged from:body" hx-swap="outerHTML">
+  <details>
+    <summary><b>Suggested titles</b>{% if suggestions %} <span class="pill grey" data-testid="title-suggestions-count">{{ suggestions|length }}</span>{% endif %}</summary>
+    <p class="muted">Titles your resume supports that are not in your target titles yet. Nothing is added until you press Accept. A dismissed title is not suggested again.</p>
+    {% if suggestions %}
+    <ul style="list-style:none;padding:0;margin:0">
+      {% for s in suggestions %}
+      <li data-testid="title-suggestion" style="margin-bottom:.7rem">
+        <b>{{ s.title }}</b>
+        <div class="muted">{{ s.why }}</div>
+        {% for e in s.evidence %}<div class="muted" data-testid="title-evidence">Based on: {{ e.text }}</div>{% endfor %}
+        <button class="btn" type="button" data-testid="title-accept" hx-post="/title-suggestions/{{ s.id }}/accept"
+                hx-target="#title-suggestions" hx-swap="outerHTML">Accept</button>
+        <button class="btn ghost" type="button" data-testid="title-dismiss" hx-post="/title-suggestions/{{ s.id }}/dismiss"
+                hx-target="#title-suggestions" hx-swap="outerHTML">Dismiss</button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% elif pending %}
+    <p class="muted" data-testid="title-suggestions-pending">Reading your resume for titles. They appear after the next background pass.</p>
+    {% elif not has_resume %}
+    <p class="muted" data-testid="title-suggestions-none">Import a resume first. Suggestions are read from it.</p>
+    {% else %}
+    <p class="muted" data-testid="title-suggestions-empty">Nothing new to suggest right now.</p>
+    {% endif %}
+    {% if note %}<p class="muted" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}
+    <button class="btn" type="button" data-testid="title-suggest-again" hx-post="/title-suggestions/refresh"
+            hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>Suggest again</button>
+  </details>
+</div>

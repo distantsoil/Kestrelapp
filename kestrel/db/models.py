@@ -584,6 +584,25 @@ Index(
 )
 
 
+class TitleSuggestion(Base):
+    """A job title the model proposes for the operator's target titles (P15, D-TTL-3). Only an
+    explicit Accept adds it to employment_terms.target_titles; a title is unique
+    case-insensitively across every status, so a dismissed one never comes back."""
+
+    __tablename__ = "title_suggestion"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String)
+    why: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[list] = mapped_column(JSON, default=list)  # [{slot_key, text}], display only
+    status: Mapped[str] = mapped_column(String, default="suggested", index=True)
+    prompt_version: Mapped[str] = mapped_column(String)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    decided_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+Index("ux_title_suggestion_title", func.lower(TitleSuggestion.title), unique=True)
+
+
 class MockSession(Base):
     __tablename__ = "mock_session"
     id: Mapped[int] = mapped_column(primary_key=True)

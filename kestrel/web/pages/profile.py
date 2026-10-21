@@ -202,3 +202,87 @@ async def title_variant_change(request: Request, action: str):
     return templates().TemplateResponse(
         request, "partials/profile_title_variants.html", await _variants_ctx()
     )
+
+
+# ----------------------------------------------------------------- suggested target titles
+# P15 (D-TTL-3, #31): the list of titles the model suggested from the resume. Accept is the only
+# way a suggestion reaches the profile. The writes live at /title-suggestions/..., not under
+# /profile/, where POST /profile/{track}/{section} would take them.
+async def _suggestions_response(
+    request: Request, note: str | None = None, *, refresh: bool = False
+):
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import title_suggest
+
+    async with get_sessionmaker()() as s:
+        ctx = {**(await title_suggest.view(s)), "note": note}
+    resp = templates().TemplateResponse(request, "partials/profile_title_suggestions.html", ctx)
+    if refresh:
+        resp.headers["HX-Refresh"] = "true"  # the Target titles box above shows the new title
+    return resp
+
+
+@router.get("/profile/title-suggestions", response_class=HTMLResponse)
+async def title_suggestions(request: Request):
+    return await _suggestions_response(request)
+
+
+@router.post("/title-suggestions/refresh", response_class=HTMLResponse)
+async def title_suggestions_refresh(request: Request):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import title_suggest
+
+    note: str | None
+    try:
+        async with get_sessionmaker()() as s:
+            if await title_suggest.employment_resume(s) is None:
+                note = "Import a resume first. Suggestions are read from it."
+            elif await title_suggest.request_title_suggestions(s, "manual"):
+                await s.commit()
+                note = "Queued. New suggestions appear after the next background pass."
+            else:
+                note = "A pass is already queued."
+    except SQLAlchemyError as exc:
+        log.warning("title_suggest_queue_failed", error_type=type(exc).__name__)
+        note = "Could not queue that. Try again."
+    return await _suggestions_response(request, note)
+
+
+@router.post("/title-suggestions/{suggestion_id}/accept", response_class=HTMLResponse)
+async def title_suggestion_accept(request: Request, suggestion_id: int):
+    """Add the title to the target titles. The generated searches and the Tier 0 re-check follow
+    the change, as after an Employment save. Never a 500: a refusal is a line on the list."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import title_suggest
+
+    try:
+        async with get_sessionmaker()() as s:
+            ok, message = await title_suggest.accept(s, suggestion_id)
+    except SQLAlchemyError as exc:
+        log.warning("title_accept_failed", error_type=type(exc).__name__)
+        return await _suggestions_response(request, "Could not save that. Try again.")
+    if not ok:
+        return await _suggestions_response(request, message)
+    await _rebuild_searches()
+    await _queue_recheck(["employment"])
+    return await _suggestions_response(request, message, refresh=True)
+
+
+@router.post("/title-suggestions/{suggestion_id}/dismiss", response_class=HTMLResponse)
+async def title_suggestion_dismiss(request: Request, suggestion_id: int):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services import title_suggest
+
+    try:
+        async with get_sessionmaker()() as s:
+            await title_suggest.dismiss(s, suggestion_id)
+    except SQLAlchemyError as exc:
+        log.warning("title_dismiss_failed", error_type=type(exc).__name__)
+        return await _suggestions_response(request, "Could not save that. Try again.")
+    return await _suggestions_response(request)

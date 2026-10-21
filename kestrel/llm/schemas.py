@@ -1,4 +1,4 @@
-"""A pydantic model per prompt schema in PROMPTS.md (P1 to P14, with the C variants).
+"""A pydantic model per prompt schema in PROMPTS.md (P1 to P15, with the C variants).
 
 TRUNCATE, never reject: maxLength limits are advisory (the grammar drops them), so overlong
 strings are truncated by validators, not rejected. Numeric bounds the grammar drops (confidence,
@@ -750,6 +750,24 @@ class P14InterviewQuestions(_Base):
     questions: Annotated[list[P14Question], _cap(MAX_QUESTIONS), _max_items(MAX_QUESTIONS)]
 
 
+# ===== P15 — suggested target titles (advisory, never auto-added; D-TTL-3)
+# The registered model takes any slot key; kestrel.services.title_suggest builds a per-call
+# subclass whose evidence keys are an enum of the document's real slot keys (the P3 and P13
+# pattern). A suggestion is stored for the operator to accept or dismiss; nothing here reaches
+# employment_terms.target_titles.
+class P15TitleCore(_Base):
+    title: Annotated[str, _truncate(80)]
+    why: Annotated[str, _truncate(200)]
+
+
+class P15Title(P15TitleCore):
+    evidence_slot_keys: Annotated[list[str], _dedupe_cap(5), _max_items(5)]
+
+
+class P15TitleSuggestions(_Base):
+    titles: Annotated[list[P15Title], _cap(10), _max_items(10)]
+
+
 # Registry: prompt version string -> pydantic model. Used by the guard/caller to pick the model.
 SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "triage/v1": P1Triage,
@@ -771,4 +789,5 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "analytics_summary/v1": P12Analytics,
     "resume_assess/v1": P13ResumeAssess,
     "interview_questions/v1": P14InterviewQuestions,
+    "title_suggest/v1": P15TitleSuggestions,
 }

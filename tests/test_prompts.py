@@ -6,10 +6,11 @@ from kestrel.llm.prompts import all_versions, global_rules, load_prompt
 from kestrel.llm.schemas import SCHEMA_BY_VERSION
 
 
-def test_nineteen_prompts_registered():
+def test_twenty_prompts_registered():
     # P7 became three prompts (outline, role map, per-slot wordings) in D-IMPORT-3; P13, the
-    # resume assessment, was added in D-DOC-2; P14, the interview questions, in D-INTERVIEW-1.
-    assert len(all_versions()) == 19
+    # resume assessment, was added in D-DOC-2; P14 (interview questions) in D-INTERVIEW-1 and
+    # P15 (suggested titles) in D-TTL-3.
+    assert len(all_versions()) == 20
 
 
 def test_every_prompt_loads_and_substitutes_global_rules():

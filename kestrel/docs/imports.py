@@ -683,6 +683,12 @@ async def accept_import(
 
         await set_current_employer(session, newest_section, current_employer)
     await _merge_proof_points(session, track, value.proof_points or [])
+    if track == "employment" and doc_kind == "resume":
+        # Suggested target titles (P15, D-TTL-3): one queued run read from this resume. The
+        # suggestions wait for an Accept; nothing is added to the profile here.
+        from kestrel.services.title_suggest import request_title_suggestions
+
+        await request_title_suggestions(session, "import")
     await session.commit()
     return master.id
 

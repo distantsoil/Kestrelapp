@@ -54,7 +54,7 @@ STATE_KEYS = frozenset({
     "stories.last_build", "ui.guides_dismissed", "ui.asks_dismissed",
     # What the user last chose on the page itself (the announcement they closed, the board's
     # date range and column cap), never configuration.
-    "ui.announcements_dismissed", "ui.board_range", "ui.board_cap",
+    "ui.announcements_dismissed", "ui.board_range", "ui.board_cap", "titles.last_run",
     # Stamps and choices the app keeps for itself, never configuration (review finding 15):
     # run_schedule.LAST_AT_KEY, run_summary.RESUMED_KEY, generated.SEC_TITLES_KEY.
     "scheduler.last_scheduled_at", "worker.resumed_at", "sources.sec_use_titles",

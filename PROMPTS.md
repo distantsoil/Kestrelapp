@@ -26,6 +26,7 @@
 | P12 | Analytics honest summary | both | tier2 |
 | P13 | Resume assessment (advisory, displayed only) | both | tier2 |
 | P14 | Interview questions (generated when a role is marked Applied) | both | tier2 |
+| P15 | Suggested target titles (advisory, never auto-added) | employment | tier2 |
 
 Store each as `kestrel/llm/prompts/{id}.{version}.md`. Load by version. **Never inline prompt
 text in Python.**
@@ -1869,6 +1870,52 @@ are truncated (question 250, why_asked 200) and the list is capped at 12, never 
 questions could not be generated and that the earlier Tier 2 questions still apply. A transport
 error leaves the task to retry. A tier routed to a hosted backend goes through `run_prompt_hosted`
 (redaction, or a refusal recorded as a quarantine row with `attempts=0`).
+
+---
+
+## P15 — Suggested Target Titles (advisory, never auto-added)
+
+**Version:** `title_suggest/v1` · **Tier:** `tier2` · **Temp:** 0.3 · **Max tokens:** 1500 ·
+**Reasoning hint:** `low`
+
+Suggests job titles for the operator's Employment target titles (D-TTL-3). It runs as a queued
+`title_suggestions` task: after a resume import, about weekly, and after every 10 roles newly
+marked applied. It reruns over time and so learns from what the operator applied for.
+
+**Inputs.** The operator's document (the newest active employment resume: summary, each role's
+header and context line, every bullet's default wording labeled with its slot key, the skills),
+the titles of roles they applied to or shortlisted (up to 30), their current target titles, and
+the titles they dismissed (the model is told not to suggest those, and the app drops any it
+suggests anyway, compared case-insensitively).
+
+**The model suggests, it never decides.** A suggestion is stored as `suggested` and shown in an
+expandable list. Nothing reaches `target_titles` until the operator presses Accept. A title the
+operator dismissed, accepted or was already shown is never stored again.
+
+**Schema generated per call:** `evidence_slot_keys` is an array of `enum`s of the document's real
+slot keys (the P3 and P13 pattern), so an invented key is structurally impossible on a constrained
+backend and a validation failure elsewhere: one repair, then a quarantine row (`tier` 15, raw
+response kept), never a silent default. The evidence text stored beside a title is the operator's
+own bullet, copied by the app from the slot, not written by the model. Hosted routing goes through
+`run_prompt_hosted` with the document's employer map.
+
+```json
+{
+  "type": "object",
+  "required": ["titles"],
+  "properties": {
+    "titles": { "type": "array", "items": { "type": "object",
+      "required": ["title", "why", "evidence_slot_keys"],
+      "properties": {
+        "title": { "type": "string" },
+        "why": { "type": "string" },
+        "evidence_slot_keys": { "type": "array", "items": { "enum": ["<slot keys>"] } } } } }
+  }
+}
+```
+
+Strings are truncated (title 80, why 200), evidence keys deduplicated and capped at 5, the list
+capped at 10, never rejected. An empty list is a valid answer (nothing new to suggest).
 
 ---
 
