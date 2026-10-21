@@ -38,18 +38,22 @@ PLATFORMS = {
     "workday": "Workday",
     "smartrecruiters": "SmartRecruiters",
     "rippling": "Rippling",
+    "adp": "ADP Workforce Now",
 }
 # The config key that names the company, per kind, and whether the platform treats it as case
 # sensitive (the Ashby and SmartRecruiters adapters pass it through unchanged).
 _KEY = {
     "greenhouse": "token", "lever": "company", "ashby": "token", "smartrecruiters": "company",
-    "rippling": "slug",
+    "rippling": "slug", "adp": "cid",
 }
-_CASE_SENSITIVE = {"ashby", "smartrecruiters"}
+_CASE_SENSITIVE = {"ashby", "smartrecruiters"}  # adp cids are UUIDs: compared lowercased
 
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 _LOCALE = re.compile(r"^[a-z]{2}(-[A-Za-z]{2})?$")
 _WORKDAY_HOST = re.compile(r"^([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com$")
+_UUID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+_CC_ID = re.compile(r"^[A-Za-z0-9_]{1,40}$")
+_ADP_LANG = re.compile(r"^[a-z]{2}_[A-Z]{2}$")
 _NOT_A_COMPANY = {"embed", "jobs", "job", "apply", "careers", "api", "v1", "posting-api"}
 
 
@@ -107,6 +111,17 @@ def board_from_url(url: str | None) -> BoardRef | None:
     if host == "ats.rippling.com":
         slug = _slug(first)
         return BoardRef("rippling", {"slug": slug}) if slug else None
+    if host == "workforcenow.adp.com" and parts.path.lower().endswith("/recruitment.html"):
+        query = parse_qs(parts.query)
+        cid = (query.get("cid") or [""])[0]
+        if not _UUID.match(cid):
+            return None
+        config = {"cid": cid.lower()}
+        for key, name, rx in (("ccId", "cc_id", _CC_ID), ("lang", "lang", _ADP_LANG)):
+            value = (query.get(key) or [""])[0]
+            if rx.match(value):
+                config[name] = value
+        return BoardRef("adp", config)
     m = _WORKDAY_HOST.match(host)
     if m:
         rest = segs[1:] if first and _LOCALE.match(first) else segs
@@ -192,7 +207,7 @@ async def discover_boards(
         config = dict(ref.config)
         if ref.kind == "workday":
             config["company"] = company
-        elif ref.kind in ("ashby", "rippling"):
+        elif ref.kind in ("ashby", "rippling", "adp"):
             config["company_name"] = company
         session.add(Source(
             track=search.track, kind=ref.kind, name=f"{company} jobs ({PLATFORMS[ref.kind]})",

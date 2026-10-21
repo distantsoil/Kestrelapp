@@ -23,6 +23,7 @@ SOURCE_KINDS = (
     "workday",
     "smartrecruiters",
     "rippling",
+    "adp",
     "page",
     "rss",
     "sec_edgar",

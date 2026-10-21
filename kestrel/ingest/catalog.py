@@ -181,6 +181,25 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "1 request/second (list and detail alike).",
         "region": _WORLDWIDE,
     },
+    "adp": {
+        "name": "ADP Workforce Now",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public career-center JSON for one employer: workforcenow.adp.com/mascsr/default/"
+            "careercenter/public/events/staffing/v1/job-requisitions, 20 per page, plus one "
+            "detail request per posting for the description, up to max_results (default 200). "
+            "ADP publishes no robots.txt for this host, so Kestrel stays at one request a second."
+        ),
+        "provide": (
+            "The employer's cid (a UUID) from its career-center link "
+            "(workforcenow.adp.com/.../recruitment.html?cid={cid}). Optionally company_name, "
+            "cc_id, lang and max_results."
+        ),
+        "config_example": {"cid": "00000000-0000-4000-8000-000000000000"},
+        "rate_limit": "1 request/second (list and detail alike).",
+        "region": _WORLDWIDE,
+    },
     "jobspy": {
         "name": "Job boards via JobSpy",
         "category": CATEGORY_AGGREGATOR,
@@ -387,7 +406,7 @@ def _ordered_kinds() -> list[str]:
     """Registered adapter kinds, then registered signal kinds, then the table-only kinds, each in
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
-        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "jobspy",
+        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp", "jobspy",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

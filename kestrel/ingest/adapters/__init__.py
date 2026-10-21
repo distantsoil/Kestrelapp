@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kestrel.ingest.adapters.adp import AdpAdapter
 from kestrel.ingest.adapters.ashby import AshbyAdapter
 from kestrel.ingest.adapters.greenhouse import GreenhouseAdapter
 from kestrel.ingest.adapters.jobspy import JobSpyAdapter
@@ -33,6 +34,7 @@ for _adapter in (
     WorkdayAdapter(),
     SmartRecruitersAdapter(),
     RipplingAdapter(),
+    AdpAdapter(),
     JobSpyAdapter(),
 ):
     register(_adapter)

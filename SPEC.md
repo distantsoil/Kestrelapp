@@ -437,6 +437,7 @@ Guardrails, all of which must be enforced rather than discovered:
 | Ashby | `GET https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` | 200 |
 | **Workday** | `POST https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` body `{"limit":20,"offset":0,"searchText":""}` | 200, 2000 postings |
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
+| **ADP Workforce Now** | `GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&$top=20&$skip=1` | 200, no auth (verified 2026-10-21) |
 | **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
 Workday matters disproportionately: it is the dominant enterprise ATS, and enterprise is where
@@ -1555,6 +1556,37 @@ several places is **one row per location with the same `uuid`**, so the adapter 
 compensation is read), `url`, `board` (`{slug, companyName, ...}`), `companyName`,
 `unlistedFromSearch`, `activeJobApplication` (form questions, ignored). `description.company` is
 the employer boilerplate and is left out; `description.role` is the body.
+
+### ADP Workforce Now (career center)
+
+`GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&ccId={ccId}&lang=en_US&locale=en_US&$top=20&$skip=1`
+→ `200`, `application/json`, no auth. Verified 2026-10-21 against one public career center
+(`recruitment.html?cid={uuid}&ccId=19000101_000001`; 85 postings). `cid` is the employer's UUID from
+the career-center link; `ccId` is `19000101_000001` on every link seen. `workforcenow.adp.com`
+publishes no `robots.txt` (the path redirects to the ADP sign-in page), so there is no rule to
+follow or break; the endpoint is the one the public career-center page itself calls.
+
+```
+{ "jobRequisitions": [ ... ], "meta": { "startSequence": n, "totalNumber": n, "links": [ ... ] } }
+```
+
+Per requisition: `itemID` (e.g. `9207316549520_1`, the id the detail endpoint takes),
+`requisitionTitle`, `postDate` (ISO datetime with offset), `workLevelCode` (`{shortName}`, absent
+on some rows), `clientRequisitionID`, `requisitionLocations[]` (`{address: {cityName,
+countrySubdivisionLevel1: {codeValue}, postalCode}, nameCode: {shortName}, aliasNames}`),
+`customFieldGroup` (`stringFields[]` holds `ExternalJobID`, the public job number), plus empty
+`links`, `organizationalUnits`, `screeningRequirements`, `postingInstructions`.
+
+**Gotchas:** pages are capped at **20** whatever `$top` says. `$skip` is **1-based**: `$skip=1`
+is the first page, `$skip=21` the second (`$skip=0` returns 19 rows and `startSequence: 0`, so it
+is never sent). Stop at `meta.totalNumber`. `meta.links` is a facet list and is ignored. A posting
+open in several places repeats `requisitionLocations` entries, some duplicates and some blank
+(`nameCode: {}`, empty `address` strings); blanks are dropped and duplicates merged. The title is
+`requisitionTitle` and carries a trailing space on some rows. The list has no description; the
+detail `GET .../job-requisitions/{itemID}?cid={cid}&ccId={ccId}&lang=en_US&locale=en_US` → `200`
+returns the same object plus `requisitionDescription` (HTML). The public posting page is
+`https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid={cid}&ccId={ccId}&jobId={ExternalJobID}&lang=en_US`
+(a script-rendered page; its content was not fetched, only the JSON above).
 
 ### SEC EDGAR full-text search — consulting trigger events
 

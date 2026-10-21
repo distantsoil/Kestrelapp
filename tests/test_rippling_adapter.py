@@ -19,9 +19,17 @@ from httpx import Response
 from kestrel.config import get_settings
 from kestrel.ingest import board_discovery as bd
 from kestrel.ingest.adapters import get_adapter
+from kestrel.ingest.adapters import rippling as rippling_module
 from kestrel.ingest.adapters.rippling import RipplingAdapter
 from kestrel.ingest.base import AdapterError, SourceConfigError
 from kestrel.ingest.http import HttpClient
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_wait(monkeypatch):
+    """The adapter paces itself at 1 request/second; tests must not sleep through that."""
+    monkeypatch.setattr(rippling_module, "_RATE", 0)
+
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _LIST = json.loads((_FIXTURES / "rippling_list.json").read_text())
