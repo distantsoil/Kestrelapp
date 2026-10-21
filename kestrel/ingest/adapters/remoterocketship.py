@@ -17,7 +17,8 @@ Rules that bind this module:
     (D-SEC-2); the body is read only to tell a missing key from a rejected one.
   - A run makes at most `max_pages` requests (default 2, 50 jobs each), far inside the provider's
     500 requests or 3,000 jobs per UTC day. 429 and 403 are never retried (each retry spends quota);
-    a 429 after a good page keeps the links already collected and makes the run partial.
+    a 429 keeps the links already collected (none, on the first page) and makes the run partial,
+    never a failure of the source.
   - The robots check is skipped for this one authenticated API call only: `Disallow: /api` is a
     crawler rule and this API is published for programmatic use with the user's own key (D-SRC-14).
 """
@@ -31,6 +32,7 @@ import httpx
 import structlog
 
 from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.pipeline.profile import load_profile
 
 log = structlog.get_logger(__name__)
 
@@ -57,6 +59,36 @@ class LinkBatch(list):
     def __init__(self) -> None:
         super().__init__()
         self.partial_error = None
+
+
+MAX_PROFILE_FILTERS = 10
+
+
+def _profile_filters() -> dict:
+    """Filters from the employment profile when the source sets none: the target titles as
+    `jobTitleFilters` and the onsite metros as `locationFilters`. Filters the user writes in the
+    source always replace these. Nothing in the profile means no filter (a plain query)."""
+    try:
+        prof = load_profile("employment")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if prof is None:
+        return {}
+    terms = getattr(prof, "employment_terms", None)
+    raw_titles = getattr(terms, "target_titles", None) or []
+    titles = [str(t).strip() for t in raw_titles if str(t).strip()]
+    geo = getattr(prof, "geo_rules", None)
+    places = []
+    for m in getattr(geo, "onsite_metros", None) or []:
+        name = str(getattr(m, "name", None) or (m.get("name") if isinstance(m, dict) else "") or "")
+        if name.strip():
+            places.append(name.strip())
+    out: dict = {}
+    if titles:
+        out["jobTitleFilters"] = titles[:MAX_PROFILE_FILTERS]
+    if places:
+        out["locationFilters"] = places[:MAX_PROFILE_FILTERS]
+    return out
 
 
 def _key(config: dict) -> str:
@@ -123,7 +155,7 @@ class RemoteRocketshipAdapter:
         key = _key(config)
         max_pages = _int_in(config, "max_pages", DEFAULT_MAX_PAGES, 1, MAX_PAGES_LIMIT)
         per_page = _int_in(config, "items_per_page", MAX_PER_PAGE, 1, MAX_PER_PAGE)
-        filters = dict(config.get("filters") or {})
+        filters = dict(config.get("filters") or {}) or _profile_filters()
         headers = {"Authorization": f"Bearer {key}"}
         batch = LinkBatch()
         seen: set[str] = set()
@@ -149,7 +181,10 @@ class RemoteRocketshipAdapter:
                     detail = None
                 message = _problem(r.status_code, detail)
                 log.warning("remoterocketship_error", status=r.status_code, page=page)
-                if page > 1 and r.status_code == 429 and len(batch):
+                if r.status_code == 429:
+                    # The daily quota is spent: what is already collected (maybe nothing) is
+                    # returned and the run is partial. Not a failure of the source, so it never
+                    # counts toward the auto-disable streak.
                     batch.partial_error = message
                     return batch
                 raise AdapterError(message)

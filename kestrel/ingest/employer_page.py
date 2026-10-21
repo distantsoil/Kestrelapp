@@ -62,9 +62,10 @@ def parse_job_posting(html: str, url: str) -> RawPosting | None:
     for block in _LD_BLOCK.findall(html):
         try:
             data = json.loads(block.strip())
-        except ValueError:
+            objs = list(_walk(data))
+        except (ValueError, RecursionError):  # malformed, or nested deeper than Python allows
             continue
-        for obj in _walk(data):
+        for obj in objs:
             if not _is_job(obj):
                 continue
             title, body = _text(obj.get("title")), _text(obj.get("description"))

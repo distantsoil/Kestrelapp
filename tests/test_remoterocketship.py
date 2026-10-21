@@ -144,13 +144,14 @@ async def test_an_invalid_key_is_told_apart_from_a_missing_one():
 
 
 @respx.mock
-async def test_a_429_on_the_first_page_is_a_partial_run_message():
+async def test_a_429_on_the_first_page_is_an_empty_partial_batch_not_a_failure():
     route = respx.post(API).mock(
         return_value=Response(429, json={"message": "Daily request limit reached"}))
     async with _http() as http:
-        with pytest.raises(AdapterError) as ei:
-            await RemoteRocketshipAdapter().fetch({}, http)
-    assert "daily limit" in str(ei.value) and route.call_count == 1  # never retried
+        got = await RemoteRocketshipAdapter().fetch({}, http)
+    assert list(got) == [] and "daily limit" in got.partial_error
+    assert route.call_count == 1  # never retried
+    assert "Daily request limit" not in got.partial_error
 
 
 @respx.mock
@@ -317,6 +318,97 @@ async def test_unreadable_links_are_capped_and_counted(sm, monkeypatch):
         out = await run_source(sm, src.id, http=http)
     assert out.counts["unreadable"] == 30  # 20 tried and unreadable, 10 over the cap
     assert employer_links.MAX_PAGES_PER_RUN == 20
+
+
+@respx.mock
+async def test_repeated_daily_limit_runs_never_disable_the_source(sm):
+    respx.post(API).mock(return_value=Response(429, json={"message": "Daily request limit"}))
+    src = await _source(sm)
+    for _ in range(4):
+        async with _http(robots=True) as http:
+            out = await run_source(sm, src.id, http=http)
+        assert out.status == "partial" and "daily limit" in out.error
+    async with sm() as s:
+        got = await s.get(Source, src.id)
+        assert got.enabled and got.consecutive_failures == 0
+
+
+@respx.mock
+async def test_a_resolve_that_raises_stores_nothing_from_the_link_batch(sm, monkeypatch):
+    from kestrel.ingest import employer_links
+
+    respx.post(API).mock(return_value=Response(200, json=_page(1, False)))
+
+    async def boom(*a, **kw):
+        raise RuntimeError("resolver blew up")
+
+    monkeypatch.setattr(employer_links, "resolve", boom)
+    src = await _source(sm)
+    async with _http(robots=True) as http:
+        out = await run_source(sm, src.id, http=http)
+    assert out.status == "partial" and "resolver blew up" in out.error
+    async with sm() as s:
+        assert (await s.execute(select(Opportunity))).scalars().all() == []
+
+
+def test_deeply_nested_json_ld_is_unreadable_not_a_crash():
+    from kestrel.ingest.employer_page import parse_job_posting
+
+    for depth in (900, 5000, 200_000):
+        html = ('<script type="application/ld+json">' + "[" * depth + "]" * depth + "</script>")
+        assert parse_job_posting(html, "https://x.example.com/j") is None
+    nested = '{"a":' * 900 + "1" + "}" * 900
+    html = f'<script type="application/ld+json">{nested}</script>'
+    assert parse_job_posting(html, "https://x.example.com/j") is None
+
+
+@respx.mock
+async def test_the_providers_own_site_is_never_fetched(sm):
+    own = ["https://www.remoterocketship.com/us/company/x/jobs/1",
+           "https://remoterocketship.com/job/2", "https://jobs.remoterocketship.com/3"]
+    many = {**JOBS, "jobOpenings": [{"url": u} for u in own] + [{"url": EMPLOYER_URL}]}
+    respx.post(API).mock(return_value=Response(200, json=many))
+    page = _employer_mocks()
+    theirs = respx.get(url__regex=r"https://([a-z]+\.)?remoterocketship\.com/.*").mock(
+        return_value=Response(200, text=LDJSON))
+    src = await _source(sm)
+    async with _http(robots=True) as http:
+        out = await run_source(sm, src.id, http=http)
+    assert theirs.call_count == 0 and page.call_count == 1
+    assert out.counts["unreadable"] == 3 and out.counts["pages_read"] == 1
+
+
+@respx.mock
+async def test_no_filters_means_the_profiles_titles_and_places_user_filters_win(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from kestrel.ingest.adapters import remoterocketship as rr
+
+    prof = NS(
+        employment_terms=NS(target_titles=["Data Engineer", "Analytics Engineer"]),
+        geo_rules=NS(onsite_metros=[NS(name="Austin"), NS(name="Denver")]),
+    )
+    monkeypatch.setattr(rr, "load_profile", lambda track: prof if track == "employment" else None)
+    route = respx.post(API).mock(return_value=Response(200, json=_page(1, False)))
+    async with _http() as http:
+        await RemoteRocketshipAdapter().fetch({}, http)
+        await RemoteRocketshipAdapter().fetch({"filters": {"jobTitleFilters": ["Chef"]}}, http)
+    first = json.loads(route.calls[0].request.content)["filters"]
+    assert first["jobTitleFilters"] == ["Data Engineer", "Analytics Engineer"]
+    assert first["locationFilters"] == ["Austin", "Denver"]
+    second = json.loads(route.calls[1].request.content)["filters"]
+    assert second["jobTitleFilters"] == ["Chef"] and "locationFilters" not in second
+
+
+@respx.mock
+async def test_no_profile_means_no_default_filters(monkeypatch):
+    from kestrel.ingest.adapters import remoterocketship as rr
+
+    monkeypatch.setattr(rr, "load_profile", lambda track: None)
+    route = respx.post(API).mock(return_value=Response(200, json=_page(1, False)))
+    async with _http() as http:
+        await RemoteRocketshipAdapter().fetch({}, http)
+    assert set(json.loads(route.calls[0].request.content)["filters"]) == {"page", "itemsPerPage"}
 
 
 # --------------------------------------------------------------------------------- help copy

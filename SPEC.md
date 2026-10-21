@@ -480,7 +480,11 @@ most 20 pages a run). A link nothing can read is dropped and counted in the run 
 not be read from the employer"). Off by default; the key is `REMOTEROCKETSHIP_API_KEY` (or the
 `api_key_env` named in the config) in `.env` and never in a config row. A run makes at most
 `max_pages` requests (default 2, 50 jobs each) against the provider's 500 requests or 3,000 jobs
-per UTC day; a 429 makes the run partial and keeps the links already collected.
+per UTC day; a 429 makes the run partial (never a source failure, so it cannot auto-disable the source) and
+keeps the links already collected, which on the first page is none. A link on the provider's own
+site is dropped and counted unreadable, never fetched. With no `filters` on the source, the
+employment profile supplies `jobTitleFilters` (target titles) and `locationFilters` (onsite metros);
+filters set on the source replace them.
 
 **Manual.** Paste a URL (httpx, escalating to Playwright on a JavaScript shell) or paste raw JD
 text. Both produce a normal `opportunity` and run the identical pipeline.

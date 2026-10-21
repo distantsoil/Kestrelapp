@@ -110,7 +110,11 @@
   <p><strong>If something goes wrong.</strong> "Did not receive an API key" or "did not accept the API
   key": check the name and the value in <span class="mono">.env</span>. "Needs an active paid
   subscription": your plan does not include API access. "Daily limit was reached": wait until 00:00
-  UTC. The run is marked partial and keeps the links it already had.</p>
+  UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits
+  after the first page, the links from the earlier pages are still used; if it hits on the first
+  page, the run finds nothing and the next scan tries again.</p>
+  <p><strong>Filters.</strong> With no filters set on the source, Kestrel asks for your target titles
+  and onsite metros from your profile. Filters you write on the source replace them.</p>
   <h3>Region</h3>
   <p>{{ region_note }}</p>
   <h3>Need a board that is not listed?</h3>

@@ -80,8 +80,9 @@ async def run_source(
                 # A fetch that stopped early with links in hand (a 429) makes the run partial
                 # without counting a failure of the source.
                 stopped_early = getattr(postings, "partial_error", None)
+                links, postings = postings, None  # a failing resolve must store no bare link
                 postings, link_counts = await employer_links.resolve(
-                    session, postings, source=source, http=http
+                    session, links, source=source, http=http
                 )
                 counts.update(link_counts)
                 if stopped_early:
