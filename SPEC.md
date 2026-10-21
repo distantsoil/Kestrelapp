@@ -988,6 +988,17 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
 - Every transmission is recorded in `frontier_transmission` with the provider's own token counts
   and cost where reported (NULL renders as unknown, never as free). One confirmation authorizes
   one send: any prior record for the same payload hash, whatever its status, refuses a replay.
+- **Balance in the status rail** (#29, D-BYOK-12). Only OpenRouter can say what is left on a key:
+  `GET /key` returns `usage`, `limit` and `limit_remaining`. The rail shows "$X left" for a key with a
+  limit and "Spent $Y, no limit set" for one without. The request is made only when Hosted mode is on
+  and acknowledged, the key is OpenRouter's and saved, and the user did not choose free models only
+  (unless they ticked Always show my OpenRouter balance, the `ui.show_balance` row). It carries the
+  Authorization header and nothing else, is cached for five minutes under a digest of the key (a
+  failure for one minute, shown as "Balance unavailable"), and the key is never logged. Anthropic and
+  OpenAI have no balance endpoint for an ordinary key and Kestrel does not ask for an admin key, so
+  every provider but OpenRouter makes **no request**: the rail shows this month's deeper reads from
+  `frontier_transmission.cost_usd` (a send with no reported cost is unknown, never $0). Tier runs on a
+  hosted model are not metered locally, so that line says "on deeper reads".
 
 ### 6.5 Recurring scans
 

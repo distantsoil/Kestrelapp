@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select
@@ -42,6 +43,8 @@ from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
+
+log = structlog.get_logger()
 
 
 def _model_display_name(model_name: str) -> str:
@@ -525,6 +528,18 @@ def _hosted_row(settings: Settings) -> dict[str, Any]:
     return {"state": "warn", "label": "Online deeper-read key: not set", "key_present": False}
 
 
+async def _balance_row(s: AsyncSession, settings: Settings) -> dict[str, str] | None:
+    """The rail's balance line (#29): what is left on an opted-in OpenRouter key, or this month's
+    local spend for any other provider. Cached; never raises into the poll."""
+    from kestrel.services import hosted_balance
+
+    try:
+        return await hosted_balance.rail_row(s, settings)
+    except Exception as exc:  # the rail must render even if this line cannot
+        log.warning("balance_row_failed", error_type=type(exc).__name__)
+        return None
+
+
 async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, int]:
     """Cheap counts for the sidebar badges, each counting exactly the rows of the page or chip
     it opens, on the active tab's track (R8; None, the tray's /api/status: every track).
@@ -616,6 +631,7 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
     model = await _model_row(settings, settings.llm.mode) if probe else None
     scan = await _scan_row(s)
     hosted = _hosted_row(settings)
+    balance = await _balance_row(s, settings)
     counts = await _nav_counts(s)
     scanning = await scan_state(s, activity)
     return {
@@ -629,6 +645,7 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
         "loaded_model": (model["loaded"][0] if model and model["loaded"] else None),
         "scan": scan,
         "hosted": hosted,
+        "balance": balance,
         "counts": counts,
         "scan_state": scanning,
     }

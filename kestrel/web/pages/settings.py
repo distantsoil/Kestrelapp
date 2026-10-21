@@ -562,6 +562,13 @@ async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dic
     extra.setdefault("free_ids", {m.id for m in prov.free_models(models)})
     # The checkbox shows the standing choice (the last Connect's), not an empty box each time.
     extra.setdefault("free_only", settings.llm.hosted_mode.free_only)
+    # #29: the Always show my OpenRouter balance choice, offered only with an OpenRouter key saved.
+    from kestrel.services import hosted_balance
+
+    extra["show_balance"] = await hosted_balance.show_balance_enabled(session)
+    extra["openrouter_key_present"] = any(
+        b["provider"] == "openrouter" and b["key_present"] for b in backends.values()
+    )
     # "setup" when the operator came from the Setup page's step 6 (D-UI-11): the partial then
     # carries the value through its forms and offers "Return to setup" once connected.
     extra["return_to"] = _return_to(extra.get("return_to"))
@@ -813,6 +820,27 @@ async def hosted_connect(request: Request):
             return_to=back,
             **extra,
         )
+    return _hosted_partial(request, ctx)
+
+
+@router.post("/settings/hosted/balance", response_class=HTMLResponse)
+async def hosted_balance_toggle(request: Request):
+    """Always show my OpenRouter balance (#29, D-BYOK-12): a stored choice that lets the sidebar
+    ask OpenRouter for the key's remaining credit even when free models only is on. Off by
+    omission: an unticked box posts nothing."""
+    from kestrel.services import hosted_balance
+
+    form = await request.form()
+    on = str(form.get("show_balance") or "") == "on"
+    async with sessionmaker()() as s:
+        await hosted_balance.set_show_balance(s, on)
+        await s.commit()
+        settings = await load_settings_with_db(s)
+        msg = (
+            "The sidebar will show your OpenRouter balance."
+            if on else "The sidebar shows your balance only when you are not on free models only."
+        )
+        ctx = await _hosted_ctx(s, settings, ok=True, message=msg)
     return _hosted_partial(request, ctx)
 
 
