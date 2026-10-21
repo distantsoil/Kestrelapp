@@ -323,3 +323,47 @@ def test_settings_toggle_stores_the_choice_and_shows_only_with_an_openrouter_key
     assert asyncio.run(stored()) is True
     client.post("/settings/hosted/balance", data={})
     assert asyncio.run(stored()) is False
+
+
+def test_a_spare_openrouter_key_is_not_asked_when_hosted_mode_uses_another_provider():
+    # An Anthropic user with a leftover OpenRouter key in .env must not have it queried or shown.
+    from kestrel.config import TierConfig
+
+    s = _settings(anthropic_key="sk-ant-test")
+    s.llm.tiers["frontier"] = s.llm.tiers["frontier"].model_copy(update={"backend": "anthropic"})
+    s.llm.hosted_tiers = {t: TierConfig(backend="anthropic", model="claude-x")
+                          for t in ("tier1", "tier2")}
+    assert hb.eligible_backend(s, show_balance=True) is None
+
+
+@respx.mock
+async def test_concurrent_polls_as_the_cache_expires_send_one_request(sm):
+    async def slow(request):
+        await asyncio.sleep(0.05)
+        return _key_json(limit=10.0, limit_remaining=4.2)
+
+    route = respx.get(KEY_URL).mock(side_effect=slow)
+    name, backend = hb.eligible_backend(_settings(), show_balance=False)
+    await asyncio.gather(*(hb._reading(name, backend) for _ in range(4)))
+    assert route.call_count == 1
+
+
+async def test_month_spend_counts_every_billed_send_not_only_sent(sm):
+    # A deeper read that left the machine was billed even when its reply quarantined or failed.
+    await _spend(sm, 0.10)
+    async with sm() as s:
+        opp = (await s.execute(select(Opportunity))).scalars().first()
+        when = datetime.now(UTC).isoformat()
+        s.add(FrontierTransmission(
+            opportunity_id=opp.id, created_at=when, provider="anthropic", base_url="https://x",
+            model="m", payload={}, payload_sha256="q1", status="quarantined", cost_usd=0.05,
+        ))
+        s.add(FrontierTransmission(
+            opportunity_id=opp.id, created_at=when, provider="anthropic", base_url="https://x",
+            model="m", payload={}, payload_sha256="n1", status="failed", cost_usd=None,
+            egressed=False,
+        ))
+        await s.commit()
+        row = await hb.local_spend(s)
+    assert row is not None and "$0.15" in row["label"]
+    assert "unreported" not in row["label"]  # the unsent row is neither cost nor unknown

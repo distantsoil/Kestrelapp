@@ -75,7 +75,7 @@
     <span class="muted pfilter-count" role="status" aria-live="polite" data-testid="filter-count" x-text="countText">Showing {{ cards|length }} of {{ cards|length }}</span>
   </div>
 </div>
-<div class="pfilter-empty" x-show="total > 0 && shown === 0" x-cloak data-testid="filter-empty">
+<div class="pfilter-empty" x-show="total > 0 && matched === 0" x-cloak data-testid="filter-empty">
   <p>Nothing matches. Try fewer words or a different stage.</p>
   <button type="button" class="btn" @click="clear()" data-testid="clear-filters">Clear filters</button>
 </div>
@@ -93,7 +93,7 @@
     return {
       q: init.q, stages: init.stages.filter(Boolean), showClosed: init.showClosed, sort: init.sort,
       range: init.range, cap: init.cap, closedOpen: init.closedOpen, closedCount: 0, expanded: [],
-      total: 0, shown: 0,
+      total: 0, shown: 0, matched: 0,
       get active() { return !!(this.q || this.stages.length || !this.showClosed || this.range !== '0'); },
       get foldable() { return this.closedCount > 0 && !this.q.trim() && !this.stages.length; },
       get closedLabel() { return this.closedOpen ? 'Hide closed' : 'Show ' + this.closedCount + ' closed'; },
@@ -143,7 +143,7 @@
       apply() {
         const words = fold(this.q).split(' ').filter(Boolean);
         const items = document.querySelectorAll('#board [data-search]');
-        let shown = 0;
+        let shown = 0, closedShown = 0;
         const perCol = {};
         // A card is out of range when its last activity is older than N days; one with no date
         // is never hidden by the range (an unknown is kept, not dropped).
@@ -160,9 +160,12 @@
             && inRange(el);
           el.hidden = !ok;
           if (ok) { shown++; perCol[el.dataset.col] = (perCol[el.dataset.col] || 0) + 1; }
+          if (ok && el.dataset.closed === '1') closedShown++;
         });
-        this.total = items.length; this.shown = shown;
-        this.closedCount = perCol.closed || 0;
+        this.total = items.length; this.matched = shown;  // the empty state: nothing matches
+        // Closed means a closed STATUS (data-closed), never the column: an open offer sits in the
+        // employment "closed" column and must never be folded away as if it were closed.
+        this.closedCount = closedShown;
         // Board only: fold the closed column unless a search or stage chip is looking for it, and
         // show the first N cards of each column with a "Show all" for the rest.
         const folded = !this.closedOpen && !this.q.trim() && !this.stages.length;
@@ -171,10 +174,11 @@
         document.querySelectorAll('#board .pcard').forEach(el => {
           if (el.hidden) return;
           const col = el.dataset.col;
-          if (col === 'closed' && folded) { el.hidden = true; return; }
+          if (el.dataset.closed === '1' && folded) { el.hidden = true; shown--; return; }
           seen[col] = (seen[col] || 0) + 1;
-          if (cap && seen[col] > cap && !this.expanded.includes(col)) { el.hidden = true; held[col] = (held[col] || 0) + 1; }
+          if (cap && seen[col] > cap && !this.expanded.includes(col)) { el.hidden = true; held[col] = (held[col] || 0) + 1; shown--; }
         });
+        this.shown = shown;  // what is actually on screen, after the fold and the column caps
         document.querySelectorAll('#board [data-colmore]').forEach(b => {
           const col = b.dataset.col, n = held[col] || 0;
           const open = this.expanded.includes(col) && cap && (perCol[col] || 0) > cap;

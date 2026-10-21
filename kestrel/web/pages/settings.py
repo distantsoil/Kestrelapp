@@ -892,15 +892,24 @@ async def hosted_balance_toggle(request: Request):
 
     form = await request.form()
     on = str(form.get("show_balance") or "") == "on"
+    from sqlalchemy.exc import SQLAlchemyError
+
     async with sessionmaker()() as s:
-        await hosted_balance.set_show_balance(s, on)
-        await s.commit()
+        try:
+            await hosted_balance.set_show_balance(s, on)
+            await s.commit()
+            ok = True
+            msg = (
+                "The sidebar will show your OpenRouter balance."
+                if on
+                else "The sidebar shows your balance only when you are not on free models only."
+            )
+        except SQLAlchemyError as exc:  # a write path never 500s
+            log.warning("show_balance_save_failed", error_type=type(exc).__name__, error=str(exc))
+            await s.rollback()
+            ok, msg = False, f"Could not save that choice: {plain_error(exc)}"
         settings = await load_settings_with_db(s)
-        msg = (
-            "The sidebar will show your OpenRouter balance."
-            if on else "The sidebar shows your balance only when you are not on free models only."
-        )
-        ctx = await _hosted_ctx(s, settings, ok=True, message=msg)
+        ctx = await _hosted_ctx(s, settings, ok=ok, message=msg)
     return _hosted_partial(request, ctx)
 
 

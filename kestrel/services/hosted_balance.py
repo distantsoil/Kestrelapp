@@ -15,6 +15,7 @@ sidebar's 10 second poll costs a request about every five minutes at most. The k
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from dataclasses import dataclass
@@ -47,6 +48,7 @@ def _now() -> float:
 
 def clear_cache() -> None:
     _cache.clear()
+    _locks.clear()
 
 
 @dataclass(frozen=True)
@@ -82,8 +84,12 @@ def eligible_backend(settings: Settings, *, show_balance: bool) -> tuple[str, Ba
         return None
     if hosted.free_only and not show_balance:
         return None
+    # Only a backend hosted mode actually uses (a hosted tier's or the frontier tier's): a spare
+    # OpenRouter key in .env must not be asked about, or shown, for an Anthropic user.
+    in_use = {t.backend for t in settings.llm.hosted_tiers.values()}
+    in_use.add(prov.frontier_backend(settings)[0])
     for name, backend in prov.external_backends(settings).items():
-        if backend.provider == "openrouter" and _key_value(backend):
+        if name in in_use and backend.provider == "openrouter" and _key_value(backend):
             return name, backend
     return None
 
@@ -127,16 +133,30 @@ async def _fetch(backend: BackendConfig) -> Reading:
         return Reading(False)
 
 
-async def _reading(name: str, backend: BackendConfig) -> Reading:
-    key = _cache_key(name, backend)
+_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
+
+
+def _fresh(key: tuple[str, str, str]) -> Reading | None:
     hit = _cache.get(key)
     if hit is not None:
         at, reading = hit
         if _now() - at < (CACHE_TTL_S if reading.ok else FAILURE_TTL_S):
             return reading
-    reading = await _fetch(backend)
-    _cache[key] = (_now(), reading)
-    return reading
+    return None
+
+
+async def _reading(name: str, backend: BackendConfig) -> Reading:
+    key = _cache_key(name, backend)
+    if (reading := _fresh(key)) is not None:
+        return reading
+    # One fetch per key at a time: the rail, the tray's /api/status and a LAN client can all poll
+    # as the cache expires, and each would otherwise wait on and send its own request.
+    async with _locks.setdefault(key, asyncio.Lock()):
+        if (reading := _fresh(key)) is not None:
+            return reading
+        reading = await _fetch(backend)
+        _cache[key] = (_now(), reading)
+        return reading
 
 
 def _row_from(reading: Reading) -> dict[str, str]:
@@ -168,7 +188,9 @@ async def local_spend(session: AsyncSession) -> dict[str, str] | None:
                 func.count(),
                 func.count() - func.count(FrontierTransmission.cost_usd),
             ).where(
-                FrontierTransmission.status == "sent",
+                # Every send that left the machine was billed, including a reply that then
+                # quarantined or failed (tier3 records its cost), not only status "sent".
+                FrontierTransmission.egressed.is_(True),
                 FrontierTransmission.created_at >= _month_start(),
             )
         )

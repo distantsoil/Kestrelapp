@@ -531,12 +531,16 @@ def _hosted_row(settings: Settings) -> dict[str, Any]:
 async def _balance_row(s: AsyncSession, settings: Settings) -> dict[str, str] | None:
     """The rail's balance line (#29): what is left on an opted-in OpenRouter key, or this month's
     local spend for any other provider. Cached; never raises into the poll."""
+    from sqlalchemy.exc import SQLAlchemyError
+
     from kestrel.services import hosted_balance
 
     try:
         return await hosted_balance.rail_row(s, settings)
-    except Exception as exc:  # the rail must render even if this line cannot
+    except (SQLAlchemyError, httpx.HTTPError) as exc:  # the rail must render without this line
         log.warning("balance_row_failed", error_type=type(exc).__name__)
+        if isinstance(exc, SQLAlchemyError):
+            await s.rollback()  # never leave the session failed for _nav_counts after it
         return None
 
 

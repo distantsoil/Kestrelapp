@@ -58,6 +58,7 @@ async def dismiss(announcement_id: str):
     except SQLAlchemyError as exc:
         log.warning("announcement_dismiss_failed", error_type=type(exc).__name__)
         return HTMLResponse(
-            '<div class="warnbox" role="status">Could not save that. Try again.</div>'
+            '<div class="warnbox" role="status">Could not save that, so the notice will show again '
+            "next time Kestrel opens. Close it again then.</div>"
         )
     return HTMLResponse("")

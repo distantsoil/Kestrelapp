@@ -27,14 +27,14 @@ _ROWS = [
 ]
 
 
-async def _seed() -> None:
+async def _seed(rows: list[tuple[str, str, str]] | None = None) -> None:
     await reset_engine()
     for suffix in ("", "-wal", "-shm"):
         paths.db_path().with_name(paths.db_path().name + suffix).unlink(missing_ok=True)
     migrate.run_migrations()
     engine = make_async_engine(paths.db_path())
     async with async_sessionmaker(engine, expire_on_commit=False)() as s:
-        for i, (company, title, status) in enumerate(_ROWS):
+        for i, (company, title, status) in enumerate(rows or _ROWS):
             org = Org(name=company, normalized_name=company.lower())
             s.add(org)
             await s.flush()
@@ -68,7 +68,7 @@ def test_applications_live_search_in_a_browser():
         search = page.get_by_test_id("pursuit-search")
         # the closed column is folded away until asked for (#30): 4 of the 5 cards show
         expect(cards.locator("visible=true")).to_have_count(4)
-        expect(count).to_have_text("Showing 5 of 5")
+        expect(count).to_have_text("Showing 4 of 5")  # the count is what is on screen
         page.get_by_test_id("closed-toggle").click()
         expect(cards.locator("visible=true")).to_have_count(5)
         page.get_by_test_id("closed-toggle").click()
@@ -84,7 +84,7 @@ def test_applications_live_search_in_a_browser():
         search.press("Escape")
         expect(search).to_have_value("")
         expect(cards.locator("visible=true")).to_have_count(4)
-        expect(count).to_have_text("Showing 5 of 5")
+        expect(count).to_have_text("Showing 4 of 5")
 
         # nonsense shows the empty state; Clear filters restores
         search.fill("zzqxnothing")
@@ -107,7 +107,7 @@ def test_applications_live_search_in_a_browser():
         expect(count).to_have_text("Showing 4 of 5")
         expect(page.locator("#board .pcard", has_text="Hooli")).to_be_hidden()
         page.get_by_test_id("show-closed").check()
-        expect(count).to_have_text("Showing 5 of 5")
+        expect(count).to_have_text("Showing 4 of 5")  # matched again, but the fold is closed
 
         # the query follows a switch to the table
         search.fill("globex")
@@ -211,3 +211,27 @@ def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
 
         browser.close()
     assert errors == [], f"JS errors on page: {errors}"
+
+
+def test_an_open_offer_is_never_folded_away_as_closed():
+    # An offer sits in the employment "closed" column but is not a closed status (#30 review):
+    # the fold keys on data-closed, so the offer stays visible and the button counts 1 closed.
+    from playwright.sync_api import expect, sync_playwright
+
+    from kestrel.web.serve import running_server
+
+    asyncio.run(_seed([
+        ("Acme", "Head of IT", "offer"),
+        ("Hooli", "Data Chief", "rejected"),
+        ("Globex Corp", "Platform Lead", "applied"),
+    ]))
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        page = browser.new_page()
+        page.goto(f"{base}/pursuits?view=kanban")
+        cards = page.locator("#board .pcard")
+        expect(cards.locator("visible=true")).to_have_count(2)
+        expect(page.locator("#board .pcard", has_text="Acme")).to_be_visible()
+        expect(page.locator("#board .pcard", has_text="Hooli")).to_be_hidden()
+        expect(page.get_by_test_id("closed-toggle")).to_have_text("Show 1 closed")
+        browser.close()
