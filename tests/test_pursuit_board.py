@@ -393,6 +393,66 @@ def test_quiet_days_helper():
     assert pb.quiet_days(p, today) is None
 
 
+# ------------------------------------------------------------------- the ghosted hint (#30)
+def _quiet_card(days: int, **kw) -> int:
+    today = date.today()
+    applied = f"{(today - timedelta(days=days)).isoformat()}T00:00:00+00:00"
+    _opp, pid = _seed(
+        status=kw.pop("status", "applied"), applied_at=applied,
+        last_activity_at=applied, next_action_at=(today - timedelta(days=1)).isoformat(),
+        next_action="Follow up", **kw,
+    )
+    return pid
+
+
+def test_ghost_hint_threshold_is_past_the_configured_days():
+    today = date(2026, 10, 15)
+    p = Pursuit(opportunity_id=1, track="employment", status="applied", id=1,
+                applied_at="2026-09-24T00:00:00+00:00", next_action_at="2026-10-10")
+    assert pb.quiet_days(p, today) == 21
+    assert pb.ghost_hint(p, today, days=21) is None  # exactly the threshold is not past it
+    assert pb.ghost_hint(p, today, days=20) == 21
+    p.status = "interviewing"
+    assert pb.ghost_hint(p, today, days=1) is None  # only a card waiting on a reply
+    assert pb.GHOST_STATUS == {"employment": "ghosted", "consulting": "no_response"}
+
+
+def test_a_long_quiet_card_offers_to_mark_ghosted_and_a_recent_one_does_not():
+    c = _fresh()
+    _quiet_card(30)
+    _quiet_card(10, title="Recent quiet")
+    with c:
+        col = _column(c.get("/pursuits").text, "Applied")
+    assert col.count('data-testid="ghost-hint"') == 1
+    assert "No reply in 30 days." in col
+    assert 'data-testid="ghost-hint-act"' in col
+    assert "&#34;to_status&#34;: &#34;ghosted&#34;" in col or '"to_status": "ghosted"' in col
+
+
+def test_the_hint_acts_through_move_to_status_and_adds_no_status():
+    c = _fresh()
+    pid = _quiet_card(40)
+    with c:
+        r = c.post(f"/pursuits/{pid}/status", data={"to_status": "ghosted"},
+                   headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        board = c.get("/pursuits").text
+    p, events = _pursuit(pid)
+    assert p.status == "ghosted" and p.closed_at  # the closed_at stamp is move_to_status's
+    assert events[-1].to_status == "ghosted"
+    assert 'data-testid="ghost-hint"' not in board  # a closed card has nothing to count
+
+
+def test_a_consulting_lead_offers_no_response():
+    c = _fresh(consulting=True)
+    pid = _quiet_card(30, track="consulting", status="outreach_sent")
+    with c:
+        html = c.get("/pursuits?track=consulting").text
+    assert "No reply in 30 days." in html
+    assert "no_response" in html
+    assert pid
+
+
 # ------------------------------------------------------------------------------- add a role
 def test_add_by_paste_creates_opportunity_pursuit_event_and_queues_scoring():
     c = _fresh()

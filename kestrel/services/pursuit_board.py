@@ -234,6 +234,18 @@ def quiet_days(p: Pursuit, on: date | None = None) -> int | None:
     return max(1, (on - anchor).days)
 
 
+# The status a long-silent card moves to when the operator accepts the hint (no new status).
+GHOST_STATUS: dict[str, str] = {"employment": "ghosted", "consulting": "no_response"}
+
+
+def ghost_hint(p: Pursuit, on: date | None = None, *, days: int) -> int | None:
+    """Days of silence when a waiting card has been quiet for MORE than `days` (the configured
+    pursuits.ghosting_days), else None. The board offers to mark such a card ghosted; the move
+    itself is the operator's click through move_to_status, never automatic."""
+    quiet = quiet_days(p, on)
+    return quiet if quiet is not None and quiet > days else None
+
+
 def order_cards(pursuits: list[Pursuit], on: date | None = None) -> list[Pursuit]:
     """Overdue follow-ups first (most overdue first), then most recent activity first."""
     on = on or today()

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ page_label }} · Kestrel{% endblock %}
 {% block content %}
-<div x-data='pursuitFilter({{ {"q": query.get("q") or "", "stages": (query.get("stage") or "").split(","), "showClosed": query.get("closed") != "0", "sort": query.get("sort") or ""}|tojson }})'
+<div x-data='pursuitFilter({{ {"q": query.get("q") or "", "stages": (query.get("stage") or "").split(","), "showClosed": query.get("closed") != "0", "sort": query.get("sort") or "", "range": board_range, "cap": board_cap, "closedOpen": query.get("open") == "closed", "today": today}|tojson }})'
      @keydown.window="onKey($event)" data-testid="pursuit-filter-scope">
 <div class="phead">
   <h1 style="margin-right:auto">{{ page_label }}</h1>
@@ -56,6 +56,16 @@
         <option value="applied" {% if query.get('sort') == 'applied' %}selected{% endif %}>Date {{ words(track).applied_done|lower }}</option>
       </select></label>
     {% endif %}
+    <label class="pfilter-sort">Updated
+      <select x-model="range" data-testid="range-select">
+        {% for r in range_choices %}<option value="{{ r }}" {% if r == board_range %}selected{% endif %}>{{ 'All time' if r == '0' else 'Last ' ~ r ~ ' days' }}</option>{% endfor %}
+      </select></label>
+    {% if view != 'table' %}
+    <label class="pfilter-sort">Per column
+      <select x-model="cap" data-testid="cap-select">
+        {% for n in cap_choices %}<option value="{{ n }}" {% if n == board_cap %}selected{% endif %}>{{ 'All' if n == '0' else n }}</option>{% endfor %}
+      </select></label>
+    {% endif %}
     <button type="button" class="btn small ghost" x-show="active" x-cloak @click="clear()" data-testid="clear-filters-inline">Clear filters</button>
   </div>
   <div class="pfilter-row" role="group" aria-label="Stage">
@@ -82,18 +92,29 @@
     const fold = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
     return {
       q: init.q, stages: init.stages.filter(Boolean), showClosed: init.showClosed, sort: init.sort,
+      range: init.range, cap: init.cap, closedOpen: init.closedOpen, closedCount: 0, expanded: [],
       total: 0, shown: 0,
-      get active() { return !!(this.q || this.stages.length || !this.showClosed); },
+      get active() { return !!(this.q || this.stages.length || !this.showClosed || this.range !== '0'); },
+      get foldable() { return this.closedCount > 0 && !this.q.trim() && !this.stages.length; },
+      get closedLabel() { return this.closedOpen ? 'Hide closed' : 'Show ' + this.closedCount + ' closed'; },
       get countText() { return 'Showing ' + this.shown + ' of ' + this.total; },
       init() {
-        ['q', 'stages', 'showClosed', 'sort'].forEach(k => this.$watch(k, () => this.apply()));
+        ['q', 'stages', 'showClosed', 'sort', 'range', 'cap', 'closedOpen'].forEach(k => this.$watch(k, () => this.apply()));
+        // What the user chose here is the default next time (a setting row, not the browser).
+        ['range', 'cap'].forEach(k => this.$watch(k, v => {
+          fetch('/pursuits/prefs', { method: 'POST', body: new URLSearchParams({ [k]: v }) }).catch(() => {});
+        }));
         document.body.addEventListener('htmx:afterSwap', () => this.$nextTick(() => this.apply()));
         this.apply();
       },
       toggleStage(k) {
         this.stages = this.stages.includes(k) ? this.stages.filter(s => s !== k) : [...this.stages, k];
       },
-      clear() { this.q = ''; this.stages = []; this.showClosed = true; },
+      clear() { this.q = ''; this.stages = []; this.showClosed = true; this.range = '0'; },
+      expandCol(k) {
+        this.expanded = this.expanded.includes(k) ? this.expanded.filter(c => c !== k) : [...this.expanded, k];
+        this.apply();
+      },
       params() {
         const p = new URLSearchParams(location.search);
         const set = (k, v) => { if (v) p.set(k, v); else p.delete(k); };
@@ -101,6 +122,9 @@
         set('stage', this.stages.join(','));
         set('closed', this.showClosed ? '' : '0');
         set('sort', this.sort);
+        set('range', this.range === '0' ? '' : this.range);
+        set('cap', this.cap === '0' ? '' : this.cap);
+        set('open', this.closedOpen ? 'closed' : '');
         return p;
       },
       tabHref(view) {
@@ -121,14 +145,42 @@
         const items = document.querySelectorAll('#board [data-search]');
         let shown = 0;
         const perCol = {};
+        // A card is out of range when its last activity is older than N days; one with no date
+        // is never hidden by the range (an unknown is kept, not dropped).
+        const limit = Number(this.range) || 0;
+        const today = Date.parse((init.today || '') + 'T00:00:00Z');
+        const inRange = el => {
+          const d = Date.parse((el.dataset.updated || '') + 'T00:00:00Z');
+          return !limit || isNaN(d) || isNaN(today) || (today - d) / 86400000 <= limit;
+        };
         items.forEach(el => {
           const ok = words.every(w => el.dataset.search.includes(w))
             && (!this.stages.length || this.stages.includes(el.dataset.col))
-            && (this.showClosed || el.dataset.closed !== '1');
+            && (this.showClosed || el.dataset.closed !== '1')
+            && inRange(el);
           el.hidden = !ok;
           if (ok) { shown++; perCol[el.dataset.col] = (perCol[el.dataset.col] || 0) + 1; }
         });
         this.total = items.length; this.shown = shown;
+        this.closedCount = perCol.closed || 0;
+        // Board only: fold the closed column unless a search or stage chip is looking for it, and
+        // show the first N cards of each column with a "Show all" for the rest.
+        const folded = !this.closedOpen && !this.q.trim() && !this.stages.length;
+        const cap = Number(this.cap) || 0;
+        const seen = {}, held = {};
+        document.querySelectorAll('#board .pcard').forEach(el => {
+          if (el.hidden) return;
+          const col = el.dataset.col;
+          if (col === 'closed' && folded) { el.hidden = true; return; }
+          seen[col] = (seen[col] || 0) + 1;
+          if (cap && seen[col] > cap && !this.expanded.includes(col)) { el.hidden = true; held[col] = (held[col] || 0) + 1; }
+        });
+        document.querySelectorAll('#board [data-colmore]').forEach(b => {
+          const col = b.dataset.col, n = held[col] || 0;
+          const open = this.expanded.includes(col) && cap && (perCol[col] || 0) > cap;
+          b.hidden = !(n || open);
+          b.textContent = n ? 'Show all ' + (perCol[col] || 0) : 'Show fewer';
+        });
         document.querySelectorAll('#board .col').forEach(col => {
           const n = col.querySelector('.ccount');
           if (n) n.textContent = perCol[col.dataset.col] || 0;

@@ -5,7 +5,7 @@
     <thead><tr><th>{{ words(track).role | capitalize }}</th><th>Org</th><th>Status</th><th>{{ words(track).applied_done }}</th><th>Next action</th><th>Due</th><th title="Once applied, a new posting of the same role is hidden on arrival as a re-post. Tick to see such listings anyway (aggregators that re-list one title).">Re-posts</th></tr></thead>
     <tbody>
       {% for c in cards %}
-        <tr data-search="{{ c.search }}" data-col="{{ c.column }}" data-closed="{{ 1 if c.closed else 0 }}" data-ord="{{ loop.index }}" data-company="{{ (c.org_name or '')|lower }}" data-activity="{{ c.pursuit.last_activity_at or '' }}" data-applied="{{ c.pursuit.applied_at or '' }}">
+        <tr data-search="{{ c.search }}" data-col="{{ c.column }}" data-closed="{{ 1 if c.closed else 0 }}" data-ord="{{ loop.index }}" data-company="{{ (c.org_name or '')|lower }}" data-activity="{{ c.pursuit.last_activity_at or '' }}" data-applied="{{ c.pursuit.applied_at or '' }}" data-updated="{{ c.updated }}">
           <td><a href="/opportunities/{{ c.opp.id }}">{{ c.opp.title or 'Untitled' }}</a></td>
           <td>{{ c.org_name or '' }}</td>
           <td><span class="pill">{{ stage_name(c.pursuit.status, track) }}</span></td>
@@ -23,13 +23,23 @@
     {% for column in columns %}
       <div class="col" data-col="{{ column.col.key }}" data-status="{{ column.col.first }}">
         <h3>{{ column.col.label }} <span class="muted ccount" data-total="{{ column.cards|length }}">{{ column.cards|length }}</span></h3>
+        {% if column.col.key == 'closed' %}
+          <button type="button" class="btn small ghost" data-testid="closed-toggle" x-show="foldable" x-cloak
+                  @click="closedOpen = !closedOpen" x-text="closedLabel">Show closed</button>
+        {% endif %}
         {% for c in column.cards %}
           {% set pid = c.pursuit.id %}
-          <div class="card pcard {% if c.overdue %}overdue{% endif %}" draggable="true" data-id="{{ pid }}" data-col="{{ column.col.key }}" data-search="{{ c.search }}" data-closed="{{ 1 if c.closed else 0 }}">
+          <div class="card pcard {% if c.overdue %}overdue{% endif %}" draggable="true" data-id="{{ pid }}" data-col="{{ column.col.key }}" data-search="{{ c.search }}" data-closed="{{ 1 if c.closed else 0 }}" data-applied="{{ c.applied }}" data-updated="{{ c.updated }}">
             <span class="grip" aria-hidden="true" title="Drag this card to another column">⠿</span>
             <div><a href="/opportunities/{{ c.opp.id }}" draggable="false">{{ c.opp.title or 'Untitled' }}</a></div>
             <div class="meta">{{ c.org_name or 'unknown' }}</div>
             {% if c.quiet_days %}<div class="meta gap" data-testid="quiet">{{ c.quiet_days }} day{{ '' if c.quiet_days == 1 else 's' }} quiet</div>{% endif %}
+            {% if c.ghost_hint %}
+              <div class="meta gap" data-testid="ghost-hint">No reply in {{ c.ghost_hint }} days.
+                <button class="btn small" type="button" draggable="false" data-testid="ghost-hint-act"
+                        hx-post="/pursuits/{{ pid }}/status" hx-vals='{"to_status": "{{ c.ghost_status }}"}'
+                        hx-target="#board" hx-swap="innerHTML">Mark as {{ stage_name(c.ghost_status, track) }}?</button></div>
+            {% endif %}
             {% if c.sub %}<div class="meta">{{ c.sub }}</div>{% endif %}
             <label class="stagesel meta">Stage
               <select name="to_status" draggable="false" aria-label="Stage for {{ c.opp.title or 'this role' }}"
@@ -111,6 +121,8 @@
         {% else %}
           <p class="muted">{{ column.col.empty }}</p>
         {% endfor %}
+        <button type="button" class="btn small ghost" data-colmore data-testid="show-all" data-col="{{ column.col.key }}" hidden
+                @click="expandCol('{{ column.col.key }}')">Show all {{ column.cards|length }}</button>
       </div>
     {% endfor %}
   </div>

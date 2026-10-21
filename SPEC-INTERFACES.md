@@ -451,6 +451,19 @@ respected; a failure is reported and pasted text is kept) and/or pasted text, in
 the manual path so it is scored through the normal queue, and puts the card in the first column at
 once. A Table view lists every pursuit. Interview debrief capture stays on the opportunity page.
 
+*Limits for a long list (#30).* An "Updated" control hides cards whose last activity (falling back
+to the applied date) is older than 7, 14, 30 or 90 days; All time is the default and a card with
+no date is never hidden. The Offer / Closed column is folded by default behind a "Show N closed"
+button with its count (a search or stage chip that is looking for closed cards opens it). A
+"Per column" control (5, 10, 25, 50 or All) shows the first N cards of each column with a
+"Show all N" button. The choices live in the URL (`range`, `cap`, `open=closed`) and the last
+range and cap chosen are saved in the `ui.board_range` and `ui.board_cap` setting rows, so the
+next visit starts there; the URL wins. A card waiting on a reply that has been quiet for more than
+`pursuits.ghosting_days` (21) shows "No reply in N days." with a Mark as ghosted (consulting: no
+response) button. It is the ordinary stage move through `move_to_status`, only on the user's click;
+there is no new status and no archive flag. Nothing in these attributes carries the employer's name
+in confidential mode.
+
 **`/orgs/{id}` Organization**
 Accumulated signals over time, research, contacts with drafted outreach, warm-path finder
 results, every opportunity ever seen at this org, comp observations.

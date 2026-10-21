@@ -116,3 +116,90 @@ def test_without_confidential_mode_the_real_employer_is_searchable():
     with _client() as c:
         html = c.get("/pursuits").text
     assert "northwind freight" in " ".join(_searches(html))
+
+
+# ------------------------------------------------------------ limits for a long list (#30)
+def _stored(key: str):
+    from sqlalchemy import select
+
+    async def go():
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+                stmt = select(Setting).where(Setting.key == key)
+                row = (await s.execute(stmt)).scalar_one_or_none()
+                return None if row is None else row.value
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(go())
+
+
+def _store(key: str, value) -> None:
+    async def go():
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+                s.add(Setting(key=key, value=value))
+                await s.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("view", ["kanban", "table"])
+def test_every_item_carries_its_applied_and_updated_dates(view):
+    with _client() as c:
+        html = c.get(f"/pursuits?view={view}").text
+    updated = re.findall(r'data-updated="([^"]*)"', html)
+    assert len(updated) == 3
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}|", u) for u in updated)
+    assert len(re.findall(r'data-applied="([^"]*)"', html)) == 3
+
+
+def test_the_range_control_offers_seven_fourteen_thirty_ninety_and_all():
+    with _client() as c:
+        html = c.get("/pursuits").text
+    select = html.split('data-testid="range-select"')[1].split("</select>")[0]
+    assert re.findall(r'<option value="(\d+)"', select) == ["7", "14", "30", "90", "0"]
+    assert '"range": "0"' in html  # nothing is hidden until the user chooses
+
+
+def test_range_prefills_from_the_url_then_the_saved_default():
+    with _client() as c:
+        assert '"range": "30"' in c.get("/pursuits?range=30").text
+        assert c.post("/pursuits/prefs", data={"range": "14", "cap": "25"}).status_code == 200
+        assert _stored("ui.board_range") == "14" and _stored("ui.board_cap") == "25"
+        html = c.get("/pursuits").text
+        assert '"range": "14"' in html and '"cap": "25"' in html
+        assert '"range": "90"' in c.get("/pursuits?range=90").text  # the URL wins
+
+
+def test_prefs_ignore_values_that_are_not_offered():
+    with _client() as c:
+        r = c.post("/pursuits/prefs", data={"range": "365", "cap": "banana"})
+        assert r.status_code == 200
+    assert _stored("ui.board_range") is None and _stored("ui.board_cap") is None
+
+
+def test_the_closed_column_folds_and_each_column_can_show_all():
+    with _client() as c:
+        html = c.get("/pursuits").text
+    assert 'data-testid="closed-toggle"' in html
+    assert html.count('data-testid="show-all"') == 4  # one per column
+    assert 'data-testid="cap-select"' in html
+    assert '"closedOpen": false' in html
+
+
+def test_the_closed_column_state_prefills_from_the_url():
+    with _client() as c:
+        assert '"closedOpen": true' in c.get("/pursuits?open=closed").text
+
+
+def test_confidential_mode_does_not_put_the_employer_in_the_new_attributes():
+    with _client(confidential=True) as c:
+        html = c.get("/pursuits").text
+    for attr in ("data-updated", "data-applied"):
+        assert _EMPLOYER not in " ".join(re.findall(rf'{attr}="([^"]*)"', html))
+    assert _EMPLOYER not in html
