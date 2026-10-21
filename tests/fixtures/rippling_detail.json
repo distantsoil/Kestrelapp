@@ -1,0 +1,151 @@
+{
+  "uuid": "3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1001",
+  "name": " Account Executive, Mid-Market (Austin) ",
+  "description": {
+    "company": "<div><body><p><b><strong>About Northwind Labs</strong></b></p><p>Northwind Labs makes scheduling software for small clinics.</p></body></div>",
+    "role": "<div><body><p><b><strong>The role</strong></b></p><p>Own a book of mid-market accounts and close new business.</p><ul><li>Prospect and run discovery calls</li><li>Forecast accurately</li></ul></body></div>"
+  },
+  "workLocations": [
+    "TX"
+  ],
+  "department": {
+    "name": "Mid-Market",
+    "base_department": "Sales",
+    "department_tree": [
+      "Sales",
+      "Account Executives",
+      "Mid-Market"
+    ]
+  },
+  "employmentType": {
+    "label": "SALARIED_FT",
+    "id": "Salaried, full-time"
+  },
+  "createdOn": "2026-10-06T16:36:07.947000-07:00",
+  "activeJobApplication": {
+    "additionalQuestions": [
+      {
+        "form": {
+          "questions": [
+            {
+              "uniqueKey": "2842322e-d52b-4d5f-8c60-0d3197f32914",
+              "title": "Do you require sponsorship now or in the future to work in the US",
+              "description": "",
+              "tags": [],
+              "dataType": "select",
+              "questionType": "KNOCKOUT",
+              "isRequired": true,
+              "allowComments": false,
+              "canEdit": false,
+              "isPrivate": false,
+              "strChoices": [
+                "Yes",
+                "No"
+              ],
+              "intChoices": [],
+              "isMultiSelectEnabled": true,
+              "isOtherEnabled": false
+            }
+          ],
+          "deletedQuestions": [],
+          "sections": [],
+          "deletedSections": [],
+          "skipLogic": []
+        },
+        "name": "Require sponsorship (knockout)",
+        "id": "6ac58685e29755aa87963dd0"
+      }
+    ],
+    "basicQuestions": [
+      {
+        "oid": "first_name",
+        "fieldType": "SHORT_ANSWER",
+        "title": "First name",
+        "required": true
+      },
+      {
+        "oid": "last_name",
+        "fieldType": "SHORT_ANSWER",
+        "title": "Last name",
+        "required": true
+      },
+      {
+        "oid": "email",
+        "fieldType": "SHORT_ANSWER",
+        "title": "Email",
+        "required": true
+      },
+      {
+        "oid": "pronouns",
+        "fieldType": "PRONOUN",
+        "title": "Pronouns",
+        "required": false
+      },
+      {
+        "oid": "current_company",
+        "fieldType": "SHORT_ANSWER",
+        "title": "Current company",
+        "required": true
+      },
+      {
+        "oid": "phone_number",
+        "fieldType": "PHONE_NUMBER",
+        "title": "Phone number",
+        "required": true
+      },
+      {
+        "oid": "location",
+        "fieldType": "SHORT_ANSWER",
+        "title": "Location (city only)",
+        "required": true
+      },
+      {
+        "oid": "linkedin_link",
+        "fieldType": "SHORT_ANSWER",
+        "title": "LinkedIn link",
+        "required": true
+      },
+      {
+        "oid": "resume",
+        "fieldType": "FILE",
+        "title": "Resume",
+        "required": true
+      },
+      {
+        "oid": "cover_letter",
+        "fieldType": "FILE",
+        "title": "Cover letter",
+        "required": false
+      }
+    ]
+  },
+  "eeocQuestionnaireEnabled": true,
+  "eeocQuestionnaireEnabledForJobPost": true,
+  "url": "https://ats.rippling.com/northwind/jobs/3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1001",
+  "board": {
+    "boardType": "CUSTOM",
+    "slug": "northwind",
+    "logo": null,
+    "banner": null,
+    "title": "Current Openings",
+    "subtitle": null,
+    "boardURL": "https://www.northwind.example/careers",
+    "fontType": null,
+    "linkColor": null,
+    "buttonColor": null,
+    "buttonTextColor": null,
+    "legalNotice": "<p>Northwind Labs is an equal opportunity employer.</p>",
+    "noOpeningsMessage": null,
+    "groupJobsByLocation": false,
+    "showBoardLogoOnJobPost": false,
+    "showCompanyInfoUnderJobPost": false,
+    "companyName": "Northwind Labs",
+    "isTest": false
+  },
+  "payRangeDetails": [],
+  "applicationConfirmationTemplate": "6348729c5a9a6e6df0bb0000",
+  "hasAIEvaluationsEnabled": true,
+  "companyName": "Northwind Labs",
+  "unlistedFromSearch": false,
+  "jsonLd": null
+}

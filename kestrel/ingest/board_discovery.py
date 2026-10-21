@@ -37,10 +37,14 @@ PLATFORMS = {
     "ashby": "Ashby",
     "workday": "Workday",
     "smartrecruiters": "SmartRecruiters",
+    "rippling": "Rippling",
 }
 # The config key that names the company, per kind, and whether the platform treats it as case
 # sensitive (the Ashby and SmartRecruiters adapters pass it through unchanged).
-_KEY = {"greenhouse": "token", "lever": "company", "ashby": "token", "smartrecruiters": "company"}
+_KEY = {
+    "greenhouse": "token", "lever": "company", "ashby": "token", "smartrecruiters": "company",
+    "rippling": "slug",
+}
 _CASE_SENSITIVE = {"ashby", "smartrecruiters"}
 
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
@@ -100,6 +104,9 @@ def board_from_url(url: str | None) -> BoardRef | None:
     if host in ("jobs.smartrecruiters.com", "careers.smartrecruiters.com"):
         company = _slug(first)
         return BoardRef("smartrecruiters", {"company": company}) if company else None
+    if host == "ats.rippling.com":
+        slug = _slug(first)
+        return BoardRef("rippling", {"slug": slug}) if slug else None
     m = _WORKDAY_HOST.match(host)
     if m:
         rest = segs[1:] if first and _LOCALE.match(first) else segs
@@ -185,7 +192,7 @@ async def discover_boards(
         config = dict(ref.config)
         if ref.kind == "workday":
             config["company"] = company
-        elif ref.kind == "ashby":
+        elif ref.kind in ("ashby", "rippling"):
             config["company_name"] = company
         session.add(Source(
             track=search.track, kind=ref.kind, name=f"{company} jobs ({PLATFORMS[ref.kind]})",

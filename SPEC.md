@@ -437,6 +437,7 @@ Guardrails, all of which must be enforced rather than discovered:
 | Ashby | `GET https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` | 200 |
 | **Workday** | `POST https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` body `{"limit":20,"offset":0,"searchText":""}` | 200, 2000 postings |
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
+| **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
 Workday matters disproportionately: it is the dominant enterprise ATS, and enterprise is where
 VP of IT roles live. It paginates via `offset`/`limit` and needs a second call per job for the
@@ -1531,6 +1532,29 @@ Per posting: `id`, `name`, `uuid`, `jobAdId`, `refNumber`, `company`, `location`
 `GET https://api.smartrecruiters.com/v1/companies/{company}/postings/{id}` for `jobAd.sections`
 containing `companyDescription`, `jobDescription`, `qualifications`, `additionalInformation`,
 each with `title` and `text` (HTML). Company identifiers are case sensitive.
+
+### Rippling
+
+`GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` → `200`, a **bare JSON
+array**, no auth. Verified 2026-10-21 against the public board behind `ats.rippling.com/{slug}/jobs`
+(667 rows, 381 distinct postings). `ats.rippling.com/robots.txt` disallows only `/internal/`;
+`api.rippling.com/robots.txt` is a 404 (no rules). The `page` and `pageSize` query parameters are
+ignored: the whole board is one response.
+
+Per row: `uuid`, `name`, `department` (`{id, label}`), `url` (the public posting page
+`https://ats.rippling.com/{slug}/jobs/{uuid}`), `workLocation` (`{id, label}`).
+
+**Gotchas:** the title is `name`, and it carries leading and trailing spaces. A posting open in
+several places is **one row per location with the same `uuid`**, so the adapter merges rows by
+`uuid` and joins the labels. The list has no description and no date; the detail does:
+`GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs/{uuid}` → `200`, an object with
+`uuid`, `name`, `description` (`{company, role}`, both HTML), `workLocations[]` (strings),
+`department` (`{name, base_department, department_tree[]}`), `employmentType` (`{label, id}`,
+`label` is an enum such as `SALARIED_FT` or `TEMP`, `id` is the readable text),
+`createdOn` (ISO datetime with offset), `payRangeDetails[]` (empty in every sample, so no
+compensation is read), `url`, `board` (`{slug, companyName, ...}`), `companyName`,
+`unlistedFromSearch`, `activeJobApplication` (form questions, ignored). `description.company` is
+the employer boilerplate and is left out; `description.role` is the body.
 
 ### SEC EDGAR full-text search — consulting trigger events
 

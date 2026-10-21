@@ -39,7 +39,7 @@ employment:
     - { id: title_exact,       when: "title_near_equals_any(opp, profile.employment_terms.target_titles)", weight: 2.0 }
     - { id: title_contains,    when: "title_near_any(opp, profile.employment_terms.target_titles)", weight: 1.0 }
     - { id: comp_above_target, when: "comp_max_at_least(opp, profile.employment_terms.comp_target_usd)", weight: 1.0 }
-    - { id: direct_ats,        when: "source_kind_in(source, ['greenhouse','lever','ashby','workday','smartrecruiters'])", weight: 0.8 }
+    - { id: direct_ats,        when: "source_kind_in(source, ['greenhouse','lever','ashby','workday','smartrecruiters','rippling'])", weight: 0.8 }
     - { id: fresh,             when: "age_days(opp.date_posted) <= 3", weight: 0.5 }
     - { id: must_have_hit,     when: "desc_contains_any(opp, profile.must_have)", weight: 0.5 }
     - { id: comp_unknown,      when: "opp.comp_source == 'none'", weight: -0.3 }

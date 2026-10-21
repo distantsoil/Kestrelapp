@@ -163,6 +163,24 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "Shared default, 2 requests/second per host.",
         "region": _WORLDWIDE,
     },
+    "rippling": {
+        "name": "Rippling",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public job-board JSON for one company: "
+            "api.rippling.com/platform/api/ats/v1/board/{slug}/jobs, plus one detail request per "
+            "posting under .../jobs/{id} for the description and date, up to max_results "
+            "(default 200). A role open in several places is one posting with all its locations."
+        ),
+        "provide": (
+            "The board name from the careers URL (ats.rippling.com/{slug}/jobs). Optionally "
+            "company_name and max_results."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second (list and detail alike).",
+        "region": _WORLDWIDE,
+    },
     "jobspy": {
         "name": "Job boards via JobSpy",
         "category": CATEGORY_AGGREGATOR,
@@ -369,7 +387,7 @@ def _ordered_kinds() -> list[str]:
     """Registered adapter kinds, then registered signal kinds, then the table-only kinds, each in
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
-        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "jobspy",
+        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "jobspy",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

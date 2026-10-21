@@ -37,6 +37,7 @@ Supporting reading in career-ops worth fetching if the rubric needs detail:
 | **Ashby** | `GET https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` | **Verified live.** 200, 58 jobs against `Ashby` |
 | **Workday** | `POST https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` | **Verified live.** 200, 2000 postings against `nvidia.wd5` |
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings` | **Verified live.** 200 against `Visa` |
+| **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` (list) and `.../jobs/{uuid}` (detail) | **Verified live 2026-10-21.** 200, no auth, bare array, 667 rows (381 postings) against one public board. No pagination (`page`/`pageSize` ignored). `ats.rippling.com/robots.txt` disallows only `/internal/`; `api.rippling.com/robots.txt` is 404. Rate: Kestrel sends at most 2 requests/second per host; one list request plus one detail request per posting. A 429 makes the run partial |
 | JobSpy docs | https://github.com/speedyapply/JobSpy#readme | Parameter reference, country list, per-site constraints |
 
 Exact field names, gotchas, and pagination behavior for each are in `SPEC.md` Appendix A. Read

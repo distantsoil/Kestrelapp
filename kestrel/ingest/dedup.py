@@ -23,6 +23,7 @@ _PRIORITY = {
     "ashby": 0,
     "workday": 0,
     "smartrecruiters": 0,
+    "rippling": 0,
     "page": 1,
     "indeed": 2,
     "jobspy": 2,

@@ -114,7 +114,8 @@ _SITE_WORDS = {
 }
 _KIND_WORDS = {
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby", "workday": "Workday",
-    "smartrecruiters": "SmartRecruiters", "sec_edgar": "SEC filings", "sam_gov": "SAM.gov",
+    "smartrecruiters": "SmartRecruiters", "rippling": "Rippling", "sec_edgar": "SEC filings",
+    "sam_gov": "SAM.gov",
     "rss": "a feed", "pe_portfolio": "PE portfolio pages", "manual": "a pasted posting",
 }
 
