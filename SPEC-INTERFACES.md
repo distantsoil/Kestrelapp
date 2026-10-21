@@ -229,6 +229,23 @@ on the operator's machine, so an unchanged feed costs a 304.
 The release side that publishes the feed is in `docs/RELEASING.md`. The decisions are D-UPD-1 to
 D-UPD-5 in `DECISIONS.md`.
 
+### 1.6 In-app announcements
+
+A dismissible notice at the top of every page can tell the operator about a coming change, for
+example that a refreshed look is on the way. **It is local.** The text is fixed in the build
+(`kestrel/web/announcements.py`), nothing is fetched, and there is no remote announcement feed:
+Kestrel never phones home for this.
+
+- Each announcement has an id. The base template carries one slot that loads `GET /announcements`
+  and shows the first announcement not yet dismissed.
+- "Got it" posts `POST /announcements/{id}/dismiss`, which stores the id in the
+  `ui.announcements_dismissed` setting row on this install (not the browser), then empties the
+  slot. A later announcement has a new id and shows again. An unknown id is ignored with a 200; a
+  failed write is logged and answered with a plain line, never a 500.
+- UI only: it never appears in a PDF, export or generated document.
+- It reuses the update banner's pattern (an htmx slot and the `warnbox` token styling). There is
+  no second banner system.
+
 ---
 
 ## 2. Web UI

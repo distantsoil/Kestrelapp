@@ -174,6 +174,8 @@
       <div id="update-banner" hx-get="/updates/banner" hx-trigger="load, every 300s, updates-changed from:body"
            hx-swap="innerHTML"></div>
       <div id="update-modal"></div>
+      {# One-time local announcement (WP-22): fixed text from kestrel/web/announcements.py. #}
+      <div id="announcement-slot" hx-get="/announcements" hx-trigger="load" hx-swap="innerHTML"></div>
       {# A one-line notice carried by a redirect (?msg=<code>), e.g. a refused or partial reset.
          The URL carries a code only; the sentence is looked up (kestrel/web/flash.py), so an
          unknown code shows nothing (WP-08, #21). #}

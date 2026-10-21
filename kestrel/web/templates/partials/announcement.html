@@ -1,0 +1,9 @@
+{% if notice %}
+<div class="warnbox" role="status" data-testid="announcement" data-announcement-id="{{ notice.id }}"
+     style="margin-bottom:.8rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+  <span>{{ notice.text }}</span>
+  <span style="flex:1"></span>
+  <button class="btn ghost" type="button" hx-post="/announcements/{{ notice.id }}/dismiss"
+          hx-target="#announcement-slot" hx-swap="innerHTML">Got it</button>
+</div>
+{% endif %}

@@ -43,7 +43,7 @@ _PAGE_MODULES = (
     "dashboard", "chrome", "documents", "profile", "pursuits", "renders", "orgs", "stories",
     "prep", "mock", "offers", "sources", "settings", "analytics", "bench", "about",
     "escalate", "opportunity_actions", "runs_detail", "models", "backup", "applied",
-    "rescore", "updates",
+    "rescore", "updates", "announcements",
 )
 
 # Worker pause is a process-wide flag the tray toggles via /api/worker/pause|resume. A paused
