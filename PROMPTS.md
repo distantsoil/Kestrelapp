@@ -58,6 +58,10 @@ And configure every call with:
 - **An adequate `num_ctx` on the model itself** (SPEC §8.2, sized per tier). The OpenAI-compatible endpoint
   cannot set it, so it must be baked into a derived model with a Modelfile. A model at its
   default context silently truncates the job description and every downstream score is wrong.
+- **Failure mode, out of credit (D-LLM-8):** an online provider's billing error (HTTP 402,
+  `INSUFFICIENT_BALANCE`, `credit_balance_exhausted`, `billing_error`) is neither a schema
+  failure nor a transient error. The guard spends no repair and no larger retry on it, writes no
+  quarantine row (there is no model output to keep), and returns an authored message; SPEC.md 8.5.
 - A hard `max_tokens` so a runaway generation cannot stall a run. **Failure mode, reply cut off
   at the cap (D-LLM-7):** a `finish_reason: length` reply from an external backend that is not a
   loop and not a reasoning overrun is asked again **once** with twice the output budget (capped at the model's context

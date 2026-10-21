@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting, Source, Task
-from kestrel.llm.client import LLMClient
+from kestrel.llm.client import LLMClient, tier_credit_hold
 from kestrel.pipeline import lane, recheck, runlog
 from kestrel.pipeline._shared import (
     HandlerOutcome,
@@ -114,6 +114,13 @@ def _tier_external(settings: Settings, tier: str) -> bool:
     tcfg = settings.llm.tiers.get(tier)
     backend = settings.llm.backends.get(tcfg.backend) if tcfg else None
     return bool(backend and backend.external)
+
+
+def held_types(settings: Settings, types: tuple[str, ...] = ("t1", "t2")) -> tuple[str, ...]:
+    """The task types among `types` whose tier routes to a backend on hold as out of credit."""
+    return tuple(
+        t for t in types if t in _OVERRIDE_TIER and tier_credit_hold(settings, _OVERRIDE_TIER[t])
+    )
 
 
 @dataclass
@@ -289,6 +296,8 @@ class Worker:
         async def one_worker(idx: int) -> None:
             wid = f"{worker_id}-{idx}"
             while not self._halted():
+                if held_types(self._settings, (task_type,)):
+                    return  # this tier's online key is out of credit: lease nothing (D-LLM-8)
                 task = await self._queue.lease(
                     wid, types=[task_type], lease_seconds=_TASK_LEASE_S, where=group[0]
                 )
@@ -352,6 +361,12 @@ class Worker:
                 await self._queue.fail(task.id, str(exc), worker_id=wid, retry=True)
                 async with done_lock:
                     stats.errors += 1
+                return
+
+            if outcome.action == "error" and outcome.out_of_credit:
+                # Not a failure of the role: the key has no credit. The task goes back unstarted
+                # (resumable, hard rule 5); the hold keeps every other send from this backend.
+                await self._queue.defer(task.id, outcome.error or "", worker_id=wid)
                 return
 
             if outcome.action == "error":

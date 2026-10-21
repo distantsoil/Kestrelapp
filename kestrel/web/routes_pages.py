@@ -931,7 +931,10 @@ async def runs(request: Request):
 
         # Only a one-run choice is worth a line here; the standing models live on Models.
         shown = await _model_in_use(s, await load_settings_with_db(s), bool(run.get("active")))
+        from kestrel.llm import credit
+
         ctx = {"activity": activity, "runs": recent, "scans": scans, "run": run,
+               "credit_notices": credit.notices(),
                "run_model": shown if shown and "(this run only)" in shown else None,
                **(await _mode_context(s)),
                **(await _keep_awake_context(s))}
@@ -945,8 +948,10 @@ async def runs_now(request: Request):
     same one-shot row as POST /api/run/now). Returns the message partial; a refused "hosted"
     says what is missing."""
     from kestrel.config import MODES, HostedModeError
+    from kestrel.llm import credit
     from kestrel.services.setting_overrides import queue_run_mode
 
+    credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     form = await request.form()
     mode = str(form.get("mode") or "")
     async with sessionmaker()() as s:

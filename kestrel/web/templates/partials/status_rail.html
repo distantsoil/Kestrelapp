@@ -10,6 +10,8 @@
   <span class="dot {{ hosted.state }}"></span><span class="txt">{{ hosted.label }}</span></a>
 {% if balance %}<a class="line" data-rail="balance" href="/settings#hosted" title="Your online key's balance, or this month's spend on deeper reads">
   <span class="dot {{ balance.state }}"></span><span class="txt">{{ balance.label }}</span></a>{% endif %}
+{% for note in credit or [] %}<a class="line" data-rail="credit" href="/settings#hosted" title="Your online model key is out of credit">
+  <span class="dot warn"></span><span class="txt">{{ note }}</span></a>{% endfor %}
 {% if worker.open_failed %}<a class="line" data-rail="failed" href="/quarantine" title="Roles the model could not finish">
   <span class="dot warn"></span><span class="txt">{{ worker.open_failed }} {{ 'role' if worker.open_failed == 1 else 'roles' }} failed scoring</span></a>{% endif %}
 {% if pending_mode %}<span class="line" data-rail="pending"><span class="dot idle"></span><span class="txt">Next cycle: {{ pending_mode }}</span></span>{% endif %}

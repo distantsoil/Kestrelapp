@@ -33,6 +33,9 @@ class HandlerOutcome:
     needs_review: bool = False
     quarantined: bool = False
     error: str | None = None
+    # The online key is out of credit (D-LLM-8): the worker puts the task back unstarted rather
+    # than failing it, and stops leasing for that tier until sends can resume.
+    out_of_credit: bool = False
 
 
 @cache

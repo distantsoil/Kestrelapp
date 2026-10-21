@@ -46,6 +46,7 @@ from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import SourceConfigError
 from kestrel.ingest.generated import SEC_TITLES_LABEL, sec_titles_opt_in
 from kestrel.ingest.signal_sources import SIGNAL_SOURCE_KINDS, get_signal_source
+from kestrel.llm import credit
 from kestrel.services import tracks as tracks_svc
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
@@ -387,6 +388,7 @@ async def score_everything_now(request: Request):
         async with sessionmaker()() as s:
             ctx = await _panel_ctx(s)
         return _panel(request, ctx, 400)
+    credit.clear()  # the operator asked to score now: let an online key try again (D-LLM-8)
     n = await lane.release_all(sessionmaker())
     async with sessionmaker()() as s:
         msg = (f"Scoring {n} waiting role{'' if n == 1 else 's'} now." if n

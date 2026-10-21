@@ -16,6 +16,7 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from kestrel.llm.client import LLMClient, ModelDeclined, _never_left, json_schema_for
+from kestrel.llm.credit import OutOfCredit
 from kestrel.llm.docselect import build_doc_select_schema, validate_doc_selection
 from kestrel.llm.schemas import P3DocSelect
 
@@ -66,6 +67,9 @@ class GuardResult:
     # `request error:` text, which is written for both (review). Defaults True: an unknown
     # outcome is treated as "it went out", because a duplicate egress cannot be undone.
     egressed: bool = True
+    # The provider said the key has no credit left (D-LLM-8). Not a quarantine (there is no model
+    # output to keep) and not a request error to retry: `error` is the authored sentence.
+    out_of_credit: bool = False
 
 
 def length_retry_budget(client: Any, tier: str, exc: Any) -> int | None:
@@ -403,6 +407,15 @@ async def run_guarded(
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                 latency_ms=latency, cost_usd=cost,
             )
+        except OutOfCredit as exc:
+            # Nothing to repair, re-ask or retry larger: the next request would be refused the
+            # same way. Neither a schema failure nor a transient error (D-LLM-8).
+            return GuardResult(
+                ok=False, error=str(exc), out_of_credit=True,
+                egressed=exhausted or exc.sent,
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                latency_ms=latency, cost_usd=cost,
+            )
         except Exception as exc:  # request/transport error: not a quarantine, the caller can retry
             return GuardResult(
                 ok=False, error=f"request error: {type(exc).__name__}: {exc}",
@@ -503,6 +516,12 @@ async def run_guarded(
             completion_tokens=completion_tokens,
             latency_ms=latency,
             cost_usd=cost,
+        )
+    except OutOfCredit as exc:
+        return GuardResult(
+            ok=False, raw=first_content, error=str(exc), out_of_credit=True, egressed=True,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            latency_ms=latency, cost_usd=cost,
         )
     except Exception as exc:
         # The first attempt already went out, so a failure on the REPAIR is never a "never left"

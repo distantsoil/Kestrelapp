@@ -264,6 +264,26 @@ class TaskQueue:
             await s.commit()
             return task.status
 
+    async def _defer(self, task_id: int, note: str, *, worker_id: str | None = None) -> str:
+        """Give a leased task back unstarted: pending again with the lease's attempt refunded and
+        the reason kept in `last_error`. For a backend that cannot serve it right now (an online
+        key out of credit, D-LLM-8): the work is neither failed nor lost, and nothing is retried
+        until the operator, or the hold timing out, lets sends resume."""
+        async with self._sm() as s:
+            task = await s.get(Task, task_id)
+            if task is None:
+                return "missing"
+            if worker_id is not None and (task.worker_id != worker_id or task.status != "leased"):
+                return "not_owned"
+            task.last_error = (note or "")[:4000]
+            task.updated_at = utcnow_iso()
+            task.status = "pending"
+            task.worker_id = None
+            task.lease_until = None
+            task.attempts = max(0, (task.attempts or 0) - 1)
+            await s.commit()
+            return task.status
+
     async def _reclaim_expired(self) -> int:
         """Return expired leases to the queue; dead-letter those already out of attempts."""
         now = utcnow_iso()
@@ -340,6 +360,11 @@ class TaskQueue:
     ) -> str:
         return await _with_lock_retry(
             "fail", lambda: self._fail(task_id, error, worker_id=worker_id, retry=retry)
+        )
+
+    async def defer(self, task_id: int, note: str, *, worker_id: str | None = None) -> str:
+        return await _with_lock_retry(
+            "defer", lambda: self._defer(task_id, note, worker_id=worker_id)
         )
 
     async def reclaim_expired(self) -> int:

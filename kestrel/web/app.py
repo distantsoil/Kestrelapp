@@ -340,7 +340,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.pipeline.tier0 import run_tier0_batch
     from kestrel.pipeline.tier1 import handle_t1
     from kestrel.pipeline.tier2 import handle_t2
-    from kestrel.pipeline.worker import TierStats, Worker
+    from kestrel.pipeline.worker import TierStats, Worker, held_types
     from kestrel.services.setting_overrides import load_settings_with_db, take_run_mode
     from kestrel.services.title_suggest import drain_title_suggestions, maybe_request
 
@@ -392,7 +392,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
                 cycle, carried = carried or runlog.CycleRun(sm, mode=settings.llm.mode), None
-                if await runlog.has_pipeline_work(sm):
+                if await runlog.has_pipeline_work(sm, skip_types=held_types(settings)):
                     await cycle.ensure_open()
                 # Scheduled scrapes first: the scheduler, tray and MCP only enqueue them, and
                 # Tier 0 below is what turns their new postings into pipeline work.

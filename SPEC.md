@@ -1388,6 +1388,19 @@ one-shot probe per model asserting no thinking span survives.
   with at least half of the output tokens spent reasoning, is re-asked once with OpenRouter's
   `reasoning: {enabled: false}` (when the operator has set no effort); a second overrun
   quarantines with the D-LLM-1 message naming the setting that raises the budget.
+- **An online key that has run out of credit is said plainly (D-LLM-8).** HTTP 402 from any
+  online provider, OpenModel's `INSUFFICIENT_BALANCE`, OpenAI's `credit_balance_exhausted` (or
+  `insufficient_quota`), and Anthropic's `billing_error` are classified in `kestrel/llm/credit.py`
+  as a distinct, non-retryable failure: not a schema failure (no repair, no larger retry, no
+  quarantine) and not a transient error. The call raises `OutOfCredit`, a `UserFacingError` whose
+  sentence Kestrel writes ("Your OpenModel credit has run out. Top up at console.openmodel.ai,
+  then use Score again."); no provider text reaches a page. The backend is then held for that key:
+  nothing more is sent to it, and no other online provider is chosen in its place. The hold ends
+  when the key changes, when the operator starts a run (Run now, Score again, Score everything
+  now, a Failed scoring retry), or after 30 minutes. The worker puts the leased task back
+  unstarted with its attempt refunded (resumable, hard rule 5), leases nothing more for a tier
+  routed to the held backend, and opens no empty Run row; tiers on a local model carry on. The
+  status rail and the Runs page each show one notice per held provider.
 - **A reply cut off at its cap is asked again once, larger (D-LLM-7).** A `length` stop that is not
   a loop and not a reasoning overrun (a long legitimate answer cut mid-object) on an **external**
   backend is retried once

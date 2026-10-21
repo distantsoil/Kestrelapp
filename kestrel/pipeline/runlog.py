@@ -126,17 +126,21 @@ async def close_orphaned_runs(
     return n
 
 
-async def has_pipeline_work(sm: async_sessionmaker[AsyncSession]) -> bool:
+async def has_pipeline_work(
+    sm: async_sessionmaker[AsyncSession], *, skip_types: tuple[str, ...] = ()
+) -> bool:
     """Whether a cycle starting now has anything to do: a scrape, embed or tier task this loop
     could actually lease (pending, or an expired lease with attempts left; not a live lease held
     by a concurrent CLI run, nor an expired one out of attempts), or a new posting waiting for
-    Tier 0."""
+    Tier 0. `skip_types` are task types that cannot run right now (a tier whose online key is
+    out of credit, D-LLM-8): they wait, and must not open an empty Run row every cycle."""
+    types = [t for t in _WORK_TYPES if t not in skip_types]
     async with sm() as s:
         tasks = (
             await s.execute(
                 select(func.count())
                 .select_from(Task)
-                .where(Task.type.in_(_WORK_TYPES), claimable(utcnow_iso()))
+                .where(Task.type.in_(types), claimable(utcnow_iso()))
             )
         ).scalar_one()
         if tasks:

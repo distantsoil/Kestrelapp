@@ -32,6 +32,7 @@ from kestrel.db.models import (
     Task,
     VerdictOverride,
 )
+from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
 from kestrel.services.setting_overrides import (
     load_settings_with_db,
@@ -83,6 +84,7 @@ async def run_now(mode: str | None = None):
     return to the stored mode. "hosted" is refused (400, with the reason) until the disclosure is
     acknowledged and tier1 and tier2 have hosted assignments. Queues only; never calls a model
     here, never acts externally."""
+    credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     async with sessionmaker()() as s:
         chosen = mode or (await load_settings_with_db(s)).llm.mode
         if chosen not in MODES:
@@ -650,6 +652,7 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
         "scan": scan,
         "hosted": hosted,
         "balance": balance,
+        "credit": credit.notices(),
         "counts": counts,
         "scan_state": scanning,
     }

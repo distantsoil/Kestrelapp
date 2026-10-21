@@ -29,6 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Evaluation, Opportunity, Quarantine, Run, ScrapeRun, Source, Task
+from kestrel.llm import credit
 from kestrel.pipeline._shared import parse_rescore_failure
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.queue.rescore import requeue_rescore_task
@@ -282,6 +283,7 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
 @router.post("/quarantine/{quarantine_id}/retry", response_class=HTMLResponse)
 async def retry(request: Request, quarantine_id: int):
     retry_error: str | None = None
+    credit.clear()
     async with sessionmaker()() as s:
         try:
             retry_error = await _retry_quarantine(s, quarantine_id)

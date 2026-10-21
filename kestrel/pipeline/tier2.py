@@ -238,7 +238,9 @@ async def handle_t2(
                                   reply_filter=book)
 
         if not result.ok and not result.quarantined:
-            return HandlerOutcome("error", 2, error=result.error)
+            return HandlerOutcome(
+                "error", 2, error=result.error, out_of_credit=result.out_of_credit
+            )
 
         if result.quarantined or result.value is None:
             # Tier 2 is the deepest evaluation: a structural failure quarantines (SPEC.md P2/P2C

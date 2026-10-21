@@ -22,6 +22,8 @@ from typing import Any
 import httpx
 
 from kestrel.config import BackendConfig, HostedModelCaps, JsonMode, Settings
+from kestrel.llm import credit
+from kestrel.llm.credit import OutOfCredit
 
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
@@ -828,7 +830,9 @@ class ProviderError(RuntimeError):
     key), 402 (no credits), 404 (no endpoint honors the parameters), or 429 (rate limit) reads as
     what it is in the quarantine record rather than as a bare status line."""
 
-    def __init__(self, status: int, message: str, url: str) -> None:
+    def __init__(
+        self, status: int, message: str, url: str, codes: tuple[str, ...] = ()
+    ) -> None:
         if status == 404 and "data policy" in message.lower():
             # OpenRouter: every endpoint for this model was excluded by the privacy rule Kestrel
             # sends (data_collection deny), usually because it is a free model (D-UI-32).
@@ -842,6 +846,9 @@ class ProviderError(RuntimeError):
         self.status = status
         self.message = message
         self.url = url
+        # The error code/type strings the body carried (`INSUFFICIENT_BALANCE`, `billing_error`),
+        # for classifying the failure; never shown (D-SEC-2).
+        self.codes = codes
 
 
 _HTTP_HINTS = {
@@ -859,8 +866,13 @@ def raise_for_provider_status(r: httpx.Response) -> None:
     if r.is_success:
         return
     message = ""
+    codes: list[str] = []
     try:
-        err = r.json().get("error")
+        body = r.json()
+        err = body.get("error")
+        for src in (err, body):
+            if isinstance(src, dict):
+                codes += [str(src[k]) for k in ("code", "type") if isinstance(src.get(k), str)]
         if isinstance(err, dict):
             message = str(err.get("message") or "")
             meta = err.get("metadata")
@@ -868,11 +880,12 @@ def raise_for_provider_status(r: httpx.Response) -> None:
                 message = f"{message} (provider: {meta['provider_name']})"
         elif isinstance(err, str):
             message = err
+            codes.append(err)
     except (ValueError, AttributeError):
         message = ""
     hint = _HTTP_HINTS.get(r.status_code, "")
     text = "; ".join(x for x in (message[:300], hint) if x) or r.reason_phrase
-    raise ProviderError(r.status_code, text, str(r.request.url))
+    raise ProviderError(r.status_code, text, str(r.request.url), tuple(codes))
 
 
 # ==================================================================== async pipeline client
@@ -918,6 +931,16 @@ def _resolve_api_key(backend: BackendConfig) -> str:
 
         return get_secret(backend.api_key_env) or ""
     return "x"
+
+
+def tier_credit_hold(settings: Settings, tier: str) -> str | None:
+    """The provider name when the backend `tier` routes to is on hold as out of credit for its
+    current key (D-LLM-8), else None. Reads settings and process memory only; sends nothing."""
+    try:
+        backend, tcfg = LLMClient(settings)._backend_and_tier(tier)
+    except (KeyError, ValueError):
+        return None
+    return credit.held_provider(tcfg.backend, _resolve_api_key(backend))
 
 
 class LLMClient:
@@ -1148,13 +1171,30 @@ class LLMClient:
             headers.setdefault("anthropic-version", ANTHROPIC_VERSION)
             if backend.provider == "anthropic":
                 headers.pop("Authorization", None)
+        held = credit.held_provider(tcfg.backend, key)
+        if held is not None:
+            # This backend already answered "out of credit" for this key: send nothing more to
+            # it, and choose no other provider in its place (D-LLM-8).
+            raise OutOfCredit(backend.provider, sent=False)
         t0 = time.perf_counter()
         client = self._http or httpx.AsyncClient()
+
+        def _credit_check(exc: ProviderError) -> None:
+            if credit.is_out_of_credit(backend.provider, exc.status, exc.codes, exc.message):
+                if credit.mark_out_of_credit(tcfg.backend, backend.provider, key):
+                    import structlog
+
+                    structlog.get_logger().warning(
+                        "llm_out_of_credit", backend=tcfg.backend, provider=backend.provider
+                    )
+                raise OutOfCredit(backend.provider) from exc
+
         try:
             r = await client.post(url, json=body, headers=headers, timeout=timeout)
             try:
                 raise_for_provider_status(r)
             except ProviderError as exc:
+                _credit_check(exc)
                 if exc.status == 400 and schema is not None:
                     # The provider refused the structured request itself (a schema keyword it
                     # does not take, a context overflow). The same request would be refused
@@ -1176,7 +1216,14 @@ class LLMClient:
             # failure; without this the guard sees KeyError('choices') and loses the message.
             err = data["error"]
             msg = err.get("message") if isinstance(err, dict) else str(err)
-            raise ProviderError(r.status_code, str(msg or "provider error")[:300], url)
+            codes = tuple(
+                str(err[k]) for k in ("code", "type") if isinstance(err, dict) and err.get(k)
+            )
+            inner = err.get("code") if isinstance(err, dict) else None
+            status = inner if isinstance(inner, int) and inner >= 400 else r.status_code
+            perr = ProviderError(status, str(msg or "provider error")[:300], url, codes)
+            _credit_check(perr)
+            raise perr
         usage = data.get("usage") or {}
         spent = {
             "prompt_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),

@@ -51,6 +51,17 @@ def _reset_status_caches():
     forget_dismissed_guides()
 
 
+@pytest.fixture(autouse=True)
+def _no_credit_holds_between_tests():
+    """An out-of-credit hold (kestrel/llm/credit.py) is process-global; one test's hold must
+    never stop the next test's sends."""
+    from kestrel.llm import credit
+
+    credit.clear()
+    yield
+    credit.clear()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _no_pooled_db_connections_across_event_loops():
     """Tests run many short event loops (asyncio.run, TestClient), unlike the app's single one.
