@@ -463,6 +463,10 @@ of the operator's pursuits (D-SRC-8). Any other role from a found board waits in
 lane: stored, never rejected, and scored only when no other work is waiting, up to
 `pipeline.lane_daily_cap` (200) a day. "Score everything now" frees the whole lane once, after a
 confirmation that states the count, the time and, on an online model, the cost (D-SRC-9).
+Precision is measured, not assumed (D-SRC-13): `python -m kestrel.evals.smart_filter_report`
+reads the database (SELECT only) and reports per lane the roles, scored, fits and not-fits, the
+fast lane's precision (fits over scored roles) and the lane miss rate (fits that sat in the
+background lane over all fits). A figure from fewer than five observations prints as insufficient.
 
 **Manual.** Paste a URL (httpx, escalating to Playwright on a JavaScript shell) or paste raw JD
 text. Both produce a normal `opportunity` and run the identical pipeline.
