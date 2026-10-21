@@ -200,6 +200,8 @@ class GenerateOutcome:
     status: str  # stored | skipped | empty | quarantined | error
     set_id: int | None = None
     error: str | None = None
+    # The online key is out of credit (D-LLM-8): the task is deferred, not failed.
+    out_of_credit: bool = False
 
 
 async def generate_question_set(
@@ -247,7 +249,9 @@ async def generate_question_set(
         return GenerateOutcome("quarantined", error=result.error)
     if not result.ok or result.value is None:
         await session.rollback()
-        return GenerateOutcome("error", error=result.error or "no reply")
+        return GenerateOutcome(
+            "error", error=result.error or "no reply", out_of_credit=result.out_of_credit
+        )
 
     questions = [
         {
@@ -316,6 +320,11 @@ async def drain_interview_questions(
             beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await beat
+        if outcome.status == "error" and outcome.out_of_credit:
+            # Not a failure of the task: the key has no credit. It goes back unstarted (hard
+            # rule 5) and this drain stops, since leasing it again would only loop.
+            await queue.defer(task.id, outcome.error or "", worker_id=wid)
+            break
         if outcome.status == "error":
             await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
             continue

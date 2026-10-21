@@ -584,3 +584,24 @@ def test_remove_from_list_deletes_the_question_set_too(web):
 
     assert asyncio.run(left()) == (0, 0)
     forget_engine()
+
+
+async def test_an_out_of_credit_key_defers_the_task_unstarted_instead_of_failing_it(sm):
+    from kestrel.llm.credit import OutOfCredit
+
+    _opp, pid = await _seed(sm)
+    await _apply(sm, pid)
+
+    class _Broke(_Client):
+        async def complete(self, **kw):
+            self.calls.append(kw)
+            raise OutOfCredit("openmodel")
+
+    client = _Broke()
+    for _ in range(4):  # more cycles than the task has attempts
+        assert await qt.drain_interview_questions(sm, client, get_settings()) == 0
+    async with sm() as s:
+        task = (await s.execute(select(Task).where(Task.type == qt.TASK_TYPE))).scalar_one()
+    assert (task.status, task.attempts) == ("pending", 0)
+    assert "credit has run out" in (task.last_error or "")
+    assert await _count(sm, InterviewQuestionSet) == 0

@@ -19,13 +19,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting, Source, Task
+from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
 from kestrel.pipeline import lane, recheck, runlog
 from kestrel.pipeline._shared import (
@@ -296,10 +297,16 @@ class Worker:
         async def one_worker(idx: int) -> None:
             wid = f"{worker_id}-{idx}"
             while not self._halted():
-                if held_types(self._settings, (task_type,)):
-                    return  # this tier's online key is out of credit: lease nothing (D-LLM-8)
+                # Work that would run on a backend held as out of credit is not leased at all
+                # (D-LLM-8 amended): the hold is judged per task from the model it will resolve
+                # to, so a held override cannot loop lease/defer and a held configured backend
+                # cannot starve an override that resolves to a local model.
+                excl = await self._hold_exclusion(task_type)
+                where = group[0] if excl is None else (
+                    excl if group[0] is None else and_(group[0], excl)
+                )
                 task = await self._queue.lease(
-                    wid, types=[task_type], lease_seconds=_TASK_LEASE_S, where=group[0]
+                    wid, types=[task_type], lease_seconds=_TASK_LEASE_S, where=where
                 )
                 if task is None:
                     return
@@ -474,6 +481,9 @@ class Worker:
             key = None if (not m or (str(b), str(m)) == cfg) else (str(b), str(m))
             counts[key] = counts.get(key, 0) + int(n)
         order = sorted(counts, key=lambda k: (k is not None, -counts[k], k or ("", "")))
+        # A group whose model resolves to a backend held as out of credit is not drained: nothing
+        # of it is leased until the hold clears (D-LLM-8 amended).
+        order = [k for k in order if not self._group_held(tier, k)]
         out: list[Any] = []
         for key in order:
             if key is None:
@@ -482,6 +492,63 @@ class Worker:
             else:
                 out.append(and_(backend == key[0], model == key[1]))
         return out
+
+    def _group_held(self, tier: str, key: tuple[str, str] | None) -> bool:
+        """Whether the model group `key` (None: the configured model) would be sent to a backend
+        on hold as out of credit. An override that cannot run falls back to the configured model,
+        so it is judged there, exactly as `_task_settings` resolves it."""
+        if not credit.any_held():
+            return False
+        if key is not None:
+            try:
+                resolved = settings_with_override(
+                    self._settings, tier, {"backend": key[0], "model": key[1]}
+                )
+            except ModelOverrideError:
+                resolved = self._settings
+            return tier_credit_hold(resolved, tier) is not None
+        return tier_credit_hold(self._settings, tier) is not None
+
+    async def _hold_exclusion(self, task_type: str) -> Any:
+        """A lease filter that leaves out the tasks which would run on a held backend, or None
+        when no backend is held (the common case: no query is made)."""
+        tier = _OVERRIDE_TIER.get(task_type)
+        if tier is None or not credit.any_held():
+            return None
+        tcfg = self._settings.llm.tiers.get(tier)
+        cfg = (str(tcfg.backend), str(tcfg.model)) if tcfg is not None else ("", "")
+        backend = func.coalesce(func.json_extract(Task.payload, "$.model_override.backend"), "")
+        model = func.coalesce(func.json_extract(Task.payload, "$.model_override.model"), "")
+        # Tier 1 honors an override only on a Score again (see _task_settings).
+        applies = model != ""
+        if task_type == "t1":
+            applies = and_(applies, func.coalesce(
+                func.json_extract(Task.payload, "$.rescore"), 0) == 1)
+        async with self._sm() as s:
+            rows = (
+                await s.execute(
+                    select(backend, model)
+                    .where(Task.type == task_type, claimable(utcnow_iso()), applies)
+                    .distinct()
+                )
+            ).all()
+        cfg_held = self._group_held(tier, None)
+        clauses: list[Any] = []
+        on_cfg: list[Any] = [not_(applies), and_(backend == cfg[0], model == cfg[1])]
+        for b, m in rows:
+            key = (str(b), str(m))
+            if key == cfg:
+                continue
+            try:
+                settings_with_override(self._settings, tier, {"backend": key[0], "model": key[1]})
+            except ModelOverrideError:
+                on_cfg.append(and_(backend == key[0], model == key[1]))  # falls back to configured
+                continue
+            if self._group_held(tier, key):
+                clauses.append(and_(applies, backend == key[0], model == key[1]))
+        if cfg_held:
+            clauses.append(or_(*on_cfg))
+        return not_(or_(*clauses)) if clauses else None
 
     async def _task_settings(self, task_type: str, payload: dict) -> tuple[Settings, LLMClient]:
         """The settings and client for one task: the worker's own, or, for a score-again task

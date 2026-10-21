@@ -842,6 +842,8 @@ class ProviderError(RuntimeError):
                 "overrides your OpenRouter account setting. Pick a paid model, or allow those "
                 "providers under Settings > Hosted (data collection: allowed)"
             )
+        if status == 402 and "max_tokens" in message.lower():
+            message = f"{credit.TOO_BIG_NOTE} {message}"
         super().__init__(f"HTTP {status} from {url}: {message}")
         self.status = status
         self.message = message

@@ -212,6 +212,8 @@ class Outcome:
     status: str  # stored | skipped | quarantined | error
     added: int = 0
     error: str | None = None
+    # The online key is out of credit (D-LLM-8): the task is deferred and no error run recorded.
+    out_of_credit: bool = False
 
 
 def _target_titles() -> list[str]:
@@ -310,7 +312,9 @@ async def generate(
         return Outcome("quarantined", error=result.error)
     if not result.ok or result.value is None:
         await session.rollback()
-        return Outcome("error", error=result.error or "no reply")
+        return Outcome(
+            "error", error=result.error or "no reply", out_of_credit=result.out_of_credit
+        )
 
     blocked = {norm(t) for t in targets} | seen
     added = 0
@@ -369,6 +373,11 @@ async def drain_title_suggestions(
             beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await beat
+        if outcome.status == "error" and outcome.out_of_credit:
+            # The key has no credit: back to the queue unstarted (hard rule 5), no "error" run
+            # recorded (it would push the next try a week out), and stop this drain.
+            await queue.defer(task.id, outcome.error or "", worker_id=wid)
+            break
         if outcome.status == "error":
             await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
             await _record_failure(sm)

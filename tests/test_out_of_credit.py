@@ -228,3 +228,114 @@ def test_the_worker_defers_the_task_and_leases_nothing_more_for_that_tier(monkey
     assert len(calls) == 1 and held_types(settings) == ("t1",)
     assert rows == [("pending", 0)] * 3 and stats.errors == 0 and stats.completed == 0
     assert "credit has run out" in note
+
+
+# --------------------------------------------------------- the hold follows each task's own model
+def _two_group_settings(monkeypatch):
+    s = _settings("openmodel", monkeypatch)
+    s.llm.hosted_mode.enabled = True
+    s.llm.hosted_mode.acknowledged_at = "2026-10-12T10:00:00+00:00"
+    s.llm.hosted_mode.acknowledged_terms = s.llm.hosted_mode.disclosure_terms()
+    return s
+
+
+def test_a_held_hosted_override_group_is_not_leased_while_a_local_group_still_runs(monkeypatch):
+    from sqlalchemy import select
+
+    from kestrel.db import migrate
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Task
+    from kestrel.pipeline._shared import HandlerOutcome
+    from kestrel.pipeline.worker import TierStats, Worker
+
+    settings = _two_group_settings(monkeypatch)
+    credit.mark_out_of_credit("frontier", "openmodel", "key-for-test")
+    hosted = {"backend": "frontier", "model": "some-model"}
+    local = {"backend": "local", "model": "kestrel-tier2"}
+    ran: list[int] = []
+    leases: list[int] = []
+
+    async def handler(sm, client, settings, *, opportunity_id, **_kw):
+        ran.append(opportunity_id)
+        return HandlerOutcome("t2_done", 2)
+
+    async def go():
+        migrate.run_migrations()
+        sm = get_sessionmaker()
+        worker = Worker(sm, LLMClient(settings), settings)
+        real = worker._queue.lease
+
+        async def counting(*a, **kw):
+            task = await real(*a, **kw)
+            if task is not None:
+                leases.append(task.id)
+            return task
+
+        worker._queue.lease = counting
+        for i in (1, 2):
+            await worker._queue.enqueue("t2", {"opportunity_id": i, "model_override": hosted})
+        await worker._queue.enqueue("t2", {"opportunity_id": 3, "model_override": local})
+        await asyncio.wait_for(worker.drain_tier("t2", 1, handler, TierStats()), 20)
+        async with sm() as s:
+            rows = (await s.execute(select(Task).order_by(Task.id))).scalars().all()
+        return [(t.status, t.attempts) for t in rows]
+
+    rows = asyncio.run(go())
+    assert ran == [3] and len(leases) == 1  # the held group was never leased, not even once
+    assert rows == [("pending", 0), ("pending", 0), ("done", 1)]
+
+
+def test_a_held_configured_backend_does_not_starve_a_local_override(monkeypatch):
+    from kestrel.db import migrate
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.pipeline._shared import HandlerOutcome
+    from kestrel.pipeline.worker import TierStats, Worker
+
+    settings = _two_group_settings(monkeypatch)
+    settings.llm.tiers["tier2"].backend = "frontier"
+    settings.llm.tiers["tier2"].model = "some-model"
+    credit.mark_out_of_credit("frontier", "openmodel", "key-for-test")
+    ran: list[int] = []
+
+    async def handler(sm, client, settings, *, opportunity_id, **_kw):
+        ran.append(opportunity_id)
+        return HandlerOutcome("t2_done", 2)
+
+    async def go():
+        migrate.run_migrations()
+        worker = Worker(get_sessionmaker(), LLMClient(settings), settings)
+        await worker._queue.enqueue("t2", {"opportunity_id": 1})
+        await worker._queue.enqueue(
+            "t2", {"opportunity_id": 2, "model_override": {"backend": "local",
+                                                           "model": "kestrel-tier2"}})
+        await asyncio.wait_for(worker.drain_tier("t2", 1, handler, TierStats()), 20)
+
+    asyncio.run(go())
+    assert ran == [2]
+
+
+_MAX_TOKENS_402 = (
+    "This request requires more credits, or fewer max_tokens. You requested up to 8000 tokens, "
+    "but can only afford 120"
+)
+
+
+def test_an_openrouter_402_about_max_tokens_is_not_an_empty_account():
+    assert not is_out_of_credit("openrouter", 402, (), _MAX_TOKENS_402)
+    assert is_out_of_credit("openrouter", 402, (), "Insufficient credits")
+    assert is_out_of_credit("openmodel", 402, (), _MAX_TOKENS_402)  # only OpenRouter says this
+
+
+@respx.mock
+def test_a_too_big_request_says_so_and_does_not_hold_the_backend(monkeypatch):
+    url = CASES["openrouter"][1]
+    route = respx.post(url).mock(return_value=Response(
+        402, json={"error": {"code": 402, "message": _MAX_TOKENS_402}}))
+    client = LLMClient(_settings("openrouter", monkeypatch))
+    first = _guard(client)
+    second = _guard(client)
+    assert route.call_count == 2  # the next request is still sent: nothing is held
+    assert not first.ok and not first.out_of_credit and not first.quarantined
+    assert "Your OpenRouter credit is too low for this request size." in first.error
+    assert credit.notices() == [] and credit.held_provider("frontier", "key-for-test") is None
+    assert not second.out_of_credit

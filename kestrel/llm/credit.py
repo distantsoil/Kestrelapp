@@ -73,10 +73,19 @@ def is_out_of_credit(
     if provider == "openai" and got & _OPENAI_QUOTA_CODES:
         return True
     if status == 402:
+        if provider == "openrouter" and "max_tokens" in message.lower():
+            # "requires more credits, or fewer max_tokens": the account cannot afford THIS
+            # request size, not an empty account. Not a hold (see TOO_BIG_NOTE).
+            return False
         return True  # OpenModel, OpenRouter, Anthropic and generic services
     # Anthropic documents 402 billing_error; its older "credit balance is too low" arrives as a
     # 400 invalid_request_error (unverified in the docs, so matched only for that provider).
     return provider == "anthropic" and status == 400 and "credit balance" in message.lower()
+
+
+# Appended to a provider's 402 that is about request size, so the quarantine record and the Runs
+# page say it plainly. The backend is not held: a smaller request may still go through.
+TOO_BIG_NOTE = "Your OpenRouter credit is too low for this request size."
 
 
 def _digest(key: str) -> str:
@@ -115,6 +124,11 @@ def held_provider(backend: str, api_key: str) -> str | None:
         _HOLDS.pop(backend, None)
         return None
     return held.provider
+
+
+def any_held() -> bool:
+    """Whether any backend is on hold right now (cheap pre-check before per-task resolution)."""
+    return any(_now() - h.at <= HOLD_SECONDS for h in _HOLDS.values())
 
 
 def clear(backend: str | None = None) -> None:

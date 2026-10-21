@@ -546,3 +546,26 @@ async def test_a_failed_pass_is_recorded_so_it_is_not_requeued_every_ten_minutes
     await _run(sm, _Broken())
     async with sm() as s:
         assert await ts.due(s) is None
+
+
+async def test_an_out_of_credit_key_defers_the_task_and_records_no_error_run(sm):
+    from kestrel.llm.credit import OutOfCredit
+
+    await _seed_master(sm)
+
+    class _Broke(_Client):
+        async def complete(self, **kw):
+            raise OutOfCredit("openmodel")
+
+    client = _Broke()
+    async with sm() as s:
+        await ts.request_title_suggestions(s, "manual")
+        await s.commit()
+    for _ in range(4):  # more cycles than the task has attempts
+        assert await ts.drain_title_suggestions(sm, client, get_settings()) == 0
+    async with sm() as s:
+        task = await _the_task(s)
+        last = await s.get(Setting, ts.LAST_RUN_KEY)
+    assert (task.status, task.attempts) == ("pending", 0)
+    assert "credit has run out" in (task.last_error or "")
+    assert last is None  # no "error" run: the weekly cadence must not swallow the retry
