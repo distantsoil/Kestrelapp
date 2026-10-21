@@ -438,6 +438,7 @@ Guardrails, all of which must be enforced rather than discovered:
 | **Workday** | `POST https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` body `{"limit":20,"offset":0,"searchText":""}` | 200, 2000 postings |
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
 | **Paylocity Recruiting** | `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` (JSON in `window.pageData`) | 200, HTML (verified 2026-10-21) |
+| **Workable** | `POST https://apply.workable.com/api/v3/accounts/{slug}/jobs` body `{}` | 200, `{results, total}` (verified 2026-10-21 from the maintainer's network) |
 | **ADP Workforce Now** | `GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&$top=20&$skip=1` | 200, no auth (verified 2026-10-21) |
 | **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
@@ -1620,6 +1621,35 @@ truncated snippet; the body comes from the posting page
 wrong UTC offset (the local clock time labelled `-05:00` after adding five hours), so the date is
 taken from the list's `PublishedDate`.** The posting link carries only `JobId`, not the board id, so
 board discovery can follow an `.../Jobs/All/{id}` link but not a `.../Jobs/Details/{JobId}` one.
+
+### Workable
+
+`POST https://apply.workable.com/api/v3/accounts/{slug}/jobs` with the JSON body `{}` → `200`
+`{"results": [...], "total": N}`, no auth. Captured 2026-10-21 by the maintainer from one public
+board (6 postings); the build environment was rate-limited by Cloudflare on this host, so nothing
+here was read from it. `apply.workable.com/robots.txt` is `User-agent: *` / `Disallow:` (allows
+everything) with `Content-Signal: search=yes, ai-input=yes, ai-train=no`. `www.workable.com/robots.txt`
+disallows `/j/`, but the adapter calls only the `apply.workable.com` API.
+
+Per result: `id`, `shortcode`, `title`, `remote` (bool), `location` (`{city, country, countryCode,
+region}`; `city` can be `""` and `region` null), `locations[]` (same fields plus `hidden`), `state`,
+`isInternal`, `published` (ISO datetime), `type`, `language`, `department[]`, `accountUid`,
+`workplace`.
+
+**Pagination is UNVERIFIED.** The captured board had `total` equal to the number of results. The
+adapter follows a `nextPage` token if the response carries one (POST again with `{"token": <nextPage>}`,
+up to 20 pages). If `total` exceeds what was collected and there is no token, it returns what it
+has and logs a warning; it never raises for that.
+
+Detail: `GET https://apply.workable.com/api/v2/accounts/{slug}/jobs/{shortcode}` → `200`, no auth,
+the same fields plus `description` (HTML), `requirements` (HTML) and `benefits` (HTML, or `""`).
+The public posting page is `https://apply.workable.com/{slug}/j/{shortcode}/`; the board is
+`https://apply.workable.com/{slug}/`.
+
+**Gotchas:** skip a result whose `isInternal` is true or whose `state` is not `published`. The list
+has no description, so each posting needs a detail request. The body is `description`,
+`requirements` and `benefits` joined in that order (blank sections skipped). The location text is
+built from `city`, `region` and `country`, dropping empty parts.
 
 ### SEC EDGAR full-text search — consulting trigger events
 

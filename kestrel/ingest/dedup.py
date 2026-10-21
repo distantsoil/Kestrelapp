@@ -26,6 +26,7 @@ _PRIORITY = {
     "rippling": 0,
     "adp": 0,
     "paylocity": 0,
+    "workable": 0,
     "page": 1,
     "indeed": 2,
     "jobspy": 2,

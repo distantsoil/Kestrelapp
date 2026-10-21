@@ -219,6 +219,24 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "1 request/second (list and detail alike).",
         "region": _WORLDWIDE,
     },
+    "workable": {
+        "name": "Workable",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public job-board API for one company: "
+            "apply.workable.com/api/v3/accounts/{slug}/jobs, plus one detail request per posting "
+            "under /api/v2/accounts/{slug}/jobs/{shortcode} for the description, up to "
+            "max_results (default 200). Internal and unpublished postings are skipped."
+        ),
+        "provide": (
+            "The board name from the careers URL (apply.workable.com/{slug}/). Optionally "
+            "company_name and max_results."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second (list and detail alike); robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
     "jobspy": {
         "name": "Job boards via JobSpy",
         "category": CATEGORY_AGGREGATOR,
@@ -426,7 +444,7 @@ def _ordered_kinds() -> list[str]:
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
-        "paylocity", "jobspy",
+        "paylocity", "workable", "jobspy",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

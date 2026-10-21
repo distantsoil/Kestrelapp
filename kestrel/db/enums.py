@@ -25,6 +25,7 @@ SOURCE_KINDS = (
     "rippling",
     "adp",
     "paylocity",
+    "workable",
     "page",
     "rss",
     "sec_edgar",
