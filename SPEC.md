@@ -468,6 +468,20 @@ reads the database (SELECT only) and reports per lane the roles, scored, fits an
 fast lane's precision (fits over scored roles) and the lane miss rate (fits that sat in the
 background lane over all fits). A figure from fewer than five observations prints as insufficient.
 
+**RemoteRocketship (optional, paid, discovery only; D-SRC-14).** For people who already pay for
+RemoteRocketship API access, a `remoterocketship` source asks its jobs API for postings and keeps
+**only each posting's own employer link** (`url`). It stores no title, description, company data
+or copy of the reply, and holds the reply in memory for the run only (their terms limit caching to
+24 hours and forbid archiving). Each link goes the way a JobSpy posting link goes (D-SRC-7): a
+recognized company board (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP,
+Paylocity, Workable) becomes a found board read by its own adapter; any other link is read from the
+employer's public page (schema.org `JobPosting` data, robots.txt checked, one polite request, at
+most 20 pages a run). A link nothing can read is dropped and counted in the run ("N links could
+not be read from the employer"). Off by default; the key is `REMOTEROCKETSHIP_API_KEY` (or the
+`api_key_env` named in the config) in `.env` and never in a config row. A run makes at most
+`max_pages` requests (default 2, 50 jobs each) against the provider's 500 requests or 3,000 jobs
+per UTC day; a 429 makes the run partial and keeps the links already collected.
+
 **Manual.** Paste a URL (httpx, escalating to Playwright on a JavaScript shell) or paste raw JD
 text. Both produce a normal `opportunity` and run the identical pipeline.
 
@@ -1667,6 +1681,28 @@ The public posting page is `https://apply.workable.com/{slug}/j/{shortcode}/`; t
 has no description, so each posting needs a detail request. The body is `description`,
 `requirements` and `benefits` joined in that order (blank sections skipped). The location text is
 built from `city`, `region` and `country`, dropping empty parts.
+
+### RemoteRocketship (paid API; discovery only)
+
+`POST https://www.remoterocketship.com/api/openclaw/jobs/` with `Authorization: Bearer <key>` and the
+JSON body `{"filters": {..., "page": N, "itemsPerPage": <=50}, "includeJobDescription": false}`.
+**The trailing slash is required**: without it the server answers `308`. Captured 2026-10-21 by the
+maintainer from their own key and scrubbed (`tests/fixtures/remoterocketship_jobs.json`).
+
+`200` reply: `{"jobOpenings": [...], "totalCount": N, "pagination": {"page", "itemsPerPage",
+"totalCount", "totalPages", "hasNextPage", "hasPreviousPage"}}`. Per job: `id`, `roleTitle`, `url`
+(the employer's own posting, the only field Kestrel keeps), `created_at`, `validUntilDate`,
+`employmentType`, `salaryRange` (null or an object), `company` (object) and more. Kestrel reads
+nothing else.
+
+Errors carry `{"message", "code", "hint"}` (`tests/fixtures/remoterocketship_401.json`): `400` bad
+request, `401` missing or invalid key, `403` active subscription required, `413`, `429` daily request
+limit reached, `500`. Kestrel never shows the provider's `message` or `hint`; it says each case in
+its own words. Limits: 500 requests or 3,000 jobs per UTC day, 50 jobs per request. Their terms
+(section 4) allow caching responses for 24 hours only and prohibit archiving, bulk export and
+resale; section 5 forbids scraping the website and bursts. `robots.txt` has `Disallow: /api` for all
+agents, a crawler rule; this user-keyed API is published for programmatic use, so the API call alone
+is exempt from the robots check (D-SRC-14). Every employer page it leads to is checked.
 
 ### SEC EDGAR full-text search — consulting trigger events
 

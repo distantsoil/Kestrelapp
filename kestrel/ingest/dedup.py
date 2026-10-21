@@ -27,6 +27,7 @@ _PRIORITY = {
     "adp": 0,
     "paylocity": 0,
     "workable": 0,
+    "remoterocketship": 1,
     "page": 1,
     "indeed": 2,
     "jobspy": 2,

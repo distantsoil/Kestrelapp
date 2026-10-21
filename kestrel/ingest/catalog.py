@@ -237,6 +237,32 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "1 request/second (list and detail alike); robots.txt respected.",
         "region": _WORLDWIDE,
     },
+    "remoterocketship": {
+        "name": "RemoteRocketship (paid API, finds links only)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Optional, for people who already pay for RemoteRocketship API access. Asks "
+            "www.remoterocketship.com/api/openclaw/jobs/ for up to max_pages requests (default 2, "
+            "50 jobs each) and keeps only each posting's own employer link. Kestrel stores "
+            "nothing else from RemoteRocketship. A link to a known company board becomes a "
+            "found board; any other link is read from the employer's public page; a link that "
+            "cannot be read is dropped and counted in the run."
+        ),
+        "provide": (
+            "Your own paid RemoteRocketship subscription with API access (Kestrel stays free "
+            "and this does not change that). Save the key as REMOTEROCKETSHIP_API_KEY in "
+            "Kestrel's .env file, never in the source. Optional max_pages, items_per_page and "
+            "filters (RemoteRocketship's own filter object)."
+        ),
+        "config_example": {"max_pages": 2},
+        "rate_limit": (
+            "1 request/second; a few requests per scan against their 500 requests or 3,000 jobs "
+            "per UTC day. The API call skips the robots check (it is published for programs); "
+            "employer pages are checked."
+        ),
+        "region": _WORLDWIDE,
+    },
     "jobspy": {
         "name": "Job boards via JobSpy",
         "category": CATEGORY_AGGREGATOR,
@@ -444,7 +470,7 @@ def _ordered_kinds() -> list[str]:
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
-        "paylocity", "workable", "jobspy",
+        "paylocity", "workable", "jobspy", "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

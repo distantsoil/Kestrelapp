@@ -1,0 +1,159 @@
+{
+  "jobOpenings": [
+    {
+      "id": 20000001,
+      "validUntilDate": null,
+      "employmentType": "full-time",
+      "created_at": "2026-10-21T17:40:44.03+00:00",
+      "roleTitle": "Security Engineer",
+      "jobDescriptionSummary": "Security Engineer at a fictional company",
+      "twoLineJobDescriptionSummary": "Security Engineer at a fictional company. Second line of summary.",
+      "url": "https://northwind.wd3.myworkdayjobs.com/northwind_careers/job/remote-poland/security-engineer_r000001",
+      "isEntryLevel": false,
+      "isJunior": false,
+      "isMidLevel": false,
+      "isSenior": true,
+      "isLead": true,
+      "salaryRange": null,
+      "techStack": [
+        "Python",
+        "AWS"
+      ],
+      "company": {
+        "id": 900001,
+        "name": "Northwind Systems",
+        "foundedYear": null,
+        "chatGPTIndustries": [
+          "Software"
+        ],
+        "profilePicURL": "https://images.example.com/northwind.jpeg",
+        "employeeRange": "201,500",
+        "fundingData": [],
+        "slug": "northwind",
+        "sponsorsH1B": false,
+        "homePageURL": "https://northwind.example.com",
+        "linkedInURL": "https://www.example.com/company/northwind",
+        "sponsorsUKSkilledWorkerVisa": false
+      },
+      "slug": "security-engineer-poland-remote",
+      "isPromoted": false,
+      "educationRequirementsCredentialCategory": "bachelor degree",
+      "requiredLanguages": [
+        "en"
+      ],
+      "descriptionLanguage": "en",
+      "isOnLinkedIn": true
+    },
+    {
+      "id": 20000002,
+      "validUntilDate": null,
+      "employmentType": "full-time",
+      "created_at": "2026-10-21T17:39:55.22+00:00",
+      "roleTitle": "Demand Generation Manager",
+      "jobDescriptionSummary": "Demand Generation Manager at a fictional company",
+      "twoLineJobDescriptionSummary": "Demand Generation Manager at a fictional company. Second line of summary.",
+      "url": "https://jobs.ashbyhq.com/contoso/00000000-0000-4000-8000-0000000000c1",
+      "isEntryLevel": false,
+      "isJunior": false,
+      "isMidLevel": true,
+      "isSenior": true,
+      "isLead": false,
+      "salaryRange": null,
+      "techStack": [],
+      "company": {
+        "id": 900002,
+        "name": "Contoso Labs",
+        "foundedYear": "2018",
+        "chatGPTIndustries": [
+          "Software"
+        ],
+        "profilePicURL": "https://images.example.com/contoso.jpeg",
+        "employeeRange": "201,500",
+        "fundingData": [
+          {
+            "fundingType": "Series B - Contoso Labs",
+            "moneyRaised": 20000000,
+            "announcedDate": "2019-03-13"
+          },
+          {
+            "fundingType": "Seed Round - Contoso Labs",
+            "moneyRaised": null,
+            "announcedDate": "2012-06-03"
+          }
+        ],
+        "slug": "contoso",
+        "sponsorsH1B": false,
+        "homePageURL": "https://contoso.example.com/",
+        "linkedInURL": "https://www.example.com/company/contoso",
+        "sponsorsUKSkilledWorkerVisa": true
+      },
+      "slug": "demand-generation-manager-united-states-remote",
+      "isPromoted": false,
+      "educationRequirementsCredentialCategory": null,
+      "requiredLanguages": [
+        "en"
+      ],
+      "descriptionLanguage": "en",
+      "isOnLinkedIn": false
+    },
+    {
+      "id": 20000003,
+      "validUntilDate": null,
+      "employmentType": "full-time",
+      "created_at": "2026-10-21T17:39:21.935+00:00",
+      "roleTitle": "Clinical Recruiter",
+      "jobDescriptionSummary": "Clinical Recruiter at a fictional company",
+      "twoLineJobDescriptionSummary": "Clinical Recruiter at a fictional company. Second line of summary.",
+      "url": "https://careers.fabrikam.example.com/jobs/3001",
+      "isEntryLevel": false,
+      "isJunior": true,
+      "isMidLevel": false,
+      "isSenior": false,
+      "isLead": false,
+      "salaryRange": {
+        "max": 70000,
+        "min": 60000,
+        "salaryType": "per year",
+        "currencyCode": "USD",
+        "currencySymbol": "$",
+        "maxSalaryAsUSD": 70000,
+        "minSalaryAsUSD": 60000,
+        "salaryHumanReadableText": "$60,000 - $70,000 per year"
+      },
+      "techStack": [],
+      "company": {
+        "id": 900003,
+        "name": "Fabrikam Care",
+        "foundedYear": "2018",
+        "chatGPTIndustries": [
+          "Software"
+        ],
+        "profilePicURL": "https://images.example.com/fabrikam.jpeg",
+        "employeeRange": "201,500",
+        "fundingData": [],
+        "slug": "fabrikam",
+        "sponsorsH1B": false,
+        "homePageURL": "https://fabrikam.example.com/",
+        "linkedInURL": "https://www.example.com/company/fabrikam",
+        "sponsorsUKSkilledWorkerVisa": false
+      },
+      "slug": "clinical-recruiter-united-states-remote",
+      "isPromoted": false,
+      "educationRequirementsCredentialCategory": "bachelor degree",
+      "requiredLanguages": [
+        "en"
+      ],
+      "descriptionLanguage": "en",
+      "isOnLinkedIn": true
+    }
+  ],
+  "totalCount": 182105,
+  "pagination": {
+    "page": 1,
+    "itemsPerPage": 3,
+    "totalCount": 182105,
+    "totalPages": 60702,
+    "hasNextPage": true,
+    "hasPreviousPage": false
+  }
+}

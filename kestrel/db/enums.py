@@ -26,6 +26,7 @@ SOURCE_KINDS = (
     "adp",
     "paylocity",
     "workable",
+    "remoterocketship",
     "page",
     "rss",
     "sec_edgar",
