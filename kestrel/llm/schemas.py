@@ -1,5 +1,4 @@
-"""A pydantic model per prompt schema in PROMPTS.md (16 prompts: P1, P1C, P2, P2C, P3, P4, P4C,
-P5, P6, P7, P8, P9, P10, P11, P12, P13).
+"""A pydantic model per prompt schema in PROMPTS.md (P1 to P14, with the C variants).
 
 TRUNCATE, never reject: maxLength limits are advisory (the grammar drops them), so overlong
 strings are truncated by validators, not rejected. Numeric bounds the grammar drops (confidence,
@@ -722,6 +721,35 @@ class P13ResumeAssess(_Base):
     strengthen: Annotated[list[P13Strengthen], _cap(8)]
 
 
+# ===== P14 — interview questions, generated when a role is marked Applied (D-INTERVIEW-1)
+# Questions are advice for the operator, not resume text; they never reach a PDF. The registered
+# model takes any story id and proof point key; kestrel.interview.question_task builds a per-call
+# subclass whose two reference fields are enums of the ids that really exist (plus null), the
+# P3 and P13 pattern, so an invented id is structurally impossible on a constrained backend.
+QUESTION_CATEGORIES = (
+    "behavioral", "technical", "role_specific", "culture", "motivation", "gap_probe",
+)
+QuestionCategory = Literal[
+    "behavioral", "technical", "role_specific", "culture", "motivation", "gap_probe"
+]
+MAX_QUESTIONS = 12
+
+
+class P14QuestionCore(_Base):
+    question: Annotated[str, _truncate(250)]
+    category: QuestionCategory
+    why_asked: Annotated[str, _truncate(200)]
+
+
+class P14Question(P14QuestionCore):
+    proof_point_key: str | None = None
+    story_id: int | None = None
+
+
+class P14InterviewQuestions(_Base):
+    questions: Annotated[list[P14Question], _cap(MAX_QUESTIONS), _max_items(MAX_QUESTIONS)]
+
+
 # Registry: prompt version string -> pydantic model. Used by the guard/caller to pick the model.
 SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "triage/v1": P1Triage,
@@ -742,4 +770,5 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "negotiate/v1": P11Negotiate,
     "analytics_summary/v1": P12Analytics,
     "resume_assess/v1": P13ResumeAssess,
+    "interview_questions/v1": P14InterviewQuestions,
 }

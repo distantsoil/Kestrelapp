@@ -370,6 +370,21 @@ them specific rather than generic), and any known panel members from `contact`.
 Renders to PDF via the same pipeline. Practically, this is what the operator reads on the
 morning of the interview.
 
+**Interview questions on Applied (P14, D-INTERVIEW-1).** When the operator marks a role Applied,
+a queued `interview_questions` task asks the Tier 2 model for a focused list of likely questions
+for that role (`PROMPTS.md` P14), each optionally linked to one of the operator's real stories
+and proof points by id. **`interview_question_set`** — `id`, `opportunity_id`, `pursuit_id`,
+`prompt_version`, `questions` json, `created_at`, `superseded_at` nullable; one active set (null
+`superseded_at`) per pursuit. The trigger is the applied branch of `move_to_status` only, so
+every way of marking Applied (the verb button, the stage select, a drag, an offer) fires it once;
+a bulk import of past applications does not. Regenerating writes a new set and supersedes the old
+one only after the new one validates.
+
+Once a set exists it **supersedes Block F for that role**: the prep pack, the mock interview's
+first question and the debrief's predicted-vs-asked hit rate use the P14 set. Block F stays the
+source for roles that are not Applied and for any Applied role with no set yet (the task has not
+run, or its reply was quarantined).
+
 ### 3.3 Mock interview
 
 A conversational loop, not a document.
@@ -392,7 +407,8 @@ After a real interview the operator captures a debrief: what was asked, what wen
 not, who was in the room, next steps, and read on the role. This writes `interaction` rows,
 updates `pursuit`, adds any newly discovered contacts, and **feeds the learning loop as outcome
 data** (§5.6). Questions actually asked are compared against questions predicted, and the hit
-rate is reported in analytics — a direct measure of whether Block F is any good.
+rate is reported in analytics — a direct measure of whether the predicted questions (the P14
+set when present, else Block F) are any good.
 
 ---
 

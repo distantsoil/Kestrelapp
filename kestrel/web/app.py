@@ -332,6 +332,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.config import HostedModeError, get_settings
     from kestrel.db.engine import get_sessionmaker
     from kestrel.intelligence.liveness import run_liveness_cycle
+    from kestrel.interview.question_task import drain_interview_questions
     from kestrel.interview.story_task import drain_story_builds
     from kestrel.learning.reranker import check_drift
     from kestrel.llm.client import LLMClient
@@ -422,6 +423,9 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # claimed no more; nothing further starts until the operator resumes.
                 if not is_paused():
                     await drain_story_builds(sm, client, settings, stop=stop)
+                    # Likely questions for roles marked Applied (P14): the same Tier 2 model as
+                    # the story build, so right after it keeps the tier drained (D-INTERVIEW-1).
+                    await drain_interview_questions(sm, client, settings, stop=stop)
                 # Drift is a rolling window over the last 50 labels; checking it every idle
                 # cycle (5 s) loaded both reranker pickles and every Org and Source row on the
                 # UI's event loop for nothing. Once per interval, or after any Tier 1 work.

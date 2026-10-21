@@ -25,6 +25,7 @@
 | P11 | Negotiation scripts | both | tier3 |
 | P12 | Analytics honest summary | both | tier2 |
 | P13 | Resume assessment (advisory, displayed only) | both | tier2 |
+| P14 | Interview questions (generated when a role is marked Applied) | both | tier2 |
 
 Store each as `kestrel/llm/prompts/{id}.{version}.md`. Load by version. **Never inline prompt
 text in Python.**
@@ -1813,6 +1814,61 @@ Refer to bullets ONLY by those keys, exactly as written.
 
 Strings are truncated (overall_fit 900, others 300 to 400), lists capped (6 strengths, 6 gaps,
 8 bullets to strengthen), never rejected.
+
+---
+
+## P14 — Interview Questions (generated when a role is marked Applied)
+
+**Version:** `interview_questions/v1` · **Tier:** `tier2` · **Temp:** 0.3 · **Max tokens:** 2500 ·
+**Reasoning hint:** `low`
+
+Run once when the operator marks a role Applied (employment `applied`, consulting
+`outreach_sent`), never on scoring and never on a bulk import of past applications (hundreds of
+model calls for roles the operator is no longer preparing for). It is a queued `interview_questions`
+task (hard rule 5), enqueued once per opportunity, drained right after the story build so the
+tier-drain rule holds. The operator can regenerate it from the opportunity page.
+
+**Inputs.** The operator's profile (`PROFILE_FULL`), the posting's title, company and description
+slice (`jd_budget`, the same slice Tier 2 uses), the latest Tier 2 summary and gaps (Block A and
+B), that evaluation's Block F questions **as a seed to improve on, not to copy**, the research
+unknowns for the organization, and the canonical story titles with their ids.
+
+**The model selects, it never invents.** Each question may point at one of the operator's real
+stories (`story_id`) and one of their real proof points (`proof_point_key`). Both are **enums of
+the ids that exist, plus null**, generated per call (the P3 and P13 pattern), so an invented id is
+structurally impossible on a constrained backend and a validation failure elsewhere: one repair,
+then a quarantine row (`tier` 14, raw response kept) and a plain note on the page, never a
+silent default. A field with no ids to point at is left out of that call's schema. Questions are
+not resume text and never reach a PDF.
+
+### Schema (enums filled per call)
+
+```json
+{
+  "type": "object",
+  "required": ["questions"],
+  "properties": {
+    "questions": { "type": "array", "items": { "type": "object",
+      "required": ["question", "category", "why_asked"],
+      "properties": {
+        "question": { "type": "string" },
+        "category": { "enum": ["behavioral", "technical", "role_specific", "culture",
+                               "motivation", "gap_probe"] },
+        "why_asked": { "type": "string" },
+        "proof_point_key": { "enum": ["<proof point keys>"] },
+        "story_id": { "enum": ["<canonical story ids>"] } } } }
+  }
+}
+```
+
+`proof_point_key` and `story_id` are optional (a null or absent value means "no match"). Strings
+are truncated (question 250, why_asked 200) and the list is capped at 12, never rejected.
+
+**Failure handling.** One repair, then quarantine with the raw reply kept; the task completes
+(retrying a model that cannot produce the schema would loop) and the opportunity page says the
+questions could not be generated and that the earlier Tier 2 questions still apply. A transport
+error leaves the task to retry. A tier routed to a hosted backend goes through `run_prompt_hosted`
+(redaction, or a refusal recorded as a quarantine row with `attempts=0`).
 
 ---
 

@@ -1,0 +1,28 @@
+{# Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1). Tokens only. #}
+<div class="card" id="questions-card" data-testid="questions-card">
+  <h3>Likely questions</h3>
+  {% if qview.questions %}
+    <ol data-testid="question-list" style="margin:0 0 .6rem 1.1rem;padding:0">
+      {% for q in qview.questions %}
+        <li data-testid="question" style="margin-bottom:.5rem">
+          {{ q.question }}
+          <span class="pill grey">{{ q.category|replace('_', ' ') }}</span>
+          {% if q.why_asked %}<div class="quiet">{{ q.why_asked }}</div>{% endif %}
+          {% if q.story_title %}<div class="quiet">Your story: {{ q.story_title }}</div>{% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+    <p class="quiet">Written when you marked this role Applied. The prep pack, mock interview and debrief use this list.</p>
+  {% elif qview.pending %}
+    <p class="quiet" data-testid="questions-pending">Writing questions for this role. They appear after the next background pass.</p>
+  {% elif qview.failed %}
+    <p class="quiet" data-testid="questions-failed">The model's answer could not be used, even after one retry, so no list was made. It is kept on the Failed scoring page for review. The questions from the scored review still apply.</p>
+  {% else %}
+    <p class="quiet">Marking this role Applied writes the questions an interviewer is likely to ask. Until then the prep pack uses the questions from the scored review.</p>
+  {% endif %}
+  {% if qnote %}<p class="quiet" role="status" data-testid="questions-note">{{ qnote }}</p>{% endif %}
+  <button type="button" class="btn" data-testid="questions-regenerate"
+          hx-post="/opportunities/{{ opp_id }}/questions/regenerate"
+          hx-target="#questions-card" hx-swap="outerHTML"
+          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>
+</div>

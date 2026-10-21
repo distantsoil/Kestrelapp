@@ -561,6 +561,29 @@ class PrepPack(Base):
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
 
 
+class InterviewQuestionSet(Base):
+    """Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1). The active set
+    has a null `superseded_at` (one per pursuit, by a partial unique index); it supersedes the
+    Tier 2 Block F questions for the prep pack, the mock interview and the debrief."""
+
+    __tablename__ = "interview_question_set"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunity.id"), index=True)
+    pursuit_id: Mapped[int] = mapped_column(ForeignKey("pursuit.id"), index=True)
+    prompt_version: Mapped[str] = mapped_column(String)
+    questions: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    superseded_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+Index(
+    "ux_interview_question_set_active",
+    InterviewQuestionSet.pursuit_id,
+    unique=True,
+    sqlite_where=text("superseded_at IS NULL"),
+)
+
+
 class MockSession(Base):
     __tablename__ = "mock_session"
     id: Mapped[int] = mapped_column(primary_key=True)

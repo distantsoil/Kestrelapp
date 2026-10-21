@@ -94,6 +94,8 @@
         </p>
       </div>
 
+      {% if pursuit %}{% set opp_id = opp.id %}{% include "partials/opp_questions.html" %}{% endif %}
+
       {# The remaining actions (Research, Find contacts, Prep pack, Archive) keep their partial. #}
       <details class="card">
         <summary>More actions</summary>

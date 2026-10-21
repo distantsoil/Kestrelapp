@@ -259,6 +259,7 @@ async def move_to_status(
       applied_at if unset and, when the card has no next action, the "Applied?" default: a
       follow-up FOLLOW_UP_DAYS out, so a dragged card gets the same quiet badge and Today line
       as one moved with the button.
+    - Entering the applied status also queues the role's interview questions (P14), once.
     - Entering a closed status sets closed_at; leaving one clears it, so a reopened card is
       open again everywhere (Today, the quiet count)."""
     from kestrel.db.enums import valid_pursuit_status
@@ -281,6 +282,11 @@ async def move_to_status(
             start = parse_day(p.applied_at) or today()
             p.next_action = applied_status.next_action
             p.next_action_at = (start + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
+        # Likely interview questions for this role (P14, D-INTERVIEW-1): one queued task, only
+        # here, so a bulk import of past applications (applied_import) never fires a model call.
+        from kestrel.interview.question_task import request_interview_questions
+
+        await request_interview_questions(session, p.opportunity_id, p.id)
     if to_status in closed:
         p.closed_at = p.closed_at or now
     elif was_closed:

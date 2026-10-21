@@ -736,10 +736,62 @@ async def opportunity_detail(request: Request, opp_id: int):
             await _tier3_card(s, detail["settings"], opp_id) if detail["pursuit"] else None
         )
         detail["renders"] = await opportunity_renders(s, opp_id)
+        if detail["pursuit"]:
+            detail["qview"] = await _questions_view(s, opp_id, detail)
     detail["request"] = request
     detail["query"] = dict(request.query_params)
     detail["tab"] = "evaluation"
     return templates().TemplateResponse(request, "opportunity_detail.html", detail)
+
+
+async def _questions_view(s, opp_id: int, detail: dict) -> dict:
+    """The Likely questions card's data, redacted like every other tab in confidential mode (the
+    model's reply is restored from its stand-in codes, so it can name the employer)."""
+    from kestrel.interview.question_task import question_view
+    from kestrel.web.redact import redact_json
+
+    return redact_json(
+        await question_view(s, opp_id), detail["mapping"], enabled=detail["confidential"]
+    )
+
+
+@router.post("/opportunities/{opp_id}/questions/regenerate", response_class=HTMLResponse)
+async def regenerate_questions(request: Request, opp_id: int):
+    """Queue a fresh question list for a role on the list. The old list stays until the new one
+    validates. Never a 500: a failure is logged and the card says so."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.models import Pursuit
+    from kestrel.interview.question_task import request_interview_questions
+
+    note: str | None = None
+    async with sessionmaker()() as s:
+        try:
+            pursuit = (
+                await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
+            ).scalar_one_or_none()
+            if pursuit is None:
+                note = "Add this role to your list first."
+            else:
+                queued = await request_interview_questions(s, opp_id, pursuit.id, regenerate=True)
+                await s.commit()
+                note = (
+                    "Queued. The new list replaces this one when it is ready."
+                    if queued else "A list is already being written for this role."
+                )
+        except SQLAlchemyError as exc:
+            log.warning("questions_regenerate_failed", opp_id=opp_id, error_type=type(exc).__name__)
+            await s.rollback()
+            note = "Could not queue that. Try again."
+        detail = await _detail_context(s, opp_id)
+        if detail is None:
+            return HTMLResponse("Not found", status_code=404)
+        qview = await _questions_view(s, opp_id, detail)
+    return templates().TemplateResponse(
+        request, "partials/opp_questions.html",
+        {"qview": qview, "qnote": note, "opp_id": opp_id},
+    )
 
 
 @router.get("/opportunities/{opp_id}/tab/{name}", response_class=HTMLResponse)
