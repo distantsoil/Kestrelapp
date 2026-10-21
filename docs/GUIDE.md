@@ -177,9 +177,10 @@ Every decision is a row in the local database (`data/kestrel.db`: the `label` ta
 
 ## Reaching Kestrel from your phone (optional, off by default)
 
-Kestrel listens on this machine only until you set `server.bind_all` in `settings.yml` or as
-`KESTREL_SERVER__BIND_ALL=true`, and restart. With it on, generate a shared secret under
-**Settings > LAN** and scan the QR code from a phone on the same network.
+Kestrel listens on this machine only until you turn on LAN access. Under **Settings > LAN &
+backup**, generate a shared secret, tick the box that says you read the warning, and turn it on;
+then restart Kestrel. Scan the QR code from a phone on the same network. (Advanced: the switch
+writes `server.bind_all` in `settings.yml`, and `KESTREL_SERVER__BIND_ALL` overrides it.)
 
 Read this before you turn it on. That secret is **one shared password for the whole application**.
 There are no accounts, no per-device access, and no record of who did what. Traffic is plain HTTP

@@ -135,6 +135,11 @@ async def settings_page(request: Request):
 
         update_last_checked = format_last_checked((await updater.load_state(s)).last_checked_at)
     lan_secret = secret_row.value if secret_row and isinstance(secret_row.value, str) else None
+    from kestrel.services import lan_access
+
+    lan = lan_access.state(
+        running_on=getattr(request.app.state, "bind_all", None), has_secret=bool(lan_secret)
+    )
     ctx = {
         "title": "Settings",
         "query": dict(request.query_params),
@@ -142,6 +147,7 @@ async def settings_page(request: Request):
         "preview": preview,
         "calibrations": calibrations,
         "lan_secret": lan_secret,
+        "lan": lan,
         "data_dir": str(paths.data_dir()),
         "confidential_inert": conf_inert,
         "confidential_employers": [e for e in employers if not e["inferred"]],
@@ -408,6 +414,60 @@ def _copy_row(value: str, *, code_testid: str, button_testid: str, label: str) -
         f'data-path="{safe}" @click="navigator.clipboard.writeText($el.dataset.path)" '
         f'title="Copy {label}">Copy</button></div>'
     )
+
+
+def _lan_partial(request: Request, lan, note: str | None = None, *, ok: bool = True):
+    return templates().TemplateResponse(
+        request, "partials/lan_bind.html", {"lan": lan, "lan_note": note, "lan_ok": ok}
+    )
+
+
+@router.post("/settings/lan/bind", response_class=HTMLResponse)
+async def lan_bind(request: Request):
+    """Turn LAN access on or off (#27, D-SEC-3) by writing server.bind_all to the user's
+    settings.yml, where the bind address and both browser guards read it. It takes effect after a
+    restart. Only a request from this machine may change it, even one carrying the shared key;
+    enabling needs an existing shared secret and the acknowledgement; every refusal is a line on the
+    panel and changes nothing."""
+    from kestrel.services import lan_access
+    from kestrel.web.auth import is_loopback
+
+    if not is_loopback(request):
+        return HTMLResponse("LAN access can only be changed from this computer.", status_code=403)
+    form = await request.form()
+    want_on = str(form.get("bind_all") or "") == "on"
+    async with sessionmaker()() as s:
+        secret_row = await s.get(Setting, SHARED_SECRET_KEY)
+    has_secret = bool(secret_row and isinstance(secret_row.value, str) and secret_row.value)
+    running = getattr(request.app.state, "bind_all", None)
+
+    def view():
+        return lan_access.state(running_on=running, has_secret=has_secret)
+
+    if want_on:
+        if not has_secret:
+            return _lan_partial(
+                request, view(),
+                "Generate the shared secret first. LAN access without it would answer other "
+                "devices with nothing to check.", ok=False,
+            )
+        if str(form.get("ack") or "") != "on":
+            return _lan_partial(
+                request, view(),
+                "Tick the box to confirm you read the warning, then turn it on.", ok=False,
+            )
+    try:
+        lan_access.set_bind_all(want_on)
+    except lan_access.LanAccessError as exc:
+        return _lan_partial(request, view(), plain_error(exc), ok=False)
+    after = view()
+    note = "Takes effect after restart. Quit Kestrel from the tray and open it again."
+    if after.env_name and after.effective_on != want_on:
+        note += (
+            f" The environment variable {after.env_name} is set to {after.env_value} and wins "
+            "over this switch until you remove it."
+        )
+    return _lan_partial(request, after, note)
 
 
 @router.post("/settings/lan/secret", response_class=HTMLResponse)

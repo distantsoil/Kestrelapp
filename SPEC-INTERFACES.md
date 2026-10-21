@@ -594,6 +594,16 @@ without typing a secret. The browser extension sends the header.
 The settings page states plainly that there is no real authorization model, that the secret is a
 single shared credential, and that this should not be exposed beyond a trusted LAN or VPN.
 
+**Turning it on from Settings (#27, D-SEC-3).** Settings > LAN & backup has a switch for `server.bind_all`.
+The bind address and both browser guards (the Host allowlist and the Origin check) read `bind_all`
+from the settings file plus environment, never from the database, so the switch writes the user's
+own `settings.yml` (an atomic temp-file write with fsync that edits only that one key and keeps every
+comment) and says **it takes effect after Kestrel restarts**. Rules: it enables only after a shared
+secret exists and the user ticks the acknowledgement of the warning; only a request from this machine
+(loopback) may change it, even one carrying the shared key; turning it off writes the file too and
+needs no tick. The control shows the file's value, what the running process started with, and, when
+`KESTREL_SERVER__BIND_ALL` is set, that the environment variable wins. `POST /settings/lan/bind`.
+
 ---
 
 ## 3. REST API

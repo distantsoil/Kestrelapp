@@ -794,6 +794,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     from kestrel.config import get_settings
 
     bind_all = get_settings().server.bind_all
+    app.state.bind_all = bind_all  # what this process runs with (Settings > LAN compares it)
     public_hostnames = tuple(h.strip().lower() for h in get_settings().server.public_hostnames if h)
 
     @app.middleware("http")

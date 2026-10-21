@@ -407,3 +407,239 @@ def test_settings_page_shows_an_existing_secret_with_a_copy_button(monkeypatch):
         page = c.get("/settings").text
     block = page.split('id="secret"', 1)[1].split("</div>", 2)[0]
     assert 'data-testid="lan-secret"' in block and 'data-testid="copy-secret"' in block
+
+
+# ------------------------------------------------- turning LAN access on from Settings (#27)
+_HEADER_COMMENT = "# ---- Hosted, bring-your-own-key backends"
+
+
+def _seed_settings(text: str | None = None):
+    """The user's settings.yml in the isolated data home: the packaged copy, or `text`."""
+    from kestrel import paths
+
+    paths.ensure_dirs()
+    target = paths.config_dir() / "settings.yml"
+    if text is None:
+        text = (paths.packaged_config() / "settings.yml").read_text(encoding="utf-8")
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+def _server(text: str) -> dict:
+    import yaml
+
+    return (yaml.safe_load(text) or {}).get("server") or {}
+
+
+def test_set_bind_all_changes_one_key_and_keeps_every_comment(_isolate_data_home):
+    import yaml
+
+    from kestrel.config import get_settings
+    from kestrel.services import lan_access
+
+    target = _seed_settings()
+    before_text = target.read_text(encoding="utf-8")
+    before = yaml.safe_load(before_text)
+    assert lan_access.set_bind_all(True) == target
+    after_text = target.read_text(encoding="utf-8")
+    assert _HEADER_COMMENT in after_text
+    assert after_text.count("#") == before_text.count("#")  # not one comment lost
+    after = yaml.safe_load(after_text)
+    assert after["server"]["bind_all"] is True
+    before["server"]["bind_all"] = True
+    assert after == before  # nothing else changed
+    assert get_settings().server.bind_all is True  # the loader sees it, no restart of the loader
+    lan_access.set_bind_all(False)
+    assert yaml.safe_load(target.read_text(encoding="utf-8")) == yaml.safe_load(before_text)
+    assert get_settings().server.bind_all is False
+
+
+@pytest.mark.parametrize("text", [
+    "llm:\n  mode: local\nserver:\n  host: \"127.0.0.1\"  # the address\n",  # no bind_all line
+    "llm:\n  mode: local\n",  # no server block at all
+    "llm:\n  mode: local\nserver:\n  bind_all: false   # keep this comment\n  host: x\n",
+    "server: {host: x, bind_all: false}\nllm:\n  mode: local\n",  # flow style
+])
+def test_set_bind_all_handles_every_shape_of_the_file(_isolate_data_home, text):
+    import yaml
+
+    from kestrel.services import lan_access
+
+    target = _seed_settings(text)
+    lan_access.set_bind_all(True)
+    out = target.read_text(encoding="utf-8")
+    assert _server(out)["bind_all"] is True
+    expected = yaml.safe_load(text)
+    expected.setdefault("server", {})["bind_all"] = True
+    assert yaml.safe_load(out) == expected
+    for comment in ("# the address", "# keep this comment"):
+        assert (comment in out) == (comment in text)
+
+
+def test_a_missing_user_file_is_seeded_from_the_packaged_copy(_isolate_data_home):
+    from kestrel import paths
+    from kestrel.services import lan_access
+
+    target = paths.config_dir() / "settings.yml"
+    target.unlink(missing_ok=True)
+    lan_access.set_bind_all(True)
+    text = target.read_text(encoding="utf-8")
+    assert _server(text)["bind_all"] is True and "backends:" in text and "tiers:" in text
+
+
+def test_a_failed_write_leaves_the_file_as_it_was(_isolate_data_home, monkeypatch):
+    import os
+
+    from kestrel import paths
+    from kestrel.services import lan_access
+
+    target = _seed_settings()
+    before = target.read_bytes()
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(lan_access.LanAccessError):
+        lan_access.set_bind_all(True)
+    assert target.read_bytes() == before
+    assert [p.name for p in paths.config_dir().iterdir() if "editing" in p.name] == []
+
+
+def test_a_file_that_is_not_a_mapping_is_refused_not_overwritten(_isolate_data_home):
+    from kestrel.services import lan_access
+
+    target = _seed_settings("- not\n- a mapping\n")
+    with pytest.raises(lan_access.LanAccessError):
+        lan_access.set_bind_all(True)
+    assert target.read_text(encoding="utf-8") == "- not\n- a mapping\n"
+
+
+def _post(c, **data):
+    return c.post("/settings/lan/bind", data=data)
+
+
+def _on(c):
+    c.post("/settings/lan/secret")
+    return _post(c, bind_all="on", ack="on")
+
+
+def test_enabling_needs_a_secret_and_the_acknowledgement(_isolate_data_home):
+    target = _seed_settings()
+    before = target.read_text(encoding="utf-8")
+    with _client() as c:
+        no_secret = _post(c, bind_all="on", ack="on")
+        assert no_secret.status_code == 200
+        assert "Generate the shared secret first" in no_secret.text
+        assert target.read_text(encoding="utf-8") == before
+        c.post("/settings/lan/secret")
+        no_ack = _post(c, bind_all="on")
+        assert "Tick the box" in no_ack.text
+        assert target.read_text(encoding="utf-8") == before
+        ok = _post(c, bind_all="on", ack="on")
+    assert "Takes effect after restart" in ok.text
+    assert _server(target.read_text(encoding="utf-8"))["bind_all"] is True
+
+
+def test_only_this_machine_may_change_it_even_with_the_key(_isolate_data_home):
+    target = _seed_settings()
+    before = target.read_text(encoding="utf-8")
+    with _client() as c:
+        c.post("/settings/lan/secret")
+        key = auth.cached_key()
+    with _client("192.168.1.50") as phone:
+        r = phone.post("/settings/lan/bind", data={"bind_all": "on", "ack": "on"},
+                       headers={"X-Kestrel-Key": key})
+    assert r.status_code == 403
+    assert target.read_text(encoding="utf-8") == before
+
+
+def test_turning_it_off_needs_no_acknowledgement_and_writes_the_file(_isolate_data_home):
+    target = _seed_settings()
+    with _client() as c:
+        _on(c)
+        off = _post(c)  # an unticked box posts nothing
+    assert "Takes effect after restart" in off.text
+    assert _server(target.read_text(encoding="utf-8"))["bind_all"] is False
+
+
+def test_the_environment_variable_wins_and_the_page_says_so(_isolate_data_home, monkeypatch):
+    from kestrel.config import get_settings
+
+    target = _seed_settings()
+    monkeypatch.setenv("KESTREL_SERVER__BIND_ALL", "false")
+    with _client() as c:
+        page = c.get("/settings").text
+        assert "KESTREL_SERVER__BIND_ALL" in page.split('data-testid="lan-bind"')[1]
+        r = _on(c)
+    assert "KESTREL_SERVER__BIND_ALL" in r.text and "wins" in r.text
+    assert _server(target.read_text(encoding="utf-8"))["bind_all"] is True  # the file is recorded
+    assert get_settings().server.bind_all is False  # but the environment still decides
+
+
+def test_the_settings_page_shows_the_control_and_the_state(_isolate_data_home):
+    _seed_settings()
+    with _client() as c:
+        page = c.get("/settings").text
+        assert 'data-testid="lan-bind"' in page and 'name="ack"' in page
+        assert "not on this page" not in page
+        assert "Off" in page.split('data-testid="lan-bind-state"')[1][:200]
+        c.post("/settings/lan/secret")
+        _post(c, bind_all="on", ack="on")
+        after = c.get("/settings").text
+    state = after.split('data-testid="lan-bind-state"')[1][:600]
+    assert "On" in state and "restart" in state
+
+
+def test_bind_host_and_both_allowlists_agree_after_the_write(_isolate_data_home, monkeypatch):
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+    from kestrel.web import app as app_module
+    from kestrel.web import serve
+
+    monkeypatch.setattr(app_module, "local_addresses", lambda: ["127.0.0.1", "192.168.1.20"])
+    _seed_settings()
+
+    def hosts() -> list[str]:
+        app = app_module.build_app(worker=False)
+        mw = next(m for m in app.user_middleware if m.cls is TrustedHostMiddleware)
+        options = getattr(mw, "kwargs", None) or mw.options
+        return list(options["allowed_hosts"])
+
+    assert serve.bind_host() == "127.0.0.1" and "192.168.1.20" not in hosts()
+    assert app_module._is_own_origin("http://192.168.1.20:8765", bind_all=False) is False
+    with _client() as c:
+        _on(c)
+    # After the write every reader of bind_all, with no code path left on the old value:
+    from kestrel.config import get_settings
+
+    assert get_settings().server.bind_all is True
+    assert serve.bind_host() == "0.0.0.0"
+    assert "192.168.1.20" in hosts()
+    assert app_module._is_own_origin(
+        "http://192.168.1.20:8765", bind_all=get_settings().server.bind_all) is True
+    assert app_module._is_own_origin("http://evil.example", bind_all=True) is False
+    with _client() as c:
+        _post(c)  # off again
+    assert serve.bind_host() == "127.0.0.1" and "192.168.1.20" not in hosts()
+
+
+def test_help_no_longer_says_to_edit_the_file_by_hand(_isolate_data_home):
+    with _client() as c:
+        help_text = c.get("/help").text
+    lan = help_text.split('id="lan"')[1].split("</div>")[0]
+    assert "Settings" in lan and "setting" in lan.lower()
+    assert "settings.yml" not in lan.split("Turning it on")[1].split("</p>")[0]
+
+
+def test_a_hostile_page_cannot_flip_the_switch(_isolate_data_home):
+    """The new write sits behind the same Origin and Host guards as every other POST."""
+    target = _seed_settings()
+    before = target.read_text(encoding="utf-8")
+    with _client() as c:
+        c.post("/settings/lan/secret")
+        data = {"bind_all": "on", "ack": "on"}
+        cross = c.post("/settings/lan/bind", data=data, headers={"Origin": "https://evil.example"})
+        rebound = c.post("/settings/lan/bind", data=data, headers={"Host": "evil.example"})
+    assert cross.status_code == 403 and rebound.status_code == 400
+    assert target.read_text(encoding="utf-8") == before

@@ -238,13 +238,11 @@
     network, a phone or tablet on the same Wi-Fi, to read Today, review the pipeline or check a
     pursuit away from the desk. The app, the models and the data stay on this machine. If you only
     ever use Kestrel here, leave it off. <a href="/help#lan">More in Help</a>.</p>
-    <p class="muted">Kestrel listens on this machine only until you turn on
-    <span class="mono">server.bind_all</span>. That is set in <span class="mono">settings.yml</span>
-    or as <span class="mono">KESTREL_SERVER__BIND_ALL=true</span>, not on this page, and it takes a
-    restart. With it on, Kestrel also answers on your local network, and every request to the web
-    interface from another device must carry the shared secret below, as the
+    <p class="muted">Kestrel listens on this machine only until you turn LAN access on below, and
+    it takes a restart. With it on, Kestrel also answers on your local network, and every request
+    to the web interface from another device must carry the shared secret below, as the
     <span class="mono">X-Kestrel-Key</span> header or as a cookie set by scanning the code once.
-    Requests from this machine never need it.</p>
+    Requests from this machine never need it. Only this computer can change the switch.</p>
 
     <p class="warnbox"><b>Read this before you turn it on.</b> This is one shared password for the
     whole application. There are no accounts, no per-device access, and no way to see who did what.
@@ -270,6 +268,7 @@
     <div id="secret" class="mono">{% if lan_secret %}<div class="copyrow"><code class="mono" data-testid="lan-secret">{{ lan_secret }}</code>
       <button type="button" class="btn ghost small" data-testid="copy-secret" data-path="{{ lan_secret }}"
               @click="navigator.clipboard.writeText($el.dataset.path)" title="Copy the secret">Copy</button></div>{% endif %}</div>
+    {% include "partials/lan_bind.html" %}
     <div hx-get="/settings/mcp" hx-trigger="intersect once" hx-swap="outerHTML"><p class="muted">Loading the MCP switch...</p></div>
     <h2 style="margin-top:1.2rem">Backup</h2>
     <p class="muted">Your data lives at <span class="mono">{{ data_dir }}</span>. Back up with

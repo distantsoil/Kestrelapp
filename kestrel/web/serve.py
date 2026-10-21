@@ -43,9 +43,10 @@ def bind_host() -> str:
     therefore before any database session) exists, so a DB-backed toggle could not take effect
     without a restart anyway. It also keeps this in step with app.py, which reads bind_all the same
     way for the Host and Origin allowlists. The consequence, stated because the UI has to say it
-    too: `bind_all` is set in settings.yml or via KESTREL_SERVER__BIND_ALL, not from the Settings
-    page. If a UI toggle is ever added it must write to one of those, or wire BOTH this and app.py
-    to the table, or LAN mode will be half-applied.
+    too: a change takes effect after a restart. The Settings switch (#27, kestrel.services.
+    lan_access) therefore writes the user's settings.yml, the one place every reader already
+    looks, and says so; KESTREL_SERVER__BIND_ALL still overrides the file. A toggle that wrote
+    only the table would leave LAN mode half-applied.
 
     Binding beyond loopback is safe only because kestrel/web/auth.py requires the shared key on
     every non-loopback request; do not widen this without that middleware in place.

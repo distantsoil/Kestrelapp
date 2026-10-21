@@ -1,0 +1,24 @@
+{# Turn LAN access on or off (#27, D-SEC-3): writes server.bind_all to settings.yml; takes effect
+   after a restart. Theme tokens only. #}
+<div id="lan-bind" class="panel" data-testid="lan-bind" style="margin:.8rem 0">
+  <h3 style="margin-top:0">Let other devices on my network connect</h3>
+  <p data-testid="lan-bind-state" style="margin:.2rem 0 .6rem">
+    <b>{{ 'On' if lan.file_on else 'Off' }}</b> in your settings file.
+    {% if lan.running_on is not none %}Kestrel is listening {{ 'on your network' if lan.running_on else 'on this computer only' }} right now.{% endif %}
+    {% if lan.restart_needed %}<b>Takes effect after restart.</b>{% endif %}
+    {% if lan.env_name %}<br><span class="mono">{{ lan.env_name }}</span> is set to <span class="mono">{{ lan.env_value }}</span>, and it wins over this switch. Remove it to use the switch.{% endif %}
+  </p>
+  {% if lan_note %}<p class="{{ 'muted' if lan_ok else 'warnbox' }}" role="status" data-testid="lan-bind-note">{{ lan_note }}</p>{% endif %}
+  <form hx-post="/settings/lan/bind" hx-target="#lan-bind" hx-swap="outerHTML">
+    {% if lan.file_on %}
+      <button class="btn" type="submit" data-testid="lan-bind-off">Turn off LAN access</button>
+      <span class="muted">Writes the setting. Quit and reopen Kestrel for it to apply.</span>
+    {% else %}
+      <input type="hidden" name="bind_all" value="on">
+      {% if not lan.has_secret %}<p class="muted" style="margin:.2rem 0">Generate the shared secret below first. It is required before this can be turned on.</p>{% endif %}
+      <label style="display:block;margin-bottom:.5rem"><input type="checkbox" name="ack" value="on" data-testid="lan-bind-ack"> I read the warning above: one shared password for the whole app, plain HTTP, home network or a VPN I control only.</label>
+      <button class="btn" type="submit" data-testid="lan-bind-on">Turn on LAN access</button>
+      <span class="muted">Writes the setting. Quit and reopen Kestrel for it to apply.</span>
+    {% endif %}
+  </form>
+</div>
