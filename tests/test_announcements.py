@@ -86,3 +86,11 @@ def test_copy_has_no_em_dash_and_no_network(monkeypatch: pytest.MonkeyPatch) -> 
     c = _client()
     assert c.get("/announcements").status_code == 200
     assert c.post(f"/announcements/{NOTICE}/dismiss").status_code == 200
+
+
+def test_the_announcement_uses_the_guide_style_not_the_warning_style():
+    # Good news must not look like an alert (hands-on testing, 2026-10-22).
+    from pathlib import Path
+
+    html = Path("kestrel/web/templates/partials/announcement.html").read_text(encoding="utf-8")
+    assert 'class="guide-strip"' in html and "warnbox" not in html
