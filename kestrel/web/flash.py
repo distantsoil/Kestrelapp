@@ -36,6 +36,9 @@ FLASH_MESSAGES: dict[str, str] = {
 }
 
 
+_KNOWN_CODES: dict[str, str] = {k: k for k in FLASH_MESSAGES}
+
+
 def flash_text(code: str | None) -> str | None:
     """The authored sentence for a known code, else None (unknown codes are ignored silently)."""
     return FLASH_MESSAGES.get(code or "")
@@ -44,5 +47,8 @@ def flash_text(code: str | None) -> str | None:
 def flash_redirect(path: str, code: str, anchor: str = "") -> RedirectResponse:
     """A 303 to `path` carrying only a KNOWN code (an unknown one is dropped, so form input never
     rides into the URL); `anchor` is the fragment without its '#'."""
-    query = f"?msg={quote(code)}" if code in FLASH_MESSAGES else ""
+    # The URL carries the allowlist's own copy of the code, never the caller's string, so nothing
+    # derived from form input reaches the redirect (CodeQL on #14).
+    known = _KNOWN_CODES.get(code)
+    query = f"?msg={quote(known)}" if known else ""
     return RedirectResponse(f"{path}{query}{'#' + anchor if anchor else ''}", status_code=303)
