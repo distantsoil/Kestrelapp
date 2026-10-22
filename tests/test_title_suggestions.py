@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace as NS
 
@@ -484,6 +485,20 @@ def test_the_employment_tab_shows_the_suggestions_and_accept_changes_the_profile
     assert 'data-testid="title-suggestions"' in page.text
     assert "Operations Analyst" in page.text and "Process Improvement Lead" in page.text
     assert BULLET_1 in page.text  # the evidence is shown in the user's own words
+    # compact (#31): one lead line, a row per title, the why and evidence behind a toggle
+    assert "Titles that fit your resume. Nothing is added until you accept." in page.text
+    rows = page.text.split('data-testid="title-suggestion"')[1:]
+    assert len(rows) == 2
+    for row in rows:
+        shown = re.sub(r"<details.*?</details>", "", row, flags=re.S)
+        assert "title-accept" in shown and "title-dismiss" in shown
+        assert "Based on" not in shown
+        why = row.split('<details data-testid="title-why">', 1)[1].split("</details>", 1)[0]
+        assert ">Why</summary>" in why and "Based on" in why
+    assert BULLET_1 in re.sub(r"(?s)^.*?<details data-testid=\"title-why\">", "", page.text)
+    outside = re.sub(r"<details.*?</details>", "", page.text, flags=re.S)
+    assert BULLET_1 not in outside and "A dismissed title" not in outside
+    assert "—" not in page.text
     assert _target_titles() == []
     emp = web.get("/profile?tab=employment&track=employment")
     assert "/profile/title-suggestions" in emp.text
