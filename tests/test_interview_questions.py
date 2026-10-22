@@ -554,6 +554,46 @@ def test_the_card_lists_the_set_and_a_role_off_the_list_has_no_card(web):
     forget_engine()
 
 
+def test_the_prep_page_leads_with_the_likely_questions_and_the_same_control(web):
+    import asyncio
+
+    from kestrel.db.engine import forget_engine, get_sessionmaker
+
+    short, _ = _seed_web()
+    page = web.get(f"/prep/{short}").text
+    assert 'data-testid="questions-card"' in page
+    assert "Likely interview questions" in page
+    assert "Marking this role Applied writes the questions" in page  # not applied yet
+    assert 'data-testid="questions-regenerate"' not in page
+
+    opp, pid = _seed_web("applied")
+    none_yet = web.get(f"/prep/{opp}").text
+    assert 'data-testid="questions-none"' in none_yet
+    assert "Write the list now" in none_yet
+    assert "Queued." in web.post(f"/opportunities/{opp}/questions/regenerate").text
+    pending = web.get(f"/prep/{opp}").text
+    assert 'data-testid="questions-pending"' in pending
+
+    async def store():
+        async with get_sessionmaker()() as s:
+            s.add(InterviewQuestionSet(
+                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v1",
+                questions=_QUESTIONS, created_at=utcnow_iso(),
+            ))
+            await s.commit()
+
+    asyncio.run(store())
+    html = web.get(f"/prep/{opp}").text
+    assert 'data-testid="question-list"' in html
+    assert "Walk me through a platform you rescued." in html
+    assert "Write a new list" in html
+    # near the top: before the generated pack and the notes panel
+    assert html.index('id="questions-card"') < html.index('id="prep-pack"')
+    # the mock interview page does not list the set; it still draws from it internally
+    assert 'data-testid="question-list"' not in web.get(f"/mock/{opp}").text
+    forget_engine()
+
+
 async def test_a_card_moved_straight_past_applied_still_gets_its_list(sm):
     _opp, pid = await _seed(sm)
     await _apply(sm, pid, "interviewing")

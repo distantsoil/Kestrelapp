@@ -745,14 +745,10 @@ async def opportunity_detail(request: Request, opp_id: int):
 
 
 async def _questions_view(s, opp_id: int, detail: dict) -> dict:
-    """The Likely questions card's data, redacted like every other tab in confidential mode (the
-    model's reply is restored from its stand-in codes, so it can name the employer)."""
-    from kestrel.interview.question_task import question_view
-    from kestrel.web.redact import redact_json
+    """The Likely questions card's data, redacted like every other tab in confidential mode."""
+    from kestrel.web.pages.prep import redacted_question_view
 
-    return redact_json(
-        await question_view(s, opp_id), detail["mapping"], enabled=detail["confidential"]
-    )
+    return await redacted_question_view(s, opp_id)
 
 
 @router.post("/opportunities/{opp_id}/questions/regenerate", response_class=HTMLResponse)

@@ -83,6 +83,17 @@ async def _latest_prep_pack(session: AsyncSession, opportunity_id: int) -> PrepP
     ).scalar_one_or_none()
 
 
+async def redacted_question_view(session: AsyncSession, opportunity_id: int) -> dict:
+    """The Likely questions card's data (question_task.question_view), redacted like every other
+    surface in confidential mode (the reply is restored from its stand-in codes, so it can name
+    the employer). One helper for the opportunity page and this page, so both cards match."""
+    from kestrel.interview.question_task import question_view
+    from kestrel.web.redact import confidential, redact_json
+
+    conf, mapping = await confidential(session)
+    return redact_json(await question_view(session, opportunity_id), mapping, enabled=conf)
+
+
 async def _context(request: Request, session: AsyncSession, opportunity_id: int) -> dict:
     opportunity = await session.get(Opportunity, opportunity_id)
     org = await session.get(Org, opportunity.org_id) if opportunity and opportunity.org_id else None
@@ -116,6 +127,12 @@ async def _context(request: Request, session: AsyncSession, opportunity_id: int)
         "pdf_error": None,
         "notes": await get_notes(session, opportunity_id) if opportunity is not None else "",
         "notes_saved": False,
+        # The Likely interview questions card (P14), the same partial the opportunity page uses.
+        "qview": (
+            await redacted_question_view(session, opportunity_id) if opportunity is not None
+            else None
+        ),
+        "opp_id": opportunity_id,
     }
 
 

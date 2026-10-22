@@ -8,6 +8,8 @@
   <p class="muted">
     {{ opportunity.title or "Role" }}{% if org_name %} · {{ org_name }}{% endif %}
   </p>
+  {# Likely interview questions first (F2): the active P14 set, the same card as the role page. #}
+  {% include "partials/opp_questions.html" %}
 {% endif %}
 <div id="prep-pack">{% include "partials/prep_pack.html" %}</div>
 {% endblock %}
