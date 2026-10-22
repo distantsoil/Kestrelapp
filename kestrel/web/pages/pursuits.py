@@ -14,6 +14,7 @@ import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -255,12 +256,15 @@ async def save_board_prefs(request: Request):
             for key, (value, allowed) in wanted.items():
                 if value not in allowed:
                     continue
-                row = await s.get(Setting, key)
-                if row is None:
-                    s.add(Setting(key=key, value=value))
-                else:
-                    row.value = value
-                    row.updated_at = utcnow_iso()
+                # One atomic upsert, not read-then-insert: two saves fired close together (the
+                # page posts one per change) both saw no row and the second insert failed on the
+                # key, silently losing the choice (#14 Windows CI). Same pattern as
+                # setting_overrides.queue_run_mode.
+                now = utcnow_iso()
+                stmt = sqlite_insert(Setting).values(key=key, value=value, updated_at=now)
+                await s.execute(stmt.on_conflict_do_update(
+                    index_elements=[Setting.key], set_={"value": value, "updated_at": now}
+                ))
             await s.commit()
     except SQLAlchemyError as exc:
         log.warning("board_prefs_not_saved", error_type=type(exc).__name__)

@@ -746,3 +746,41 @@ def test_card_remove_confirm_is_stage_aware_and_speaks_each_track():
     assert confirm(con, "Fresh lead") == "Remove this from your leads?"
     assert confirm(con, "Late lead").startswith("Remove this from your leads? Its status")
     assert ">Remove from my shortlist<" in emp and ">Remove from my leads<" in con
+
+
+def test_a_board_pref_save_racing_another_never_loses_the_choice(monkeypatch):
+    # #14 Windows CI: two /pursuits/prefs saves close together both read "no row" and the second
+    # insert failed on the key, losing the choice. Stage that race deterministically: the row
+    # already exists (the other save won) but this save's read comes back empty.
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+    from kestrel.web.pages.pursuits import RANGE_KEY
+
+    client = _fresh()
+
+    async def seed():
+        async with get_sessionmaker()() as s:
+            s.add(Setting(key=RANGE_KEY, value="30"))
+            await s.commit()
+
+    asyncio.run(seed())
+    real_get = AsyncSession.get
+
+    async def stale_get(self, model, ident, *a, **k):
+        if model is Setting and ident == RANGE_KEY:
+            return None  # the other save's row is not visible to this read
+        return await real_get(self, model, ident, *a, **k)
+
+    monkeypatch.setattr(AsyncSession, "get", stale_get)
+    assert client.post("/pursuits/prefs", data={"range": "7"}).status_code == 200
+    monkeypatch.setattr(AsyncSession, "get", real_get)
+
+    async def read():
+        async with get_sessionmaker()() as s:
+            return (await s.get(Setting, RANGE_KEY)).value
+
+    assert asyncio.run(read()) == "7"
