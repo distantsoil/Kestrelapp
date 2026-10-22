@@ -224,3 +224,15 @@ def test_hosted_key_write_refusal_is_authored(monkeypatch):
         ValueError(SECRET_PATH)))
     r = _fresh().post("/settings/hosted/key", data={"backend": "openrouter", "api_key": "k"})
     assert "secret-dir" not in r.text
+
+
+def test_flash_redirect_drops_an_unknown_code():
+    # CodeQL review on the PR: form input built the code (mode_<choice>); only known codes may ride
+    # into the redirect URL.
+    from kestrel.web.flash import FLASH_MESSAGES, flash_redirect
+
+    known = next(iter(FLASH_MESSAGES))
+    assert flash_redirect("/settings", known, "system").headers["location"].endswith(
+        f"?msg={known}#system")
+    assert flash_redirect("/settings", "mode_<x>", "system").headers["location"] == (
+        "/settings#system")

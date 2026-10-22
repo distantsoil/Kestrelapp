@@ -8,7 +8,6 @@ transmission log. Offline: respx stands in for OpenRouter."""
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -142,7 +141,7 @@ async def test_a_changed_key_is_a_different_cache_entry_and_the_raw_key_is_not_i
         await hb.rail_row(s, _settings(key="sk-or-v1-another-key-0987654321"))
     assert route.call_count == 2
     digests = {k[2] for k in hb._cache}
-    assert hashlib.sha256(SECRET.encode()).hexdigest() in digests
+    assert len(digests) == 2 and all(len(d) == 16 for d in digests)  # one entry per key
     assert SECRET not in json.dumps([list(k) for k in hb._cache])
 
 

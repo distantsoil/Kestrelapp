@@ -16,7 +16,6 @@ sidebar's 10 second poll costs a request about every five minutes at most. The k
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -73,7 +72,9 @@ def _key_value(backend: BackendConfig) -> str:
 
 def _cache_key(name: str, backend: BackendConfig) -> tuple[str, str, str]:
     # The same shape as hosted_models._cache_key: backend, base URL, a digest of the key.
-    digest = hashlib.sha256(_key_value(backend).encode("utf-8")).hexdigest()
+    # An in-memory cache key, never stored, so Python's per-process salted hash() is enough; the
+    # raw key is never part of it.
+    digest = format(hash(("balance", _key_value(backend))) & 0xFFFFFFFFFFFFFFFF, "016x")
     return (name, backend.base_url.rstrip("/"), digest)
 
 

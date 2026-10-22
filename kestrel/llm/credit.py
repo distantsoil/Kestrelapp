@@ -14,7 +14,6 @@ online provider: the hold is per backend and nothing else is chosen in its place
 
 from __future__ import annotations
 
-import hashlib
 import time
 from dataclasses import dataclass
 
@@ -89,7 +88,9 @@ TOO_BIG_NOTE = "Your OpenRouter credit is too low for this request size."
 
 
 def _digest(key: str) -> str:
-    return hashlib.sha256((key or "").encode("utf-8")).hexdigest()[:16]
+    # An in-memory lookup key for the hold, never stored or compared with a stored value, so
+    # Python's per-process salted hash() is enough; the raw key is never kept.
+    return format(hash(("credit-hold", key or "")) & 0xFFFFFFFFFFFFFFFF, "016x")
 
 
 @dataclass
