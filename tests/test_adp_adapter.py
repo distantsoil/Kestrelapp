@@ -33,8 +33,8 @@ def _no_rate_wait(monkeypatch):
 
 
 _FIXTURES = Path(__file__).parent / "fixtures"
-_LIST = json.loads((_FIXTURES / "adp_list.json").read_text())
-_DETAIL = json.loads((_FIXTURES / "adp_detail.json").read_text())
+_LIST = json.loads((_FIXTURES / "adp_list.json").read_text(encoding="utf-8"))
+_DETAIL = json.loads((_FIXTURES / "adp_detail.json").read_text(encoding="utf-8"))
 
 _CID = "5d2f7a90-3c41-4e8b-9a16-0b7e4c2d8f11"
 _BASE = "https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1"

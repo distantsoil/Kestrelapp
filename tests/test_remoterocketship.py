@@ -26,8 +26,8 @@ from kestrel.ingest.http import HttpClient
 from kestrel.ingest.runner import run_source
 
 FIX = Path(__file__).parent / "fixtures"
-JOBS = json.loads((FIX / "remoterocketship_jobs.json").read_text())
-ERR401 = json.loads((FIX / "remoterocketship_401.json").read_text())
+JOBS = json.loads((FIX / "remoterocketship_jobs.json").read_text(encoding="utf-8"))
+ERR401 = json.loads((FIX / "remoterocketship_401.json").read_text(encoding="utf-8"))
 API = "https://www.remoterocketship.com/api/openclaw/jobs/"
 KEY = "rr-secret-key-0123456789"
 URLS = [j["url"] for j in JOBS["jobOpenings"]]

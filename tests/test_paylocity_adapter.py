@@ -33,8 +33,8 @@ def _no_rate_wait(monkeypatch):
 
 
 _FIXTURES = Path(__file__).parent / "fixtures"
-_LIST = (_FIXTURES / "paylocity_list.html").read_text()
-_DETAIL = (_FIXTURES / "paylocity_detail.html").read_text()
+_LIST = (_FIXTURES / "paylocity_list.html").read_text(encoding="utf-8")
+_DETAIL = (_FIXTURES / "paylocity_detail.html").read_text(encoding="utf-8")
 
 _BOARD = "8a1f3c52-6d47-4e0b-9b21-7c3e5d9a2f10"
 _LIST_URL = f"https://recruiting.paylocity.com/recruiting/jobs/All/{_BOARD}"

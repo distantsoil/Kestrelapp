@@ -32,8 +32,8 @@ def _no_rate_wait(monkeypatch):
 
 
 _FIXTURES = Path(__file__).parent / "fixtures"
-_LIST = json.loads((_FIXTURES / "rippling_list.json").read_text())
-_DETAIL = json.loads((_FIXTURES / "rippling_detail.json").read_text())
+_LIST = json.loads((_FIXTURES / "rippling_list.json").read_text(encoding="utf-8"))
+_DETAIL = json.loads((_FIXTURES / "rippling_detail.json").read_text(encoding="utf-8"))
 
 _BASE = "https://api.rippling.com/platform/api/ats/v1/board/northwind/jobs"
 _U1 = "3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1001"

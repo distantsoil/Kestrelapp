@@ -34,8 +34,8 @@ def _no_rate_wait(monkeypatch):
 
 
 _FIXTURES = Path(__file__).parent / "fixtures"
-_LIST = json.loads((_FIXTURES / "workable_list.json").read_text())
-_DETAIL = json.loads((_FIXTURES / "workable_detail.json").read_text())
+_LIST = json.loads((_FIXTURES / "workable_list.json").read_text(encoding="utf-8"))
+_DETAIL = json.loads((_FIXTURES / "workable_detail.json").read_text(encoding="utf-8"))
 
 _LIST_URL = "https://apply.workable.com/api/v3/accounts/northwind/jobs"
 _DETAIL_URL = "https://apply.workable.com/api/v2/accounts/northwind/jobs"

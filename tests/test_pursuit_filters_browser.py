@@ -71,16 +71,17 @@ def test_applications_live_search_in_a_browser():
         expect(count).to_have_text("Showing 5 of 5")  # the count is what is on screen
         toggle = page.get_by_test_id("closed-toggle")
         expect(toggle).to_have_text("Hide closed")
-        toggle.click()
+        # each toggle waits for its save, not a fixed delay (the slower Windows runner, #14 CI)
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            toggle.click()
         expect(cards.locator("visible=true")).to_have_count(4)
         expect(toggle).to_have_text("Show 1 closed")
         # the choice is remembered: a reload still has it hidden
-        page.wait_for_timeout(300)
         page.reload()
         expect(cards.locator("visible=true")).to_have_count(4)
-        page.get_by_test_id("closed-toggle").click()
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            page.get_by_test_id("closed-toggle").click()
         expect(cards.locator("visible=true")).to_have_count(5)
-        page.wait_for_timeout(300)
 
         # typing a company narrows to that one card
         search.fill("northwind")
@@ -196,7 +197,10 @@ def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
         expect(cards.locator("visible=true")).to_have_count(6)
         expect(count).to_have_text("Showing 6 of 8")
         assert "range=30" in page.url
-        page.get_by_test_id("range-select").select_option("7")
+        # Wait for the choice to be saved before leaving: on the slower Windows runner the reload
+        # beat the save and the page came back with the previous range (#14 CI).
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            page.get_by_test_id("range-select").select_option("7")
         expect(cards.locator("visible=true")).to_have_count(5)
 
         # the choice is the default next visit, with no query string
