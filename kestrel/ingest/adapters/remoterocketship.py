@@ -98,8 +98,8 @@ def _key(config: dict) -> str:
     key = get_secret(name)
     if not key:
         raise SourceConfigError(
-            f"RemoteRocketship needs your own API key. Add {name} to Kestrel's .env file "
-            f"(Settings shows where it lives). {_NEEDS_SUBSCRIPTION}."
+            f"RemoteRocketship needs your own API key ({name}). Save it in the RemoteRocketship "
+            f"card on the Sources page. {_NEEDS_SUBSCRIPTION}."
         )
     return key
 
@@ -111,7 +111,10 @@ def _problem(status: int, body: Any) -> str:
         said = str(body.get("message", "")).lower() if isinstance(body, dict) else ""
         if "missing" in said:
             return "RemoteRocketship did not receive an API key. Check the key name in the source"
-        return "RemoteRocketship did not accept the API key. Check it in Kestrel's .env file"
+        return (
+            "RemoteRocketship did not accept the API key. "
+            "Save it again in the RemoteRocketship card on Sources"
+        )
     if status == 403:
         return _NEEDS_SUBSCRIPTION
     if status == 429:

@@ -427,7 +427,8 @@ def test_help_documents_remoterocketship_without_em_dashes():
     m = re.search(r'<h3 id="remoterocketship".*?(?=<h3>Region</h3>)', page.text, re.S)
     assert m, "the RemoteRocketship help section did not render"
     section = m.group(0)
-    for needle in ("own RemoteRocketship subscription", "REMOTEROCKETSHIP_API_KEY", ".env",
+    for needle in ("own RemoteRocketship subscription", "RemoteRocketship card", "Save key",
+                   "Turn on",
                    "Only the link to each employer", "500 requests or 3,000 jobs per UTC day",
                    "Needs an active paid", "Daily limit"):
         assert needle.lower() in section.lower() or needle in section, needle

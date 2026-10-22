@@ -95,11 +95,10 @@
   <p><strong>What it is.</strong> An optional source for people who already pay for RemoteRocketship
   with API access. Kestrel stays free; this source needs your own RemoteRocketship subscription and
   is off until you add it.</p>
-  <p><strong>How to turn it on.</strong> Add your key to Kestrel's <span class="mono">.env</span> file
-  as <span class="mono">REMOTEROCKETSHIP_API_KEY</span>. If you use another name, put that name in
-  the source's <span class="mono">api_key_env</span>. Then add a <span class="mono">remoterocketship</span>
-  source on <a href="/sources">Sources</a> and switch it on. The key never goes in the source
-  itself.</p>
+  <p><strong>How to turn it on.</strong> Open <a href="/sources">Sources</a> and find the
+  RemoteRocketship card. Paste your key, choose Save key, then Turn on. Run now checks right away.
+  The key is kept in Kestrel's private key file on this computer, never in the source and never
+  shown again (only its last four characters). Turn off pauses the source.</p>
   <p><strong>What Kestrel keeps.</strong> Only the link to each employer's own posting. The posting is
   then read from the employer's site, or from the company's job board when it is one Kestrel
   knows. Nothing from RemoteRocketship is stored: no titles, descriptions or company details, and
@@ -108,7 +107,7 @@
   Kestrel uses a few requests per scan (two by default, 50 jobs each). A link that cannot be read
   from the employer is skipped and counted in the run.</p>
   <p><strong>If something goes wrong.</strong> "Did not receive an API key" or "did not accept the API
-  key": check the name and the value in <span class="mono">.env</span>. "Needs an active paid
+  key": paste the key again in the RemoteRocketship card. "Needs an active paid
   subscription": your plan does not include API access. "Daily limit was reached": wait until 00:00
   UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits
   after the first page, the links from the earlier pages are still used; if it hits on the first

@@ -286,6 +286,93 @@ def test_sam_gov_help_is_present_and_the_key_is_saved_to_env_then_enabled():
     assert sam.enabled and sam.kind == "sam_gov"
 
 
+# ----------------------------------------------------------------------- RemoteRocketship (#38)
+_RRS_KEY = "rrs-test-key-98765432"
+
+
+def test_remoterocketship_card_is_on_the_page_and_lean():
+    with _client() as c:
+        html = c.get("/sources").text
+    card = html.split('data-testid="rrs-card"', 1)[1].split("<!-- /rrs -->", 1)[0]
+    assert "RemoteRocketship" in card and "own paid subscription" in card
+    assert 'type="password"' in card and 'href="/help#remoterocketship"' in card
+    assert "—" not in card and ".env" not in card
+    assert 'data-testid="rrs-switch"' in card
+    assert _RRS_KEY not in html
+
+
+def test_remoterocketship_saving_a_key_writes_env_and_never_echoes_it(caplog, capsys):
+    from kestrel.config import get_secret
+
+    with _client() as c:
+        r = c.post("/sources/remoterocketship/key", data={"api_key": ""})
+        assert r.status_code == 200 and "Paste your key first" in r.text
+        r = c.post("/sources/remoterocketship/key", data={"api_key": _RRS_KEY})
+        assert r.status_code == 200 and "Key saved" in r.text
+        assert _RRS_KEY not in r.text and _RRS_KEY not in c.get("/sources").text
+        assert _RRS_KEY[-4:] in r.text  # only a masked fingerprint
+    assert f"REMOTEROCKETSHIP_API_KEY={_RRS_KEY}" in paths.dotenv_path().read_text("utf-8")
+    assert get_secret("REMOTEROCKETSHIP_API_KEY") == _RRS_KEY
+    out = capsys.readouterr()
+    assert _RRS_KEY not in caplog.text and _RRS_KEY not in out.out + out.err
+    assert "RemoteRocketship" not in _run(_rows())  # saving a key alone adds no source
+
+
+def test_remoterocketship_turn_on_without_a_key_is_refused():
+    with _client() as c:
+        r = c.post("/sources/remoterocketship/toggle", data={"on": "1"})
+    assert r.status_code == 200 and "Add your key first" in r.text
+    assert "RemoteRocketship" not in _run(_rows())
+
+
+def test_remoterocketship_turn_on_creates_then_turn_off_disables_the_source():
+    with _client() as c:
+        c.post("/sources/remoterocketship/key", data={"api_key": _RRS_KEY})
+        r = c.post("/sources/remoterocketship/toggle", data={"on": "1"})
+        assert r.status_code == 200 and "Turn off" in r.text
+        row = _run(_rows())["RemoteRocketship"]
+        assert row.kind == "remoterocketship" and row.enabled and row.track == "employment"
+        assert "api_key" not in (row.config or {}) and _RRS_KEY not in json.dumps(row.config)
+        c.post("/sources/remoterocketship/toggle", data={"on": "0"})
+        assert not _run(_rows())["RemoteRocketship"].enabled
+        c.post("/sources/remoterocketship/toggle", data={"on": "1"})
+        rows = [r for r in _run(_rows()).values() if r.kind == "remoterocketship"]
+        assert len(rows) == 1 and rows[0].enabled  # re-enabled, not duplicated
+
+
+def test_remoterocketship_run_now_queues_a_run(monkeypatch):
+    from kestrel.web.pages import sources as page
+
+    calls: list[int] = []
+
+    async def _fake(source_id, override=None, label=None):
+        calls.append(source_id)
+        return "ok: {}"
+
+    monkeypatch.setattr(page, "_trigger_run", _fake)
+    with _client() as c:
+        c.post("/sources/remoterocketship/key", data={"api_key": _RRS_KEY})
+        c.post("/sources/remoterocketship/toggle", data={"on": "1"})
+        sid = _run(_rows())["RemoteRocketship"].id
+        html = c.get("/sources").text
+        assert f'hx-post="/sources/{sid}/run-now"' in html.split("<!-- /rrs -->", 1)[0]
+        r = c.post(f"/sources/{sid}/run-now", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+    assert calls == [sid]
+
+
+def test_remoterocketship_write_paths_never_500(monkeypatch):
+    from kestrel.llm import providers
+
+    def _boom(name, value):
+        raise OSError("disk full: " + value)
+
+    monkeypatch.setattr(providers, "write_secret", _boom)
+    with _client() as c:
+        r = c.post("/sources/remoterocketship/key", data={"api_key": _RRS_KEY})
+    assert r.status_code == 200 and _RRS_KEY not in r.text
+
+
 # --------------------------------------------------------------- retired example sources
 def test_retired_examples_are_deleted_at_startup_only_when_untouched():
     from kestrel.web.app import _seed_shipped_sources
