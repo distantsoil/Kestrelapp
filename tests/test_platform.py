@@ -727,6 +727,13 @@ def test_macos_browser_fallback_wires_quit_and_runs_the_tray_loop(shell, monkeyp
     assert shell.icon.calls == [("visible=True", main), ("run", main), ("stop", main)]
     assert fake_server.should_exit is True
     assert fake_thread.alive is False
+    # The fallback starts a daemon "server-watch" thread that calls do_quit() when the server
+    # stops on its own. Wait for it here: left running, it finished after this test's teardown and
+    # set the module's _quitting during the NEXT test, which then skipped its own quit (#14 CI).
+    for t in threading.enumerate():
+        if t.name == "server-watch":
+            t.join(timeout=5)
+            assert not t.is_alive(), "the server-watch thread must end with the test"
 
 
 def test_open_folder_uses_the_platform_opener(shell, monkeypatch):
