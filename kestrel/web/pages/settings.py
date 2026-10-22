@@ -147,6 +147,7 @@ async def settings_page(request: Request):
         "preview": preview,
         "calibrations": calibrations,
         "lan_secret": lan_secret,
+        "lan_secret_html": _lan_join_html(lan_secret, request) if lan_secret else "",
         "lan": lan,
         "data_dir": str(paths.data_dir()),
         "confidential_inert": conf_inert,
@@ -479,7 +480,7 @@ async def generate_secret(request: Request):
     device holding the previous key, which is the only revocation mechanism a single shared
     credential can offer.
     """
-    from kestrel.web.auth import generate_key, join_url, lan_host_ip, qr_svg, set_cached_key
+    from kestrel.web.auth import generate_key, set_cached_key
 
     token = generate_key()
     async with sessionmaker()() as s:
@@ -490,6 +491,14 @@ async def generate_secret(request: Request):
     # Everything past this point is presentation. The rotation is already committed, so a failure
     # here must still show the operator the new secret: 500ing after a commit would lock out every
     # joined device AND withhold the key needed to rejoin.
+    return HTMLResponse(_lan_join_html(token, request))
+
+
+def _lan_join_html(token: str, request: Request) -> str:
+    """The secret block: QR, secret with Copy, join link as text with Copy. One renderer for the
+    Settings page on load and for the Generate/Rotate response, so the two always match (#26)."""
+    from kestrel.web.auth import join_url, lan_host_ip, qr_svg
+
     try:
         host = lan_host_ip()
         port = request.url.port or 8765
@@ -499,7 +508,7 @@ async def generate_secret(request: Request):
         token, code_testid="lan-secret", button_testid="copy-secret", label="the secret"
     )
     if host is None:
-        return HTMLResponse(
+        return (
             f"{secret_row}"
             '<p class="muted">No LAN address was detected, so there is no join link to show. '
             "Pass the key as the X-Kestrel-Key header.</p>"
@@ -514,12 +523,11 @@ async def generate_secret(request: Request):
     url_row = _copy_row(
         url, code_testid="join-url", button_testid="copy-join-url", label="the join link"
     )
-    return HTMLResponse(
+    return (
         f"{secret_row}"
         f"{qr_block}"
-        '<p class="muted">Scan the code on a phone that is on the same network, or copy the join '
-        "link below and paste it into that phone's browser once. Any device holding the previous "
-        "key has just been locked out.</p>"
+        '<p class="muted">Scan with a phone on the same network, or paste the link into its '
+        "browser once.</p>"
         f"{url_row}"
     )
 

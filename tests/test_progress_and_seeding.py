@@ -330,7 +330,7 @@ def test_loading_is_visible_without_the_mouse():
 def test_filters_tab_points_at_the_profile_not_the_yaml_and_lan_says_why():
     settings = (_TEMPLATES / "settings.html").read_text(encoding="utf-8")
     assert "come from your profile and the Core tab, not from a file" in settings
-    assert "<b>What is this?</b>" in settings and 'href="/help#lan"' in settings
+    assert "Open Kestrel from a phone or tablet" in settings and 'href="/help#lan"' in settings
     help_ = (_TEMPLATES / "help.html").read_text(encoding="utf-8")
     assert 'id="lan"' in help_ and "same home network" in help_
 

@@ -12,13 +12,11 @@
   <form hx-post="/settings/lan/bind" hx-target="#lan-bind" hx-swap="outerHTML">
     {% if lan.file_on %}
       <button class="btn" type="submit" data-testid="lan-bind-off">Turn off LAN access</button>
-      <span class="muted">Writes the setting. Quit and reopen Kestrel for it to apply.</span>
     {% else %}
       <input type="hidden" name="bind_all" value="on">
       {% if not lan.has_secret %}<p class="muted" style="margin:.2rem 0">Generate the shared secret below first. It is required before this can be turned on.</p>{% endif %}
-      <label style="display:block;margin-bottom:.5rem"><input type="checkbox" name="ack" value="on" data-testid="lan-bind-ack"> I read the warning above: one shared password for the whole app, plain HTTP, home network or a VPN I control only.</label>
+      <label style="display:block;margin-bottom:.5rem"><input type="checkbox" name="ack" value="on" data-testid="lan-bind-ack"> I understand: shared password, plain HTTP, home network or VPN only.</label>
       <button class="btn" type="submit" data-testid="lan-bind-on">Turn on LAN access</button>
-      <span class="muted">Writes the setting. Quit and reopen Kestrel for it to apply.</span>
     {% endif %}
   </form>
 </div>

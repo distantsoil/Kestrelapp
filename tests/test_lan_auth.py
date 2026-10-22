@@ -400,13 +400,48 @@ def test_join_block_without_a_lan_address_still_copies_the_secret(monkeypatch):
     assert 'data-testid="copy-secret"' in body and 'class="qr"' not in body
 
 
-def test_settings_page_shows_an_existing_secret_with_a_copy_button(monkeypatch):
+def _secret_block(page: str) -> str:
+    return page.split('id="secret">', 1)[1].split("<!-- /secret -->", 1)[0].removesuffix("</div>")
+
+
+def test_settings_page_with_an_existing_secret_shows_the_same_block_as_generate(monkeypatch):
+    """#26/#27: a key without a QR on launch was confusing. The page now renders the block the
+    Generate/Rotate response renders, from one helper, so the two match."""
     monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
     with _client() as c:
-        c.post("/settings/lan/secret")
+        generated = c.post("/settings/lan/secret").text
         page = c.get("/settings").text
-    block = page.split('id="secret"', 1)[1].split("</div>", 2)[0]
+    block = _secret_block(page)
+    assert '<div class="qr"' in block and "<svg" in block.split('<div class="qr"', 1)[1]
     assert 'data-testid="lan-secret"' in block and 'data-testid="copy-secret"' in block
+    assert 'data-testid="join-url"' in block and 'data-testid="copy-join-url"' in block
+    assert block.count("navigator.clipboard.writeText($el.dataset.path)") == 2
+    assert "<a " not in block and "href=" not in block  # the join link is text, never an anchor
+    assert " ".join(block.split()) == " ".join(generated.split())  # one shared renderer
+
+
+def test_settings_page_without_a_secret_shows_no_block(monkeypatch):
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    with _client() as c:
+        block = _secret_block(c.get("/settings").text)
+    assert "lan-secret" not in block and 'class="qr"' not in block
+
+
+def test_lan_tab_is_short_and_keeps_every_safety_fact_inside_show_details():
+    with _client() as c:
+        page = c.get("/settings").text
+    lan = page.split("<h2>LAN access</h2>", 1)[1].split("<h2", 1)[0]
+    assert "—" not in lan and "\u2014" not in lan
+    details = lan.split('<details data-testid="lan-details">', 1)[1].split("</details>", 1)[0]
+    assert "<summary>Show details</summary>" in details
+    for fact in ("no accounts", "plain HTTP", "What else the secret gates", "X-Kestrel-Key",
+                 "browser extension", "restart", "port forwarder", "public"):
+        assert fact in " ".join(details.split()), fact
+    outside = lan.split('id="lan-bind"', 1)[0].replace(details, "")
+    for long in ("What else the secret gates", "no accounts", "port forwarder", "bind_all"):
+        assert long not in outside, long
+    assert "plain HTTP" in outside and "shared password" in outside  # the short warning line
+    assert len(outside.split()) < 260
 
 
 # ------------------------------------------------- turning LAN access on from Settings (#27)

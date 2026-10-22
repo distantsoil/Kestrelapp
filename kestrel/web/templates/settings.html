@@ -234,40 +234,45 @@
 
   <section x-show="tab==='lan'" x-cloak>
     <h2>LAN access</h2>
-    <p><b>What is this?</b> Optional. It lets you open Kestrel from another device on your home
-    network, a phone or tablet on the same Wi-Fi, to read Today, review the pipeline or check a
-    pursuit away from the desk. The app, the models and the data stay on this machine. If you only
-    ever use Kestrel here, leave it off. <a href="/help#lan">More in Help</a>.</p>
-    <p class="muted">Kestrel listens on this machine only until you turn LAN access on below, and
-    it takes a restart. With it on, Kestrel also answers on your local network, and every request
-    to the web interface from another device must carry the shared secret below, as the
-    <span class="mono">X-Kestrel-Key</span> header or as a cookie set by scanning the code once.
-    Requests from this machine never need it. Only this computer can change the switch.</p>
+    <p>Optional. Open Kestrel from a phone or tablet on your home network. The app and your data
+    stay on this computer. <a href="/help#lan">More in Help</a></p>
+    <p class="warnbox" data-testid="lan-warning">One shared password for the whole app, plain HTTP,
+    home network or a VPN you control only.</p>
 
-    <p class="warnbox"><b>Read this before you turn it on.</b> This is one shared password for the
-    whole application. There are no accounts, no per-device access, and no way to see who did what.
-    Anyone who has the secret, or who is on a network where they can read unencrypted traffic, can
-    do everything you can do: read every opportunity, every document, and your profile. Traffic is
-    plain HTTP and is not encrypted. Use this on a home network or a VPN you control. Do not use it
-    on shared, public, or office Wi-Fi, and do not forward the port through a router. Do not put a
-    local proxy or port forwarder in front of Kestrel either: that makes every request look like it
-    came from this machine, which switches the secret off entirely.</p>
+    <details data-testid="lan-details">
+      <summary>Show details</summary>
+      <p class="muted">Kestrel listens on this machine only until you turn LAN access on below, and
+      it takes a restart. With it on, Kestrel also answers on your local network, and every request
+      to the web interface from another device must carry the shared secret below, as the
+      <span class="mono">X-Kestrel-Key</span> header or as a cookie set by scanning the code once.
+      Requests from this machine never need it. Only this computer can change the switch.</p>
 
-    <p class="muted"><b>What else the secret gates.</b> With <span class="mono">bind_all</span>
-    on, the MCP server (if enabled) listens on its own port and requires the same secret as the
-    <span class="mono">X-Kestrel-Key</span> header from any device that is not this machine; there
-    is no separate MCP password. The browser extension must carry the secret too, even on this
-    machine, so paste it into the extension's options page. Two cautions: the join link contains
-    the secret, so it lands in that phone's browser history, and the secret is displayed on this
-    page in clear text.</p>
+      <p class="muted"><b>Read this before you turn it on.</b> This is one shared password for the
+      whole application. There are no accounts, no per-device access, and no way to see who did
+      what. Anyone who has the secret, or who is on a network where they can read unencrypted
+      traffic, can do everything you can do: read every opportunity, every document, and your
+      profile. Traffic is plain HTTP and is not encrypted. Use this on a home network or a VPN you
+      control. Do not use it on shared, public, or office Wi-Fi, and do not forward the port
+      through a router. Do not put a local proxy or port forwarder in front of Kestrel either: that
+      makes every request look like it came from this machine, which switches the secret off
+      entirely.</p>
+
+      <p class="muted"><b>What else the secret gates.</b> With <span class="mono">bind_all</span>
+      on, the MCP server (if enabled) listens on its own port and requires the same secret as the
+      <span class="mono">X-Kestrel-Key</span> header from any device that is not this machine;
+      there is no separate MCP password. The browser extension must carry the secret too, even on
+      this machine, so paste it into the extension's options page. Two cautions: the join link
+      contains the secret, so it lands in that phone's browser history, and the secret is
+      displayed on this page in clear text.</p>
+
+      <p class="muted">Rotating the secret takes effect immediately and locks out any device using
+      the old one. That is the only way to revoke access. Turning LAN access on or off writes the
+      setting; quit and reopen Kestrel for it to apply.</p>
+    </details>
 
     <button class="btn" hx-post="/settings/lan/secret" hx-target="#secret">
       {% if lan_secret %}Rotate shared secret{% else %}Generate shared secret{% endif %}</button>
-    <span class="muted">Rotating takes effect immediately and locks out any device using the old
-    one. That is the only way to revoke access.</span>
-    <div id="secret" class="mono">{% if lan_secret %}<div class="copyrow"><code class="mono" data-testid="lan-secret">{{ lan_secret }}</code>
-      <button type="button" class="btn ghost small" data-testid="copy-secret" data-path="{{ lan_secret }}"
-              @click="navigator.clipboard.writeText($el.dataset.path)" title="Copy the secret">Copy</button></div>{% endif %}</div>
+    <div id="secret">{{ lan_secret_html|safe }}</div><!-- /secret -->
     {% include "partials/lan_bind.html" %}
     <div hx-get="/settings/mcp" hx-trigger="intersect once" hx-swap="outerHTML"><p class="muted">Loading the MCP switch...</p></div>
     <h2 style="margin-top:1.2rem">Backup</h2>
