@@ -100,6 +100,7 @@ def _no_provider_keys_from_the_host(monkeypatch):
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "SAM_GOV_API_KEY",
+        "REMOTEROCKETSHIP_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
     _dotenv_state["owned"].clear()  # type: ignore[union-attr]

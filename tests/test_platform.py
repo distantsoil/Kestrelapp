@@ -595,6 +595,24 @@ def test_macos_browser_fallback_tray_runs_its_loop_on_the_main_thread(shell, mon
     assert shell.icon.calls == [("visible=True", main), ("run", main)]
 
 
+def test_a_quit_before_the_owned_tray_loop_starts_never_leaves_it_blocked(shell, monkeypatch):
+    # pystray's stop() is a no-op until run() has started, so a quit landing first must either
+    # skip the loop or stop it from setup once it is live.
+    _quiet_tray(shell, monkeypatch, macos=True)
+    assert shell.start_tray(with_window=False) is True
+    monkeypatch.setattr(shell, "_quitting", True)
+    shell.run_tray_loop()
+    assert shell.icon.calls == []
+    stopped = []
+    monkeypatch.setattr(shell, "_quitting", False)
+    seen = {}
+    monkeypatch.setattr(shell.icon, "run", lambda setup=None: seen.update(setup=setup))
+    shell.run_tray_loop()
+    monkeypatch.setattr(shell, "_quitting", True)
+    seen["setup"](type("I", (), {"stop": lambda self: stopped.append(1)})())
+    assert stopped == [1]
+
+
 def test_window_path_tray_never_owns_the_loop(shell, monkeypatch):
     _quiet_tray(shell, monkeypatch, macos=True)
     assert shell.start_tray() is True
@@ -900,7 +918,9 @@ def test_detect_browser_mirrors_the_ladder(render, monkeypatch):
     assert render.detect_browser(exists=lambda p: p == chrome) == ("Chrome (chrome)", str(chrome))
     monkeypatch.setattr(render, "_bundled_chromium", lambda: Path("/c/chromium-1234"))
     assert render.detect_browser(exists=lambda p: False) == (
-        "Playwright Chromium", str(Path("/c/chromium-1234")))
+        "Playwright Chromium",
+        str(Path("/c/chromium-1234")),
+    )
     monkeypatch.setattr(render, "_bundled_chromium", lambda: None)
     assert render.detect_browser(exists=lambda p: False) is None
     monkeypatch.setenv(render.BROWSER_PATH_ENV, "/x/browser")
@@ -932,13 +952,15 @@ def test_wrong_browser_path_env_falls_through_with_a_warning(render, monkeypatch
     assert rep.results[0].status == PASS and "/x/missing" not in rep.results[0].detail
 
 
-def test_bundled_chromium_probe_matches_the_installed_playwright_revision(render, monkeypatch,
-                                                                         tmp_path):
+def test_bundled_chromium_probe_matches_the_installed_playwright_revision(
+    render, monkeypatch, tmp_path
+):
     # A Chromium left behind by an older Playwright is in the same cache under another revision
     # and this Playwright cannot launch it; the probe must not report it as present.
     monkeypatch.setattr(render, "playwright_browsers_dir", lambda: tmp_path)
-    monkeypatch.setattr(render, "_expected_chromium_dirs",
-                        lambda: ["chromium-1243", "chromium_headless_shell-1243"])
+    monkeypatch.setattr(
+        render, "_expected_chromium_dirs", lambda: ["chromium-1243", "chromium_headless_shell-1243"]
+    )
     (tmp_path / "chromium_headless_shell-1194").mkdir()
     assert render._bundled_chromium() is None
     (tmp_path / "chromium-1243").mkdir()
@@ -1001,8 +1023,10 @@ def test_doctor_browser_check_is_wired_into_run_doctor():
     assert "_check_browser(rep)" in src and "_check_edge" not in src
 
 
-@pytest.mark.skipif(os.environ.get("KESTREL_LIVE_BROWSER") != "1",
-                    reason="launches a real browser; set KESTREL_LIVE_BROWSER=1")
+@pytest.mark.skipif(
+    os.environ.get("KESTREL_LIVE_BROWSER") != "1",
+    reason="launches a real browser; set KESTREL_LIVE_BROWSER=1",
+)
 async def test_live_ladder_launches_some_browser(render, browser_fallback):
     from playwright.async_api import async_playwright
 
@@ -1039,8 +1063,9 @@ def test_open_browser_waits_for_health_then_opens_in_a_daemon_thread(monkeypatch
 
     opened: list[str] = []
     waited: list[int] = []
-    monkeypatch.setattr(serve, "wait_for_health", lambda port, timeout=30.0: waited.append(port)
-                        or True)
+    monkeypatch.setattr(
+        serve, "wait_for_health", lambda port, timeout=30.0: waited.append(port) or True
+    )
     monkeypatch.setattr(serve.webbrowser, "open", lambda url: opened.append(url))
     t = serve.open_browser_when_healthy(8765, "http://127.0.0.1:8765/")
     assert t.daemon is True
@@ -1077,12 +1102,14 @@ def test_serve_announces_the_url_opens_once_healthy_and_stops_cleanly_on_ctrl_c(
     real_bind = serve.bind_free_port
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     # Ephemeral loopback port: never a ladder rung, never LAN-visible, from a test.
-    monkeypatch.setattr(serve, "bind_free_port",
-                        lambda: real_bind(ladder=False, host="127.0.0.1"))
+    monkeypatch.setattr(serve, "bind_free_port", lambda: real_bind(ladder=False, host="127.0.0.1"))
     monkeypatch.setattr(serve, "build_app", lambda worker: object())
     monkeypatch.setattr(serve, "_make_server", lambda app, log_level: _Server())
-    monkeypatch.setattr(serve, "open_browser_when_healthy",
-                        lambda port, url, timeout=30.0: opened.append((port, url)))
+    monkeypatch.setattr(
+        serve,
+        "open_browser_when_healthy",
+        lambda port, url, timeout=30.0: opened.append((port, url)),
+    )
 
     serve.serve(open_browser=False, announce=announced.append)
     assert opened == []
@@ -1108,8 +1135,11 @@ def test_cli_serve_passes_the_open_flag_through(monkeypatch):
     seen: list[dict] = []
     monkeypatch.setattr(serve, "serve", lambda **kw: seen.append(kw))
     runner = CliRunner()
-    for args, expect in ((["serve"], None), (["serve", "--open"], True),
-                         (["serve", "--no-open", "--no-worker"], False)):
+    for args, expect in (
+        (["serve"], None),
+        (["serve", "--open"], True),
+        (["serve", "--no-open", "--no-worker"], False),
+    ):
         result = runner.invoke(cli.app, args)
         assert result.exit_code == 0, result.output
         assert seen[-1]["open_browser"] is expect
@@ -1139,15 +1169,16 @@ def test_windows_only_packages_are_never_imported_at_module_level():
     offenders = []
     for py in root.rglob("*.py"):
         for line in py.read_text(encoding="utf-8").splitlines():
-            if re.match(r"^(import|from)\s+(win11toast|pythonnet|clr|winreg|webview|pystray)\b",
-                        line):
+            if re.match(
+                r"^(import|from)\s+(win11toast|pythonnet|clr|winreg|webview|pystray)\b", line
+            ):
                 offenders.append(f"{py.relative_to(root)}: {line}")
     assert offenders == []
 
 
 # ------------------------------------------------------------------ the desktop shell downloads
 def test_desktop_window_allows_downloads(shell, monkeypatch):
-    """"Download diagnostics" flashed a window and closed it: pywebview cancels every download
+    """ "Download diagnostics" flashed a window and closed it: pywebview cancels every download
     until ALLOW_DOWNLOADS is on. The shell turns it on before the window is created."""
 
     class _Handler:

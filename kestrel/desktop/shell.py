@@ -191,9 +191,7 @@ def start_server() -> int:
     _port = port
     # worker AND scheduler from the lifespan, on uvicorn's single loop (never a second loop).
     server = _make_server(build_app(worker=True, scheduler=True), log_level="info")
-    server_thread = threading.Thread(
-        target=server.run, kwargs={"sockets": [sock]}, name="uvicorn"
-    )
+    server_thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, name="uvicorn")
     server_thread.start()
     return port
 
@@ -342,8 +340,7 @@ def _open_folder(p: Path) -> None:
             os.startfile(str(p))  # noqa: S606
         else:
             opener = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([opener, str(p)], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+            subprocess.Popen([opener, str(p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as exc:
         log.warning("open_folder_failed", path=str(p), error=str(exc))
 
@@ -359,8 +356,9 @@ def reveal_file(p: Path) -> None:
             # spaces. The path comes from the Downloads Known Folder and cannot contain a quote.
             subprocess.Popen(f'explorer /select,"{p}"')  # noqa: S603
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", str(p)], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                ["open", "-R", str(p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
         else:
             _open_folder(p.parent)
     except OSError as exc:
@@ -401,8 +399,11 @@ def _icons() -> dict:
             d.ellipse((40, 6, 58, 24), fill=accent)
         return img
 
-    return {"idle": _mk(False, None), "working": _mk(True, None),
-            "working_att": _mk(True, "#b3261e")}
+    return {
+        "idle": _mk(False, None),
+        "working": _mk(True, None),
+        "working_att": _mk(True, "#b3261e"),
+    }
 
 
 def _tooltip(status: dict) -> tuple[str, str]:
@@ -552,14 +553,18 @@ def _build_tray(pystray: Any, *, with_window: bool) -> None:
                 _menu_action(lambda: _show_update_dialog()),
                 visible=lambda item: _update_version is not None,
             ),
-            pystray.MenuItem("Pause worker", _menu_action(lambda: _post("/api/worker/pause")),
-                             checked=_paused_checked),
+            pystray.MenuItem(
+                "Pause worker",
+                _menu_action(lambda: _post("/api/worker/pause")),
+                checked=_paused_checked,
+            ),
             pystray.MenuItem("Resume worker", _menu_action(lambda: _post("/api/worker/resume"))),
             pystray.MenuItem("Run scan now", _menu_action(lambda: _post("/api/scan/now"))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Recent notifications", _menu_action(lambda: show_window())),
-            pystray.MenuItem("Open data folder",
-                             _menu_action(lambda: _open_folder(paths.data_dir()))),
+            pystray.MenuItem(
+                "Open data folder", _menu_action(lambda: _open_folder(paths.data_dir()))
+            ),
             pystray.MenuItem("Open logs", _menu_action(lambda: _open_folder(paths.logs_dir()))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", _menu_action(lambda: do_quit())),
@@ -591,10 +596,12 @@ def run_tray_loop() -> None:
     installs its own Ctrl+C handler (NSApp terminate), so on this path Ctrl+C ends the process at
     once rather than through the drain; the tray's Quit and the in-app Quit button are the
     graceful paths, and an expired lease is picked up at the next launch (hard rule 5)."""
-    if icon is None or not _tray_owns_loop:
+    if icon is None or not _tray_owns_loop or _quitting:
         return
     icon.visible = True
-    icon.run(setup=lambda _icon: None)  # blocks until icon.stop() from _begin_quit
+    # pystray's stop() is a no-op until the loop is running, so a quit that lands before run()
+    # would leave it blocked; setup runs once the loop is live and stops it then.
+    icon.run(setup=lambda i: i.stop() if _quitting else None)  # blocks until icon.stop()
 
 
 # --------------------------------------------------------------------------- preflight (trap 7)
@@ -642,8 +649,12 @@ def run_desktop() -> int:
 
     paths.ensure_dirs()
     _configure_logging()
-    log.info("kestrel_start", pid=os.getpid(), version=__version__,
-             frozen=getattr(__import__("sys"), "frozen", False))
+    log.info(
+        "kestrel_start",
+        pid=os.getpid(),
+        version=__version__,
+        frozen=getattr(__import__("sys"), "frozen", False),
+    )
 
     if not acquire_single_instance():
         log.info("second_instance_exit")
@@ -689,7 +700,10 @@ def run_desktop() -> int:
         # scaling. min_size keeps a resized window usable.
         width, height = _initial_size()
         window = webview.create_window(
-            f"Kestrel {__version__}", url=url, width=width, height=height,
+            f"Kestrel {__version__}",
+            url=url,
+            width=width,
+            height=height,
             min_size=(960, 640),
             # pywebview blocks text selection app-wide unless asked (#26): the LAN secret, a
             # path or an error message could not be selected or copied. Draggable board cards
@@ -773,8 +787,9 @@ def _run_in_browser(url: str) -> int:
         if _tray_owns_loop:
             # The wait loop below also ended when the server died; keep that while the tray
             # loop holds the main thread.
-            threading.Thread(target=_quit_when_server_stops, name="server-watch",
-                             daemon=True).start()
+            threading.Thread(
+                target=_quit_when_server_stops, name="server-watch", daemon=True
+            ).start()
             run_tray_loop()
         else:
             while not _quitting and server_thread is not None and server_thread.is_alive():

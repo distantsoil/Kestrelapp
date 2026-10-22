@@ -39,8 +39,13 @@ async def _seed(rows: list[tuple[str, str, str]] | None = None) -> None:
             s.add(org)
             await s.flush()
             opp = Opportunity(
-                track="employment", opp_type="job_posting", title=title, org_id=org.id,
-                org_name=company, location_raw="Remote (US)", url=f"https://x.example/{i}",
+                track="employment",
+                opp_type="job_posting",
+                title=title,
+                org_id=org.id,
+                org_name=company,
+                location_raw="Remote (US)",
+                url=f"https://x.example/{i}",
                 stage="t2_done",
             )
             s.add(opp)
@@ -162,15 +167,27 @@ async def _seed_aged() -> None:
             s.add(org)
             await s.flush()
             opp = Opportunity(
-                track="employment", opp_type="job_posting", title=title, org_id=org.id,
-                org_name=company, location_raw="Remote (US)", url=f"https://x.example/{i}",
+                track="employment",
+                opp_type="job_posting",
+                title=title,
+                org_id=org.id,
+                org_name=company,
+                location_raw="Remote (US)",
+                url=f"https://x.example/{i}",
                 stage="t2_done",
             )
             s.add(opp)
             await s.flush()
             when = (now - timedelta(days=age)).isoformat()
-            s.add(Pursuit(opportunity_id=opp.id, track="employment", status=status,
-                          applied_at=when, last_activity_at=when))
+            s.add(
+                Pursuit(
+                    opportunity_id=opp.id,
+                    track="employment",
+                    status=status,
+                    applied_at=when,
+                    last_activity_at=when,
+                )
+            )
         await s.commit()
     await engine.dispose()
 
@@ -193,13 +210,20 @@ def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
         expect(cards.locator("visible=true")).to_have_count(8)
 
         # the date range hides cards whose last activity is older than the range
-        page.get_by_test_id("range-select").select_option("30")
+        # Each change saves on its own; wait for this save too, or the 7-day wait below can match
+        # this slower response and the reload reads 30.
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            page.get_by_test_id("range-select").select_option("30")
         expect(cards.locator("visible=true")).to_have_count(6)
         expect(count).to_have_text("Showing 6 of 8")
         assert "range=30" in page.url
         # Wait for the choice to be saved before leaving: on the slower Windows runner the reload
         # beat the save and the page came back with the previous range (#14 CI).
-        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+        with page.expect_response(
+            lambda r: (
+                "/pursuits/prefs" in r.url and r.ok and "range=7" in (r.request.post_data or "")
+            )
+        ):
             page.get_by_test_id("range-select").select_option("7")
         expect(cards.locator("visible=true")).to_have_count(5)
 
@@ -234,11 +258,15 @@ def test_an_open_offer_is_never_folded_away_as_closed():
 
     from kestrel.web.serve import running_server
 
-    asyncio.run(_seed([
-        ("Acme", "Head of IT", "offer"),
-        ("Hooli", "Data Chief", "rejected"),
-        ("Globex Corp", "Platform Lead", "applied"),
-    ]))
+    asyncio.run(
+        _seed(
+            [
+                ("Acme", "Head of IT", "offer"),
+                ("Hooli", "Data Chief", "rejected"),
+                ("Globex Corp", "Platform Lead", "applied"),
+            ]
+        )
+    )
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
         page = browser.new_page()
