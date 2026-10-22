@@ -8,7 +8,7 @@
   <span class="dot {{ scan.state }}"></span><span class="txt">{{ scan.label }}</span></a>
 <a class="line" data-rail="hosted" href="/settings" title="Your online model key and whether it is ready">
   <span class="dot {{ hosted.state }}"></span><span class="txt">{{ hosted.label }}</span></a>
-{% if balance %}<a class="line" data-rail="balance" href="/settings#hosted" title="Your online key's balance, or this month's spend on deeper reads">
+{% if balance %}<a class="line" data-rail="balance" href="/settings#hosted" title="{{ balance.note or 'This month\'s spend on deeper reads' }}">
   <span class="dot {{ balance.state }}"></span><span class="txt">{{ balance.label }}</span></a>{% endif %}
 {% for note in credit or [] %}<a class="line" data-rail="credit" href="/settings#hosted" title="Your online model key is out of credit">
   <span class="dot warn"></span><span class="txt">{{ note }}</span></a>{% endfor %}

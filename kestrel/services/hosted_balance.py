@@ -57,6 +57,7 @@ class Reading:
     usage: float | None = None
     limit: float | None = None
     remaining: float | None = None
+    usage_monthly: float | None = None
 
 
 def usd(value: float) -> str:
@@ -124,6 +125,7 @@ async def _fetch(backend: BackendConfig) -> Reading:
         return Reading(
             True, usage=_num(data.get("usage")), limit=_num(data.get("limit")),
             remaining=_num(data.get("limit_remaining")),
+            usage_monthly=_num(data.get("usage_monthly")),
         )
     except httpx.HTTPError as exc:
         log.info("balance_unreachable", provider="openrouter", error_type=type(exc).__name__)
@@ -159,16 +161,28 @@ async def _reading(name: str, backend: BackendConfig) -> Reading:
         return reading
 
 
+# A normal OpenRouter key reports only on itself: its own spend, and a cap if one was set on
+# openrouter.ai. The account balance needs a management key (/api/v1/credits), which can create and
+# delete keys, far more access than a balance line justifies, so Kestrel never asks for one.
+KEY_ONLY_NOTE = (
+    "This key's own figures. Your account balance is on openrouter.ai; OpenRouter shares it only "
+    "with a management key."
+)
+
+
 def _row_from(reading: Reading) -> dict[str, str]:
     if not reading.ok:
         return {"kind": "unavailable", "label": UNAVAILABLE, "state": "warn"}
     if reading.limit is not None:
         left = reading.remaining if reading.remaining is not None else (
             reading.limit - (reading.usage or 0.0))
-        return {"kind": "remaining", "label": f"{usd(max(left, 0.0))} left", "state": "good"}
-    if reading.usage is not None:
-        return {"kind": "spent_no_limit", "label": f"Spent {usd(reading.usage)}, no limit set",
-                "state": "good"}
+        return {"kind": "remaining",
+                "label": f"{usd(max(left, 0.0))} left of {usd(reading.limit)} on this key",
+                "state": "good", "note": KEY_ONLY_NOTE}
+    month = reading.usage_monthly
+    if month is not None:
+        return {"kind": "spent_month", "label": f"{usd(month)} spent this month",
+                "state": "good", "note": KEY_ONLY_NOTE}
     return {"kind": "unavailable", "label": UNAVAILABLE, "state": "warn"}
 
 

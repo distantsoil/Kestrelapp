@@ -76,22 +76,27 @@ async def test_a_key_with_a_limit_reads_dollars_left(sm):
     async with sm() as s:
         row = await hb.rail_row(s, _settings())
     assert row is not None
-    assert row["label"] == "$4.20 left" and row["kind"] == "remaining" and row["state"] == "good"
+    assert row["label"] == "$4.20 left of $10.00 on this key"
+    assert row["kind"] == "remaining" and row["state"] == "good"
+    assert "management key" in row["note"]
 
 
 @respx.mock
-async def test_a_key_with_no_limit_reads_spend(sm):
-    respx.get(KEY_URL).mock(return_value=_key_json(usage=1.3))
+async def test_a_key_with_no_limit_reads_this_months_spend_not_lifetime(sm):
+    # Owner test: "Spent $X, no limit set" showed lifetime usage and named a cap Kestrel never
+    # explains. Without a cap the line is this month's spend on the key; never "no limit set".
+    respx.get(KEY_URL).mock(return_value=_key_json(usage=41.5, usage_monthly=1.3))
     async with sm() as s:
         row = await hb.rail_row(s, _settings())
-    assert row["label"] == "Spent $1.30, no limit set" and row["kind"] == "spent_no_limit"
+    assert row["label"] == "$1.30 spent this month" and row["kind"] == "spent_month"
+    assert "limit" not in row["label"].lower() and "41.50" not in row["label"]
 
 
 @respx.mock
 async def test_an_overspent_limit_reads_zero_not_negative(sm):
     respx.get(KEY_URL).mock(return_value=_key_json(limit=5.0, limit_remaining=-0.2))
     async with sm() as s:
-        assert (await hb.rail_row(s, _settings()))["label"] == "$0.00 left"
+        assert (await hb.rail_row(s, _settings()))["label"] == "$0.00 left of $5.00 on this key"
 
 
 @respx.mock
@@ -178,13 +183,13 @@ async def test_nothing_is_fetched_for_free_only_or_other_providers(sm):
 
 @respx.mock
 async def test_the_show_balance_setting_opts_a_free_only_user_in(sm):
-    route = respx.get(KEY_URL).mock(return_value=_key_json(usage=0.0))
+    route = respx.get(KEY_URL).mock(return_value=_key_json(usage=0.0, usage_monthly=0.0))
     async with sm() as s:
         s.add(Setting(key=hb.SHOW_BALANCE_KEY, value=True))
         await s.commit()
     async with sm() as s:
         row = await hb.rail_row(s, _settings(free_only=True))
-    assert route.call_count == 1 and row["kind"] == "spent_no_limit"
+    assert route.call_count == 1 and row["kind"] == "spent_month"
 
 
 # --------------------------------------------------------------------- local spend, no network
@@ -288,7 +293,8 @@ def test_the_rail_shows_the_row_and_polls_use_the_cache(monkeypatch):
     first = client.get("/status/rail").text
     second = client.get("/status/rail").text
     assert 'data-rail="balance"' in first and "$4.20 left" in first and "$4.20 left" in second
-    assert client.get("/api/status").json()["balance"]["label"] == "$4.20 left"
+    label = client.get("/api/status").json()["balance"]["label"]
+    assert label == "$4.20 left of $10.00 on this key"
     assert route.call_count == 1
     assert SECRET not in first + second
 

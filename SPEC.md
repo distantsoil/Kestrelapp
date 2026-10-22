@@ -1015,8 +1015,8 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
   and cost where reported (NULL renders as unknown, never as free). One confirmation authorizes
   one send: any prior record for the same payload hash, whatever its status, refuses a replay.
 - **Balance in the status rail** (#29, D-BYOK-12). Only OpenRouter can say what is left on a key:
-  `GET /key` returns `usage`, `limit` and `limit_remaining`. The rail shows "$X left" for a key with a
-  limit and "Spent $Y, no limit set" for one without. The request is made only when Hosted mode is on
+  `GET /key` returns `usage`, `usage_monthly`, `limit` and `limit_remaining`. The rail shows "$X left of $Z on this key" for a key with a
+  limit and "$Y spent this month" (the key's `usage_monthly`) for one without; the account balance needs a management key and is never fetched. The request is made only when Hosted mode is on
   and acknowledged, the key is OpenRouter's and saved, and the user did not choose free models only
   (unless they ticked Always show my OpenRouter balance, the `ui.show_balance` row). It carries the
   Authorization header and nothing else, is cached for five minutes under a digest of the key (a
