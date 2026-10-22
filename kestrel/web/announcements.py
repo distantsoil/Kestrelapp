@@ -10,8 +10,7 @@ ANNOUNCEMENTS: tuple[dict[str, str], ...] = (
     {
         "id": "ui-refresh-2026",
         "text": (
-            "A refreshed look for Kestrel is coming in a future update. Your roles, documents "
-            "and settings stay exactly as they are."
+            "A refreshed look is coming. Your data stays as it is."
         ),
     },
 )

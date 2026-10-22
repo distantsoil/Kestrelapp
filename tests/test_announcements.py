@@ -50,7 +50,7 @@ def test_pages_carry_the_slot_and_the_fragment_shows_the_notice() -> None:
     frag = c.get("/announcements")
     assert frag.status_code == 200
     assert 'data-testid="announcement"' in frag.text
-    assert "A refreshed look for Kestrel is coming" in frag.text
+    assert "A refreshed look is coming" in frag.text
 
 
 def test_dismiss_stores_the_id_and_the_notice_stays_gone() -> None:

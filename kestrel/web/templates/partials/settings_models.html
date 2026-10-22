@@ -3,9 +3,7 @@
    /models/hosted/overrides (D-UI-42), so a change here has the same effect as on the Models or
    System page. Theme variables only. #}
 <div id="settings-models" data-testid="settings-models">
-  <p class="muted" style="margin-top:0">What each tier runs on now, after the run mode is applied.
-    Change the local hardware profile or pick a hosted model per tier below; Benchmark and the
-    <a href="/models">Models page</a> compare how they do.</p>
+  <p class="muted" style="margin-top:0">What each tier runs on now. <a href="/models">Compare models</a></p>
   <table class="data" data-testid="effective-tiers">
     <thead><tr><th>Tier</th><th>Model</th><th>Runs on</th></tr></thead>
     <tbody>
@@ -20,8 +18,9 @@
   </table>
 
   <h3 style="margin-top:1.2rem">Local hardware profile</h3>
-  <p class="muted" style="margin-top:0">Which local models fit this machine. Changing it only records
-    the profile; the System tab shows the downloads and builds it needs.</p>
+  <p class="muted" style="margin-top:0">Which local models fit this machine.</p>
+  <details data-testid="profile-details"><summary class="muted">Show details</summary>
+    <p class="muted">Changing it only records the profile. The System tab shows the downloads and builds it needs.</p></details>
   <form method="post" action="/setup/profile" hx-post="/setup/profile"
         hx-target="#models-profile-result" hx-select="[role=status]" hx-swap="innerHTML"
         style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -35,6 +34,6 @@
 
   <div hx-get="/models/hosted/overrides" hx-trigger="intersect once" hx-swap="outerHTML"
        style="margin-top:1.2rem" data-testid="overrides-loader">
-    <p class="muted">Loading the hosted model choices...</p>
+    <p class="muted">Loading...</p>
   </div>
 </div>

@@ -502,7 +502,7 @@ def test_the_opportunity_page_shows_the_card_and_regenerate_queues_a_task(web):
     page = web.get(f"/opportunities/{short}")
     assert page.status_code == 200
     assert 'data-testid="questions-card"' in page.text
-    assert "Marking this role Applied writes the questions" in page.text
+    assert "Marking this role Applied writes the list" in page.text
     assert 'data-testid="questions-regenerate"' not in page.text
     refused = web.post(f"/opportunities/{short}/questions/regenerate")
     assert "when you mark this role Applied" in refused.text
@@ -563,7 +563,7 @@ def test_the_prep_page_leads_with_the_likely_questions_and_the_same_control(web)
     page = web.get(f"/prep/{short}").text
     assert 'data-testid="questions-card"' in page
     assert "Likely interview questions" in page
-    assert "Marking this role Applied writes the questions" in page  # not applied yet
+    assert "Marking this role Applied writes the list" in page  # not applied yet
     assert 'data-testid="questions-regenerate"' not in page
 
     opp, pid = _seed_web("applied")

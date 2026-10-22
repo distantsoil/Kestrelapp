@@ -12,14 +12,14 @@
         </li>
       {% endfor %}
     </ol>
-    <p class="quiet">Written when you marked this role Applied. The prep pack, mock interview and debrief use this list.</p>
+    <p class="quiet">The prep pack, mock interview and debrief use this list.</p>
   {% elif qview.pending %}
-    <p class="quiet" data-testid="questions-pending">Writing questions for this role. They appear after the next background pass.</p>
+    <p class="quiet" data-testid="questions-pending">Writing the list.</p>
   {% elif qview.failed %}
-    <p class="quiet" data-testid="questions-failed">The model's answer could not be used, even after one retry, so no list was made. It is kept on the Failed scoring page for review. The questions from the scored review still apply.</p>
+    <p class="quiet" data-testid="questions-failed">No list was made. The scored review's questions still apply. <a href="/quarantine">Failed scoring</a></p>
   {% else %}
-    {% if qview.applied %}<p class="quiet" data-testid="questions-none">No list yet for this role. Write the list now to get the questions an interviewer is likely to ask. Until then the prep pack uses the questions from the scored review.</p>
-    {% else %}<p class="quiet">Marking this role Applied writes the questions an interviewer is likely to ask. Until then the prep pack uses the questions from the scored review.</p>{% endif %}
+    {% if qview.applied %}<p class="quiet" data-testid="questions-none">No list yet. The scored review's questions apply until you write one.</p>
+    {% else %}<p class="quiet">Marking this role Applied writes the list. Until then the scored review's questions apply.</p>{% endif %}
   {% endif %}
   {% if qnote %}<p class="quiet" role="status" data-testid="questions-note">{{ qnote }}</p>{% endif %}
   {% if qview.applied %}

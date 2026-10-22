@@ -163,9 +163,9 @@
           <div class="fitgroup-explain" data-testid="background-note">
             <span class="muted">
             {%- if background_hosted -%}
-              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'is' if background == 1 else 'are' }} waiting. Your scoring runs on an online model, so they score only when you choose Score everything now on <a href="/sources">Sources</a>.
+              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'is' if background == 1 else 'are' }} waiting. Scoring is on an online model: choose Score everything now on <a href="/sources">Sources</a>.
             {%- else -%}
-              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'scores' if background == 1 else 'score' }} in the background when Kestrel is idle. <a href="/sources">Sources</a> can score {{ 'it' if background == 1 else 'them' }} now.
+              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'scores' if background == 1 else 'score' }} when Kestrel is idle. <a href="/sources">Score {{ 'it' if background == 1 else 'them' }} now</a>
             {%- endif -%}
             </span>
           </div>

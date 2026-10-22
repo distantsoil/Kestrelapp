@@ -79,8 +79,9 @@
   {% if openrouter_key_present %}
   <form hx-post="/settings/hosted/balance" hx-trigger="change" hx-target="#hosted-panel" hx-swap="outerHTML"
         style="margin-top:.8rem" data-testid="balance-setting">
-    <label><input type="checkbox" name="show_balance" value="on" {% if show_balance %}checked{% endif %}> Always show my OpenRouter balance</label>
-    <span class="muted">Shown in the sidebar for paid models whenever hosted mode is on. This box also turns it on when you chose free models only. Kestrel asks OpenRouter for your key's remaining credit about every five minutes, a single request that carries your key and nothing else. Other providers show this month's spend from Kestrel's own log, with no request.</span>
+    <label><input type="checkbox" name="show_balance" value="on" {% if show_balance %}checked{% endif %}> Always show balance</label>
+    <details data-testid="balance-details"><summary class="muted">Show details</summary>
+      <p class="muted">The sidebar shows your OpenRouter balance for paid models. This box also turns it on for free models only. Kestrel asks OpenRouter for your key's remaining credit about every five minutes: one request that carries your key and nothing else. Other providers show this month's spend from Kestrel's own log, with no request.</p></details>
   </form>
   {% endif %}
 

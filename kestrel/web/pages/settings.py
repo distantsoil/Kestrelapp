@@ -449,20 +449,19 @@ async def lan_bind(request: Request):
         if not has_secret:
             return _lan_partial(
                 request, view(),
-                "Generate the shared secret first. LAN access without it would answer other "
-                "devices with nothing to check.", ok=False,
+                "Generate the shared secret first.", ok=False,
             )
         if str(form.get("ack") or "") != "on":
             return _lan_partial(
                 request, view(),
-                "Tick the box to confirm you read the warning, then turn it on.", ok=False,
+                "Tick the box to turn it on.", ok=False,
             )
     try:
         lan_access.set_bind_all(want_on)
     except lan_access.LanAccessError as exc:
         return _lan_partial(request, view(), plain_error(exc), ok=False)
     after = view()
-    note = "Takes effect after restart. Quit Kestrel from the tray and open it again."
+    note = "Takes effect after restart."
     if after.env_name and after.effective_on != want_on:
         note += (
             f" The environment variable {after.env_name} is set to {after.env_value} and wins "

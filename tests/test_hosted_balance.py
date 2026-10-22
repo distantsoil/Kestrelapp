@@ -306,8 +306,9 @@ def test_the_rail_has_no_balance_row_when_nothing_is_fetched(monkeypatch):
 def test_settings_toggle_stores_the_choice_and_shows_only_with_an_openrouter_key(monkeypatch):
     client = _fresh(monkeypatch)
     page = client.get("/settings/hosted").text
-    assert 'name="show_balance"' in page and "Always show my OpenRouter balance" in page
-    assert "—" not in page.split("Always show my OpenRouter balance")[1][:400]
+    assert 'name="show_balance"' in page and "Always show balance" in page
+    assert "one request that carries your key" in page.split('data-testid="balance-details"')[1]
+    assert "—" not in page.split("Always show balance")[1][:900]
     r = client.post("/settings/hosted/balance", data={"show_balance": "on"})
     assert r.status_code == 200 and 'name="show_balance"' in r.text
 
