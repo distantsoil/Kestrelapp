@@ -508,6 +508,9 @@ def test_the_opportunity_page_shows_the_card_and_regenerate_queues_a_task(web):
     assert "when you mark this role Applied" in refused.text
 
     opp, pid = _seed_web("applied")
+    applied_page = web.get(f"/opportunities/{opp}").text
+    assert 'data-testid="questions-none"' in applied_page  # applied, no set yet: says so
+    assert "Marking this role Applied" not in applied_page
     r = web.post(f"/opportunities/{opp}/questions/regenerate")
     assert r.status_code == 200 and "Queued." in r.text
     again = web.post(f"/opportunities/{opp}/questions/regenerate")
