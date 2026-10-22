@@ -171,19 +171,12 @@ KEY_ONLY_NOTE = (
 
 
 def _row_from(reading: Reading) -> dict[str, str]:
-    if not reading.ok:
+    """One short line, the same with or without a key cap (owner decision): this month's spend on
+    the key. The rail has room for nothing longer."""
+    if not reading.ok or reading.usage_monthly is None:
         return {"kind": "unavailable", "label": UNAVAILABLE, "state": "warn"}
-    if reading.limit is not None:
-        left = reading.remaining if reading.remaining is not None else (
-            reading.limit - (reading.usage or 0.0))
-        return {"kind": "remaining",
-                "label": f"{usd(max(left, 0.0))} left of {usd(reading.limit)} on this key",
-                "state": "good", "note": KEY_ONLY_NOTE}
-    month = reading.usage_monthly
-    if month is not None:
-        return {"kind": "spent_month", "label": f"{usd(month)} spent this month",
-                "state": "good", "note": KEY_ONLY_NOTE}
-    return {"kind": "unavailable", "label": UNAVAILABLE, "state": "warn"}
+    return {"kind": "spent_month", "label": f"{usd(reading.usage_monthly)} spent this month",
+            "state": "good", "note": KEY_ONLY_NOTE}
 
 
 # ----------------------------------------------------------------------- local spend (no network)

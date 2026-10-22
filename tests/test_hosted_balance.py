@@ -71,32 +71,24 @@ def test_anthropic_and_openai_are_never_eligible():
 
 # ------------------------------------------------------------------------- the reading
 @respx.mock
-async def test_a_key_with_a_limit_reads_dollars_left(sm):
-    respx.get(KEY_URL).mock(return_value=_key_json(limit=10.0, limit_remaining=4.2, usage=5.8))
-    async with sm() as s:
-        row = await hb.rail_row(s, _settings())
-    assert row is not None
-    assert row["label"] == "$4.20 left of $10.00 on this key"
-    assert row["kind"] == "remaining" and row["state"] == "good"
-    assert "management key" in row["note"]
+async def test_the_line_is_this_months_spend_with_or_without_a_cap(sm):
+    # Owner decision: one short line, the same either way. Never lifetime usage, never a cap.
+    for data in ({"usage": 41.5, "usage_monthly": 1.3},
+                 {"limit": 10.0, "limit_remaining": 4.2, "usage": 41.5, "usage_monthly": 1.3}):
+        hb.clear_cache()
+        respx.get(KEY_URL).mock(return_value=_key_json(**data))
+        async with sm() as s:
+            row = await hb.rail_row(s, _settings())
+        assert row["label"] == "$1.30 spent this month" and row["kind"] == "spent_month"
+        assert "management key" in row["note"]
+        assert "left" not in row["label"] and "limit" not in row["label"].lower()
 
 
 @respx.mock
-async def test_a_key_with_no_limit_reads_this_months_spend_not_lifetime(sm):
-    # Owner test: "Spent $X, no limit set" showed lifetime usage and named a cap Kestrel never
-    # explains. Without a cap the line is this month's spend on the key; never "no limit set".
-    respx.get(KEY_URL).mock(return_value=_key_json(usage=41.5, usage_monthly=1.3))
-    async with sm() as s:
-        row = await hb.rail_row(s, _settings())
-    assert row["label"] == "$1.30 spent this month" and row["kind"] == "spent_month"
-    assert "limit" not in row["label"].lower() and "41.50" not in row["label"]
-
-
-@respx.mock
-async def test_an_overspent_limit_reads_zero_not_negative(sm):
+async def test_no_monthly_figure_reads_unavailable_not_zero(sm):
     respx.get(KEY_URL).mock(return_value=_key_json(limit=5.0, limit_remaining=-0.2))
     async with sm() as s:
-        assert (await hb.rail_row(s, _settings()))["label"] == "$0.00 left of $5.00 on this key"
+        assert (await hb.rail_row(s, _settings()))["kind"] == "unavailable"
 
 
 @respx.mock
@@ -289,12 +281,13 @@ def test_the_rail_shows_the_row_and_polls_use_the_cache(monkeypatch):
     client = _fresh(monkeypatch)
     _seed_web(*_HOSTED_ON)
     _ollama()
-    route = respx.get(KEY_URL).mock(return_value=_key_json(limit=10.0, limit_remaining=4.2))
+    route = respx.get(KEY_URL).mock(return_value=_key_json(usage_monthly=4.2))
     first = client.get("/status/rail").text
     second = client.get("/status/rail").text
-    assert 'data-rail="balance"' in first and "$4.20 left" in first and "$4.20 left" in second
+    assert 'data-rail="balance"' in first and "$4.20 spent this month" in first
+    assert "$4.20 spent this month" in second
     label = client.get("/api/status").json()["balance"]["label"]
-    assert label == "$4.20 left of $10.00 on this key"
+    assert label == "$4.20 spent this month"
     assert route.call_count == 1
     assert SECRET not in first + second
 
