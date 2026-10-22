@@ -35,8 +35,10 @@ log = structlog.get_logger()
 # once chosen, in a setting row so the next visit starts where the user left off.
 RANGE_KEY = "ui.board_range"
 CAP_KEY = "ui.board_cap"
+CLOSED_KEY = "ui.board_closed"  # "show" (default) or "hide": the Closed column is the user's call
 RANGE_CHOICES: tuple[str, ...] = ("7", "14", "30", "90", "0")
 CAP_CHOICES: tuple[str, ...] = ("5", "10", "25", "50", "0")
+CLOSED_CHOICES: tuple[str, ...] = ("show", "hide")
 
 
 def _day(stamp: str | None) -> str:
@@ -223,9 +225,13 @@ async def pursuits(request: Request):
         board_cap = request.query_params.get("cap")
         if board_cap not in CAP_CHOICES:
             board_cap = await _stored_choice(s, CAP_KEY, CAP_CHOICES) or "0"
+        closed_col = request.query_params.get("closedcol")
+        if closed_col not in CLOSED_CHOICES:
+            closed_col = await _stored_choice(s, CLOSED_KEY, CLOSED_CHOICES) or "show"
     ctx = {
         "title": board["page_label"], "query": dict(request.query_params), "view": view, **board,
         "off_tracks": off, "board_range": board_range, "board_cap": board_cap,
+        "closed_hidden": closed_col == "hide",
         "range_choices": RANGE_CHOICES, "cap_choices": CAP_CHOICES,
     }
     if request.headers.get("HX-Request"):
@@ -235,12 +241,14 @@ async def pursuits(request: Request):
 
 @router.post("/pursuits/prefs", response_class=HTMLResponse)
 async def save_board_prefs(request: Request):
-    """Remember the date range and column cap the user chose (#30). A value that is not one of
-    the offered choices is ignored. Always 200: the page fires this and forgets it."""
+    """Remember the date range, column cap and Closed column choice the user made (#30). A value
+    that is not one of the offered choices is ignored. Always 200: the page fires this and
+    forgets it."""
     form = await request.form()
     wanted = {
         RANGE_KEY: (form.get("range"), RANGE_CHOICES),
         CAP_KEY: (form.get("cap"), CAP_CHOICES),
+        CLOSED_KEY: (form.get("closedcol"), CLOSED_CHOICES),
     }
     try:
         async with sessionmaker()() as s:

@@ -25,7 +25,7 @@
         <h3>{{ column.col.label }} <span class="muted ccount" data-total="{{ column.cards|length }}">{{ column.cards|length }}</span></h3>
         {% if column.col.key == 'closed' %}
           <button type="button" class="btn small ghost" data-testid="closed-toggle" x-show="foldable" x-cloak
-                  @click="closedOpen = !closedOpen" x-text="closedLabel">Show closed</button>
+                  @click="closedHidden = !closedHidden" x-text="closedLabel">Show closed</button>
         {% endif %}
         {% for c in column.cards %}
           {% set pid = c.pursuit.id %}

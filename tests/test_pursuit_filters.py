@@ -189,12 +189,20 @@ def test_the_closed_column_folds_and_each_column_can_show_all():
     assert 'data-testid="closed-toggle"' in html
     assert html.count('data-testid="show-all"') == 4  # one per column
     assert 'data-testid="cap-select"' in html
-    assert '"closedOpen": false' in html
+    assert '"closedHidden": false' in html  # shown by default; hiding is the user's choice
 
 
-def test_the_closed_column_state_prefills_from_the_url():
+def test_the_closed_column_state_prefills_from_the_url_then_the_saved_choice():
     with _client() as c:
-        assert '"closedOpen": true' in c.get("/pursuits?open=closed").text
+        assert '"closedHidden": true' in c.get("/pursuits?closedcol=hide").text
+        assert c.post("/pursuits/prefs", data={"closedcol": "hide"}).status_code == 200
+        assert _stored("ui.board_closed") == "hide"
+        assert '"closedHidden": true' in c.get("/pursuits").text
+        assert '"closedHidden": false' in c.get("/pursuits?closedcol=show").text  # URL wins
+        assert c.post("/pursuits/prefs", data={"closedcol": "show"}).status_code == 200
+        assert '"closedHidden": false' in c.get("/pursuits").text
+        assert c.post("/pursuits/prefs", data={"closedcol": "banana"}).status_code == 200
+        assert _stored("ui.board_closed") == "show"  # an unoffered value is ignored
 
 
 def test_confidential_mode_does_not_put_the_employer_in_the_new_attributes():

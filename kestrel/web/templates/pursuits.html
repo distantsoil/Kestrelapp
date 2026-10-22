@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ page_label }} · Kestrel{% endblock %}
 {% block content %}
-<div x-data='pursuitFilter({{ {"q": query.get("q") or "", "stages": (query.get("stage") or "").split(","), "showClosed": query.get("closed") != "0", "sort": query.get("sort") or "", "range": board_range, "cap": board_cap, "closedOpen": query.get("open") == "closed", "today": today}|tojson }})'
+<div x-data='pursuitFilter({{ {"q": query.get("q") or "", "stages": (query.get("stage") or "").split(","), "showClosed": query.get("closed") != "0", "sort": query.get("sort") or "", "range": board_range, "cap": board_cap, "closedHidden": closed_hidden, "today": today}|tojson }})'
      @keydown.window="onKey($event)" data-testid="pursuit-filter-scope">
 <div class="phead">
   <h1 style="margin-right:auto">{{ page_label }}</h1>
@@ -92,18 +92,21 @@
     const fold = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
     return {
       q: init.q, stages: init.stages.filter(Boolean), showClosed: init.showClosed, sort: init.sort,
-      range: init.range, cap: init.cap, closedOpen: init.closedOpen, closedCount: 0, expanded: [],
+      range: init.range, cap: init.cap, closedHidden: init.closedHidden, closedCount: 0, expanded: [],
       total: 0, shown: 0, matched: 0,
       get active() { return !!(this.q || this.stages.length || !this.showClosed || this.range !== '0'); },
       get foldable() { return this.closedCount > 0 && !this.q.trim() && !this.stages.length; },
-      get closedLabel() { return this.closedOpen ? 'Hide closed' : 'Show ' + this.closedCount + ' closed'; },
+      get closedLabel() { return this.closedHidden ? 'Show ' + this.closedCount + ' closed' : 'Hide closed'; },
       get countText() { return 'Showing ' + this.shown + ' of ' + this.total; },
       init() {
-        ['q', 'stages', 'showClosed', 'sort', 'range', 'cap', 'closedOpen'].forEach(k => this.$watch(k, () => this.apply()));
+        ['q', 'stages', 'showClosed', 'sort', 'range', 'cap', 'closedHidden'].forEach(k => this.$watch(k, () => this.apply()));
         // What the user chose here is the default next time (a setting row, not the browser).
         ['range', 'cap'].forEach(k => this.$watch(k, v => {
           fetch('/pursuits/prefs', { method: 'POST', body: new URLSearchParams({ [k]: v }) }).catch(() => {});
         }));
+        this.$watch('closedHidden', v => {
+          fetch('/pursuits/prefs', { method: 'POST', body: new URLSearchParams({ closedcol: v ? 'hide' : 'show' }) }).catch(() => {});
+        });
         document.body.addEventListener('htmx:afterSwap', () => this.$nextTick(() => this.apply()));
         this.apply();
       },
@@ -124,7 +127,7 @@
         set('sort', this.sort);
         set('range', this.range === '0' ? '' : this.range);
         set('cap', this.cap === '0' ? '' : this.cap);
-        set('open', this.closedOpen ? 'closed' : '');
+        set('closedcol', this.closedHidden ? 'hide' : '');
         return p;
       },
       tabHref(view) {
@@ -166,9 +169,9 @@
         // Closed means a closed STATUS (data-closed), never the column: an open offer sits in the
         // employment "closed" column and must never be folded away as if it were closed.
         this.closedCount = closedShown;
-        // Board only: fold the closed column unless a search or stage chip is looking for it, and
-        // show the first N cards of each column with a "Show all" for the rest.
-        const folded = !this.closedOpen && !this.q.trim() && !this.stages.length;
+        // Board only: fold the closed column only when the user hid it and no search or stage chip is looking
+        // for it, and show the first N cards of each column with a "Show all" for the rest.
+        const folded = this.closedHidden && !this.q.trim() && !this.stages.length;
         const cap = Number(this.cap) || 0;
         const seen = {}, held = {};
         document.querySelectorAll('#board .pcard').forEach(el => {
