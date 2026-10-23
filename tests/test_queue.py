@@ -138,3 +138,33 @@ async def test_two_workers_never_lease_the_same_task(sm):
     leased = [tid for r in results for tid in r]
     assert sorted(leased) == sorted(ids)  # every task leased exactly once
     assert len(leased) == len(set(leased))  # no task leased twice
+
+
+async def test_a_cancelled_heartbeat_still_finishes_its_write(sm):
+    # Renewal loops are cancelled when their task ends, often mid-write. The write must run to the
+    # end (closing its session) and only then report the cancel; an interrupted write left an
+    # unclosed connection that failed later on Windows ("Event loop is closed").
+    import asyncio
+
+    import pytest
+
+    q = TaskQueue(sm)
+    started, release = asyncio.Event(), asyncio.Event()
+    finished: list[bool] = []
+
+    async def slow_write(task_id, worker_id, *, lease_seconds):
+        started.set()
+        await release.wait()
+        finished.append(True)
+        return True
+
+    q._heartbeat = slow_write  # type: ignore[method-assign]
+    beat = asyncio.create_task(q.heartbeat(1, "w1"))
+    await started.wait()
+    beat.cancel()
+    await asyncio.sleep(0)
+    assert finished == []  # still writing: the cancel waits for it
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await beat
+    assert finished == [True]

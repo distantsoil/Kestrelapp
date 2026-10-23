@@ -348,9 +348,24 @@ class TaskQueue:
         return await _with_lock_retry("lease_read", lambda: self.get(task_id))
 
     async def heartbeat(self, task_id: int, worker_id: str, *, lease_seconds: int = 300) -> bool:
-        return await _with_lock_retry(
-            "heartbeat", lambda: self._heartbeat(task_id, worker_id, lease_seconds=lease_seconds)
+        """Renew a lease. Every renewal loop is cancelled when its task ends, often mid-write: a
+        cancel landing inside the database call abandons its connection unclosed, to be finalized
+        later by the garbage collector (on Windows, after the loop that owned it is gone). So the
+        write runs to the end even when the caller is cancelled, and the cancel is raised after."""
+        write = asyncio.ensure_future(
+            _with_lock_retry(
+                "heartbeat",
+                lambda: self._heartbeat(task_id, worker_id, lease_seconds=lease_seconds),
+            )
         )
+        try:
+            return await asyncio.shield(write)
+        except asyncio.CancelledError:
+            if not write.done():
+                await asyncio.wait([write])
+            if not write.cancelled():
+                write.exception()  # retrieved, so a failed write is not logged as unhandled
+            raise
 
     async def complete(self, task_id: int, worker_id: str | None = None) -> bool:
         return await _with_lock_retry("complete", lambda: self._complete(task_id, worker_id))
