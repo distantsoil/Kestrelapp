@@ -76,7 +76,15 @@ def _toast(title: str, body: str | None) -> bool:
     if sys.platform == "win32":
         import win11toast
 
-        win11toast.notify(title, body or "")
+        from kestrel import paths
+        from kestrel.desktop.shell import APP_USER_MODEL_ID
+
+        # The installed app toasts as itself (the identity its shortcut carries); from source
+        # there is no such shortcut, so it keeps win11toast's default rather than toast silently.
+        if paths.is_frozen():
+            win11toast.notify(title, body or "", app_id=APP_USER_MODEL_ID)
+        else:
+            win11toast.notify(title, body or "")
         return True
     if sys.platform == "darwin":
         tool = shutil.which("osascript")
