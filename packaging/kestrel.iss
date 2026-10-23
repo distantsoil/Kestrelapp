@@ -47,10 +47,10 @@ Name: "startupicon"; Description: "Launch Kestrel at login (minimized to the tra
 Source: "..\dist\Kestrel\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Kestrel"; Filename: "{app}\Kestrel.exe"
+Name: "{group}\Kestrel"; Filename: "{app}\Kestrel.exe"; AppUserModelID: "Kestrel.Desktop"
 Name: "{group}\Uninstall Kestrel"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Kestrel"; Filename: "{app}\Kestrel.exe"; Tasks: desktopicon
-Name: "{userstartup}\Kestrel"; Filename: "{app}\Kestrel.exe"; Tasks: startupicon
+Name: "{autodesktop}\Kestrel"; Filename: "{app}\Kestrel.exe"; AppUserModelID: "Kestrel.Desktop"; Tasks: desktopicon
+Name: "{userstartup}\Kestrel"; Filename: "{app}\Kestrel.exe"; AppUserModelID: "Kestrel.Desktop"; Tasks: startupicon
 
 [Run]
 Filename: "{app}\Kestrel.exe"; Description: "Launch Kestrel now"; Flags: nowait postinstall skipifsilent

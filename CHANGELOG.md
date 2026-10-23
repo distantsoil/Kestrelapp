@@ -36,6 +36,7 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 - Error messages no longer show technical details anywhere in the app.
 - Saving a board preference twice at once no longer loses the choice.
 - On macOS, quitting while Kestrel was starting in the browser could leave the menu-bar icon running. It now quits cleanly.
+- Windows notifications now come from Kestrel by name with its current icon, instead of from "Kestrel.exe" with an old logo.
 
 ## [0.6.2] - 2026-10-19
 

@@ -776,3 +776,18 @@ def test_releasing_doc_explains_how_to_bump_the_vendored_runtime():
     doc = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
     assert "packaging/linux/runtime-x86_64" in doc and "RUNTIME_SHA256" in doc
     assert "RUNTIME-NOTICE.txt" in doc
+
+
+def test_every_app_shortcut_carries_the_desktop_app_identity():
+    # The shortcut's AppUserModelID must equal the one the process declares, or Windows keeps
+    # attributing toasts to "Kestrel.exe" with a stale icon.
+    from kestrel.desktop.shell import APP_USER_MODEL_ID
+
+    lines = [
+        ln
+        for ln in ISS.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("Name: ") and 'Filename: "{app}\\Kestrel.exe"' in ln
+    ]
+    assert len(lines) == 3
+    for ln in lines:
+        assert f'AppUserModelID: "{APP_USER_MODEL_ID}"' in ln, ln

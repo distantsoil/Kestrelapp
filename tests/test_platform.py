@@ -1233,3 +1233,47 @@ def test_desktop_window_allows_downloads(shell, monkeypatch):
 
     assert shell.run_desktop() == 0
     assert _FakeWebview.settings["ALLOW_DOWNLOADS"] is True
+
+
+def test_the_installed_windows_app_declares_its_identity(shell, monkeypatch):
+    # Toasts read "Kestrel" with the shortcut's icon only when the process and the installer's
+    # shortcut carry the same AppUserModelID (an old build's icon otherwise sticks to Kestrel.exe).
+    import types
+
+    calls = []
+    shell32 = types.SimpleNamespace(
+        SetCurrentProcessExplicitAppUserModelID=lambda aumid: calls.append(aumid) or 0
+    )
+    monkeypatch.setattr(shell, "IS_WINDOWS", True)
+    monkeypatch.setattr(shell.paths, "is_frozen", lambda: True)
+    monkeypatch.setattr("ctypes.windll", types.SimpleNamespace(shell32=shell32), raising=False)
+    assert shell.set_app_identity() is True
+    assert calls == [shell.APP_USER_MODEL_ID]
+
+
+def test_from_source_or_off_windows_no_identity_is_declared(shell, monkeypatch):
+    # From source no shortcut carries the identity, and Windows drops toasts it cannot resolve.
+    monkeypatch.setattr(shell, "IS_WINDOWS", True)
+    monkeypatch.setattr(shell.paths, "is_frozen", lambda: False)
+    assert shell.set_app_identity() is False
+    monkeypatch.setattr(shell, "IS_WINDOWS", False)
+    monkeypatch.setattr(shell.paths, "is_frozen", lambda: True)
+    assert shell.set_app_identity() is False
+
+
+def test_the_installed_app_toasts_under_its_own_identity(monkeypatch):
+    import sys
+    import types
+
+    from kestrel.desktop.shell import APP_USER_MODEL_ID
+    from kestrel.services import delivery
+
+    sent = []
+    fake = types.SimpleNamespace(notify=lambda *a, **kw: sent.append(kw.get("app_id")))
+    monkeypatch.setitem(sys.modules, "win11toast", fake)
+    monkeypatch.setattr(delivery.sys, "platform", "win32")
+    monkeypatch.setattr("kestrel.paths.is_frozen", lambda: True)
+    assert delivery._toast("Kestrel", "body") is True
+    monkeypatch.setattr("kestrel.paths.is_frozen", lambda: False)
+    assert delivery._toast("Kestrel", "body") is True
+    assert sent == [APP_USER_MODEL_ID, None]

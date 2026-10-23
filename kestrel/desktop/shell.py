@@ -45,6 +45,10 @@ from kestrel import __version__, paths
 log = structlog.get_logger()
 
 IS_WINDOWS = sys.platform == "win32"
+# The Windows app identity (AppUserModelID). The installer stamps the same value on its shortcuts
+# (packaging/kestrel.iss), so toasts read "Kestrel" with the shortcut's current icon instead of
+# "Kestrel.exe" with whatever icon Windows recorded the first time an old build notified.
+APP_USER_MODEL_ID = "Kestrel.Desktop"
 IS_MACOS = sys.platform == "darwin"
 
 # ------------------------------------------------------------------- module-scope singletons
@@ -640,6 +644,25 @@ def abort_start(reason: str) -> int:
     return 1
 
 
+def set_app_identity() -> bool:
+    """Declare Kestrel's Windows app identity for this process, before any window, tray icon or
+    toast exists. Only the installed app: from source there is no shortcut carrying the identity,
+    and Windows drops toasts for an identity it cannot resolve. Returns True when it was set."""
+    if not (IS_WINDOWS and paths.is_frozen()):
+        return False
+    try:
+        import ctypes
+
+        hr = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except (AttributeError, OSError) as exc:
+        log.warning("app_identity_failed", error_type=type(exc).__name__, error=str(exc))
+        return False
+    if hr != 0:
+        log.warning("app_identity_failed", hresult=hr)
+        return False
+    return True
+
+
 def run_desktop() -> int:
     """The full startup sequence. Called from __main__ after freeze_support + stdout repair.
     Returns the process exit code: 0 for a clean run or a second-instance handoff, non-zero when
@@ -659,6 +682,7 @@ def run_desktop() -> int:
     if not acquire_single_instance():
         log.info("second_instance_exit")
         return 0
+    set_app_identity()
 
     migrate.run_migrations()
     port = start_server()
