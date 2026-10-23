@@ -4,6 +4,39 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-10-23
+
+### New
+
+- Likely interview questions. When you mark a role Applied, Kestrel writes up to 12 questions you are likely to be asked, each with why it is asked, linked to your own stories where one fits. Your prep pack uses them.
+- Suggested titles. Kestrel suggests job titles that fit your resume and the roles you apply to. Nothing is added to your profile until you click Accept, and a title you dismiss does not come back.
+- The Applications board can show only recent activity (7, 14, 30 or 90 days), cap how many cards each column shows, and fold the Closed column. Your choices are remembered. A role with no reply for three weeks offers "Mark as ghosted?".
+- Remove from shortlist on each Applications board card, with the same confirmation as the role page.
+- Applied roles get their own Applied group on the Pipeline, with a status pill, and no longer count toward Review on Today.
+- Every role still waiting for a score says why: being scored, queued, waiting in the background, held, or not queued.
+- Four more company job boards: Rippling, ADP Workforce Now, Paylocity and Workable. Kestrel follows them from your searches like the others.
+- RemoteRocketship, for people with their own paid key: Kestrel uses it only to find employer links, then reads each posting from the employer's own page.
+- Turn LAN access on or off from Settings, after creating a shared secret. It takes effect after a restart.
+- Change which model each tier uses from Settings > Models.
+- With an OpenRouter key, the status rail shows what you have spent this month.
+- A notice that a refreshed look for Kestrel is coming. It closes for good with Got it.
+
+### Changed
+
+- A posting is marked closed only after two checks in a row find it gone, and the role page says why it was closed.
+- Open full page now sits at the top of the role side panel.
+- When an online key runs out of credit, Kestrel says so once, names where to top up, and stops sending to that service. It never switches to another online service on its own.
+
+### Fixed
+
+- The LAN QR code scans in dark mode, and the secret and join link can be copied with one click.
+- Calibrate no longer shows roles with no description, and its count matches the page.
+- A reply from an online model that ran out of room is retried once with more room, instead of failing.
+- The tray and menu-bar icons are indigo again.
+- Error messages no longer show technical details anywhere in the app.
+- Saving a board preference twice at once no longer loses the choice.
+- On macOS, quitting while Kestrel was starting in the browser could leave the menu-bar icon running. It now quits cleanly.
+
 ## [0.6.2] - 2026-10-19
 
 ### Fixed
