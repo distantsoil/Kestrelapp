@@ -1,0 +1,30 @@
+{# Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1). Tokens only. #}
+<div class="card" id="questions-card" data-testid="questions-card">
+  <h3>Likely interview questions</h3>
+  {% if qview.questions %}
+    <ol data-testid="question-list" style="margin:0 0 .6rem 1.1rem;padding:0">
+      {% for q in qview.questions %}
+        <li data-testid="question" style="margin-bottom:.5rem">
+          {{ q.question }}
+          <span class="pill grey">{{ q.category|replace('_', ' ') }}</span>
+          {% if q.why_asked %}<div class="quiet">{{ q.why_asked }}</div>{% endif %}
+          {% if q.story_title %}<div class="quiet">Your story: {{ q.story_title }}</div>{% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+    <p class="quiet">The prep pack, mock interview and debrief use this list.</p>
+  {% elif qview.pending %}
+    <p class="quiet" data-testid="questions-pending">Writing the list.</p>
+  {% elif qview.failed %}
+    <p class="quiet" data-testid="questions-failed">No list was made. The scored review's questions still apply. <a href="/quarantine">Failed scoring</a></p>
+  {% else %}
+    {% if qview.applied %}<p class="quiet" data-testid="questions-none">No list yet. The scored review's questions apply until you write one.</p>
+    {% else %}<p class="quiet">Marking this role Applied writes the list. Until then the scored review's questions apply.</p>{% endif %}
+  {% endif %}
+  {% if qnote %}<p class="quiet" role="status" data-testid="questions-note">{{ qnote }}</p>{% endif %}
+  {% if qview.applied %}
+  <button type="button" class="btn" data-testid="questions-regenerate"
+          hx-post="/opportunities/{{ opp_id }}/questions/regenerate"
+          hx-target="#questions-card" hx-swap="outerHTML"
+          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>{% endif %}
+</div>

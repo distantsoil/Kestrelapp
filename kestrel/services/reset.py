@@ -31,6 +31,7 @@ from pathlib import Path
 import structlog
 
 from kestrel import paths
+from kestrel.errors import UserFacingError
 
 log = structlog.get_logger()
 
@@ -43,8 +44,16 @@ class ResetResult:
     failed: list[str] = field(default_factory=list)  # files that could not be removed
 
 
-class ResetBusy(RuntimeError):
+class ResetBusy(UserFacingError, RuntimeError):
     """A worker cycle is still running; nothing was deleted."""
+
+
+class ResetBackupFailed(UserFacingError, RuntimeError):
+    """The backup that must precede a reset could not be made, so nothing was deleted. The
+    underlying error (it can name a path) is logged, never carried in the message."""
+
+    def __init__(self) -> None:
+        super().__init__("The backup before the reset failed, so nothing was deleted.")
 
 
 def backup_dir() -> Path:
@@ -63,7 +72,8 @@ def reset_everything(*, keep_keys: bool = True, backup: bool = True) -> ResetRes
         try:
             zip_path = create_backup(out)
         except Exception as exc:  # no backup, no reset: the operator's data is not ours to lose
-            raise RuntimeError(f"Backup before reset failed, nothing was deleted: {exc}") from exc
+            log.warning("reset_backup_failed", error_type=type(exc).__name__, error=str(exc))
+            raise ResetBackupFailed() from exc
 
     removed: list[str] = []
     kept: list[str] = []
@@ -180,7 +190,8 @@ async def reset_in_app(sessionmaker, *, keep_keys: bool = True) -> ResetResult:
         out.mkdir(parents=True, exist_ok=True)
         zip_path = await asyncio.to_thread(create_backup, out)
     except Exception as exc:  # no backup, no reset
-        raise RuntimeError(f"Backup before reset failed, nothing was deleted: {exc}") from exc
+        log.warning("reset_backup_failed", error_type=type(exc).__name__, error=str(exc))
+        raise ResetBackupFailed() from exc
 
     lock = app_mod.maintenance_lock()
     if lock.locked():

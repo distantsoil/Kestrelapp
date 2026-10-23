@@ -393,6 +393,66 @@ def test_quiet_days_helper():
     assert pb.quiet_days(p, today) is None
 
 
+# ------------------------------------------------------------------- the ghosted hint (#30)
+def _quiet_card(days: int, **kw) -> int:
+    today = date.today()
+    applied = f"{(today - timedelta(days=days)).isoformat()}T00:00:00+00:00"
+    _opp, pid = _seed(
+        status=kw.pop("status", "applied"), applied_at=applied,
+        last_activity_at=applied, next_action_at=(today - timedelta(days=1)).isoformat(),
+        next_action="Follow up", **kw,
+    )
+    return pid
+
+
+def test_ghost_hint_threshold_is_past_the_configured_days():
+    today = date(2026, 10, 15)
+    p = Pursuit(opportunity_id=1, track="employment", status="applied", id=1,
+                applied_at="2026-09-24T00:00:00+00:00", next_action_at="2026-10-10")
+    assert pb.quiet_days(p, today) == 21
+    assert pb.ghost_hint(p, today, days=21) is None  # exactly the threshold is not past it
+    assert pb.ghost_hint(p, today, days=20) == 21
+    p.status = "interviewing"
+    assert pb.ghost_hint(p, today, days=1) is None  # only a card waiting on a reply
+    assert pb.GHOST_STATUS == {"employment": "ghosted", "consulting": "no_response"}
+
+
+def test_a_long_quiet_card_offers_to_mark_ghosted_and_a_recent_one_does_not():
+    c = _fresh()
+    _quiet_card(30)
+    _quiet_card(10, title="Recent quiet")
+    with c:
+        col = _column(c.get("/pursuits").text, "Applied")
+    assert col.count('data-testid="ghost-hint"') == 1
+    assert "No reply in 30 days." in col
+    assert 'data-testid="ghost-hint-act"' in col
+    assert "&#34;to_status&#34;: &#34;ghosted&#34;" in col or '"to_status": "ghosted"' in col
+
+
+def test_the_hint_acts_through_move_to_status_and_adds_no_status():
+    c = _fresh()
+    pid = _quiet_card(40)
+    with c:
+        r = c.post(f"/pursuits/{pid}/status", data={"to_status": "ghosted"},
+                   headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        board = c.get("/pursuits").text
+    p, events = _pursuit(pid)
+    assert p.status == "ghosted" and p.closed_at  # the closed_at stamp is move_to_status's
+    assert events[-1].to_status == "ghosted"
+    assert 'data-testid="ghost-hint"' not in board  # a closed card has nothing to count
+
+
+def test_a_consulting_lead_offers_no_response():
+    c = _fresh(consulting=True)
+    pid = _quiet_card(30, track="consulting", status="outreach_sent")
+    with c:
+        html = c.get("/pursuits?track=consulting").text
+    assert "No reply in 30 days." in html
+    assert "no_response" in html
+    assert pid
+
+
 # ------------------------------------------------------------------------------- add a role
 def test_add_by_paste_creates_opportunity_pursuit_event_and_queues_scoring():
     c = _fresh()
@@ -614,3 +674,113 @@ def test_add_by_a_malformed_url_is_a_notice_not_a_500():
         r = c.post("/pursuits/add", data={"url": "https://exa mple.com:99999/x"},
                    headers={"HX-Request": "true"})
     assert r.status_code == 200 and "Could not read that page" in r.text
+
+
+# ------------------------------------------------------------ Remove on the card (#23, D-UI-75)
+def test_card_remove_deletes_the_pursuit_like_the_panel_and_returns_the_board():
+    from kestrel.db.models import Notification, Offer, Outcome, VerdictOverride
+    from kestrel.web.pages.opportunity_actions import ADD_REASONS
+
+    c = _fresh()
+    opp_id, pid = _seed(status="applied", title="Wrong role")
+    _other_opp, other_pid = _seed(status="shortlisted", title="Keeper")
+
+    async def extras(s):
+        s.add_all([
+            StatusEvent(pursuit_id=pid, from_status="shortlisted", to_status="applied"),
+            Outcome(pursuit_id=pid, opportunity_id=opp_id, final_status="rejected"),
+            Offer(pursuit_id=pid, base=150000),
+            Notification(kind="liveness", title="Closed", opportunity_id=opp_id, pursuit_id=pid),
+            VerdictOverride(opportunity_id=opp_id, operator_verdict="agree",
+                            reason=sorted(ADD_REASONS)[0]),
+            VerdictOverride(opportunity_id=opp_id, operator_verdict="agree", reason="my own"),
+        ])
+        await s.commit()
+
+    _run(extras)
+    with c:
+        html = c.get("/pursuits").text
+        assert f'hx-post="/pursuits/{pid}/remove"' in html
+        assert f'hx-post="/pursuits/{other_pid}/remove"' in html
+        r = c.post(f"/pursuits/{pid}/remove", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        assert 'data-testid="board"' in r.text and "Wrong role" not in r.text
+        assert "Keeper" in r.text and "Removed from your shortlist." in r.text
+        assert 'hx-swap-oob="true"' in r.text  # the sidebar badges move with the board
+        missing = c.post("/pursuits/999999/remove", headers={"HX-Request": "true"})
+        assert missing.status_code == 200 and 'data-testid="board-notice"' in missing.text
+
+    async def left(s):
+        n_p = len((await s.execute(select(Pursuit).where(Pursuit.id == pid))).all())
+        ev = len((await s.execute(select(StatusEvent).where(StatusEvent.pursuit_id == pid))).all())
+        out = len((await s.execute(select(Outcome).where(Outcome.pursuit_id == pid))).all())
+        off = len((await s.execute(select(Offer).where(Offer.pursuit_id == pid))).all())
+        note = (await s.execute(select(Notification))).scalar_one()
+        reasons = [
+            v.reason for v in (await s.execute(select(VerdictOverride))).scalars().all()
+        ]
+        return n_p, ev, out, off, note.pursuit_id, reasons
+
+    assert _run(left) == (0, 0, 0, 0, None, ["my own"])
+    assert _pursuit(other_pid)[0] is not None
+
+
+def test_card_remove_confirm_is_stage_aware_and_speaks_each_track():
+    c = _fresh(consulting=True)
+    _seed(status="shortlisted", title="Fresh role")
+    _seed(status="applied", title="Applied role")
+    _seed(track="consulting", status="shortlisted", title="Fresh lead")
+    _seed(track="consulting", status="proposal_sent", title="Late lead")
+    with c:
+        emp = c.get("/pursuits").text
+        con = c.get("/pursuits?track=consulting").text
+
+    def confirm(html: str, title: str) -> str:
+        card = html.split(f">{title}</a>", 1)[1].split('class="card pcard', 1)[0]
+        tag = card.split("/remove", 1)[1].split(">", 1)[0]
+        return tag.split('hx-confirm="', 1)[1].split('"', 1)[0]
+
+    assert confirm(emp, "Fresh role") == "Remove this from your shortlist?"
+    assert confirm(emp, "Applied role").startswith("Remove this from your shortlist? Its status")
+    assert "cannot be undone" in confirm(emp, "Applied role")
+    assert confirm(con, "Fresh lead") == "Remove this from your leads?"
+    assert confirm(con, "Late lead").startswith("Remove this from your leads? Its status")
+    assert ">Remove from my shortlist<" in emp and ">Remove from my leads<" in con
+
+
+def test_a_board_pref_save_racing_another_never_loses_the_choice(monkeypatch):
+    # #14 Windows CI: two /pursuits/prefs saves close together both read "no row" and the second
+    # insert failed on the key, losing the choice. Stage that race deterministically: the row
+    # already exists (the other save won) but this save's read comes back empty.
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+    from kestrel.web.pages.pursuits import RANGE_KEY
+
+    client = _fresh()
+
+    async def seed():
+        async with get_sessionmaker()() as s:
+            s.add(Setting(key=RANGE_KEY, value="30"))
+            await s.commit()
+
+    asyncio.run(seed())
+    real_get = AsyncSession.get
+
+    async def stale_get(self, model, ident, *a, **k):
+        if model is Setting and ident == RANGE_KEY:
+            return None  # the other save's row is not visible to this read
+        return await real_get(self, model, ident, *a, **k)
+
+    monkeypatch.setattr(AsyncSession, "get", stale_get)
+    assert client.post("/pursuits/prefs", data={"range": "7"}).status_code == 200
+    monkeypatch.setattr(AsyncSession, "get", real_get)
+
+    async def read():
+        async with get_sessionmaker()() as s:
+            return (await s.get(Setting, RANGE_KEY)).value
+
+    assert asyncio.run(read()) == "7"

@@ -165,6 +165,7 @@ def shell(monkeypatch):
     monkeypatch.setattr(shell, "server", None)
     monkeypatch.setattr(shell, "server_thread", None)
     monkeypatch.setattr(shell, "_quitting", False)
+    monkeypatch.setattr(shell, "_tray_owns_loop", False)
     yield shell
     shell.release_single_instance()
 
@@ -582,10 +583,175 @@ def test_macos_quit_hides_the_tray_instead_of_stopping_the_shared_loop(shell, mo
     assert [what for what, _ in fake.calls] == ["visible=False"]
 
 
-def test_macos_browser_fallback_runs_without_a_tray(shell, monkeypatch):
+def test_macos_browser_fallback_tray_runs_its_loop_on_the_main_thread(shell, monkeypatch):
+    # No window loop to join, so the icon's own run() is the main loop: nothing starts in
+    # start_tray, and run_tray_loop shows the item then runs it, both on the calling thread.
     _quiet_tray(shell, monkeypatch, macos=True)
-    assert shell.start_tray(with_window=False) is False
+    assert shell.start_tray(with_window=False) is True
+    assert shell._tray_owns_loop is True
+    assert shell.icon.calls == []
+    shell.run_tray_loop()
+    main = threading.current_thread().name
+    assert shell.icon.calls == [("visible=True", main), ("run", main)]
+
+
+def test_a_quit_before_the_owned_tray_loop_starts_never_leaves_it_blocked(shell, monkeypatch):
+    # pystray's stop() is a no-op until run() has started, so a quit landing first must either
+    # skip the loop or stop it from setup once it is live.
+    _quiet_tray(shell, monkeypatch, macos=True)
+    assert shell.start_tray(with_window=False) is True
+    monkeypatch.setattr(shell, "_quitting", True)
+    shell.run_tray_loop()
+    assert shell.icon.calls == []
+    stopped = []
+    monkeypatch.setattr(shell, "_quitting", False)
+    seen = {}
+    monkeypatch.setattr(shell.icon, "run", lambda setup=None: seen.update(setup=setup))
+    shell.run_tray_loop()
+    monkeypatch.setattr(shell, "_quitting", True)
+    seen["setup"](type("I", (), {"stop": lambda self: stopped.append(1)})())
+    assert stopped == [1]
+
+
+def test_window_path_tray_never_owns_the_loop(shell, monkeypatch):
+    _quiet_tray(shell, monkeypatch, macos=True)
+    assert shell.start_tray() is True
+    assert shell._tray_owns_loop is False
+    shell.run_tray_loop()  # a no-op, not a second loop under the window
+    assert [what for what, _ in shell.icon.calls] == ["run_detached", "visible=True"]
+
+
+def test_quit_stops_the_tray_loop_it_owns(shell, monkeypatch):
+    # With the tray's run() as the main loop, hiding the item would leave run() blocking forever;
+    # stop() is what returns the main thread to _finish_quit.
+    monkeypatch.setattr(shell, "IS_MACOS", True)
+    monkeypatch.setattr(shell, "_tray_owns_loop", True)
+    fake = _FakeIcon()
+    fake._visible = True
+    monkeypatch.setattr(shell, "icon", fake)
+    shell._begin_quit()
+    assert [what for what, _ in fake.calls] == ["stop"]
+
+
+def test_a_tray_that_fails_to_show_leaves_no_icon_so_a_close_quits(shell, monkeypatch):
+    # The icon is published only once it is up: a backend that constructs but cannot show the
+    # item must not leave on_closing hiding the window behind an item that is not there.
+    _quiet_tray(shell, monkeypatch, macos=True)
+
+    class _BrokenIcon(_FakeIcon):
+        def run_detached(self, setup=None):
+            raise RuntimeError("no status bar")
+
+    shell.sys.modules["pystray"].Icon = _BrokenIcon
+    assert shell.start_tray() is False
     assert shell.icon is None
+
+    class _FakeServer:
+        should_exit = False
+
+    monkeypatch.setattr(shell, "server", _FakeServer())
+    monkeypatch.setattr("kestrel.web.deps.close_to_tray", lambda: True)
+    assert shell.on_closing() is True
+    assert shell.server.should_exit is True
+
+
+def test_poller_rebinds_last_status_whole_and_redraws_on_a_pause_change(shell, monkeypatch):
+    # The macOS menu reads _last_status on the main thread: it must never see a half-filled dict,
+    # and the "Pause worker" check is only re-read on update_menu, so a pause change must queue one.
+    class _NeverEmptied(dict):
+        def clear(self):
+            pytest.fail("_last_status was emptied in place")
+
+        def update(self, *a, **k):
+            pytest.fail("_last_status was filled in place")
+
+    answers = iter([{"paused": True}, {"paused": True}, {"paused": False}, {}])
+    ticks: list[int] = []
+
+    class _Done(Exception):
+        pass
+
+    def _sleep(_s: float) -> None:
+        ticks.append(1)
+        if len(ticks) == 4:
+            raise _Done
+
+    fake = _FakeIcon()
+    monkeypatch.setattr(shell, "icon", fake)
+    monkeypatch.setattr(shell, "_last_status", _NeverEmptied())
+    monkeypatch.setattr(shell, "_status", lambda: next(answers))
+    monkeypatch.setattr(shell, "_poll_update_status", lambda: None)
+    monkeypatch.setattr(shell, "_icons", lambda: {"idle": object()})
+    monkeypatch.setattr(shell, "_on_tray_thread", lambda fn: fn())
+    monkeypatch.setattr(shell.time, "sleep", _sleep)
+    with pytest.raises(_Done):
+        shell._tooltip_poller()
+    assert shell._last_status == {}
+    # Redrawn on False->True (tick 1), not on True->True (tick 2), on True->False (tick 3), and
+    # not on False->False (tick 4, an empty answer).
+    assert [what for what, _ in fake.calls if what == "update_menu"] == ["update_menu"] * 2
+
+
+def test_server_death_ends_the_tray_loop(shell, monkeypatch):
+    class _FakeThread:
+        def join(self, timeout=None) -> None:
+            pass
+
+    quits: list[int] = []
+    monkeypatch.setattr(shell, "server_thread", _FakeThread())
+    monkeypatch.setattr(shell, "do_quit", lambda: quits.append(1))
+    shell._quit_when_server_stops()
+    assert quits == [1]
+    monkeypatch.setattr(shell, "_quitting", True)
+    shell._quit_when_server_stops()
+    assert quits == [1]  # a quit already under way is not started again
+
+
+def test_macos_browser_fallback_wires_quit_and_runs_the_tray_loop(shell, monkeypatch):
+    """A packaged app on the fallback path has no terminal: the tray's Quit and the in-app Quit
+    button must both end the process. The tray loop runs on the main thread and a quit stops it."""
+    from kestrel.web import desktop_bridge
+
+    class _FakeServer:
+        should_exit = False
+
+    class _FakeThread:
+        alive = True
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def join(self, timeout=None) -> None:
+            for _ in range(500):  # the real thread ends when the server is told to exit
+                if fake_server.should_exit:
+                    break
+                time.sleep(0.01)
+            self.alive = False
+
+    fake_server, fake_thread = _FakeServer(), _FakeThread()
+    handlers: list = []
+    _quiet_tray(shell, monkeypatch, macos=True)
+    monkeypatch.setattr(shell, "server", fake_server)
+    monkeypatch.setattr(shell, "server_thread", fake_thread)
+    monkeypatch.setattr(desktop_bridge, "set_quit_handler", handlers.append)
+    monkeypatch.setattr(desktop_bridge, "set_focus_handler", lambda fn: None)
+    monkeypatch.setattr(shell.webbrowser, "open", lambda url: None)
+    monkeypatch.setattr("builtins.print", lambda *a, **k: None)
+
+    assert shell._run_in_browser("http://127.0.0.1:8765/") == 0
+
+    assert handlers == [shell.do_quit, None]
+    main = threading.current_thread().name
+    assert shell.icon.calls == [("visible=True", main), ("run", main), ("stop", main)]
+    assert fake_server.should_exit is True
+    assert fake_thread.alive is False
+    # The fallback starts a daemon "server-watch" thread that calls do_quit() when the server
+    # stops on its own. Wait for it here: left running, it finished after this test's teardown and
+    # set the module's _quitting during the NEXT test, which then skipped its own quit (#14 CI).
+    for t in threading.enumerate():
+        if t.name == "server-watch":
+            t.join(timeout=5)
+            assert not t.is_alive(), "the server-watch thread must end with the test"
 
 
 def test_open_folder_uses_the_platform_opener(shell, monkeypatch):
@@ -752,7 +918,9 @@ def test_detect_browser_mirrors_the_ladder(render, monkeypatch):
     assert render.detect_browser(exists=lambda p: p == chrome) == ("Chrome (chrome)", str(chrome))
     monkeypatch.setattr(render, "_bundled_chromium", lambda: Path("/c/chromium-1234"))
     assert render.detect_browser(exists=lambda p: False) == (
-        "Playwright Chromium", str(Path("/c/chromium-1234")))
+        "Playwright Chromium",
+        str(Path("/c/chromium-1234")),
+    )
     monkeypatch.setattr(render, "_bundled_chromium", lambda: None)
     assert render.detect_browser(exists=lambda p: False) is None
     monkeypatch.setenv(render.BROWSER_PATH_ENV, "/x/browser")
@@ -784,13 +952,15 @@ def test_wrong_browser_path_env_falls_through_with_a_warning(render, monkeypatch
     assert rep.results[0].status == PASS and "/x/missing" not in rep.results[0].detail
 
 
-def test_bundled_chromium_probe_matches_the_installed_playwright_revision(render, monkeypatch,
-                                                                         tmp_path):
+def test_bundled_chromium_probe_matches_the_installed_playwright_revision(
+    render, monkeypatch, tmp_path
+):
     # A Chromium left behind by an older Playwright is in the same cache under another revision
     # and this Playwright cannot launch it; the probe must not report it as present.
     monkeypatch.setattr(render, "playwright_browsers_dir", lambda: tmp_path)
-    monkeypatch.setattr(render, "_expected_chromium_dirs",
-                        lambda: ["chromium-1243", "chromium_headless_shell-1243"])
+    monkeypatch.setattr(
+        render, "_expected_chromium_dirs", lambda: ["chromium-1243", "chromium_headless_shell-1243"]
+    )
     (tmp_path / "chromium_headless_shell-1194").mkdir()
     assert render._bundled_chromium() is None
     (tmp_path / "chromium-1243").mkdir()
@@ -853,8 +1023,10 @@ def test_doctor_browser_check_is_wired_into_run_doctor():
     assert "_check_browser(rep)" in src and "_check_edge" not in src
 
 
-@pytest.mark.skipif(os.environ.get("KESTREL_LIVE_BROWSER") != "1",
-                    reason="launches a real browser; set KESTREL_LIVE_BROWSER=1")
+@pytest.mark.skipif(
+    os.environ.get("KESTREL_LIVE_BROWSER") != "1",
+    reason="launches a real browser; set KESTREL_LIVE_BROWSER=1",
+)
 async def test_live_ladder_launches_some_browser(render, browser_fallback):
     from playwright.async_api import async_playwright
 
@@ -891,8 +1063,9 @@ def test_open_browser_waits_for_health_then_opens_in_a_daemon_thread(monkeypatch
 
     opened: list[str] = []
     waited: list[int] = []
-    monkeypatch.setattr(serve, "wait_for_health", lambda port, timeout=30.0: waited.append(port)
-                        or True)
+    monkeypatch.setattr(
+        serve, "wait_for_health", lambda port, timeout=30.0: waited.append(port) or True
+    )
     monkeypatch.setattr(serve.webbrowser, "open", lambda url: opened.append(url))
     t = serve.open_browser_when_healthy(8765, "http://127.0.0.1:8765/")
     assert t.daemon is True
@@ -929,12 +1102,14 @@ def test_serve_announces_the_url_opens_once_healthy_and_stops_cleanly_on_ctrl_c(
     real_bind = serve.bind_free_port
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     # Ephemeral loopback port: never a ladder rung, never LAN-visible, from a test.
-    monkeypatch.setattr(serve, "bind_free_port",
-                        lambda: real_bind(ladder=False, host="127.0.0.1"))
+    monkeypatch.setattr(serve, "bind_free_port", lambda: real_bind(ladder=False, host="127.0.0.1"))
     monkeypatch.setattr(serve, "build_app", lambda worker: object())
     monkeypatch.setattr(serve, "_make_server", lambda app, log_level: _Server())
-    monkeypatch.setattr(serve, "open_browser_when_healthy",
-                        lambda port, url, timeout=30.0: opened.append((port, url)))
+    monkeypatch.setattr(
+        serve,
+        "open_browser_when_healthy",
+        lambda port, url, timeout=30.0: opened.append((port, url)),
+    )
 
     serve.serve(open_browser=False, announce=announced.append)
     assert opened == []
@@ -960,8 +1135,11 @@ def test_cli_serve_passes_the_open_flag_through(monkeypatch):
     seen: list[dict] = []
     monkeypatch.setattr(serve, "serve", lambda **kw: seen.append(kw))
     runner = CliRunner()
-    for args, expect in ((["serve"], None), (["serve", "--open"], True),
-                         (["serve", "--no-open", "--no-worker"], False)):
+    for args, expect in (
+        (["serve"], None),
+        (["serve", "--open"], True),
+        (["serve", "--no-open", "--no-worker"], False),
+    ):
         result = runner.invoke(cli.app, args)
         assert result.exit_code == 0, result.output
         assert seen[-1]["open_browser"] is expect
@@ -991,15 +1169,16 @@ def test_windows_only_packages_are_never_imported_at_module_level():
     offenders = []
     for py in root.rglob("*.py"):
         for line in py.read_text(encoding="utf-8").splitlines():
-            if re.match(r"^(import|from)\s+(win11toast|pythonnet|clr|winreg|webview|pystray)\b",
-                        line):
+            if re.match(
+                r"^(import|from)\s+(win11toast|pythonnet|clr|winreg|webview|pystray)\b", line
+            ):
                 offenders.append(f"{py.relative_to(root)}: {line}")
     assert offenders == []
 
 
 # ------------------------------------------------------------------ the desktop shell downloads
 def test_desktop_window_allows_downloads(shell, monkeypatch):
-    """"Download diagnostics" flashed a window and closed it: pywebview cancels every download
+    """ "Download diagnostics" flashed a window and closed it: pywebview cancels every download
     until ALLOW_DOWNLOADS is on. The shell turns it on before the window is created."""
 
     class _Handler:

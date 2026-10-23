@@ -27,20 +27,25 @@ _ROWS = [
 ]
 
 
-async def _seed() -> None:
+async def _seed(rows: list[tuple[str, str, str]] | None = None) -> None:
     await reset_engine()
     for suffix in ("", "-wal", "-shm"):
         paths.db_path().with_name(paths.db_path().name + suffix).unlink(missing_ok=True)
     migrate.run_migrations()
     engine = make_async_engine(paths.db_path())
     async with async_sessionmaker(engine, expire_on_commit=False)() as s:
-        for i, (company, title, status) in enumerate(_ROWS):
+        for i, (company, title, status) in enumerate(rows or _ROWS):
             org = Org(name=company, normalized_name=company.lower())
             s.add(org)
             await s.flush()
             opp = Opportunity(
-                track="employment", opp_type="job_posting", title=title, org_id=org.id,
-                org_name=company, location_raw="Remote (US)", url=f"https://x.example/{i}",
+                track="employment",
+                opp_type="job_posting",
+                title=title,
+                org_id=org.id,
+                org_name=company,
+                location_raw="Remote (US)",
+                url=f"https://x.example/{i}",
                 stage="t2_done",
             )
             s.add(opp)
@@ -66,8 +71,22 @@ def test_applications_live_search_in_a_browser():
         cards = page.locator("#board .pcard")
         count = page.get_by_test_id("filter-count")
         search = page.get_by_test_id("pursuit-search")
+        # the closed column shows by default; hiding it is the user's choice (#30)
         expect(cards.locator("visible=true")).to_have_count(5)
-        expect(count).to_have_text("Showing 5 of 5")
+        expect(count).to_have_text("Showing 5 of 5")  # the count is what is on screen
+        toggle = page.get_by_test_id("closed-toggle")
+        expect(toggle).to_have_text("Hide closed")
+        # each toggle waits for its save, not a fixed delay (the slower Windows runner, #14 CI)
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            toggle.click()
+        expect(cards.locator("visible=true")).to_have_count(4)
+        expect(toggle).to_have_text("Show 1 closed")
+        # the choice is remembered: a reload still has it hidden
+        page.reload()
+        expect(cards.locator("visible=true")).to_have_count(4)
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            page.get_by_test_id("closed-toggle").click()
+        expect(cards.locator("visible=true")).to_have_count(5)
 
         # typing a company narrows to that one card
         search.fill("northwind")
@@ -91,13 +110,19 @@ def test_applications_live_search_in_a_browser():
         expect(search).to_have_value("")
         expect(cards.locator("visible=true")).to_have_count(5)
 
-        # Show closed off hides the rejected card
+        # a search that matches a closed card opens the fold so the match can be seen
+        search.fill("hooli")
+        expect(cards.locator("visible=true")).to_have_count(1)
+        search.fill("")
+        expect(cards.locator("visible=true")).to_have_count(5)
+
+        # Show closed off drops the rejected card from the matches
         page.get_by_test_id("show-closed").uncheck()
         expect(cards.locator("visible=true")).to_have_count(4)
         expect(count).to_have_text("Showing 4 of 5")
         expect(page.locator("#board .pcard", has_text="Hooli")).to_be_hidden()
         page.get_by_test_id("show-closed").check()
-        expect(cards.locator("visible=true")).to_have_count(5)
+        expect(count).to_have_text("Showing 5 of 5")
 
         # the query follows a switch to the table
         search.fill("globex")
@@ -112,3 +137,145 @@ def test_applications_live_search_in_a_browser():
 
         browser.close()
     assert errors == [], f"JS errors on page: {errors}"
+
+
+_OLD = [
+    # (company, title, status, days since last activity)
+    ("Northwind Freight", "Head of IT", "shortlisted", 3),
+    ("Globex Corp", "Platform Lead", "applied", 5),
+    ("Initech", "Security Director", "applied", 20),
+    ("Umbrella Labs", "Ops Manager", "applied", 60),
+    ("Hooli", "Data Chief", "applied", 200),
+    ("Acme Inc", "Infra Lead", "applied", 1),
+    ("Wayne Corp", "Site Head", "applied", 2),
+    ("Stark Labs", "Systems Chief", "applied", 4),
+]
+
+
+async def _seed_aged() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    await reset_engine()
+    for suffix in ("", "-wal", "-shm"):
+        paths.db_path().with_name(paths.db_path().name + suffix).unlink(missing_ok=True)
+    migrate.run_migrations()
+    engine = make_async_engine(paths.db_path())
+    now = datetime.now(UTC)
+    async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+        for i, (company, title, status, age) in enumerate(_OLD):
+            org = Org(name=company, normalized_name=company.lower())
+            s.add(org)
+            await s.flush()
+            opp = Opportunity(
+                track="employment",
+                opp_type="job_posting",
+                title=title,
+                org_id=org.id,
+                org_name=company,
+                location_raw="Remote (US)",
+                url=f"https://x.example/{i}",
+                stage="t2_done",
+            )
+            s.add(opp)
+            await s.flush()
+            when = (now - timedelta(days=age)).isoformat()
+            s.add(
+                Pursuit(
+                    opportunity_id=opp.id,
+                    track="employment",
+                    status=status,
+                    applied_at=when,
+                    last_activity_at=when,
+                )
+            )
+        await s.commit()
+    await engine.dispose()
+
+
+def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
+    from playwright.sync_api import expect, sync_playwright
+
+    from kestrel.web.serve import running_server
+
+    asyncio.run(_seed_aged())
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(f"pageerror:{e}"))
+
+        page.goto(f"{base}/pursuits?view=kanban")
+        cards = page.locator("#board .pcard")
+        count = page.get_by_test_id("filter-count")
+        expect(cards.locator("visible=true")).to_have_count(8)
+
+        # the date range hides cards whose last activity is older than the range
+        # Each change saves on its own; wait for this save too, or the 7-day wait below can match
+        # this slower response and the reload reads 30.
+        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
+            page.get_by_test_id("range-select").select_option("30")
+        expect(cards.locator("visible=true")).to_have_count(6)
+        expect(count).to_have_text("Showing 6 of 8")
+        assert "range=30" in page.url
+        # Wait for the choice to be saved before leaving: on the slower Windows runner the reload
+        # beat the save and the page came back with the previous range (#14 CI).
+        with page.expect_response(
+            lambda r: (
+                "/pursuits/prefs" in r.url and r.ok and "range=7" in (r.request.post_data or "")
+            )
+        ):
+            page.get_by_test_id("range-select").select_option("7")
+        expect(cards.locator("visible=true")).to_have_count(5)
+
+        # the choice is the default next visit, with no query string
+        page.goto(f"{base}/pursuits?view=kanban")
+        expect(page.get_by_test_id("range-select")).to_have_value("7")
+        expect(page.locator("#board .pcard").locator("visible=true")).to_have_count(5)
+        # All time brings everything back (and is remembered)
+        page.get_by_test_id("range-select").select_option("0")
+        expect(cards.locator("visible=true")).to_have_count(8)
+
+        # a per-column cap shows the first N with a Show all for the rest
+        page.get_by_test_id("cap-select").select_option("5")
+        applied = page.locator('#board .pcard[data-col="applied"]')
+        expect(applied.locator("visible=true")).to_have_count(5)
+        more = page.locator('#board [data-colmore][data-col="applied"]')
+        expect(more).to_be_visible()
+        expect(more).to_have_text("Show all 7")
+        more.click()
+        expect(applied.locator("visible=true")).to_have_count(7)
+        expect(more).to_have_text("Show fewer")
+
+        browser.close()
+    assert errors == [], f"JS errors on page: {errors}"
+
+
+def test_an_open_offer_is_never_folded_away_as_closed():
+    # An offer sits in the employment "closed" column but is not a closed status (#30 review):
+    # the fold keys on data-closed, so the offer stays visible and the button counts 1 closed
+    # once the user hides closed (shown by default).
+    from playwright.sync_api import expect, sync_playwright
+
+    from kestrel.web.serve import running_server
+
+    asyncio.run(
+        _seed(
+            [
+                ("Acme", "Head of IT", "offer"),
+                ("Hooli", "Data Chief", "rejected"),
+                ("Globex Corp", "Platform Lead", "applied"),
+            ]
+        )
+    )
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        page = browser.new_page()
+        page.goto(f"{base}/pursuits?view=kanban")
+        cards = page.locator("#board .pcard")
+        expect(cards.locator("visible=true")).to_have_count(3)
+        page.get_by_test_id("closed-toggle").click()
+        expect(cards.locator("visible=true")).to_have_count(2)
+        expect(page.locator("#board .pcard", has_text="Acme")).to_be_visible()
+        expect(page.locator("#board .pcard", has_text="Hooli")).to_be_hidden()
+        expect(page.get_by_test_id("closed-toggle")).to_have_text("Show 1 closed")
+        browser.close()

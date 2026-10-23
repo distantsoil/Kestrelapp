@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Notification, ScrapeRun, Source, Task
-from kestrel.ingest import board_discovery
+from kestrel.ingest import board_discovery, employer_links
 from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import AdapterError, SourceConfigError
 from kestrel.ingest.http import HttpClient
@@ -73,6 +73,20 @@ async def run_source(
             adapter.validate_config(source.config)
             postings = await adapter.fetch(source.config, http)
             counts["fetched"] = len(postings)
+            if getattr(adapter, "discovery_only", False):
+                # A link source (RemoteRocketship, D-SRC-14): the fetch holds only employer URLs,
+                # which are never stored. Boards are found through D-SRC-7; the rest are read
+                # from the employer's own page, and those postings are what get stored below.
+                # A fetch that stopped early with links in hand (a 429) makes the run partial
+                # without counting a failure of the source.
+                stopped_early = getattr(postings, "partial_error", None)
+                links, postings = postings, None  # a failing resolve must store no bare link
+                postings, link_counts = await employer_links.resolve(
+                    session, links, source=source, http=http
+                )
+                counts.update(link_counts)
+                if stopped_early:
+                    error = stopped_early
             # Postings per board (JobSpy tags each with its site), so the Sources page can say
             # when a board found nothing instead of hiding it in the total (D-SRC-4).
             sites = ((p.raw or {}).get("site") for p in postings)

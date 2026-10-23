@@ -22,16 +22,19 @@ best-effort match, not presented as an authoritative join."""
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Evaluation, Opportunity, Quarantine, Run, ScrapeRun, Source, Task
+from kestrel.llm import credit
 from kestrel.pipeline._shared import parse_rescore_failure
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.queue.rescore import requeue_rescore_task
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.pages.rescore import outcome_for
 from kestrel.web.queries import (
     failure_summary,
@@ -41,6 +44,8 @@ from kestrel.web.queries import (
     quarantine_queued_clause,
     quarantine_superseded,
 )
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -110,11 +115,13 @@ async def page(request: Request, run_id: int):
         try:
             run = await s.get(Run, run_id)
         except Exception as exc:  # a lookup failure must render, never 500
+            log.warning("run_lookup_failed", run_id=run_id, error_type=type(exc).__name__,
+                        error=str(exc))
             return templates().TemplateResponse(
                 request,
                 "run_detail.html",
                 {"title": "Run", "query": dict(request.query_params), "run": None,
-                 "load_error": str(exc)},
+                 "load_error": plain_error(exc)},
                 status_code=404,
             )
         if run is None:
@@ -276,12 +283,15 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
 @router.post("/quarantine/{quarantine_id}/retry", response_class=HTMLResponse)
 async def retry(request: Request, quarantine_id: int):
     retry_error: str | None = None
+    credit.clear()
     async with sessionmaker()() as s:
         try:
             retry_error = await _retry_quarantine(s, quarantine_id)
         except Exception as exc:  # a write path must never turn into a 500
             await s.rollback()
-            retry_error = f"Could not retry quarantine #{quarantine_id}: {exc}"
+            log.warning("quarantine_retry_failed", quarantine_id=quarantine_id,
+                        error_type=type(exc).__name__, error=str(exc))
+            retry_error = f"Could not retry quarantine #{quarantine_id}: {plain_error(exc)}"
     ctx = await _quarantine_context(request)
     ctx["title"] = "Failed scoring"
     ctx["retry_error"] = retry_error

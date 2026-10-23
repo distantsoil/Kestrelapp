@@ -93,6 +93,12 @@ async def start_session(
     transcript turn with a null answer, so the session is resumable before any answer is given."""
     if mode not in MODES:
         raise ValueError(f"unknown mock mode: {mode!r}")
+    if first_question is None:
+        # The role's own likely questions (P14, once it is marked Applied) open the session; a
+        # role without a set gets the mode's stock opener.
+        from kestrel.interview.questions import opener_for
+
+        first_question = await opener_for(session, opportunity_id, mode)
     question = (first_question or _MODE_OPENERS[mode]).strip()
     ms = MockSession(
         opportunity_id=opportunity_id,

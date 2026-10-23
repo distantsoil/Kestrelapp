@@ -142,12 +142,14 @@ def test_switch_has_two_tabs_no_both_and_a_badge_per_track():
         assert 'id="nav-count-track-employment"' in switch
         assert 'id="nav-count-track-consulting"' in switch
         counts = c.get("/status/counts").text
-    # Employment: one Worth a look (the consider is Maybe). Consulting: one plus one follow-up.
+    # Employment: one Worth a look (the consider is Maybe). Consulting: its role is an open
+    # pursuit at outreach_sent, so it is Applied (#37) and off Worth a look; the follow-up due
+    # today is the one thing waiting.
     # R12: the badge keeps its tooltip through the out-of-band swap.
     assert ('<span id="nav-count-track-employment" class="n" hx-swap-oob="true"'
             f'{_TIP}>1</span>') in counts
     assert ('<span id="nav-count-track-consulting" class="n" hx-swap-oob="true"'
-            f'{_TIP}>2</span>') in counts
+            f'{_TIP}>1</span>') in counts
 
 
 def test_one_track_has_no_switch_and_no_track_badges():
@@ -698,3 +700,17 @@ def test_pipeline_badge_counts_roles_not_yet_rated_and_the_ring_shows_only_while
     css = (Path(paths.web_static_dir()) / "css" / "kestrel.css").read_text("utf-8")
     motion = css.split("/* The nav ring beside the Pipeline badge")[1].split("/* About and Help")[0]
     assert "prefers-reduced-motion: reduce" in motion and "animation: none" in motion
+
+
+def test_a_prompt_quarantine_beyond_tier_3_is_not_a_scoring_failure():
+    """Quarantine tiers 8, 9, 13, 14 and 15 name prompts (interview questions, titles and
+    others), not scoring tiers: a role without a Tier 2 score whose question list failed must not
+    show as "Scoring failed" (Wave C review)."""
+    asyncio.run(_seed(_active_rows()))
+    base = _summary("employment")["failed"]
+    rows = _active_rows()
+    for opp_id, tier in ((7, 14), (8, 8), (7, 13)):  # roles with no Tier 2 score
+        rows.append(Quarantine(opportunity_id=opp_id, tier=tier, error="schema",
+                               created_at=_ago(minutes=2)))
+    asyncio.run(_seed(rows))
+    assert _summary("employment")["failed"] == base

@@ -1,0 +1,203 @@
+{
+  "results": [
+    {
+      "id": 9200001,
+      "shortcode": "A1B2C3D4E5",
+      "title": "Senior Platform Engineer, Developer Tools - EMEA Remote",
+      "remote": true,
+      "location": {
+        "city": "",
+        "country": "France",
+        "countryCode": "FR",
+        "region": null
+      },
+      "locations": [
+        {
+          "city": "",
+          "country": "France",
+          "countryCode": "FR",
+          "hidden": true,
+          "region": null
+        }
+      ],
+      "state": "published",
+      "isInternal": false,
+      "code": "",
+      "published": "2026-09-21T00:00:00.000Z",
+      "type": "full",
+      "language": "en",
+      "department": [
+        "Product"
+      ],
+      "accountUid": "00000000-0000-4000-8000-0000000000a1",
+      "approvalStatus": "approved",
+      "workplace": "remote"
+    },
+    {
+      "id": 9200002,
+      "shortcode": "B2C3D4E5F6",
+      "title": "Senior Platform Engineer, Developer Tools - US Remote",
+      "remote": true,
+      "location": {
+        "city": "",
+        "country": "United States",
+        "countryCode": "US",
+        "region": null
+      },
+      "locations": [
+        {
+          "city": "",
+          "country": "United States",
+          "countryCode": "US",
+          "hidden": true,
+          "region": null
+        }
+      ],
+      "state": "published",
+      "isInternal": false,
+      "code": "",
+      "published": "2026-09-21T00:00:00.000Z",
+      "type": "full",
+      "language": "en",
+      "department": [
+        "Product"
+      ],
+      "accountUid": "00000000-0000-4000-8000-0000000000a1",
+      "approvalStatus": "approved",
+      "workplace": "remote"
+    },
+    {
+      "id": 9200003,
+      "shortcode": "C3D4E5F6A7",
+      "title": "Data Engineer, Clinic Analytics - EMEA Remote",
+      "remote": true,
+      "location": {
+        "city": "Paris",
+        "country": "France",
+        "countryCode": "FR",
+        "region": "Île-de-France"
+      },
+      "locations": [
+        {
+          "city": "Paris",
+          "country": "France",
+          "countryCode": "FR",
+          "hidden": true,
+          "region": "Île-de-France"
+        }
+      ],
+      "state": "published",
+      "isInternal": false,
+      "code": "",
+      "published": "2026-09-02T00:00:00.000Z",
+      "type": "full",
+      "language": "en",
+      "department": [
+        "Science"
+      ],
+      "accountUid": "00000000-0000-4000-8000-0000000000a1",
+      "approvalStatus": "approved",
+      "workplace": "remote"
+    },
+    {
+      "id": 9200004,
+      "shortcode": "D4E5F6A7B8",
+      "title": "Open-Source Engineer - US Remote",
+      "remote": true,
+      "location": {
+        "city": "New York",
+        "country": "United States",
+        "countryCode": "US",
+        "region": "New York"
+      },
+      "locations": [
+        {
+          "city": "New York",
+          "country": "United States",
+          "countryCode": "US",
+          "hidden": false,
+          "region": "New York"
+        }
+      ],
+      "state": "published",
+      "isInternal": false,
+      "code": "",
+      "published": "2026-05-29T00:00:00.000Z",
+      "type": "full",
+      "language": "en",
+      "department": [
+        "Open Source"
+      ],
+      "accountUid": "00000000-0000-4000-8000-0000000000a1",
+      "approvalStatus": "approved",
+      "workplace": "remote"
+    },
+    {
+      "id": 9200005,
+      "shortcode": "E5F6A7B8C9",
+      "title": "Open-Source Engineer - EMEA Remote",
+      "remote": true,
+      "location": {
+        "city": "Paris",
+        "country": "France",
+        "countryCode": "FR",
+        "region": "Île-de-France"
+      },
+      "locations": [
+        {
+          "city": "Paris",
+          "country": "France",
+          "countryCode": "FR",
+          "hidden": false,
+          "region": "Île-de-France"
+        }
+      ],
+      "state": "published",
+      "isInternal": false,
+      "code": "",
+      "published": "2026-05-29T00:00:00.000Z",
+      "type": "full",
+      "language": "en",
+      "department": [
+        "Open Source"
+      ],
+      "accountUid": "00000000-0000-4000-8000-0000000000a1",
+      "approvalStatus": "approved",
+      "workplace": "remote"
+    },
+    {
+      "id": 9200006,
+      "shortcode": "F6A7B8C9D0",
+      "title": "Wild Card",
+      "remote": true,
+      "location": {
+        "city": "",
+        "country": "United States",
+        "countryCode": "US",
+        "region": null
+      },
+      "locations": [
+        {
+          "city": "",
+          "country": "United States",
+          "countryCode": "US",
+          "hidden": false,
+          "region": null
+        }
+      ],
+      "state": "published",
+      "isInternal": false,
+      "code": "",
+      "published": "2024-10-17T00:00:00.000Z",
+      "type": "full",
+      "language": "en",
+      "department": [
+        "Wild Card"
+      ],
+      "accountUid": "00000000-0000-4000-8000-0000000000a1",
+      "approvalStatus": "approved",
+      "workplace": "remote"
+    }
+  ],
+  "total": 6
+}

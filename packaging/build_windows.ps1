@@ -48,6 +48,15 @@ if (-not $SkipBuild) {
     Write-Host "==> version.iss from __version__ $Version"
     & $Python (Join-Path $Root "packaging\gen_version_iss.py")
     if ($LASTEXITCODE -ne 0) { throw "gen_version_iss failed" }
+    Write-Host "==> bundled embedding model (kestrel.spec refuses to build without it)"
+    Push-Location $Root
+    try {
+        & $Python scripts\fetch_embed_model.py --check
+        if ($LASTEXITCODE -ne 0) {
+            & $Python scripts\fetch_embed_model.py
+            if ($LASTEXITCODE -ne 0) { throw "fetch_embed_model failed" }
+        }
+    } finally { Pop-Location }
     Write-Host "==> PyInstaller one-folder build"
     Push-Location $Root
     try {

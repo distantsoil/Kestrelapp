@@ -10,6 +10,7 @@ running (constraint: a dead backend must render a message, never a 500)."""
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -18,6 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.db.models import MockSession, Opportunity, Org
 from kestrel.interview.mock import MODES, end_session, start_session, submit_answer
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -111,8 +115,10 @@ async def answer(request: Request, mock_session_id: int):
                 client = LLMClient(await load_settings_with_db(s), http=http)
                 turn = await submit_answer(s, client, mock_session_id, answer_text)
         except Exception as exc:  # a model that is not running must not 500 the page
+            log.warning("mock_answer_failed", mock_session_id=mock_session_id,
+                        error_type=type(exc).__name__, error=str(exc))
             ctx = {"ms": ms, "pending_question": _pending_question(ms), "turn": None,
-                   "error": f"Mock interview needs the local model running: {exc}"}
+                   "error": f"Mock interview needs the local model running: {plain_error(exc)}"}
             return templates().TemplateResponse(request, "partials/mock_active.html", ctx)
         if turn is None:
             ctx = {"ms": ms, "pending_question": _pending_question(ms), "turn": None,

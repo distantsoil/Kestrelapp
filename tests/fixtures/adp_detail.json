@@ -1,0 +1,181 @@
+{
+  "itemID": "9100000000002_1",
+  "postingInstructions": [],
+  "links": [],
+  "additionalProperties": {},
+  "requisitionTitle": "Billing Data Analyst ",
+  "postDate": "2026-10-16T15:06:00.000-04:00",
+  "screeningRequirements": [],
+  "organizationalUnits": [],
+  "workLevelCode": {
+    "shortName": "Full Time"
+  },
+  "sponsoredVisaTypeCodes": [],
+  "customFieldGroup": {
+    "dateFields": [
+      {
+        "dateValue": "2026-10-16T15:06Z",
+        "nameCode": {
+          "codeValue": "PostingDate"
+        }
+      },
+      {
+        "dateValue": "2026-10-21T12:43Z",
+        "nameCode": {
+          "codeValue": "CurrentServerDateTime"
+        }
+      }
+    ],
+    "indicatorFields": [
+      {
+        "indicatorValue": false,
+        "nameCode": {
+          "codeValue": "PriortyStatusFlag"
+        }
+      },
+      {
+        "indicatorValue": false,
+        "nameCode": {
+          "codeValue": "InternalPostingFlag"
+        }
+      },
+      {
+        "indicatorValue": true,
+        "nameCode": {
+          "codeValue": "MinValue"
+        }
+      },
+      {
+        "indicatorValue": true,
+        "nameCode": {
+          "codeValue": "IsVsidApplicable"
+        }
+      },
+      {
+        "indicatorValue": false,
+        "nameCode": {
+          "codeValue": "IsSassDlReqForExtPostFlag"
+        }
+      },
+      {
+        "indicatorValue": false,
+        "nameCode": {
+          "codeValue": "IsSassDlReqForIntPostFlag"
+        }
+      },
+      {
+        "indicatorValue": false,
+        "nameCode": {
+          "codeValue": "IsMonetaryFlag"
+        }
+      },
+      {
+        "indicatorValue": false,
+        "nameCode": {
+          "codeValue": "IsNonMonetaryFlag"
+        }
+      }
+    ],
+    "numberFields": [
+      {
+        "numberValue": 0.0,
+        "categoryCode": {
+          "codeValue": "ApplicantCount"
+        }
+      },
+      {
+        "categoryCode": {
+          "codeValue": "AwardAmount"
+        }
+      }
+    ],
+    "stringFields": [
+      {
+        "stringValue": "500102",
+        "nameCode": {
+          "codeValue": "ExternalJobID"
+        }
+      },
+      {
+        "nameCode": {
+          "codeValue": "CareerCenterRefId"
+        }
+      },
+      {
+        "nameCode": {
+          "codeValue": "GuidelineOid"
+        }
+      },
+      {
+        "nameCode": {
+          "codeValue": "CurrencySymbolOrCode"
+        }
+      },
+      {
+        "stringValue": "",
+        "nameCode": {
+          "codeValue": "HomeDepartment"
+        }
+      },
+      {
+        "nameCode": {
+          "codeValue": "JobClass"
+        }
+      }
+    ]
+  },
+  "clientRequisitionID": "2002",
+  "requisitionDescription": "<div><div><p><strong>Billing Data Analyst</strong></p><p>Springfield, IL</p><p><strong>About Northwind Health:</strong></p><p>Northwind Health runs community clinics across central Illinois.</p><p><strong>Responsibilities:</strong></p><ul><li><p>Reconcile weekly billing extracts</p></li><li><p>Report on claim denial trends</p></li></ul><p><strong>Qualifications:</strong></p><ul><li><p>Two years of healthcare billing experience</p></li></ul></div></div>",
+  "requisitionLocations": [
+    {
+      "aliasNames": [],
+      "address": {
+        "cityName": "Springfield",
+        "countrySubdivisionLevel1": {
+          "codeValue": "IL"
+        },
+        "postalCode": "62704"
+      },
+      "nameCode": {
+        "shortName": " Springfield, IL, US"
+      }
+    },
+    {
+      "aliasNames": [],
+      "address": {
+        "cityName": "",
+        "countrySubdivisionLevel1": {
+          "codeValue": ""
+        },
+        "postalCode": ""
+      },
+      "nameCode": {}
+    },
+    {
+      "aliasNames": [],
+      "address": {
+        "cityName": "Peoria",
+        "countrySubdivisionLevel1": {
+          "codeValue": "IL"
+        },
+        "postalCode": "61602"
+      },
+      "nameCode": {
+        "shortName": " Peoria, IL, US"
+      }
+    },
+    {
+      "aliasNames": [],
+      "address": {
+        "cityName": "Peoria",
+        "countrySubdivisionLevel1": {
+          "codeValue": "IL"
+        },
+        "postalCode": "61602"
+      },
+      "nameCode": {
+        "shortName": " Peoria, IL, US"
+      }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import select
@@ -44,6 +45,9 @@ from kestrel.docs.catalog import (
 from kestrel.docs.render import render_html
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -274,11 +278,12 @@ async def new_render(request: Request):
                 s, settings, master_id, config=config, opportunity_id=opportunity_id,
             )
     except Exception as exc:  # Playwright/Edge missing, bad id, or any render failure — never 500
+        log.warning("test_render_failed", error_type=type(exc).__name__, error=str(exc))
         ctx = {
             "title": "Render review",
             "query": dict(request.query_params),
             "render": None,
-            "new_render_error": f"Could not create a test render: {exc}",
+            "new_render_error": f"Could not create a test render: {plain_error(exc)}",
         }
         return templates().TemplateResponse(request, "renders.html", ctx, status_code=200)
     if result is None:

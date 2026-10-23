@@ -223,7 +223,9 @@ def test_doc_soffice_failure_is_a_message_not_a_crash(monkeypatch, tmp_path):
     monkeypatch.setattr(convert.shutil, "which", lambda _name: str(stand_in))
     with pytest.raises(ConvertError) as ei:
         convert_to_markdown(b"junk", filename="old.doc")
-    assert "could not be loaded" in str(ei.value)
+    # The converter's own stderr can name temp paths: it goes to the log, not into the message.
+    assert "could not be loaded" not in str(ei.value)
+    assert "LibreOffice could not convert 'old.doc'" in str(ei.value)
 
 
 # ---------------------------------------------------------------------------------- refusals

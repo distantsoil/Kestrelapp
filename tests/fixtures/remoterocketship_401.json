@@ -1,0 +1,5 @@
+{
+  "message": "Missing API key",
+  "code": "UNAUTHORIZED",
+  "hint": "Send your API key in the Authorization: Bearer header. Manage keys in your account."
+}

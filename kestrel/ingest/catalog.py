@@ -163,6 +163,106 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "Shared default, 2 requests/second per host.",
         "region": _WORLDWIDE,
     },
+    "rippling": {
+        "name": "Rippling",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public job-board JSON for one company: "
+            "api.rippling.com/platform/api/ats/v1/board/{slug}/jobs, plus one detail request per "
+            "posting under .../jobs/{id} for the description and date, up to max_results "
+            "(default 200). A role open in several places is one posting with all its locations."
+        ),
+        "provide": (
+            "The board name from the careers URL (ats.rippling.com/{slug}/jobs). Optionally "
+            "company_name and max_results."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second (list and detail alike).",
+        "region": _WORLDWIDE,
+    },
+    "adp": {
+        "name": "ADP Workforce Now",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public career-center JSON for one employer: workforcenow.adp.com/mascsr/default/"
+            "careercenter/public/events/staffing/v1/job-requisitions, 20 per page, plus one "
+            "detail request per posting for the description, up to max_results (default 200). "
+            "ADP publishes no robots.txt for this host, so Kestrel stays at one request a second."
+        ),
+        "provide": (
+            "The employer's cid (a UUID) from its career-center link "
+            "(workforcenow.adp.com/.../recruitment.html?cid={cid}). Optionally company_name, "
+            "cc_id, lang and max_results."
+        ),
+        "config_example": {"cid": "00000000-0000-4000-8000-000000000000"},
+        "rate_limit": "1 request/second (list and detail alike).",
+        "region": _WORLDWIDE,
+    },
+    "paylocity": {
+        "name": "Paylocity",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public careers page for one employer, recruiting.paylocity.com/recruiting/jobs/"
+            "All/{board_id}, whose page data lists every posting, plus one request per posting "
+            "page for the description, up to max_results (default 200). Paylocity has no JSON "
+            "list, so the page's own embedded data is read. Nothing is fetched behind a login."
+        ),
+        "provide": (
+            "The board id (a GUID) from the employer's careers link "
+            "(recruiting.paylocity.com/recruiting/jobs/All/{board_id}). Optionally company_name "
+            "and max_results."
+        ),
+        "config_example": {"board_id": "00000000-0000-4000-8000-000000000000"},
+        "rate_limit": "1 request/second (list and detail alike).",
+        "region": _WORLDWIDE,
+    },
+    "workable": {
+        "name": "Workable",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public job-board API for one company: "
+            "apply.workable.com/api/v3/accounts/{slug}/jobs, plus one detail request per posting "
+            "under /api/v2/accounts/{slug}/jobs/{shortcode} for the description, up to "
+            "max_results (default 200). Internal and unpublished postings are skipped."
+        ),
+        "provide": (
+            "The board name from the careers URL (apply.workable.com/{slug}/). Optionally "
+            "company_name and max_results."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second (list and detail alike); robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
+    "remoterocketship": {
+        "name": "RemoteRocketship (paid API, finds links only)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Optional, for people who already pay for RemoteRocketship API access. Asks "
+            "www.remoterocketship.com/api/openclaw/jobs/ for up to max_pages requests (default 2, "
+            "50 jobs each) and keeps only each posting's own employer link. Kestrel stores "
+            "nothing else from RemoteRocketship. A link to a known company board becomes a "
+            "found board; any other link is read from the employer's public page; a link that "
+            "cannot be read is dropped and counted in the run."
+        ),
+        "provide": (
+            "Your own paid RemoteRocketship subscription with API access (Kestrel stays free "
+            "and this does not change that). Save the key as REMOTEROCKETSHIP_API_KEY in "
+            "Kestrel's .env file, never in the source. Optional max_pages, items_per_page and "
+            "filters (RemoteRocketship's own filter object)."
+        ),
+        "config_example": {"max_pages": 2},
+        "rate_limit": (
+            "1 request/second; a few requests per scan against their 500 requests or 3,000 jobs "
+            "per UTC day. The API call skips the robots check (it is published for programs); "
+            "employer pages are checked."
+        ),
+        "region": _WORLDWIDE,
+    },
     "jobspy": {
         "name": "Job boards via JobSpy",
         "category": CATEGORY_AGGREGATOR,
@@ -369,7 +469,8 @@ def _ordered_kinds() -> list[str]:
     """Registered adapter kinds, then registered signal kinds, then the table-only kinds, each in
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
-        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "jobspy",
+        "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
+        "paylocity", "workable", "jobspy", "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

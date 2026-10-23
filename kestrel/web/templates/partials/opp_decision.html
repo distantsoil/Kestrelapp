@@ -1,3 +1,4 @@
+{% from "partials/_remove_confirm.html" import remove_confirm %}
 {# The decision panel (D-UI-45, kestrel-flow-mockups section 2), in the drawer and on the detail
    page. Fit / Why / Watch, the two primary actions, the Disagree control, and the follow-ups
    once the role is on the shortlist. The AI overview card carries the D-UI-53 disclaimer;
@@ -36,7 +37,7 @@
       {# The undo for Add (D-UI-75). Past the first column it deletes real history, so it says so. #}
       <button class="btn" type="button" data-testid="remove-from-list"
               hx-post="/opportunities/{{ opp.id }}/remove" hx-target="#decision" hx-swap="outerHTML"
-              hx-confirm="Remove this from your {{ w.list }}?{% if pursuit.status != 'shortlisted' %} Its status history, notes, outcome and offers are deleted too. This cannot be undone.{% elif pursuit.notes_md or pursuit.next_action %} Its notes and next action are deleted too.{% endif %}">{{ w.remove_from_list }}</button>
+              hx-confirm="{{ remove_confirm(w, pursuit) }}">{{ w.remove_from_list }}</button>
     {% elif not opp.archived_at %}
       <button class="btn pri" type="button" data-testid="add-to-list"
               hx-post="/opportunities/{{ opp.id }}/add" hx-target="#decision" hx-swap="outerHTML">{{ w.add_to_list }}</button>

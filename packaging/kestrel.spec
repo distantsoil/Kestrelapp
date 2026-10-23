@@ -172,9 +172,12 @@ if _missing_embed:
         f"in-process embedding model missing from {EMBED_MODEL_DIR} ({', '.join(_missing_embed)}); "
         "run `uv run python scripts/fetch_embed_model.py` before building"
     )
+# Only the Linux build embeds the AppImage runtime (#44), so only its notices carry that entry.
+_runtime_notice = ROOT / "packaging" / "linux" / "RUNTIME-NOTICE.txt"
 _notices = _ns.write_notices(
     ROOT / "build" / "notices" / _ns.NOTICES_FILENAME,
     model_notice=EMBED_MODEL_DIR / "NOTICE.txt",
+    runtime_notice=_runtime_notice if sys.platform == "linux" else None,
 )
 datas.append((str(_notices), "kestrel/resources"))
 

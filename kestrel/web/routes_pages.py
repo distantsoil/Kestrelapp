@@ -6,6 +6,7 @@ page."""
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import replace
 
@@ -15,9 +16,11 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm.exc import StaleDataError
 
 from kestrel.db.enums import ARCHIVE_REASONS
+from kestrel.pipeline import lane
 from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.fit import (
     FAILED_NOTE,
     FIT_WORDS,
@@ -191,6 +194,12 @@ async def _redact_rows(s, settings, rows) -> None:
 
 @router.get("/opportunities", response_class=HTMLResponse)
 async def opportunities(request: Request):
+    from sqlalchemy import select
+
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.models import Task
+    from kestrel.queue.queue import in_flight
+    from kestrel.services.tracks import switched_off_tracks
     from kestrel.web.routes_control import run_active
 
     f = page_filters(request.query_params, request)
@@ -208,6 +217,18 @@ async def opportunities(request: Request):
         # Only when the list is empty: is that "nothing matches" or "nothing ingested yet"?
         has_any = True if (page.total or n_not_fit) else await any_opportunities(s, f.track)
         running = await run_active(s)
+        # Roles waiting in the background lane explain themselves under Being scored (#34): how
+        # many, and whether they start on their own or only on Score everything now.
+        being_scored = page.group_counts.get(GROUP_NEW, 0)
+        background = await lane.waiting_count(s, f.track) if being_scored else 0
+        if f.track and f.track in set(switched_off_tracks()):
+            background = 0  # a switched-off track's rows say "held"; the lane note would mislead
+        # Refresh while ANY live work exists (queue.in_flight), not only a scrape or t1/t2 run:
+        # embed, Tier 3 and Score again rows also change state (#34 review).
+        polling = running or bool(
+            (await s.execute(select(Task.id).where(in_flight(utcnow_iso())).limit(1))).first()
+        )
+        background_hosted = bool(background) and lane.scores_on_hosted(settings)
     query = dict(request.query_params)
     groups = _groups(page)
     ctx = {
@@ -215,6 +236,7 @@ async def opportunities(request: Request):
         "groups": groups,
         "not_fit": {"count": n_not_fit, "note": not_fit_note(page), "page": nf_page},
         "running": running,
+        "polling": polling,
         "f": f,
         "stages": _STAGES,
         "verdicts": _VERDICTS,
@@ -227,7 +249,9 @@ async def opportunities(request: Request):
         "carried": {k: query[k] for k in _CARRIED if query.get(k)},
         "archive_reasons": ARCHIVE_REASONS,
         # The header's "N open · M still being scored" (D-UI-51) and the Score again selection.
-        "being_scored": page.group_counts.get(GROUP_NEW, 0),
+        "being_scored": being_scored,
+        "background": background,
+        "background_hosted": background_hosted,
         "scoring_failed": page.group_counts.get(GROUP_FAILED, 0),
         "page_ids": [r.opp.id for r in page.rows],
     }
@@ -364,6 +388,7 @@ def decision_extras(detail: dict) -> dict:
     fit = row_fit(
         opp, ev,
         pursued=detail.get("pursuit") is not None and detail["pursuit"].closed_at is None,
+        pursuit_status=detail["pursuit"].status if detail.get("pursuit") is not None else None,
         operator_verdict=override.operator_verdict if override is not None else None,
     )
     model_word = rules_word = None
@@ -576,7 +601,7 @@ async def _tier3_card(s, settings, opp_id: int) -> dict:
         preview = await build_escalation_preview(s, settings, opp_id)
     except Exception as exc:  # the card must say why; the page itself must still render
         log.warning("tier3.preview_failed", opp_id=opp_id, error=str(exc))
-        card["unavailable"] = f"estimate unavailable: {exc}"
+        card["unavailable"] = f"estimate unavailable: {plain_error(exc)}"
         return card
     if preview.error:
         card["unavailable"] = preview.error
@@ -711,10 +736,60 @@ async def opportunity_detail(request: Request, opp_id: int):
             await _tier3_card(s, detail["settings"], opp_id) if detail["pursuit"] else None
         )
         detail["renders"] = await opportunity_renders(s, opp_id)
+        if detail["pursuit"]:
+            detail["qview"] = await _questions_view(s, opp_id, detail)
     detail["request"] = request
     detail["query"] = dict(request.query_params)
     detail["tab"] = "evaluation"
     return templates().TemplateResponse(request, "opportunity_detail.html", detail)
+
+
+async def _questions_view(s, opp_id: int, detail: dict) -> dict:
+    """The Likely questions card's data, redacted like every other tab in confidential mode."""
+    from kestrel.web.pages.prep import redacted_question_view
+
+    return await redacted_question_view(s, opp_id)
+
+
+@router.post("/opportunities/{opp_id}/questions/regenerate", response_class=HTMLResponse)
+async def regenerate_questions(request: Request, opp_id: int):
+    """Queue a fresh question list for a role on the list. The old list stays until the new one
+    validates. Never a 500: a failure is logged and the card says so."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.models import Pursuit
+    from kestrel.interview.question_task import is_applied, request_interview_questions
+
+    note: str | None = None
+    async with sessionmaker()() as s:
+        try:
+            pursuit = (
+                await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
+            ).scalar_one_or_none()
+            if pursuit is None:
+                note = "Add this role to your list first."
+            elif not await is_applied(s, opp_id):
+                note = "The list is written when you mark this role Applied."
+            else:
+                queued = await request_interview_questions(s, opp_id, pursuit.id, regenerate=True)
+                await s.commit()
+                note = (
+                    "Queued. The new list replaces this one when it is ready."
+                    if queued else "A list is already being written for this role."
+                )
+        except SQLAlchemyError as exc:
+            log.warning("questions_regenerate_failed", opp_id=opp_id, error_type=type(exc).__name__)
+            await s.rollback()
+            note = "Could not queue that. Try again."
+        detail = await _detail_context(s, opp_id)
+        if detail is None:
+            return HTMLResponse("Not found", status_code=404)
+        qview = await _questions_view(s, opp_id, detail)
+    return templates().TemplateResponse(
+        request, "partials/opp_questions.html",
+        {"qview": qview, "qnote": note, "opp_id": opp_id},
+    )
 
 
 @router.get("/opportunities/{opp_id}/tab/{name}", response_class=HTMLResponse)
@@ -852,7 +927,10 @@ async def runs(request: Request):
 
         # Only a one-run choice is worth a line here; the standing models live on Models.
         shown = await _model_in_use(s, await load_settings_with_db(s), bool(run.get("active")))
+        from kestrel.llm import credit
+
         ctx = {"activity": activity, "runs": recent, "scans": scans, "run": run,
+               "credit_notices": credit.notices(),
                "run_model": shown if shown and "(this run only)" in shown else None,
                **(await _mode_context(s)),
                **(await _keep_awake_context(s))}
@@ -866,8 +944,10 @@ async def runs_now(request: Request):
     same one-shot row as POST /api/run/now). Returns the message partial; a refused "hosted"
     says what is missing."""
     from kestrel.config import MODES, HostedModeError
+    from kestrel.llm import credit
     from kestrel.services.setting_overrides import queue_run_mode
 
+    credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     form = await request.form()
     mode = str(form.get("mode") or "")
     async with sessionmaker()() as s:
@@ -877,7 +957,9 @@ async def runs_now(request: Request):
             await queue_run_mode(s, mode)
             await s.commit()
         except HostedModeError as exc:
-            return HTMLResponse(f'<span class="warnbox">Not queued: {exc}.</span>')
+            return HTMLResponse(
+                f'<span class="warnbox">Not queued: {html.escape(plain_error(exc))}.</span>'
+            )
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return HTMLResponse(
                 '<span class="warnbox">Not queued: the queue changed while queuing; try '

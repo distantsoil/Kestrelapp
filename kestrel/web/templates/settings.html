@@ -4,7 +4,7 @@
 <h1>Settings</h1>
 {# D-PRIV-1: above the tabs, so it shows on whichever tab the page opens on. #}
 {% include "partials/employer_banner.html" %}
-<div x-data="{ tabs: {'#appearance': 'appearance', '#hosted': 'hosted', '#applied': 'applied', '#system': 'system', '#core': 'core'}, tab: null }"
+<div x-data="{ tabs: {'#appearance': 'appearance', '#hosted': 'hosted', '#applied': 'applied', '#system': 'system', '#core': 'core', '#models': 'models'}, tab: null }"
      x-init="tab = tabs[location.hash] || 'filters'"
      @hashchange.window="tab = tabs[location.hash] || tab">
   <div class="tabs">
@@ -22,7 +22,7 @@
 
   <section x-show="tab==='system'" x-cloak id="system">
     {# Settings > System (D-UI-31): the machine checks and Restart onboarding. #}
-    <div hx-get="/settings/system{% if query.msg %}?msg={{ query.msg | urlencode }}{% endif %}" hx-trigger="intersect once" hx-swap="outerHTML">
+    <div hx-get="/settings/system{% if flash_text(query.msg) %}?msg={{ query.msg | urlencode }}{% endif %}" hx-trigger="intersect once" hx-swap="outerHTML">
       <p class="muted">Checking this machine...</p>
     </div>
   </section>
@@ -171,17 +171,13 @@
     {% endfor %}
   </section>
 
-  <section x-show="tab==='models'" x-cloak>
+  <section x-show="tab==='models'" x-cloak id="models">
+    {# Settings > Models (#36): loads the effective per-tier models, the hardware profile and the
+       hosted override panel, all through the routes the Models and System pages already use. #}
     <h2>Models per tier</h2>
-    <table class="data">
-      <thead><tr><th>Tier</th><th>Model</th><th></th></tr></thead>
-      <tbody>
-        {% for tier, cfg in settings.llm.tiers.items() %}
-          <tr><td class="mono">{{ tier }}</td><td>{{ cfg.model }}</td>
-            <td><button class="btn ghost" disabled title="Test needs the local model running">Test</button></td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div hx-get="/settings/models" hx-trigger="intersect once" hx-swap="outerHTML">
+      <p class="muted">Loading the models...</p>
+    </div>
   </section>
 
   <section x-show="tab==='hosted'" x-cloak>
@@ -210,7 +206,7 @@
         <a href="https://console.openmodel.ai" target="_blank" rel="noopener">OpenModel</a>,
         <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Anthropic</a> or
         <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>.
-        Every hosted call records tokens and, where the provider reports it, cost.</p>
+        Deeper reads (Tier 3) record tokens and, where the provider reports it, cost. Tier runs in Hosted mode are not metered here; your provider's dashboard has the full bill.</p>
       </div>
     </div>
     <p class="muted">The switch is the standing choice. The Runs page and
@@ -238,40 +234,46 @@
 
   <section x-show="tab==='lan'" x-cloak>
     <h2>LAN access</h2>
-    <p><b>What is this?</b> Optional. It lets you open Kestrel from another device on your home
-    network, a phone or tablet on the same Wi-Fi, to read Today, review the pipeline or check a
-    pursuit away from the desk. The app, the models and the data stay on this machine. If you only
-    ever use Kestrel here, leave it off. <a href="/help#lan">More in Help</a>.</p>
-    <p class="muted">Kestrel listens on this machine only until you turn on
-    <span class="mono">server.bind_all</span>. That is set in <span class="mono">settings.yml</span>
-    or as <span class="mono">KESTREL_SERVER__BIND_ALL=true</span>, not on this page, and it takes a
-    restart. With it on, Kestrel also answers on your local network, and every request to the web
-    interface from another device must carry the shared secret below, as the
-    <span class="mono">X-Kestrel-Key</span> header or as a cookie set by scanning the code once.
-    Requests from this machine never need it.</p>
+    <p>Optional. Open Kestrel from a phone or tablet on your home network. The app and your data
+    stay on this computer. <a href="/help#lan">More in Help</a></p>
+    <p class="warnbox" data-testid="lan-warning">One shared password for the whole app, plain HTTP,
+    home network or a VPN you control only.</p>
 
-    <p class="warnbox"><b>Read this before you turn it on.</b> This is one shared password for the
-    whole application. There are no accounts, no per-device access, and no way to see who did what.
-    Anyone who has the secret, or who is on a network where they can read unencrypted traffic, can
-    do everything you can do: read every opportunity, every document, and your profile. Traffic is
-    plain HTTP and is not encrypted. Use this on a home network or a VPN you control. Do not use it
-    on shared, public, or office Wi-Fi, and do not forward the port through a router. Do not put a
-    local proxy or port forwarder in front of Kestrel either: that makes every request look like it
-    came from this machine, which switches the secret off entirely.</p>
+    <details data-testid="lan-details">
+      <summary>Show details</summary>
+      <p class="muted">Kestrel listens on this machine only until you turn LAN access on below, and
+      it takes a restart. With it on, Kestrel also answers on your local network, and every request
+      to the web interface from another device must carry the shared secret below, as the
+      <span class="mono">X-Kestrel-Key</span> header or as a cookie set by scanning the code once.
+      Requests from this machine never need it. Only this computer can change the switch.</p>
 
-    <p class="muted"><b>What else the secret gates.</b> With <span class="mono">bind_all</span>
-    on, the MCP server (if enabled) listens on its own port and requires the same secret as the
-    <span class="mono">X-Kestrel-Key</span> header from any device that is not this machine; there
-    is no separate MCP password. The browser extension must carry the secret too, even on this
-    machine, so paste it into the extension's options page. Two cautions: the join link contains
-    the secret, so it lands in that phone's browser history, and the secret is displayed on this
-    page in clear text.</p>
+      <p class="muted"><b>Read this before you turn it on.</b> This is one shared password for the
+      whole application. There are no accounts, no per-device access, and no way to see who did
+      what. Anyone who has the secret, or who is on a network where they can read unencrypted
+      traffic, can do everything you can do: read every opportunity, every document, and your
+      profile. Traffic is plain HTTP and is not encrypted. Use this on a home network or a VPN you
+      control. Do not use it on shared, public, or office Wi-Fi, and do not forward the port
+      through a router. Do not put a local proxy or port forwarder in front of Kestrel either: that
+      makes every request look like it came from this machine, which switches the secret off
+      entirely.</p>
+
+      <p class="muted"><b>What else the secret gates.</b> With <span class="mono">bind_all</span>
+      on, the MCP server (if enabled) listens on its own port and requires the same secret as the
+      <span class="mono">X-Kestrel-Key</span> header from any device that is not this machine;
+      there is no separate MCP password. The browser extension must carry the secret too, even on
+      this machine, so paste it into the extension's options page. Two cautions: the join link
+      contains the secret, so it lands in that phone's browser history, and the secret is
+      displayed on this page in clear text.</p>
+
+      <p class="muted">Rotating the secret takes effect immediately and locks out any device using
+      the old one. That is the only way to revoke access. Turning LAN access on or off writes the
+      setting; quit and reopen Kestrel for it to apply.</p>
+    </details>
 
     <button class="btn" hx-post="/settings/lan/secret" hx-target="#secret">
       {% if lan_secret %}Rotate shared secret{% else %}Generate shared secret{% endif %}</button>
-    <span class="muted">Rotating takes effect immediately and locks out any device using the old
-    one. That is the only way to revoke access.</span>
-    <div id="secret" class="mono">{% if lan_secret %}<code>{{ lan_secret }}</code>{% endif %}</div>
+    <div id="secret">{{ lan_secret_html|safe }}</div><!-- /secret -->
+    {% include "partials/lan_bind.html" %}
     <div hx-get="/settings/mcp" hx-trigger="intersect once" hx-swap="outerHTML"><p class="muted">Loading the MCP switch...</p></div>
     <h2 style="margin-top:1.2rem">Backup</h2>
     <p class="muted">Your data lives at <span class="mono">{{ data_dir }}</span>. Back up with

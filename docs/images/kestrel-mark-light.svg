@@ -1,11 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Kestrel">
   <title>Kestrel</title>
-  <!-- The light tray variant of the Windhover mark (D-UI-13): a paper tile with the orange bird,
-       for light taskbars where the orange tile would read as a notification. -->
+  <!-- The light tray variant of the Windhover mark (D-UI-13): a paper tile with the indigo bird,
+       for light taskbars where the indigo tile would read as a notification. The bird gradient is
+       the same indigo pair as the ground of kestrel-mark.svg (D-UI-53; orange is retired). -->
   <defs>
     <linearGradient id="bird" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#EE8A4E"/>
-      <stop offset="1" stop-color="#C9551F"/>
+      <stop offset="0" stop-color="#6470E0"/>
+      <stop offset="1" stop-color="#3A44A8"/>
     </linearGradient>
   </defs>
   <rect x="4" y="4" width="504" height="504" rx="110" fill="#FFFFFF" stroke="#4F5BD5" stroke-width="8"/>

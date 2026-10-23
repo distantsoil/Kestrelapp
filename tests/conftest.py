@@ -51,6 +51,17 @@ def _reset_status_caches():
     forget_dismissed_guides()
 
 
+@pytest.fixture(autouse=True)
+def _no_credit_holds_between_tests():
+    """An out-of-credit hold (kestrel/llm/credit.py) is process-global; one test's hold must
+    never stop the next test's sends."""
+    from kestrel.llm import credit
+
+    credit.clear()
+    yield
+    credit.clear()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _no_pooled_db_connections_across_event_loops():
     """Tests run many short event loops (asyncio.run, TestClient), unlike the app's single one.
@@ -89,6 +100,7 @@ def _no_provider_keys_from_the_host(monkeypatch):
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "SAM_GOV_API_KEY",
+        "REMOTEROCKETSHIP_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
     _dotenv_state["owned"].clear()  # type: ignore[union-attr]

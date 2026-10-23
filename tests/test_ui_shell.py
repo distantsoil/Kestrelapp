@@ -216,7 +216,8 @@ def test_status_counts_are_out_of_band_badges_that_hide_at_zero():
             sr = (await s.execute(select(Source))).scalar_one()
             opp = Opportunity(track="employment", opp_type="job_posting", org_id=o.id,
                               source_id=sr.id, title="VP IT", org_name="Acme",
-                              url="https://x/1", stage="t2_done")
+                              url="https://x/1", stage="t2_done",
+                              description_md="Own IT strategy.")
             s.add(opp)
             await s.flush()
             s.add(Evaluation(opportunity_id=opp.id, tier=2, track="employment",
@@ -359,3 +360,38 @@ def test_rail_says_scanning_while_searches_run_and_names_failing_searches():
     assert "Searching 1 of 2 searches" in html
     assert "2 searches failing · see Sources" in html
     assert "Not scoring anything right now" not in html
+
+
+def test_qr_ground_and_ink_tokens_are_fixed_light_in_every_scheme_block():
+    """#28: the QR is always dark on light, so --qr-bg and --qr-ink are defined in every block
+    (light, both dark selectors, teal and its dark selectors) with the same values."""
+    css = _CSS.read_text(encoding="utf-8")
+    selectors = (
+        ":root {",
+        ':root:not([data-theme="light"]) {',
+        ':root[data-theme="dark"] {',
+        ':root[data-scheme="teal"] {',
+        ':root[data-scheme="teal"]:not([data-theme="light"]) {',
+        ':root[data-scheme="teal"][data-theme="dark"] {',
+    )
+    values = set()
+    for sel in selectors:
+        block = css.split(sel, 1)[1].split("}", 1)[0]
+        bg = re.search(r"--qr-bg:\s*(#[0-9A-Fa-f]{6})", block)
+        ink = re.search(r"--qr-ink:\s*(#[0-9A-Fa-f]{6})", block)
+        assert bg and ink, f"{sel} lacks --qr-bg / --qr-ink"
+        values.add((bg.group(1).lower(), ink.group(1).lower()))
+    assert len(values) == 1, values  # identical everywhere: never theme-dependent
+    (bg, ink), = values
+
+    def lum(h: str) -> float:
+        return sum(int(h[i : i + 2], 16) for i in (1, 3, 5)) / 3
+
+    assert lum(bg) > 235 and lum(ink) < 40
+    assert re.search(r"\.qr\s*\{[^}]*background:\s*var\(--qr-bg\)", css)
+    assert re.search(r"\.qr svg[^{]*\{[^}]*var\(--qr-ink\)", css)
+
+
+def test_board_cards_stay_unselectable_so_dragging_still_works():
+    css = _CSS.read_text(encoding="utf-8")
+    assert re.search(r"\.pcard\s*\{[^}]*user-select:\s*none", css)

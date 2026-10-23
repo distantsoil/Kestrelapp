@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select
@@ -31,6 +32,7 @@ from kestrel.db.models import (
     Task,
     VerdictOverride,
 )
+from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
 from kestrel.services.setting_overrides import (
     load_settings_with_db,
@@ -39,8 +41,11 @@ from kestrel.services.setting_overrides import (
 )
 from kestrel.web.app import current_run_mode, is_paused, set_paused
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
+
+log = structlog.get_logger()
 
 
 def _model_display_name(model_name: str) -> str:
@@ -79,6 +84,7 @@ async def run_now(mode: str | None = None):
     return to the stored mode. "hosted" is refused (400, with the reason) until the disclosure is
     acknowledged and tier1 and tier2 have hosted assignments. Queues only; never calls a model
     here, never acts externally."""
+    credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     async with sessionmaker()() as s:
         chosen = mode or (await load_settings_with_db(s)).llm.mode
         if chosen not in MODES:
@@ -90,7 +96,7 @@ async def run_now(mode: str | None = None):
             await queue_run_mode(s, chosen)
             await s.commit()
         except HostedModeError as exc:
-            return JSONResponse({"queued": False, "reason": str(exc)}, status_code=400)
+            return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return JSONResponse(
                 {"queued": False, "reason": "the queue changed while queuing; try again"},
@@ -524,6 +530,22 @@ def _hosted_row(settings: Settings) -> dict[str, Any]:
     return {"state": "warn", "label": "Online deeper-read key: not set", "key_present": False}
 
 
+async def _balance_row(s: AsyncSession, settings: Settings) -> dict[str, str] | None:
+    """The rail's balance line (#29): what is left on an opted-in OpenRouter key, or this month's
+    local spend for any other provider. Cached; never raises into the poll."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.services import hosted_balance
+
+    try:
+        return await hosted_balance.rail_row(s, settings)
+    except (SQLAlchemyError, httpx.HTTPError) as exc:  # the rail must render without this line
+        log.warning("balance_row_failed", error_type=type(exc).__name__)
+        if isinstance(exc, SQLAlchemyError):
+            await s.rollback()  # never leave the session failed for _nav_counts after it
+        return None
+
+
 async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, int]:
     """Cheap counts for the sidebar badges, each counting exactly the rows of the page or chip
     it opens, on the active tab's track (R8; None, the tray's /api/status: every track).
@@ -532,9 +554,11 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
     - `unrated` (Pipeline, D-UI-61): roles not yet rated, the Pipeline's own Being scored
       group (queries._group_expr), so the badge and that group's header always agree.
     - `calibrate`: Calibrate's candidate pool (learning.active.rank_uncertain before ranking):
-      roles on the track with a Tier 2 evaluation and no label or override on the track.
+      roles on the track with a Tier 2 evaluation, a description, not hidden (active.calibratable,
+      #32) and no label or override on the track.
       Ranking loads embeddings, which is too much for a 30 s poll, so the pool is counted."""
     from kestrel.analytics.today import worth_a_look
+    from kestrel.learning.active import calibratable
     from kestrel.web.fit import GROUP_NEW
     from kestrel.web.queries import GROUP_ORDER, OppFilters, _base_stmt, _group_expr, _with_operator
 
@@ -556,6 +580,7 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
         .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
         .where(
             Evaluation.tier == 2,
+            calibratable(),
             Evaluation.opportunity_id.not_in(labeled.union(overridden)),
         )
     )
@@ -612,6 +637,7 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
     model = await _model_row(settings, settings.llm.mode) if probe else None
     scan = await _scan_row(s)
     hosted = _hosted_row(settings)
+    balance = await _balance_row(s, settings)
     counts = await _nav_counts(s)
     scanning = await scan_state(s, activity)
     return {
@@ -625,6 +651,8 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
         "loaded_model": (model["loaded"][0] if model and model["loaded"] else None),
         "scan": scan,
         "hosted": hosted,
+        "balance": balance,
+        "credit": credit.notices(),
         "counts": counts,
         "scan_state": scanning,
     }

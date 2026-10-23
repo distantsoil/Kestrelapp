@@ -285,7 +285,7 @@ async def test_t3_migration_preserves_duplicate_transmission_rows(tmp_path):
     destroys the only evidence that it did.
     """
     from alembic import command
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import MetaData, Table, create_engine, inspect, text
 
     from kestrel import paths
     from kestrel.db import migrate
@@ -301,16 +301,21 @@ async def test_t3_migration_preserves_duplicate_transmission_rows(tmp_path):
         with engine.begin() as conn:
             # Via the table metadata, so the column defaults the model declares are applied
             # rather than this test having to know which NOT NULL columns exist at 0016.
-            conn.execute(
-                Opportunity.__table__.insert().values(
-                    id=1, track="employment", opp_type="full_time", title="Staff Engineer"
-                )
+            have = {c["name"] for c in inspect(conn).get_columns("opportunity")}
+            # The model's column defaults, limited to the columns this old schema has (a later
+            # migration's new column must not break a test pinned at 0016).
+            old_table = Table(
+                "opportunity", MetaData(),
+                *[c._copy() for c in Opportunity.__table__.columns if c.name in have],
             )
-            conn.execute(
-                Opportunity.__table__.insert().values(
-                    id=2, track="employment", opp_type="full_time", title="Platform Engineer"
-                )
-            )
+
+            def add_opportunity(**values):
+                conn.execute(old_table.insert().values(**values))
+
+            add_opportunity(id=1, track="employment", opp_type="full_time",
+                            title="Staff Engineer")
+            add_opportunity(id=2, track="employment", opp_type="full_time",
+                            title="Platform Engineer")
             # A second duplicate group on a DIFFERENT opportunity, to prove the ranks are
             # computed per (opportunity_id, payload_sha256) and do not run continuously across
             # the table.

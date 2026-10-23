@@ -22,6 +22,11 @@ SOURCE_KINDS = (
     "ashby",
     "workday",
     "smartrecruiters",
+    "rippling",
+    "adp",
+    "paylocity",
+    "workable",
+    "remoterocketship",
     "page",
     "rss",
     "sec_edgar",
@@ -59,6 +64,11 @@ STAGES = (
 )
 
 LIVENESS = ("live", "closed", "unknown", "unchecked")
+
+# Why a posting was marked closed (opportunity.closed_reason). A posting closes only on the second
+# consecutive expired read (D-INTEL-1). `ats_missing` (the ATS no longer lists the id) is reserved,
+# not implemented.
+CLOSED_REASONS = ("http_404", "http_410", "page_text", "ats_missing")
 
 VERDICTS = ("apply", "pursue", "consider", "pass", "keep", "kill")
 

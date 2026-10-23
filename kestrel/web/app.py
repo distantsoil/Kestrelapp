@@ -43,7 +43,7 @@ _PAGE_MODULES = (
     "dashboard", "chrome", "documents", "profile", "pursuits", "renders", "orgs", "stories",
     "prep", "mock", "offers", "sources", "settings", "analytics", "bench", "about",
     "escalate", "opportunity_actions", "runs_detail", "models", "backup", "applied",
-    "rescore", "updates",
+    "rescore", "updates", "announcements",
 )
 
 # Worker pause is a process-wide flag the tray toggles via /api/worker/pause|resume. A paused
@@ -332,6 +332,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.config import HostedModeError, get_settings
     from kestrel.db.engine import get_sessionmaker
     from kestrel.intelligence.liveness import run_liveness_cycle
+    from kestrel.interview.question_task import drain_interview_questions
     from kestrel.interview.story_task import drain_story_builds
     from kestrel.learning.reranker import check_drift
     from kestrel.llm.client import LLMClient
@@ -339,8 +340,9 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.pipeline.tier0 import run_tier0_batch
     from kestrel.pipeline.tier1 import handle_t1
     from kestrel.pipeline.tier2 import handle_t2
-    from kestrel.pipeline.worker import TierStats, Worker
+    from kestrel.pipeline.worker import TierStats, Worker, held_types
     from kestrel.services.setting_overrides import load_settings_with_db, take_run_mode
+    from kestrel.services.title_suggest import drain_title_suggestions, maybe_request
 
     sm = get_sessionmaker()
     async with httpx.AsyncClient() as http:
@@ -390,7 +392,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
                 cycle, carried = carried or runlog.CycleRun(sm, mode=settings.llm.mode), None
-                if await runlog.has_pipeline_work(sm):
+                if await runlog.has_pipeline_work(sm, skip_types=held_types(settings)):
                     await cycle.ensure_open()
                 # Scheduled scrapes first: the scheduler, tray and MCP only enqueue them, and
                 # Tier 0 below is what turns their new postings into pipeline work.
@@ -422,6 +424,13 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # claimed no more; nothing further starts until the operator resumes.
                 if not is_paused():
                     await drain_story_builds(sm, client, settings, stop=stop)
+                    # Likely questions for roles marked Applied (P14): the same Tier 2 model as
+                    # the story build, so right after it keeps the tier drained (D-INTERVIEW-1).
+                    await drain_interview_questions(sm, client, settings, stop=stop)
+                    # Suggested target titles (P15): queued after an import, weekly, or after 10
+                    # newly applied roles; Tier 2 again, so it stays inside the same drain.
+                    await maybe_request(sm)
+                    await drain_title_suggestions(sm, client, settings, stop=stop)
                 # Drift is a rolling window over the last 50 labels; checking it every idle
                 # cycle (5 s) loaded both reranker pickles and every Org and Source row on the
                 # UI's event loop for nothing. Once per interval, or after any Tier 1 work.
@@ -785,6 +794,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     from kestrel.config import get_settings
 
     bind_all = get_settings().server.bind_all
+    app.state.bind_all = bind_all  # what this process runs with (Settings > LAN compares it)
     public_hostnames = tuple(h.strip().lower() for h in get_settings().server.public_hostnames if h)
 
     @app.middleware("http")

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
@@ -45,8 +46,12 @@ from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import SourceConfigError
 from kestrel.ingest.generated import SEC_TITLES_LABEL, sec_titles_opt_in
 from kestrel.ingest.signal_sources import SIGNAL_SOURCE_KINDS, get_signal_source
+from kestrel.llm import credit
 from kestrel.services import tracks as tracks_svc
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -55,6 +60,8 @@ GENERATED = "generated"
 CUSTOM = "custom"
 SAM_ENV = "SAM_GOV_API_KEY"
 SAM_NAME = "SAM.gov federal IT contracts"
+RRS_ENV = "REMOTEROCKETSHIP_API_KEY"
+RRS_NAME = "RemoteRocketship"
 SAM_NAICS = ["541512", "541611", "541519"]
 
 
@@ -70,14 +77,14 @@ def _validate_source_config(kind: str, config: dict) -> str | None:
         try:
             adapter.validate_config(config)
         except SourceConfigError as exc:
-            return str(exc)
+            return plain_error(exc)
         return None
     signal_source = get_signal_source(kind)
     if signal_source is not None:
         try:
             signal_source.validate_config(config)
         except SourceConfigError as exc:
-            return str(exc)
+            return plain_error(exc)
     return None
 
 
@@ -87,7 +94,7 @@ def _parse_config(raw: str) -> tuple[dict, str | None]:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        return {}, f"config must be valid JSON: {exc}"
+        return {}, f"config must be valid JSON (line {exc.lineno}, column {exc.colno})"
     if not isinstance(parsed, dict):
         return {}, "config must be a JSON object (e.g. {\"token\": \"...\"})"
     return parsed, None
@@ -219,6 +226,21 @@ def _sam_status() -> dict:
     return {"present": present, "masked": masked(secret_value(SAM_ENV)) if present else ""}
 
 
+async def _rrs_status(session: AsyncSession) -> dict:
+    """The RemoteRocketship card: whether a key is saved (only its last four characters are ever
+    shown) and the source row, if the user has turned it on."""
+    from kestrel.llm.providers import masked, secret_present, secret_value
+
+    present = secret_present(RRS_ENV)
+    src = (
+        await session.execute(select(Source).where(Source.kind == "remoterocketship").limit(1))
+    ).scalar_one_or_none()
+    return {
+        "present": present, "masked": masked(secret_value(RRS_ENV)) if present else "",
+        "source": src, "on": bool(src is not None and src.enabled),
+    }
+
+
 async def _lane_ctx(session: AsyncSession) -> dict:
     """Roles from found company boards waiting to be scored when Kestrel is idle (D-SRC-8), and
     what scoring them all now would cost (D-SRC-9), stated before the operator confirms."""
@@ -273,6 +295,7 @@ async def _panel_ctx(
         "sec_titles_on": await sec_titles_opt_in(session),
         "sec_titles_label": SEC_TITLES_LABEL,
         "sam": _sam_status(),
+        "rrs": await _rrs_status(session),
         "create_error": create_error,
         "create_values": create_values or {},
         "edit_error": edit_error,
@@ -383,6 +406,7 @@ async def score_everything_now(request: Request):
         async with sessionmaker()() as s:
             ctx = await _panel_ctx(s)
         return _panel(request, ctx, 400)
+    credit.clear()  # the operator asked to score now: let an online key try again (D-LLM-8)
     n = await lane.release_all(sessionmaker())
     async with sessionmaker()() as s:
         msg = (f"Scoring {n} waiting role{'' if n == 1 else 's'} now." if n
@@ -503,7 +527,7 @@ async def save_sam_key(request: Request):
         write_secret(SAM_ENV, key)
     except (ValueError, OSError) as exc:
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, sam_message={"ok": False, "text": str(exc)})
+            ctx = await _panel_ctx(s, sam_message={"ok": False, "text": plain_error(exc)})
         return _panel(request, ctx, 400)
 
     async with sessionmaker()() as s:
@@ -524,6 +548,69 @@ async def save_sam_key(request: Request):
             "ok": True,
             "text": "Key saved on this computer. SAM.gov is on and is checked once a day.",
         })
+    return _panel(request, ctx)
+
+
+@router.post("/sources/remoterocketship/key", response_class=HTMLResponse)
+async def save_rrs_key(request: Request):
+    """Save the user's RemoteRocketship key through the helper the hosted-model and SAM.gov keys
+    use (atomic, data-home .env only). The key is never echoed, logged or stored in the source.
+    Always 200 so the panel can show the message; a failure is a plain sentence."""
+    from kestrel.llm import providers
+
+    form = await request.form()
+    key = str(form.get("api_key") or "").strip()
+    message: dict
+    if not key:
+        message = {"ok": False, "text": "Paste your key first."}
+    else:
+        try:
+            providers.write_secret(RRS_ENV, key)
+            message = {"ok": True, "text": "Key saved on this computer."}
+        except (ValueError, OSError) as exc:
+            log.warning("rrs_key_not_saved", error_type=type(exc).__name__)
+            message = {"ok": False, "text": plain_error(exc)}
+    async with sessionmaker()() as s:
+        ctx = await _panel_ctx(s, rrs_message=message)
+    return _panel(request, ctx)
+
+
+@router.post("/sources/remoterocketship/toggle", response_class=HTMLResponse)
+async def toggle_rrs(request: Request):
+    """Turn RemoteRocketship on (create the source with default config, or re-enable it) or off.
+    On needs a saved key; without one nothing changes and the card says so."""
+    form = await request.form()
+    want_on = str(form.get("on") or "") == "1"
+    message: dict | None = None
+    try:
+        async with sessionmaker()() as s:
+            src = (
+                await s.execute(select(Source).where(Source.kind == "remoterocketship").limit(1))
+            ).scalar_one_or_none()
+            from kestrel.llm.providers import secret_present
+
+            if want_on and not secret_present(RRS_ENV):
+                message = {"ok": False, "text": "Add your key first."}
+            elif want_on:
+                if src is None:
+                    s.add(Source(
+                        track="employment", kind="remoterocketship", name=RRS_NAME,
+                        config={}, enabled=True, cadence_hours=_DEFAULT_CADENCE, origin=CUSTOM,
+                    ))
+                else:
+                    src.enabled = True
+                    src.consecutive_failures = 0
+                await s.commit()
+                message = {"ok": True, "text": "On. It checks once a day."}
+            elif src is not None:
+                src.enabled = False
+                await s.commit()
+                message = {"ok": True, "text": "Off."}
+    except Exception as exc:  # a write path never 500s: the card says so in plain words
+        log.warning("rrs_toggle_failed", error_type=type(exc).__name__)
+        message = {"ok": False, "text": "Could not change that. Try again."}
+    async with sessionmaker()() as s:
+        ctx = await _panel_ctx(s, rrs_message=message)
     return _panel(request, ctx)
 
 
@@ -834,7 +921,9 @@ async def _trigger_run(
             text += f" ({outcome.error})"
         return text
     except Exception as exc:  # never let a dead network/model/adapter 500 the run-now button
-        return f"queued, but the run failed immediately: {type(exc).__name__}: {exc}"
+        log.warning("run_now_failed_immediately", source_id=source_id,
+                    error_type=type(exc).__name__, error=str(exc))
+        return f"queued, but the run failed immediately: {plain_error(exc)}"
 
 
 # ------------------------------------------------------------------ Settings > Tracks I use

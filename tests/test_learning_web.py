@@ -141,3 +141,27 @@ def test_train_and_outcomes_endpoints_respond():
         assert t["promoted"] is False
         o = c.get("/api/learning/outcomes?track=employment").json()
         assert "discriminating" in o and "headline" in o
+
+
+def test_calibrate_page_never_shows_a_role_without_a_description():
+    ids = asyncio.run(_seed())
+
+    async def blank_one():
+        from kestrel.db.models import Opportunity as Opp
+
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            (await s.get(Opp, ids[0])).description_md = "   "
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    asyncio.run(blank_one())
+    with _client() as c:
+        html = c.get("/calibrate").text
+        items = c.get("/api/learning/queue?track=employment").json()["items"]
+    queued = {i["opportunity_id"] for i in items}
+    assert "(no description)" not in html
+    assert ids[0] not in queued
+    assert set(ids[1:]) <= queued

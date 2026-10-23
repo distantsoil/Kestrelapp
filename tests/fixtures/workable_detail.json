@@ -1,0 +1,36 @@
+{
+  "id": 9200005,
+  "shortcode": "E5F6A7B8C9",
+  "title": "Open-Source Engineer - EMEA Remote",
+  "remote": true,
+  "location": {
+    "city": "Paris",
+    "country": "France",
+    "countryCode": "FR",
+    "region": "Île-de-France"
+  },
+  "locations": [
+    {
+      "city": "Paris",
+      "country": "France",
+      "countryCode": "FR",
+      "hidden": false,
+      "region": "Île-de-France"
+    }
+  ],
+  "state": "published",
+  "isInternal": false,
+  "code": "",
+  "published": "2026-05-29T00:00:00.000Z",
+  "type": "full",
+  "language": "en",
+  "department": [
+    "Open Source"
+  ],
+  "accountUid": "00000000-0000-4000-8000-0000000000a1",
+  "approvalStatus": "approved",
+  "workplace": "remote",
+  "description": "<p></p><p>At Northwind Labs, we build scheduling software for small clinics.</p><h3>About the Role</h3><p>You will improve our open-source libraries and work with contributors in the open.</p><h3>What you'll need</h3><ul><li>Strong Python skills</li><li>A public track record of open-source work</li></ul><p><strong>More about Northwind Labs</strong></p><p>Northwind Labs is an equal opportunity employer.</p>",
+  "requirements": "<p>Please include a short note on why you want to work in open source.</p>",
+  "benefits": ""
+}

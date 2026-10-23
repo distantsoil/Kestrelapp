@@ -42,6 +42,7 @@ from kestrel.db.enums import ARCHIVE_REASONS, PURSUIT_STATUS, valid_pursuit_stat
 from kestrel.db.models import (
     DocMaster,
     EngagementOffer,
+    InterviewQuestionSet,
     Notification,
     Offer,
     Opportunity,
@@ -273,7 +274,7 @@ async def remove_from_list(session: AsyncSession, opp: Opportunity) -> str:
     ).scalar_one_or_none()
     if pursuit is None:
         return f"Not {where}."
-    for model in (StatusEvent, Outcome, Offer, EngagementOffer):
+    for model in (StatusEvent, Outcome, Offer, EngagementOffer, InterviewQuestionSet):
         await session.execute(delete(model).where(model.pursuit_id == pursuit.id))
     await session.execute(
         update(Notification).where(Notification.pursuit_id == pursuit.id).values(pursuit_id=None)

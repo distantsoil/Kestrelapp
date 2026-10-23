@@ -82,6 +82,18 @@ The shipped configuration is US-centric (JobSpy defaults to the USA, SEC EDGAR a
 federal). The boards themselves work worldwide: change the search
 location and your profile's `geo_rules` and the pipeline runs unchanged.
 
+### RemoteRocketship (optional, paid)
+
+An optional source for people who already pay for RemoteRocketship with API access; Kestrel stays
+free and this needs your own subscription. Add the key to `.env` as `REMOTEROCKETSHIP_API_KEY`, then
+add a `remoterocketship` source on the Sources page and switch it on. Kestrel keeps only the link to
+each employer's own posting and reads the posting from the employer (or from its job board, when
+Kestrel knows the platform). Nothing from RemoteRocketship is stored, in line with their terms. Their
+limits are 500 requests or 3,000 jobs per UTC day; Kestrel uses a few requests per scan. A link that
+cannot be read from the employer is skipped and counted in the run. A missing or rejected key, a
+plan without API access, or a reached daily limit each show a short message on the source. See
+[`SOURCES.md`](SOURCES.md) and the Help page.
+
 ### Company boards Kestrel finds for you
 
 Greenhouse, Lever, Ashby, Workday and SmartRecruiters cannot be searched across companies; each
@@ -177,9 +189,10 @@ Every decision is a row in the local database (`data/kestrel.db`: the `label` ta
 
 ## Reaching Kestrel from your phone (optional, off by default)
 
-Kestrel listens on this machine only until you set `server.bind_all` in `settings.yml` or as
-`KESTREL_SERVER__BIND_ALL=true`, and restart. With it on, generate a shared secret under
-**Settings > LAN** and scan the QR code from a phone on the same network.
+Kestrel listens on this machine only until you turn on LAN access. Under **Settings > LAN &
+backup**, generate a shared secret, tick the box that says you read the warning, and turn it on;
+then restart Kestrel. Scan the QR code from a phone on the same network. (Advanced: the switch
+writes `server.bind_all` in `settings.yml`, and `KESTREL_SERVER__BIND_ALL` overrides it.)
 
 Read this before you turn it on. That secret is **one shared password for the whole application**.
 There are no accounts, no per-device access, and no record of who did what. Traffic is plain HTTP

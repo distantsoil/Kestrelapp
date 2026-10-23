@@ -25,6 +25,8 @@
 | P11 | Negotiation scripts | both | tier3 |
 | P12 | Analytics honest summary | both | tier2 |
 | P13 | Resume assessment (advisory, displayed only) | both | tier2 |
+| P14 | Interview questions (generated when a role is marked Applied) | both | tier2 |
+| P15 | Suggested target titles (advisory, never auto-added) | employment | tier2 |
 
 Store each as `kestrel/llm/prompts/{id}.{version}.md`. Load by version. **Never inline prompt
 text in Python.**
@@ -56,7 +58,17 @@ And configure every call with:
 - **An adequate `num_ctx` on the model itself** (SPEC §8.2, sized per tier). The OpenAI-compatible endpoint
   cannot set it, so it must be baked into a derived model with a Modelfile. A model at its
   default context silently truncates the job description and every downstream score is wrong.
-- A hard `max_tokens` so a runaway generation cannot stall a run
+- **Failure mode, out of credit (D-LLM-8):** an online provider's billing error (HTTP 402,
+  `INSUFFICIENT_BALANCE`, `credit_balance_exhausted`, `billing_error`) is neither a schema
+  failure nor a transient error. The guard spends no repair and no larger retry on it, writes no
+  quarantine row (there is no model output to keep), and returns an authored message; SPEC.md 8.5.
+- A hard `max_tokens` so a runaway generation cannot stall a run. **Failure mode, reply cut off
+  at the cap (D-LLM-7):** a `finish_reason: length` reply from an external backend that is not a
+  loop and not a reasoning overrun is asked again **once** with twice the output budget (capped at the model's context
+  minus the input; no retry when nothing larger fits). This is separate from the one schema
+  repair and does not consume it. A second cut-off quarantines with the raw reply kept and the
+  limit named. A tier whose backend is external gets the hosted floor (`HOSTED_MAX_TOKENS`)
+  whatever the run mode.
 
 Strip any `<think>…</think>` or `<thinking>…</thinking>` span from the response before parsing,
 unconditionally.
@@ -897,7 +909,9 @@ a resume past about five pages overflows it; a long CV is a known limit either w
 
 **Guard re-ask:** any chat-completions reply that stopped at the cap with the budget spent on
 reasoning and nothing written is re-asked once with reasoning off, when that changes the request
-(a hosted provider that takes the switch, no operator-set effort), before it quarantines.
+(a hosted provider that takes the switch, no operator-set effort), before it quarantines. A reply
+cut off mid-object with no loop and no reasoning overrun is asked again once with twice the output
+budget, capped at the model's context minus the input (D-LLM-7); see SPEC.md 8.5.
 
 Replaces `resume_import/v1` (D-IMPORT-3). That prompt asked the model to write the whole resume
 back as JSON, every bullet verbatim plus up to two rewordings, so its output was about four times
@@ -1805,6 +1819,111 @@ Refer to bullets ONLY by those keys, exactly as written.
 
 Strings are truncated (overall_fit 900, others 300 to 400), lists capped (6 strengths, 6 gaps,
 8 bullets to strengthen), never rejected.
+
+---
+
+## P14 — Interview Questions (generated when a role is marked Applied)
+
+**Version:** `interview_questions/v1` · **Tier:** `tier2` · **Temp:** 0.3 · **Max tokens:** 2500 ·
+**Reasoning hint:** `low`
+
+Run once when the operator marks a role Applied (employment `applied`, consulting
+`outreach_sent`), never on scoring and never on a bulk import of past applications (hundreds of
+model calls for roles the operator is no longer preparing for). It is a queued `interview_questions`
+task (hard rule 5), enqueued once per opportunity, drained right after the story build so the
+tier-drain rule holds. The operator can regenerate it from the opportunity page.
+
+**Inputs.** The operator's profile (`PROFILE_FULL`), the posting's title, company and description
+slice (`jd_budget`, the same slice Tier 2 uses), the latest Tier 2 summary and gaps (Block A and
+B), that evaluation's Block F questions **as a seed to improve on, not to copy**, the research
+unknowns for the organization, and the canonical story titles with their ids.
+
+**The model selects, it never invents.** Each question may point at one of the operator's real
+stories (`story_id`) and one of their real proof points (`proof_point_key`). Both are **enums of
+the ids that exist, plus null**, generated per call (the P3 and P13 pattern), so an invented id is
+structurally impossible on a constrained backend and a validation failure elsewhere: one repair,
+then a quarantine row (`tier` 14, raw response kept) and a plain note on the page, never a
+silent default. A field with no ids to point at is left out of that call's schema. Questions are
+not resume text and never reach a PDF.
+
+### Schema (enums filled per call)
+
+```json
+{
+  "type": "object",
+  "required": ["questions"],
+  "properties": {
+    "questions": { "type": "array", "items": { "type": "object",
+      "required": ["question", "category", "why_asked"],
+      "properties": {
+        "question": { "type": "string" },
+        "category": { "enum": ["behavioral", "technical", "role_specific", "culture",
+                               "motivation", "gap_probe"] },
+        "why_asked": { "type": "string" },
+        "proof_point_key": { "enum": ["<proof point keys>"] },
+        "story_id": { "enum": ["<canonical story ids>"] } } } }
+  }
+}
+```
+
+`proof_point_key` and `story_id` are optional (a null or absent value means "no match"). Strings
+are truncated (question 250, why_asked 200) and the list is capped at 12, never rejected.
+
+**Failure handling.** One repair, then quarantine with the raw reply kept; the task completes
+(retrying a model that cannot produce the schema would loop) and the opportunity page says the
+questions could not be generated and that the earlier Tier 2 questions still apply. A transport
+error leaves the task to retry. A tier routed to a hosted backend goes through `run_prompt_hosted`
+(redaction, or a refusal recorded as a quarantine row with `attempts=0`).
+
+---
+
+## P15 — Suggested Target Titles (advisory, never auto-added)
+
+**Version:** `title_suggest/v1` · **Tier:** `tier2` · **Temp:** 0.3 · **Max tokens:** 1500 ·
+**Reasoning hint:** `low`
+
+Suggests job titles for the operator's Employment target titles (D-TTL-3). It runs as a queued
+`title_suggestions` task: after a resume import, about weekly, and after every 10 roles newly
+marked applied. It reruns over time and so learns from what the operator applied for. These
+automatic runs happen only when Tier 2 is local: when Tier 2 would go to an online model, nothing
+is sent until the operator clicks Suggest again, because no automatic pass may send the resume
+online without a user action. A failed or skipped pass is recorded, so it waits for the next
+weekly check rather than queuing again.
+
+**Inputs.** The operator's document (the newest active employment resume: summary, each role's
+header and context line, every bullet's default wording labeled with its slot key, the skills),
+the titles of roles they applied to or shortlisted (up to 30), their current target titles, and
+the titles they dismissed (the model is told not to suggest those, and the app drops any it
+suggests anyway, compared case-insensitively).
+
+**The model suggests, it never decides.** A suggestion is stored as `suggested` and shown in an
+expandable list. Nothing reaches `target_titles` until the operator presses Accept. A title the
+operator dismissed, accepted or was already shown is never stored again.
+
+**Schema generated per call:** `evidence_slot_keys` is an array of `enum`s of the document's real
+slot keys (the P3 and P13 pattern), so an invented key is structurally impossible on a constrained
+backend and a validation failure elsewhere: one repair, then a quarantine row (`tier` 15, raw
+response kept), never a silent default. The evidence text stored beside a title is the operator's
+own bullet, copied by the app from the slot, not written by the model. Hosted routing goes through
+`run_prompt_hosted` with the document's employer map.
+
+```json
+{
+  "type": "object",
+  "required": ["titles"],
+  "properties": {
+    "titles": { "type": "array", "items": { "type": "object",
+      "required": ["title", "why", "evidence_slot_keys"],
+      "properties": {
+        "title": { "type": "string" },
+        "why": { "type": "string" },
+        "evidence_slot_keys": { "type": "array", "items": { "enum": ["<slot keys>"] } } } } }
+  }
+}
+```
+
+Strings are truncated (title 80, why 200), evidence keys deduplicated and capped at 5, the list
+capped at 10, never rejected. An empty list is a valid answer (nothing new to suggest).
 
 ---
 

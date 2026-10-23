@@ -144,7 +144,7 @@
             <td><a href="/opportunities/{{ o.id }}">{{ o.title or 'Untitled' }}</a></td>
             <td><span class="pill">{{ o.stage }}</span></td>
             <td class="mono {% if o.ghost_score >= 0.5 %}gap{% endif %}">{{ '%.2f'|format(o.ghost_score) }}</td>
-            <td>{{ o.liveness }}</td>
+            <td{% if o.liveness == 'closed' and closed_reason_text(o.closed_reason) %} title="{{ closed_reason_text(o.closed_reason) }}"{% endif %}>{{ o.liveness }}</td>
             <td class="mono">{{ (o.first_seen_at or '')[:10] }}</td>
           </tr>
         {% endfor %}

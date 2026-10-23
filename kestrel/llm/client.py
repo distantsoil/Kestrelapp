@@ -22,6 +22,8 @@ from typing import Any
 import httpx
 
 from kestrel.config import BackendConfig, HostedModelCaps, JsonMode, Settings
+from kestrel.llm import credit
+from kestrel.llm.credit import OutOfCredit
 
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
@@ -680,6 +682,9 @@ class ModelDeclined(RuntimeError):
         *,
         reasoning_exhausted: bool = False,
         degenerate: bool = False,
+        truncated: bool = False,
+        sent_max_tokens: int | None = None,
+        external: bool = False,
         content: str = "",
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
@@ -695,6 +700,15 @@ class ModelDeclined(RuntimeError):
         # The reply was a generation loop (one value repeated until the cap, D-LLM-2): a failed
         # attempt, so the guard makes its one repair rather than quarantining at once.
         self.degenerate = degenerate
+        # The reply was cut at the output cap with no sign of a loop or of reasoning eating the
+        # budget: a longer answer than the cap allowed. The guard retries it once with a larger
+        # budget (D-LLM-7); `sent_max_tokens` is the cap this request actually carried.
+        self.truncated = truncated
+        self.sent_max_tokens = sent_max_tokens
+        # Whether the backend was external. Only an external reply is retried larger: a local
+        # model's num_ctx is sized per tier (SPEC 8.2), and a doubled output budget could push the
+        # prompt past it, which Ollama truncates silently.
+        self.external = external
         self.content = content
         # What the declined call cost: it was accepted and billed, so the guard adds it to the
         # transmission record like any other attempt.
@@ -733,6 +747,13 @@ def _complete_json(content: str) -> bool:
 
 
 REASONING_RETRY_SHARE = 0.5
+
+
+def choices_finish(data: dict) -> str | None:
+    """The first choice's finish_reason of a chat-completions reply, or None."""
+    choices = data.get("choices") or [{}]
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    return first.get("finish_reason")
 
 
 def reasoning_exhausted(data: dict) -> bool:
@@ -809,7 +830,9 @@ class ProviderError(RuntimeError):
     key), 402 (no credits), 404 (no endpoint honors the parameters), or 429 (rate limit) reads as
     what it is in the quarantine record rather than as a bare status line."""
 
-    def __init__(self, status: int, message: str, url: str) -> None:
+    def __init__(
+        self, status: int, message: str, url: str, codes: tuple[str, ...] = ()
+    ) -> None:
         if status == 404 and "data policy" in message.lower():
             # OpenRouter: every endpoint for this model was excluded by the privacy rule Kestrel
             # sends (data_collection deny), usually because it is a free model (D-UI-32).
@@ -819,10 +842,15 @@ class ProviderError(RuntimeError):
                 "overrides your OpenRouter account setting. Pick a paid model, or allow those "
                 "providers under Settings > Hosted (data collection: allowed)"
             )
+        if status == 402 and "max_tokens" in message.lower():
+            message = f"{credit.TOO_BIG_NOTE} {message}"
         super().__init__(f"HTTP {status} from {url}: {message}")
         self.status = status
         self.message = message
         self.url = url
+        # The error code/type strings the body carried (`INSUFFICIENT_BALANCE`, `billing_error`),
+        # for classifying the failure; never shown (D-SEC-2).
+        self.codes = codes
 
 
 _HTTP_HINTS = {
@@ -840,8 +868,13 @@ def raise_for_provider_status(r: httpx.Response) -> None:
     if r.is_success:
         return
     message = ""
+    codes: list[str] = []
     try:
-        err = r.json().get("error")
+        body = r.json()
+        err = body.get("error")
+        for src in (err, body):
+            if isinstance(src, dict):
+                codes += [str(src[k]) for k in ("code", "type") if isinstance(src.get(k), str)]
         if isinstance(err, dict):
             message = str(err.get("message") or "")
             meta = err.get("metadata")
@@ -849,11 +882,12 @@ def raise_for_provider_status(r: httpx.Response) -> None:
                 message = f"{message} (provider: {meta['provider_name']})"
         elif isinstance(err, str):
             message = err
+            codes.append(err)
     except (ValueError, AttributeError):
         message = ""
     hint = _HTTP_HINTS.get(r.status_code, "")
     text = "; ".join(x for x in (message[:300], hint) if x) or r.reason_phrase
-    raise ProviderError(r.status_code, text, str(r.request.url))
+    raise ProviderError(r.status_code, text, str(r.request.url), tuple(codes))
 
 
 # ==================================================================== async pipeline client
@@ -901,6 +935,16 @@ def _resolve_api_key(backend: BackendConfig) -> str:
     return "x"
 
 
+def tier_credit_hold(settings: Settings, tier: str) -> str | None:
+    """The provider name when the backend `tier` routes to is on hold as out of credit for its
+    current key (D-LLM-8), else None. Reads settings and process memory only; sends nothing."""
+    try:
+        backend, tcfg = LLMClient(settings)._backend_and_tier(tier)
+    except (KeyError, ValueError):
+        return None
+    return credit.held_provider(tcfg.backend, _resolve_api_key(backend))
+
+
 class LLMClient:
     def __init__(self, settings: Settings, http: httpx.AsyncClient | None = None) -> None:
         self.settings = settings
@@ -918,6 +962,17 @@ class LLMClient:
             and self.settings.llm.mode == "hosted"
             and tier in self.settings.llm.hosted_tiers
         )
+
+    def _external_floor(self, tier: str, backend: BackendConfig) -> int | None:
+        """The hosted output floor (config.HOSTED_MAX_TOKENS) for a tier whose backend is
+        external, whatever the run mode (D-LLM-7). The prompt's own max_tokens is sized for the
+        local models, and a paid reasoning model spends tokens thinking before it writes; a tier
+        pointed at an external backend while the mode is local (a settings.yml edit, a legacy
+        row) needs the same room. None for a local backend and for tiers with no hosted floor
+        (the frontier tier keeps its own budget)."""
+        from kestrel.config import HOSTED_MAX_TOKENS
+
+        return HOSTED_MAX_TOKENS.get(tier) if backend.external else None
 
     def _reasoning_off(
         self, tier: str, backend: BackendConfig, reasoning_hint: str | None
@@ -1041,10 +1096,15 @@ class LLMClient:
         temp = temperature if temperature is not None else tcfg.temperature
         max_out = max_tokens if max_tokens is not None else tcfg.max_tokens
         hosted_tier = self._hosted_tier(tier, backend)
+        floor = self._external_floor(tier, backend)
         if hosted_tier and tcfg.max_tokens is not None and max_out is not None:
             # Under Hosted mode the tier's budget (HOSTED_MAX_TOKENS unless the operator set
             # one) is a floor under the prompt's, which is sized for the local models (D-LLM-1).
             max_out = max(max_out, tcfg.max_tokens)
+        elif floor is not None and max_out is not None:
+            # An external backend outside Hosted mode (D-LLM-7): the same floor.
+            max_out = max(max_out, floor, tcfg.max_tokens or 0)
+            hosted_tier = True
         if (
             max_tokens_cap is not None
             and max_out is not None
@@ -1113,13 +1173,30 @@ class LLMClient:
             headers.setdefault("anthropic-version", ANTHROPIC_VERSION)
             if backend.provider == "anthropic":
                 headers.pop("Authorization", None)
+        held = credit.held_provider(tcfg.backend, key)
+        if held is not None:
+            # This backend already answered "out of credit" for this key: send nothing more to
+            # it, and choose no other provider in its place (D-LLM-8).
+            raise OutOfCredit(backend.provider, sent=False)
         t0 = time.perf_counter()
         client = self._http or httpx.AsyncClient()
+
+        def _credit_check(exc: ProviderError) -> None:
+            if credit.is_out_of_credit(backend.provider, exc.status, exc.codes, exc.message):
+                if credit.mark_out_of_credit(tcfg.backend, backend.provider, key):
+                    import structlog
+
+                    structlog.get_logger().warning(
+                        "llm_out_of_credit", backend=tcfg.backend, provider=backend.provider
+                    )
+                raise OutOfCredit(backend.provider) from exc
+
         try:
             r = await client.post(url, json=body, headers=headers, timeout=timeout)
             try:
                 raise_for_provider_status(r)
             except ProviderError as exc:
+                _credit_check(exc)
                 if exc.status == 400 and schema is not None:
                     # The provider refused the structured request itself (a schema keyword it
                     # does not take, a context overflow). The same request would be refused
@@ -1141,7 +1218,14 @@ class LLMClient:
             # failure; without this the guard sees KeyError('choices') and loses the message.
             err = data["error"]
             msg = err.get("message") if isinstance(err, dict) else str(err)
-            raise ProviderError(r.status_code, str(msg or "provider error")[:300], url)
+            codes = tuple(
+                str(err[k]) for k in ("code", "type") if isinstance(err, dict) and err.get(k)
+            )
+            inner = err.get("code") if isinstance(err, dict) else None
+            status = inner if isinstance(inner, int) and inner >= 400 else r.status_code
+            perr = ProviderError(status, str(msg or "provider error")[:300], url, codes)
+            _credit_check(perr)
+            raise perr
         usage = data.get("usage") or {}
         spent = {
             "prompt_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
@@ -1159,7 +1243,11 @@ class LLMClient:
         elif backend.protocol == "messages":
             problem = messages_stop_problem(data)
             if problem:
-                raise ModelDeclined(problem, json.dumps(data)[:4000], **spent)
+                raise ModelDeclined(
+                    problem, json.dumps(data)[:4000],
+                    truncated=data.get("stop_reason") == "max_tokens",
+                    sent_max_tokens=body.get("max_tokens"), external=backend.external, **spent,
+                )
             content = messages_output_text(data)
             prompt_tokens = usage.get("input_tokens", 0)
             completion_tokens = usage.get("output_tokens", 0)
@@ -1169,7 +1257,11 @@ class LLMClient:
                 data,
                 body.get("max_tokens") or body.get("max_completion_tokens"),
                 reasoning_off=self._reasoning_off(tier, backend, reasoning_hint),
-                setting=f"llm.hosted_tiers.{tier}.max_tokens" if hosted_tier else None,
+                setting=(
+                    f"llm.hosted_tiers.{tier}.max_tokens"
+                    if self._hosted_tier(tier, backend)
+                    else f"llm.tiers.{tier}.max_tokens" if hosted_tier else None
+                ),
             )
             text = message.get("content") or ""
             if problem and not _complete_json(text):
@@ -1189,7 +1281,12 @@ class LLMClient:
                     # guard spend its one repair on it (D-LLM-2).
                     raise ModelDeclined(f"{loop}; {problem}", json.dumps(data)[:4000],
                                         degenerate=True, content=text, **spent)
-                raise ModelDeclined(problem, json.dumps(data)[:4000], **spent)
+                raise ModelDeclined(
+                    problem, json.dumps(data)[:4000],
+                    truncated=(choices_finish(data) == "length"),
+                    sent_max_tokens=body.get("max_tokens") or body.get("max_completion_tokens"),
+                    external=backend.external, **spent,
+                )
             if message.get("refusal"):
                 # OpenAI structured outputs: a safety refusal comes back in `refusal` with a null
                 # `content`; without this it would quarantine as "invalid JSON" and lose the reason.

@@ -137,6 +137,9 @@ class Opportunity(Base):
     is_canonical: Mapped[bool] = mapped_column(Boolean, default=True)
     liveness: Mapped[str] = mapped_column(String, default="unchecked")
     liveness_checked_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Consecutive "expired" reads (404/410/closed text); a posting closes on the second (D-INTEL-1).
+    liveness_strikes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    closed_reason: Mapped[str | None] = mapped_column(String, nullable=True)  # enums.CLOSED_REASONS
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     stage: Mapped[str] = mapped_column(String, default="new", index=True)
     stage_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -556,6 +559,48 @@ class PrepPack(Base):
     panel: Mapped[list | None] = mapped_column(JSON, default=list)
     pdf_path: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+
+
+class InterviewQuestionSet(Base):
+    """Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1). The active set
+    has a null `superseded_at` (one per pursuit, by a partial unique index); it supersedes the
+    Tier 2 Block F questions for the prep pack, the mock interview and the debrief."""
+
+    __tablename__ = "interview_question_set"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunity.id"), index=True)
+    pursuit_id: Mapped[int] = mapped_column(ForeignKey("pursuit.id"), index=True)
+    prompt_version: Mapped[str] = mapped_column(String)
+    questions: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    superseded_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+Index(
+    "ux_interview_question_set_active",
+    InterviewQuestionSet.pursuit_id,
+    unique=True,
+    sqlite_where=text("superseded_at IS NULL"),
+)
+
+
+class TitleSuggestion(Base):
+    """A job title the model proposes for the operator's target titles (P15, D-TTL-3). Only an
+    explicit Accept adds it to employment_terms.target_titles; a title is unique
+    case-insensitively across every status, so a dismissed one never comes back."""
+
+    __tablename__ = "title_suggestion"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String)
+    why: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[list] = mapped_column(JSON, default=list)  # [{slot_key, text}], display only
+    status: Mapped[str] = mapped_column(String, default="suggested", index=True)
+    prompt_version: Mapped[str] = mapped_column(String)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    decided_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+Index("ux_title_suggestion_title", func.lower(TitleSuggestion.title), unique=True)
 
 
 class MockSession(Base):

@@ -229,6 +229,23 @@ on the operator's machine, so an unchanged feed costs a 304.
 The release side that publishes the feed is in `docs/RELEASING.md`. The decisions are D-UPD-1 to
 D-UPD-5 in `DECISIONS.md`.
 
+### 1.6 In-app announcements
+
+A dismissible notice at the top of every page can tell the operator about a coming change, for
+example that a refreshed look is on the way. **It is local.** The text is fixed in the build
+(`kestrel/web/announcements.py`), nothing is fetched, and there is no remote announcement feed:
+Kestrel never phones home for this.
+
+- Each announcement has an id. The base template carries one slot that loads `GET /announcements`
+  and shows the first announcement not yet dismissed.
+- "Got it" posts `POST /announcements/{id}/dismiss`, which stores the id in the
+  `ui.announcements_dismissed` setting row on this install (not the browser), then empties the
+  slot. A later announcement has a new id and shows again. An unknown id is ignored with a 200; a
+  failed write is logged and answered with a plain line, never a 500.
+- UI only: it never appears in a PDF, export or generated document.
+- It reuses the update banner's pattern (an htmx slot and the `warnbox` token styling). There is
+  no second banner system.
+
 ---
 
 ## 2. Web UI
@@ -251,6 +268,14 @@ opens, on the active tab's track. A switched-off track does not scan or score (i
 unclaimed), and its open pursuits are never hidden: Today's Act card and Applications name the
 track and link to its board (D-UI-68). Work the operator asked for (Score again, a Retry, an MCP
 scan) is never held by the switch.
+
+**Error and notice text (D-SEC-2).** A response never carries exception text, a file path or a
+URL taken from an exception. The route logs the exception (`error_type`, `error`, the ids) and
+shows an authored sentence plus `plain_error(exc)` (`kestrel/web/errors.py`), which returns an
+exception's own message only when it is a `UserFacingError` (`kestrel/errors.py`), a type whose
+text Kestrel wrote. A redirect notice travels as `?msg=<code>`, never as text: the page looks
+the code up in `kestrel/web/flash.py` and shows nothing for a code it does not know, so a
+crafted link cannot display a message of its own.
 
 ### 2.1 Pages
 
@@ -332,7 +357,16 @@ The main working surface. Server-side pagination and filtering over several thou
 - HTMX inline row expansion showing the evaluation blocks without navigating away.
 - Bulk actions: shortlist, archive, re-evaluate, escalate to Tier 3, mark reviewed.
 - Row badges: ghost score, legitimacy, needs-review divergence, liveness, prompt-version staleness.
-- Fit groups in order (Worth a look, Maybe, Being scored, Scoring failed) page together. **Not a
+- Fit groups in order (Worth a look, Maybe, Applied, Being scored, Scoring failed) page
+  together. **Applied** (D-UI-51 amended, #37) holds a role with an open pursuit at `applied` or
+  later (`APPLIED_OR_LATER`): it leaves Worth a look, Today's Review count and the Pipeline badge,
+  and its row shows the pursuit status as a pill ("applied", "interviewing") instead of "on my
+  shortlist". A merely shortlisted role stays in Worth a look. An unscored row's pill says why
+  (D-UI-81, #34): scoring now, queued, background (a company-board role waiting in the lane),
+  held (its track is switched off), not queued, failed or stuck. Under the Being scored header a
+  note counts the background roles: they score when Kestrel is idle, or, when Tier 1 or Tier 2
+  runs on an online model, only when the operator chooses Score everything now on Sources. The
+  list refreshes every 10 seconds while a run is in flight (not while the search box has focus). **Not a
   fit is its own section below them** (D-UI-62): "Not a fit · N" with a note over the whole
   filter set ("49 set aside by your rules before any model ran (location 31, title 18); 0 scored
   low by the model."), a Show N button that loads its rows with their own paging
@@ -390,6 +424,13 @@ the generated searches also ask for (D-TTL-2: up to 3 per target title, 9 in all
 the searches without them and never past the generated-search cap), states that each variant is searched on every board, and lets each one be
 removed or searched again (`GET /profile/title-variants`, `POST /title-variants/remove|restore`;
 removals are the `sources.title_variants_removed` setting row).
+Above it, **Suggested titles** (P15, D-TTL-3, #31; also under the Employment step of onboarding)
+is an expandable list of titles the model proposes from the resume, each with a one-line reason
+and the operator's own bullets it rests on. **Accept** adds the title to the target titles through
+the same profile edit as the form (the generated searches and the Tier 0 re-check follow);
+**Dismiss** keeps it from ever being suggested again; **Suggest again** queues a pass. Nothing is
+added without an Accept (`GET /profile/title-suggestions`, `POST /title-suggestions/{id}/accept|
+dismiss|refresh`).
 
 **`/renders/{id}` Render review**
 Chosen variant beside alternatives per slot with the model's rationale, one-click swap writing a
@@ -417,6 +458,19 @@ respected; a failure is reported and pasted text is kept) and/or pasted text, in
 the manual path so it is scored through the normal queue, and puts the card in the first column at
 once. A Table view lists every pursuit. Interview debrief capture stays on the opportunity page.
 
+*Limits for a long list (#30).* An "Updated" control hides cards whose last activity (falling back
+to the applied date) is older than 7, 14, 30 or 90 days; All time is the default and a card with
+no date is never hidden. The Offer / Closed column is folded by default behind a "Show N closed"
+button with its count (a search or stage chip that is looking for closed cards opens it). A
+"Per column" control (5, 10, 25, 50 or All) shows the first N cards of each column with a
+"Show all N" button. The choices live in the URL (`range`, `cap`, `open=closed`) and the last
+range and cap chosen are saved in the `ui.board_range` and `ui.board_cap` setting rows, so the
+next visit starts there; the URL wins. A card waiting on a reply that has been quiet for more than
+`pursuits.ghosting_days` (21) shows "No reply in N days." with a Mark as ghosted (consulting: no
+response) button. It is the ordinary stage move through `move_to_status`, only on the user's click;
+there is no new status and no archive flag. Nothing in these attributes carries the employer's name
+in confidential mode.
+
 **`/orgs/{id}` Organization**
 Accumulated signals over time, research, contacts with drafted outreach, warm-path finder
 results, every opportunity ever seen at this org, comp observations.
@@ -437,7 +491,10 @@ CRUD, health, last run, counts, errors, run-now, cadence. JobSpy parameter-confl
 before save. Slug validation for ATS sources (a Lever 404 is caught here, not silently later).
 
 **`/settings`**
-Models and backends per tier with a test button. Concurrency. Thresholds. The oldest posting
+The **Models** tab (#36) lists the effective model per tier and where it runs, changes the local
+hardware profile (the existing `POST /setup/profile`), and embeds the hosted per-tier override
+panel (D-UI-42, the existing `/models/hosted/overrides` routes); it adds no write route of its
+own, so a change there has the same effect as on the Models or System page. Concurrency. Thresholds. The oldest posting
 and the oldest consulting event Tier 0 keeps (`max_posting_age_days`,
 `consulting.max_trigger_age_days`, on Core, D-UI-73). Scoring weights per
 track, with proposed recalibration when available. Profile editors are on `/profile`. Filter-rule editor
@@ -536,6 +593,16 @@ without typing a secret. The browser extension sends the header.
 
 The settings page states plainly that there is no real authorization model, that the secret is a
 single shared credential, and that this should not be exposed beyond a trusted LAN or VPN.
+
+**Turning it on from Settings (#27, D-SEC-3).** Settings > LAN & backup has a switch for `server.bind_all`.
+The bind address and both browser guards (the Host allowlist and the Origin check) read `bind_all`
+from the settings file plus environment, never from the database, so the switch writes the user's
+own `settings.yml` (an atomic temp-file write with fsync that edits only that one key and keeps every
+comment) and says **it takes effect after Kestrel restarts**. Rules: it enables only after a shared
+secret exists and the user ticks the acknowledgement of the warning; only a request from this machine
+(loopback) may change it, even one carrying the shared key; turning it off writes the file too and
+needs no tick. The control shows the file's value, what the running process started with, and, when
+`KESTREL_SERVER__BIND_ALL` is set, that the environment variable wins. `POST /settings/lan/bind`.
 
 ---
 

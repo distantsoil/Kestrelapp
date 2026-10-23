@@ -23,6 +23,7 @@ from pydantic_settings import (
 )
 
 from kestrel import paths
+from kestrel.errors import UserFacingError
 
 
 # ------------------------------------------------------------------------------- LLM settings
@@ -324,6 +325,7 @@ class Docs(BaseModel):
 
 class Liveness(BaseModel):
     cadence_days: int = 3
+    recheck_hours: int = 24  # a posting with one expired read is read again after this long
 
 
 class Notify(BaseModel):
@@ -594,7 +596,7 @@ def load_dotenv_into_environ() -> bool:
     return True
 
 
-class HostedModeError(ValueError):
+class HostedModeError(UserFacingError, ValueError):
     """Mode "hosted" was asked for explicitly but cannot run; str(exc) is the reason."""
 
 

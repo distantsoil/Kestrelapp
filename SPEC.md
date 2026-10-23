@@ -198,6 +198,25 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | consulting_terms | json | consulting track: `day_rate_floor`, `day_rate_target`, `min_engagement_days`, `max_concurrent`, `service_lines`, `target_org_size`, `target_sectors`, `excluded_sectors`, `travel_tolerance` |
 | updated_at | ts | |
 
+**`title_suggestion`** (P15, D-TTL-3) — job titles the model proposes for `employment_terms.target_titles`,
+for the operator to accept or dismiss. **Nothing is ever added to `target_titles` without an
+explicit Accept.**
+
+| column | type | notes |
+|---|---|---|
+| id | int pk | |
+| title | text | unique case-insensitively across every status, so a title never comes back once seen |
+| why | text | one sentence on why it fits, from the operator's own document |
+| evidence | json | `[{slot_key, text}]`: the operator's own bullets the title rests on (display only) |
+| status | enum | `suggested` \| `accepted` \| `dismissed` |
+| prompt_version | text | e.g. `title_suggest/v1` |
+| created_at, decided_at | ts | `decided_at` is set on Accept or Dismiss |
+
+A queued `title_suggestions` task writes the rows: after a resume import, about once a week, and
+after every 10 roles newly marked applied (a manual "Suggest again" also queues one). Accept adds
+the title through the same profile edit as the Employment form (so the generated searches and the
+Tier 0 re-check follow); Dismiss records it so it is never suggested again.
+
 ### 4.2 Sources and ingestion
 
 **`source`**
@@ -252,6 +271,8 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | is_canonical | bool | |
 | liveness | enum | `live` \| `closed` \| `unknown` \| `unchecked` |
 | liveness_checked_at | ts | |
+| liveness_strikes | int | consecutive expired reads; a posting closes on the second (SPEC-MODULES 6.3) |
+| closed_reason | enum? | `http_404` \| `http_410` \| `page_text` \| `ats_missing` (reserved) |
 | raw | json | untouched source payload |
 | stage | enum | `new` \| `t0_pass` \| `t0_reject` \| `t1_pass` \| `t1_reject` \| `t2_done` \| `t3_done` \| `error` \| `quarantined` |
 | stage_reason | text | |
@@ -416,6 +437,10 @@ Guardrails, all of which must be enforced rather than discovered:
 | Ashby | `GET https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` | 200 |
 | **Workday** | `POST https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` body `{"limit":20,"offset":0,"searchText":""}` | 200, 2000 postings |
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
+| **Paylocity Recruiting** | `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` (JSON in `window.pageData`) | 200, HTML (verified 2026-10-21) |
+| **Workable** | `POST https://apply.workable.com/api/v3/accounts/{slug}/jobs` body `{}` | 200, `{results, total}` (verified 2026-10-21 from the maintainer's network) |
+| **ADP Workforce Now** | `GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&$top=20&$skip=1` | 200, no auth (verified 2026-10-21) |
+| **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
 Workday matters disproportionately: it is the dominant enterprise ATS, and enterprise is where
 VP of IT roles live. It paginates via `offset`/`limit` and needs a second call per job for the
@@ -438,6 +463,28 @@ of the operator's pursuits (D-SRC-8). Any other role from a found board waits in
 lane: stored, never rejected, and scored only when no other work is waiting, up to
 `pipeline.lane_daily_cap` (200) a day. "Score everything now" frees the whole lane once, after a
 confirmation that states the count, the time and, on an online model, the cost (D-SRC-9).
+Precision is measured, not assumed (D-SRC-13): `python -m kestrel.evals.smart_filter_report`
+reads the database (SELECT only) and reports per lane the roles, scored, fits and not-fits, the
+fast lane's precision (fits over scored roles) and the lane miss rate (fits that sat in the
+background lane over all fits). A figure from fewer than five observations prints as insufficient.
+
+**RemoteRocketship (optional, paid, discovery only; D-SRC-14).** For people who already pay for
+RemoteRocketship API access, a `remoterocketship` source asks its jobs API for postings and keeps
+**only each posting's own employer link** (`url`). It stores no title, description, company data
+or copy of the reply, and holds the reply in memory for the run only (their terms limit caching to
+24 hours and forbid archiving). Each link goes the way a JobSpy posting link goes (D-SRC-7): a
+recognized company board (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP,
+Paylocity, Workable) becomes a found board read by its own adapter; any other link is read from the
+employer's public page (schema.org `JobPosting` data, robots.txt checked, one polite request, at
+most 20 pages a run). A link nothing can read is dropped and counted in the run ("N links could
+not be read from the employer"). Off by default; the key is `REMOTEROCKETSHIP_API_KEY` (or the
+`api_key_env` named in the config) in `.env` and never in a config row. A run makes at most
+`max_pages` requests (default 2, 50 jobs each) against the provider's 500 requests or 3,000 jobs
+per UTC day; a 429 makes the run partial (never a source failure, so it cannot auto-disable the source) and
+keeps the links already collected, which on the first page is none. A link on the provider's own
+site is dropped and counted unreadable, never fetched. With no `filters` on the source, the
+employment profile supplies `jobTitleFilters` (target titles) and `locationFilters` (onsite metros);
+filters set on the source replace them.
 
 **Manual.** Paste a URL (httpx, escalating to Playwright on a JavaScript shell) or paste raw JD
 text. Both produce a normal `opportunity` and run the identical pipeline.
@@ -967,6 +1014,18 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
 - Every transmission is recorded in `frontier_transmission` with the provider's own token counts
   and cost where reported (NULL renders as unknown, never as free). One confirmation authorizes
   one send: any prior record for the same payload hash, whatever its status, refuses a replay.
+- **Balance in the status rail** (#29, D-BYOK-12). Only OpenRouter can say what is left on a key:
+  `GET /key` returns `usage`, `usage_monthly`, `limit` and `limit_remaining`. The rail shows one short line either way,
+  "$Y spent this month" (the key's `usage_monthly`), with or without a key cap (owner decision);
+  the account balance needs a management key and is never fetched. The request is made only when Hosted mode is on
+  and acknowledged, the key is OpenRouter's and saved, and the user did not choose free models only
+  (unless they ticked Always show my OpenRouter balance, the `ui.show_balance` row). It carries the
+  Authorization header and nothing else, is cached for five minutes under a digest of the key (a
+  failure for one minute, shown as "Balance unavailable"), and the key is never logged. Anthropic and
+  OpenAI have no balance endpoint for an ordinary key and Kestrel does not ask for an admin key, so
+  every provider but OpenRouter makes **no request**: the rail shows this month's deeper reads from
+  `frontier_transmission.cost_usd` (a send with no reported cost is unknown, never $0). Tier runs on a
+  hosted model are not metered locally, so that line says "on deeper reads".
 
 ### 6.5 Recurring scans
 
@@ -1156,9 +1215,12 @@ when that is unset a hosted default (`tier1` and `trigger` 1200, `tier2` and `ti
 `docsel` 4000; `config.HOSTED_MAX_TOKENS`), and that value is a **floor** under the prompt's own: a hosted
 reasoning model spends output tokens thinking before it writes, and the local 300 and 4000
 quarantined every reply with `finish_reason: length`. A cap bounds the bill, it does not set it.
-Local tier budgets and Tier 3 escalation (the `frontier` tier) are unchanged. A length stop on a
-request that already had reasoning off says the reply needs more output tokens and names the
-setting; it never suggests lowering the reasoning effort.
+Local tier budgets and Tier 3 escalation (the `frontier` tier) are unchanged. **The floor follows
+the backend, not the mode (D-LLM-7):** a tier whose backend is external gets the same floor
+(and its own `llm.tiers.<tier>.max_tokens`, if larger) even while the run mode is local, so a
+tier pointed at a paid model by a settings edit is not left on the local 300 and 4000. A length
+stop on a request that already had reasoning off says the reply needs more output tokens and
+names the setting; it never suggests lowering the reasoning effort.
 
 ### 8.1.1 Embeddings: two engines, both on the machine
 
@@ -1349,6 +1411,32 @@ one-shot probe per model asserting no thinking span survives.
   with at least half of the output tokens spent reasoning, is re-asked once with OpenRouter's
   `reasoning: {enabled: false}` (when the operator has set no effort); a second overrun
   quarantines with the D-LLM-1 message naming the setting that raises the budget.
+- **An online key that has run out of credit is said plainly (D-LLM-8).** HTTP 402 from any
+  online provider, OpenModel's `INSUFFICIENT_BALANCE`, OpenAI's `credit_balance_exhausted` (or
+  `insufficient_quota`), and Anthropic's `billing_error` are classified in `kestrel/llm/credit.py`
+  as a distinct, non-retryable failure: not a schema failure (no repair, no larger retry, no
+  quarantine) and not a transient error. The call raises `OutOfCredit`, a `UserFacingError` whose
+  sentence Kestrel writes ("Your OpenModel credit has run out. Top up at console.openmodel.ai,
+  then use Score again."); no provider text reaches a page. The backend is then held for that key:
+  nothing more is sent to it, and no other online provider is chosen in its place. The hold ends
+  when the key changes, when the operator starts a run (Run now, Score again, Score everything
+  now, a Failed scoring retry), or after 30 minutes. The worker puts the leased task back
+  unstarted with its attempt refunded (resumable, hard rule 5), leases nothing more for a tier
+  routed to the held backend, and opens no empty Run row; tiers on a local model carry on. The
+  status rail and the Runs page each show one notice per held provider.
+- **A reply cut off at its cap is asked again once, larger (D-LLM-7).** A `length` stop that is not
+  a loop and not a reasoning overrun (a long legitimate answer cut mid-object) on an **external**
+  backend is retried once
+  with twice the output budget the request carried, capped at the model's context window minus the
+  input it was billed for (`hosted_model_caps`); with no room to grow it quarantines at once. A
+  second cut-off quarantines with the raw reply kept, the limit it hit named (`max_tokens N`,
+  which the Pipeline reads as "the reply ran out of room") and a note that it was retried. This
+  retry is separate from the schema repair: it neither uses nor is counted against it, a repair
+  after it keeps the larger budget, and both attempts' tokens and cost go in the record. The
+  reasoning-off re-ask and this retry are each taken at most once per call, so a call makes at
+  most three attempts before the one repair. A local backend is never retried larger: its
+  `num_ctx` is sized per tier (8.2), and a doubled output budget could push the prompt past it,
+  which Ollama truncates silently; a local cut-off quarantines at once.
 
 ### 8.6 Benchmark harness
 
@@ -1483,6 +1571,143 @@ Per posting: `id`, `name`, `uuid`, `jobAdId`, `refNumber`, `company`, `location`
 `GET https://api.smartrecruiters.com/v1/companies/{company}/postings/{id}` for `jobAd.sections`
 containing `companyDescription`, `jobDescription`, `qualifications`, `additionalInformation`,
 each with `title` and `text` (HTML). Company identifiers are case sensitive.
+
+### Rippling
+
+`GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` → `200`, a **bare JSON
+array**, no auth. Verified 2026-10-21 against the public board behind `ats.rippling.com/{slug}/jobs`
+(667 rows, 381 distinct postings). `ats.rippling.com/robots.txt` disallows only `/internal/`;
+`api.rippling.com/robots.txt` is a 404 (no rules). The `page` and `pageSize` query parameters are
+ignored: the whole board is one response.
+
+Per row: `uuid`, `name`, `department` (`{id, label}`), `url` (the public posting page
+`https://ats.rippling.com/{slug}/jobs/{uuid}`), `workLocation` (`{id, label}`).
+
+**Gotchas:** the title is `name`, and it carries leading and trailing spaces. A posting open in
+several places is **one row per location with the same `uuid`**, so the adapter merges rows by
+`uuid` and joins the labels. The list has no description and no date; the detail does:
+`GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs/{uuid}` → `200`, an object with
+`uuid`, `name`, `description` (`{company, role}`, both HTML), `workLocations[]` (strings),
+`department` (`{name, base_department, department_tree[]}`), `employmentType` (`{label, id}`,
+`label` is an enum such as `SALARIED_FT` or `TEMP`, `id` is the readable text),
+`createdOn` (ISO datetime with offset), `payRangeDetails[]` (empty in every sample, so no
+compensation is read), `url`, `board` (`{slug, companyName, ...}`), `companyName`,
+`unlistedFromSearch`, `activeJobApplication` (form questions, ignored). `description.company` is
+the employer boilerplate and is left out; `description.role` is the body.
+
+### ADP Workforce Now (career center)
+
+`GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&ccId={ccId}&lang=en_US&locale=en_US&$top=20&$skip=1`
+→ `200`, `application/json`, no auth. Verified 2026-10-21 against one public career center
+(`recruitment.html?cid={uuid}&ccId=19000101_000001`; 85 postings). `cid` is the employer's UUID from
+the career-center link; `ccId` is `19000101_000001` on every link seen. `workforcenow.adp.com`
+publishes no `robots.txt` (the path redirects to the ADP sign-in page), so there is no rule to
+follow or break; the endpoint is the one the public career-center page itself calls.
+
+```
+{ "jobRequisitions": [ ... ], "meta": { "startSequence": n, "totalNumber": n, "links": [ ... ] } }
+```
+
+Per requisition: `itemID` (e.g. `9207316549520_1`, the id the detail endpoint takes),
+`requisitionTitle`, `postDate` (ISO datetime with offset), `workLevelCode` (`{shortName}`, absent
+on some rows), `clientRequisitionID`, `requisitionLocations[]` (`{address: {cityName,
+countrySubdivisionLevel1: {codeValue}, postalCode}, nameCode: {shortName}, aliasNames}`),
+`customFieldGroup` (`stringFields[]` holds `ExternalJobID`, the public job number), plus empty
+`links`, `organizationalUnits`, `screeningRequirements`, `postingInstructions`.
+
+**Gotchas:** pages are capped at **20** whatever `$top` says. `$skip` is **1-based**: `$skip=1`
+is the first page, `$skip=21` the second (`$skip=0` returns 19 rows and `startSequence: 0`, so it
+is never sent). Stop at `meta.totalNumber`. `meta.links` is a facet list and is ignored. A posting
+open in several places repeats `requisitionLocations` entries, some duplicates and some blank
+(`nameCode: {}`, empty `address` strings); blanks are dropped and duplicates merged. The title is
+`requisitionTitle` and carries a trailing space on some rows. The list has no description; the
+detail `GET .../job-requisitions/{itemID}?cid={cid}&ccId={ccId}&lang=en_US&locale=en_US` → `200`
+returns the same object plus `requisitionDescription` (HTML). The public posting page is
+`https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid={cid}&ccId={ccId}&jobId={ExternalJobID}&lang=en_US`
+(a script-rendered page; its content was not fetched, only the JSON above).
+
+### Paylocity Recruiting
+
+No JSON API was found for a job list. `GET https://recruiting.paylocity.com/recruiting/v2/api/feed/jobs/{id}`
+answers `200` with `{"displayName", "vidGridId", "showVideo", "jobs": []}` for every public board
+tried (three), including one that lists 11 postings on its page, so it is not used. The public
+careers page is the source: `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` → `200`
+HTML (no login, no challenge, no script needed) whose inline script assigns the board to
+`window.pageData = {...};`. Verified 2026-10-21 against one public board (11 postings).
+`recruiting.paylocity.com/robots.txt` is a 404 (no rules). `{id}` is the board GUID in the page link
+(`.../recruiting/jobs/All/{id}` or `.../All/{id}/{Name}`).
+
+```
+window.pageData = { "ModuleTitle": "...", "ModuleId": "...", "Jobs": [ ... ], "Locations": [...],
+                    "Departments": [...], "LeadJoinUrl": ..., ... }
+```
+
+Per job in `Jobs[]`: `JobId` (integer), `JobTitle`, `LocationName`, `ShouldDisplayLocation`,
+`PublishedDate` (ISO datetime with the correct offset), `Description` (a ~110 character plain
+snippet, **not** the body), `IsInternal`, `HiringDepartment`, `JobLocation` (`{LocationId, ModuleId,
+Name, Address, Address2, Metro, City, State, Zip, Country, County, SmartyAddressId}`), `IsRemote`,
+`IndeedRemoteType`. `ModuleTitle` is the employer name.
+
+**Gotchas:** the data is JSON inside an HTML script, read by locating `window.pageData = ` and
+decoding one JSON value from there (never by a regex over the JSON). The list's `Description` is a
+truncated snippet; the body comes from the posting page
+`GET https://recruiting.paylocity.com/Recruiting/Jobs/Details/{JobId}` → `200` HTML with one
+`<script type="application/ld+json">` schema.org `JobPosting` (`title`, `datePosted`,
+`hiringOrganization.name`, `description` as HTML, `jobLocation.address`). **Its `datePosted` has a
+wrong UTC offset (the local clock time labelled `-05:00` after adding five hours), so the date is
+taken from the list's `PublishedDate`.** The posting link carries only `JobId`, not the board id, so
+board discovery can follow an `.../Jobs/All/{id}` link but not a `.../Jobs/Details/{JobId}` one.
+
+### Workable
+
+`POST https://apply.workable.com/api/v3/accounts/{slug}/jobs` with the JSON body `{}` → `200`
+`{"results": [...], "total": N}`, no auth. Captured 2026-10-21 by the maintainer from one public
+board (6 postings); the build environment was rate-limited by Cloudflare on this host, so nothing
+here was read from it. `apply.workable.com/robots.txt` is `User-agent: *` / `Disallow:` (allows
+everything) with `Content-Signal: search=yes, ai-input=yes, ai-train=no`. `www.workable.com/robots.txt`
+disallows `/j/`, but the adapter calls only the `apply.workable.com` API.
+
+Per result: `id`, `shortcode`, `title`, `remote` (bool), `location` (`{city, country, countryCode,
+region}`; `city` can be `""` and `region` null), `locations[]` (same fields plus `hidden`), `state`,
+`isInternal`, `published` (ISO datetime), `type`, `language`, `department[]`, `accountUid`,
+`workplace`.
+
+**Pagination is UNVERIFIED.** The captured board had `total` equal to the number of results. The
+adapter follows a `nextPage` token if the response carries one (POST again with `{"token": <nextPage>}`,
+up to 20 pages). If `total` exceeds what was collected and there is no token, it returns what it
+has and logs a warning; it never raises for that.
+
+Detail: `GET https://apply.workable.com/api/v2/accounts/{slug}/jobs/{shortcode}` → `200`, no auth,
+the same fields plus `description` (HTML), `requirements` (HTML) and `benefits` (HTML, or `""`).
+The public posting page is `https://apply.workable.com/{slug}/j/{shortcode}/`; the board is
+`https://apply.workable.com/{slug}/`.
+
+**Gotchas:** skip a result whose `isInternal` is true or whose `state` is not `published`. The list
+has no description, so each posting needs a detail request. The body is `description`,
+`requirements` and `benefits` joined in that order (blank sections skipped). The location text is
+built from `city`, `region` and `country`, dropping empty parts.
+
+### RemoteRocketship (paid API; discovery only)
+
+`POST https://www.remoterocketship.com/api/openclaw/jobs/` with `Authorization: Bearer <key>` and the
+JSON body `{"filters": {..., "page": N, "itemsPerPage": <=50}, "includeJobDescription": false}`.
+**The trailing slash is required**: without it the server answers `308`. Captured 2026-10-21 by the
+maintainer from their own key and scrubbed (`tests/fixtures/remoterocketship_jobs.json`).
+
+`200` reply: `{"jobOpenings": [...], "totalCount": N, "pagination": {"page", "itemsPerPage",
+"totalCount", "totalPages", "hasNextPage", "hasPreviousPage"}}`. Per job: `id`, `roleTitle`, `url`
+(the employer's own posting, the only field Kestrel keeps), `created_at`, `validUntilDate`,
+`employmentType`, `salaryRange` (null or an object), `company` (object) and more. Kestrel reads
+nothing else.
+
+Errors carry `{"message", "code", "hint"}` (`tests/fixtures/remoterocketship_401.json`): `400` bad
+request, `401` missing or invalid key, `403` active subscription required, `413`, `429` daily request
+limit reached, `500`. Kestrel never shows the provider's `message` or `hint`; it says each case in
+its own words. Limits: 500 requests or 3,000 jobs per UTC day, 50 jobs per request. Their terms
+(section 4) allow caching responses for 24 hours only and prohibit archiving, bulk export and
+resale; section 5 forbids scraping the website and bursts. `robots.txt` has `Disallow: /api` for all
+agents, a crawler rule; this user-keyed API is published for programmatic use, so the API call alone
+is exempt from the robots check (D-SRC-14). Every employer page it leads to is checked.
 
 ### SEC EDGAR full-text search — consulting trigger events
 

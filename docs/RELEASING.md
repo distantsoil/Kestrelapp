@@ -59,7 +59,12 @@ choice and always builds and publishes all three.
 
 Every script runs PyInstaller itself and takes `--skip-build` (`-SkipBuild` on Windows) when
 `dist/` already holds the build. `PYTHON` names the interpreter with kestrel and pyinstaller
-installed (`uv sync --extra dev` installs both).
+installed (`uv sync --extra dev` installs both). The scripts also fetch the bundled embedding
+model (`scripts/fetch_embed_model.py`, about 90 MB, never committed) when
+`fetch_embed_model.py --check` says it is missing, because `kestrel.spec` refuses to build without
+it; run `uv run python scripts/fetch_embed_model.py` yourself first to do it ahead of time or
+offline (`--archive`). The dmg script uses `diskutil image create` when macOS has it and
+`hdiutil create` otherwise (hdiutil is deprecated on macOS 27; the diskutil path was verified on macOS 27.0.1).
 
 ```bash
 PYTHON=.venv/bin/python packaging/build_appimage.sh      # Linux
@@ -165,6 +170,23 @@ AppImages are not signed in a way desktops enforce. `SHA256SUMS.txt` on the Rele
 integrity check. `build_appimage.sh` pins `appimagetool` to release 1.9.1 by URL and sha256 and
 the AppImage runtime by sha256 (its upstream publishes only a moving `continuous` tag), so a build
 fails loudly rather than silently picking up a changed tool.
+
+The runtime itself is vendored (#44): `packaging/linux/runtime-x86_64` is the reviewed upstream
+file, marked binary in `.gitattributes`, and `build_appimage.sh` uses it when its sha256 equals
+`RUNTIME_SHA256` (an `APPIMAGE_RUNTIME_FILE` override wins; a missing or mismatched file falls back
+to a pinned download). Its MIT license and the libraries it links are in
+`packaging/linux/RUNTIME-NOTICE.txt`, which the AppImage carries under `usr/share/doc/kestrel/` and
+the Linux notices page lists. To bump it:
+
+1. Download `runtime-x86_64` from the `continuous` release of `AppImage/type2-runtime` and compare
+   GitHub's digest for the asset with the file's `sha256sum`.
+2. Inspect it: it must be an x86_64 ELF of about 1 MB, and read the upstream commits since the last
+   pin.
+3. Replace `packaging/linux/runtime-x86_64`, set `RUNTIME_SHA256` in `packaging/build_appimage.sh`
+   (keep the previous hash in its comment), and update the commit, hash and size in
+   `packaging/linux/RUNTIME-NOTICE.txt`.
+4. `uv run --extra dev pytest tests/test_packaging.py tests/test_notices.py` must pass; the hash
+   test fails if the file and the pin disagree.
 
 ## What is verified where
 

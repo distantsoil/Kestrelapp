@@ -39,6 +39,9 @@
   {% elif run %}
     <span class="pill {{ 'covered' if run.status == 'ok' else 'gap' }}">{{ run.status }}</span>
     {% if run.counts %}<div class="muted mono" style="font-size:.75rem">{{ run.counts | run_counts }}</div>{% endif %}
+    {% if (run.counts or {}).get('unreadable') %}
+      <div class="muted" style="font-size:.75rem" data-testid="unreadable-links">{{ run.counts.unreadable }} {{ 'link' if run.counts.unreadable == 1 else 'links' }} could not be read.</div>
+    {% endif %}
     {% if site_lines %}
       <div class="muted" style="font-size:.75rem" data-testid="site-counts">
         {% for site in site_lines %}{{ site.label }} {{ site.count }}{{ ", " if not loop.last }}{% endfor %}

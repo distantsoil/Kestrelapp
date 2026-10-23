@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import paths
 from kestrel.db.models import Contact, Evaluation, Opportunity, Org, OrgResearch, PrepPack, Story
+from kestrel.interview.questions import active_set, set_questions
 
 _PANEL_TYPES = ("hiring_manager", "exec", "board", "peer", "recruiter", "pe_operator")
 
@@ -78,6 +79,21 @@ def _map_stories(f_interview: list, stories: list[Story]) -> list[dict]:
     return out
 
 
+def _map_question_set(questions: list[dict], stories: list[Story]) -> list[dict]:
+    """The P14 set's questions with their story: the story the model linked by id, else the one
+    that shares the question's proof point key, else none (never an arbitrary story)."""
+    by_id = {s.id: s for s in stories}
+    by_key = {s.proof_point_key: s for s in stories if s.proof_point_key}
+    out: list[dict] = []
+    for item in questions:
+        story = by_id.get(item.get("story_id")) or by_key.get(item.get("proof_point_key"))
+        out.append(
+            {"question": str(item["question"]).strip(), "story_id": story.id if story else None,
+             "story_title": story.title if story else None}
+        )
+    return out
+
+
 def _questions_to_ask(unknowns: list) -> list[str]:
     """Turn research unknowns into specific questions to ask. Their specificity is the whole value:
     they come from what the research could NOT resolve, so they are about this company alone."""
@@ -108,7 +124,13 @@ async def _assemble(session: AsyncSession, opportunity: Opportunity, org: Org | 
     stories = (
         (await session.execute(select(Story).where(Story.is_canonical.is_(True)))).scalars().all()
     )
-    questions_map = _map_stories(blocks.get("f_interview") or [], list(stories))
+    # Once the role was marked Applied and its P14 set exists, that set supersedes Block F
+    # (D-INTERVIEW-1); Block F stays the fallback for every other role.
+    qset = set_questions(await active_set(session, opportunity.id))
+    if qset:
+        questions_map = _map_question_set(qset, list(stories))
+    else:
+        questions_map = _map_stories(blocks.get("f_interview") or [], list(stories))
 
     panel = []
     if org is not None:

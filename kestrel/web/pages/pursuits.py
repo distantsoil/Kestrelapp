@@ -10,20 +10,47 @@ import html
 import re
 from datetime import date, timedelta
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.enums import PURSUIT_STATUS, valid_pursuit_status
-from kestrel.db.models import DocMaster, DocRender, Opportunity, Org, Outcome, Pursuit
+from kestrel.db.models import DocMaster, DocRender, Opportunity, Org, Outcome, Pursuit, Setting
 from kestrel.services import pursuit_board as board_svc
 from kestrel.services.pursuits import set_pursuit_status
+from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates, track_is_consulting
 from kestrel.web.redact import confidential, redact_name, redact_text
 
 router = APIRouter()
+log = structlog.get_logger()
+
+
+# Limits for a long board (#30). The date range hides cards whose last activity is older than N
+# days ("0" is All time); the cap shows the first N cards of each column. Both live in the URL and,
+# once chosen, in a setting row so the next visit starts where the user left off.
+RANGE_KEY = "ui.board_range"
+CAP_KEY = "ui.board_cap"
+CLOSED_KEY = "ui.board_closed"  # "show" (default) or "hide": the Closed column is the user's call
+RANGE_CHOICES: tuple[str, ...] = ("7", "14", "30", "90", "0")
+CAP_CHOICES: tuple[str, ...] = ("5", "10", "25", "50", "0")
+CLOSED_CHOICES: tuple[str, ...] = ("show", "hide")
+
+
+def _day(stamp: str | None) -> str:
+    """The date part of a stored timestamp, or "" (a card with no date is never range-hidden)."""
+    return (stamp or "")[:10]
+
+
+async def _stored_choice(session: AsyncSession, key: str, allowed: tuple[str, ...]) -> str | None:
+    row = await session.get(Setting, key)
+    value = str(row.value) if row is not None and row.value is not None else None
+    return value if value in allowed else None
 
 
 def _search_text(*parts: str | None) -> str:
@@ -86,6 +113,7 @@ async def _board(session: AsyncSession, track: str, *, notice: dict | None = Non
     conf, mapping = await confidential(session)
     resumes = await _resume_options(session, [opp.id for _p, opp, _o in rows])
     master = await _tailor_master(session, track)
+    ghost_days = (await load_settings_with_db(session)).pursuits.ghosting_days
     by_status: dict[str, list] = {}
     for pursuit, opp, org in rows:
         by_status.setdefault(pursuit.status, []).append((pursuit, opp, org))
@@ -142,6 +170,11 @@ async def _board(session: AsyncSession, track: str, *, notice: dict | None = Non
                 ),
                 "default_doc": pursuit.document_id or (docs[0]["id"] if docs else None),
                 "closed": pursuit.status in board_svc.CLOSED_STATUSES[track],
+                "applied": _day(pursuit.applied_at),
+                "updated": _day(pursuit.last_activity_at) or _day(pursuit.applied_at),
+                # A waiting card quiet past pursuits.ghosting_days offers (never forces) the move.
+                "ghost_hint": board_svc.ghost_hint(pursuit, on, days=ghost_days),
+                "ghost_status": board_svc.GHOST_STATUS.get(track),
                 "needs_outcome": col.key == "closed" and pursuit.outcome is None,
                 "column": col.key,
             }
@@ -186,13 +219,56 @@ async def pursuits(request: Request):
         # R2: a switched-off track's open pursuits are never hidden; a line names the track
         # and links to its board (an explicit ?track= opens it, D-UI-57).
         off = [o for o in await switched_off_work(s) if o["track"] != track]
+        # The URL wins, then the choice saved last time, then nothing hidden (#30).
+        board_range = request.query_params.get("range")
+        if board_range not in RANGE_CHOICES:
+            board_range = await _stored_choice(s, RANGE_KEY, RANGE_CHOICES) or "0"
+        board_cap = request.query_params.get("cap")
+        if board_cap not in CAP_CHOICES:
+            board_cap = await _stored_choice(s, CAP_KEY, CAP_CHOICES) or "0"
+        closed_col = request.query_params.get("closedcol")
+        if closed_col not in CLOSED_CHOICES:
+            closed_col = await _stored_choice(s, CLOSED_KEY, CLOSED_CHOICES) or "show"
     ctx = {
         "title": board["page_label"], "query": dict(request.query_params), "view": view, **board,
-        "off_tracks": off,
+        "off_tracks": off, "board_range": board_range, "board_cap": board_cap,
+        "closed_hidden": closed_col == "hide",
+        "range_choices": RANGE_CHOICES, "cap_choices": CAP_CHOICES,
     }
     if request.headers.get("HX-Request"):
         return templates().TemplateResponse(request, "partials/pursuit_board.html", ctx)
     return templates().TemplateResponse(request, "pursuits.html", ctx)
+
+
+@router.post("/pursuits/prefs", response_class=HTMLResponse)
+async def save_board_prefs(request: Request):
+    """Remember the date range, column cap and Closed column choice the user made (#30). A value
+    that is not one of the offered choices is ignored. Always 200: the page fires this and
+    forgets it."""
+    form = await request.form()
+    wanted = {
+        RANGE_KEY: (form.get("range"), RANGE_CHOICES),
+        CAP_KEY: (form.get("cap"), CAP_CHOICES),
+        CLOSED_KEY: (form.get("closedcol"), CLOSED_CHOICES),
+    }
+    try:
+        async with sessionmaker()() as s:
+            for key, (value, allowed) in wanted.items():
+                if value not in allowed:
+                    continue
+                # One atomic upsert, not read-then-insert: two saves fired close together (the
+                # page posts one per change) both saw no row and the second insert failed on the
+                # key, silently losing the choice (#14 Windows CI). Same pattern as
+                # setting_overrides.queue_run_mode.
+                now = utcnow_iso()
+                stmt = sqlite_insert(Setting).values(key=key, value=value, updated_at=now)
+                await s.execute(stmt.on_conflict_do_update(
+                    index_elements=[Setting.key], set_={"value": value, "updated_at": now}
+                ))
+            await s.commit()
+    except SQLAlchemyError as exc:
+        log.warning("board_prefs_not_saved", error_type=type(exc).__name__)
+    return HTMLResponse("")
 
 
 @router.post("/pursuits/add", response_class=HTMLResponse)
@@ -259,6 +335,45 @@ async def move_status(request: Request, pursuit_id: int):
     if err:
         return HTMLResponse(html.escape(err), status_code=400)
     return HTMLResponse("", status_code=204)
+
+
+@router.post("/pursuits/{pursuit_id}/remove", response_class=HTMLResponse)
+async def remove_card(request: Request, pursuit_id: int):
+    """Remove from my shortlist / leads, from the board card (#23). The same full undo as the
+    decision panel's Remove (D-UI-75, opportunity_actions.remove_from_list): the pursuit with its
+    history, outcome and offers goes in one transaction. Answers with the board plus the sidebar
+    badges out of band. Always 200: HTMX does not swap a 4xx body, so a failure is a notice."""
+    from kestrel.web.errors import plain_error
+    from kestrel.web.pages.opportunity_actions import remove_from_list
+    from kestrel.web.routes_api import oob_nav_counts
+    from kestrel.web.words import words
+
+    track = active_track(request)
+    notice: dict
+    async with sessionmaker()() as s:
+        try:
+            p = await s.get(Pursuit, pursuit_id)
+            opp = await s.get(Opportunity, p.opportunity_id) if p is not None else None
+            if p is None or opp is None:
+                notice = {"ok": False, "text": "That card is no longer on the board."}
+            else:
+                track = p.track
+                notice = {"ok": True, "text": await remove_from_list(s, opp)}
+        except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning(
+                "board_remove.failed", pursuit_id=pursuit_id,
+                error_type=type(exc).__name__, error=str(exc),
+            )
+            await s.rollback()
+            notice = {
+                "ok": False,
+                "text": f"Could not remove it from your {words(track)['list']}: {plain_error(exc)}",
+            }
+        oob = await oob_nav_counts(s)
+    resp = await _render_board(request, track, notice=notice)
+    resp.body += oob.encode("utf-8")
+    resp.headers["content-length"] = str(len(resp.body))
+    return resp
 
 
 @router.post("/pursuits/{pursuit_id}/act/{verb}", response_class=HTMLResponse)

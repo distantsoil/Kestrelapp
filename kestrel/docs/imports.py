@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant, Profile
+from kestrel.errors import UserFacingError
 from kestrel.llm.guard import run_prompt
 from kestrel.llm.prompts import load_prompt
 
@@ -559,7 +560,7 @@ async def propose_import(
     return ImportProposal(value=value, flags=flags, source_format=source_format)
 
 
-class ImportRejected(ValueError):
+class ImportRejected(UserFacingError, ValueError):
     """accept_import refused because the proposal did not pass its own re-validation."""
 
 
@@ -682,6 +683,15 @@ async def accept_import(
 
         await set_current_employer(session, newest_section, current_employer)
     await _merge_proof_points(session, track, value.proof_points or [])
+    if track == "employment" and doc_kind == "resume":
+        # Suggested target titles (P15, D-TTL-3): one queued run read from this resume. The
+        # suggestions wait for an Accept; nothing is added to the profile here.
+        # On an online Tier 2 it waits for Suggest again: the import did not ask to send the
+        # resume a second time.
+        from kestrel.services.title_suggest import _runs_online, request_title_suggestions
+
+        if not await _runs_online(session):
+            await request_title_suggestions(session, "import")
     await session.commit()
     return master.id
 

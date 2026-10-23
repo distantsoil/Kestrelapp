@@ -78,13 +78,12 @@ def _join_opportunity(stmt):
     )
 
 
-async def waiting_count(session: AsyncSession) -> int:
-    """Roles waiting in the lane."""
-    return (
-        await session.execute(
-            _join_opportunity(select(func.count()).select_from(Task)).where(*_waiting_filter())
-        )
-    ).scalar_one()
+async def waiting_count(session: AsyncSession, track: str | None = None) -> int:
+    """Roles waiting in the lane (on one track when `track` is given)."""
+    stmt = _join_opportunity(select(func.count()).select_from(Task)).where(*_waiting_filter())
+    if track in ("employment", "consulting"):
+        stmt = stmt.where(Opportunity.track == track)
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def released_today(session: AsyncSession, today: str | None = None) -> int:

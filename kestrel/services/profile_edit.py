@@ -31,6 +31,7 @@ import yaml
 
 from kestrel import paths
 from kestrel.db.enums import TRACKS
+from kestrel.errors import UserFacingError, plain_os_reason, yaml_where
 
 log = structlog.get_logger()
 
@@ -79,7 +80,7 @@ PROFILE_BAK = "profile.yml.bak"
 _INCOMING = "profile.yml.editing"
 
 
-class ProfileEditError(ValueError):
+class ProfileEditError(UserFacingError, ValueError):
     """A save that must not happen: the form was unusable, or the written file failed the
     loader (in which case the previous file is back in place)."""
 
@@ -115,9 +116,11 @@ def _read(path: Path | None) -> dict:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ProfileEditError(f"{path.name} could not be read: {exc}") from exc
+        log.warning("profile_read_failed", error_type=type(exc).__name__, error=str(exc))
+        raise ProfileEditError(f"{path.name} could not be read: {plain_os_reason(exc)}") from exc
     except yaml.YAMLError as exc:
-        raise ProfileEditError(f"{path.name} is not valid YAML: {exc}") from exc
+        log.warning("profile_yaml_invalid", error=str(exc))
+        raise ProfileEditError(f"{path.name} is not valid YAML{yaml_where(exc)}.") from exc
     return data if isinstance(data, dict) else {}
 
 
@@ -321,3 +324,33 @@ def save_section(track: str, section: str, values: dict) -> Path:
         raise ProfileEditError("The saved profile could not be loaded; the previous file was kept.")
     log.info("profile_saved", track=track, section=section)
     return target
+
+
+def _same_title(a: str, b: str) -> bool:
+    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+
+
+def add_target_title(title: str) -> bool:
+    """Add one title to the employment track's target titles, keeping every other term as it is
+    (the Employment form's save, for one title: P15 Accept, D-TTL-3). True when the title was
+    added, False when an equal one (ignoring case and spacing) was already there. A profile with
+    no employment terms yet gets the blank terms a form save would write, so the new file filters
+    nothing but the titles. Raises ProfileEditError when profile.yml cannot be read or written."""
+    title = " ".join(title.split())
+    if not title:
+        raise ProfileEditError("A title cannot be empty.")
+    state = load_state()
+    if state.problem:
+        raise ProfileEditError(state.problem)
+    terms = dict(state.tracks["employment"].get("employment_terms") or {})
+    titles = [str(t) for t in (terms.get("target_titles") or [])]
+    if any(_same_title(title, t) for t in titles):
+        return False
+    terms["target_titles"] = [*titles, title]
+    terms.setdefault("anti_titles", [])
+    terms.setdefault("excluded_employment_types", [])
+    terms.setdefault("seniority_floor", "")
+    for key in EMPLOYMENT_INTS:
+        terms.setdefault(key, None)
+    save_section("employment", "employment", {"employment_terms": terms})
+    return True

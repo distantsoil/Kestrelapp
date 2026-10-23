@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Contact, Interaction, Opportunity, Pursuit
+from kestrel.interview.questions import expected_questions
 
 _STOPWORDS = frozenset(
     "a an the of to in on for with about your you tell me how what when why did do does "
@@ -142,6 +143,10 @@ async def capture_debrief(
         note = f"[{now[:10]}] Debrief: {summary}"
         pursuit.notes_md = (pursuit.notes_md + "\n\n" + note) if pursuit.notes_md else note
 
+    if predicted_questions is None:
+        # Score against the role's own predicted questions: the P14 set once it exists, else
+        # Tier 2 Block F (D-INTERVIEW-1).
+        predicted_questions = await expected_questions(session, opportunity_id)
     predicted = [p for p in (predicted_questions or []) if p]
     asked = [q for q in (questions_asked or []) if q]
     result.predicted = len(predicted)

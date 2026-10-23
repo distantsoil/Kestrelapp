@@ -16,6 +16,7 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from kestrel.llm.client import LLMClient, ModelDeclined, _never_left, json_schema_for
+from kestrel.llm.credit import OutOfCredit
 from kestrel.llm.docselect import build_doc_select_schema, validate_doc_selection
 from kestrel.llm.schemas import P3DocSelect
 
@@ -66,6 +67,31 @@ class GuardResult:
     # `request error:` text, which is written for both (review). Defaults True: an unknown
     # outcome is treated as "it went out", because a duplicate egress cannot be undone.
     egressed: bool = True
+    # The provider said the key has no credit left (D-LLM-8). Not a quarantine (there is no model
+    # output to keep) and not a request error to retry: `error` is the authored sentence.
+    out_of_credit: bool = False
+
+
+def length_retry_budget(client: Any, tier: str, exc: Any) -> int | None:
+    """The output budget for the one retry of a reply cut off at its cap (D-LLM-7): twice what
+    the cut-off request carried, capped at the model's context window minus the input it was
+    billed for when the provider's model list gave one (hosted_model_caps). None when the request
+    did not say what it carried, when no larger budget fits, or when the backend is local (its
+    num_ctx is sized per tier, SPEC 8.2, and a larger output could truncate the prompt silently):
+    the caller quarantines."""
+    sent = getattr(exc, "sent_max_tokens", None)
+    if not sent or not getattr(exc, "external", False):
+        return None
+    want = int(sent) * 2
+    try:
+        tcfg = client.settings.llm.tiers[tier]
+        caps = client.settings.llm.hosted_model_caps.get(tcfg.model)
+    except (AttributeError, KeyError):
+        caps = None
+    window = getattr(caps, "context_length", None)
+    if window:
+        want = min(want, int(window) - int(getattr(exc, "prompt_tokens", 0) or 0))
+    return want if want > int(sent) else None
 
 
 def _add_cost(total: float | None, part: float | None) -> float | None:
@@ -320,6 +346,10 @@ async def run_guarded(
         default_of = getattr(client, "default_reasoning_hint", None)
         hint = default_of(tier) if default_of is not None else None
     exhausted = False
+    # The one retry of a reply cut off at its cap, with a larger budget (D-LLM-7). Separate from
+    # the schema repair below: it neither uses nor is counted against that attempt.
+    length_retried = False
+    eff_max_tokens = max_tokens
     first_content: str | None = None
     err: str | None = None
     while True:
@@ -329,7 +359,7 @@ async def run_guarded(
                 messages=messages,
                 schema=schema,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=eff_max_tokens,
                 schema_name=schema_name,
                 allow_external=allow_external,
                 **({"reasoning_hint": hint} if hint else {}),
@@ -355,11 +385,34 @@ async def run_guarded(
                 hint = "none"
                 exhausted = True
                 continue
+            reason = exc.reason
+            if getattr(exc, "truncated", False):
+                # A reply cut at its cap: ask once more with a larger budget when one fits.
+                if not length_retried:
+                    bigger = length_retry_budget(client, tier, exc)
+                    if bigger is not None:
+                        log.info("length_retry", tier=tier, sent=exc.sent_max_tokens,
+                                 retry=bigger)
+                        length_retried = True
+                        eff_max_tokens = bigger
+                        continue
+                    reason += ". No larger output budget fits this model's context window"
+                else:
+                    reason += ". It was already retried once with a larger output budget"
             if on_quarantine is not None:
                 model = client.settings.llm.tiers[tier].model
-                await on_quarantine(messages, exc.raw, exc.reason, model)
+                await on_quarantine(messages, exc.raw, reason, model)
             return GuardResult(
-                ok=False, raw=exc.raw, quarantined=True, error=exc.reason,
+                ok=False, raw=exc.raw, quarantined=True, error=reason,
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                latency_ms=latency, cost_usd=cost,
+            )
+        except OutOfCredit as exc:
+            # Nothing to repair, re-ask or retry larger: the next request would be refused the
+            # same way. Neither a schema failure nor a transient error (D-LLM-8).
+            return GuardResult(
+                ok=False, error=str(exc), out_of_credit=True,
+                egressed=exhausted or exc.sent,
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                 latency_ms=latency, cost_usd=cost,
             )
@@ -443,7 +496,7 @@ async def run_guarded(
             messages=repair_messages,
             schema=schema,
             temperature=0.0,
-            max_tokens=max_tokens,
+            max_tokens=eff_max_tokens,
             schema_name=schema_name,
             allow_external=allow_external,
             **repair_kw,
@@ -463,6 +516,12 @@ async def run_guarded(
             completion_tokens=completion_tokens,
             latency_ms=latency,
             cost_usd=cost,
+        )
+    except OutOfCredit as exc:
+        return GuardResult(
+            ok=False, raw=first_content, error=str(exc), out_of_credit=True, egressed=True,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            latency_ms=latency, cost_usd=cost,
         )
     except Exception as exc:
         # The first attempt already went out, so a failure on the REPAIR is never a "never left"

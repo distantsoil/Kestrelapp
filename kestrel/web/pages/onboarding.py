@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, Request
@@ -36,6 +35,8 @@ from kestrel.services import setup_state as ss
 from kestrel.services import tracks as tracks_svc
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import plain_error
+from kestrel.web.flash import flash_redirect
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -581,9 +582,10 @@ async def onboarding_save(request: Request, key: str):
 
         await _queue_recheck(targets)  # a first profile may release roles set aside before it
     except pe.ProfileEditError as exc:
-        problem = str(exc)
+        problem = plain_error(exc)
     except OSError as exc:
-        problem = f"Could not write profile.yml: {exc}"
+        log.warning("profile_write_failed", error_type=type(exc).__name__, error=str(exc))
+        problem = f"Could not write profile.yml: {plain_error(exc)}"
     if problem is None and form.get("_next"):
         nav_problem = await _advance_problem(key, form)
         if nav_problem is None:
@@ -716,25 +718,22 @@ async def onboarding_restart(request: Request):
     if choice != "clear":
         return HTMLResponse("Choose keep or clear.", status_code=400)
     if str(form.get("confirm") or "").strip() != "RESET":
-        msg = "Nothing was cleared: type RESET in the box to confirm."
-        return RedirectResponse(f"/settings?msg={quote(msg)}#system", status_code=303)
-    from kestrel.services.reset import reset_in_app
+        return flash_redirect("/settings", "reset_confirm_needed", "system")
+    from kestrel.services.reset import ResetBackupFailed, ResetBusy, reset_in_app
 
     keep_keys = "on" in form.getlist("keep_keys")
     try:
         result = await reset_in_app(sessionmaker(), keep_keys=keep_keys)
     except Exception as exc:  # the app is put back in reset_in_app's finally; say what happened
         log.warning("onboarding_reset_failed", error=f"{type(exc).__name__}: {exc}")
-        msg = str(exc) if isinstance(exc, RuntimeError) else (
-            f"The reset stopped part way ({type(exc).__name__}). Your backup is in "
-            "the Kestrel-backups folder beside your data folder."
+        code = {ResetBusy: "reset_busy", ResetBackupFailed: "reset_backup_failed"}.get(
+            type(exc), "reset_stopped"
         )
-        return RedirectResponse(f"/settings?msg={quote(msg)}#system", status_code=303)
+        return flash_redirect("/settings", code, "system")
     async with sessionmaker()() as s:
         await ob.restart(s)
         await s.commit()
     if result.failed:
-        msg = ("Kestrel was reset, but some files were in use and stayed: "
-               f"{', '.join(result.failed)}. Close them and they can be deleted by hand.")
-        return RedirectResponse(f"/onboarding?msg={quote(msg)}", status_code=303)
+        log.warning("onboarding_reset_files_in_use", files=list(result.failed))
+        return flash_redirect("/onboarding", "reset_files_in_use")
     return RedirectResponse("/onboarding", status_code=303)

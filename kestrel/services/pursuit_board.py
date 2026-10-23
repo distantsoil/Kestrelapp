@@ -234,6 +234,18 @@ def quiet_days(p: Pursuit, on: date | None = None) -> int | None:
     return max(1, (on - anchor).days)
 
 
+# The status a long-silent card moves to when the operator accepts the hint (no new status).
+GHOST_STATUS: dict[str, str] = {"employment": "ghosted", "consulting": "no_response"}
+
+
+def ghost_hint(p: Pursuit, on: date | None = None, *, days: int) -> int | None:
+    """Days of silence when a waiting card has been quiet for MORE than `days` (the configured
+    pursuits.ghosting_days), else None. The board offers to mark such a card ghosted; the move
+    itself is the operator's click through move_to_status, never automatic."""
+    quiet = quiet_days(p, on)
+    return quiet if quiet is not None and quiet > days else None
+
+
 def order_cards(pursuits: list[Pursuit], on: date | None = None) -> list[Pursuit]:
     """Overdue follow-ups first (most overdue first), then most recent activity first."""
     on = on or today()
@@ -259,9 +271,10 @@ async def move_to_status(
       applied_at if unset and, when the card has no next action, the "Applied?" default: a
       follow-up FOLLOW_UP_DAYS out, so a dragged card gets the same quiet badge and Today line
       as one moved with the button.
+    - Entering the applied status also queues the role's interview questions (P14), once.
     - Entering a closed status sets closed_at; leaving one clears it, so a reopened card is
       open again everywhere (Today, the quiet count)."""
-    from kestrel.db.enums import valid_pursuit_status
+    from kestrel.db.enums import APPLIED_OR_LATER, valid_pursuit_status
 
     if not valid_pursuit_status(p.track, to_status):
         return f"'{to_status}' is not a stage for {p.track} cards; nothing was changed."
@@ -281,6 +294,17 @@ async def move_to_status(
             start = parse_day(p.applied_at) or today()
             p.next_action = applied_status.next_action
             p.next_action_at = (start + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
+        # Likely interview questions for this role (P14, D-INTERVIEW-1): one queued task, only
+        # here, so a bulk import of past applications (applied_import) never fires a model call.
+        from kestrel.interview.question_task import request_interview_questions
+
+        await request_interview_questions(session, p.opportunity_id, p.id)
+    elif to_status in APPLIED_OR_LATER and to_status not in closed:
+        # A card dragged straight past Applied (to Screening or Interviewing) still gets its
+        # list; the request is once per role, so moving back and forth adds nothing.
+        from kestrel.interview.question_task import request_interview_questions
+
+        await request_interview_questions(session, p.opportunity_id, p.id)
     if to_status in closed:
         p.closed_at = p.closed_at or now
     elif was_closed:

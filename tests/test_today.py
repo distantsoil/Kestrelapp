@@ -428,15 +428,15 @@ def test_today_page_renders_review_act_schedule_and_asks():
     assert 'data-testid="today-overnight"' not in body and "today-next" not in body
     assert "Things to finish" in body and "Setup, when you have a minute" not in body
     review = body.split('data-testid="today-review"')[1].split('data-testid="today-act"')[0]
-    # a (strong), b (your call), d, and the open pursuits c and f; g's pursuit is closed, and e
+    # a (strong), b (your call) and d; c and f are Applied now (#37), g's pursuit is closed, and e
     # (a Tier 1 keep) is still being scored, which outranks its open pursuit.
-    assert ">5<small>roles worth a look</small>" in review
+    assert ">3<small>roles worth a look</small>" in review
     assert "1 strong fit, 1 your call." in review
     assert 'href="/opportunities"' in review and ">Open Pipeline<" in review
     # The top three by fit number, each with its word, and "2 more" (D-UI-60).
     top = review.split('data-testid="review-top"')[1].split("</div>")[0]
     assert top.count('class="review-row"') == 3 and 'data-fit="strong fit"' in top
-    assert 'data-testid="review-more">2 more<' in review
+    assert 'data-testid="review-more"' not in review  # exactly three roles: nothing more
     act = body.split('data-testid="today-act"')[1].split('data-testid="today-schedule"')[0]
     assert ">2<small>things to do</small>" in act
     assert "0 on your shortlist to apply to · 2 follow-ups due (VP of IT f, 30 days quiet)" in act
@@ -512,8 +512,10 @@ def _worth(track=None):
 def test_review_and_act_counts():
     asyncio.run(_seed())
     # Strong is 4.5 and up (kestrel.web.fit.STRONG_FLOOR): a at 4.6 is, d at 4.4 is a good fit.
-    # e is a Tier 1 keep with an open pursuit: still being scored, so not counted here yet.
-    assert _worth("employment") == {"n": 5, "strong": 1, "your_call": 1}
+    # e is a Tier 1 keep with an open pursuit: still being scored, so not counted here yet. c and
+    # f have open pursuits at `applied`: they sit in the Pipeline's Applied group, off the Review
+    # count (D-UI-51 amended, #37).
+    assert _worth("employment") == {"n": 3, "strong": 1, "your_call": 1}
     act = _act("employment")
     assert act["apply"] == 0 and act["follow_up"] == 2 and act["n"] == 2
     assert act["earliest"]["title"] == "VP of IT f" and act["earliest"]["days_quiet"] == 30
@@ -547,7 +549,7 @@ def test_worth_a_look_uses_the_highest_tier_evaluation_and_skips_hidden_roles():
         await s.commit()
 
     asyncio.run(_with_session(_more))
-    assert _worth("employment") == {"n": 4, "strong": 1, "your_call": 1}
+    assert _worth("employment") == {"n": 2, "strong": 1, "your_call": 1}
 
 
 def test_the_operator_label_moves_a_role_into_and_out_of_worth_a_look():
@@ -571,7 +573,7 @@ def test_the_operator_label_moves_a_role_into_and_out_of_worth_a_look():
         await s.commit()
 
     asyncio.run(_with_session(_label))
-    assert _worth("employment")["n"] == 5  # +m, -d (e is still being scored)
+    assert _worth("employment")["n"] == 3  # +m, -d (e is being scored; c, f are Applied)
 
 
 def test_today_with_an_empty_database_says_nothing_is_waiting():
@@ -796,8 +798,8 @@ def test_worth_a_look_counts_tier3_and_your_call_and_the_nav_badge_shares_it():
     async def _counts(s):
         return (await worth_a_look(s))["n"], (await _nav_counts(s))["shortlist"]
 
-    # a, b (your call), d and x, plus the open pursuits c and f (D-UI-51); e is being scored.
-    assert asyncio.run(_with_session(_counts)) == (6, 6)
+    # a, b (your call), d and x (D-UI-51); e is being scored, c and f are Applied (#37).
+    assert asyncio.run(_with_session(_counts)) == (4, 4)
 
 
 def test_a_past_interview_is_an_outcome_to_record_not_an_overdue_follow_up():

@@ -284,7 +284,9 @@ def test_mcp_switch_failure_is_a_plain_error_not_a_500(monkeypatch):
     with _client() as c:
         r = c.post("/settings/mcp", data={"enabled": "1"}, headers=HX)
     assert r.status_code == 200
-    assert "The MCP server could not be started: no loop for you" in r.text
+    # The exception text is logged, never shown (D-SEC-2): the type and a pointer to the log.
+    assert "The MCP server could not be started: an unexpected problem (RuntimeError)" in r.text
+    assert "no loop for you" not in r.text
 
 
 # ------------------------------------------------------------- finding 5: open run is active

@@ -3,6 +3,7 @@
   {% set t2 = activity.tasks.get('t2', {}) %}
   {% set em = activity.tasks.get('embed', {}) %}
   {% set sr = activity.tasks.get('scrape', {}) %}
+  {% for note in credit_notices or [] %}<div class="warnbox" role="status" data-testid="credit-notice" style="margin-bottom:.8rem">{{ note }}</div>{% endfor %}
   <div class="grid2">
     <div class="panel">
       <h2>Live queue</h2>

@@ -193,7 +193,9 @@ async def handle_t1(
 
         if not result.ok and not result.quarantined:
             # Transport/request error, not a structural failure: let the worker retry the task.
-            return HandlerOutcome("error", 1, error=result.error)
+            return HandlerOutcome(
+                "error", 1, error=result.error, out_of_credit=result.out_of_credit
+            )
 
         ev = Evaluation(
             opportunity_id=opp.id,

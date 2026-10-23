@@ -25,7 +25,6 @@ import asyncio
 import html
 import re
 from typing import Any
-from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, Request
@@ -40,6 +39,7 @@ from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
+from kestrel.web.flash import flash_redirect, flash_text
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -122,8 +122,8 @@ async def _system_partial(request: Request, state: ss.SetupState, **extra):
     )
 
 
-def _back_to_system(msg: str) -> RedirectResponse:
-    return RedirectResponse(f"/settings?msg={quote(msg)}#system", status_code=303)
+def _back_to_system(code: str) -> RedirectResponse:
+    return flash_redirect("/settings", code, "system")
 
 
 @router.get("/setup")
@@ -136,7 +136,7 @@ async def setup_page():
 
 @router.get("/settings/system", response_class=HTMLResponse)
 async def system_panel(request: Request):
-    msg = request.query_params.get("msg")
+    msg = flash_text(request.query_params.get("msg"))  # a known code only, never the raw text
     return await _system_partial(request, await setup_state(), message=msg)
 
 
@@ -157,30 +157,36 @@ async def setup_mode(request: Request):
         await s.commit()
     if request.headers.get("HX-Request"):
         return await _system_partial(request, await setup_state(), message=msg)
-    return _back_to_system(msg)
+    code = "mode_hosted_pending" if msg.startswith(ss.HOSTED_PENDING) else f"mode_{choice}"
+    return _back_to_system(code)
 
 
 @router.post("/setup/profile")
 async def setup_profile(request: Request):
     form = await request.form()
     name = str(form.get("profile") or "").strip()
+    # The Settings > Models panel swaps only a status line, and htmx never swaps a 4xx/5xx body,
+    # so its failures answer 200 with the message (#36 review); other callers keep the old codes.
+    from_models = form.get("from") == "models" and bool(request.headers.get("HX-Request"))
+
+    def _fail(text: str, code: int) -> HTMLResponse:
+        if from_models:
+            return HTMLResponse(f'<p role="status" class="bad">{text}</p>')
+        return HTMLResponse(text, status_code=code)
+
     try:
         await asyncio.to_thread(ss.record_profile, name)
     except KeyError as exc:
         # A fixed sentence with the submitted name, never the exception's own text (D-SEC-1).
         log.info("setup_profile_unknown", profile=name, error=str(exc))
-        return HTMLResponse(
-            f"Unknown hardware profile: {html.escape(name)}.", status_code=400
-        )
+        return _fail(f"Unknown hardware profile: {html.escape(name)}.", 400)
     except OSError as exc:
         log.warning("setup_profile_record_failed", error_type=type(exc).__name__, error=str(exc))
-        return HTMLResponse(
-            f"could not record the profile: {html.escape(plain_error(exc))}", status_code=500
-        )
+        return _fail(f"could not record the profile: {html.escape(plain_error(exc))}", 500)
     msg = f"Profile {name} recorded."
     if request.headers.get("HX-Request"):
         return await _system_partial(request, await setup_state(), message=msg)
-    return _back_to_system(msg)
+    return _back_to_system("profile_recorded")
 
 
 async def start_action(name: str) -> tuple[ss.SetupState, str | None, str | None]:
@@ -221,7 +227,8 @@ async def start_action(name: str) -> tuple[ss.SetupState, str | None, str | None
         try:
             ss.verify()
         except ss.ActionBusy as exc:
-            return state, f"Not started: {exc}.", "busy"
+            log.info("setup_action_busy", action=name, error=str(exc))
+            return state, f"Not started: {plain_error(exc)}.", "busy"
         return state, None, None
     if state.ollama_version is None:
         return state, (
@@ -239,7 +246,9 @@ async def start_action(name: str) -> tuple[ss.SetupState, str | None, str | None
                     return state, "Not started: download the models first.", "error"
                 await mt.queue_builds(s, state.profile, state.profile_reason)
     except (KeyError, ValueError, OSError) as exc:
-        return state, f"Not started: {exc}.", "error"
+        log.warning("setup_action_not_started", action=name, error_type=type(exc).__name__,
+                    error=str(exc))
+        return state, f"Not started: {plain_error(exc)}.", "error"
     return state, None, None
 
 

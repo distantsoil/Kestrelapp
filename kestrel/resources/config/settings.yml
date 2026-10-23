@@ -128,6 +128,7 @@ docs:
 
 liveness:
   cadence_days: 3
+  recheck_hours: 24
 
 notify:
   enabled: true

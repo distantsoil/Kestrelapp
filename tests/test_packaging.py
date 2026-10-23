@@ -519,7 +519,12 @@ def test_dmg_script_names_the_artifact_and_gates_signing():
     sh = (PACKAGING / "build_dmg.sh").read_text(encoding="utf-8")
     assert "set -euo pipefail" in sh
     assert "Kestrel-${VERSION}.dmg" in sh
-    assert "hdiutil create" in sh and "UDZO" in sh
+    # #40: hdiutil is deprecated on macOS 27. Probe for diskutil first, fall back to hdiutil.
+    assert "diskutil image create" in sh and "hdiutil create" in sh and "UDZO" in sh
+    code = _code(PACKAGING / "build_dmg.sh")  # comments cannot satisfy the order check
+    probe = code.index("diskutil image create --help")
+    assert probe < code.index("diskutil image create from") < code.index("hdiutil create")
+    assert "VERIFIED on macOS 27" in sh  # the diskutil path ran on a real macOS 27 host
     assert "ln -s /Applications" in sh
     assert "APPLE_SIGNING_IDENTITY" in sh and "UNSIGNED" in sh
     for var in ("APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_PASSWORD"):
@@ -654,3 +659,120 @@ def test_release_preflight_refuses_a_tag_that_already_has_a_release():
     assert "github.event_name == 'push'" in check["if"]
     assert "gh release view" in check["run"] and "exit 1" in check["run"]
     assert "GH_TOKEN" in check["env"]
+
+
+# ------------------------------------------------------------------------- tray icons (#39)
+_ORANGE_HEXES = ("EE8A4E", "C9551F", "D4622A")
+
+
+def test_mark_svgs_carry_no_retired_orange():
+    """Orange #D4622A is retired as a brand color (D-UI-53). The light tray mark still had the old
+    orange bird gradient, so the idle tray icon stayed orange."""
+    for name in ("kestrel-mark.svg", "kestrel-mark-light.svg"):
+        svg = (ROOT / "docs" / "images" / name).read_text(encoding="utf-8").upper()
+        for hex_ in _ORANGE_HEXES:
+            assert hex_ not in svg, f"{name} still contains {hex_}"
+
+
+def _is_orange(r: int, g: int, b: int) -> bool:
+    import colorsys
+
+    h, s, _v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return 10 <= h * 360 <= 30 and s > 0.4 and r > b + 60
+
+
+def test_the_orange_detector_flags_orange_and_spares_indigo_and_the_attention_red():
+    assert _is_orange(0xD4, 0x62, 0x2A) and _is_orange(0xEE, 0x8A, 0x4E)
+    assert not _is_orange(0x4F, 0x5B, 0xD5) and not _is_orange(0x7B, 0x86, 0xF0)
+    assert not _is_orange(0xB3, 0x26, 0x1E)  # the attention dot, hue about 3 degrees
+
+
+def test_tray_pngs_have_no_orange_pixel():
+    """Regenerate with `uv run python scripts/make_icons.py` after any change to the marks."""
+    from PIL import Image
+
+    icons = ROOT / "kestrel" / "resources" / "icons"
+    names = ("tray-idle.png", "tray-working.png", "tray-working_att.png")
+    for name in names:
+        im = Image.open(icons / name).convert("RGBA")
+        bad = [
+            px[:3]
+            for px in im.getdata()
+            if px[3] == 255 and _is_orange(px[0], px[1], px[2])
+        ]
+        assert not bad, f"{name} has {len(bad)} orange pixels, e.g. {bad[0]}"
+
+
+# ------------------------------------------------------ the embed model on a fresh clone (#41)
+def test_every_build_script_fetches_the_embed_model_before_pyinstaller():
+    """kestrel.spec refuses to build without kestrel/resources/embed_model/*, and the model is
+    never committed, so a fresh clone failed inside PyInstaller. Each local build script now
+    checks for it and fetches it first (release.yml already does)."""
+    for name, runner in (
+        ("build_dmg.sh", "PyInstaller packaging/kestrel.spec"),
+        ("build_appimage.sh", "PyInstaller packaging/kestrel.spec"),
+        ("build_windows.ps1", "PyInstaller packaging\\kestrel.spec"),
+    ):
+        text = _code(PACKAGING / name)
+        assert "fetch_embed_model.py" in text, name
+        assert "--check" in text.split("fetch_embed_model.py", 1)[1][:60], name
+        assert text.index("fetch_embed_model.py") < text.index(runner), name
+
+
+def test_releasing_doc_mentions_the_embed_model_for_local_builds():
+    doc = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+    local = doc.split("### Building locally", 1)[1].split("\n## ", 1)[0]
+    assert "fetch_embed_model.py" in local
+
+
+# ------------------------------------------------------------ the vendored AppImage runtime (#44)
+VENDORED_RUNTIME = PACKAGING / "linux" / "runtime-x86_64"
+
+
+def _runtime_pin() -> str:
+    sh = (PACKAGING / "build_appimage.sh").read_text(encoding="utf-8")
+    return re.search(r'^RUNTIME_SHA256="([0-9a-f]{64})"', sh, re.MULTILINE).group(1)
+
+
+def test_the_vendored_runtime_matches_the_pinned_hash():
+    """Upstream rebuilds its moving `continuous` asset, and every rebuild used to stop a Linux
+    release until someone looked at the new file. The reviewed runtime now lives in the repo; a
+    bump must change this file and RUNTIME_SHA256 together (docs/RELEASING.md)."""
+    import hashlib
+
+    data = VENDORED_RUNTIME.read_bytes()
+    assert data[:4] == b"\x7fELF"
+    assert hashlib.sha256(data).hexdigest() == _runtime_pin()
+
+
+def test_the_vendored_runtime_is_marked_binary_so_git_never_rewrites_it():
+    attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    rules = [ln.split() for ln in attrs if ln.strip() and not ln.lstrip().startswith("#")]
+    assert ["packaging/linux/runtime-x86_64", "binary"] in rules
+    # Last matching line wins, so the override has to come after the `* text=auto eol=lf` rule.
+    flat = [r[0] for r in rules]
+    assert flat.index("packaging/linux/runtime-x86_64") > flat.index("*")
+
+
+def test_appimage_resolves_the_runtime_override_then_vendored_then_download():
+    code = _code(PACKAGING / "build_appimage.sh")
+    override = code.index('if [ -n "${APPIMAGE_RUNTIME_FILE:-}" ]')
+    vendored = code.index('elif [ -f "$VENDORED_RUNTIME" ]')
+    download = code.index('curl -fsSL --retry 3 -o "$RUNTIME" "$RUNTIME_URL"')
+    assert override < vendored < download
+    # The vendored file is used only when its hash matches the pin; a stale one falls through.
+    assert "sha256sum -c --status" in code[vendored:download]
+
+
+def test_the_runtime_notice_carries_the_mit_text_and_travels_with_the_appimage():
+    notice = (PACKAGING / "linux" / "RUNTIME-NOTICE.txt").read_text(encoding="utf-8")
+    assert "type2-runtime" in notice and "MIT License" in notice
+    assert "Permission is hereby granted, free of charge" in notice
+    assert _runtime_pin() in notice  # says which runtime build it describes
+    assert "RUNTIME-NOTICE.txt" in _code(PACKAGING / "build_appimage.sh")  # copied into the AppDir
+
+
+def test_releasing_doc_explains_how_to_bump_the_vendored_runtime():
+    doc = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+    assert "packaging/linux/runtime-x86_64" in doc and "RUNTIME_SHA256" in doc
+    assert "RUNTIME-NOTICE.txt" in doc

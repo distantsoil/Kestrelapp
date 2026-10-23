@@ -91,6 +91,29 @@
   <h3>LinkedIn</h3>
   <p>Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a
   LinkedIn posting by hand.</p>
+  <h3 id="remoterocketship" data-testid="help-remoterocketship">RemoteRocketship (optional, paid)</h3>
+  <p><strong>What it is.</strong> An optional source for people who already pay for RemoteRocketship
+  with API access. Kestrel stays free; this source needs your own RemoteRocketship subscription and
+  is off until you add it.</p>
+  <p><strong>How to turn it on.</strong> Open <a href="/sources">Sources</a> and find the
+  RemoteRocketship card. Paste your key, choose Save key, then Turn on. Run now checks right away.
+  The key is kept in Kestrel's private key file on this computer, never in the source and never
+  shown again (only its last four characters). Turn off pauses the source.</p>
+  <p><strong>What Kestrel keeps.</strong> Only the link to each employer's own posting. The posting is
+  then read from the employer's site, or from the company's job board when it is one Kestrel
+  knows. Nothing from RemoteRocketship is stored: no titles, descriptions or company details, and
+  not the reply itself, which fits their terms limit of 24 hours.</p>
+  <p><strong>Daily limits.</strong> RemoteRocketship allows 500 requests or 3,000 jobs per UTC day.
+  Kestrel uses a few requests per scan (two by default, 50 jobs each). A link that cannot be read
+  from the employer is skipped and counted in the run.</p>
+  <p><strong>If something goes wrong.</strong> "Did not receive an API key" or "did not accept the API
+  key": paste the key again in the RemoteRocketship card. "Needs an active paid
+  subscription": your plan does not include API access. "Daily limit was reached": wait until 00:00
+  UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits
+  after the first page, the links from the earlier pages are still used; if it hits on the first
+  page, the run finds nothing and the next scan tries again.</p>
+  <p><strong>Filters.</strong> With no filters set on the source, Kestrel asks for your target titles
+  and onsite metros from your profile. Filters you write on the source replace them.</p>
   <h3>Region</h3>
   <p>{{ region_note }}</p>
   <h3>Need a board that is not listed?</h3>
@@ -138,10 +161,10 @@
     pipeline, check an application or your interview prep away from the desk. Nothing moves: the models, the
     database and the documents stay on this machine, which has to be running (in the window or
     the tray).</p>
-    <p>Turning it on means setting <span class="mono">server.bind_all</span> and sharing one
-    secret with each device, as described on <a href="/settings">Settings</a>, LAN &amp; backup
-    tab, together with what that secret does and does not protect. If you only use Kestrel at
-    this computer, leave it off.</p>
+    <p>Turning it on is a switch on <a href="/settings">Settings</a>, LAN &amp; backup tab. You
+    generate one shared secret, tick that you read what it does and does not protect, and turn the
+    switch on; it takes effect after you quit and reopen Kestrel. Then you share the secret with
+    each device. If you only use Kestrel at this computer, leave it off.</p>
   </div>
 
   <div class="panel">

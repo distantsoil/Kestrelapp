@@ -1,0 +1,54 @@
+AppImage runtime (type2-runtime)
+
+The Kestrel AppImage embeds the AppImage type 2 runtime, the small program at the start of every
+AppImage that mounts the payload with FUSE (or extracts it when FUSE is absent) and starts the app.
+It is vendored unmodified as packaging/linux/runtime-x86_64.
+
+  Project:  https://github.com/AppImage/type2-runtime
+  Built:    the `continuous` release asset runtime-x86_64, upstream commit fedfad5
+  SHA-256:  617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46
+  Size:     944,632 bytes
+  License:  MIT (the project's own code; the text follows)
+
+The runtime is a statically linked musl binary. Upstream's src/runtime/Makefile links it against
+squashfuse, zstd, zlib, libfuse3 and mimalloc, each distributed under its own license. Their source
+and license texts are in the upstream repository at the commit above and in the projects named. The
+exact source of this binary can be rebuilt from that commit (see BUILD.md upstream).
+
+------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2004-23 probonopd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The AppImage runtime executable contains statically linked code from
+the following third party libraries, which are licensed under
+the following terms:
+
+* musl libc, licensed under the terms of
+  https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT
+* libfuse, licensed under the terms of
+  https://github.com/libfuse/libfuse/blob/master/LGPL2.txt
+* squashfuse, licensed under the terms of
+  https://github.com/vasi/squashfuse/blob/master/LICENSE
+* libzstd, licensed under the terms of
+  https://github.com/facebook/zstd/blob/dev/LICENSE
+* zlib, licensed under the terms of
+  https://zlib.net/zlib_license.html

@@ -32,6 +32,7 @@ from sqlalchemy import select
 
 from kestrel.analytics.progress import model_label, tier2_label, tier2_pace_seconds
 from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine
+from kestrel.llm import credit
 from kestrel.pipeline._shared import derived_num_ctx
 from kestrel.pipeline.profile import load_profile
 from kestrel.queue.rescore import MAX_ROLES, enqueue_rescore, parse_ids
@@ -89,7 +90,7 @@ async def _hosted_models(settings) -> tuple[str, str | None, list, list, dict, s
     try:
         raw = await hm.fetch_models(name, backend)
     except hm.ModelListError as exc:
-        return label, name, [], [], {}, str(exc)
+        return label, name, [], [], {}, plain_error(exc)
     raw = [m for m in raw if (m.json_mode or "schema") in _JSON_MODES]
     picker = hm.picker_models(raw)
     reasons = {m.id: why for m in picker if (why := hm.block_reason(m, _TIER, backend))}
@@ -281,6 +282,7 @@ async def _count_retry(session, quarantine_id: str, queued: list[int]) -> None:
 
 @router.post("/rescore", response_class=HTMLResponse)
 async def rescore(request: Request):
+    credit.clear()  # Score again is what the out-of-credit message tells the operator to use
     form = await request.form()
     ids = parse_ids([str(v) for v in form.getlist("opp_ids")])
     pick = str(form.get("model") or "same").strip()[:240]

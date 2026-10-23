@@ -135,6 +135,11 @@ async def settings_page(request: Request):
 
         update_last_checked = format_last_checked((await updater.load_state(s)).last_checked_at)
     lan_secret = secret_row.value if secret_row and isinstance(secret_row.value, str) else None
+    from kestrel.services import lan_access
+
+    lan = lan_access.state(
+        running_on=getattr(request.app.state, "bind_all", None), has_secret=bool(lan_secret)
+    )
     ctx = {
         "title": "Settings",
         "query": dict(request.query_params),
@@ -142,6 +147,8 @@ async def settings_page(request: Request):
         "preview": preview,
         "calibrations": calibrations,
         "lan_secret": lan_secret,
+        "lan_secret_html": _lan_join_html(lan_secret, request) if lan_secret else "",
+        "lan": lan,
         "data_dir": str(paths.data_dir()),
         "confidential_inert": conf_inert,
         "confidential_employers": [e for e in employers if not e["inferred"]],
@@ -354,7 +361,7 @@ async def restore_from_upload(request: Request):
                 # with every request on uvicorn's one loop, so they run in a thread.
                 result = await asyncio.to_thread(restore_backup, tmp_zip)
         except InvalidBackupError as exc:
-            return HTMLResponse(f'<div class="warnbox">{html.escape(str(exc))}</div>')
+            return HTMLResponse(f'<div class="warnbox">{html.escape(plain_error(exc))}</div>')
         except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
             log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
             return HTMLResponse(
@@ -396,6 +403,73 @@ async def restore_from_upload(request: Request):
     )
 
 
+def _copy_row(value: str, *, code_testid: str, button_testid: str, label: str) -> str:
+    """A value shown as selectable text with a one-click Copy beside it (#26). Escaped for both
+    the text and the attribute. Deliberately not an anchor: the join URL carries the secret, and a
+    click would land it in the desktop browser's history (D-UI-79)."""
+    safe = html.escape(value, quote=True)
+    return (
+        '<div class="copyrow">'
+        f'<code class="mono" data-testid="{code_testid}">{safe}</code>'
+        f'<button type="button" class="btn ghost small" data-testid="{button_testid}" '
+        f'data-path="{safe}" @click="navigator.clipboard.writeText($el.dataset.path)" '
+        f'title="Copy {label}">Copy</button></div>'
+    )
+
+
+def _lan_partial(request: Request, lan, note: str | None = None, *, ok: bool = True):
+    return templates().TemplateResponse(
+        request, "partials/lan_bind.html", {"lan": lan, "lan_note": note, "lan_ok": ok}
+    )
+
+
+@router.post("/settings/lan/bind", response_class=HTMLResponse)
+async def lan_bind(request: Request):
+    """Turn LAN access on or off (#27, D-SEC-3) by writing server.bind_all to the user's
+    settings.yml, where the bind address and both browser guards read it. It takes effect after a
+    restart. Only a request from this machine may change it, even one carrying the shared key;
+    enabling needs an existing shared secret and the acknowledgement; every refusal is a line on the
+    panel and changes nothing."""
+    from kestrel.services import lan_access
+    from kestrel.web.auth import is_loopback
+
+    if not is_loopback(request):
+        return HTMLResponse("LAN access can only be changed from this computer.", status_code=403)
+    form = await request.form()
+    want_on = str(form.get("bind_all") or "") == "on"
+    async with sessionmaker()() as s:
+        secret_row = await s.get(Setting, SHARED_SECRET_KEY)
+    has_secret = bool(secret_row and isinstance(secret_row.value, str) and secret_row.value)
+    running = getattr(request.app.state, "bind_all", None)
+
+    def view():
+        return lan_access.state(running_on=running, has_secret=has_secret)
+
+    if want_on:
+        if not has_secret:
+            return _lan_partial(
+                request, view(),
+                "Generate the shared secret first.", ok=False,
+            )
+        if str(form.get("ack") or "") != "on":
+            return _lan_partial(
+                request, view(),
+                "Tick the box to turn it on.", ok=False,
+            )
+    try:
+        lan_access.set_bind_all(want_on)
+    except lan_access.LanAccessError as exc:
+        return _lan_partial(request, view(), plain_error(exc), ok=False)
+    after = view()
+    note = "Takes effect after restart."
+    if after.env_name and after.effective_on != want_on:
+        note += (
+            f" The environment variable {after.env_name} is set to {after.env_value} and wins "
+            "over this switch until you remove it."
+        )
+    return _lan_partial(request, after, note)
+
+
 @router.post("/settings/lan/secret", response_class=HTMLResponse)
 async def generate_secret(request: Request):
     """Generate (or rotate) the LAN shared secret and show the QR a phone can scan to join.
@@ -405,7 +479,7 @@ async def generate_secret(request: Request):
     device holding the previous key, which is the only revocation mechanism a single shared
     credential can offer.
     """
-    from kestrel.web.auth import generate_key, join_url, lan_host_ip, qr_svg, set_cached_key
+    from kestrel.web.auth import generate_key, set_cached_key
 
     token = generate_key()
     async with sessionmaker()() as s:
@@ -416,30 +490,44 @@ async def generate_secret(request: Request):
     # Everything past this point is presentation. The rotation is already committed, so a failure
     # here must still show the operator the new secret: 500ing after a commit would lock out every
     # joined device AND withhold the key needed to rejoin.
+    return HTMLResponse(_lan_join_html(token, request))
+
+
+def _lan_join_html(token: str, request: Request) -> str:
+    """The secret block: QR, secret with Copy, join link as text with Copy. One renderer for the
+    Settings page on load and for the Generate/Rotate response, so the two always match (#26)."""
+    from kestrel.web.auth import join_url, lan_host_ip, qr_svg
+
     try:
         host = lan_host_ip()
         port = request.url.port or 8765
     except (ValueError, OSError):
         host, port = None, 8765
+    secret_row = _copy_row(
+        token, code_testid="lan-secret", button_testid="copy-secret", label="the secret"
+    )
     if host is None:
-        return HTMLResponse(
-            f'<code class="mono">{html.escape(token)}</code>'
+        return (
+            f"{secret_row}"
             '<p class="muted">No LAN address was detected, so there is no join link to show. '
             "Pass the key as the X-Kestrel-Key header.</p>"
         )
     url = join_url(host, port, token)
     svg = qr_svg(url)
     qr_block = (
-        f'<div style="margin:.6rem 0">{svg}</div>'
+        f'<div class="qr" data-testid="lan-qr">{svg}</div>'
         if svg
         else '<p class="muted">QR rendering is unavailable; use the link below.</p>'
     )
-    return HTMLResponse(
-        f'<code class="mono">{html.escape(token)}</code>'
+    url_row = _copy_row(
+        url, code_testid="join-url", button_testid="copy-join-url", label="the join link"
+    )
+    return (
+        f"{secret_row}"
         f"{qr_block}"
-        f'<p class="muted">Scan this on a phone that is on the same network, or open '
-        f'<span class="mono">{html.escape(url)}</span> once. Any device holding the previous key '
-        f"has just been locked out.</p>"
+        '<p class="muted">Scan with a phone on the same network, or paste the link into its '
+        "browser once.</p>"
+        f"{url_row}"
     )
 
 
@@ -541,6 +629,13 @@ async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dic
     extra.setdefault("free_ids", {m.id for m in prov.free_models(models)})
     # The checkbox shows the standing choice (the last Connect's), not an empty box each time.
     extra.setdefault("free_only", settings.llm.hosted_mode.free_only)
+    # #29: the Always show my OpenRouter balance choice, offered only with an OpenRouter key saved.
+    from kestrel.services import hosted_balance
+
+    extra["show_balance"] = await hosted_balance.show_balance_enabled(session)
+    extra["openrouter_key_present"] = any(
+        b["provider"] == "openrouter" and b["key_present"] for b in backends.values()
+    )
     # "setup" when the operator came from the Setup page's step 6 (D-UI-11): the partial then
     # carries the value through its forms and offers "Return to setup" once connected.
     extra["return_to"] = _return_to(extra.get("return_to"))
@@ -619,7 +714,7 @@ async def hosted_save_key(request: Request):
         try:
             prov.write_secret(backend.api_key_env, value)
         except ValueError as exc:
-            ctx = await _hosted_ctx(s, settings, message=str(exc), ok=False, return_to=back)
+            ctx = await _hosted_ctx(s, settings, message=plain_error(exc), ok=False, return_to=back)
             return _hosted_partial(request, ctx)
         settings = await load_settings_with_db(s)
         label = _backend_label(backend_name)
@@ -672,7 +767,7 @@ async def _keybox_op(op: str, backend, label: str, value: str) -> dict:
         try:
             prov.write_secret(backend.api_key_env, "")
         except ValueError as exc:
-            return {"ok": False, "text": f"The {label} key was not removed: {exc}."}
+            return {"ok": False, "text": f"The {label} key was not removed: {plain_error(exc)}."}
         return {"ok": True, "text": f"{label} key removed."}
     if not value and not saved:
         return {"ok": False, "text": f"Paste your {label} key first."}
@@ -683,7 +778,7 @@ async def _keybox_op(op: str, backend, label: str, value: str) -> dict:
         try:
             prov.write_secret(backend.api_key_env, value)
         except ValueError as exc:
-            return {"ok": False, "text": f"The {label} key was not saved: {exc}."}
+            return {"ok": False, "text": f"The {label} key was not saved: {plain_error(exc)}."}
         tail = key_tail(backend.model_copy(update={"api_key": value}))
         ending = f", ending in {tail}" if tail else ""  # a key of 8 or fewer shows none of it
         return {"ok": True, "text": f"{label} key saved{ending}. Press Test "
@@ -731,7 +826,9 @@ async def hosted_test(request: Request):
             try:
                 models = prov.models_fit_for_tier3(await prov.list_models(backend), backend)
             except (RuntimeError, ValueError, KeyError) as exc:
-                model_error = f"{type(exc).__name__}: {exc}"
+                log.info("hosted_models_list_failed", backend=backend_name,
+                         error_type=type(exc).__name__, error=str(exc))
+                model_error = f"{type(exc).__name__}: {plain_error(exc)}"
         if free_only:
             # Zero-priced for both prompt and completion. Only OpenRouter reports pricing, so
             # on any other backend this filter empties the list and the partial says so.
@@ -790,6 +887,36 @@ async def hosted_connect(request: Request):
             return_to=back,
             **extra,
         )
+    return _hosted_partial(request, ctx)
+
+
+@router.post("/settings/hosted/balance", response_class=HTMLResponse)
+async def hosted_balance_toggle(request: Request):
+    """Always show my OpenRouter balance (#29, D-BYOK-12): a stored choice that lets the sidebar
+    ask OpenRouter for the key's remaining credit even when free models only is on. Off by
+    omission: an unticked box posts nothing."""
+    from kestrel.services import hosted_balance
+
+    form = await request.form()
+    on = str(form.get("show_balance") or "") == "on"
+    from sqlalchemy.exc import SQLAlchemyError
+
+    async with sessionmaker()() as s:
+        try:
+            await hosted_balance.set_show_balance(s, on)
+            await s.commit()
+            ok = True
+            msg = (
+                "The sidebar will show your OpenRouter balance."
+                if on
+                else "The sidebar shows your balance only when you are not on free models only."
+            )
+        except SQLAlchemyError as exc:  # a write path never 500s
+            log.warning("show_balance_save_failed", error_type=type(exc).__name__, error=str(exc))
+            await s.rollback()
+            ok, msg = False, f"Could not save that choice: {plain_error(exc)}"
+        settings = await load_settings_with_db(s)
+        ctx = await _hosted_ctx(s, settings, ok=ok, message=msg)
     return _hosted_partial(request, ctx)
 
 
@@ -1042,6 +1169,33 @@ def _ledger_partial(request: Request, ctx: dict) -> HTMLResponse:
     return templates().TemplateResponse(request, "partials/learning_ledger.html", ctx)
 
 
+@router.get("/settings/models", response_class=HTMLResponse)
+async def models_panel(request: Request):
+    """Settings > Models (#36): the effective model per tier, the hardware profile select and a
+    loader for the hosted overrides panel. Read-only: every change posts to a route the Models or
+    System page already owns (/setup/profile, /models/hosted/overrides)."""
+    from kestrel.llm import profiles
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    effective = []
+    for tier, cfg in sorted(settings.llm.tiers.items()):
+        backend = settings.llm.backends.get(cfg.backend)
+        external = bool(backend and backend.external)
+        label = next(
+            (p["label"] for p in prov.PRESETS.values() if p["backend"] == cfg.backend), cfg.backend
+        )
+        effective.append(
+            {"tier": tier, "model": cfg.model, "external": external, "provider": label}
+        )
+    ctx = {
+        "effective": effective,
+        "profile_names": profiles.load_catalog().names(),
+        "active_profile": _active_profile_name(),
+    }
+    return templates().TemplateResponse(request, "partials/settings_models.html", ctx)
+
+
 @router.get("/settings/learning", response_class=HTMLResponse)
 async def learning_ledger(request: Request):
     async with sessionmaker()() as s:
@@ -1281,6 +1435,6 @@ async def mcp_switch(request: Request):
         except Exception as exc:
             log.warning("mcp_switch_failed", on=on, error=f"{type(exc).__name__}: {exc}")
             message, ok = ("The MCP server could not be "
-                           f"{'started' if on else 'stopped'}: {exc}"), False
+                           f"{'started' if on else 'stopped'}: {plain_error(exc)}"), False
         ctx = await _mcp_ctx(s, message=message, ok=ok)
     return templates().TemplateResponse(request, "partials/mcp_switch.html", ctx)

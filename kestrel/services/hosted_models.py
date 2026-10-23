@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.config import BackendConfig, HostedModelCaps, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
+from kestrel.errors import UserFacingError
 from kestrel.llm import providers as prov
 from kestrel.llm.service_name import service_name
 from kestrel.services.setting_overrides import (
@@ -63,7 +64,7 @@ _cache: dict[tuple[str, str, str], tuple[float, list[prov.ModelInfo]]] = {}
 STATE_LOCK = asyncio.Lock()
 
 
-class ModelListError(RuntimeError):
+class ModelListError(UserFacingError, RuntimeError):
     """The provider's model list could not be fetched; the message is shown to the operator."""
 
 

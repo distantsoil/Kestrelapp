@@ -33,6 +33,9 @@ class HandlerOutcome:
     needs_review: bool = False
     quarantined: bool = False
     error: str | None = None
+    # The online key is out of credit (D-LLM-8): the worker puts the task back unstarted rather
+    # than failing it, and stops leasing for that tier until sends can resume.
+    out_of_credit: bool = False
 
 
 @cache
@@ -217,16 +220,20 @@ async def run_prompt_hosted(
     opportunity_id: int | None = None,
     on_quarantine: QuarantineHook | None = None,
     master_id: int | None = None,
+    schema: dict | None = None,
 ) -> GuardResult:
     """guard.run_prompt with the Hosted mode plan applied first (SPEC.md 6.4): the one path for
     every prompt outside the Tier 1/2/docsel handlers (tier3 work, trigger classification) so a
     tier routed to a hosted backend redacts the confidential employer before the send and is
     refused (a quarantine row with attempts=0, never a rejection) when there is nothing to
     redact with. A local tier passes straight through. Reads the plan off `client.settings`, the
-    settings the call will actually be made with."""
+    settings the call will actually be made with. `schema` is a per-call JSON schema (the P3 and
+    P13 pattern: enums of real ids); `spec.model_cls` must then be the matching per-call model."""
     settings = getattr(client, "settings", None)
     if settings is None:  # a test double with no settings: it cannot be routed anywhere hosted
-        return await run_prompt(client, spec, messages, on_quarantine=on_quarantine)
+        return await run_prompt(
+            client, spec, messages, schema=schema, on_quarantine=on_quarantine
+        )
     plan = await plan_hosted_send(session, settings, spec.tier, master_id=master_id)
     if plan.refuse:
         tcfg = client.settings.llm.tiers.get(spec.tier)
@@ -240,7 +247,9 @@ async def run_prompt_hosted(
         )
         return GuardResult(ok=False, quarantined=True, error=plan.refuse)
     sent, book = encode_send(messages, plan.mapping)
-    return await run_prompt(client, spec, sent, on_quarantine=on_quarantine, reply_filter=book)
+    return await run_prompt(
+        client, spec, sent, schema=schema, on_quarantine=on_quarantine, reply_filter=book
+    )
 
 
 def record_refusal(

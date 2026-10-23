@@ -370,6 +370,21 @@ them specific rather than generic), and any known panel members from `contact`.
 Renders to PDF via the same pipeline. Practically, this is what the operator reads on the
 morning of the interview.
 
+**Interview questions on Applied (P14, D-INTERVIEW-1).** When the operator marks a role Applied,
+a queued `interview_questions` task asks the Tier 2 model for a focused list of likely questions
+for that role (`PROMPTS.md` P14), each optionally linked to one of the operator's real stories
+and proof points by id. **`interview_question_set`** — `id`, `opportunity_id`, `pursuit_id`,
+`prompt_version`, `questions` json, `created_at`, `superseded_at` nullable; one active set (null
+`superseded_at`) per pursuit. The trigger is the applied branch of `move_to_status` only, so
+every way of marking Applied (the verb button, the stage select, a drag, an offer) fires it once;
+a bulk import of past applications does not. Regenerating writes a new set and supersedes the old
+one only after the new one validates.
+
+Once a set exists it **supersedes Block F for that role**: the prep pack, the mock interview's
+first question and the debrief's predicted-vs-asked hit rate use the P14 set. Block F stays the
+source for roles that are not Applied and for any Applied role with no set yet (the task has not
+run, or its reply was quarantined).
+
 ### 3.3 Mock interview
 
 A conversational loop, not a document.
@@ -392,7 +407,8 @@ After a real interview the operator captures a debrief: what was asked, what wen
 not, who was in the room, next steps, and read on the role. This writes `interaction` rows,
 updates `pursuit`, adds any newly discovered contacts, and **feeds the learning loop as outcome
 data** (§5.6). Questions actually asked are compared against questions predicted, and the hit
-rate is reported in analytics — a direct measure of whether Block F is any good.
+rate is reported in analytics — a direct measure of whether the predicted questions (the P14
+set when present, else Block F) are any good.
 
 ---
 
@@ -662,10 +678,19 @@ starts on day one regardless.
 A `liveness` task re-fetches the URL of every shortlisted and applied opportunity on a cadence
 (default every 3 days).
 
-- HTTP 404 or 410 → `closed`
-- Page text matching "no longer accepting", "position filled", "this job is closed" → `closed`
-- ATS API no longer returning the id → `closed`
-- Otherwise → `live`, timestamp updated
+An *expired read* is any of:
+
+- HTTP 404 or 410 (`http_404`, `http_410`)
+- Page text matching "no longer accepting", "position filled", "this job is closed" (`page_text`)
+- ATS API no longer returning the id (`ats_missing`; reserved, not implemented)
+
+**A posting closes only on the second consecutive expired read** (D-INTEL-1). The first expired
+read sets `liveness_strikes` to 1, leaves `liveness` unchanged and stamps `liveness_checked_at`;
+the row is read again after `liveness.recheck_hours` (default 24) instead of the cadence. The
+second consecutive expired read sets `closed`, stores the `closed_reason`, and raises the
+notification, which states the reason in plain words. A live read resets `liveness_strikes` to 0
+and clears `closed_reason`. A transient failure (5xx, 429, 403, a network error) changes neither
+the state nor the strike count. Otherwise → `live`, timestamp updated.
 
 A shortlisted opportunity going closed raises a notification. Prevents preparing for something
 that no longer exists, and the close date is useful data for the ghost model.

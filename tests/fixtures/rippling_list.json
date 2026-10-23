@@ -1,0 +1,54 @@
+[
+  {
+    "uuid": "3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1001",
+    "name": " Account Executive, Mid-Market (Austin) ",
+    "department": {
+      "id": "Sales",
+      "label": "Sales"
+    },
+    "url": "https://ats.rippling.com/northwind/jobs/3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1001",
+    "workLocation": {
+      "label": "TX",
+      "id": "TX"
+    }
+  },
+  {
+    "uuid": "3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1002",
+    "name": " Support Engineer ",
+    "department": {
+      "id": "Support",
+      "label": "Support"
+    },
+    "url": "https://ats.rippling.com/northwind/jobs/3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1002",
+    "workLocation": {
+      "label": "Raleigh, NC",
+      "id": "Raleigh, NC"
+    }
+  },
+  {
+    "uuid": "3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1002",
+    "name": " Support Engineer ",
+    "department": {
+      "id": "Support",
+      "label": "Support"
+    },
+    "url": "https://ats.rippling.com/northwind/jobs/3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1002",
+    "workLocation": {
+      "label": "Remote (Dallas, Texas, US)",
+      "id": "Remote (Dallas, Texas, US)"
+    }
+  },
+  {
+    "uuid": "3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1003",
+    "name": " Data Science Intern - Summer 2027 ",
+    "department": {
+      "id": "Engineering",
+      "label": "Engineering"
+    },
+    "url": "https://ats.rippling.com/northwind/jobs/3f6c1a52-7d0e-4b8a-9c21-5a0d2e7b1003",
+    "workLocation": {
+      "label": "Austin, TX",
+      "id": "Austin, TX"
+    }
+  }
+]

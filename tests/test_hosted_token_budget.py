@@ -136,3 +136,134 @@ def test_reasoning_off_retry_quarantines_with_the_raw_reply_and_the_right_reason
 @pytest.mark.parametrize("tier", ["tier1", "tier2"])
 def test_every_required_hosted_tier_has_a_default(tier):
     assert HOSTED_MAX_TOKENS[tier] > get_settings().llm.tiers[tier].max_tokens
+
+
+# ------------------------------------------------------------- WP-10 (#33): cut-off replies
+_CUT = '{"verdict": "keep", "confidence": 0.8, "reason": "plausible, a senior role with scope'
+_OK = json.dumps({"verdict": "keep", "confidence": 0.8, "reason": "plausible",
+                  "signals": ["level_match"]})
+
+
+def _reply(content: str, finish: str = "length", *, prompt: int = 900, cost: float = 0.01):
+    return Response(200, json={
+        "choices": [{"finish_reason": finish, "message": {"content": content}}],
+        "usage": {"prompt_tokens": prompt, "completion_tokens": 700, "cost": cost},
+    })
+
+
+def _sent(route, i: int) -> int:
+    return json.loads(route.calls[i].request.content)["max_tokens"]
+
+
+def _guard(settings, **kw):
+    return asyncio.run(run_guarded(
+        LLMClient(settings), tier="tier1", messages=MSG, model_cls=P1Triage, max_tokens=300, **kw
+    ))
+
+
+@respx.mock
+def test_a_cut_off_reply_is_retried_once_with_twice_the_budget(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    route = respx.post(OR_URL).mock(side_effect=[_reply(_CUT), _reply(_OK, "stop")])
+    res = _guard(_hosted())
+    assert res.ok and route.call_count == 2
+    assert _sent(route, 0) == 1200 and _sent(route, 1) == 2400  # the floor, then doubled
+    # It is not the schema repair: that attempt is still unspent, and the reply was not repaired.
+    assert res.repaired is False
+    # Both attempts were billed, so both are in the record.
+    assert res.prompt_tokens == 1800 and res.completion_tokens == 1400
+    assert res.cost_usd == pytest.approx(0.02)
+
+
+@respx.mock
+def test_the_length_retry_does_not_use_up_the_schema_repair(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    bad = '{"verdict": "keep"}'  # complete JSON that fails the schema
+    route = respx.post(OR_URL).mock(
+        side_effect=[_reply(_CUT), _reply(bad, "stop"), _reply(_OK, "stop")]
+    )
+    res = _guard(_hosted())
+    assert res.ok and res.repaired and route.call_count == 3
+    assert _sent(route, 1) == 2400 and _sent(route, 2) == 2400  # the repair keeps the larger budget
+
+
+@respx.mock
+def test_a_second_cut_off_quarantines_naming_the_limit_with_the_raw_reply(monkeypatch):
+    from kestrel.web.fit import failure_words
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    route = respx.post(OR_URL).mock(side_effect=[_reply(_CUT)] * 6)
+    seen: dict = {}
+
+    async def hook(_messages, raw, reason, _model):
+        seen.update(raw=raw, reason=reason)
+
+    res = _guard(_hosted(), on_quarantine=hook)
+    assert route.call_count == 2  # one retry, never more
+    assert not res.ok and res.quarantined and res.raw
+    assert "max_tokens 2400" in seen["reason"] and "retried once" in seen["reason"]
+    assert seen["raw"] and failure_words(seen["reason"]) == "the reply ran out of room"
+    assert res.prompt_tokens == 1800  # both attempts billed
+
+
+@respx.mock
+def test_the_retry_budget_stops_at_the_models_context_minus_the_input(monkeypatch):
+    from kestrel.config import HostedModelCaps
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    s = _hosted()
+    s.llm.hosted_model_caps["nvidia/nemotron:free"] = HostedModelCaps(context_length=3000)
+    route = respx.post(OR_URL).mock(side_effect=[_reply(_CUT), _reply(_OK, "stop")])
+    assert _guard(s).ok
+    assert _sent(route, 1) == 3000 - 900  # not 2400: that would overrun the window
+    # No room at all (window minus input is below what was already asked): quarantine at once.
+    respx.reset()
+    s.llm.hosted_model_caps["nvidia/nemotron:free"] = HostedModelCaps(context_length=2000)
+    route = respx.post(OR_URL).mock(side_effect=[_reply(_CUT), _reply(_OK, "stop")])
+    res = _guard(s)
+    assert route.call_count == 1 and res.quarantined
+
+
+@respx.mock
+def test_length_retry_and_reasoning_off_reask_are_each_bounded(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    # An empty cut-off (reasoning spent the budget) gets the reasoning-off re-ask; a partial
+    # reply after that gets the one length retry; a third cut-off quarantines. Three calls, ever.
+    route = respx.post(OR_URL).mock(side_effect=[_reply("")] + [_reply(_CUT)] * 8)
+    res = _guard(_hosted())
+    assert route.call_count == 3 and res.quarantined
+
+
+@respx.mock
+def test_an_external_tier_in_local_mode_gets_the_hosted_floor(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    s = get_settings().model_copy(deep=True)
+    s.llm.hosted_mode.enabled = True
+    s.llm.hosted_mode.acknowledged_at = "2026-10-15T00:00:00Z"
+    s.llm.hosted_mode.acknowledged_terms = s.llm.hosted_mode.disclosure_terms()
+    s.llm.tiers["tier1"] = TierConfig(backend="frontier", model="vendor/m", max_tokens=300)
+    assert s.llm.mode == "local"
+    ok = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}], "usage": {}}
+    route = respx.post(OR_URL).mock(return_value=Response(200, json=ok))
+    asyncio.run(LLMClient(s).complete(tier="tier1", messages=MSG, max_tokens=300))
+    assert json.loads(route.calls[0].request.content)["max_tokens"] == HOSTED_MAX_TOKENS["tier1"]
+    # A local backend keeps the prompt's own cap, and the frontier tier its own budget.
+    assert LLMClient(s)._external_floor("tier1", s.llm.backends["local"]) is None
+    assert LLMClient(s)._external_floor("frontier", s.llm.backends["frontier"]) is None
+
+
+@respx.mock
+def test_a_cut_off_reply_on_a_local_model_is_not_retried_larger():
+    # A local model's num_ctx is sized per tier (SPEC 8.2): a doubled output budget could push the
+    # prompt past it, and Ollama truncates silently. A local cut-off quarantines at once instead.
+    s = get_settings().model_copy(deep=True)
+    assert s.llm.mode == "local"
+    route = respx.post(url__regex=r".*/chat/completions$").mock(
+        side_effect=[_reply(_CUT), _reply(_OK, "stop")]
+    )
+    res = asyncio.run(run_guarded(
+        LLMClient(s), tier="tier1", messages=MSG, model_cls=P1Triage, max_tokens=300
+    ))
+    assert route.call_count == 1
+    assert res.quarantined and not res.ok
+    assert "already retried" not in (res.error or "")
