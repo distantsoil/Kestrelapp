@@ -88,6 +88,10 @@ PR branch runs CI. So CI confirms; it does not discover.
 - A warning in any CI or release log (a deprecated runtime, an annotation, a resource warning)
   becomes a failing local test in the same PR, not a note for later.
 - Windows-only behavior is the one thing the Windows CI job still has to prove; say so in the PR.
+- Static analysis runs first, not last: open the public draft PR at the start of a review cycle
+  so free CodeQL and CI report before model reviews. Write code an analyzer can prove safe
+  (server-rendered links, DOMParser text, `|tojson`/`xmlattr`), and verify each fix with the
+  tool that flagged it.
 
 ---
 
