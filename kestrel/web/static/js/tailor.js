@@ -230,7 +230,7 @@
   /* The PDF is fetched, so an error (no browser to make it, a missing file) is a message on this
      page and never replaces the app with an error line or saves it as a resume. */
   function saveFrom(url, name) {
-    if (!root.fetch) { root.location.href = url; return; }
+    if (!root.fetch) return;  // every supported webview has fetch
     root.fetch(url, { credentials: 'same-origin' }).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (t) {

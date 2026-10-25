@@ -426,7 +426,60 @@ class Amount:
 
 
 # No match may start inside a run of digits, commas or dots, so the scan is linear.
-_NUM = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?|\.\d+)\s*([km])?(?![a-z])")
+def _num_ends(s: str, i: int) -> list[int]:
+    """Where a figure starting at i may end, in the order the old pattern tried them."""
+    n = len(s)
+    if s[i] == ".":
+        j = i + 1
+        while j < n and s[j].isdecimal():
+            j += 1
+        return list(range(j, i + 1, -1))
+    run = i + 1
+    while run < n and (s[run].isdecimal() or s[run] == ","):
+        run += 1
+    ends: list[int] = []
+    for e in range(run, i, -1):
+        if e + 1 < n and s[e] == "." and s[e + 1].isdecimal():
+            d = e + 1
+            while d < n and s[d].isdecimal():
+                d += 1
+            ends.extend(range(d, e + 1, -1))
+        ends.append(e)
+    return ends
+
+
+def _find_numbers(s: str) -> list[tuple[str, str]]:
+    """Money figures in `s` as (digits, unit) pairs: a number with commas and an optional decimal
+    part, then an optional k or m not followed by another letter. A hand-written scan rather
+    than a regex, so any pasted text is read in bounded time."""
+    out: list[tuple[str, str]] = []
+    n, i = len(s), 0
+    while i < n:
+        c = s[i]
+        starts = c.isdecimal() or (c == "." and i + 1 < n and s[i + 1].isdecimal())
+        if not starts or (i and (s[i - 1].isdecimal() or s[i - 1] in ",.")):
+            i += 1
+            continue
+        found = None
+        for e in _num_ends(s, i):
+            ws = e
+            while ws < n and s[ws].isspace():
+                ws += 1
+            for w in range(ws, e - 1, -1):
+                if w < n and s[w] in "km" and not (w + 1 < n and "a" <= s[w + 1] <= "z"):
+                    found = (s[i:e], s[w], w + 1)
+                elif not (w < n and "a" <= s[w] <= "z"):
+                    found = (s[i:e], "", w)
+                if found:
+                    break
+            if found:
+                break
+        if found is None:
+            i += 1
+            continue
+        out.append(found[:2])
+        i = max(found[2], i + 1)
+    return out
 _SYMBOLS = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP"}
 _CODES = (
     "usd", "eur", "gbp", "cad", "aud", "nzd", "chf", "jpy", "inr", "sgd", "mxn", "brl", "sek",
@@ -450,7 +503,7 @@ def parse_amount(text: str | None) -> Amount | None:
     it means, and the caller refuses rather than guesses."""
     # A money figure is short; capping the input keeps the number pattern linear on any paste.
     raw = (text or "").strip().lower()[:200]
-    nums = _NUM.findall(raw)
+    nums = _find_numbers(raw)
     if len(nums) != 1:
         return None
     digits, suffix = nums[0]

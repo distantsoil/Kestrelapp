@@ -1133,4 +1133,4 @@ def test_parse_amount_is_linear_on_long_runs_of_digits():
     start = time.perf_counter()
     ov.parse_amount("0" * 50_000 + "x" + "0," * 25_000)
     assert time.perf_counter() - start < 1.0
-    assert ov._NUM.findall("1,234,567 and 2.5m") == [("1,234,567", ""), ("2.5", "m")]
+    assert ov._find_numbers("1,234,567 and 2.5m") == [("1,234,567", ""), ("2.5", "m")]
