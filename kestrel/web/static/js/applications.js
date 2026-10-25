@@ -17,6 +17,11 @@
   function $(sel, ctx) { return (ctx || doc).querySelector(sel); }
   function $$(sel, ctx) { return Array.prototype.slice.call((ctx || doc).querySelectorAll(sel)); }
   function page() { return $('#apps-page'); }
+  /* Navigate only to a path on this app; an attribute value is never trusted as a URL. */
+  function go(path) {
+    var p = String(path || '');
+    if (p.charAt(0) === '/' && p.charAt(1) !== '/' && p.charAt(1) !== '\\') root.location.assign(p);
+  }
   function board() { return $('#apps-board'); }
   function reduced() {
     return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -283,8 +288,8 @@
       else post('/pursuits/' + id + '/act/' + key, {});
     } else if (btn.hasAttribute('data-more-pick')) {
       var card = ctx.card, what = btn.getAttribute('data-more-pick');
-      if (what === 'tailor') root.location.href = card.getAttribute('data-tailor');
-      else if (what === 'full') root.location.href = card.getAttribute('data-full');
+      if (what === 'tailor') go(card.getAttribute('data-tailor'));
+      else if (what === 'full') go(card.getAttribute('data-full'));
       else if (what === 'priority') post('/pursuits/' + id + '/priority', {});
       else if (what === 'link') copyLink(card.getAttribute('data-full'));
       else if (what === 'remove') removeCard(id, !!card.getAttribute('data-confirm'));
