@@ -157,7 +157,7 @@ def test_download_is_fetched_so_an_error_never_replaces_the_page(live):
         page.evaluate("window.__same = 1")
         # The server cannot make the PDF: the person sees a message and stays on this page.
         page.route("**/renders/*/download*", lambda r: r.fulfill(
-            status=500, content_type="text/html", body="<p>No browser to make the PDF.</p>"))
+            status=500, content_type="text/plain", body="No browser to make the PDF."))
         page.click('[data-testid="tl-download"]')
         page.wait_for_selector(".k-toast")
         assert "No browser to make the PDF." in page.inner_text(".k-toast")

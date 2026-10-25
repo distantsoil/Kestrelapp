@@ -13,20 +13,22 @@ from tests.test_web_phase13 import _dispose_engines  # noqa: F401  (autouse fixt
 PAYLOAD = "<script>alert(1)</script>"
 
 
-def test_swap_error_escapes_the_slot_and_variant_keys():
+def test_swap_error_answers_in_plain_text():
     render_id, _ = _seed_tailor()
     c = _client()
     r = c.post(f"/renders/{render_id}/swap", data={"slot_key": PAYLOAD, "variant_key": "x"})
     assert r.status_code == 400
-    assert PAYLOAD not in r.text and "&lt;script&gt;" in r.text
+    assert r.headers["content-type"].startswith("text/plain")  # text, so it never runs
+    assert PAYLOAD in r.text
 
 
-def test_wording_error_escapes_the_slot_key():
+def test_wording_error_answers_in_plain_text():
     render_id, _ = _seed_tailor()
     c = _client()
     r = c.post(f"/renders/{render_id}/wording", data={"slot_key": PAYLOAD, "text": "my words"})
     assert r.status_code == 400
-    assert PAYLOAD not in r.text and "&lt;script&gt;" in r.text
+    assert r.headers["content-type"].startswith("text/plain")  # text, so it never runs
+    assert PAYLOAD in r.text
 
 
 def test_pursuit_status_error_escapes_the_stage_on_a_plain_post():

@@ -31,10 +31,11 @@
   }
   function toast(msg, opts) { if (root.KUI && root.KUI.toast) return root.KUI.toast(msg, opts); return null; }
   function pageEl() { return $('.tl-page'); }
-  /* Plain text of a server message: parsed, never inserted, so no markup in it can run. */
-  function plain(html) {
-    var d = new root.DOMParser().parseFromString(String(html || ''), 'text/html');
-    return (d.body.textContent || '').trim();
+  /* A server message is shown only when the server sent it as text/plain, and only ever through
+     textContent in the toast; HTML responses never reach a toast. */
+  function plain(text, type) {
+    if (String(type || '').toLowerCase().indexOf('text/plain') !== 0) return '';
+    return String(text || '').trim();
   }
 
   /* ------------------------------------------------------------------ the scaled preview */
@@ -233,7 +234,7 @@
     root.fetch(url, { credentials: 'same-origin' }).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (t) {
-          toast(plain(t).slice(0, 200) || 'Could not make the PDF.');
+          toast(plain(t, r.headers.get('Content-Type')).slice(0, 200) || 'Could not make the PDF.');
         });
       }
       return r.blob().then(function (blob) {
@@ -402,7 +403,7 @@
     var xhr = e.detail && e.detail.xhr;
     var path = String((e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath) || '');
     if (path.indexOf('/renders/') !== 0 || !xhr) return;
-    var text = plain(xhr.responseText);
+    var text = plain(xhr.responseText, xhr.getResponseHeader('Content-Type'));
     if (text && text.length < 240) toast(text);
   });
 

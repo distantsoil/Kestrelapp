@@ -1125,3 +1125,12 @@ async def test_migration_0024_downgrades_with_offers_and_their_pursuits_on_file(
     assert "deadline" not in cols and n_eng >= 1 and n_off >= 2 and n_p >= 3
     with paths.resource_path(paths.packaged_migrations()) as mig_dir:
         command.upgrade(migrate._config(str(mig_dir), db), "head")
+
+
+def test_parse_amount_is_linear_on_long_runs_of_digits():
+    import time
+
+    start = time.perf_counter()
+    ov.parse_amount("0" * 50_000 + "x" + "0," * 25_000)
+    assert time.perf_counter() - start < 1.0
+    assert ov._NUM.findall("1,234,567 and 2.5m") == [("1,234,567", ""), ("2.5", "m")]

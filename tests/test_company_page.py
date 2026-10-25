@@ -607,3 +607,10 @@ def test_a_reposted_role_is_one_pay_observation():
 def test_only_web_addresses_become_links():
     assert cv.safe_url("javascript:alert(1)") is None
     assert cv.safe_url("https://a.example/x") == "https://a.example/x"
+
+
+def test_missing_company_htmx_answer_is_static_and_escaped():
+    r = _client().get("/orgs/987654", headers={"HX-Request": "true"})
+    assert r.status_code == 404
+    assert r.text == '<div class="warnbox">Company not found.</div>'
+    assert _client().get("/orgs/%3Cscript%3E").status_code == 422  # not an id, never echoed

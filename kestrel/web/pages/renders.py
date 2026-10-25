@@ -28,7 +28,12 @@ from typing import Any
 import httpx
 import structlog
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -755,25 +760,25 @@ async def _do_swap(request: Request, render_id: int, slot_key: str, variant_key:
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         if not slot_key or not variant_key:
-            return HTMLResponse("slot_key and variant_key are required", status_code=400)
+            return PlainTextResponse("slot_key and variant_key are required", status_code=400)
         # Validate against the LIVE catalog before anything is written: a key that is not one of
         # this part's wordings (or "hide") is refused outright. Writing it would make resolve()
         # silently substitute the default while the config claimed otherwise (hard rule 2).
         catalog = await load_catalog(s, render.doc_master_id)
         if catalog is None:
-            return HTMLResponse(
+            return PlainTextResponse(
                 "the document master for this render no longer exists", status_code=404
             )
         config = dict(render.config or {})
         allowed, current = _choice_for(catalog, config, slot_key)
         if allowed is None:
-            return HTMLResponse(f"unknown slot key: {html.escape(repr(slot_key))}", status_code=400)
+            return PlainTextResponse(f"unknown slot key: {repr(slot_key)}", status_code=400)
         if variant_key not in allowed:
-            return HTMLResponse(
-                f"variant key {html.escape(repr(variant_key))} is not one of slot "
-                f"{html.escape(repr(slot_key))}'s variants "
+            return PlainTextResponse(
+                f"variant key {repr(variant_key)} is not one of slot "
+                f"{repr(slot_key)}'s variants "
                 f"({html.escape(', '.join(sorted(allowed)))}); nothing was changed",
                 status_code=400,
             )
@@ -915,10 +920,10 @@ async def edit_wording(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         catalog = await load_catalog(s, render.doc_master_id)
         if catalog is None:
-            return HTMLResponse(
+            return PlainTextResponse(
                 "the document master for this render no longer exists", status_code=404
             )
         config = dict(render.config or {})
@@ -957,8 +962,8 @@ async def edit_wording(request: Request, render_id: int):
                 )
             ).scalars().first()
             if slot is None:
-                return HTMLResponse(
-                    f"unknown slot key: {html.escape(repr(slot_key))}", status_code=400
+                return PlainTextResponse(
+                    f"unknown slot key: {repr(slot_key)}", status_code=400
                 )
             variants = (
                 await s.execute(select(DocVariant).where(DocVariant.doc_slot_id == slot.id))
@@ -996,10 +1001,10 @@ async def change_look(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         catalog = await load_catalog(s, render.doc_master_id)
         if catalog is None:
-            return HTMLResponse(
+            return PlainTextResponse(
                 "the document master for this render no longer exists", status_code=404
             )
         config = dict(render.config or {})
@@ -1035,10 +1040,10 @@ async def make_look_default(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         master = await s.get(DocMaster, render.doc_master_id)
         if master is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         config = dict(render.config or {})
         look = dict(master.look or {})
         before = {k: look.get(k) or "" for k in ("layout", "size", "margins")}
@@ -1093,7 +1098,7 @@ async def change_privacy(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         config = dict(render.config or {})
         config["redact_orgs"] = on
         config["stale"] = True
@@ -1124,7 +1129,7 @@ async def pick_dialog(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         ctx = await _page_response(request, s, render)
     return templates().TemplateResponse(request, "partials/tailor_pick_dialog.html", ctx)
 
@@ -1145,7 +1150,7 @@ async def pick_again(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         settings = await load_settings_with_db(s)
         route = await _pick_route(s, settings, render.doc_master_id)
         ctx = await _page_response(request, s, render)
@@ -1260,7 +1265,7 @@ async def attach_to_pursuit(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("not found", status_code=404)
+            return PlainTextResponse("not found", status_code=404)
         if render.opportunity_id is None:
             return HTMLResponse('<span class="muted">This version is not tied to a role.</span>')
         pursuit = (
@@ -1282,7 +1287,7 @@ async def attach_to_pursuit(request: Request, render_id: int):
                 doc = resolve(catalog, dict(render.config or {}))
                 pending = _needs(dict(render.config or {}), doc)
                 if pending and not anyway:
-                    return HTMLResponse(
+                    return PlainTextResponse(
                         _unresolved_message(len(pending))
                         + " Choose now, or attach anyway from the page.",
                         status_code=409,
@@ -1373,13 +1378,13 @@ async def download(request: Request, render_id: int):
     async with sessionmaker()() as s:
         render = await s.get(DocRender, render_id)
         if render is None:
-            return HTMLResponse("No PDF on record for this render.", status_code=404)
+            return PlainTextResponse("No PDF on record for this render.", status_code=404)
         catalog = await load_catalog(s, render.doc_master_id)
         if catalog is not None:
             config = dict(render.config or {})
             pending = _needs(config, resolve(catalog, config))
             if pending and not anyway:
-                return HTMLResponse(
+                return PlainTextResponse(
                     _unresolved_message(len(pending)) + " Go back and choose, or download "
                     "anyway from the page.", status_code=409)
             if pending:
@@ -1397,14 +1402,14 @@ async def download(request: Request, render_id: int):
             except Exception as exc:  # no browser on this machine: say so, never a 500
                 log.warning("tailor_pdf_failed", render_id=render_id,
                             error_type=type(exc).__name__)
-                return HTMLResponse(
+                return PlainTextResponse(
                     f"Could not make the PDF: {plain_error(exc)}", status_code=503)
             if fresh is None:
-                return HTMLResponse("The document this came from no longer exists.",
+                return PlainTextResponse("The document this came from no longer exists.",
                                     status_code=404)
             render = fresh
         path = Path(render.pdf_path) if render.pdf_path else None
         if path is None or not path.is_file():
-            return HTMLResponse("The PDF file is missing from disk.", status_code=404)
+            return PlainTextResponse("The PDF file is missing from disk.", status_code=404)
         name = render.filename or path.name
     return FileResponse(path, media_type="application/pdf", filename=name)

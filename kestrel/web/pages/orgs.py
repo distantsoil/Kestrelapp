@@ -252,7 +252,7 @@ async def page(request: Request, org_id: int):
         if org is None:
             if request.headers.get("HX-Request"):
                 return HTMLResponse(
-                    f'<div class="warnbox">Organization {org_id} not found.</div>', status_code=404
+                    '<div class="warnbox">Company not found.</div>', status_code=404
                 )
             ctx = {
                 "title": "Company", "query": dict(request.query_params),

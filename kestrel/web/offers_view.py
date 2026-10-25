@@ -425,7 +425,8 @@ class Amount:
     currency: str | None
 
 
-_NUM = re.compile(r"(\d[\d,]*(?:\.\d+)?|\.\d+)\s*([km])?(?![a-z])")
+# No match may start inside a run of digits, commas or dots, so the scan is linear.
+_NUM = re.compile(r"(?<![\d,.])(\d[\d,]*(?:\.\d+)?|\.\d+)\s*([km])?(?![a-z])")
 _SYMBOLS = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP"}
 _CODES = (
     "usd", "eur", "gbp", "cad", "aud", "nzd", "chf", "jpy", "inr", "sgd", "mxn", "brl", "sek",
