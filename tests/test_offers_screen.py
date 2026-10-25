@@ -797,7 +797,7 @@ async def test_the_page_uses_the_design_system_and_drops_the_legacy_sheet():
     assert "k-layout" in t and "k-help-col" in t  # the shared stacking, not an override
     assert t.count("k-flyout") >= 4  # one flyout per help card
     # no em dashes in copy
-    assert "—" not in re.sub(r"<script.*?</script\s*>", "", t, flags=re.S | re.I)
+    assert "—" not in re.sub(r"<script.*?</script[^>]*>", "", t, flags=re.S | re.I)
 
 
 async def test_the_body_alone_comes_for_an_htmx_request_and_the_tab_is_remembered():

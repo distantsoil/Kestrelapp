@@ -186,7 +186,7 @@ def test_the_page_lists_every_role_in_plain_words(seeded):
     assert "Deep read" in row and "3 tries" in row and 'href="/models"' in row
     # The visible copy has no developer words and no em dash; the raw reply sits behind details.
     visible = re.sub(r"<details.*?</details>", "", page.split("<main")[-1], flags=re.S)
-    visible = re.sub(r"<script.*?</script\s*>|<style.*?</style\s*>", "", visible, flags=re.S | re.I)
+    visible = re.sub(r"<script.*?</script[^>]*>|<style.*?</style[^>]*>", "", visible, flags=re.S | re.I)
     text = re.sub(r"<[^>]+>", " ", visible).lower()
     for word in ("quarantine", "schema", "tier ", "json", "validation"):
         assert word not in text, word
