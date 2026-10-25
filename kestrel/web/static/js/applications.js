@@ -17,10 +17,10 @@
   function $(sel, ctx) { return (ctx || doc).querySelector(sel); }
   function $$(sel, ctx) { return Array.prototype.slice.call((ctx || doc).querySelectorAll(sel)); }
   function page() { return $('#apps-page'); }
-  /* Navigate only to a path on this app; an attribute value is never trusted as a URL. */
-  function go(path) {
-    var p = String(path || '');
-    if (p.charAt(0) === '/' && p.charAt(1) !== '/' && p.charAt(1) !== '\\') root.location.assign(p);
+  /* Follow the card's own server-rendered link for a menu destination. */
+  function follow(card, which) {
+    var a = card.querySelector('a[data-go="' + which + '"]');
+    if (a) a.click();
   }
   function board() { return $('#apps-board'); }
   function reduced() {
@@ -288,8 +288,8 @@
       else post('/pursuits/' + id + '/act/' + key, {});
     } else if (btn.hasAttribute('data-more-pick')) {
       var card = ctx.card, what = btn.getAttribute('data-more-pick');
-      if (what === 'tailor') go(card.getAttribute('data-tailor'));
-      else if (what === 'full') go(card.getAttribute('data-full'));
+      if (what === 'tailor') follow(card, 'tailor');
+      else if (what === 'full') follow(card, 'full');
       else if (what === 'priority') post('/pursuits/' + id + '/priority', {});
       else if (what === 'link') copyLink(card.getAttribute('data-full'));
       else if (what === 'remove') removeCard(id, !!card.getAttribute('data-confirm'));

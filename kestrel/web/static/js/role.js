@@ -9,11 +9,6 @@
   var doc = root.document;
   if (!doc) return;
 
-  /* Navigate only to a path on this app; an attribute value is never trusted as a URL. */
-  function go(path) {
-    var p = String(path || '');
-    if (p.charAt(0) === '/' && p.charAt(1) !== '/' && p.charAt(1) !== '\\') root.location.assign(p);
-  }
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
   function reduced() { return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches); }
@@ -249,8 +244,8 @@
     }
     var why = t.closest && t.closest('[data-rl-open]');
     if (why) { e.preventDefault(); openModal($('#' + why.getAttribute('data-rl-open'))); return; }
-    var href = t.closest && t.closest('[data-rl-href]');
-    if (href) { go(href.getAttribute('data-rl-href')); return; }
+    var href = t.closest && t.closest('[data-rl-help]');
+    if (href) { root.location.assign('/help'); return; }
     if (t.closest && t.closest('[data-rl-copy]')) {
       var url = root.location.origin + '/opportunities/' + oppId();
       var done = function () { toast('Link copied.'); };

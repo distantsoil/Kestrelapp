@@ -13,6 +13,8 @@
          data-tailor="{{ c.tailor_href }}" data-full="/opportunities/{{ c.opp.id }}"
          data-confirm="{{ 'offer' if c.has_offers else '' }}"
          aria-label="{{ c.title }}, {{ c.org_name or 'unknown organization' }}, {{ c.stage_label }}">
+  {# Menu destinations as real links, so script follows a link instead of building a URL. #}
+  {% if c.tailor_href %}<a hidden tabindex="-1" data-go="tailor" href="{{ c.tailor_href }}"></a>{% endif %}<a hidden tabindex="-1" data-go="full" href="/opportunities/{{ c.opp.id }}"></a>
   <div class="ap-c1">
     <span class="ap-mono" data-slot="{{ c.slot }}" aria-hidden="true">{{ c.letters }}</span>
     <div class="k-grow">

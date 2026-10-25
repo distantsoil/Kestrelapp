@@ -74,7 +74,7 @@
 
   {# Why are some actions greyed out? An in-app help card, not a page. #}
   {% call ui.modal('rl-why', 'Why are some actions greyed out?', [
-    {'label': 'Open the full help article', 'attrs': {'data-rl-href': '/help'}},
+    {'label': 'Open the full help article', 'attrs': {'data-rl-help': '1'}},
     {'label': 'Got it', 'kind': 'primary', 'close': True}
   ]) %}
     <p>Tailored resumes, cover letters and prep packs each need the AI to read the {{ w.role }} and your profile.</p>
