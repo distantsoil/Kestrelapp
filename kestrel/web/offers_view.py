@@ -447,7 +447,8 @@ def parse_amount(text: str | None) -> Amount | None:
     "1.2m", "12k a month" (annualized), "550 a day", "140k base". None when the text holds no
     figure or more than one, or names two currencies or two units: Kestrel then cannot say what
     it means, and the caller refuses rather than guesses."""
-    raw = (text or "").strip().lower()
+    # A money figure is short; capping the input keeps the number pattern linear on any paste.
+    raw = (text or "").strip().lower()[:200]
     nums = _NUM.findall(raw)
     if len(nums) != 1:
         return None

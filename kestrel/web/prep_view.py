@@ -66,7 +66,7 @@ THEME_WORDS = {
 
 def qhash(text: str) -> str:
     """A short stable id for a question, so a form never has to carry its text."""
-    return hashlib.sha1(text.strip().casefold().encode("utf-8")).hexdigest()[:10]
+    return hashlib.sha256(text.strip().casefold().encode("utf-8")).hexdigest()[:10]
 
 
 async def question_for(session: AsyncSession, opportunity_id: int, h: str) -> str | None:

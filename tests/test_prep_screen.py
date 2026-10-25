@@ -143,7 +143,7 @@ async def test_the_page_uses_the_design_system_and_drops_the_legacy_sheet():
     assert "/static/css/pages/prep.css" in t and "/static/js/prep.js" in t
     assert "/static/css/shell.css" in t and "/static/css/kestrel.css" not in t
     assert "k-layout" in t and "k-help-col" in t and t.count("k-flyout") >= 5
-    assert "—" not in re.sub(r"<script.*?</script>", "", t, flags=re.S)
+    assert "—" not in re.sub(r"<script.*?</script\s*>", "", t, flags=re.S | re.I)
 
 
 # ----------------------------------------------------------------------------- empty and build
