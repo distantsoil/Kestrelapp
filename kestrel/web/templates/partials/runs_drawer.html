@@ -1,0 +1,28 @@
+{# One past run, in the drawer (D-UI-103): the summary, roles per minute by step, per-source
+   results and a Show details log. Rates under five roles say so (hard rule 6). #}
+{% import "ui/macros.html" as ui %}
+<div class="rn-dr" data-testid="rn-drawer-run" data-run-id="{{ run.id }}">
+  <div class="rn-dr__head"><span class="k-badge k-badge--lg {{ 'k-badge--good' if row.status.key == 'finished' else 'k-badge--warn' if row.status.key in ('partial','failed') else 'k-badge--muted' }}">{{ ui.icon('check' if row.status.key == 'finished' else 'alert') }}</span>
+    <div><h3>{{ row.day }}, {{ row.at }}</h3><span class="k-muted">{{ row.status.label }}{% if row.duration %} · took {{ row.duration }}{% endif %}{% if row.mode.label %} · {{ row.mode.label }}{% endif %}</span></div></div>
+  <div class="rn-note is-{{ 'good' if row.status.key == 'finished' else 'warn' if row.status.key in ('partial','failed') else 'info' }}">{{ row.status.why }}</div>
+  <div class="rn-nums rn-nums--wide"><span><b>{{ row.counts.found }}</b>found</span><span><b>{{ row.counts.new }}</b>new</span><span><b>{{ row.counts.rated }}</b>rated</span><span class="{{ 'is-bad' if row.counts.failed }}"><b>{{ row.counts.failed }}</b>need another try</span></div>
+  {% if row.cost %}<p class="k-muted rn-small" data-testid="rn-dr-cost"><b>Online cost: {{ row.cost.label }}.</b> {% if row.cost.tokens %}Estimated from {{ row.cost.tokens }} tokens across {{ row.cost.roles }} ratings and the model's listed price. {% endif %}Your provider's bill is the exact figure; Kestrel does not store a bill for each rating.</p>{% endif %}
+  <div><div class="rn-eyebrow">Roles per minute, by step</div>
+    <div class="rn-chart" role="img" aria-label="Roles per minute by step">
+      {% for c in chart %}<div><b>{{ c.words }}</b><i style="height:{{ c.pct }}%"></i></div>{% endfor %}
+    </div>
+    <div class="rn-chlab">{% for c in chart %}<span>{{ c.label }}</span>{% endfor %}</div>
+    <p class="k-muted rn-small">Deeper read only runs when you ask, one role at a time. Rules have no rate.</p></div>
+  <div><div class="rn-eyebrow">Sources</div>
+    {% if sources %}
+    <ul class="rn-srcs">
+      {% for s in sources %}<li><span>{{ s.name }}</span><span class="k-muted">{{ s.new }} new</span>{% if s.model %}<span class="k-muted" data-testid="run-model-used">on {{ s.model }}</span>{% endif %}<span class="k-pill k-pill--{{ s.tone }}">{{ s.word }}</span></li>{% endfor %}
+    </ul>
+    {% else %}<p class="k-muted rn-small">No searches are matched to this run.</p>{% endif %}</div>
+  <details class="rn-details" data-testid="rn-run-details"><summary>Show details</summary>
+    <p class="k-muted rn-small">Kestrel does not link searches to runs by id, so sources are matched by start time.</p>
+    <pre>{% for s in sources %}{{ s.name }}: {{ s.word }}{% if s.error %} ({{ s.error }}){% endif %}
+{% endfor %}{{ counts_json | tojson(indent=1) }}</pre>
+  </details>
+  {% if not on_page %}<div class="rn-dr__foot"><a class="k-btn" href="/runs/{{ run.id }}" data-testid="rn-dr-page">Open the full page</a></div>{% endif %}
+</div>

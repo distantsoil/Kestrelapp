@@ -1,0 +1,36 @@
+{# The ask-first dialog for an online try (D-UI-104): provider, exactly what is sent, what is not,
+   the cost and the credit left. Nothing is sent until Send and try. static: a click outside does
+   not close it, because it asks before something goes online. #}
+{% from "ui/macros.html" import modal %}
+{% set send_attrs = {'data-testid': 'rt-send', 'hx-post': '/quarantine/' ~ quarantine_id ~ '/model', 'hx-include': '#rt-online-model, #rt-online-approval', 'hx-target': '#' ~ dom_id, 'hx-swap': 'outerHTML'} %}
+{% call modal('rt-online-dialog', 'Try ' ~ role ~ ' with an online model?', [
+  {'label': 'Cancel', 'close': True},
+  {'label': 'Send and try', 'kind': 'primary', 'close': True, 'attrs': send_attrs, 'vals': {'confirmed': '1'}}
+], static=True) %}
+  <p class="k-muted">{{ provider }}, using your own credit{% if org %}. {{ org }}{% endif %}</p>
+  <div class="rt-send">
+    <b>What will be sent</b>
+    <ul>
+      <li data-testid="rt-sends">{{ sends }}.</li>
+      {% if pages %}<li>The posting for {{ role }} is about {{ pages }} {{ 'page' if pages == 1 else 'pages' }} of that.</li>{% endif %}
+    </ul>
+    {% if employer == 'hidden' %}
+    <p data-testid="rt-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+    {% elif employer == 'held' %}
+    <p data-testid="rt-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. The role waits here until you <a href="/settings">choose your employer in Settings</a>, then try again.</p>
+    {% endif %}
+    <p><b>Not sent:</b> your name, contact details and your resume file.</p>
+    <p>{{ provider }} handles what it receives under its own terms, and Kestrel cannot recall it.{% if any_free %} Free models may use what they receive for training.{% endif %}</p>
+  </div>
+  {% if models %}
+  <input type="hidden" id="rt-online-approval" name="online_approval" value='{{ approval_json }}'>
+  <label class="rt-field">Model
+    <select id="rt-online-model" name="model" class="k-select" data-testid="rt-online-model">
+      {% for m in models %}<option value="hosted:{{ m.id }}">{{ m.name }}, {{ m.cost }}</option>{% endfor %}
+    </select>
+  </label>
+  <p><b>Cost:</b> shown beside each model, an estimate for this one role.{% if credit %} {{ credit }}.{% endif %}</p>
+  {% else %}
+  <p class="rt-menu-note">{{ note or 'No online model can score a role right now. Check Models.' }}</p>
+  {% endif %}
+{% endcall %}

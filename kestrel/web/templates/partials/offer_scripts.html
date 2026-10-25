@@ -1,35 +1,32 @@
+{# The draft panel's content (D-UI-122). A draft for the operator to edit and deliver themselves:
+   there is no send action. Highlighted phrases are the operator's own proof points, with their
+   source on hover. A draft that rests on nothing supplied is flagged. #}
 {% if error %}
-  <div class="warnbox">{{ error }}</div>
+  <div class="of-ready of-err" data-testid="of-draft-error" role="status"><div><span class="k-pill k-pill--warn">{{ error }}</span></div></div>
 {% elif result %}
-  <div class="panel" style="margin-top:.6rem">
-    <p><strong>Situation read:</strong> {{ result.situation_read }}</p>
-    <p><strong>Walk-away (yours, unchanged):</strong>
-      <span class="mono" data-exact="{{ result.walk_away }}">{{ result.walk_away|typed_amount }}</span></p>
-
-    {% if result.leverage_inventory %}
-      <p class="muted"><strong>Leverage:</strong> {{ result.leverage_inventory|join('; ') }}</p>
-    {% endif %}
-
-    {% for sc in result.scripts %}
-      <div class="panel" style="margin:.5rem 0">
-        <h4>{{ sc.scenario.replace('_', ' ')|title }}
-          {% if not sc.supported %}
-            <span class="pill flag">flagged: rests on nothing supplied, verify before use</span>
-          {% endif %}
-        </h4>
-        <p>{{ sc.script }}</p>
-        <p class="muted"><strong>Basis:</strong> {{ sc.justification_basis }}</p>
-        <p class="muted"><strong>Likely pushback:</strong> {{ sc.likely_pushback }}</p>
-      </div>
-    {% endfor %}
-
-    {% if result.risks %}
-      <p class="muted"><strong>Risks:</strong> {{ result.risks|join('; ') }}</p>
-    {% endif %}
-
-    <p class="muted">These are drafts for you to edit and deliver yourself. There is no send
-    action anywhere in Kestrel. Nothing here adjusts the walk-away number you supplied.</p>
+  <div class="of-dh">
+    <b>Draft: {{ situation_name|lower }}</b>
+    <span class="k-pill k-pill--info">Draft only · never sent</span>
+    {%- if not script.supported %}<span class="k-pill k-pill--warn" data-testid="of-flag">Rests on nothing you supplied. Check it before use.</span>{% endif %}
+    <span class="k-grow"></span>
+    <button type="button" class="k-btn k-btn--sm of-act" data-of-again data-testid="of-again">Draft again</button>
+    <button type="button" class="k-btn k-btn--sm" data-of-edit data-testid="of-edit">Edit</button>
+    <button type="button" class="k-btn k-btn--primary k-btn--sm" data-of-copy data-testid="of-copy">Copy draft</button>
   </div>
+  <div class="of-db" id="of-dbody" data-testid="of-dbody" tabindex="0" aria-label="Draft, editable">
+    {%- for para in paras %}<p>{% for text, src in para %}{% if src %}<span class="of-claim" title="{{ src }}" tabindex="0">{{ text }}</span>{% else %}{{ text }}{% endif %}{% endfor %}</p>{% endfor -%}
+  </div>
+  <p class="of-foot of-pad">Highlighted phrases come from your resume or stories. Paste it into your own email. Kestrel never sends it.</p>
+  <p class="of-foot of-pad">Your walk-away, unchanged: <span class="of-mono-text" data-exact="{{ result.walk_away }}">{{ result.walk_away|typed_amount }}</span></p>
+  <details class="of-det of-pad">
+    <summary>Show details</summary>
+    <p><strong>Situation read:</strong> {{ result.situation_read }}</p>
+    <p><strong>Basis:</strong> {{ script.justification_basis }}</p>
+    <p><strong>Likely pushback:</strong> {{ script.likely_pushback }}</p>
+    {%- if script.response_to_pushback %}<p><strong>If they push back:</strong> {{ script.response_to_pushback }}</p>{% endif %}
+    {%- if result.leverage_inventory %}<p><strong>Leverage:</strong> {{ result.leverage_inventory|join('; ') }}</p>{% endif %}
+    {%- if result.risks %}<p><strong>Risks:</strong> {{ result.risks|join('; ') }}</p>{% endif %}
+  </details>
 {% else %}
-  <p class="muted">No scripts yet.</p>
+  <div class="of-ready"><div><b>No draft yet</b></div></div>
 {% endif %}

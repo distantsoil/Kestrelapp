@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
@@ -109,6 +109,7 @@ async def enqueue_rescore(
     opp_ids: list[int],
     *,
     model_override: dict | None = None,
+    online_approval: dict | None = None,
     tier0_anyway: bool = False,
     explain: Callable[[Opportunity], Awaitable[Any]] | None = None,
 ) -> RescoreResult:
@@ -128,6 +129,12 @@ async def enqueue_rescore(
     extra: dict = {"rescore": True, "requested": True, "requested_at": utcnow_iso()}
     if model_override:
         extra["model_override"] = dict(model_override)
+    if online_approval:
+        from kestrel.services.online_consent import read_approval
+
+        approval = read_approval(online_approval)
+        if approval:
+            extra["online_approval"] = approval
     for oid in ids:
         opp = rows.get(oid)
         if opp is None:
@@ -137,6 +144,10 @@ async def enqueue_rescore(
             # Only the intent rides on the task; Tier 1 records the override when it runs
             # (D-UI-74 amended), so a task that dies leaves no "You asked to score this".
             anyway_extra = {**extra, "tier0_override": True, "tier0_reason": opp.stage_reason}
+            if await _reconfirm_held(session, "t1", oid, anyway_extra):
+                result.queued.append(oid)
+                result.anyway.append(oid)
+                continue
             added = await enqueue_once(
                 session, "t1", oid, priority=RESCORE_PRIORITY, extra=anyway_extra
             )
@@ -158,6 +169,9 @@ async def enqueue_rescore(
         else:  # "new": Tier 0 has not seen it
             result.unscreened.append(oid)
             continue
+        if await _reconfirm_held(session, task_type, oid, extra):
+            result.queued.append(oid)
+            continue
         added = await enqueue_once(
             session, task_type, oid, priority=RESCORE_PRIORITY, extra=dict(extra)
         )
@@ -166,6 +180,34 @@ async def enqueue_rescore(
             continue
         result.queued.append(oid)
     return result
+
+
+async def _reconfirm_held(
+    session: AsyncSession, task_type: str, opportunity_id: int, extra: dict,
+) -> bool:
+    """Replace an unstarted consent hold with the operator's newly validated scoring request.
+
+    Never edit a lease or carry an old one-time model into a new Same model confirmation.
+    Compare the observed payload as well as the state so a concurrent request cannot be lost.
+    """
+    from kestrel.services.online_consent import APPROVAL_HOLD
+
+    task = (await session.execute(select(Task).where(
+        Task.type == task_type, Task.status == "pending", Task.last_error == APPROVAL_HOLD,
+        func.json_extract(Task.payload, "$.opportunity_id") == opportunity_id,
+    ))).scalar_one_or_none()
+    if task is None:
+        return False
+    payload = dict(task.payload or {})
+    for key in ("online_approval", "model_override", T2_ONLY_KEY, "lane", "lane_priority"):
+        payload.pop(key, None)
+    payload.update(extra)
+    changed = await session.execute(update(Task).where(
+        Task.id == task.id, Task.status == "pending", Task.last_error == APPROVAL_HOLD,
+        Task.payload == task.payload,
+    ).values(payload=payload, last_error=None, updated_at=utcnow_iso(),
+             priority=RESCORE_PRIORITY).execution_options(synchronize_session=False))
+    return changed.rowcount == 1
 
 
 async def _upgrade_waiting_t1(session: AsyncSession, opportunity_id: int, extra: dict) -> bool:

@@ -1,0 +1,244 @@
+{# Shared UI macros (UI overhaul, Phase 1). Import with
+     {% from "ui/macros.html" import icon, help_card, flyout, ... with context %}
+   Markup mirrors components.css (classes carry the k- prefix); behavior comes from
+   static/js/kestrel-ui.js through data attributes (data-k-flyout, data-k-close, ...). Every
+   color is a token, every string a caller supplies is escaped by Jinja, and none of the copy
+   here uses an em dash.
+
+   The `attrs` parameters (button, chip, switch, modal actions) are inserted unescaped so a
+   template can pass hx-* and data-* attributes. They are TRUSTED, template-authored strings
+   only: never build one from request data, a database value or model output. #}
+{% set ICONS = {
+  'today': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  'pipeline': '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  'apps': '<path d="M5 21V4h11l-2 4 2 4H5"/>',
+  'profile': '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  'prep': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  'offers': '<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  'calibrate': '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  'analytics': '<path d="M3 3v18h18"/><path d="M8 17v-5M13 17V8M18 17v-9"/>',
+  'bench': '<path d="M9 3h6M10 3v6L4 20h16l-6-11V3"/>',
+  'sources': '<path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/>',
+  'models': '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  'runs': '<path d="M7 4l13 8-13 8z"/>',
+  'settings': '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.4 19.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 14H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 7.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+  'help': '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  'about': '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>',
+  'pin': '<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  'bm': '<path d="M6 3h12v18l-6-4-6 4z"/>',
+  'check': '<path d="M5 12l5 5 9-10"/>',
+  'alert': '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/>',
+  'clock': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  'scan': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  'gpu': '<rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="8" cy="12" r="2.2"/><circle cx="15" cy="12" r="2.2"/><path d="M5 17v3M19 17v3"/>',
+  'cpu': '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  'mem': '<rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 7v10M11 7v10M15 7v10M19 17v3M5 17v3"/>',
+  'dl': '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  'up': '<path d="M12 21V9M7 14l5-5 5 5M5 3h14"/>',
+  'x': '<path d="M6 6l12 12M18 6L6 18"/>',
+  'key': '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/>',
+  'shield': '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  'cloud': '<path d="M7 18a5 5 0 1 1 .9-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z"/>',
+  'laptop': '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>',
+  'both': '<rect x="2" y="7" width="11" height="8" rx="1.2"/><path d="M1 18h13"/><path d="M15 15a3.5 3.5 0 1 1 .6-7 4.2 4.2 0 0 1 7.4 2.2A2.6 2.6 0 0 1 22 15z"/>',
+  'folder': '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
+  'cal': '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  'restore': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/>',
+  'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  'moon': '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>',
+  'auto': '<circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+  'text': '<path d="M4 7V5h16v2M9 19h6M12 5v14"/>',
+  'contrast': '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+  'bell': '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  'play': '<path d="M7 4l13 8-13 8z"/>',
+  'motion': '<path d="M4 12h4l3-7 4 14 3-7h2"/>',
+  'wand': '<path d="M15 4V2M15 10V8M11 6h2M17 6h2M4 20l10-10"/>',
+  'arrow': '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  'tune': '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  'lock': '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  'trash': '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  'plug': '<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/>',
+  'diag': '<path d="M4 4h16v16H4z"/><path d="M4 12h4l2-4 4 8 2-4h4"/>',
+  'bird': '<path d="M3 16c5 0 8-2 9-6l1-3 3 1 4-1-3 3c-.2 6-4 9-10 9H3z"/><path d="M16 9h.01"/>',
+  'leaf': '<path d="M5 19C5 9 11 5 20 4c0 9-4 15-13 15zM5 19l8-8"/>',
+  'star': '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  'mountain': '<path d="M2 19l7-12 4 7 3-4 6 9z"/>',
+  'compass': '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
+  'vol': '<path d="M4 9v6h4l5 4V5L8 9zM16 9a4 4 0 0 1 0 6"/>',
+  'chev': '<path d="M9 6l6 6-6 6"/>',
+  'plus': '<path d="M12 5v14M5 12h14"/>',
+  'minus': '<path d="M5 12h14"/>',
+  'info': '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
+  'undo': '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'
+} %}
+
+{# One inline SVG from the shared icon set (the mockups' ic() set). Decorative by default. #}
+{% macro icon(name, cls='') -%}
+<svg class="k-ic {{ cls }}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{{ (ICONS.get(name) or ICONS['info'])|safe }}</svg>
+{%- endmacro %}
+
+{# A button. kind: '' | primary | quiet | danger. Pass href for a link that looks like one. #}
+{% macro button(label, kind='', small=False, href='', attrs={}, icon_name='') -%}
+{%- set cls = 'k-btn' ~ (' k-btn--' ~ kind if kind else '') ~ (' k-btn--sm' if small else '') -%}
+{%- if href -%}<a class="{{ cls }}" href="{{ href }}"{{ attrs|xmlattr }}>{% if icon_name %}{{ icon(icon_name) }}{% endif %}{{ label }}</a>
+{%- else -%}<button type="button" class="{{ cls }}"{{ attrs|xmlattr }}>{% if icon_name %}{{ icon(icon_name) }}{% endif %}{{ label }}</button>{%- endif -%}
+{%- endmacro %}
+
+{# Status pill. The label is required: color alone never carries status. tone: good | warn | bad | info | '' #}
+{% macro pill(label, tone='', icon_name='') -%}
+<span class="k-pill{% if tone %} k-pill--{{ tone }}{% endif %}">{% if icon_name %}{{ icon(icon_name) }}{% endif %}{{ label }}</span>
+{%- endmacro %}
+
+{# Filter chip with an optional count. #}
+{% macro chip(label, count=None, on=False, attrs={}) -%}
+<button type="button" class="k-chip{% if on %} is-on{% endif %}" aria-pressed="{{ 'true' if on else 'false' }}"{{ attrs|xmlattr }}>{{ label }}{% if count is not none %}<span class="k-chip__n">{{ count }}</span>{% endif %}</button>
+{%- endmacro %}
+
+{# Card with a header: icon badge, title, optional sub line, actions beside the title. #}
+{% macro section_card(title, icon_name='info', tone='', sub='', card_tone='') -%}
+<section class="k-card{% if card_tone %} k-card--{{ card_tone }}{% endif %}">
+  <header class="k-sec-head">
+    <span class="k-badge{% if tone %} k-badge--{{ tone }}{% endif %}">{{ icon(icon_name) }}</span>
+    <div class="k-grow"><h3>{{ title }}</h3>{% if sub %}<p>{{ sub }}</p>{% endif %}</div>
+  </header>
+  {{ caller() }}
+</section>
+{%- endmacro %}
+
+{# Opens a flyout. target is the flyout's id. Use only when the flyout adds something the card
+   does not already say (what to do, how to tell which case you hit). #}
+{% macro flyout_trigger(target, label='More about this') -%}
+<button type="button" class="k-morelink" data-k-flyout="#{{ target }}" aria-controls="{{ target }}" aria-expanded="false">{{ label }}</button>
+{%- endmacro %}
+
+{# Help card: a short title, two or three lines, its own accent and icon, and a flyout link.
+   accent: info | warn | good | tier. lines is a list of plain strings. #}
+{% macro help_card(title, lines, accent='info', icon_name='help', more_id='') -%}
+<article class="k-hcard k-hcard--{{ accent }}">
+  <div class="k-hcard__head">
+    <span class="k-badge{% if accent == 'warn' %} k-badge--warn{% elif accent == 'good' %} k-badge--good{% elif accent == 'tier' %} k-badge--tier{% endif %}">{{ icon(icon_name) }}</span>
+    <h3 title="{{ title }}">{{ title }}</h3>
+  </div>
+  <ul class="k-hcard__list">{% for l in lines %}<li>{{ l }}</li>{% endfor %}</ul>
+  {% if more_id %}{{ flyout_trigger(more_id) }}{% endif %}
+</article>
+{%- endmacro %}
+
+{# The right-hand help column. It starts level with the first main card, so place it inside
+   .k-layout beside .k-layout__main, never inside the scene band. #}
+{% macro help_column() -%}
+<aside class="k-help-col" aria-label="Help for this page">{{ caller() }}</aside>
+{%- endmacro %}
+
+{# Flyout: opens on the right, centered vertically. Body comes from the call block. help_href
+   links to the full Help article. #}
+{% macro flyout(id, title, eyebrow='More about this', help_href='') -%}
+<div class="k-flyout" id="{{ id }}" role="dialog" aria-modal="false" aria-labelledby="{{ id }}-t" aria-hidden="true">
+  <div class="k-flyout__head">
+    <div class="k-grow"><small>{{ eyebrow }}</small><h2 id="{{ id }}-t">{{ title }}</h2></div>
+    <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ icon('x') }}</button>
+  </div>
+  <div class="k-flyout__body">{{ caller() }}</div>
+  {% if help_href %}<div class="k-flyout__foot"><a class="k-link" href="{{ help_href }}">Read the full help article {{ icon('arrow', 'k-ic--sm') }}</a></div>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Slide-over: slides over the content from the right, centered vertically in the window.
+   Modal while open: focus is trapped and the page behind is inert. Body from the call block. #}
+{% macro slide_over(id, title, eyebrow='') -%}
+<aside class="k-slideover" id="{{ id }}" role="dialog" aria-modal="true" aria-labelledby="{{ id }}-t" aria-hidden="true">
+  <div class="k-slideover__head">
+    <div class="k-grow">{% if eyebrow %}<small class="k-muted">{{ eyebrow }}</small>{% endif %}<h2 id="{{ id }}-t">{{ title }}</h2></div>
+    <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ icon('x') }}</button>
+  </div>
+  <div class="k-slideover__body">{{ caller() }}</div>
+</aside>
+{%- endmacro %}
+
+{# Modal, or a bottom sheet with sheet=True. Pass actions as {label, kind, close} dicts in
+   actions; the first close action also takes Escape. static=True keeps a scrim click from
+   closing it (use for anything that asks before something goes online). #}
+{% macro modal(id, title, actions=[], sheet=False, static=False) -%}
+<div class="k-modal{% if sheet %} k-modal--sheet{% endif %}" id="{{ id }}" role="dialog" aria-modal="true" aria-labelledby="{{ id }}-t" aria-hidden="true"{% if static %} data-k-static{% endif %}>
+  <div class="k-modal__head"><h2 id="{{ id }}-t">{{ title }}</h2></div>
+  <div class="k-modal__body">{{ caller() }}</div>
+  {% if actions %}<div class="k-modal__foot">
+    {% for a in actions %}<button type="button" class="k-btn{% if a.kind %} k-btn--{{ a.kind }}{% endif %}"{% if a.close %} data-k-close{% endif %}{% if a.attrs %}{{ a.attrs|xmlattr }}{% endif %}{% if a.vals %} hx-vals='{{ a.vals|tojson }}'{% endif %}>{{ a.label }}</button>{% endfor %}
+  </div>{% endif %}
+</div>
+{%- endmacro %}
+
+{# The toast region. Include once per page (base.html does). kestrel-ui.js fills it. #}
+{% macro toast_region() -%}
+<div id="k-toasts" class="k-toasts" role="status" aria-live="polite"></div>
+{%- endmacro %}
+
+{# Switch: a real checkbox with role=switch, so it works without script and in a form. #}
+{% macro switch(name, label, checked=False, id='', attrs={}) -%}
+{%- set sid = id or ('sw-' ~ name) -%}
+<label class="k-switch" for="{{ sid }}"><input type="checkbox" role="switch" id="{{ sid }}" name="{{ name }}"{% if checked %} checked{% endif %}{{ attrs|xmlattr }}><span class="k-switch__track" aria-hidden="true"></span><span>{{ label }}</span></label>
+{%- endmacro %}
+
+{# Segmented control. options is a list of (value, label); selected is the current value. A
+   hidden input named `name` carries the choice, so it submits with a form and kestrel-ui.js
+   keeps it in step with the buttons. #}
+{% macro segmented(name, options, selected='', label='') -%}
+<div class="k-seg" role="group" data-k-seg{% if label %} aria-label="{{ label }}"{% endif %}>
+  <input type="hidden" name="{{ name }}" value="{{ selected }}">
+  {% for value, text in options %}<button type="button" value="{{ value }}" class="{% if value == selected %}is-on{% endif %}" aria-pressed="{{ 'true' if value == selected else 'false' }}">{{ text }}</button>{% endfor %}
+</div>
+{%- endmacro %}
+
+{# Stepper: minus, value, plus. The value is submitted under name. #}
+{% macro stepper(name, value, min=0, max=99, step=1, label='') -%}
+<div class="k-stepper" data-k-stepper min="{{ min }}" max="{{ max }}" step="{{ step }}" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>
+  <button type="button" data-k-step="-1" aria-label="Decrease"{% if value <= min %} disabled{% endif %}>{{ icon('minus', 'k-ic--sm') }}</button>
+  <input type="text" inputmode="numeric" name="{{ name }}" value="{{ value }}" readonly aria-live="polite">
+  <button type="button" data-k-step="1" aria-label="Increase"{% if value >= max %} disabled{% endif %}>{{ icon('plus', 'k-ic--sm') }}</button>
+</div>
+{%- endmacro %}
+
+{# Step strip. steps is a list of labels; current is the 1-based step in progress. #}
+{% macro steps(labels, current=1) -%}
+<ol class="k-steps" style="--k-steps: {{ labels|length }}">
+  {% for l in labels %}{% set n = loop.index %}
+  <li class="k-step{% if n < current %} is-done{% elif n == current %} is-now{% endif %}"{% if n == current %} aria-current="step"{% endif %}><span class="k-step__n">{% if n < current %}{{ icon('check', 'k-ic--sm') }}{% else %}{{ n }}{% endif %}</span><span class="k-step__label">{{ l }}</span></li>
+  {% endfor %}
+</ol>
+{%- endmacro %}
+
+{# Danger zone: a red-bordered group of irreversible actions. Rows come from the call block as
+   .k-dz__row elements. Pass a distinct id when a page has more than one. #}
+{% macro danger_zone(title='Danger zone', id='k-dz') -%}
+<section class="k-dz" aria-labelledby="{{ id }}-t">
+  <div class="k-dz__head">{{ icon('alert', 'k-ic--lg') }}<span id="{{ id }}-t">{{ title }}</span></div>
+  <div class="k-dz__body">{{ caller() }}</div>
+</section>
+{%- endmacro %}
+
+{# Scene band across the top of a page. The title sits at the left, header actions beside it
+   (from the call block, never on the art). scene and touch are ids; the server picks them from
+   Settings (kestrel-ui.js draws the art). animate=False keeps the art still. #}
+{% macro scene_band(title, sub='', scene='', touch='', animate=None, crumb='', lede='') -%}
+{#- Unset scene, touch and animate come from Settings > Preferences (ui_prefs in deps.py): the
+    scene of the day, the seasonal touch inside its dates, and still art under Reduce motion. -#}
+{%- set pf = ui_prefs() -%}
+{%- set sc = scene or pf.scene -%}
+{%- set tc = touch if touch else pf.touch -%}
+{%- set an = pf.animate if animate is none else (animate and pf.animate) -%}
+<div class="k-scene" data-scene="{{ sc }}" data-touch="{{ tc }}" data-animate="{{ '1' if an else '0' }}">
+  {%- if crumb or lede %}<div class="k-scene__stack">{{ crumb }}{% endif %}
+  <div class="k-scene__title"><h1>{{ title }}</h1>{% if sub %}<span class="k-scene__sub">{{ sub }}</span>{% endif %}{% if caller is defined %}{{ caller() }}{% endif %}</div>
+  {%- if crumb or lede %}{{ lede }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Empty state: one line on what is missing, one on what to do, an optional action. #}
+{% macro empty_state(title, text='', icon_name='info', action_label='', action_href='') -%}
+<div class="k-empty"><div>
+  {{ icon(icon_name, 'k-ic--lg') }}
+  <h3>{{ title }}</h3>
+  {% if text %}<p>{{ text }}</p>{% endif %}
+  {% if action_label %}{{ button(action_label, 'primary', small=True, href=action_href) }}{% endif %}
+</div></div>
+{%- endmacro %}

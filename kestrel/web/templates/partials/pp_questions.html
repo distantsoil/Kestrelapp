@@ -1,0 +1,43 @@
+{# What they will likely ask: each question, where it comes from, its story (the operator's own
+   words) or "No story yet", and what to do next. #}
+{% import "partials/pp_icons.html" as i %}
+<section class="k-card pp-qcard" id="pp-qcard"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-qcard">
+  <header class="k-sec-head"><span class="k-badge">{{ i.pi('mic') }}</span><div class="k-grow"><h3>{{ 'What they will want to know' if con else 'What they will likely ask' }}</h3></div></header>
+  {%- for r in questions %}
+  <div class="pp-q{% if not r.story %} is-gap{% endif %}" data-testid="pp-q" data-qh="{{ r.qh }}">
+    <span class="pp-q__n">{{ r.n }}</span>
+    <div class="pp-q__main">
+      <div class="pp-q__t">{{ r.q }}</div>
+      <div class="pp-q__from">{{ r.from }}</div>
+      {%- if r.story %}
+      <button type="button" class="pp-story" data-pp-open aria-expanded="false" data-testid="pp-story-chip">{{ i.pi('book', 'k-ic--sm') }}<span>{{ r.story.title }}</span>{{ i.pi('down', 'k-ic--sm') }}</button>
+      <div class="pp-star" hidden>
+        <div><i>Situation</i>{{ r.story.situation }}</div>
+        <div><i>What you did</i>{{ r.story.action }}</div>
+        <div><i>What changed</i>{{ r.story.result }}</div>
+        <p class="pp-sub">Your words, as you wrote them.</p>
+      </div>
+      {%- else %}
+      <span class="pp-story is-none" data-testid="pp-nostory">{{ i.pi('alert', 'k-ic--sm') }}No story yet</span>
+      <a class="pp-storyln" href="#" role="button" hx-get="/stories/sheet?from=pack&opp={{ opp.id }}&qh={{ r.qh }}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-have-story">+ I have a story for this</a>
+      {%- endif %}
+    </div>
+    <div class="pp-q__btns">
+      {%- if r.story %}
+      <div class="pp-menuwrap">
+        <button type="button" class="k-btn k-btn--sm" data-pp-menu aria-haspopup="true" aria-expanded="false" data-testid="pp-swap">Swap story</button>
+        <div class="pp-menu" role="menu" hidden>
+          {%- for s in stories %}
+          <form hx-post="/prep/{{ opp.id }}/choose" hx-swap="none"><input type="hidden" name="qh" value="{{ r.qh }}"><button type="submit" role="menuitem" name="story_id" value="{{ s.id }}"{% if s.id == r.story.id %} class="is-on"{% endif %}>{{ s.title }}</button></form>
+          {%- endfor %}
+          <a role="menuitem" href="#" hx-get="/stories/sheet?from=pack&opp={{ opp.id }}&qh={{ r.qh }}" hx-target="#pp-dialog" hx-swap="innerHTML">+ Write a new story<small>Opens the story sheet</small></a>
+        </div>
+      </div>
+      {%- endif %}
+      <a class="k-btn k-btn--sm" href="{{ base }}?tab=practice&qh={{ r.qh }}" hx-get="{{ base }}?tab=practice&qh={{ r.qh }}" hx-target="#pp-body" hx-swap="innerHTML" hx-push-url="true" data-testid="pp-practice">Practice</a>
+    </div>
+  </div>
+  {%- else %}
+  <p class="k-muted" data-testid="pp-noq">No likely questions yet. They appear once Kestrel has rated this role.</p>
+  {%- endfor %}
+</section>

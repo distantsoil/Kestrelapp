@@ -17,17 +17,20 @@ keeps the phase migration-free (see the private decision log)."""
 from __future__ import annotations
 
 import hashlib
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 import structlog
 from sqlalchemy import select
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Evaluation, Setting, Story, StoryUsage
+from kestrel.db.models import Evaluation, Opportunity, Setting, Story, StoryUsage
 from kestrel.llm.embeddings import cosine
 from kestrel.llm.guard import QuarantineHook
 from kestrel.llm.prompts import load_prompt
@@ -128,10 +131,20 @@ def question_key(question: str | None) -> str:
     return question_text(question).casefold()
 
 
-async def dismiss_draft(session: AsyncSession, story_id: int) -> bool:
+async def dismiss_draft(
+    session: AsyncSession, story_id: int, *, undo_token: str | None = None
+) -> bool:
     """Remove a proposed (not operator-edited) story and remember the sketches it came from, so
     Build stories never proposes it again. Commits. False when there is no such draft; a story
     the operator has saved is theirs and goes through `delete_story`, never this."""
+    if undo_token:
+        await session.execute(sql_text("BEGIN IMMEDIATE"))
+        old_tokens = (await session.scalars(
+            select(Setting).where(Setting.key.startswith("stories.dismiss_undo."))
+        )).all()
+        for old in old_tokens:
+            if old.value["expires"] < time.time():
+                await session.delete(old)
     story = await session.get(Story, story_id)
     if story is None or story.operator_edited:
         return False
@@ -141,14 +154,73 @@ async def dismiss_draft(session: AsyncSession, story_id: int) -> bool:
     wanted = {(u.opportunity_id, question_key(u.question)) for u in usages}
     everything = await collect_sketches(session) + await collect_note_sketches(session)
     dismissed = await _get_dismissed(session)
+    previous = dict(dismissed)
     for sk in everything:
         if (sk.opportunity_id, question_key(sk.question)) in wanted:
             dismissed[str(sk.id)] = sketch_fingerprint(sk)
+    if undo_token:
+        snapshot = {
+            "expires": time.time() + 600,
+            "story": {
+                column.name: getattr(story, column.name) for column in Story.__table__.columns
+            },
+            "usages": [
+                {
+                    column.name: getattr(usage, column.name)
+                    for column in StoryUsage.__table__.columns
+                }
+                for usage in usages
+            ],
+            "changes": {
+                key: {"before": previous.get(key), "after": value}
+                for key, value in dismissed.items() if previous.get(key) != value
+            },
+        }
+        await _set_setting(session, "stories.dismiss_undo." + undo_token, snapshot)
     await _set_setting(session, DISMISSED_KEY, dismissed)
     for u in usages:
         await session.delete(u)
     await session.flush()  # usage rows first: they hold the foreign key
     await session.delete(story)
+    await session.commit()
+    return True
+
+
+def dismissal_token() -> str:
+    return uuid.uuid4().hex
+
+
+async def undo_dismissal(session: AsyncSession, token: str) -> bool:
+    """Restore the exact proposal once, without replacing later work."""
+    await session.execute(sql_text("BEGIN IMMEDIATE"))
+    row = await session.get(Setting, "stories.dismiss_undo." + token)
+    if row is None:
+        return False
+    snapshot = row.value
+    if time.time() > snapshot["expires"]:
+        await session.delete(row)
+        await session.commit()
+        return False
+    if await session.get(Story, snapshot["story"]["id"]) is not None:
+        return False
+    for usage in snapshot["usages"]:
+        if await session.get(StoryUsage, usage["id"]) is not None:
+            return False
+        if await session.get(Opportunity, usage["opportunity_id"]) is None:
+            return False
+    dismissed = await _get_dismissed(session)
+    if any(dismissed.get(key) != change["after"] for key, change in snapshot["changes"].items()):
+        return False
+    for key, change in snapshot["changes"].items():
+        if change["before"] is None:
+            dismissed.pop(key, None)
+        else:
+            dismissed[key] = change["before"]
+    await _set_setting(session, DISMISSED_KEY, dismissed)
+    session.add(Story(**snapshot["story"]))
+    await session.flush()
+    session.add_all(StoryUsage(**usage) for usage in snapshot["usages"])
+    await session.delete(row)
     await session.commit()
     return True
 

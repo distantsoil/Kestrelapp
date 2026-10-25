@@ -1,0 +1,21 @@
+{% from "ui/macros.html" import modal %}
+{% set attrs = {'hx-post': '/sources/check-all', 'hx-include': '#sources-check-form', 'hx-target': '#src-list', 'hx-swap': 'outerHTML'} %}
+{% call modal('sources-check-dialog', 'Check all sources now?', [
+  {'label': 'Cancel', 'close': True},
+  {'label': 'Check all now', 'kind': 'primary', 'close': True, 'attrs': attrs}
+], static=True) %}
+  <form id="sources-check-form" onsubmit="return false">
+    <input type="hidden" name="online_approval" value='{{ approval | tojson }}'>
+    {% if routes %}
+      <p>These models use your own key and credit. What will be sent:</p>
+      {% for route in routes %}
+        <p><b>{{ route.provider }} · {{ route.model }}</b></p>
+        <p>{{ route.sends }}.</p>
+        {% if route.employer == 'hidden' %}<p>Your current employer is hidden before anything is sent.</p>
+        {% elif route.employer == 'held' %}<p>Nothing will be sent until you choose your current employer in Settings.</p>{% endif %}
+      {% endfor %}
+      <label><input type="checkbox" name="confirmed" value="1"> I approve this online check and scoring.</label>
+    {% else %}<p>Scoring stays on this computer. Kestrel reads the public pages for each enabled source.</p>{% endif %}
+    <p>This also resumes checks waiting for a new confirmation. Later scheduled checks use your saved settings.</p>
+  </form>
+{% endcall %}

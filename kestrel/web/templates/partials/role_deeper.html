@@ -1,0 +1,32 @@
+{# Deeper read: ask first. The provider, the model, the cost, whether the employer is hidden, and
+   (behind Show details) the exact payload. The confirm form carries the token that binds the send
+   to this payload byte for byte; the server re-derives the preview and refuses a mismatch. #}
+{% from "ui/macros.html" import modal %}
+{% if error %}
+  {% call modal('rl-deeper', 'Deeper read is not possible', [{'label': 'Close', 'kind': 'primary', 'close': True}]) %}
+    <p data-testid="deeper-error">{{ error }}</p>
+  {% endcall %}
+{% else %}
+  {% set send_attrs = {'data-testid': 'deeper-send', 'data-rl-confirm': '', 'hx-post': '/opportunities/' ~ opp.id ~ '/role/deeper/send', 'hx-include': '#rl-deeper-form', 'hx-swap': 'none'} %}
+  {% set actions = [{'label': 'Cancel', 'close': True}] %}
+  {% if not preview.unavailable %}{% set actions = [{'label': 'Cancel', 'close': True}, {'label': 'Send for a deeper read', 'kind': 'primary', 'close': True, 'attrs': send_attrs}] %}{% endif %}
+  {% call modal('rl-deeper', 'Deeper read with a stronger model?', actions, static=True) %}
+    <p class="rl-quiet" data-testid="deeper-where">A one-off read by a bigger model on <b>{{ service }}</b>, using <b>{{ preview.model }}</b> and your own credit. Nothing is sent until you press Send.</p>
+    {% if preview.unavailable %}<p class="rl-warn" data-testid="deeper-unavailable">Preview only: {{ preview.unavailable }}</p>{% endif %}
+    <div class="rl-send">
+      <b>What will be sent</b>
+      <ul>
+        <li data-testid="deeper-sends">{{ sends[:1]|upper }}{{ sends[1:] }}.</li>
+        <li>About {{ preview.prompt_tokens_estimate|comma }} tokens in; {{ cost }}.</li>
+      </ul>
+      {% if preview.confidential %}<p data-testid="deeper-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+      {% else %}<p data-testid="deeper-employer">Confidential mode is off, so the employer's name is not hidden.</p>{% endif %}
+      <p>{{ service }} handles what it receives under its own terms.</p>
+    </div>
+    <details class="rl-details"><summary>Show exactly what is sent</summary><pre class="rl-pre" data-testid="deeper-payload">{{ payload }}</pre></details>
+    <form id="rl-deeper-form">
+      <input type="hidden" name="confirmed" value="1">
+      <input type="hidden" name="confirmation_token" value="{{ preview.confirmation_token }}">
+    </form>
+  {% endcall %}
+{% endif %}

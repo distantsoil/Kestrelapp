@@ -23,7 +23,22 @@
       can hide it only after you mark your current employer.{% if confidential_send.shown %} Names
       you have already marked go as stand-in codes.{% endif %}</p>
     {% endif %}
-    {% set auto = not confidential_send %}
-    {% include "partials/import_processing.html" %}
+    {% if online_route and online_route.online %}
+      {% set route = online_route %}
+      {% set dialog_id = 'doc-import-online' %}
+      {% set post_url = '/api/documents/import' %}
+      {% set target = '#import-proposal' %}
+      {% set action = 'Send and import' %}
+      {% set extra = {
+        'text': markdown, 'track': track, 'doc_kind': doc_kind,
+        'source_format': source_format or '', 'filename': filename or '',
+        'extracted_shown': '1', 'ob': '1' if ob else '',
+        'confirm_unredacted': confidential_send.confirm if confidential_send and confidential_send.needs_confirm else ''
+      } %}
+      {% include "partials/doc_online_consent.html" %}
+    {% else %}
+      {% set auto = true %}
+      {% include "partials/import_processing.html" %}
+    {% endif %}
   </div>
 {% endif %}

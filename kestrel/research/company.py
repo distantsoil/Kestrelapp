@@ -30,6 +30,7 @@ from kestrel.llm.client import LLMClient
 from kestrel.llm.guard import QuarantineHook
 from kestrel.llm.prompts import load_prompt
 from kestrel.pipeline._shared import run_prompt_hosted
+from kestrel.research.errors import raise_if_transport_failure
 from kestrel.research.excerpts import ExcerptSet, acquire_excerpts
 from kestrel.research.validation import valid_source_index
 
@@ -129,14 +130,17 @@ async def research_org(
     settings: Settings,
     http: Any = None,
     operator_paste: str | None = None,
+    excerpts: ExcerptSet | None = None,
+    raise_on_transport: bool = False,
 ) -> OrgResearch:
     """Acquire excerpts, synthesize them into a structured OrgResearch record (P5), validate every
     signal's source attribution, and enrich the org record. Never fabricates: fewer than two
     excerpts, or a not-ok/quarantined model call, returns insufficient_sources=True instead of a
     synthesized answer."""
-    excerpts = await acquire_excerpts(
-        session, http, org, settings=settings, operator_paste=operator_paste
-    )
+    if excerpts is None:
+        excerpts = await acquire_excerpts(
+            session, http, org, settings=settings, operator_paste=operator_paste
+        )
 
     if len(excerpts) < 2:
         record = OrgResearch(
@@ -163,6 +167,8 @@ async def research_org(
         on_quarantine=_quarantine_hook(session),
     )
 
+    if raise_on_transport:
+        raise_if_transport_failure(result)
     if not result.ok or result.value is None:
         record = OrgResearch(
             org_id=org.id,

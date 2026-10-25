@@ -1,7 +1,7 @@
 {# The hosted-mode disclosure, shared by Settings > Hosted and the onboarding model step.
    Import it with context: it reads tier_sends. #}
-{% macro disclosure_text() %}
-    <p class="warnbox" style="margin:.4rem 0"><b>Read before turning this on. Hosted mode sends opportunity and profile text to a provider you choose, under your own key, automatically.</b>
+{% macro disclosure_text(modern=false) %}
+    <p class="warnbox"{% if not modern %} style="margin:.4rem 0"{% endif %}><b>Read before turning this on. Hosted mode sends opportunity and profile text to a provider you choose, under your own key, automatically.</b>
     What leaves the machine, per hosted tier:
     Tier 1 sends {{ tier_sends.tier1 }}.
     Tier 2 sends {{ tier_sends.tier2 }}.

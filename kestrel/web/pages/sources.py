@@ -40,7 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.enums import SOURCE_KINDS, TRACKS
-from kestrel.db.models import ScrapeRun, Source
+from kestrel.db.models import ScrapeRun, Source, Task
 from kestrel.ingest import board_discovery
 from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import SourceConfigError
@@ -48,6 +48,7 @@ from kestrel.ingest.generated import SEC_TITLES_LABEL, sec_titles_opt_in
 from kestrel.ingest.signal_sources import SIGNAL_SOURCE_KINDS, get_signal_source
 from kestrel.llm import credit
 from kestrel.services import tracks as tracks_svc
+from kestrel.web import source_view as sv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 
@@ -117,9 +118,40 @@ def _validate_common(name: str, track: str, kind: str, cadence_raw: str) -> tupl
     return cadence_hours, None
 
 
-async def _all_sources(session: AsyncSession) -> list[Source]:
+async def _all_sources(session: AsyncSession, *, removed: bool = False) -> list[Source]:
+    """Every source in page order. A removed one (the Undo marker, see source_view) is left out
+    unless asked for: it is hidden, never deleted, so the roles it found keep their source."""
     stmt = select(Source).order_by(Source.track, Source.kind, Source.name)
-    return list((await session.execute(stmt)).scalars().all())
+    rows = list((await session.execute(stmt)).scalars().all())
+    return rows if removed else [s for s in rows if not sv.is_removed(s)]
+
+
+async def _recent_runs(
+    session: AsyncSession, sources: list[Source], n: int = 10
+) -> dict[int, list[ScrapeRun]]:
+    """The last `n` scrape runs per source, newest first, for the sparkline and the drawer's
+    health history. Bounded like `_latest_runs`: a source with no runs has no entry."""
+    ids = [s.id for s in sources]
+    if not ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(ScrapeRun)
+                .where(ScrapeRun.source_id.in_(ids))
+                .order_by(ScrapeRun.started_at.desc())
+                .limit(max(500, 12 * len(ids)))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[int, list[ScrapeRun]] = {}
+    for run in rows:
+        bucket = out.setdefault(run.source_id, [])
+        if len(bucket) < n:
+            bucket.append(run)
+    return out
 
 
 async def _latest_runs(session: AsyncSession, sources: list[Source]) -> dict[int, ScrapeRun]:
@@ -241,6 +273,41 @@ async def _rrs_status(session: AsyncSession) -> dict:
     }
 
 
+async def _checking(session: AsyncSession, *, held: bool = False) -> int:
+    """Checks someone asked for that have not finished: scrape tasks waiting or running."""
+    from kestrel.services.online_consent import APPROVAL_HOLD
+
+    rows = (
+        await session.execute(
+            select(Task.last_error).where(
+                Task.type == "scrape", Task.status.in_(("pending", "leased")),
+            )
+        )
+    ).all()
+    return sum((error == APPROVAL_HOLD) == held for (error,) in rows)
+
+
+def _lane_dest(settings) -> str:
+    """The destination (backend, base URL, model) the lane scores with on an online tier."""
+    from kestrel.services.online_consent import destination_id
+
+    tier = "tier2" if settings.llm.tiers.get("tier2") else "tier1"
+    return destination_id(settings, tier)
+
+
+def _lane_model(settings) -> str:
+    """The model the lane would score with on an online tier: what the confirmation names and
+    what the server checks the posted value against."""
+    tier = settings.llm.tiers.get("tier2") or settings.llm.tiers.get("tier1")
+    return str(getattr(tier, "model", "") or "")
+
+
+def _lane_approval(settings) -> dict[str, list[str]]:
+    from kestrel.services.online_consent import approval_for
+
+    return approval_for(settings, ("tier1", "tier2"))
+
+
 async def _lane_ctx(session: AsyncSession) -> dict:
     """Roles from found company boards waiting to be scored when Kestrel is idle (D-SRC-8), and
     what scoring them all now would cost (D-SRC-9), stated before the operator confirms."""
@@ -251,19 +318,63 @@ async def _lane_ctx(session: AsyncSession) -> dict:
     if not waiting:
         return {"waiting": 0}
     secs, measured = await lane.seconds_per_role(session)
+    sends, model, dest, confidential, approval_json = "", "", "", False, "{}"
     try:
-        hosted = lane.scores_on_hosted(await load_settings_with_db(session))
+        settings = await load_settings_with_db(session)
+        hosted = lane.scores_on_hosted(settings)
+        if hosted:
+            from kestrel.setup import tier_sends
+
+            tiers = tier_sends(settings)
+            sends = " ".join(v.rstrip(".") + "." for k, v in tiers.items()
+                             if k in ("tier1", "tier2"))
+            model = _lane_model(settings)
+            dest = _lane_dest(settings)
+            import json
+
+            from kestrel.services.online_consent import approval_for
+            approval_json = json.dumps(
+                approval_for(settings, ("tier1", "tier2")), separators=(",", ":")
+            )
+            confidential = bool(settings.confidential_mode)
     except Exception:  # an unreadable setting must not take the page down; say the cautious thing
         hosted = True
     minutes = max(1, round(waiting * secs / 60))
     return {
         "waiting": waiting, "seconds": round(secs), "measured": measured, "hosted": hosted,
+        "sends": sends, "model": model, "dest": dest, "confidential": confidential,
+        "approval_json": approval_json,
         "minutes": minutes,
         "time": f"{minutes} minutes" if minutes < 120 else f"about {round(minutes / 60)} hours",
     }
 
 
+def _page_track(request: Request, enabled: tuple[str, ...]) -> str:
+    """The track tab the page reads (D-UI-57): the asked-for or remembered one while it is in
+    use, else the first in use. A switched-off track's rows never show here."""
+    from kestrel.web.deps import active_track
+
+    track = active_track(request)
+    return track if track in enabled else enabled[0]
+
+
+def _groups(track: str, views: list[sv.SourceView]) -> list[dict]:
+    """The page's groups for `track`: its standard ones (shown even when empty) plus any other
+    group a row belongs to. Only sources that are on; the paused ones sit in their own group."""
+    on = [v for v in views if v.enabled]
+    order = [(k, t, d) for k, t, d in sv.GROUPS[track]]
+    known = {k for k, _t, _d in order}
+    order += [(v.group, sv.GROUP_TITLES[v.group], sv.GROUP_NOTES[v.group])
+              for v in {v.group: v for v in on if v.group not in known}.values()]
+    return [
+        {"key": k, "title": t, "note": d, "icon": sv.GROUP_ICON[k], "add": sv.ADD_LABEL[k],
+         "views": [v for v in on if v.group == k]}
+        for k, t, d in order
+    ]
+
+
 async def _panel_ctx(
+    request: Request,
     session: AsyncSession,
     *,
     create_error: str | None = None,
@@ -271,22 +382,49 @@ async def _panel_ctx(
     edit_error: dict | None = None,
     **extra,
 ) -> dict:
+    from kestrel.services import source_suggestions
+
     enabled_tracks = await tracks_svc.load_enabled(session)
-    sources = [s for s in await _all_sources(session) if s.track in enabled_tracks]
-    generated = [s for s in sources if s.origin == GENERATED]
-    own = [s for s in sources if s.origin != GENERATED]
-    runs = await _latest_runs(session, sources)
+    track = _page_track(request, enabled_tracks)
+    in_use = [s for s in await _all_sources(session) if s.track in enabled_tracks]
+    sources = [s for s in in_use if s.track == track]
+    generated = [s for s in in_use if s.origin == GENERATED]
+    recent = await _recent_runs(session, in_use)
+    latest = {sid: rs[0] for sid, rs in recent.items()}
+    site_lines = await _site_lines(session, sources, latest)
+    summaries = await _summaries(session) if generated else {}
+    views = [
+        sv.build_view(s, recent.get(s.id, []), summary=summaries.get(s.name, ""),
+                      sites=site_lines.get(s.id))
+        for s in sources
+    ]
+    counts = sv.health_counts(views)
+    on_total = sum(1 for v in views if v.enabled)
     # Pre-rendered JSON for each row's edit form, built here so the template needs no filter.
     config_text = {s.id: json.dumps(s.config or {}, indent=2) for s in sources}
     ctx = {
-        "sources": own,
-        "generated": generated,
-        "found_boards": sum(1 for src in own if src.origin == board_discovery.DISCOVERED),
+        "track": track,
+        "track_name": "Consulting" if track == "consulting" else "Employment",
+        "views": views,
+        "groups": _groups(track, views),
+        "paused": [v for v in views if not v.enabled],
+        "n_on": on_total,
+        "n_paused": len(views) - on_total,
+        "health": [
+            {"key": k, "n": counts[k], "label": sv.HEALTH[k][0], "sub": sub,
+             **sv.ring(counts[k], on_total)}
+            for k, sub in (("g", "Working normally"), ("w", "A site asked Kestrel to wait"),
+                           ("b", "Address moved or removed"))
+        ],
+        "type_options": [("", "All types")] + [(k, t) for k, t, _d in sv.GROUPS[track]],
+        "origins": sv.ORIGINS,
+        "suggestions": await source_suggestions.suggestions(
+            session, track, [s.name for s in in_use]
+        ),
+        "found_boards": sum(1 for s in sources if s.origin == board_discovery.DISCOVERED),
         "found_cap": board_discovery.MAX_DISCOVERED,
+        "generated": any(s.track == track for s in generated),
         "generated_on": any(s.enabled for s in generated),
-        "summaries": await _summaries(session) if generated else {},
-        "runs": runs,
-        "site_lines": await _site_lines(session, sources, runs),
         "config_text": config_text,
         "kinds": _visible_kinds(enabled_tracks),
         "tracks": enabled_tracks,
@@ -302,11 +440,18 @@ async def _panel_ctx(
         "signal_kinds": SIGNAL_SOURCE_KINDS,
     }
     ctx["lane"] = await _lane_ctx(session)
-    ctx.update(extra)
-    # Advanced opens itself when it has something to say (a lookup result, a saved key, an error).
-    ctx["advanced_open"] = bool(
-        create_error or ctx.get("lookup") or ctx.get("sam_message") or ctx.get("add_message")
+    import json as json_module
+
+    from kestrel.services.online_consent import approval_for
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    current_settings = await load_settings_with_db(session)
+    ctx["online_approval_json"] = json_module.dumps(
+        approval_for(current_settings, ("tier1", "tier2", "trigger")), separators=(",", ":")
     )
+    ctx["checking"] = await _checking(session)
+    ctx["consent_held"] = await _checking(session, held=True)
+    ctx.update(extra)
     return ctx
 
 
@@ -331,7 +476,7 @@ async def page(request: Request):
     elif rid.isdigit() and code in RUN_OUTCOMES:
         message = {"id": int(rid), "text": RUN_OUTCOMES[code][1]}
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(s, run_message=message)
+        ctx = await _panel_ctx(request, s, run_message=message)
     ctx["title"] = "Sources"
     ctx["query"] = dict(request.query_params)
     tmpl = "partials/sources_panel.html" if request.headers.get("HX-Request") else "sources.html"
@@ -371,10 +516,10 @@ async def create_source(request: Request):
                 )
             )
             await s.commit()
-            ctx = await _panel_ctx(s, add_message=f"Added {name}.")
+            ctx = await _panel_ctx(request, s, add_message=f"Added {name}.")
             status_code = 200
         else:
-            ctx = await _panel_ctx(s, create_error=error, create_values=values)
+            ctx = await _panel_ctx(request, s, create_error=error, create_values=values)
             status_code = 400
     return _panel(request, ctx, status_code)
 
@@ -391,7 +536,7 @@ async def toggle_searches(request: Request):
     async with sessionmaker()() as s:
         await rebuild_generated_sources(s, enable=enable)
         await s.commit()
-        ctx = await _panel_ctx(s)
+        ctx = await _panel_ctx(request, s)
     return _panel(request, ctx)
 
 
@@ -404,14 +549,31 @@ async def score_everything_now(request: Request):
     form = await request.form()
     if str(form.get("confirm") or "") != "1":  # only the confirmation panel sends this
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s)
+            ctx = await _panel_ctx(request, s)
         return _panel(request, ctx, 400)
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    if lane.scores_on_hosted(settings):
+        # An online model would score these: the confirmation must name the configured model,
+        # checked here and not trusted from the page, and Hosted mode must be on.
+        from kestrel.services.online_consent import approval_covers
+        ok = settings.llm.hosted_mode.active and approval_covers(
+            _lane_approval(settings), form.get("online_approval")
+        )
+        if not ok:
+            async with sessionmaker()() as s:
+                ctx = await _panel_ctx(
+                    request, s, lane_message="Nothing was sent. Confirm the online scoring in "
+                    "the panel first, and check that Hosted mode is on.")
+            return _panel(request, ctx, 400)
     credit.clear()  # the operator asked to score now: let an online key try again (D-LLM-8)
-    n = await lane.release_all(sessionmaker())
+    n = await lane.release_all(sessionmaker(), online_approval=form.get("online_approval"))
     async with sessionmaker()() as s:
         msg = (f"Scoring {n} waiting role{'' if n == 1 else 's'} now." if n
                else "No roles were waiting.")
-        ctx = await _panel_ctx(s, lane_message=msg)
+        ctx = await _panel_ctx(request, s, lane_message=msg)
     return _panel(request, ctx)
 
 
@@ -428,7 +590,7 @@ async def save_sec_titles(request: Request):
         await save_sec_titles_opt_in(s, on)
         await rebuild_generated_sources(s)
         await s.commit()
-        ctx = await _panel_ctx(s)
+        ctx = await _panel_ctx(request, s)
     return _panel(request, ctx)
 
 
@@ -457,7 +619,9 @@ async def watch_company_board(request: Request):
     company = str(form.get("company") or "").strip()[:120]
     if not company:
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, lookup={"ok": False, "text": "Type a company name first."})
+            ctx = await _panel_ctx(
+                request, s, lookup={"ok": False, "text": "Type a company name first."}
+            )
         return _panel(request, ctx, 400)
 
     try:
@@ -465,21 +629,21 @@ async def watch_company_board(request: Request):
             result = await find_company_board(company, http)
     except Exception as exc:  # a dead network is a message, never a 500
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, lookup={
+            ctx = await _panel_ctx(request, s, lookup={
                 "ok": False, "company": company,
                 "text": f"The lookup could not run ({type(exc).__name__}). Check the network "
-                        "and try again, or add the board by hand below.",
+                        "and try again, or use Add a source with its careers page link.",
             })
         return _panel(request, ctx)
 
     async with sessionmaker()() as s:
         if result.match is None:
-            ctx = await _panel_ctx(s, lookup={
+            ctx = await _panel_ctx(request, s, lookup={
                 "ok": False, "company": company,
                 "text": f"No public Greenhouse, Lever, Ashby or SmartRecruiters board was found "
                         f"for {company}. The company may use another system, or a different "
-                        "name on its careers page. If you know the board address, add it by "
-                        "hand below.",
+                        "name on its careers page. If you know the board address, use Add a "
+                        "source and paste its careers page link.",
             })
             return _panel(request, ctx)
         m = result.match
@@ -505,7 +669,7 @@ async def watch_company_board(request: Request):
             text = (f"Found a {m.platform} board called {ident}{jobs}. It is added below, "
                     "switched off. Check it is the right company, then turn it on and Kestrel "
                     "checks it once a day.")
-        ctx = await _panel_ctx(s, lookup={"ok": True, "company": company, "text": text})
+        ctx = await _panel_ctx(request, s, lookup={"ok": True, "company": company, "text": text})
     return _panel(request, ctx)
 
 
@@ -520,14 +684,14 @@ async def save_sam_key(request: Request):
     if not key:
         async with sessionmaker()() as s:
             ctx = await _panel_ctx(
-                s, sam_message={"ok": False, "text": "Paste the key from SAM.gov first."}
+                request, s, sam_message={"ok": False, "text": "Paste the key from SAM.gov first."}
             )
         return _panel(request, ctx, 400)
     try:
         write_secret(SAM_ENV, key)
     except (ValueError, OSError) as exc:
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, sam_message={"ok": False, "text": plain_error(exc)})
+            ctx = await _panel_ctx(request, s, sam_message={"ok": False, "text": plain_error(exc)})
         return _panel(request, ctx, 400)
 
     async with sessionmaker()() as s:
@@ -544,7 +708,7 @@ async def save_sam_key(request: Request):
             row.enabled = True
             row.consecutive_failures = 0
         await s.commit()
-        ctx = await _panel_ctx(s, sam_message={
+        ctx = await _panel_ctx(request, s, sam_message={
             "ok": True,
             "text": "Key saved on this computer. SAM.gov is on and is checked once a day.",
         })
@@ -571,7 +735,7 @@ async def save_rrs_key(request: Request):
             log.warning("rrs_key_not_saved", error_type=type(exc).__name__)
             message = {"ok": False, "text": plain_error(exc)}
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(s, rrs_message=message)
+        ctx = await _panel_ctx(request, s, rrs_message=message)
     return _panel(request, ctx)
 
 
@@ -610,7 +774,7 @@ async def toggle_rrs(request: Request):
         log.warning("rrs_toggle_failed", error_type=type(exc).__name__)
         message = {"ok": False, "text": "Could not change that. Try again."}
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(s, rrs_message=message)
+        ctx = await _panel_ctx(request, s, rrs_message=message)
     return _panel(request, ctx)
 
 
@@ -623,7 +787,7 @@ async def add_rss(request: Request):
     if not feeds or bad:
         text = "Paste one feed address per line, each starting with https://."
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, add_message=text, add_error=True)
+            ctx = await _panel_ctx(request, s, add_message=text, add_error=True)
         return _panel(request, ctx, 400)
     return await _add_simple(request, "rss", name, {"feeds": feeds}, 24)
 
@@ -636,7 +800,7 @@ async def add_pe_portfolio(request: Request):
     if not firm or not url.lower().startswith(("http://", "https://")):
         text = "Give the firm's name and its portfolio page address (starting with https://)."
         async with sessionmaker()() as s:
-            ctx = await _panel_ctx(s, add_message=text, add_error=True)
+            ctx = await _panel_ctx(request, s, add_message=text, add_error=True)
         return _panel(request, ctx, 400)
     return await _add_simple(
         request, "pe_portfolio", f"{firm} portfolio", {"firms": [{"name": firm, "url": url}]}, 168
@@ -649,12 +813,12 @@ async def _add_simple(
     error = _validate_source_config(kind, config)
     async with sessionmaker()() as s:
         if error:
-            ctx = await _panel_ctx(s, add_message=error, add_error=True)
+            ctx = await _panel_ctx(request, s, add_message=error, add_error=True)
             return _panel(request, ctx, 400)
         s.add(Source(track="consulting", kind=kind, name=name, config=config, enabled=True,
                      cadence_hours=cadence, origin=CUSTOM))
         await s.commit()
-        ctx = await _panel_ctx(s, add_message=f"Added {name}.")
+        ctx = await _panel_ctx(request, s, add_message=f"Added {name}.")
     return _panel(request, ctx)
 
 
@@ -692,7 +856,7 @@ async def update_source(request: Request, source_id: int):
             src.enabled = enabled
             src.origin = CUSTOM
             await s.commit()
-            ctx = await _panel_ctx(s)
+            ctx = await _panel_ctx(request, s)
             status_code = 200
         else:
             values = {
@@ -700,32 +864,85 @@ async def update_source(request: Request, source_id: int):
                 "cadence_hours": cadence_raw, "config": config_raw, "enabled": enabled,
             }
             ctx = await _panel_ctx(
-                s, edit_error={"id": source_id, "message": error, "values": values}
+                request, s, edit_error={"id": source_id, "message": error, "values": values}
             )
             status_code = 400
+        if form.get("drawer") and request.headers.get("HX-Request"):
+            from kestrel.web.pages import sources_ui
+
+            dctx = await sources_ui._drawer_ctx(
+                request, s, source_id, edit_error=ctx["edit_error"],
+                note={"tone": "good", "text": "Saved."} if error is None else None,
+            )
+            return sources_ui.drawer_with_list(request, dctx)
     return _panel(request, ctx, status_code)
+
+
+def toast_header(message: str, undo_url: str | None = None, **events) -> dict[str, str]:
+    """An HX-Trigger header: a toast (with Undo when `undo_url` is given) and any named events.
+    ensure_ascii keeps it latin-1 safe for the header."""
+    toast: dict = {"message": message}
+    if undo_url:
+        toast["undoUrl"] = undo_url
+    return {"HX-Trigger": json.dumps({"k-toast": toast, **events}, ensure_ascii=True)}
+
+
+def list_response(
+    request: Request, ctx: dict, headers: dict[str, str] | None = None
+) -> HTMLResponse:
+    """The groups alone (plus the health tiles and the counts, out of band): what a row action
+    swaps, so the page, the toolbar and the filters stay where they are."""
+    return templates().TemplateResponse(
+        request, "partials/sources_list.html", ctx, headers=headers or {}
+    )
+
+
+@router.get("/sources/list", response_class=HTMLResponse)
+async def source_list(request: Request):
+    """The groups again, for Undo and for a change made elsewhere."""
+    async with sessionmaker()() as s:
+        ctx = await _panel_ctx(request, s)
+    return list_response(request, ctx)
 
 
 @router.post("/sources/{source_id}/toggle", response_class=HTMLResponse)
 async def toggle_source(request: Request, source_id: int):
     """Flip enabled. A disabled source is skipped by the scheduler; this is the manual override to
-    re-enable one the auto-disable (3 consecutive failures) turned off, or to pause one by hand."""
+    re-enable one the auto-disable (3 consecutive failures) turned off, or to pause one by hand.
+    A source is paused, never deleted. Script gets the groups and a toast with Undo."""
     async with sessionmaker()() as s:
         src = await s.get(Source, source_id)
-        if src is None:
+        if src is None or sv.is_removed(src):
             return HTMLResponse("source not found", status_code=404)
         from kestrel.ingest.adapters.jobspy import NO_BOARDS_KEY, NO_BOARDS_REFUSED
 
+        # Undo posts `set=<0|1>`: it puts back exactly the state the action changed, so a second
+        # click or a later change cannot flip it again.
+        want = request.query_params.get("set")
+        if want in ("0", "1") and src.enabled == (want == "1"):
+            ctx = await _panel_ctx(request, s)
+            if request.headers.get("HX-Request"):
+                return list_response(request, ctx)
+            return _panel(request, ctx)
         if not src.enabled and (src.config or {}).get(NO_BOARDS_KEY):
             # LinkedIn was its only board: it stays off until the operator picks boards.
-            ctx = await _panel_ctx(s, run_message={"id": source_id, "text": NO_BOARDS_REFUSED})
+            ctx = await _panel_ctx(request, s, run_message={"id": source_id,
+                                                            "text": NO_BOARDS_REFUSED})
             return _panel(request, ctx)
         src.enabled = not src.enabled
         if src.enabled:
             src.consecutive_failures = 0  # a manual re-enable gets a clean slate
         await s.commit()
-        ctx = await _panel_ctx(s)
-    return _panel(request, ctx)
+        name, now_on = src.name, src.enabled
+        title = sv.GROUP_TITLES.get(sv.group_of(src), "its group")
+        ctx = await _panel_ctx(request, s)
+    if not request.headers.get("HX-Request"):
+        return _panel(request, ctx)
+    message = (f"{name} is on again. It is back in {title}." if now_on
+               else f"{name} is paused and moved to Paused. Nothing is deleted.")
+    return list_response(request, ctx, toast_header(
+        message, f"/sources/{source_id}/toggle?set={0 if now_on else 1}",
+        **{"src-moved": {"id": source_id}}))
 
 
 @router.post("/sources/{source_id}/default-boards", response_class=HTMLResponse)
@@ -745,7 +962,7 @@ async def use_default_boards(request: Request, source_id: int):
         src.consecutive_failures = 0
         await s.commit()
         ctx = await _panel_ctx(
-            s, run_message={"id": source_id, "text": "Now searching Indeed and Glassdoor."}
+            request, s, run_message={"id": source_id, "text": "Now searching Indeed and Glassdoor."}
         )
     return _panel(request, ctx)
 
@@ -760,6 +977,11 @@ RUN_OUTCOMES: dict[str, tuple[bool, str]] = {
         "Choose My usual models.",
     ),
     "bad_model": (False, "Not run: that model is not available right now. Pick another."),
+    "not_confirmed": (False, "Not run: nothing was sent. Confirm the online send first."),
+    "held": (False, "Not run: nothing was sent. Confidential mode is on and no current employer "
+                    "is chosen. Choose it in Settings, then try again."),
+    "hosted_off": (False, "Not run: nothing was sent. Online models need Hosted mode, "
+                          "which is off."),
 }
 
 
@@ -787,7 +1009,7 @@ async def _run_choice(
     `src` None is a whole scan (Today's Scan now): signal searches in it run on usual models.
     """
     from kestrel.services.setting_overrides import load_settings_with_db
-    from kestrel.web.pages.rescore import _override_for
+    from kestrel.web.pages.rescore import HOSTED_PREFIX, _override_for, online_refusal
 
     if str(form.get("model_choice") or "usual") != "other":
         return None, None, None
@@ -797,6 +1019,12 @@ async def _run_choice(
     if src is not None and _signal_kind(src.kind):
         return None, None, ("signal", RUN_OUTCOMES["signal"][1])
     settings = await load_settings_with_db(s)
+    if pick.startswith(HOSTED_PREFIX):
+        # An online pick needs the ask-first step's confirmation, Hosted mode on, and a listed
+        # model (the last is _override_for). Nothing is queued otherwise.
+        code = await online_refusal(s, settings, form)
+        if code:
+            return None, None, (code, RUN_OUTCOMES[code][1])
     override, label, why = await _override_for(settings, pick)
     if override is None:
         return None, None, ("bad_model", f"Not run: {why}")
@@ -819,10 +1047,15 @@ async def run_now_choose(request: Request, source_id: int):
         if src is None:
             return HTMLResponse("source not found", status_code=404)
         settings = await load_settings_with_db(s)
+        consent = await rs._consent(s, settings)
     local, local_note = await asyncio.to_thread(rs._local_models, settings)
     label, _name, _raw, hosted, reasons, hosted_note = await rs._hosted_models(settings)
+    bases = await rs._bases()
     page = request.query_params.get("page") == "1" and not request.headers.get("HX-Request")
     ctx = {
+        **rs.usual_model_ctx(settings, bases),
+        "consent": consent,
+        "local_labels": {m: rs.friendly_name(m, bases) for m in local},
         "source": src,
         "source_label": src.name,
         "can_pick": not _signal_kind(src.kind),
@@ -837,6 +1070,7 @@ async def run_now_choose(request: Request, source_id: int):
         "hosted_note": hosted_note,
         "hosted_prefix": rs.HOSTED_PREFIX,
         "hosted_while_local": settings.llm.mode != "hosted",
+        "online_approval": consent.get("approval_json", "{}"),
     }
     if page:
         ctx.update(title="Run now", query=dict(request.query_params))
@@ -865,6 +1099,20 @@ async def run_now(request: Request, source_id: int):
         if src is None:
             return HTMLResponse("source not found", status_code=404)
         override, label, refused = await _run_choice(s, src, form)
+        if refused is None:
+            from kestrel.pipeline._shared import settings_with_override
+            from kestrel.services.online_consent import approval_problem
+            from kestrel.services.setting_overrides import load_settings_with_db
+            settings = await load_settings_with_db(s)
+            effective = settings
+            if override is not None:
+                effective = settings_with_override(settings, "tier2", override)
+            tiers = ("trigger",) if _signal_kind(src.kind) else ("tier1", "tier2")
+            problem = await approval_problem(s, effective, tiers, form)
+            if problem is not None:
+                refused = (
+                    "not_confirmed", "Not run: nothing was sent. Confirm the online send first."
+                )
 
     if refused is not None:
         code, text = refused
@@ -873,18 +1121,25 @@ async def run_now(request: Request, source_id: int):
                                     status_code=303)
         message = text
     else:
-        message = await _trigger_run(source_id, override, label)
+        approval = form.get("online_approval")
+        if approval is None:
+            message = await _trigger_run(source_id, override, label)
+        else:
+            message = await _trigger_run(
+                source_id, override, label, online_approval=approval
+            )
         if not hx:
             return RedirectResponse(f"/sources?run_outcome=ran&run_id={source_id}",
                                     status_code=303)
 
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(s, run_message={"id": source_id, "text": message})
+        ctx = await _panel_ctx(request, s, run_message={"id": source_id, "text": message})
     return _panel(request, ctx)
 
 
 async def _trigger_run(
-    source_id: int, override: dict | None = None, label: str | None = None
+    source_id: int, override: dict | None = None, label: str | None = None,
+    online_approval: object = None,
 ) -> str:
     from kestrel.ingest.http import HttpClient
     from kestrel.ingest.runner import run_source
@@ -898,6 +1153,17 @@ async def _trigger_run(
             if src is None:
                 return "source not found"
             kind = src.kind
+            from kestrel.services.online_consent import approval_covers, approval_for
+
+            tiers = ("trigger",) if kind in SIGNAL_SOURCE_KINDS else ("tier1", "tier2")
+            effective = settings
+            if override is not None:
+                from kestrel.pipeline._shared import settings_with_override
+
+                effective = settings_with_override(settings, "tier2", override)
+            expected = approval_for(effective, tiers)
+            if expected and not approval_covers(expected, online_approval):
+                return "Nothing was sent. The online destination changed. Open Run now again."
         async with HttpClient(
             user_agent=settings.ingest.user_agent,
             default_rate_per_sec=settings.ingest.default_rate_per_sec,
@@ -914,7 +1180,7 @@ async def _trigger_run(
             else:
                 outcome = await run_source(
                     sessionmaker(), source_id, http=http, model_override=override,
-                    model_label=label,
+                    model_label=label, online_approval=online_approval,
                 )
         text = f"{outcome.status}: {outcome.counts}"
         if outcome.error:

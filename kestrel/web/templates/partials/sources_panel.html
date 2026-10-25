@@ -1,147 +1,77 @@
-{% import "partials/sources_macros.html" as sm %}
-<div id="sources-panel">
+{# The Sources panel (D-UI-102): health tiles, the toolbar, the groups, and the sources that need
+   a key of your own. Everything above the groups is static; a row action swaps only the groups
+   (partials/sources_list.html). A legacy action (a key saved, the searches switch) swaps the panel. #}
+{% import "ui/macros.html" as ui %}
+<div id="sources-panel" class="src-panel" data-testid="sources-panel">
+  {% if run_message %}{% set rv = (views | selectattr('id', 'equalto', run_message.id) | list | first) %}
+  <div class="src-note" role="status" data-testid="run-result">{% if rv %}<b>{{ rv.name }}:</b> {% endif %}{{ run_message.text }}</div>{% endif %}
+  {% if lookup %}<div class="src-note {{ '' if lookup.ok else 'is-warn' }}" role="status" data-testid="lookup-result">{{ lookup.text }}</div>{% endif %}
+  {% if add_message %}<div class="src-note {{ 'is-warn' if add_error else '' }}" role="status" data-testid="add-result">{{ add_message }}</div>{% endif %}
+  {% if create_error %}<div class="src-note is-warn" role="status" data-testid="create-error">{{ create_error }}</div>{% endif %}
 
-  {# ------------------------------------------------------------- Your searches (D-SRC-3) #}
-  <div class="panel" data-testid="your-searches">
-    <div class="bar" style="margin-bottom:.4rem">
-      <h2 style="margin:0">Your searches</h2>
-      {% if generated %}
-      <span class="pill {{ 'covered' if generated_on else 'grey' }}" data-testid="searches-state">{{ 'On' if generated_on else 'Off' }}</span>
-      <span class="sp"></span>
-      <form hx-post="/sources/searches" hx-target="#sources-panel" hx-swap="outerHTML" style="margin:0">
-        <input type="hidden" name="enable" value="{{ '0' if generated_on else '1' }}">
-        <button class="btn {{ '' if generated_on else 'primary' }}" type="submit" data-testid="searches-switch">
-          {{ 'Turn searching off' if generated_on else 'Turn searching on' }}</button>
+  {% include "partials/sources_health.html" %}
+
+  <div class="src-tools">
+    <label class="src-sq"><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="src-q" type="search" placeholder="Search sources" aria-label="Search sources" autocomplete="off"></label>
+    <span class="k-select"><select id="src-ftype" class="k-input" aria-label="Type">{% for v, l in type_options %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></span>
+    <span class="k-select"><select id="src-forig" class="k-input" aria-label="Where it came from"><option value="">All origins</option>{% for k, o in origins.items() %}<option value="{{ k }}">{{ o[0] }}</option>{% endfor %}</select></span>
+    <span class="k-select"><select id="src-fhealth" class="k-input" aria-label="Health"><option value="">All health</option><option value="g">Healthy</option><option value="w">Slowed down</option><option value="b">Needs you</option></select></span>
+    <span class="k-grow"></span>
+    <button type="button" class="k-btn k-btn--sm" hx-get="/sources/check-all/choose" hx-target="#sources-check-slot" hx-swap="innerHTML" data-testid="check-all">{{ ui.icon('scan', 'k-ic--sm') }}Check all now</button>
+    <button type="button" class="k-btn k-btn--primary k-btn--sm" data-src-add="" data-testid="add-source">{{ ui.icon('plus', 'k-ic--sm') }}Add a source</button>
+  </div>
+
+  {% include "partials/sources_groups.html" %}
+  <div id="sources-check-slot"></div>
+
+  {# Sources that need a key of your own: RemoteRocketship (all tracks) and SAM.gov (consulting). #}
+  <details class="k-card src-keys" data-testid="sources-keys"{% if rrs_message or sam_message %} open{% endif %}>
+    <summary><b>Sources that need your own key</b> <span class="src-sub">RemoteRocketship{% if consulting %} and SAM.gov{% endif %}</span></summary>
+
+    <div class="src-key" data-testid="rrs-card">
+      <div class="src-key__head"><h3>RemoteRocketship <span class="src-sub">optional, needs your own paid subscription</span></h3>
+        {% if rrs.source %}<span class="k-pill {{ 'k-pill--good' if rrs.on else '' }}" data-testid="rrs-state">{{ 'On' if rrs.on else 'Off' }}</span>{% endif %}</div>
+      <p>Finds remote jobs through your RemoteRocketship account. <a class="k-link" href="/help#remoterocketship">Help</a></p>
+      <form class="src-keyform" hx-post="/sources/remoterocketship/key" hx-target="#sources-panel" hx-swap="outerHTML">
+        <input class="k-input" type="password" name="api_key" autocomplete="off" aria-label="RemoteRocketship key" placeholder="{{ 'Key saved: ' ~ rrs.masked if rrs.present else 'Paste your key' }}">
+        <button class="k-btn k-btn--sm" type="submit" data-testid="rrs-save">Save key</button>
       </form>
-      {% endif %}
-    </div>
-    {% if generated %}
-    <p class="muted" style="margin:0 0 .6rem">Built from your
-      <a href="/profile?tab=employment">job titles</a> and <a href="/profile?tab=location">location</a>.
-      They update when you change your profile.</p>
-    <div style="overflow-x:auto">
-    <table class="data">
-      <thead><tr><th>Search</th>{% if show_track %}<th>Track</th>{% endif %}<th>Last run</th><th>Health</th><th></th></tr></thead>
-      {% for src in generated %}
-      {% set run = runs.get(src.id) %}
-      {% set is_edit_error = edit_error and edit_error.id == src.id %}
-      <tbody>
-        <tr data-testid="search-row">
-          <td>{{ summaries.get(src.name) or src.name }}</td>
-          {% if show_track %}<td>{{ src.track }}</td>{% endif %}
-          <td>{{ sm.last_run(src) }}</td>
-          <td>{{ sm.health(src, run, run_message, site_lines.get(src.id)) }}</td>
-          <td>
-            {{ sm.run_now(src, signal_kinds) }}
-          </td>
-        </tr>
-        <tr>
-          <td colspan="{{ 5 if show_track else 4 }}" style="padding-top:0">
-            <details class="section-edit" {% if is_edit_error %}open{% endif %}>
-              <summary class="muted">Show details</summary>
-              <p class="muted" style="margin:.4rem 0">Runs every {{ src.cadence_hours }} hours as
-                <span class="mono">{{ src.kind }}</span>. Editing it makes it your own search: it
-                will no longer follow your profile.</p>
-              {% if is_edit_error %}<div class="warnbox">{{ edit_error.message }}</div>{% endif %}
-              {{ sm.edit_form(src, edit_error.values if is_edit_error else None, tracks, kinds, config_text) }}
-            </details>
-          </td>
-        </tr>
-      </tbody>
-      {% endfor %}
-    </table>
-    </div>
-    {% if consulting %}
-    <p style="margin:.6rem 0 0" data-testid="sec-titles-row">
-      <label><input type="checkbox" name="on" value="1" data-testid="sec-titles"
-             hx-post="/sources/sec-titles" hx-trigger="change" hx-target="#sources-panel" hx-swap="outerHTML"
-             {% if sec_titles_on %}checked{% endif %}> {{ sec_titles_label }}</label>
-    </p>
-    {% endif %}
-    {% else %}
-    <p class="muted" data-testid="no-searches" style="margin:0">Your searches come from
-      <a href="/profile?tab=employment">Profile &gt; Employment</a> and Location: add the job
-      titles you want and where, and they appear here.</p>
-    {% endif %}
-  </div>
-
-  {# ---------------------------------------------------- Sources you added, and shipped ones #}
-  {% if sources %}
-  <div class="panel" data-testid="own-sources">
-    <h2>Other sources</h2>
-    {% if found_boards %}
-    <p class="muted" data-testid="found-boards">{{ found_boards }} company board{{ '' if found_boards == 1 else 's' }}
-      found in your searches{% if found_boards >= found_cap %} (the most Kestrel adds is {{ found_cap }}){% endif %}.
-      Each is read straight from the company, once a day. Turn one off and it stays off.</p>
-    {% if lane_message %}<div class="banner" data-testid="lane-result">{{ lane_message }}</div>{% endif %}
-    {% if lane.waiting %}
-    <div data-testid="lane" x-data="{ confirming: false }">
-      <p class="muted" data-testid="lane-waiting">Waiting: {{ lane.waiting }} role{{ '' if lane.waiting == 1 else 's' }}
-        from company boards that do not look like your field or level are {{ 'kept for you' if lane.hosted else 'scored when Kestrel is idle' }}.
-        None are rejected.{% if lane.hosted %} Because your scoring runs on an online model, these wait for you to choose Score everything now.{% endif %}
-        <button class="btn" type="button" data-testid="lane-score-now" x-show="!confirming"
-                @click="confirming = true">Score everything now</button></p>
-      <div class="warnbox" x-show="confirming" x-cloak data-testid="lane-confirm">
-        <p><strong>Score all {{ lane.waiting }} waiting role{{ '' if lane.waiting == 1 else 's' }} now?</strong></p>
-        {% if lane.hosted %}
-        <p>Kestrel is set to use an online model, so <strong>every role can cost real money</strong>
-          on your account with that service, and the roles are sent to it. Kestrel cannot tell you the
-          total beforehand. Stop here if you are unsure.</p>
+      <div class="src-keyform">
+        <form hx-post="/sources/remoterocketship/toggle" hx-target="#sources-panel" hx-swap="outerHTML">
+          <input type="hidden" name="on" value="{{ '0' if rrs.on else '1' }}">
+          <button class="k-btn k-btn--sm{{ '' if rrs.on else ' k-btn--primary' }}" type="submit" data-testid="rrs-switch">{{ 'Turn off' if rrs.on else 'Turn on' }}</button>
+        </form>
+        {% if rrs.source %}
+        <form hx-post="/sources/{{ rrs.source.id }}/run-now" hx-target="#sources-panel" hx-swap="outerHTML" data-busy-text="Running…">
+          <button class="k-btn k-btn--sm" type="submit" data-testid="rrs-run">Run now</button>
+        </form>
         {% endif %}
-        <p>On a local model this takes your computer about <strong>{{ lane.time }}</strong>
-          ({{ lane.waiting }} roles at about {{ lane.seconds }} seconds each{{ '' if lane.measured else ', a rough figure because not enough roles have been scored yet' }}),
-          and it will be busy meanwhile.{% if not lane.hosted %} If you later switch to an online model, scoring each role there costs money.{% endif %}</p>
-        <p>This happens once. Afterward Kestrel goes back to scoring them slowly in the background.</p>
-        <button class="btn" type="button" hx-post="/sources/score-everything" hx-vals='{"confirm": "1"}'
-                hx-target="#sources-panel" hx-swap="outerHTML" data-testid="lane-confirm-yes">Yes, score them all now</button>
-        <button class="btn" type="button" @click="confirming = false">Cancel</button>
       </div>
+      {% if rrs_message %}<p class="{{ 'src-sub' if rrs_message.ok else 'src-warn' }}" role="status" data-testid="rrs-result">{{ rrs_message.text }}</p>{% endif %}
+      {% if run_message and rrs.source and run_message.id == rrs.source.id %}<p class="src-sub" data-testid="rrs-run-result">{{ run_message.text }}</p>{% endif %}
     </div>
-    {% endif %}
-    {% endif %}
-    <div style="overflow-x:auto">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>Name</th><th>Kind</th>{% if show_track %}<th>Track</th>{% endif %}<th>Enabled</th>
-          <th>Last run</th><th>Health</th><th>Actions</th>
-        </tr>
-      </thead>
-      {% for src in sources %}
-      {% set run = runs.get(src.id) %}
-      {% set is_edit_error = edit_error and edit_error.id == src.id %}
-      <tbody x-data="{ editing: {{ 'true' if is_edit_error else 'false' }} }">
-        <tr>
-          <td>{{ src.name }}{% if src.origin == 'discovered' %} <span class="pill grey" data-testid="found-board">found in your searches</span>{% endif %}</td>
-          <td class="mono">{{ src.kind }}</td>
-          {% if show_track %}<td>{{ src.track }}</td>{% endif %}
-          <td><span class="pill {{ 'covered' if src.enabled else '' }}">{{ 'on' if src.enabled else 'off' }}</span></td>
-          <td>{{ sm.last_run(src) }}</td>
-          <td>{{ sm.health(src, run, run_message, site_lines.get(src.id)) }}</td>
-          <td>
-            <div style="display:flex; gap:.35rem; flex-wrap:wrap">
-              <button class="btn" type="button" @click="editing = !editing">Edit</button>
-              <button class="btn" hx-post="/sources/{{ src.id }}/toggle"
-                      hx-target="#sources-panel" hx-swap="outerHTML">
-                {{ 'Turn off' if src.enabled else 'Turn on' }}
-              </button>
-              {{ sm.run_now(src, signal_kinds) }}
-            </div>
-          </td>
-        </tr>
-        <tr class="expand-row" x-show="editing" x-cloak>
-          <td colspan="{{ 7 if show_track else 6 }}">
-            {% if is_edit_error %}<div class="warnbox">{{ edit_error.message }}</div>{% endif %}
-            {{ sm.edit_form(src, edit_error.values if is_edit_error else None, tracks, kinds, config_text) }}
-          </td>
-        </tr>
-      </tbody>
-      {% endfor %}
-    </table>
-    </div>
-  </div>
-  {% endif %}
+    <!-- /rrs -->
 
-  {% include "partials/sources_rrs.html" %}
-  {% include "partials/sources_advanced.html" %}
+    {% if consulting %}
+    <div class="src-key" data-testid="sam-card">
+      <div class="src-key__head"><h3>SAM.gov <span class="src-sub">consulting</span></h3></div>
+      <p>US federal contract opportunities: requests for proposals for IT services posted by government agencies. Useful only if you take consulting work. It needs a free API key.</p>
+      <details class="src-how" data-testid="sam-help"{% if not sam.present %} open{% endif %}>
+        <summary>How to get a SAM.gov API key</summary>
+        <ol>
+          <li>Go to <a class="k-link" href="https://sam.gov" target="_blank" rel="noopener">sam.gov</a> and sign in. SAM.gov uses Login.gov; create a free Login.gov account if you do not have one.</li>
+          <li>Open your profile menu and choose <b>Account Details</b> (on some screens it is under <b>Workspace</b>).</li>
+          <li>Find <b>Public API Key</b>, request a key, and copy it. It may ask you to confirm with your Login.gov sign-in.</li>
+          <li>Paste the key below and save. Kestrel keeps it in its own key file on this computer and sends it only to SAM.gov.</li>
+        </ol>
+      </details>
+      <form class="src-keyform" hx-post="/sources/sam-gov/key" hx-target="#sources-panel" hx-swap="outerHTML">
+        <input class="k-input" type="password" name="api_key" autocomplete="off" aria-label="SAM.gov key" placeholder="{{ 'Key saved: ' ~ sam.masked if sam.present else 'Paste your SAM.gov API key' }}">
+        <button class="k-btn k-btn--sm" type="submit">Save key and turn on SAM.gov</button>
+      </form>
+      {% if sam_message %}<p class="{{ 'src-sub' if sam_message.ok else 'src-warn' }}" role="status" data-testid="sam-result">{{ sam_message.text }}</p>
+      {% elif sam.present %}<p class="src-sub">A key is saved ({{ sam.masked }}). Paste a new one to replace it.</p>{% endif %}
+    </div>
+    {% endif %}
+  </details>
 </div>

@@ -117,7 +117,9 @@ async def documents_context(request: Request) -> dict:
             selected = masters[0]
         await _ensure_entry_ids(s, selected)
         tree = await _tree(s, selected.id) if selected else []
-        layouts = [lay.key for lay in await _layouts(s, selected)] if selected else []
+        layout_rows = await _layouts(s, selected) if selected else []
+        layouts = [lay.key for lay in layout_rows]
+        layout_choices = [(lay.key, lay.label or lay.key) for lay in layout_rows]
         assess_host = await _assess_hosted_backend(s)
         conf = await _confidential(s)
         banner = await _employer_banner(s) if conf else []
@@ -125,7 +127,14 @@ async def documents_context(request: Request) -> dict:
 
     # ?section=<id> (the Settings "Choose your current employer" link) opens that role's details.
     wanted = request.query_params.get("section") or ""
+    saved_look = dict((selected.look if selected else None) or {})
+    saved_layout = saved_look.get("layout")
     return {"masters": masters, "selected": selected, "tree": tree, "layouts": layouts,
+            "layout_choices": layout_choices,
+            "layout_saved": saved_layout if saved_layout in layouts else (
+                layouts[0] if layouts else ""),
+            "font_saved": saved_look.get("font") or "",
+            "align_saved": saved_look.get("header_align") or "",
             "open_section": int(wanted) if wanted.isdigit() else None,
             "employer_banner": banner,
             "edit_open_id": int(wanted) if wanted.isdigit() else None,
@@ -249,14 +258,15 @@ async def _tree_response(request: Request, master_id: int, *, note: str | None =
 async def documents(request: Request):
     """Documents is the first tab of the Profile page (D-UI-21); this path stays so every link
     into it, with or without a master_id, keeps working."""
-    from kestrel.web.pages.profile import TABS, _section_ctx, _track
+    from kestrel.web.pages.profile import _section_ctx, _story_count, _tabs, _track
 
     data = await documents_context(request)
     if request.headers.get("HX-Request"):
         return templates().TemplateResponse(request, "partials/doc_tree.html", data)
     ctx = {
         "title": "Profile", "query": dict(request.query_params), "tab": "documents",
-        "tabs": TABS, **_section_ctx(_track(request)), **data,
+        "tabs": _tabs(), **_section_ctx(_track(request)), **data,
+        "story_count": await _story_count(),
     }
     return templates().TemplateResponse(request, "profile.html", ctx)
 
@@ -598,6 +608,8 @@ async def suggest_slot_variants(request: Request, slot_id: int):
 
     from kestrel.docs.imports import suggest_variants
     from kestrel.llm.client import LLMClient
+    from kestrel.llm.prompts import load_prompt
+    from kestrel.services.online_consent import consent_problem, online_route
     from kestrel.services.setting_overrides import load_settings_with_db
 
     ctx: dict = {"slot_id": slot_id, "suggestions": [], "error": None}
@@ -608,6 +620,30 @@ async def suggest_slot_variants(request: Request, slot_id: int):
             ctx["error"] = "This slot has no original wording to work from."
         else:
             slot, base, _variants, label = found
+            route = await online_route(
+                s, settings, load_prompt("variant_suggest/v1").tier,
+                this_send="the original bullet, its role label and its tags",
+            )
+            if route.get("online"):
+                problem = consent_problem(route, form := await request.form())
+                if str(form.get("confirmed") or "") != "1":
+                    return templates().TemplateResponse(
+                        request,
+                        "partials/doc_online_consent.html",
+                        {
+                            "dialog_id": f"doc-suggest-{slot_id}",
+                            "post_url": f"/documents/slot/{slot_id}/suggest",
+                            "target": f"#suggest-{slot_id}",
+                            "action": "Send and suggest wordings",
+                            "route": route,
+                            "extra": {},
+                        },
+                    )
+                if problem:
+                    ctx["error"] = problem
+                    return templates().TemplateResponse(
+                        request, "partials/variant_suggestions.html", ctx
+                    )
             try:
                 # The hosted path (D-PRIV-1): on an online tier the current employer goes as a
                 # token and comes back as the real name; with nothing to hide it is refused.
@@ -701,9 +737,19 @@ async def preview(request: Request, master_id: int):
         # The document carries its own stylesheet (paper colors, print fonts). Inside the page
         # those rules would be dropped and dark mode would paint it unreadable, so it goes in a
         # frame of its own (D-UI-22).
+        # A printed page is white in every theme and has its half-inch margin: the document paints
+        # its own sheet, so dark mode never shows its dark text on a dark ground (D-UI-22).
+        # Preview only; the PDF is unchanged. This white is the printed paper of the document
+        # itself, which is exempt from theme tokens: a resume page is white in any theme.
+        sheet = "<style>html{background:#fff}body{padding:.5in;min-height:11in}</style>"
+        html = html.replace("<head>", "<head>" + sheet, 1) if "<head>" in html else sheet + html
         doc_attr = escape(html, quote=True)
+        # The frame is one true-size Letter page; profile.js scales it with a transform (and
+        # Enlarge scales the same frame), so the page is never re-flowed (D-UI-126).
         return HTMLResponse(
+            '<div class="pf-page" data-pf-page><div class="pf-page__scale" data-pf-scale>'
             f'<iframe class="preview-doc" title="Preview" srcdoc="{doc_attr}"></iframe>'
+            "</div></div>"
         )
     except Exception as exc:  # a 500 here is invisible: htmx leaves the target untouched
         log.warning("preview_failed", master_id=master_id, error=f"{type(exc).__name__}: {exc}")
@@ -738,6 +784,44 @@ async def save_accent(request: Request, master_id: int):
         await s.commit()
     msg = f"Saved {accent}." if accent else "Saved: the layout's own color."
     return HTMLResponse(f'<span class="saved" role="status">{escape(msg)}</span>')
+
+
+@router.post("/documents/{master_id}/look", response_class=HTMLResponse)
+async def save_look(request: Request, master_id: int):
+    """Save the document's Look (D-DOC-1, D-DOC-4): layout, font, header alignment and accent, as
+    the default for every render of it. Each value is checked against what the renderer knows;
+    one that is not refused as a whole and nothing is saved. Empty means the layout's own."""
+    from kestrel.docs.styles import ALIGNS, FONTS, accent_from_params
+
+    form = await request.form()
+    layout = str(form.get("layout") or "").strip()
+    font = str(form.get("font") or "").strip()
+    align = str(form.get("header_align") or "").strip()
+    accent, error = accent_from_params(form)
+    async with sessionmaker()() as s:
+        master = await s.get(DocMaster, master_id)
+        if master is None:
+            return HTMLResponse("not found", status_code=404)
+        known = {lay.key for lay in await _layouts(s, master)}
+        if layout and layout not in known:
+            error = "That layout is not available."
+        elif font and font not in FONTS:
+            error = "That font is not on the list."
+        elif align and align not in ALIGNS:
+            error = "Choose left or center."
+        if error:
+            return HTMLResponse(f'<span class="warn" role="alert">{escape(error)} '
+                                "Nothing was saved.</span>")
+        look = dict(master.look or {})
+        for key, value in (("layout", layout), ("font", font), ("header_align", align),
+                           ("accent", accent or "")):
+            if value:
+                look[key] = value
+            else:
+                look.pop(key, None)
+        master.look = look
+        await s.commit()
+    return HTMLResponse('<span class="saved" role="status">Look saved.</span>')
 
 
 # ------------------------------------- name, summary, skills and the optional flag (D-UI-52)
@@ -1214,13 +1298,16 @@ async def assess(request: Request, master_id: int):
     from kestrel.docs.assess import VERSION, assess_master
     from kestrel.docs.catalog import load_catalog
     from kestrel.llm.client import LLMClient
+    from kestrel.llm.prompts import load_prompt
+    from kestrel.services.online_consent import consent_problem, online_route
     from kestrel.services.setting_overrides import load_settings_with_db
 
     form = await request.form()
-    pick = str(form.get("model") or "").strip()[:240]
+    pick_value = form.get("model_choice") if "model_choice" in form else form.get("model")
+    pick = str(pick_value or "").strip()[:240]
     ctx: dict = {"result": None, "error": None,
                  "model_label": await _import_model_label(VERSION)}
-    if "model" in form and not pick:
+    if "model" in form and "model_choice" not in form and not pick:
         # The "other model" form was submitted with nothing picked (script off or bypassed): ask
         # for a pick rather than quietly running the current model.
         ctx.update(error="Pick a model first, or use the current model.", model_label="")
@@ -1241,6 +1328,30 @@ async def assess(request: Request, master_id: int):
                         )
                     settings = run
                     ctx["model_label"] = label
+                route = await online_route(
+                    s, settings, load_prompt(VERSION).tier,
+                    this_send="your resume text, every bullet, role title and date",
+                )
+                if route.get("online"):
+                    problem = consent_problem(route, form)
+                    if str(form.get("confirmed") or "") != "1":
+                        return templates().TemplateResponse(
+                            request,
+                            "partials/doc_online_consent.html",
+                            {
+                                "dialog_id": f"doc-assess-{master_id}",
+                                "post_url": f"/documents/{master_id}/assess",
+                                "target": "#assessment",
+                                "action": "Send and assess",
+                                "route": route,
+                                "extra": {"model_choice": pick},
+                            },
+                        )
+                    if problem:
+                        ctx.update(error=problem, model_label="")
+                        return templates().TemplateResponse(
+                            request, "partials/doc_assessment.html", ctx
+                        )
                 async with httpx.AsyncClient() as http:
                     result = await assess_master(
                         LLMClient(settings, http=http), catalog, session=s,
@@ -1367,18 +1478,46 @@ async def import_read(request: Request):
     form = await request.form()
     ctx = await _read_source(form)
     if ctx["error"] is None:
+        from kestrel.llm.prompts import load_prompt
+
         ctx["model_label"] = await _import_model_label()
         ctx["confidential_send"] = await _import_confidential_send(ctx["markdown"])
+        from kestrel.services.online_consent import online_route
+        from kestrel.services.setting_overrides import load_settings_with_db
+
+        try:
+            async with sessionmaker()() as s:
+                settings = await load_settings_with_db(s)
+                ctx["online_route"] = _import_route(await online_route(
+                    s, settings, load_prompt("resume_outline/v1").tier,
+                    this_send="your resume text, every bullet, role title and date",
+                ))
+        except Exception as exc:  # the dialog is shown here only as a courtesy: the import
+            # step re-derives the route itself and refuses without a matching confirmation, so
+            # a settings read that fails must not turn the upload into a 500.
+            log.warning("import_online_route_failed", error_type=type(exc).__name__,
+                        error=str(exc))
+            ctx["online_route"] = None
     return templates().TemplateResponse(request, "partials/import_read.html", ctx)
 
 
-def _confirm_hash(markdown: str, provider: str, model: str) -> str:
+def _import_route(route: dict) -> dict:
+    """The import's online route. Importing a first resume is how the current employer gets
+    marked, so "confidential mode on, none marked" is not a hold here: the import has its own
+    confirmation for exactly that case (D-PRIV-1, `_import_confidential_send`), which stays
+    required and bound to the text, provider, model and destination."""
+    if route.get("employer") == "held":
+        return {**route, "employer": "unmarked"}
+    return route
+
+
+def _confirm_hash(markdown: str, provider: str, model: str, destination: str = "") -> str:
     """What an unredacted-import confirmation is bound to (D-PRIV-1): this text, this provider,
-    this model. A Try again with any of them changed needs a fresh confirmation."""
+    this model and destination. A Try again with any of them changed needs a fresh confirmation."""
     import hashlib
     import json as _json
 
-    blob = _json.dumps([markdown, provider, model], ensure_ascii=False)
+    blob = _json.dumps([markdown, provider, model, destination], ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -1410,13 +1549,18 @@ async def _import_confidential_send(markdown: str = "") -> dict | None:
     except Exception as exc:  # unknown means ask: privacy copy fails closed
         log.warning("import_confidential_check_failed", error=str(exc))
         return {"provider": "an online model", "mapping": EmployerMap(), "needs_confirm": True,
-                "shown": "", "confirm": _confirm_hash(markdown, "?", "?")}
+                "shown": "", "model": "?", "dest": "?",
+                "confirm": _confirm_hash(markdown, "?", "?", "?")}
     shown = sorted({e.shown_as for e in plan.mapping.employers})
     # D-PRIV-1: ALWAYS confirmed under confidential mode on an online model: the resume may name
     # an employer nothing marks yet (the one being imported). Marked names still go coded.
+    from kestrel.services.online_consent import destination_id
+
+    dest = destination_id(settings, tier)
     return {"provider": provider, "mapping": plan.mapping, "needs_confirm": True,
+            "model": model, "dest": dest,
             "shown": ", ".join(f'"{x}"' for x in shown),
-            "confirm": _confirm_hash(markdown, provider, model)}
+            "confirm": _confirm_hash(markdown, provider, model, dest)}
 
 
 @router.post("/api/documents/import", response_class=HTMLResponse)
@@ -1435,6 +1579,8 @@ async def import_markdown(request: Request):
 
     from kestrel.docs.imports import propose_import
     from kestrel.llm.client import LLMClient
+    from kestrel.llm.prompts import load_prompt
+    from kestrel.services.online_consent import consent_problem, online_route
     from kestrel.services.setting_overrides import load_settings_with_db
 
     form = await request.form()
@@ -1446,6 +1592,34 @@ async def import_markdown(request: Request):
 
     send = await _import_confidential_send(ctx["markdown"])
     ctx["confidential_send"] = send
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        route = _import_route(await online_route(
+            s, settings, load_prompt("resume_outline/v1").tier,
+            this_send="your resume text, every bullet, role title and date",
+        ))
+    if route.get("online"):
+        problem = consent_problem(route, form)
+        if str(form.get("confirmed") or "") != "1":
+            extra = {
+                "text": ctx["markdown"], "track": ctx["track"], "doc_kind": ctx["doc_kind"],
+                "source_format": ctx["source_format"] or "", "filename": ctx["filename"] or "",
+                "extracted_shown": "1", "ob": "1" if ctx["ob"] else "",
+            }
+            if send and send["needs_confirm"]:
+                extra["confirm_unredacted"] = send["confirm"]
+            return templates().TemplateResponse(
+                request, "partials/doc_online_consent.html",
+                {
+                    "dialog_id": "doc-import-online", "post_url": "/api/documents/import",
+                    "target": "#import-proposal", "action": "Send and import", "route": route,
+                    "extra": extra,
+                },
+            )
+        if problem:
+            ctx["error"] = problem
+            ctx["retryable"] = False
+            return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
     posted = str(form.get("confirm_unredacted") or "")
     if send and send["needs_confirm"] and not hmac.compare_digest(posted, send["confirm"]):
         # D-PRIV-1: nothing is marked, so the whole resume would go as written. The confirmation

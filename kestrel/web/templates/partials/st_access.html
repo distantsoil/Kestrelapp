@@ -1,0 +1,45 @@
+{# Access from other devices (D-SEC-3, SPEC-INTERFACES 2.6 item 4): a switch, then a QR code that
+   carries the one-time key link. It only works on your own network, and it takes effect after
+   Kestrel restarts. The QR is dark on white whatever the theme, because a scanner needs it. The
+   address and the key warning sit behind Show details. Turning it on asks first. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-access" data-testid="st-access">
+  {% call st.head('Access from other devices', 'wifi') %}
+    <label class="k-switch st-sw"><input type="checkbox" role="switch" aria-label="Access from other devices" {% if lan.file_on %}checked{% endif %}{% if not lan_local %} disabled{% endif %} data-st-access data-testid="st-access-switch"><span class="k-switch__track" aria-hidden="true"></span></label>
+  {% endcall %}
+  <p class="st-sub" data-testid="lan-bind-state">{% if lan.file_on %}On. A phone or laptop on your Wi-Fi can open Kestrel by scanning this code.{% else %}Off. Only this computer can open Kestrel.{% endif %}
+    {% if lan.restart_needed %} <b>Takes effect after Kestrel restarts.</b>{% endif %}
+    {% if lan.env_name %}<br><span class="st-mono">{{ lan.env_name }}</span> is set to <span class="st-mono">{{ lan.env_value }}</span>, and it wins over this switch. Remove it to use the switch.{% endif %}</p>
+  {% if lan_note %}<p class="st-note st-note--{{ 'good' if lan_ok else 'bad' }}" role="status" data-testid="lan-bind-note">{{ lan_note }}</p>{% endif %}
+  {% if lan.file_on %}
+  <div class="st-accp" data-testid="st-accp">
+    <div class="st-acc">
+      {% if lan_qr %}<div class="st-qr" data-testid="lan-qr" role="img" aria-label="QR code for the address">{{ lan_qr|safe }}</div>{% endif %}
+      <div class="st-accm"><b>Scan with your phone's camera</b><span class="st-dsm">Only works on your own network</span>
+        <div class="st-btns">
+          {% if lan_join %}<button type="button" class="k-btn k-btn--sm" data-st-copy="{{ lan_join }}" data-testid="copy-join-url">{{ st.sic('copy', 'k-ic--sm') }}Copy address</button>{% endif %}
+          <button type="button" class="k-btn k-btn--sm" hx-post="/settings/privacy/access" hx-vals='{"on": "0"}' hx-target="#st-access" hx-swap="outerHTML" data-testid="lan-bind-off">Turn off</button>
+        </div></div>
+    </div>
+    {% if not lan_host %}<p class="st-dsm">No network address was detected, so there is no code to show. Other devices send the key as the X-Kestrel-Key header.</p>{% endif %}
+    <details class="st-det"><summary>Show details</summary>
+      <pre>{% if lan_address %}Address: {{ lan_address }}
+{% endif %}The code includes a private key. Turn access off to make it stop working.
+One shared key for the whole app, plain HTTP, home network or a VPN you control only.</pre>
+      <p class="st-dsm">Making a new key signs out every device that used the old one. It is the only way to take access away from one device.</p>
+      <button type="button" class="k-btn k-btn--sm" hx-post="/settings/privacy/access/rotate" hx-target="#st-access" hx-swap="outerHTML" data-testid="rotate-secret">Make a new key</button>
+    </details>
+  </div>
+  {% endif %}
+  {% if not lan_local %}<p class="st-dsm">Only this computer can change this switch.</p>{% endif %}
+  <div class="k-modal" id="st-access-dialog" role="dialog" aria-modal="true" aria-labelledby="st-access-dialog-t" aria-hidden="true" data-k-static>
+    <div class="k-modal__head"><h2 id="st-access-dialog-t">Let other devices open Kestrel?</h2></div>
+    <div class="k-modal__body">
+      <p>One shared key for the whole app, over plain HTTP. Anyone with the key can see everything you can: every role, every document and your profile.</p>
+      <p>Use it only on a home network or a VPN you control. Never on shared, public or office Wi-Fi, and never through a port forward.</p>
+      <label class="st-ck"><input type="checkbox" id="st-access-ack" data-testid="lan-bind-ack"> I understand</label>
+    </div>
+    <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close data-st-access-cancel>Cancel</button>
+      <button type="button" class="k-btn k-btn--primary" id="st-access-go" disabled hx-post="/settings/privacy/access" hx-vals='{"on": "1", "ack": "on"}' hx-target="#st-access" hx-swap="outerHTML" data-k-close data-testid="lan-bind-on">Turn on</button></div>
+  </div>
+</section>

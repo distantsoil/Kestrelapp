@@ -187,7 +187,7 @@ body.busy::before {
   border-radius: var(--radius); display: grid; gap: .4rem; }
 .import-current input[type="text"] { padding: .35rem; max-width: 24rem; }
 .variant-actions { display: flex; flex-direction: column; gap: .3rem; align-items: flex-start; }
-.saved { color: var(--ok, #2e7d32); font-size: .85rem; animation: saved-fade 3s forwards; }
+.saved { color: var(--good-ink); font-size: .85rem; animation: saved-fade 3s forwards; }
 @keyframes saved-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 .doc-side { position: sticky; top: 1rem; align-self: start; display: grid; gap: .8rem;
   max-height: calc(100vh - 2rem); overflow-y: auto; }
@@ -323,7 +323,7 @@ body.busy::before {
 .palette {
   position: fixed; top: 14vh; left: 50%; transform: translateX(-50%); width: min(560px, 92vw);
   background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-lg);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, .3); z-index: 51; padding: .5rem;
+  box-shadow: var(--shadow-pop); z-index: 51; padding: .5rem;
 }
 .palette input { width: 100%; padding: .6rem .7rem; font-size: 1rem; }
 .palette ul { list-style: none; margin: .4rem 0 0; padding: 0; max-height: 50vh; overflow: auto; }
@@ -465,12 +465,12 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
 }
 .step .ic {
   width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
-  font-size: var(--fs-sm); font-weight: 700; color: #fff; background: var(--good);
+  font-size: var(--fs-sm); font-weight: 700; color: var(--good-ink); background: var(--good-bg);
 }
-.step .ic.ok, .step .ic.good { background: var(--good); }
+.step .ic.ok, .step .ic.good { background: var(--good-bg); color: var(--good-ink); }
 .step .ic.todo { background: var(--line); color: var(--muted); }
-.step .ic.warn { background: var(--warn); }
-.step .ic.bad { background: var(--bad); }
+.step .ic.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.step .ic.bad { background: var(--bad-bg); color: var(--bad-ink); }
 .step .ic.now { background: var(--action); color: var(--action-fg); }
 .step .d, .cards .d { color: var(--muted); font-size: var(--fs-sm); }
 .step .cmd {
@@ -790,19 +790,19 @@ table.data th { background: transparent; }
   color: var(--muted); font-size: var(--fs-sm); font-weight: 600;
 }
 
-/* The one-line guide strip at the top of each main page (D-UI-47). */
-.guide-strip {
+/* The one-line notice strip (announcements). */
+.notice-strip {
   display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 7px 12px;
   border: 1px solid var(--line); border-left: 3px solid var(--accent);
   border-radius: var(--radius); background: var(--bg-alt);
   color: var(--text); font-size: var(--fs-sm);
 }
-.guide-strip .guide-text { flex: 1; min-width: 0; }
-.guide-strip .guide-x {
+.notice-strip .notice-text { flex: 1; min-width: 0; }
+.notice-strip .notice-x {
   flex: none; background: none; border: 0; color: var(--muted); cursor: pointer;
   padding: 0 4px; font-size: 16px; line-height: 1;
 }
-.guide-strip .guide-x:hover { color: var(--text); }
+.notice-strip .notice-x:hover { color: var(--text); }
 
 /* ------------------------------------------------------------ applications / leads board */
 .phead { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
@@ -1046,8 +1046,8 @@ details.fitgroup[open] > summary.fitgroup-head > .quiet { visibility: hidden; }
   border-left: 3px solid var(--line); padding-left: 10px;
 }
 
-/* Guide strips: "Got it" is a text button now, not a cross (mockup section 9). */
-.guide-strip .guide-x { font-size: var(--fs-sm); font-weight: 600; color: var(--accent); }
+/* Notice strips: "Got it" is a text button, not a cross (mockup section 9). */
+.notice-strip .notice-x { font-size: var(--fs-sm); font-weight: 600; color: var(--accent); }
 
 /* Calibrate's intro panel. */
 .calibrate-intro p { margin-top: 0; }

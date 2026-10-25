@@ -1,0 +1,27 @@
+{# Keep my search private (D-UI-117): the confidential-mode switch and the current employer with
+   its "Shown as" label, on About you. These are the same setting and the same employer marks the
+   Documents role editor and Settings use. Each change saves on its own (it is not part of the
+   profile.yml form), so typing here never lights the Save bar. #}
+{% import "ui/macros.html" as ui %}
+<div id="pf-conf" data-pf-nodirty data-testid="pf-conf"
+     hx-post="/profile/confidential" hx-trigger="change" hx-include="#pf-conf input"
+     hx-params="conf_mode,conf_employer,conf_shown"
+     hx-target="#pf-conf" hx-swap="outerHTML">
+  <div class="pf-swrow">
+    {{ ui.switch('conf_mode', 'Hide my current employer', conf.on, 'pf-conf-mode') }}
+  </div>
+  <small class="pf-hint pf-swrow__hint">In every document Kestrel makes and in lists you might show someone, your current employer appears as the label below.</small>
+  <div class="pf-grid pf-grid--2 pf-conf__fields{% if not conf.on %} is-idle{% endif %}">
+    <div class="pf-f">
+      <label for="pf-conf-employer">Current employer</label>
+      <input class="k-input" id="pf-conf-employer" type="text" name="conf_employer" value="{{ conf.employer }}" maxlength="200" autocomplete="off">
+    </div>
+    <div class="pf-f">
+      <label for="pf-conf-shown">Shown as</label>
+      <input class="k-input" id="pf-conf-shown" type="text" name="conf_shown" value="{{ conf.shown }}" maxlength="200" autocomplete="off">
+    </div>
+  </div>
+  {% if conf.inferred %}<small class="pf-hint" data-testid="conf-inferred">Kestrel guessed this from your newest open role. Change it, or save to confirm it.</small>{% endif %}
+  {% if conf.problem %}<small class="pf-problem" role="alert" data-testid="conf-problem">{{ conf.problem }}</small>{% endif %}
+  {% if conf.note %}<small class="pf-saved" role="status" data-testid="conf-saved">{{ conf.note }}</small>{% endif %}
+</div>

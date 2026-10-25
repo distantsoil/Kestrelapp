@@ -1,0 +1,23 @@
+{# The timeline body. Colored nodes carry text labels too (Finished, Partial, Stopped by you, Did
+   not run): color never carries the status alone. #}
+{% import "ui/macros.html" as ui %}
+{% if history.rows %}
+<ol class="rn-tl" data-expanded="{{ '1' if history.all else '0' }}">
+  {% for r in history.rows %}
+  <li class="rn-tl__item is-{{ r.status.key }}">
+    <button type="button" class="rn-run" data-k-slideover="#rn-drawer" hx-get="/runs/{{ r.id }}/drawer" hx-target="#rn-drawer-body" hx-swap="innerHTML" data-testid="rn-run" data-run-id="{{ r.id }}">
+      <span class="rn-run__when"><b>{{ r.day }}</b><span>{{ r.at }}{% if r.duration %} · {{ r.duration }}{% endif %}</span>{% if r.mode.label %}<span class="rn-md{{ ' is-online' if r.mode.online }}">{% if r.mode.online %}{{ ui.icon('cloud', 'k-ic--sm') }}{% endif %}{{ r.mode.label }}</span>{% endif %}</span>
+      <span class="rn-run__what"><span class="k-pill{{ ' k-pill--' ~ r.status.tone if r.status.tone }}">{{ r.status.label }}</span><span class="rn-run__why">{{ r.status.why }}</span></span>
+      <span class="rn-nums"><span><b>{{ r.counts.found }}</b>found</span><span><b>{{ r.counts.new }}</b>new</span><span><b>{{ r.counts.rated }}</b>rated</span><span class="{{ 'is-bad' if r.counts.failed }}"><b>{{ r.counts.failed }}</b>failed</span>{% if r.cost %}<span class="rn-cost" data-testid="rn-cost"><b>{{ r.cost.label }}</b>online cost</span>{% endif %}</span>
+    </button>
+  </li>
+  {% endfor %}
+</ol>
+{% if history.more %}
+<div class="rn-tlfoot"><button type="button" class="k-btn k-btn--sm" hx-get="/runs/history?all=1" hx-target="#runs-tl" hx-swap="innerHTML" data-testid="rn-more">Show {{ history.more }} more</button><span class="k-muted">Every run is in the Analytics export.</span></div>
+{% elif history.all and history.total > 10 %}
+<div class="rn-tlfoot"><button type="button" class="k-btn k-btn--sm" hx-get="/runs/history" hx-target="#runs-tl" hx-swap="innerHTML">Show fewer</button></div>
+{% endif %}
+{% else %}
+<p class="k-muted rn-empty">No runs yet. The first one appears here when it finishes.</p>
+{% endif %}

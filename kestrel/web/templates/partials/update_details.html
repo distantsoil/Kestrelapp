@@ -1,27 +1,45 @@
-<div class="upd-backdrop" role="dialog" aria-modal="true" aria-labelledby="upd-title"
-     data-testid="update-dialog"
-     onclick="if (event.target === this) this.remove()">
-  <div class="card" style="max-width:640px;width:100%;max-height:85vh;overflow:auto;
-                           background:var(--paper)">
-    <h3 id="upd-title">Kestrel {{ version }} is available</h3>
-    {% for n in notes %}
-      <h4 style="margin:.8rem 0 .2rem">{{ n.version }} <span class="muted">{{ n.date }}</span></h4>
-      {{ n.html }}
-    {% else %}
-      <p class="muted">Release notes are not available right now.</p>
-    {% endfor %}
-    <p class="muted">On the download page, get the installer, close Kestrel, and run it. Your data stays where it is.</p>
-    <p style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.6rem 0 0">
-      {% if download_page %}
-        <a class="btn primary" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get the update</a>
-      {% endif %}
-      <button class="btn" type="button" hx-post="/updates/remind" hx-target="#update-banner"
-              hx-swap="innerHTML" hx-on::after-request="this.closest('.upd-backdrop').remove()">Remind me tomorrow</button>
-      <button class="btn ghost" type="button" hx-post="/updates/skip" hx-vals='{"version": "{{ version }}"}'
+{# The release-notes dialog for an available update (D-UPD-3, restyled D-UI-152). Native <dialog>
+   opened as it lands in #update-modal. Kestrel only says a version exists and where to get it;
+   the link opens the download page and the user installs it. Notes are escaped HTML from
+   updater.render_notes_html. Styles: static/css/pages/surfaces.css. #}
+{% from "ui/macros.html" import icon %}
+<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<dialog class="sf-dialog" data-testid="update-dialog" aria-labelledby="upd-title">
+  <div class="sf-form">
+    <div class="sf-head">
+      <span class="sf-ic" aria-hidden="true">{{ icon('dl') }}</span>
+      <h2 id="upd-title">Kestrel {{ version }} is available</h2>
+      <button type="button" class="k-iconbtn sf-x" data-sf-close aria-label="Close">{{ icon('x') }}</button>
+    </div>
+    {% if current %}<p class="sf-sub">You are on {{ current }}.</p>{% endif %}
+    <div class="sf-body sf-notes">
+      {% for n in notes %}
+        <h4>{{ n.version }} <span class="k-muted">{{ date_display(n.date, fallback=n.date) }}</span></h4>
+        {{ n.html }}
+      {% else %}
+        <p class="k-muted">Release notes are not available right now.</p>
+      {% endfor %}
+      <p class="k-muted">On the download page, get the installer, close Kestrel, and run it. Your data stays where it is.</p>
+    </div>
+    <div class="sf-foot">
+      <button class="k-btn k-btn--quiet" type="button" hx-post="/updates/skip" hx-vals='{{ {"version": version}|tojson }}'
               hx-target="#update-banner" hx-swap="innerHTML"
-              hx-on::after-request="this.closest('.upd-backdrop').remove()">Skip this version</button>
-      <button class="btn ghost" type="button"
-              onclick="this.closest('.upd-backdrop').remove()">Close</button>
-    </p>
+              hx-on::after-request="this.closest('dialog').close()">Skip this version</button>
+      <button class="k-btn" type="button" hx-post="/updates/remind" hx-target="#update-banner"
+              hx-swap="innerHTML" hx-on::after-request="this.closest('dialog').close()">Remind me tomorrow</button>
+      {% if download_page %}
+        <a class="k-btn k-btn--primary" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co</a>
+      {% endif %}
+    </div>
   </div>
-</div>
+</dialog>
+<script>
+  (function () {
+    var d = document.currentScript.previousElementSibling;
+    if (!d || d.tagName !== 'DIALOG') return;
+    d.addEventListener('close', function () { d.remove(); });
+    d.addEventListener('click', function (e) { if (e.target === d) d.close(); });
+    d.querySelectorAll('[data-sf-close]').forEach(function (b) { b.addEventListener('click', function () { d.close(); }); });
+    if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
+  })();
+</script>

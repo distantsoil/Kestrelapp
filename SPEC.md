@@ -80,7 +80,7 @@ Non-negotiable. Every downstream decision defers to these.
 | Templating | Jinja2, server-rendered | No SPA build toolchain |
 | Interactivity | HTMX 2.x + Alpine.js 3.x, **vendored locally** | Must work offline inside a packaged app. Do not use CDNs |
 | Styling | Tailwind CSS, **prebuilt stylesheet vendored** | Play CDN needs network. Generate once at build time, commit the CSS |
-| Database | SQLite WAL, SQLAlchemy 2.x async (`aiosqlite`) + Alembic | Alembic runs a sync engine against the same file |
+| Database | SQLite WAL, SQLAlchemy 2.x async (`aiosqlite`) + Alembic | Every connection uses `synchronous=NORMAL`; Alembic runs a sync engine against the same file (D-UI-174) |
 | Queue | DB-backed `task` table, in-process async worker | Restart-safe, inspectable with SQL |
 | Rule expressions | `simpleeval` | Tier 0 `when:` clauses. Sandboxed, never `eval()`. **No generator expressions; see §6.1** |
 | PDF verification | `pypdf` | Phase gates assert page count, text layer, and empty metadata |
@@ -98,7 +98,7 @@ Non-negotiable. Every downstream decision defers to these.
 | Token counting | `tiktoken` with a **vendored** `cl100k_base` encoding file | First use otherwise downloads from Azure blob storage, which breaks the offline requirement. Ship the file and set `TIKTOKEN_CACHE_DIR` |
 | Config | `pydantic-settings`, `.env` + YAML + DB overrides | |
 | Logging | `structlog`, rotating JSON lines | |
-| Tests | `pytest`, `pytest-asyncio`, `respx`, `playwright` | |
+| Tests | `pytest`, `pytest-asyncio`, `pytest-xdist`, `respx`, `playwright` | Isolated processes, temporary per-test data and ports; serial parity required (D-UI-172) |
 | Dependency mgmt | `uv` | Fast and Windows-clean |
 
 **Explicitly excluded:** React/Vue/Svelte, Node build tooling, Electron, Tauri, Rust, Redis,
@@ -186,7 +186,7 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | id | int pk | |
 | track | enum | `employment` \| `consulting` |
 | is_active | bool | both may be active |
-| full_name, email, phone, location | text | |
+| first_name, last_name, email, phone, location | text | `first_name` is required and used to greet the operator; `last_name` may be empty. `full_name` is derived (`first_name last_name`, trimmed) and is what a resume header prints. A migration (0023) splits an existing `full_name` at its first space and keeps the original text (D-UI-117) |
 | headline | text | |
 | narrative | text | 300-600 words, first person, track-specific framing |
 | work_auth | text | |
@@ -194,8 +194,8 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | geo_rules | json | see §6.1 |
 | must_have, must_avoid | json | weighted statements |
 | proof_points | json | `{key, claim, evidence, metric}` — the only achievements any prompt may cite |
-| employment_terms | json | employment track: `target_titles`, `anti_titles`, `seniority_floor`, `comp_floor_usd`, `comp_target_usd`, `excluded_employment_types` |
-| consulting_terms | json | consulting track: `day_rate_floor`, `day_rate_target`, `min_engagement_days`, `max_concurrent`, `service_lines`, `target_org_size`, `target_sectors`, `excluded_sectors`, `travel_tolerance` |
+| employment_terms | json | employment track: `target_titles`, `anti_titles`, `seniority_floor`, `comp_floor_usd`, `comp_target_usd`, `comp_floor_margin_pct` (0, 2, 5, 10 or 15; default 5; 0 = exact; the near-floor margin, D-RULES-2), `excluded_employment_types` |
+| consulting_terms | json | consulting track: `day_rate_floor`, `day_rate_floor_margin_pct` (same meaning as the employment margin), `day_rate_target`, `min_engagement_days`, `max_concurrent`, `service_lines`, `target_org_size`, `target_sectors`, `excluded_sectors`, `travel_tolerance` |
 | updated_at | ts | |
 
 **`title_suggestion`** (P15, D-TTL-3) — job titles the model proposes for `employment_terms.target_titles`,
@@ -352,8 +352,10 @@ application, a consulting pursuit is a business-development thread.
 `lease_until`, `worker_id`, `last_error`, timestamps.
 
 Task types: `scrape`, `normalize`, `embed`, `t1`, `t2`, `t3`, `doc_select`, `render`,
-`research`, `contacts`, `liveness`, `calibrate`, `train_reranker`, `consolidate_stories`,
-`prep_pack`, `negotiation`, `trigger_classify`, `pursuit_sweep`.
+`research`, `org_summary`, `contacts`, `liveness`, `calibrate`, `train_reranker`,
+`consolidate_stories`, `prep_pack`, `negotiation`, `follow_up`, `trigger_classify`,
+`pursuit_sweep`, `bench`.
+(`org_summary` is the company summary of `SPEC-MODULES.md` §2.1; `bench` is the Model check run.)
 
 **`embed` is enqueued by `normalize`, unconditionally, for every opportunity.** Two separate
 subsystems depend on vectors existing: the reranker's PCA features
@@ -367,12 +369,38 @@ notifications possible: it finds pursuits with a `next_action_at` due today and 
 **`run`** — a named batch. `id`, `name`, `track`, `started_at`, `finished_at`, `status`
 (`running`/`stopping`/`done`/`failed`), `counts` json, `notes`.
 
+**`notification`** — `id`, `kind`, `severity`, `title`, `body`, `opportunity_id`, `pursuit_id`,
+`track`, `created_at`, `read_at`, `dismissed_at`, `resolved_at`, `delivered_channels` json. The
+bell counts rows with `read_at` null and `dismissed_at` null; the Dismissed tab shows rows with
+`dismissed_at` set; a problem kind stays under Needs attention while `resolved_at` is null; a
+dismissed row is deleted 30 days after `dismissed_at` (D-UI-94). `SPEC-INTERFACES.md` §6.
+
 **`setting`** — key/value UI overrides.
 **Precedence, highest first:** `setting` row → environment variable → YAML → code default.
 Re-read on every request and every task lease, so a UI change takes effect on the next unit of
 work with no restart. Only keys declared in the typed settings model are overridable.
 
 **`saved_view`** — `id`, `name`, `track`, `filters` json, `sort` json, `is_default`.
+
+**State the interface owns (D-UI-92 to D-UI-129).** Where each piece of overhaul state lives:
+
+| State | Storage |
+|---|---|
+| Save for later | `opportunity.saved_at` (nullable ts); the Saved chip lists rows where it is set |
+| Not for me and its reason | The existing hidden state of the role, plus a `label` (`source` `manual`, `dimensions` for role fit, comp and logistics, or career direction, `rationale` the chosen reason); the role stays recoverable under Hidden |
+| Company hidden | `org.hidden_at` (nullable ts); roles of a hidden org are left out of Pipeline and Today, never deleted |
+| Scene, touches, avatar | `setting` rows `ui.scene`, `ui.scene_daily` (default true), `ui.scene_rotation`, `ui.scene_animate`, `ui.touches_enabled`, `ui.touches_off` (single touches), `ui.touch_groups_off` (a whole group: `seasons`, `civic` or `lights`), `ui.avatar` (`initial`, six marks or `photo`; the photo file lives in the data folder). Values are validated in `kestrel/ui_settings.py`; a stored value that no longer validates reads as its default |
+| Appearance and window | `ui.theme`, `ui.scheme`, `ui.text_size`, `ui.reduce_motion`, `ui.close_to_tray` |
+| Region | `region.date_format` (`MM/DD/YYYY` default, `MM/DD/YY`, `DD/MM/YYYY`, `DD/MM/YY`, `YYYY-MM-DD`, `Mon D, YYYY`), `region.time_format` (`12h` default, `24h`) (country and currency are fixed: US, USD) |
+| Notification sound | `notify.sound` (default on), `notify.sound_name` (`chime` default, `soft_click`, `bell`), `notify.sound_volume` (0 to 1, clamped), `notify.quiet_hours` (`{enabled, start, end}`, `HH:MM`, default 21:00 to 07:00, off) |
+| Score cutoffs | `thresholds.apply`, `thresholds.consider` |
+| Onboarding | `onboarding.state` (step, visited, skipped, completed) |
+| Contacts import | `contact_import`, `connection_position`, and `contact.source` = `linkedin_import` (SPEC-MODULES.md §2.3) |
+| Company summary | `org_summary` (SPEC-MODULES.md §2.1) |
+| Near-floor margin | `profile.employment_terms.comp_floor_margin_pct`, `consulting_terms.day_rate_floor_margin_pct` (§4.1) |
+
+Key names are the contract for the build; the exact `ui.*` spellings may be adjusted in the code
+with a matching spec edit.
 
 Tables belonging to specific modules (documents, contacts, research, stories, offers, labels,
 overrides, models) are defined in `SPEC-MODULES.md`.
@@ -629,7 +657,7 @@ material for ghost-job detection (`SPEC-MODULES.md` §6).
 
 ### 5.6 Applied-history import
 
-The operator arrives with applications already made elsewhere. Settings > Applied takes that
+The operator arrives with applications already made elsewhere. Settings > Your data > Import past applications takes that
 history as a CSV or a Markdown table, shows a review pane, and on confirm writes one
 opportunity plus one pursuit per row. Nothing is written before the confirm.
 
@@ -672,7 +700,7 @@ written with `archived_at` set, `archive_reason = "applied"` and `stage_reason =
 pursuit #<id>"`. It is counted in the scrape run as `suppressed`, visible under the Hidden chip,
 and Unhide puts it back like any hidden row. With `allow_reposts` on, the new row surfaces as
 usual: this is for aggregators that re-list the same title (Jobgether, for one) where the
-operator wants to see each listing. The pursuit's detail and the Applied tab both carry the
+operator wants to see each listing. The pursuit's detail and the Applications page both carry the
 toggle. The suppression applies to every applied pursuit, imported or not.
 
 ---
@@ -688,7 +716,7 @@ Microseconds. Target: eliminate 60-80% of raw ingest. Rules live in
 change. Every rejection records the rule that fired.
 
 A rejection is not final when the inputs change. A profile save that changes what the rules read
-(target or excluded titles, seniority floor, pay floor, geography, sponsorship) queues one
+(target or excluded titles, seniority floor, pay floor, pay margin, geography, sponsorship) queues one
 resumable, rules-only `t0_recheck` task per track. It re-runs the rules on roles set aside by
 Tier 0 and returns the ones that now pass to `new`. A role the operator scored anyway, labeled,
 put in a pursuit or hid is never touched (D-RULES-1).
@@ -708,7 +736,7 @@ put in a pursuit or hid is never touched (D-RULES-1).
 employment:
   hard_blockers:
     - id: comp_floor
-      when: "comp_max_below(opp, profile.employment_terms.comp_floor_usd)"
+      when: "comp_max_below(opp, margin_floor(profile.employment_terms.comp_floor_usd, profile.employment_terms.comp_floor_margin_pct))"
       reason: "Comp ceiling below floor"
     - id: sponsorship
       when: "profile.requires_sponsorship and regex(opp.description_md, '(?i)(cannot|unable to|will not) (provide|offer) (visa )?sponsor')"
@@ -735,6 +763,7 @@ employment:
     - { id: direct_ats,        when: "source_kind_in(source, ['greenhouse','lever','ashby','workday','smartrecruiters'])", weight: +0.8 }
     - { id: fresh,             when: "age_days(opp.date_posted) <= 3", weight: +0.5 }
     - { id: must_have_hit,     when: "desc_contains_any(opp, profile.must_have)", weight: +0.5 }
+    - { id: near_floor,        when: "comp_near_floor(opp, profile.employment_terms.comp_floor_usd, profile.employment_terms.comp_floor_margin_pct)", weight: 0.0 }
     - { id: comp_unknown,      when: "opp.comp_source == 'none'", weight: -0.3 }
     - { id: must_avoid_hit,    when: "desc_contains_any(opp, profile.must_avoid)", weight: -1.0 }
     - { id: staffing_agency,   when: "regex(opp.description_md, '(?i)(staffing|recruiting|talent) (agency|partner|solutions)|our client is seeking')", weight: -1.0 }
@@ -744,7 +773,7 @@ employment:
 consulting:
   hard_blockers:
     - id: rate_floor
-      when: "comp_max_below(opp, profile.consulting_terms.day_rate_floor)"
+      when: "comp_max_below(opp, margin_floor(profile.consulting_terms.day_rate_floor, profile.consulting_terms.day_rate_floor_margin_pct))"
       reason: "Day rate below floor"
     - id: too_short
       when: "trigger_int_below(opp, 'engagement_days', profile.consulting_terms.min_engagement_days)"
@@ -765,7 +794,22 @@ consulting:
     - { id: recent_trigger,   when: "age_days(opp.event_date) <= 30", weight: +1.2 }
     - { id: multi_signal,     when: "org_signal_count(org, 90) >= 2", weight: +1.5 }
     - { id: no_url,           when: "opp.url is None", weight: -0.2 }
+    - { id: near_floor,       when: "comp_near_floor(opp, profile.consulting_terms.day_rate_floor, profile.consulting_terms.day_rate_floor_margin_pct)", weight: 0.0 }
 ```
+
+**The near-floor margin (D-RULES-2).** A
+profile sets `comp_floor_margin_pct` (employment) or `day_rate_floor_margin_pct` (consulting) to
+0 (Exact), 2, 5, 10 or 15, default 5 (the Profile control "Keep near-floor roles", `SPEC-INTERFACES.md` §2.1). The
+`comp_floor` and `rate_floor` blockers then fire only when the ceiling is below the floor lowered
+by that percentage, so a role that tops out a little under the floor passes Tier 0 and reaches the
+models. A passing role inside the margin matches the zero-weight `near_floor` soft signal; the
+signal is a label, it changes no score, and the interface shows "Just under your pay floor" (a
+rate: "Just under your rate floor") on cards, in the pay box and on the role page, so the operator
+decides with the gap in view. A role with no posted pay is unaffected: it was already kept
+(`comp_max_below` is False when `comp_max` is None). With the margin at 0 (Exact) both rules behave
+exactly as before. The helpers are null-safe and contain no comprehension, so the AST guard is
+untouched. Changing the margin queues the same `t0_recheck` as changing the floor. This is hard
+rule 4 applied to pay: a small gap is uncertainty, and uncertainty escalates.
 
 `geo_rules` on the profile:
 
@@ -824,6 +868,8 @@ trips a staleness rule) rather than raising.
 | `value_in(value, list)` | bool, None-safe membership |
 | `source_kind_in(source, list)` | bool |
 | `comp_max_below(opp, n)` | bool, False when `comp_max` is None |
+| `margin_floor(n, pct)` | the floor lowered by `pct` percent (`n * (1 - pct/100)`); returns `n` when `pct` is None or 0 and returns None when `n` is None, so the rule then has nothing to check and the role passes |
+| `comp_near_floor(opp, n, pct)` | bool, True when `comp_max` is below `n` but at or above `margin_floor(n, pct)`; False when `comp_max`, `n` or `pct` is None or `pct` is 0 |
 | `comp_max_at_least(opp, n)` | bool, False when `comp_max` is None |
 | `trigger_int_below(opp, key, n)` | bool, False when the key is absent |
 | `org_signal_count(org, days)` | int |
@@ -946,13 +992,20 @@ pay directly; Kestrel ships no key and no proxy. The shipped external backends a
 
 Any OpenAI-compatible chat-completions server can be added as `provider: generic`. Rules:
 
+- Settings > This computer offers Other with a base URL and key. Both are stored only in
+  the data home's `.env` (`OTHER_SERVICE_URL_SECRET`, `OTHER_SERVICE_API_KEY`), never in YAML,
+  setting rows, backups or logs. The URL must be HTTPS (HTTP is allowed only for loopback),
+  without credentials, a query or a fragment. Test lists models and writes nothing. Save makes
+  a generic external backend available to the existing Models connection and consent flow;
+  it does not enable Hosted mode, acknowledge a disclosure or assign a model.
+
 - The `frontier` **tier** names exactly one external backend and is reachable only through the
   per-item preview-and-confirm escalation. The worker never passes `allow_external`.
 - **Hosted mode** (`llm.hosted_mode`, off by default) is the only other way an external backend
   is ever used. Any tier (`tier1`, `tier2`, `docsel`; never `embed`, which runs on Ollama or
   in-process, §8.1.1) may name an external backend, but the client refuses the call
   (`ExternalBackendError`) until the operator has turned Hosted mode on **and** accepted the
-  disclosure under Settings > Hosted, which writes `enabled: true`, `acknowledged_at` and
+  disclosure when the operator chooses Online or Both under Settings > This computer, which writes `enabled: true`, `acknowledged_at` and
   `acknowledged_terms` (the Tier 1 head, the Tier 2 ceiling and the per-tier "sends" lines as
   accepted). A bare `enabled: true` in YAML without the acknowledgement does nothing, and an
   acknowledgement whose terms differ from the current disclosure is void: hosted sends stop
@@ -985,7 +1038,7 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
   - Turning Hosted mode off keeps the per-tier choices and stops using them.
   - **Two tier sets and a switch.** `llm.tiers` is the local set (the hardware profile's
     derived models) and `llm.hosted_tiers` the hosted assignments, same shape, written by
-    Settings > Hosted and `kestrel setup --hosted` as `llm.hosted_tiers.<tier>.backend` and
+    Settings > This computer, Models and `kestrel setup --hosted` as `llm.hosted_tiers.<tier>.backend` and
     `.model`. `llm.mode` (`local`, the default, or `hosted`) is the standing choice: under
     `hosted`, settings resolution overlays each assigned tier onto `llm.tiers` (backend and
     model; the local tier's other fields survive except `max_tokens`, which takes the hosted
@@ -998,7 +1051,7 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
     `pending_run_mode` row the serve loop consumes on exactly one cycle. Each `run` row records
     its `mode`; each evaluation already records its model. The `frontier` tier is hosted in both
     modes and stays in `llm.tiers`.
-- Keys live only in `<data home>/.env`, entered from **Settings > Hosted (BYOK)** or
+- Keys live only in `<data home>/.env`, entered from **Settings > This computer** or **Models** (the same key store; D-UI-106) or
   `kestrel provider set-key`. Never in YAML, never in a backup, never echoed, never logged.
 - Before a model is offered for Tier 3 the provider is asked which models can honor a JSON schema
   (`supported_parameters` on OpenRouter, `supported_protocols` on OpenModel); a model whose
@@ -1053,10 +1106,16 @@ scheduler), never from a one-shot CLI run.
 ### 6.6 Concurrency and the model-thrash trap
 
 - `settings.concurrency.tier1` and `.tier2` (defaults 4 and 2) parallel requests.
-  `OLLAMA_NUM_PARALLEL` must be at least the maximum, or requests serialize regardless.
+  Each concurrency setting, including `embed` (default 4), is a whole number from 1 to 16,
+  validated at load from every configuration source. Models saves Tier 1 and Tier 2 together
+  only after both values pass validation. These limits bound requests, not a guarantee of
+  available memory; start low on smaller computers.
+  `OLLAMA_NUM_PARALLEL` must be at least the maximum, including `embed`, or requests queue.
+  Set it in Ollama's environment and restart Ollama. Kestrel cannot verify another process's
+  environment.
 - **Never interleave tiers that use different models.** With 16GB of VRAM, alternating a 14B and
   an 8B forces Ollama to unload and reload weights on every task. The worker **drains all pending
-  tasks for one tier before starting another**, unless the models are identical. Set
+  tasks for one tier before starting another**, even when the models are identical. Set
   `OLLAMA_KEEP_ALIVE` generously (2h).
 - A run reports live per-tier counts, throughput, elapsed, and an ETA extrapolated from the
   trailing 20 completions.
@@ -1114,6 +1173,15 @@ alike, and it is the primary input to the active-learning queue.
 | ≥ 4.0 | `apply` (employment) / `pursue` (consulting) | Shortlist. Auto-queue document selection. |
 | 3.0 - 3.99 | `consider` | Review queue. No automatic work. |
 | < 3.0 | `pass` | Archived, still searchable |
+
+The two cutoffs are `thresholds.apply` (default 4.0, shown to the operator as **Strong match**) and
+`thresholds.consider` (default 3.0, shown as **Worth a look**). They are editable in Settings >
+Which roles you see (D-UI-107): each is 0.0 to 5.0 in steps of 0.1, `consider` must be lower than
+`apply`, and Restore defaults returns 4.0 and 3.0. The "new strong match" notification uses the
+`apply` cutoff rather than a separate `notify.high_score` setting, which the interface no longer
+exposes. A change applies to new evaluations and to how existing ones are grouped; stored scores
+are never rewritten. (The earlier code read threshold keys that did not exist; the cutoffs are
+read from `thresholds` and fixed under D-UI-107.)
 
 Overrides, applied system-side after the model responds:
 
@@ -1187,7 +1255,7 @@ llm:
     docsel:  { backend: local, model: "kestrel-docsel", temperature: 0.0, max_tokens: 1500 }
     trigger: { backend: local, model: "kestrel-tier1", temperature: 0.0, max_tokens: 600 }
     frontier: { backend: frontier, model: "anthropic/claude-sonnet-4.6", temperature: 0.3, max_tokens: 6000, timeout_s: 300 }  # §6.4 escalation only
-  hosted_mode:                             # §6.4: off by default; Settings > Hosted writes enabled + acknowledged_at
+  hosted_mode:                             # §6.4: off by default; choosing Online or Both under Settings > This computer writes enabled + acknowledged_at
     enabled: false
     acknowledged_at: null                  # ISO timestamp of the accepted disclosure; required for any hosted tier to be used
     redact_confidential: true              # redact the current employer before a hosted send; refuse when there is no map
@@ -1239,7 +1307,7 @@ engines, chosen by the backend `llm.tiers.embed.backend` names:
 
 The **`hosted_only` profile** (models.yml `embed_backend: inprocess`) writes `llm.tiers.embed`
 to the in-process engine when hosted setup completes (`kestrel setup --hosted` or Connect under
-Settings > Hosted with that profile active), so a BYOK install needs nothing local beyond Kestrel.
+Settings > This computer with that profile active), so a BYOK install needs nothing local beyond Kestrel.
 It is written to the local tier set, never `hosted_tiers`: the engine serves both modes.
 
 **Packaging.** The model files are never committed and never downloaded at run time.
@@ -1329,7 +1397,7 @@ nothing detected) is recommended `hosted_only`: a Tier 2 evaluation on a CPU tak
 job, and a hosted provider under the operator's own key uses no local memory. The reason is
 stated plainly and specifically (for example "Apple silicon with 8 GB unified memory: too little
 to run the models alongside the OS"). Local profiles stay available to choose; only the default
-changes. When Hosted is recommended and the operator chooses Local or Both, the Setup page shows
+changes. When Hosted is recommended and the operator chooses Local or Both, onboarding step 2 and Settings > This computer show
 a prominent warning that leads with the decision (D-SETUP-7).
 
 **Ollama only when a tier uses it (D-SETUP-8).** Ollama is needed iff a tier in the effective
@@ -1440,8 +1508,13 @@ one-shot probe per model asserting no thinking span survives.
 
 ### 8.6 Benchmark harness
 
-`kestrel bench`, also a UI page. Accepts `--models` and `--prompt-version` so exactly one
-variable changes per comparison. Reports per model and per track:
+`kestrel bench`, and the **Model check** page, which queues the same run as a background task of
+type `bench` so it never blocks the web and worker loop and never needs the command line
+(D-UI-105; D-DRIFT-11 reverses the Bench line of D-DRIFT-6). The task is a `task` row, resumable,
+with progress and Cancel, and each finished check is stored so earlier checks can be listed on the
+page (the storage shape is the build's to choose). Accepts
+`--models` and `--prompt-version` so exactly one variable changes per comparison. Reports per
+model and per track:
 
 - First-attempt JSON validity rate (a target above 98%; the code measures and reports it but does
   not enforce it)
@@ -1472,7 +1545,14 @@ is an empirical question and this is how it gets answered.
   `%LOCALAPPDATA%\Kestrel\config\profile.yml`), the data directory, logs, and `.env` are never
   committed. The shipped example profile (`profile.example.yml`) is fictional.
 - Contact records hold only publicly listed business contact information. No personal addresses,
-  no personal phone numbers, no inferred emails.
+  no personal phone numbers, no inferred emails. The one other thing Kestrel stores about people is
+  the operator's own LinkedIn connections file, which they download themselves and import by hand:
+  name, company, position and connected date only, email addresses dropped at import, kept only on
+  this computer (`SPEC-MODULES.md` §2.3, D-UI-115).
+- The operator's profile photo (the avatar, D-UI-112) stays on this computer and never reaches a
+  resume, an export or a diagnostics file. A diagnostics file (D-UI-114) holds the app version,
+  recent logs, settings without keys and health check results; it is made only on request, never
+  holds the profile, resumes, keys, roles or applications, and is never sent by Kestrel.
 - **Local backup:** a `kestrel backup` command and a UI button produce a single timestamped zip
   of the database, config, and generated documents. Restore from the setup window.
 

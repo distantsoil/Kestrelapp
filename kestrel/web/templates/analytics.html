@@ -1,14 +1,23 @@
+{# Analytics (D-UI-101, SPEC-INTERFACES 2.1 /analytics). Built on the shared design system:
+   ui/macros.html for the band and icons, tokens for every color. The body (range bar and every
+   card) is what a range or view change swaps; Rewrite summary swaps only the summary card. #}
 {% extends "base.html" %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
 {% block title %}Analytics · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/pages/analytics.css">
+<script src="/static/js/analytics.js" defer></script>
+{% endblock %}
 {% block content %}
-<div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap">
-  <h1 style="margin-right:auto">Analytics <span class="badge">{{ track }}</span></h1>
-  <a class="btn ghost" href="/analytics?track={{ track }}">Refresh</a>
-</div>
-<p class="muted">The funnel, breakdowns, cost and quality, and the summary for the
-{{ track }} track. Every rate is shown next to the sample size it rests on; anything under five
-observations says "too few to judge" rather than being shown as if it were solid. Switch tracks
-with the track switch in the sidebar.</p>
-
-<div id="analytics-body">{% include "partials/analytics_body.html" %}</div>
+<div class="an-wrap"><div class="an-page">
+  {% call ui.scene_band('Analytics', sub=('Is your search working?' if track == 'employment' else 'Is consulting outreach working?')) %}{% endcall %}
+  <div id="analytics-body" data-testid="analytics-body">{% include "partials/analytics_body.html" %}</div>
+  <div class="an-tip" id="an-tip" role="tooltip"></div>
+</div></div>
+{# Outside .an-wrap: that is a layout container, and a fixed dialog inside it would be placed
+   against the column instead of the window. #}
+<div id="an-dialog"></div>
 {% endblock %}

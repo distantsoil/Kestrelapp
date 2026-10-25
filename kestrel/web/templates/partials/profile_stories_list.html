@@ -1,0 +1,44 @@
+{# The story cards, swapped in place by Add, Build and Delete. Same data as /stories. #}
+{% import "ui/macros.html" as ui %}
+{% import "partials/online_ask.html" as online_ask %}
+<div id="pf-stories-list" class="pf-stories">
+  <div class="pf-stories__head">
+    <p class="pf-lede k-grow">Your stories feed matching, cover letters and interview prep. They are always your own words, and Kestrel never rewrites them.
+      The same bank appears under Interview prep, and a change in either place changes both.</p>
+    <a class="k-btn k-btn--sm" href="/stories" data-testid="pf-stories-open">Open my stories</a>
+    <form hx-post="/profile/stories/build" hx-target="#pf-stories-list" hx-swap="outerHTML">
+      {{ online_ask.ask(build_route, 'build', 'build drafts') }}
+      <button type="submit" class="k-btn k-btn--sm" data-testid="pf-stories-build"
+            {% if building %}disabled{% endif %}>Build stories</button>
+    </form>
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" data-k-modal="#pf-story-new"
+            aria-haspopup="dialog">{{ ui.icon('plus', 'k-ic--sm') }}Add a story</button>
+  </div>
+  {% if story_notice %}<p class="pf-saved" role="status" data-testid="story-notice">{{ story_notice }}</p>{% endif %}
+  {% if story_error %}<p class="pf-problem" role="alert">{{ story_error }}</p>{% endif %}
+  {% if building %}<p class="pf-hint" data-testid="build-status">Building now. Drafts appear here when it finishes.</p>
+  {% elif build_failed %}<p class="pf-hint" data-testid="build-failed">Last build failed: {{ build_failed }}</p>{% endif %}
+  {% if stories %}
+  <div class="pf-storygrid">
+    {% for st in stories %}
+    <article class="pf-story" id="pf-story-{{ st.id }}" data-story="{{ st.id }}">
+      <header class="pf-story__head">
+        <h4>{{ st.title }}</h4>
+        {% if not st.operator_edited %}<span class="k-pill k-pill--info" title="Kestrel proposed this from your notes. It becomes yours when you edit it.">Draft</span>{% endif %}
+        <button type="button" class="k-iconbtn" aria-label="{{ 'Delete' if st.operator_edited else 'Dismiss' }} {{ st.title }}"
+                title="{{ 'Delete story' if st.operator_edited else 'Dismiss draft' }}"
+                hx-post="/profile/stories/{{ st.id }}/delete" hx-target="#pf-stories-list" hx-swap="outerHTML"
+                hx-confirm="{{ 'Delete' if st.operator_edited else 'Dismiss' }} &quot;{{ st.title }}&quot;? {{ 'This cannot be undone.' if st.operator_edited else 'Build stories will not propose it again.' }}">{{ ui.icon('x', 'k-ic--sm') }}</button>
+      </header>
+      {% if st.themes %}<div class="pf-tags">{% for t in st.themes %}<span class="k-tag">{{ t | replace('_', ' ') }}</span>{% endfor %}</div>{% endif %}
+      {% for label, text in (('Situation', st.situation), ('What I did', st.action), ('What changed', st.result)) %}
+        {% if text %}<div class="pf-sp"><i>{{ label }}</i>{{ text }}</div>{% endif %}
+      {% endfor %}
+      <small class="pf-hint">{% if st.use_count %}Used for {{ st.use_count }} role{{ '' if st.use_count == 1 else 's' }}{% else %}Not used yet{% endif %}</small>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  {{ ui.empty_state('No stories yet', 'Add a short true account of something you did, or press Build stories to draft some from your interview notes.', 'profile') }}
+  {% endif %}
+</div>

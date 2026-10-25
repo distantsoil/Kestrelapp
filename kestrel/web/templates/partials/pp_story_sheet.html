@@ -1,0 +1,31 @@
+{# The story sheet: a story in three short prompts, in the operator's own words. Opened to add
+   one for a question, a theme, a claim from practice or the bank, or to edit one. Saving keeps
+   the words exactly as typed, and Kestrel will not rewrite them. #}
+{% import "partials/pp_icons.html" as i %}
+{% set s = story %}
+<div class="k-modal pp-sheet" id="pp-story-sheet" role="dialog" aria-modal="true" aria-labelledby="pp-story-sheet-t" aria-hidden="true" data-k-static data-testid="pp-story-sheet">
+  <form hx-post="{{ ('/stories/' ~ s.id) if s else '/stories' }}" hx-swap="none" hx-disabled-elt="find button[type=submit]" data-busy-text="Saving your story.">
+    <input type="hidden" name="from" value="{{ from }}">
+    {%- if opp %}<input type="hidden" name="opp" value="{{ opp }}">{% endif %}
+    {%- if qh %}<input type="hidden" name="qh" value="{{ qh }}">{% endif %}
+    {%- if theme %}<input type="hidden" name="theme" value="{{ theme }}">{% endif %}
+    <div class="k-modal__head"><h2 id="pp-story-sheet-t">{{ 'Your story' if s else 'Add a story' }}</h2>
+      <p class="k-muted">Kestrel only knows what you write down. Each story helps it understand your experience and prepare you for the right questions.</p></div>
+    <div class="k-modal__body pp-sheet__body">
+      <div><span class="pp-sub">For</span> <span class="k-pill k-pill--info" data-testid="pp-sheet-for">{{ label }}</span></div>
+      <div class="pp-wsheet">
+        <label class="pp-wp"><span class="pp-wpl">What was the situation?</span><textarea class="pp-wpt" name="situation" rows="2" data-k-autofocus placeholder="Our three sites reported differently, so leadership never saw one picture.">{{ s.situation if s and s.situation else '' }}</textarea></label>
+        <label class="pp-wp"><span class="pp-wpl">What did you do?</span><textarea class="pp-wpt" name="action" rows="2" placeholder="I built one weekly report and ran the review with the site leads.">{{ s.action if s and s.action else '' }}</textarea></label>
+        <label class="pp-wp"><span class="pp-wpl">What changed?</span><textarea class="pp-wpt" name="result" rows="2" placeholder="Late shipments fell 15% in a quarter.">{{ s.result if s and s.result else '' }}</textarea></label>
+      </div>
+      <p class="pp-sub">A sentence or two under each prompt, in your own words. Include a number if you have one. Kestrel will not rewrite your story.</p>
+    </div>
+    <div class="k-modal__foot">
+      {%- if s and s.operator_edited %}
+      <button type="button" class="k-btn k-btn--danger pp-sheet__del" hx-get="/stories/{{ s.id }}/delete-confirm?from={{ from }}{% if opp %}&opp={{ opp }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="delete-story">Delete</button>
+      {%- endif %}
+      <button type="button" class="k-btn" data-k-close data-testid="pp-sheet-cancel">Cancel</button>
+      <button type="submit" class="k-btn k-btn--primary" data-testid="pp-sheet-save">Save story</button>
+    </div>
+  </form>
+</div>

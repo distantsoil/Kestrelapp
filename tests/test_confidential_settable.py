@@ -190,6 +190,33 @@ def _hosted(monkeypatch):
     """Every tier counts as an online model under Hosted mode (the plan, not the transport)."""
     monkeypatch.setattr("kestrel.pipeline._shared.tier_is_hosted", lambda settings, tier: True)
     monkeypatch.setattr("kestrel.web.pages.models._provider_label", lambda name: "OpenRouter")
+    from kestrel import config
+
+    load = config.load_settings
+
+    def with_hosted(*args, **kwargs):
+        settings = load(*args, **kwargs)
+        hosted = settings.llm.hosted_mode
+        hosted.enabled = True
+        hosted.acknowledged_at = "2026-10-25T00:00:00+00:00"
+        hosted.acknowledged_terms = hosted.disclosure_terms()
+        return settings
+
+    monkeypatch.setattr(config, "load_settings", with_hosted)
+
+
+def _consent(page: str) -> dict[str, str]:
+    """The confirmation a document action's ask-first dialog posts (D-UI-179): confirmed, the
+    model and the destination it named, read from the Send button of the dialog the server
+    returned. A page with no such button (a held send has none) fails here."""
+    import re
+
+    for raw in re.findall(r"hx-vals='([^']*)'", page):
+        vals = json.loads(raw)
+        if vals.get("confirmed") == "1":
+            assert vals.get("model") and vals.get("dest"), "the dialog named no model or dest"
+            return vals
+    raise AssertionError("the page carries no Send button with a confirmation")
 
 
 def _code_in(text: str) -> str:
@@ -493,7 +520,9 @@ def test_suggest_sends_a_code_and_restores_only_the_code(monkeypatch):
     slot = _slot_id(ids["cur"])
     with client:
         _mark(client, ids["cur"], _EMPLOYER, "a company in fintech")
-        shown = client.post(f"/documents/slot/{slot}/suggest").text
+        asked = client.post(f"/documents/slot/{slot}/suggest").text
+        assert "with an online model?" in asked and not _SuggestLLM.sent  # asked first
+        shown = client.post(f"/documents/slot/{slot}/suggest", data=_consent(asked)).text
         restored = f"Sold to a company in fintech for {_EMPLOYER}, 300 staff."
         client.post(f"/documents/slot/{slot}/variants", data={"text": restored, "tags": ""})
     assert _SuggestLLM.sent and all(_EMPLOYER not in m for m in _SuggestLLM.sent)
@@ -508,8 +537,26 @@ def test_suggest_refuses_when_nothing_can_be_hidden(monkeypatch):
     client, ids = _app(cap_marked=False, cur_end="2024")
     slot = _slot_id(ids["cur"])
     with client:
-        r = client.post(f"/documents/slot/{slot}/suggest").text
-    assert "Not sent" in r and not _SuggestLLM.sent
+        asked = client.post(f"/documents/slot/{slot}/suggest").text
+        # A held send is offered no Send button at all, and a confirmation posted anyway
+        # (a hand-built request) is still refused. Nothing reaches the model either way.
+        assert "This send will be held" in asked and "hx-vals" not in asked
+
+        async def route(s):
+            from kestrel.llm.prompts import load_prompt
+            from kestrel.services.online_consent import online_route
+            from kestrel.services.setting_overrides import load_settings_with_db
+
+            return await online_route(s, await load_settings_with_db(s),
+                                      load_prompt("variant_suggest/v1").tier, this_send="x")
+
+        named = _db(route)  # the model and destination that route names, as a dialog would
+        assert named["employer"] == "held"
+        posted = client.post(f"/documents/slot/{slot}/suggest",
+                             data={"confirmed": "1", "model": named["model"],
+                                   "dest": named["dest"]}).text
+    assert "Confidential mode is on and no current employer is chosen" in posted
+    assert not _SuggestLLM.sent
 
 
 # ------------------------------------------------------------------------------ assessment
@@ -645,21 +692,27 @@ def test_import_without_a_mark_needs_a_confirmation_bound_to_text_and_model(monk
     with client:
         read = client.post("/api/documents/import/read", data={"text": _RESUME}).text
         good = _confirm_value(read)
-        direct = client.post("/api/documents/import", data={"text": _RESUME}).text
+        consent = _consent(read)  # the online-send confirmation (D-UI-179), model and dest named
+        # Without it the step only asks again: the dialog, nothing sent.
+        asked = client.post("/api/documents/import", data={"text": _RESUME}).text
+        assert "with an online model?" in asked and "Not sent." not in asked
+        # With it, the unredacted-resume confirmation (D-PRIV-1) is still required and bound.
+        direct = client.post("/api/documents/import", data={"text": _RESUME, **consent}).text
         flag = client.post("/api/documents/import",
-                           data={"text": _RESUME, "confirm_unredacted": "1"}).text
+                           data={"text": _RESUME, "confirm_unredacted": "1", **consent}).text
         other_text = client.post("/api/documents/import",
                                  data={"text": _RESUME + "\nExtra line.",
-                                       "confirm_unredacted": good}).text
+                                       "confirm_unredacted": good, **consent}).text
         monkeypatch.setattr("kestrel.web.pages.models._provider_label", lambda name: "OtherAI")
         other_provider = client.post("/api/documents/import",
-                                     data={"text": _RESUME, "confirm_unredacted": good}).text
+                                     data={"text": _RESUME, "confirm_unredacted": good,
+                                           **consent}).text
         assert not _ImportFake.sent, "an unconfirmed import reached the model"
         assert _confirm_value(other_provider) != good  # a FRESH confirmation is offered
         monkeypatch.setattr("kestrel.web.pages.models._provider_label",
                             lambda name: "OpenRouter")
         ok = client.post("/api/documents/import",
-                         data={"text": _RESUME, "confirm_unredacted": good}).text
+                         data={"text": _RESUME, "confirm_unredacted": good, **consent}).text
     warning = ("This sends your whole resume to OpenRouter, including your current employer's "
                "name. Confidential mode can hide it only after you mark your current employer.")
     assert warning in " ".join(html.unescape(read).split()) and 'hx-trigger="load"' not in read
@@ -676,10 +729,14 @@ def test_import_with_a_mark_still_asks_and_sends_coded_lines(monkeypatch):
     with client:
         _mark(client, ids["cur"], _EMPLOYER, _SHOWN)
         read = client.post("/api/documents/import/read", data={"text": _RESUME}).text
-        refused = client.post("/api/documents/import", data={"text": _RESUME}).text
+        consent = _consent(read)
+        asked = client.post("/api/documents/import", data={"text": _RESUME}).text
+        assert "with an online model?" in asked and not _ImportFake.sent
+        refused = client.post("/api/documents/import", data={"text": _RESUME, **consent}).text
         assert "Not sent." in refused and not _ImportFake.sent  # always asked
         r = client.post("/api/documents/import",
-                        data={"text": _RESUME, "confirm_unredacted": _confirm_value(read)})
+                        data={"text": _RESUME, "confirm_unredacted": _confirm_value(read),
+                              **consent})
     assert "This sends your whole resume to OpenRouter" in " ".join(read.split())
     assert _ImportFake.sent and all(_EMPLOYER not in m for m in _ImportFake.sent)
     assert any(_code_in_or_none(m) for m in _ImportFake.sent)
@@ -795,7 +852,7 @@ def test_the_banner_shows_above_every_settings_tab_and_today_asks_until_confirme
         client.post(f"/documents/section/{ids['cur']}/confirm-current",
                     data={"shown_as": "a company in your industry"})
         after = _db(lambda s: system_asks(s, get_settings(), None))
-    assert page.index('data-testid="employer-inferred"') < page.index('class="tabs"')
+    assert 'data-testid="employer-inferred"' in page  # on Privacy and access, loaded with the page
     assert "redaction_confirm" in [a["key"] for a in before]
     assert "redaction_confirm" not in [a["key"] for a in after]
 
@@ -939,7 +996,8 @@ def test_a_suggested_wording_keeps_the_spelling_the_operator_wrote(monkeypatch):
     _db(caps)
     with client:
         _mark(client, ids["cur"], _EMPLOYER, _SHOWN)
-        shown = client.post(f"/documents/slot/{slot}/suggest").text
+        asked = client.post(f"/documents/slot/{slot}/suggest").text
+        shown = client.post(f"/documents/slot/{slot}/suggest", data=_consent(asked)).text
         wording = "Owned it: Led IT for NORTHWIND FREIGHT across 300 staff."
         assert wording in shown
         client.post(f"/documents/slot/{slot}/variants", data={"text": wording, "tags": ""})

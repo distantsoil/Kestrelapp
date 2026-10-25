@@ -32,19 +32,27 @@ import yaml
 from kestrel import paths
 from kestrel.db.enums import TRACKS
 from kestrel.errors import UserFacingError, plain_os_reason, yaml_where
+from kestrel.rules.margin import MARGIN_STOPS
+from kestrel.services import names
 
 log = structlog.get_logger()
 
 SECTIONS = ("about", "employment", "consulting", "location")
 
 # Personal fields on each track block (the "About you" tab). Lists are one item per line.
-ABOUT_TEXT = ("full_name", "email", "phone", "location", "headline", "work_auth")
+# `first_name` is required and greets the operator; `last_name` may be empty; `full_name` is
+# derived from them on save (D-UI-117) and is what a resume header prints.
+ABOUT_TEXT = ("first_name", "last_name", "email", "phone", "location", "headline", "work_auth")
 ABOUT_LISTS = ("must_have", "must_avoid")
 # is_active is not offered: nothing in the pipeline reads it yet (reviewer finding 4).
 ABOUT_FLAGS = ("requires_sponsorship",)
 
 EMPLOYMENT_LISTS = ("target_titles", "anti_titles", "excluded_employment_types")
 EMPLOYMENT_INTS = ("comp_floor_usd", "comp_target_usd")
+# The near-floor margin stops (D-RULES-2): 0 is Exact. A form that omits the field leaves the
+# stored value alone.
+EMPLOYMENT_MARGIN = "comp_floor_margin_pct"
+CONSULTING_MARGIN = "day_rate_floor_margin_pct"
 # The words seniority_rank() recognizes, lowest first, as the floor select offers them.
 SENIORITY_FLOORS = (
     ("", "Any level (no floor)"),  # the permissive default: nothing is hidden for its level
@@ -58,6 +66,10 @@ SENIORITY_FLOORS = (
     ("chief technology officer", "C-level"),
 )
 EMPLOYMENT_TYPES = ("internship", "part_time", "contract", "temporary")
+# Work mode: the ways of working the person would take, shown as three checks on the Employment
+# and Consulting tabs. Stored as `work_modes` in the track's terms and read by the scoring
+# context; it is a preference, never a filter.
+WORK_MODES = (("remote", "Remote"), ("hybrid", "Hybrid"), ("onsite", "On-site"))
 
 CONSULTING_LISTS = ("service_lines", "target_org_size", "target_sectors", "excluded_sectors")
 CONSULTING_INTS = ("day_rate_floor", "day_rate_target", "min_engagement_days", "max_concurrent")
@@ -149,7 +161,7 @@ def about_missing(state: ProfileState | None = None) -> list[str]:
     the employment track when there is no file at all."""
     state = state or load_state()
     tracks = state.present or ("employment",)
-    return [t for t in tracks if not str(state.tracks[t].get("full_name") or "").strip()]
+    return [t for t in tracks if not names.clean(state.tracks[t].get("first_name"))]
 
 
 def load_state() -> ProfileState:
@@ -168,7 +180,7 @@ def load_state() -> ProfileState:
         example = _example_terms(track)
         if isinstance(block, dict):
             present.append(track)
-            block = dict(block)
+            block = names.normalize_name_fields(block)
         else:
             block = {"track": track, "is_active": True}
         # A section the file does not have yet starts BLANK (release round review, finding 1):
@@ -211,6 +223,27 @@ def _flag(form: Any, name: str) -> bool:
     return str(form.get(name) or "") in ("on", "true", "1")
 
 
+def _modes_from_form(form: Any) -> list[str]:
+    """The work modes whose check is on, in the fixed order."""
+    return [key for key, _label in WORK_MODES if _flag(form, f"mode_{key}")]
+
+
+def _margin_from_form(form: Any, key: str, terms: dict) -> None:
+    """Set `terms[key]` to a near-floor margin stop when the form sent one (blank = not sent)."""
+    raw = str(form.get(key) or "").strip().lower()
+    if not raw:
+        return
+    if raw == "exact":
+        raw = "0"
+    try:
+        pct = int(raw.rstrip("%"))
+    except ValueError as exc:
+        raise ProfileEditError("Pick a near-floor margin from the list.") from exc
+    if pct not in MARGIN_STOPS:
+        raise ProfileEditError("Pick a near-floor margin from the list.")
+    terms[key] = pct
+
+
 def parse_metros(value: str | None) -> list[dict]:
     """One metro per line: `Austin: Round Rock, Cedar Park`. The name is always an alias too,
     since `geo_allows` matches aliases only."""
@@ -243,6 +276,15 @@ def section_from_form(section: str, form: Any) -> dict:
     on a value that cannot be stored."""
     if section == "about":
         out: dict[str, Any] = {k: (str(form.get(k) or "").strip()) for k in ABOUT_TEXT}
+        if not out["first_name"] and str(form.get("full_name") or "").strip():
+            # An older form (or a script) that still sends one full name: split it the same way
+            # the migration does (first space), so nothing is lost.
+            out["first_name"], out["last_name"] = names.split_full_name(form.get("full_name"))
+        out["first_name"] = names.clean(out["first_name"])
+        out["last_name"] = names.clean(out["last_name"])
+        if not out["first_name"]:
+            raise ProfileEditError("Add your first name.")
+        out["full_name"] = names.join_full_name(out["first_name"], out["last_name"])
         for k in ABOUT_LISTS:
             out[k] = lines(form.get(k))
         for k in ABOUT_FLAGS:
@@ -257,8 +299,10 @@ def section_from_form(section: str, form: Any) -> dict:
         if floor not in {k for k, _ in SENIORITY_FLOORS}:
             raise ProfileEditError("Pick a seniority floor from the list.")
         terms["seniority_floor"] = floor
+        terms["work_modes"] = _modes_from_form(form)
         for k in EMPLOYMENT_INTS:
             terms[k] = _int(form.get(k), k.replace("_", " "))  # None clears: no floor
+        _margin_from_form(form, EMPLOYMENT_MARGIN, terms)
         return {"employment_terms": terms}
     if section == "consulting":
         terms = {k: lines(form.get(k)) for k in CONSULTING_LISTS}
@@ -266,6 +310,8 @@ def section_from_form(section: str, form: Any) -> dict:
             terms[k] = _int(form.get(k), k.replace("_", " "))
         for k in CONSULTING_TEXT:
             terms[k] = str(form.get(k) or "").strip()
+        terms["work_modes"] = _modes_from_form(form)
+        _margin_from_form(form, CONSULTING_MARGIN, terms)
         return {"consulting_terms": terms}
     if section == "location":
         geo: dict[str, Any] = {k: _flag(form, k) for k in GEO_FLAGS}
@@ -311,6 +357,8 @@ def save_section(track: str, section: str, values: dict) -> Path:
     had_previous = target.is_file()
     if had_previous:
         shutil.copy2(target, bak)
+    else:
+        bak.unlink(missing_ok=True)  # a first save has nothing to undo to; no stale backup
     os.replace(incoming, target)
     try:
         ok = load_profile(track) is not None
@@ -323,6 +371,46 @@ def save_section(track: str, section: str, values: dict) -> Path:
             target.unlink(missing_ok=True)
         raise ProfileEditError("The saved profile could not be loaded; the previous file was kept.")
     log.info("profile_saved", track=track, section=section)
+    return target
+
+
+def undo_token() -> str:
+    """A stamp of the profile.yml on disk right now. A save hands it to its Undo; Undo is only
+    honored while the file still carries it, so an old toast can never restore a version that a
+    newer save has already replaced (Undo goes back one save, no further)."""
+    import hashlib
+
+    try:
+        return hashlib.sha256(profile_path().read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
+
+
+def restore_backup() -> Path:
+    """Undo of the last save: put profile.yml.bak back as profile.yml (D-UI-119). Refused when
+    there is no backup or the loader would not read it; the current file is untouched then."""
+    from kestrel.pipeline.profile import load_profile
+
+    target = profile_path()
+    bak = target.with_name(PROFILE_BAK)
+    if not bak.is_file():
+        raise ProfileEditError("There is no earlier version to go back to.")
+    current = target.read_bytes() if target.is_file() else None
+    incoming = target.with_name(_INCOMING)
+    shutil.copy2(bak, incoming)
+    os.replace(incoming, target)  # atomic, like a save: a failed copy never truncates the file
+    try:
+        data = _read(target)
+        ok = all(load_profile(t) is not None for t in TRACKS if isinstance(data.get(t), dict))
+    except (TypeError, ValueError, ProfileEditError):
+        ok = False
+    if not ok:
+        if current is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_bytes(current)
+        raise ProfileEditError("The earlier version could not be loaded; nothing was changed.")
+    log.info("profile_restored")
     return target
 
 

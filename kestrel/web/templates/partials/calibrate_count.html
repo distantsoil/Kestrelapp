@@ -1,0 +1,2 @@
+{# The pill beside the title: roles left in this session. An out-of-band swap target. #}
+<span id="cal-count" class="k-pill {{ 'k-pill--info' if queue.current else 'k-pill--good' }}" data-testid="cal-count"{% if oob %} hx-swap-oob="true"{% endif %}>{% if queue.current %}{{ queue.total - queue.done }} to rate{% else %}All clear{% endif %}</span>

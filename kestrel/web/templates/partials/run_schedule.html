@@ -1,17 +1,28 @@
-<div class="panel" id="run-schedule" data-testid="run-schedule" style="padding:.8rem 1rem; margin-bottom:1rem">
-  <h2 style="margin-top:0">Schedule</h2>
-  <p class="muted" style="margin:.2rem 0 .6rem">One scan of every enabled source, daily or weekly, on this machine's clock ({{ local_tz }}). It fires only while the Kestrel desktop app is running, in the window or the tray, and once per day or week: a time missed while Kestrel was closed fires at the next start that same day or week. Changing the schedule after it has fired waits for the next period. Per-source cadences on Sources keep running as before.</p>
-  <form hx-post="/runs/schedule" hx-target="#run-schedule" hx-swap="outerHTML" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap">
-    <label><input type="radio" name="kind" value="off" {% if schedule.kind == 'off' %}checked{% endif %}> Off</label>
-    <label><input type="radio" name="kind" value="daily" {% if schedule.kind == 'daily' %}checked{% endif %}> Daily</label>
-    <label><input type="radio" name="kind" value="weekly" {% if schedule.kind == 'weekly' %}checked{% endif %}> Weekly on
-      <select name="weekday" aria-label="Weekday">
-        {% for name in weekdays %}<option value="{{ loop.index0 }}" {% if schedule.weekday == loop.index0 %}selected{% endif %}>{{ name }}</option>{% endfor %}
-      </select></label>
-    <label>at <input type="time" name="time" value="{{ schedule.time }}" required></label>
-    <button class="btn" type="submit">Save schedule</button>
-    <span class="muted" data-testid="schedule-status">
-      {% if schedule_saved %}Saved: {% endif %}{{ schedule.describe() }}{% if schedule_next %}; next {{ schedule_next }}{% endif %}{% if schedule_last %} (last fired {{ schedule_last }}){% endif %}.
-    </span>
+{# The Schedule card (SPEC.md 6.5, D-UI-103): off, daily at a time, or weekly on a weekday at a
+   time, in local time, with the next firing, the run mode read-only with a link to Models, and the
+   keep-awake switch. The form saves on change and the card swaps itself. #}
+{% import "ui/macros.html" as ui %}
+<section class="k-card rn-sched" id="run-schedule" data-testid="run-schedule">
+  <header class="k-sec-head"><span class="k-badge">{{ ui.icon('cal') }}</span><div class="k-grow"><h3>Schedule</h3></div></header>
+  <form hx-post="/runs/schedule" hx-target="#run-schedule" hx-swap="outerHTML" hx-trigger="change, k-seg-change" data-busy-text="Saving the schedule…" class="rn-sched__form">
+    {{ ui.segmented('kind', [('off', 'Off'), ('daily', 'Daily'), ('weekly', 'Weekly')], schedule.kind, label='How often') }}
+    <div class="rn-sched__at">
+      <span class="rn-weekday"{% if schedule.kind != 'weekly' %} hidden{% endif %}><label class="k-sr-only" for="rn-weekday">Weekday</label>
+        <select class="k-select" id="rn-weekday" name="weekday">{% for name in weekdays %}<option value="{{ loop.index0 }}"{% if schedule.weekday == loop.index0 %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></span>
+      <label for="rn-time">at</label>
+      <input class="k-input" type="time" id="rn-time" name="time" value="{{ schedule.time }}" required>
+    </div>
+    <noscript><button class="k-btn k-btn--sm" type="submit">Save schedule</button></noscript>
   </form>
-</div>
+  <div class="rn-next" data-testid="schedule-status">
+    <b>{% if schedule.kind == 'off' %}Scheduled runs are off{% elif schedule_next %}Next run: {{ schedule_next }}{% else %}Scheduled{% endif %}</b>
+    <span>{% if schedule_saved %}Saved: {{ schedule.describe() }}. {% elif schedule.kind != 'off' %}{% set d = schedule.describe() %}{{ d[:1]|upper }}{{ d[1:] }}{% if schedule_last %} (last fired {{ schedule_last }}){% endif %}. {% endif %}Runs only while Kestrel is open, in the window or the tray.</span>
+  </div>
+  <details class="rn-details"><summary>Show details</summary>
+    <p>One scan of every enabled source, on this machine's clock ({{ local_tz }}), once per day or week. A time missed while Kestrel was closed fires at the next start that same day or week. Changing the schedule after it has fired waits for the next period. Per-source cadences on Sources keep running as before.</p>
+  </details>
+  {% include "partials/keep_awake.html" %}
+  <p class="rn-runsuse" data-testid="rn-runs-use">Runs use: <b>{{ runs_use }}</b> · <a class="k-link" href="/models">Change in Models</a>{% if pending_mode %}<br>Next run only: <b>{{ 'Online' if pending_mode == 'hosted' else 'Local' }}</b>{% endif %}</p>
+  {% if runs_use.startswith('Online') %}<p class="k-muted rn-small">Scheduled runs only send what you approved in Models. Online runs started by hand ask first.</p>{% endif %}
+  {% if credit_notices %}<div class="rn-note is-warn" role="status" data-testid="rn-low-credit">Your online credit has run out. Scheduled runs on an online model wait until it is topped up.</div>{% endif %}
+</section>

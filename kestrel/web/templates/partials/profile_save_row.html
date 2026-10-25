@@ -1,17 +1,26 @@
-<div class="variant-actions" style="margin-top:.6rem">
-  {# The onboarding (D-UI-30) renders these forms with ob_next set: one click saves and moves on.
-     htmx sends the clicked button's name, so the route knows which one was pressed. #}
-  {# In the wizard there is ONE primary button per step (D-UI-65): "Save ... and continue",
-     no second Save. A step that needs a name keeps it disabled, with a hint, until one is typed. #}
-  {% if ob_next %}<button class="btn primary" type="submit" name="_next" value="1" data-testid="ob-save-next"
+{# The save row. On the Profile page it is the Save bar of the mockup: hidden until a field
+   changes (profile.js marks the form data-dirty), with Discard beside it, and it stays shown
+   to say Saved or why a save was refused. The onboarding (D-UI-30) renders these forms with
+   ob_next set: one click saves and moves on, with ONE primary button per step (D-UI-65), and a
+   step that needs a name keeps it disabled, with a hint, until one is typed. #}
+{% if ob_next %}
+<div class="pf-wizard-row">
+  <button class="k-btn k-btn--primary" type="submit" name="_next" value="1" data-testid="ob-save-next"
       {% if profile_problem %}disabled{% elif ob_require_name %}:disabled="!named"{% endif %}>{{ ob_save_label or 'Save and continue' }}</button>
-    {% if ob_require_name %}<span class="wizard-hint" x-show="!named" data-testid="ob-save-hint">Add your full name first</span>{% endif %}
-  {% else %}
-  <button class="btn primary" type="submit" {% if profile_problem %}disabled{% endif %}>Save</button>
-  {% endif %}
-  {% if saved %}<span class="saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>{% endif %}
-  {% if problem %}<span class="warnbox" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>{% endif %}
+  {% if ob_require_name %}<span class="wizard-hint" x-show="!named" data-testid="ob-save-hint">Add your first name first</span>{% endif %}
+  {% if saved %}<span class="pf-saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>{% endif %}
+  {% if problem %}<span class="pf-problem" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>{% endif %}
 </div>
-<p class="muted" style="margin:.4rem 0 0"><small>Saving rewrites profile.yml from these fields.
-  A file edited by hand keeps its values, not its comments; the previous file is kept as
-  profile.yml.bak.</small></p>
+{% else %}
+<div class="pf-savebar" data-pf-savebar {% if saved or problem %}data-shown{% endif %}>
+  <span class="pf-savebar__msg" data-pf-msg>
+    {% if saved %}<span class="pf-saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>
+    {% elif problem %}<span class="pf-problem" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>
+    {% else %}<span data-pf-dirty-msg>Unsaved changes</span>{% endif %}
+  </span>
+  <button class="k-btn k-btn--sm" type="button" data-pf-discard>Discard</button>
+  <button class="k-btn k-btn--sm k-btn--primary" type="submit" {% if profile_problem %}disabled{% endif %}>Save changes</button>
+</div>
+{% endif %}
+<p class="pf-fine">Saving rewrites profile.yml from these fields. A file edited by hand keeps its values, not
+  its comments; the previous file is kept as profile.yml.bak.</p>

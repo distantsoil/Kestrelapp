@@ -1,0 +1,5 @@
+{# The result of Test, Save or Remove for an online key, and the lines elsewhere on the page that
+   depend on whether a key is saved. The key itself is never echoed (only its last four
+   characters, in the sentence the route builds). #}
+{% if key_result %}<span class="st-res__t st-res__t--{{ 'good' if key_result.ok else 'bad' }}" role="status" data-testid="st-key-result">{{ key_result.text }}</span>{% endif %}
+{% if oob %}<span id="st-keyline" hx-swap-oob="true">{% if choice == 'local' %}Only needed for Online or Both.{% elif any_key %}{{ provider_names|join(', ') }} key saved. Change it on Models.{% else %}No key saved yet.{% endif %}</span>{% endif %}

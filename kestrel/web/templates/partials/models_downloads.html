@@ -1,0 +1,41 @@
+{% import "ui/macros.html" as ui %}
+{# Models on this computer: status, Download with progress, Pause and Resume, then an automatic
+   tuning step. The pull commands sit behind Show details. Polls while work runs. #}
+<section class="k-card mo-card {{ 'mo-edge-warn' if dl_missing or dl_tune_missing else 'mo-edge-good' }}" id="mo-downloads" data-testid="mo-downloads"
+  {% if dl_live %}hx-get="/models/downloads" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <header class="mo-head"><span class="k-badge k-badge--warn">{{ ui.icon('dl') }}</span>
+    <div class="k-grow"><h3>Models on this computer</h3>
+      <p class="k-muted">{{ dl_note|capitalize }}.</p></div></header>
+  {% if dl_hosted %}
+    <p class="k-muted">This computer is set up to use an online model, so nothing needs to be downloaded.</p>
+  {% else %}
+  {% if dl_message %}<p class="mo-msg {{ 'is-good' if dl_ok else 'is-bad' }}" role="status" data-testid="mo-dl-message">{{ dl_message }}</p>{% endif %}
+  {% if dl_engine_down %}<p class="mo-msg is-bad" data-testid="mo-engine-down">The AI engine is not running. Open Ollama, then press Run check.</p>{% endif %}
+  <div class="mo-actions">
+    {% if dl_live %}
+      <button type="button" class="k-btn k-btn--sm" hx-post="/models/download/pause" hx-target="#mo-downloads" hx-swap="outerHTML" data-testid="mo-dl-pause">Pause</button>
+    {% elif dl_missing %}
+      <button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/models/download" hx-target="#mo-downloads" hx-swap="outerHTML" data-testid="mo-dl-start">{{ ui.icon('dl', 'k-ic--sm') }}Download {{ dl_missing }} missing{% if dl_gb %} · {{ '%.1f'|format(dl_gb) }} GB{% endif %}</button>
+    {% elif dl_tune_missing %}
+      <button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/models/download/tune" hx-target="#mo-downloads" hx-swap="outerHTML" data-testid="mo-dl-tune">Tune models for Kestrel</button>
+    {% endif %}
+  </div>
+  <ul class="mo-checks">
+    {% for r in dl_rows %}
+    <li class="{{ 'is-ok' if r.ready else ('is-fail' if r.failed else 'is-warn') }}" data-testid="mo-dl-{{ loop.index }}">
+      <span class="mo-state">{{ ui.icon('check' if r.ready else ('alert' if r.failed else 'dl')) }}</span>
+      <div class="k-grow"><b>{{ r.tag }}</b><span class="k-muted">{{ r.what }}{% if r.size %} · {{ r.size }}{% endif %}</span>
+        {% if r.item %}<div class="mo-prog" role="progressbar" aria-label="Downloading {{ r.tag }}" {% if r.item.percent is not none %}aria-valuenow="{{ r.item.percent }}"{% endif %}><i style="width: {{ r.item.percent or 3 }}%"></i></div>
+          <span class="k-muted">{{ r.item.step }}{% if r.item.percent is not none %} · {{ r.item.percent }}%{% endif %}</span>{% endif %}
+        {% if r.failed %}<span class="mo-bad">{{ r.error or 'The download stopped.' }} Press Download to continue.</span>{% endif %}</div>
+      {{ ui.pill('Ready', 'good') if r.ready else '' }}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if dl_tuning %}<p class="k-muted" data-testid="mo-tuning">Tuning Kestrel's models for the room each step needs…</p>{% endif %}
+  {% endif %}
+  <details class="mo-details"><summary>Show details</summary>
+    {% if not dl_hosted %}{% if dl_commands %}{% for c in dl_commands %}<p class="mo-mono-line">{{ c }}</p>{% endfor %}{% else %}<p class="k-muted">Nothing left to download.</p>{% endif %}{% endif %}
+    {% include "partials/models_speed.html" %}
+  </details>
+</section>

@@ -1,0 +1,85 @@
+{# The Role page body: the scene band (breadcrumb, Previous and Next, the title, the posting
+   button, the facts), the tabs and the pane. Swapped whole by Previous and Next. Every company
+   mention is the redacted copy the route built (confidential mode is "everywhere"). #}
+{% import "ui/macros.html" as ui %}
+{% from "partials/role_icons.html" import ric %}
+{% set base = '/opportunities/' ~ opp.id %}
+<div id="rl-body" class="rl-body" data-opp="{{ opp.id }}" data-title="{{ title_display }}" data-tab="{{ tab }}" data-track="{{ opp.track }}">
+  {% set crumb %}
+  <div class="rl-crumbrow">
+    <nav class="rl-crumb" aria-label="Breadcrumb"><a href="/opportunities">Pipeline</a> › <span>{{ w.role|capitalize }}</span></nav>
+    {% if seq %}
+    <div class="rl-pn" role="group" aria-label="Previous and next {{ w.role }}">
+      {% if seq.prev %}<a class="k-btn k-btn--sm" href="/opportunities/{{ seq.prev }}" hx-get="/opportunities/{{ seq.prev }}" hx-target="#rl-body" hx-swap="outerHTML" hx-push-url="true" data-rl-dir="-1" data-testid="rl-prev">‹ Prev</a>
+      {% else %}<button type="button" class="k-btn k-btn--sm" disabled data-testid="rl-prev">‹ Prev</button>{% endif %}
+      <span class="rl-pn__pos" data-testid="rl-pos">{{ seq.pos }} of {{ seq.total }}</span>
+      {% if seq.next %}<a class="k-btn k-btn--sm" href="/opportunities/{{ seq.next }}" hx-get="/opportunities/{{ seq.next }}" hx-target="#rl-body" hx-swap="outerHTML" hx-push-url="true" data-rl-dir="1" data-testid="rl-next">Next ›</a>
+      {% else %}<button type="button" class="k-btn k-btn--sm" disabled data-testid="rl-next">Next ›</button>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endset %}
+  {% set lede %}
+  <div class="rl-facts" data-testid="facts">
+    {% for f in facts_row %}<span data-kind="{{ f.kind }}">{{ ric(f.icon) }}{{ f.text }}{% if f.kind == 'pay' and opp.comp_source == 'inferred' %} <span class="rl-est" tabindex="0">est.<span class="rl-tip" role="tooltip">Kestrel's estimate from similar roles. The posting does not list pay.</span></span>{% endif %}</span>{% endfor %}
+    <span class="rl-live"><span class="k-dot{% if liveness.tone == 'good' %} k-dot--live{% elif liveness.tone == 'bad' %} k-dot--bad{% else %} k-dot--idle{% endif %}"></span>{{ liveness.text }}</span>
+  </div>
+  {% endset %}
+  {% call ui.scene_band(title_display, crumb=crumb, lede=lede) %}
+    {% if posting_link and posting_link.href %}
+    <a class="k-btn k-btn--primary rl-postbtn" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="open-posting"
+       title="Opens the posting{% if source_name %} on {{ source_name }}{% endif %} in your browser">Open original posting {{ ric('ext', 'k-ic--sm') }}</a>
+    {% else %}
+    <span class="k-btn rl-postbtn is-off" aria-disabled="true" data-testid="open-posting-off"
+          title="{{ 'The link would name your employer, so it is hidden in confidential mode.' if posting_link else 'This role has no posting link on file.' }}">{{ 'Link hidden' if posting_link else 'No posting link' }}</span>
+    {% endif %}
+  {% endcall %}
+
+  {% if not tailor_master and opp.track %}
+  <p class="rl-quiet" data-testid="no-master">{{ tailor_label }} is unavailable: no active document master for the {{ opp.track }} track. Import or build one under <a href="/documents">Profile &gt; Documents</a>.</p>
+  {% endif %}
+
+  <div class="rl-tabs" id="rl-tabs" role="tablist" aria-label="Sections of this {{ w.role }}">
+    {% for t in tabs %}
+      {% set href = base if t == 'evaluation' else base ~ '/' ~ t %}
+      <a role="tab" href="{{ href }}" data-tab="{{ t }}" aria-selected="{{ 'true' if tab == t else 'false' }}" class="{{ 'is-on' if tab == t else '' }}"
+         hx-get="{{ base }}/tab/{{ t }}" hx-target="#rl-pane" hx-swap="innerHTML" hx-push-url="{{ href }}"
+         data-testid="tab-{{ t }}">{{ tab_labels[t] }}{% if t == 'documents' and n_docs %} <b id="rl-tabcount-documents">{{ n_docs }}</b>{% endif %}</a>
+    {% endfor %}
+    <span class="rl-tabs__ink" aria-hidden="true"></span>
+  </div>
+
+  <div id="rl-pane" class="rl-pane" role="tabpanel">
+    {% include "partials/role_tab_" ~ tab ~ ".html" %}
+  </div>
+
+  {# Add a story: flies up from the bottom without leaving the page. The boxes are the
+     operator's own words; the sheet's For chip is filled from the link that opened it. #}
+  {% call ui.modal('rl-story', 'Add a story', [
+    {'label': 'Save', 'attrs': {'data-rl-story-save': '0'}},
+    {'label': 'Save and re-score this ' ~ w.role, 'kind': 'primary', 'attrs': {'data-rl-story-save': '1', 'data-testid': 'story-rescore'}}
+  ], sheet=True) %}
+    <form id="rl-story-form" class="rl-story" autocomplete="off">
+      <p class="rl-quiet">Kestrel only knows what you write down. Each story helps it understand your experience and match you to the right {{ w.roles }}.</p>
+      <p class="rl-for"><span class="rl-quiet">For</span> <span class="k-pill k-pill--info" id="rl-story-for" data-testid="story-for">Something else they ask for</span></p>
+      <input type="hidden" name="for_text" id="rl-story-fortext" value="">
+      <div class="rl-sheet">
+        <label class="rl-wp"><span class="rl-wpl">What was the situation?</span><textarea class="rl-wpt" name="situation" rows="2" placeholder="Our three sites reported differently, so leadership never saw one picture."></textarea></label>
+        <label class="rl-wp"><span class="rl-wpl">What did you do?</span><textarea class="rl-wpt" name="action" rows="2" placeholder="I built one weekly report and ran the review with the site leads."></textarea></label>
+        <label class="rl-wp"><span class="rl-wpl">What changed?</span><textarea class="rl-wpt" name="result" rows="2" placeholder="Late shipments fell 15% in a quarter."></textarea></label>
+      </div>
+      <p class="rl-quiet">A sentence or two under each prompt, in your own words. Include a number if you have one. Kestrel will not rewrite your story.</p>
+    </form>
+  {% endcall %}
+
+  {# Why are some actions greyed out? An in-app help card, not a page. #}
+  {% call ui.modal('rl-why', 'Why are some actions greyed out?', [
+    {'label': 'Open the full help article', 'attrs': {'data-rl-href': '/help'}},
+    {'label': 'Got it', 'kind': 'primary', 'close': True}
+  ]) %}
+    <p>Tailored resumes, cover letters and prep packs each need the AI to read the {{ w.role }} and your profile.</p>
+    <p><b>On your own computer</b>, each one takes several minutes of GPU or CPU time and can slow everything else down while it runs.<br><b>With an online model</b>, each one costs money and sends the {{ w.role }} and your profile off your computer.</p>
+    <p>So Kestrel only builds them for {{ w.roles }} you {{ 'add to your leads' if consulting else 'shortlist' }}. {{ 'Add it to your leads' if consulting else 'Shortlist the role' }} and they switch on straight away.</p>
+    <p class="rl-quiet">From Help: How Kestrel uses AI</p>
+  {% endcall %}
+</div>

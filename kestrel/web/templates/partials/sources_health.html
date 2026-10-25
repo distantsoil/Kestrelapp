@@ -1,0 +1,10 @@
+{# The three health tiles (D-UI-102): they count only sources that are on and filter the list
+   when pressed. Sent again out of band whenever a row changes. #}
+<div class="src-health" id="src-health"{% if oob %} hx-swap-oob="outerHTML"{% endif %} data-testid="health-tiles">
+  {%- for h in health %}
+  <button type="button" class="src-ht src-ht--{{ h.key }}" data-src-health="{{ h.key }}" aria-pressed="false" data-testid="health-{{ h.key }}">
+    <svg class="src-ring" viewBox="0 0 52 52" aria-hidden="true"><circle class="bg" cx="26" cy="26" r="21"/><circle class="fg" cx="26" cy="26" r="21" stroke-dasharray="{{ h.c }}" stroke-dashoffset="{{ h.offset }}"/></svg>
+    <span><b class="src-n" data-testid="health-n">{{ h.n }}</b> <span class="src-t">{{ h.label }}</span><span class="src-s">{{ h.sub }}</span></span>
+  </button>
+  {%- endfor %}
+</div>

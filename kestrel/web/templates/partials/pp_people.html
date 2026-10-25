@@ -1,0 +1,17 @@
+{# Who you may meet: a public listing only. People the operator heard about are their own notes;
+   Kestrel never contacts anyone. Unknown panelists are shown dashed. #}
+{% import "partials/pp_icons.html" as i %}
+<section class="k-card pp-people" id="pp-people"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-people">
+  <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ i.pi('users') }}</span><div class="k-grow"><h3>{{ 'Who you will talk to' if con else 'Who you may meet' }}</h3></div></header>
+  {%- for p in panel %}
+  <div class="pp-person"><span class="pp-person__av">{{ p.letters }}</span><div><b>{{ p.name }}</b><span class="pp-sub">{{ p.title }}{% if p.mine %}{{ ' · ' if p.title }}Added by you{% elif p.title %} · public company page{% endif %}</span></div></div>
+  {%- endfor %}
+  <div class="pp-person is-unknown"><span class="pp-person__av" aria-hidden="true">?</span><div><b>More panelists?</b><span class="pp-sub">Not listed yet. Add them when you hear.</span></div></div>
+  <details class="pp-add"><summary class="k-btn k-btn--sm" data-testid="pp-addperson">+ Add someone</summary>
+    <form hx-post="/prep/{{ opp.id }}/people" hx-swap="none">
+      <input class="k-input" name="name" maxlength="120" placeholder="Name you heard" aria-label="Name" required>
+      <input class="k-input" name="title" maxlength="160" placeholder="Title, if you know it" aria-label="Title">
+      <button type="submit" class="k-btn k-btn--sm k-btn--primary">Add</button>
+      <p class="pp-sub">This is your own note. Kestrel never contacts anyone.</p>
+    </form></details>
+</section>

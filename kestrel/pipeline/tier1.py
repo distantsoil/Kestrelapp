@@ -49,6 +49,7 @@ async def handle_t1(
     requested_at: str | None = None,
     tier0_override: bool = False,
     t2_model_override: dict | None = None,
+    online_approval: dict | None = None,
 ) -> HandlerOutcome:
     """`model_override` is set on a score-again task run on another model this time only
     (D-UI-50): `settings` already carry it for Tier 1, and the Tier 2 task enqueued here carries
@@ -77,6 +78,8 @@ async def handle_t1(
         t2_extra = {"model_override": t2_model_override}
     else:
         t2_extra = None
+    if online_approval is not None:
+        t2_extra = {**(t2_extra or {}), "online_approval": dict(online_approval)}
     if rescore:
         # The Tier 2 step of an operator's Score again is requested too (finding 10).
         #

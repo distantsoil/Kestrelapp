@@ -1,0 +1,160 @@
+{# Evaluation tab (D-UI-150, the locked design mockup (kept privately)): the score card,
+   pay, level and lead-with, the match wheel with In your favor and Gaps, evidence, what the role
+   is, then Your view and the company card; the decision column sits beside it. It never shows
+   less than the Pipeline side panel does. All prose is the redacted copy the route built. #}
+{% import "ui/macros.html" as ui %}
+{% from "partials/role_icons.html" import ric %}
+{% set base = '/opportunities/' ~ opp.id %}
+{% set scored = ev is not none and fit.score is not none %}
+<div id="rl-tab-evaluation" class="rl-grid" data-tab="evaluation">
+ <div class="rl-main">
+  {% if scoring_held %}<section class="k-card rl-card" role="status" data-testid="scoring-held">
+    <h3>Waiting for your confirmation</h3>
+    <p>The model or online service changed. Nothing was sent. Choose Score again to review and approve the current destination.</p>
+    <a class="k-btn k-btn--sm" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next={{ base }}">Score again</a>
+  </section>{% endif %}
+ {% if override_note and not scored %}<p class="rl-quiet" data-testid="eval-rule-override">{{ override_note }}</p>{% endif %}
+ {% if scored %}
+  {% if override_note %}<p class="rl-quiet" data-testid="eval-rule-override">{{ override_note }}</p>{% endif %}
+  <section class="k-card rl-card rl-card--score" data-testid="score-card">
+    <div class="rl-score">
+      <div class="rl-ringwrap">
+        <div class="rl-ring rl-ring--{{ ring_tone }}" style="--p: {{ ring_pct }}" role="img" aria-label="{{ '%.1f'|format(fit.score) }} out of 5">
+          <div><div><b data-testid="score-holistic">{{ '%.1f'|format(fit.score) }}</b><br><small>out of 5</small></div></div></div>
+        <span class="k-pill k-pill--{{ 'good' if ring_tone == 'good' else 'warn' }} rl-fitpill" data-testid="verdict-pill" data-fit="{{ fit.word }}">{{ ric('check' if ring_tone == 'good' else 'alert') }}{{ fit.word|capitalize }}</span>
+      </div>
+      <div class="rl-dims" data-testid="dimensions">
+        {% for d in dims %}<div class="rl-dim"{% if d.why %} title="{{ d.why }}"{% endif %}><span>{{ d.name }}</span><i><u style="--w: {{ d.pct }}%"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
+      </div>
+      {% if read %}
+      <div class="rl-read" data-testid="read"><h4><span class="rl-hb rl-hb--g">{{ ric('target') }}</span>{{ read.title }}</h4><p>{{ read.text }}</p>
+        <div class="rl-ai" data-testid="ai-disclaimer">Written by Kestrel's AI from the posting and your profile. {{ ai_disclaimer }}</div></div>
+      {% endif %}
+    </div>
+    {% if model_word %}<p class="rl-quiet" data-testid="agreement">The model said {{ model_word }}, the scoring rules said {{ rules_word }}. Your call, below: the word you pick teaches the ranker.</p>{% endif %}
+    <details class="rl-details" data-testid="eval-details"><summary>Show details</summary>
+      {% set both = ev.score is not none and ev.weighted_score is not none and (ev.score - ev.weighted_score)|abs >= 0.05 %}
+      {% if both %}<p>The model's score is {{ '%.1f'|format(ev.score) }} and the weighted score is {{ '%.1f'|format(ev.weighted_score) }}.</p>{% endif %}
+      <p data-testid="provenance">
+        {% if model_word %}The model said {{ model_word }}, the scoring rules said {{ rules_word }}.
+        {% elif ev.needs_review %}The model's score and the weighted score disagree.
+        {% elif ev.tier == 1 %}A quick screen only; the full read has not run yet.
+        {% else %}The model and the scoring rules agree: {{ fit.word }}.{% endif %}
+        Scored by {% if ev.model and 'kestrel-' in ev.model %}a local model{% elif ev.model %}{{ ev.model }}{% else %}a model{% endif %}{% if ev.created_at %} at {{ date_display(ev.created_at, kind='datetime', time_style='24h') }} UTC{% endif %}{% if ev.prompt_version %}, prompt {{ ev.prompt_version }}{% endif %}{% if ev.prompt_tokens %}, {{ ev.prompt_tokens|comma }} tokens in{% endif %}.
+        {% if ev.forced_by %}{{ forced_words(ev.forced_by) }}{% endif %}
+      </p>
+    </details>
+  </section>
+ {% else %}
+  <section class="k-card rl-card" data-testid="not-scored">
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>{{ 'Not scored' if rule_why else fit.word|capitalize }}</h3></div></header>
+    <p class="rl-quiet" data-testid="eval-why">{% if rule_why %}{{ rule_why.text }} No model read it. {{ rule_why.verb }} <a href="{{ rule_why.href }}" data-testid="eval-rule-link">{{ rule_why.place }}</a>.{% elif scoring_held %}Scoring is paused until you confirm the current model and online service.{% elif fit.word == 'not a fit' %}Not a fit by the {{ fit.why or 'rule' }}, before any model ran.{% elif fit.why %}{{ fit.why|capitalize }}.{% else %}Being scored. The details appear here when the review finishes.{% endif %}</p>
+    <a class="k-btn k-btn--sm" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next={{ base }}" data-testid="score-anyway">{{ 'Score this ' ~ w.role ~ ' anyway' if rule_why else 'Score again' }}</a>
+  </section>
+ {% endif %}
+
+ {% if scored and (watch or legit_flag or ev_json.blockers) %}
+  <section class="k-card k-card--warn rl-card rl-watch" data-testid="watch">
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>Worth checking</h3></div></header>
+    <ul class="rl-list">
+      {% for line in watch %}<li data-testid="fit-watch">{{ line }}</li>{% endfor %}
+      {% if legit_flag %}<li><span class="k-pill k-pill--warn" data-testid="legit-flag">may not be a real opening</span></li>{% endif %}
+      {% for bl in ev_json.blockers or [] %}<li class="rl-blocker"><b>{{ bl.kind|replace('_', ' ')|capitalize }}</b>: {{ bl.detail }}</li>{% endfor %}
+    </ul>
+  </section>
+ {% endif %}
+
+ <div class="rl-trio">
+  <section class="k-card rl-box rl-box--pay" data-testid="pay-box">
+    <div class="rl-dl2"><span class="rl-hb rl-hb--g">{{ ric('dollar') }}</span><div class="rl-dl">{{ pay.label }}</div></div>
+    <div class="rl-pay">{{ pay.text }}{% if pay.estimate %}<span class="rl-est" tabindex="0">est.<span class="rl-tip" role="tooltip">Kestrel's estimate from similar roles. The posting does not list pay.</span></span>{% endif %}</div>
+    {% if pay.band %}
+    <div class="rl-pband" role="img" aria-label="Where this pay sits against your floor and target">
+      {% if pay.band.bracket %}<span class="rl-pband__sim" style="left: {{ pay.band.bracket.left }}%; width: {{ pay.band.bracket.width }}%"></span><span class="rl-pband__simt" style="left: {{ pay.band.bracket.left + pay.band.bracket.width / 2 }}%">Similar roles · {{ pay.similar.n }}</span>{% endif %}
+      <div class="rl-pband__bar"></div>
+      {% if pay.band.marker is not none %}<span class="rl-pband__mk" style="left: {{ pay.band.marker }}%"></span>{% endif %}
+      {% for t in pay.band.ticks %}<span class="rl-pband__tk{{ ' is-low' if t.low else '' }}" style="left: {{ t.pos }}%">{{ t.label }}</span>{% endfor %}
+    </div>
+    {% endif %}
+    <div class="rl-dsm rl-dsm--{{ pay.tone or 'plain' }}" data-testid="pay-note">{{ pay.note }}</div>
+    <div class="rl-dsm" data-testid="similar-roles">{{ pay.similar.text }}</div>
+  </section>
+  <section class="k-card rl-box" data-testid="level-box">
+    <div class="rl-dl2"><span class="rl-hb rl-hb--v">{{ ric('ladder') }}</span><div class="rl-dl">{{ level.label or ('Buyer access' if consulting else 'Level') }}</div></div>
+    {% if level %}
+      <div class="rl-strong">{{ level.text }}</div>
+      {% if level.ladder %}<div class="rl-ladder" role="img" aria-label="Where this role sits against your level">{% for st in level.ladder %}<div class="rl-st{{ ' is-you' if st.you else '' }}{{ ' is-role' if st.role else '' }}" style="height: {{ st.height }}%">{% if st.pin %}<span class="rl-pin">{{ st.pin }}</span>{% endif %}{{ st.word }}</div>{% endfor %}</div>{% endif %}
+      {% if level.note %}<div class="rl-dsm">{{ level.note }}</div>{% endif %}
+    {% else %}<div class="rl-strong rl-unk">Not recorded</div>{% endif %}
+  </section>
+  <section class="k-card rl-box rl-box--lead" data-testid="lead-box">
+    <div class="rl-dl2"><span class="rl-hb rl-hb--i">{{ ric('spark') }}</span><div class="rl-dl">{{ lead.title or ('Opening move' if consulting else 'Lead with') }}</div></div>
+    {% if lead %}<div class="rl-leadtx">{{ lead.text }}</div>{% else %}<div class="rl-leadtx rl-unk">Not recorded</div>{% endif %}
+  </section>
+ </div>
+
+ {% if wheel.n %}
+ <div class="rl-wheelrow" id="rl-wheelrow" data-testid="match-map">
+  <section class="k-card rl-card rl-card--good">
+    <header class="k-sec-head"><span class="k-badge k-badge--good">{{ ric('check') }}</span><div class="k-grow"><h3>In your favor</h3></div></header>
+    <div class="rl-kr">
+      {% for r in reqs if r.state == 'met' %}<div class="rl-fl" data-k="{{ r.k }}" data-c="met"><span class="rl-m rl-m--g">+</span><span>{{ r.text }}{% if r.evidence %}<span class="rl-dsm">{{ r.evidence }}</span>{% endif %}</span></div>
+      {% else %}<p class="rl-quiet">Nothing the posting asks for is fully covered yet.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="k-card rl-card rl-card--warn">
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>Gaps</h3></div></header>
+    <div class="rl-kr">
+      {% for r in reqs if r.state != 'met' %}<div class="rl-fl" data-k="{{ r.k }}" data-c="{{ r.state }}"><span class="rl-m rl-m--{{ 'b' if r.state == 'part' else 'a' }}">{{ r.mark }}</span><span>{{ r.text }}{% if r.fatal %} <span class="k-pill k-pill--bad">Could rule it out</span>{% endif %}{% if r.how %}<span class="rl-dsm">{{ r.how }}</span>{% elif r.evidence %}<span class="rl-dsm">{{ r.evidence }}</span>{% endif %}<a class="rl-storyln" href="#" data-rl-story="{{ r.text }}">+ I have a story for this</a></span></div>
+      {% else %}<p class="rl-quiet">No gaps found in what the posting asks for.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="k-card rl-card rl-wheelc" id="rl-wheelc">
+    <header class="k-sec-head"><span class="k-badge">{{ ric('target') }}</span><div class="k-grow"><h3>Match map</h3></div></header>
+    <svg viewBox="0 0 140 140" class="rl-wheel" role="img" aria-label="{{ wheel.center }} of the things they ask for are met">
+      <g transform="rotate(-90 70 70)"><circle r="{{ wheel.r }}" cx="70" cy="70" fill="none" class="rl-wtrack" stroke-width="16"/>
+        {% for a in wheel.arcs %}<circle class="rl-wseg rl-wseg--{{ a.state }}" data-k="{{ a.k }}" data-c="{{ a.state }}" r="{{ wheel.r }}" cx="70" cy="70" fill="none" stroke-width="16" style="--d: {{ a.dash }}; stroke-dashoffset: {{ a.offset }}; animation-delay: {{ a.k * 90 }}ms"><title>{{ a.text }}: {{ a.word|lower }}</title></circle>{% endfor %}
+      </g><text x="70" y="78" text-anchor="middle" class="rl-wn" data-testid="wheel-center">{{ wheel.center }}</text></svg>
+    <div class="rl-wleg">
+      <button type="button" class="rl-wchip" data-f="met"><i class="rl-wdot rl-wdot--met"></i>{{ wheel.met }} met</button>
+      <button type="button" class="rl-wchip" data-f="part"><i class="rl-wdot rl-wdot--part"></i>{{ wheel.part }} partly met</button>
+      <button type="button" class="rl-wchip" data-f="gap"><i class="rl-wdot rl-wdot--gap"></i>{{ wheel.gap }} not met</button>
+    </div>
+    <div class="rl-dsm rl-wsub">{{ wheel.n }} thing{{ '' if wheel.n == 1 else 's' }} they ask for · click to focus</div>
+    <div class="rl-wfocus" id="rl-wfocus" aria-live="polite"></div>
+  </section>
+ </div>
+ {% endif %}
+
+ {% if scored %}
+ <section class="k-card rl-card rl-card--map" data-testid="evidence">
+   <header class="k-sec-head"><span class="k-badge">{{ ric('doc') }}</span><div class="k-grow"><h3>Evidence</h3></div></header>
+   <p class="rl-dsm">What the posting asks for, and where your own resume and stories already show it.</p>
+   <div class="rl-ev">
+     {% for e in evidence %}<div class="rl-evi" data-k="{{ e.k }}"><div><div class="rl-q">“{{ e.quote }}”</div><div class="rl-a">{{ e.proof }}</div></div>
+       {% if e.source %}<a class="rl-src" href="{{ e.source.href }}">{{ e.source.label }} →</a>{% else %}<span class="rl-src rl-src--none">Source not recorded</span>{% endif %}</div>
+     {% else %}<p class="rl-quiet">Kestrel did not match any of your own proof to what the posting asks for.</p>{% endfor %}
+   </div>
+   <a class="rl-storyln rl-storyln--block" href="#" data-rl-story="">+ I have a story that shows something else they ask for</a>
+ </section>
+
+ <section class="k-card rl-card" data-testid="role-summary">
+   <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ ric('brief') }}</span><div class="k-grow"><h3>{{ 'The situation' if consulting else 'What the role is' }}</h3></div></header>
+   {% if summary.text %}<div class="rl-dsum">{{ summary.text }}</div>
+   {% if summary.tags %}<div class="rl-tags">{% for t in summary.tags %}<span class="rl-tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+   <div class="rl-ai">Summarized by Kestrel's AI. <a class="k-link" href="{{ base }}/posting" hx-get="{{ base }}/tab/posting" hx-target="#rl-pane" hx-swap="innerHTML" hx-push-url="{{ base }}/posting" data-tab="posting">Read the full posting</a></div>
+   {% else %}<div class="rl-dsum rl-unk">Not recorded</div>{% endif %}
+ </section>
+
+ <div class="rl-duo">
+   {% include "partials/role_view_card.html" %}
+   {% include "partials/role_company_card.html" %}
+ </div>
+ {% else %}
+ <div class="rl-duo rl-duo--one">
+   {% include "partials/role_company_card.html" %}
+ </div>
+ {% endif %}
+ </div>
+ {% include "partials/role_side.html" %}
+</div>

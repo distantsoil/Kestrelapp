@@ -1,59 +1,60 @@
+{# Calibrate (D-UI-99, SPEC-INTERFACES 2.1 /calibrate). The operator answers first; Kestrel's score
+   appears after. Built on the shared design system (ui/macros.html, tokens). The card, the strips,
+   the tune-up and the history each swap in place (partials/calibrate_swap.html). #}
 {% extends "base.html" %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
 {% block title %}Calibrate · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/calibrate.css">
+<script src="/static/js/calibrate.js" defer></script>
+{% endblock %}
 {% block content %}
-<h1>Calibrate</h1>
-{# The intro panel (mockup section 9): what calibrating does, how many ratings, how long. #}
-<div class="panel calibrate-intro" data-testid="calibrate-intro">
-  <p data-testid="page-purpose">Rate scored roles the way you would judge them, so scoring learns your taste.
-  It does not review your resume; the resume assessment lives on
-  <a href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
-  <ul class="calibrate-steps">
-    <li><b>What it does.</b> Each rating is a label. At 15 Kestrel starts showing the model your own examples; with more, a ranker trained on your ratings can take over the order.</li>
-    <li><b>How many.</b> 15 to start. The roles below are the ones Kestrel is least sure about, so each rating teaches it the most.</li>
-    <li><b>How long.</b> About five minutes for 15: read the posting on the left, the evaluation on the right, then agree or pick your own fit word.</li>
-  </ul>
-</div>
+<div class="cal-wrap"><div class="cal-page" data-testid="calibrate-page">
+  {% call ui.scene_band('Calibrate') %}
+    {% include "partials/calibrate_count.html" %}
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#cal-how-fly" aria-controls="cal-how-fly" aria-expanded="false" data-testid="cal-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+  {% endcall %}
+  <p class="cal-purpose" data-testid="page-purpose">Rate roles the way you would judge them, so scoring learns your taste. It does not review your resume; that lives on <a href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
 
-{# ---------------------------------------------- Reranker promotion progress (self-contained). #}
-{% if promo_error %}
-<div class="panel" data-testid="promotion-panel-error"><p class="muted">{{ promo_error }}</p></div>
-{% elif promo %}
-<div class="panel" data-testid="promotion-panel">
-  <h2 title="Reranker promotion">Learned ranking</h2>
-  <p>
-    {% if promo.reranker_active %}
-    <span class="covered">&#10003; learned ranking active</span> for {{ track }} quick-screen decisions.
-    {% else %}
-    <span class="gap">&#10007; not promoted</span>: the rule-based quick screen is still in charge for
-    {{ track }}, not the learned ranking.
-    {% endif %}
-  </p>
-  <table class="data">
-    <thead><tr><th>Criterion</th><th>Current</th><th>Required</th><th>Met</th></tr></thead>
-    <tbody>
-      {% for c in promo.criteria %}
-      <tr data-testid="criterion-{{ c.key }}">
-        <td>{{ c.label }}</td>
-        <td class="mono">{{ c.current }}</td>
-        <td class="mono">{{ c.required }}</td>
-        <td>
-          {% if c.met is none %}<span class="pill">not yet measurable</span>
-          {% elif c.met %}<span class="covered">&#10003;</span>
-          {% else %}<span class="gap">&#10007;</span>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if promo.last_trained_at %}
-  <p class="muted"><small>Last trained {{ promo.last_trained_at }}, on {{ promo.last_trained_n_labeled }}
-  labeled examples.</small></p>
-  {% endif %}
-  <p><b>Next step:</b> {{ promo.next_step }}</p>
-</div>
-{% endif %}
+  {% include "partials/calibrate_top.html" %}
 
-<h2 class="calibrate-queue-head">Ten roles to rate for the {{ track }} track</h2>
-{% include "partials/calibrate_queue.html" %}
+  <div class="k-layout">
+    <div class="k-layout__main">{% include "partials/calibrate_card.html" %}</div>
+    {% call ui.help_column() %}
+      {{ ui.help_card('What your ratings change', [
+        'At ' ~ strips.few_at ~ ': Kestrel shows the AI your own rated roles as examples when it scores similar ones.',
+        'At ' ~ strips.tune_at ~ ': a scoring tune-up you can accept or skip.',
+        'At ' ~ strips.rank_at ~ ': Kestrel learns to sort new roles your way. It tests itself on your ratings first and is only used if it gets more of them right.'], 'good', 'check', 'cal-change-fly') }}
+      {{ ui.help_card('Tips for better ratings', [
+        'Rate the role, not the title.',
+        'Think about where you want to be in two years.',
+        'Be consistent. Two similar roles should get similar ratings.',
+        'You can change any rating later.'], 'warn', 'help') }}
+    {% endcall %}
+  </div>
+
+  {% include "partials/calibrate_history.html" %}
+
+  {% call ui.flyout('cal-how-fly', 'How Calibrate works', help_href='/help') %}
+    <h4>What you do</h4>
+    <ol><li>Kestrel shows the roles it is least sure about.</li><li>You say how good a match each one is.</li><li>Then you see Kestrel's score, and it learns from the difference.</li></ol>
+    <h4>Why your score comes first</h4>
+    <p>Seeing Kestrel's score first tends to pull yours toward it. Your own call teaches it more.</p>
+    <h4>What your ratings change</h4>
+    <p>At {{ strips.few_at }} ratings, they become examples Kestrel shows the AI when it scores similar roles. At {{ strips.tune_at }} it offers a scoring tune-up you can accept or skip. At {{ strips.rank_at }}, Kestrel learns to sort new roles your way. It tests itself on your ratings first and is only used if it gets more of them right. After that, keep rating whenever Kestrel asks: your taste changes, and new kinds of roles show up.</p>
+    <h4>Nothing leaves your computer</h4>
+    <p>Your ratings stay in your Kestrel data folder.</p>
+  {% endcall %}
+  {% call ui.flyout('cal-change-fly', 'What your ratings change', help_href='/help') %}
+    <h4>Right away</h4>
+    <p>Each rating is saved as one of your own examples. From {{ strips.few_at }} ratings, Kestrel shows the AI a few of them when it scores a similar role.</p>
+    <h4>At {{ strips.tune_at }}</h4>
+    <p>Kestrel checks whether different weights on the five scores would match your ratings better. You choose: use the new weights or keep the current ones. Nothing changes without your yes.</p>
+    <h4>At {{ strips.rank_at }}</h4>
+    <p>Kestrel trains a sorter on your ratings and tests it on ratings it has not seen. It is used only if it gets more of them right than the usual scoring. It tries again every 50 ratings.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

@@ -53,7 +53,8 @@ async def test_bootstrap_keys_are_not_taken_from_db(sm, monkeypatch):
 
 async def test_content_and_state_rows_stay_out_of_the_config_layer(sm):
     """Regression (polling cost): prep notes (up to 20k characters each), the last story build
-    and dismissed guides/asks are not configuration, so the config layer never reads them, and
+    and dismissed asks (plus the retired guides row old installs may hold) are not configuration,
+    so the config layer never reads them, and
     the doctor's sync copy reads exactly the same rows. Real ui.* and stories.* fields stay."""
     from kestrel import doctor
     from kestrel.db.base import Base

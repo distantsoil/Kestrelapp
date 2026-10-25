@@ -1,0 +1,4 @@
+{# The answer to a pick: the reading (into #cal-eval) and the optional reasons panel, swapped out
+   of band into the form. Writes nothing. #}
+{% include "partials/calibrate_reveal_eval.html" %}
+<div id="cal-why-body" class="cal-whybody" hx-swap-oob="innerHTML">{% include "partials/calibrate_why_body.html" %}</div>

@@ -645,8 +645,9 @@ def local_when(ts: str | None) -> str | None:
     if dt is None:
         return None
     dt = dt.astimezone()
-    hour = dt.hour % 12 or 12
-    return f"{dt:%a %b} {dt.day}, {hour}:{dt:%M} {'AM' if dt.hour < 12 else 'PM'}"
+    from kestrel.date_display import format_display
+
+    return format_display(dt, "weekday_short", kind="datetime", separator=", ")
 
 
 def problem_note(summary: dict[str, Any]) -> str | None:
@@ -673,7 +674,9 @@ def view(summary: dict[str, Any], *, now: datetime | None = None) -> dict[str, A
 
     def hhmm(ts: str | None) -> str | None:
         dt = _parse(ts)
-        return dt.astimezone().strftime("%H:%M") if dt else None
+        from kestrel.date_display import format_display
+
+        return format_display(dt, kind="time", time_style="24h", local=True) if dt else None
 
     total = int(s.get("to_rate") or 0)
     s["recent_events"] = [{**e, "hhmm": hhmm(e.get("at"))} for e in s.get("recent_events") or []]

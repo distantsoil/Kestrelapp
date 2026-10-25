@@ -150,7 +150,9 @@ def _acquire_lock_file() -> bool:
 def acquire_single_instance() -> bool:
     """True iff we are the first instance. Otherwise focus the running instance and return False."""
     first = _acquire_windows_mutex() if IS_WINDOWS else _acquire_lock_file()
-    if not first:
+    if not first and "--tray" not in sys.argv[1:]:
+        # A quiet start by the start-with-my-computer entry must not raise a window that is
+        # already open (or one the person closed to the tray on purpose).
         focus_running_instance()
     return first
 
@@ -242,7 +244,7 @@ def on_closing():
 CLOSE_TO_TRAY_TITLE = "Kestrel is still running"
 CLOSE_TO_TRAY_BODY = (
     "Kestrel keeps working in the background while the window is closed. Open it again from "
-    "this tray icon. To quit on close instead, go to Settings > Appearance > Desktop window."
+    "this tray icon. To quit on close instead, go to Settings > This computer > Everyday options."
 )
 
 
@@ -759,9 +761,18 @@ def run_desktop() -> int:
     # Saved files (the diagnostics zip) go to Downloads and open in Explorer, never through the
     # WebView2 downloads flyout (D-UI-41).
     set_reveal_handler(reveal_file)
+    from kestrel.web.desktop_bridge import set_folder_handler
+
+    set_folder_handler(_open_folder)  # About's Open buttons for the data and logs folders
     start_tray()
     log.info("webview_start")
-    webview.start()  # blocks the main thread until window.destroy()
+    # Started by the start-with-my-computer entry (`--tray`): leave the window hidden, in the
+    # tray, until the person opens it. Only with a tray icon to open it from.
+    quiet_start = "--tray" in sys.argv[1:] and icon is not None
+    if quiet_start:
+        webview.start(hide_window)  # blocks until window.destroy()
+    else:
+        webview.start()
 
     # webview returned => a real quit is in progress. Let uvicorn's graceful shutdown (worker drain
     # + lease release) finish before the process exits; never truncate it.

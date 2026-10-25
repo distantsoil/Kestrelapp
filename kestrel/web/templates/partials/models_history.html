@@ -1,0 +1,86 @@
+{% import "ui/macros.html" as ui %}
+{# Show details: the comparison from the operator's own stored evaluations (SPEC.md 8.6). Every
+   rate sits beside its n, and under five labeled evaluations it reads as too few (hard rule 6).
+   No model is called and nothing is written to render it. #}
+{% macro too_few_text(n) %}too few to judge ({{ n or 0 }} of 5 needed){% endmacro %}
+<details class="k-card mo-card mo-history" id="mo-history" data-testid="mo-history">
+  <summary><span class="k-badge">{{ ui.icon('analytics') }}</span><b>How each model has done</b>
+    <span class="k-muted">{{ n_evaluations }} evaluations, {{ 'last ' ~ since ~ ' days' if since else 'all time' }}{% if track %}, {{ track }} track{% endif %}</span></summary>
+  <div class="mo-filter"><span class="k-muted">Window:</span>
+    {% for d in since_choices %}<a class="k-chip{{ ' is-on' if since == d }}" href="/models?track={{ track }}&since={{ d }}">{{ d }}d</a>{% endfor %}
+    <a class="k-chip{{ ' is-on' if not since }}" href="/models?track={{ track }}">All</a></div>
+  <h4>Where things stand</h4>
+  {% if not rows %}
+    <p>No evaluations {% if since %}in the last {{ since }} days{% endif %}{% if track %} on the {{ track }} track{% endif %} yet. Run the pipeline and rate a few results from Calibrate to start a comparison.</p>
+  {% else %}
+    <p>{{ n_evaluations }} evaluations across {{ rows|length }} model and prompt combinations.
+    {% for tier in tiers %}{% set b = best[tier] %}
+      {% if b %}{{ tier|tier_label }}: <b class="mo-mono">{{ b.model }}</b> ({{ b.prompt_version }}) agrees with you on {{ '%.0f'|format(b.agreement_rate * 100) }}% of {{ b.n_labeled }} labeled evaluations{% if b.mean_abs_score_error is not none %}, mean absolute score error {{ '%.2f'|format(b.mean_abs_score_error) }}{% endif %}.
+      {% else %}{{ tier|tier_label }}: {{ too_few_text(max_labeled[tier]) }} to say which model agrees with you.{% endif %}
+    {% endfor %}</p>
+  {% endif %}
+  <p class="k-muted">Configured now:
+    {% for name, cfg in configured.items() %}<span class="mo-mono">{{ name }}={{ cfg.model }}</span>{% if cfg.backend != 'local' %} <span class="k-pill">{{ cfg.backend }}</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  <p class="k-muted">Hardware profile: {% if hardware %}<b class="mo-mono">{{ hardware.profile }}</b>{% if hardware.chosen_at %}, chosen {{ date_display(hardware.chosen_at, 'raw') }}{% endif %}{% else %}not recorded yet{% endif %}.
+    Online service: {% if provider and provider.base_url %}<span class="mo-mono">{{ provider.backend_name }}</span>, key {{ 'saved' if provider.key_present else 'not set' }}{% else %}none configured{% endif %}.
+    Hosted sends are opt-in per opportunity and only happen after you confirm the payload. Manage keys under <a class="k-link" href="/settings#hosted">Settings &gt; Hosted (BYOK)</a>.</p>
+
+  <h4>Comparison by step, model, and prompt version</h4>
+  <p class="k-muted">Click a column header to sort. Agreement is exact-verdict agreement with your latest label on the same opportunity; Rated is its denominator. Cost is summed from hosted transmissions; local models show "local".</p>
+  <div class="mo-scroll"><table class="k-table" id="model-compare">
+    <thead><tr><th data-sort="num">Step</th><th data-sort="text">Model</th><th data-sort="text">Prompt</th><th data-sort="num">Rated</th><th data-sort="num">Mean score</th><th>Verdicts</th><th data-sort="num">Agreement</th><th data-sort="num">Score error</th><th data-sort="num">Latency ms</th><th data-sort="num">Tokens in / out</th><th data-sort="num">Cost</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td data-v="{{ r.tier }}">{{ r.tier|tier_label }}</td>
+        <td class="mo-mono" data-v="{{ r.model }}">{{ r.model }}{% if r.hosted %} <span class="k-pill">hosted</span>{% endif %}</td>
+        <td class="mo-mono" data-v="{{ r.prompt_version }}">{{ r.prompt_version }}</td>
+        <td data-v="{{ r.n }}">{{ r.n }}</td>
+        <td data-v="{{ r.mean_score if r.mean_score is not none else -1 }}">{% if r.mean_score is not none %}{{ '%.2f'|format(r.mean_score) }}{% else %}-{% endif %}</td>
+        <td>{% for v, c in r.verdicts.items()|sort %}{{ v }} {{ c }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+        <td data-v="{{ r.agreement_rate if r.agreement_rate is not none else -1 }}">{% if r.insufficient %}<span class="k-pill">{{ too_few_text(r.n_labeled) }}</span>{% elif r.agreement_rate is not none %}{{ '%.0f'|format(r.agreement_rate * 100) }}% of {{ r.n_labeled }}{% else %}too few to judge{% endif %}</td>
+        <td data-v="{{ r.mean_abs_score_error if r.mean_abs_score_error is not none else 99 }}">{% if r.insufficient %}<span class="k-pill">{{ too_few_text(r.n_labeled) }}</span>{% elif r.mean_abs_score_error is not none %}{{ '%.2f'|format(r.mean_abs_score_error) }}{% else %}-{% endif %}</td>
+        <td data-v="{{ r.mean_latency_ms or 0 }}">{% if r.mean_latency_ms is not none %}{{ '%.0f'|format(r.mean_latency_ms) }}{% else %}-{% endif %}</td>
+        <td data-v="{{ r.mean_prompt_tokens or 0 }}">{% if r.mean_prompt_tokens is not none %}{{ '%.0f'|format(r.mean_prompt_tokens) }} / {{ '%.0f'|format(r.mean_completion_tokens) }}{% else %}-{% endif %}</td>
+        <td data-v="{{ r.cost_usd if r.cost_usd is not none else -1 }}">{{ r.cost_label }}{% if r.hosted %} <span class="k-muted">({{ r.n_costed_sends }} of {{ r.n_hosted_sends }} sends priced)</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="11" class="k-muted">No evaluations in this window. This table is computed from stored rows and is never a placeholder.</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+
+  <h4>Recent evaluations</h4>
+  <p class="k-muted">The last {{ history|length }} evaluations, newest first. "Agreed" compares the model's verdict with your latest label on the same opportunity; blank means no label yet.</p>
+  <div class="mo-scroll"><table class="k-table">
+    <thead><tr><th>When</th><th>Opportunity</th><th>Step</th><th>Model</th><th>Verdict</th><th>Score</th><th>Your label</th><th>Agreed</th><th>Latency ms</th><th>Tokens</th><th>Cost</th></tr></thead>
+    <tbody>
+    {% for h in history %}
+      <tr>
+        <td class="mo-mono k-muted">{{ date_display(h.created_at, kind='datetime', time_style='24h', separator='T') }}</td>
+        <td><a class="k-link" href="/opportunities/{{ h.opportunity_id }}">{{ h.title or '(untitled)' }}</a> <span class="k-muted">{{ h.org or '' }}</span> <span class="k-pill">{{ h.track }}</span></td>
+        <td>{{ h.tier|tier_label }}</td>
+        <td class="mo-mono">{{ h.model }}{% if h.hosted %} <span class="k-pill">hosted</span>{% endif %}</td>
+        <td>{{ h.verdict or '-' }}</td>
+        <td>{% if h.score is not none %}{{ '%.2f'|format(h.score) }}{% else %}-{% endif %}</td>
+        <td>{{ h.operator_verdict or '-' }}</td>
+        <td>{% if h.agreed is true %}yes{% elif h.agreed is false %}no{% else %}-{% endif %}</td>
+        <td>{{ h.latency_ms }}</td><td>{{ h.prompt_tokens }} / {{ h.completion_tokens }}</td><td>{{ h.cost_label }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="11" class="k-muted">No evaluations yet.</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+
+  <h4>Benchmark runs</h4>
+  {% if not bench.persisted %}<p class="mo-msg is-warn">No stored benchmark run. {{ bench.note }}</p>{% endif %}
+  {% if bench.goldsets %}
+  <div class="mo-scroll"><table class="k-table">
+    <thead><tr><th>Track</th><th>Gold set</th><th>Items</th><th>Status</th></tr></thead>
+    <tbody>{% for g in bench.goldsets %}
+      <tr><td>{{ g.track }}</td><td>{{ 'present' if g.present else 'missing' }}</td>
+        <td>{{ g.n_items }}{% if g.insufficient %} <span class="k-pill">{{ too_few_text(g.n_items) }}</span>{% endif %}</td>
+        <td class="k-muted">{% if not g.present %}Press Check my models after you have rated at least 5 roles; it builds this from your ratings.{% elif g.placeholder %}Shipped placeholder: invented items, so agreement against it says nothing about your judgment. Rate real items and check again.{% else %}Regenerated from your own ratings.{% endif %}</td></tr>
+    {% endfor %}</tbody></table></div>
+  {% endif %}
+  <p class="k-muted">For a controlled comparison and to switch a model, use <a class="k-link" href="/bench">Model check</a>.</p>
+</details>

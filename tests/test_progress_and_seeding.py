@@ -72,9 +72,9 @@ async def test_honest_summary_with_no_client_offers_the_narrative_only_when_data
 def test_analytics_page_never_calls_the_model_and_the_narrative_route_does(monkeypatch):
     seen: list[object] = []
 
-    async def _spy(session, client, track):
+    async def _spy(session, client, track, **kw):
         seen.append(client)
-        return await honest_summary(session, None, track)
+        return await honest_summary(session, None, track, **kw)
 
     monkeypatch.setattr("kestrel.web.pages.analytics.honest_summary", _spy)
     asyncio.run(reset_engine())
@@ -84,8 +84,8 @@ def test_analytics_page_never_calls_the_model_and_the_narrative_route_does(monke
         r = c.get("/analytics")
         assert r.status_code == 200
         assert seen == [None]
-        # With no outcomes there is no narrative to offer either.
-        assert 'data-testid="write-narrative"' not in r.text
+        # With no outcomes there is no summary to write either.
+        assert 'data-testid="rewrite-summary"' not in r.text
         r = c.post("/analytics/narrative?track=employment")
         assert r.status_code == 200
         assert seen[-1] is not None  # the one place the page asks the model
@@ -157,24 +157,33 @@ def test_sources_page_lists_the_shipped_sources_after_seeding():
 
     asyncio.run(_run())
     with _client() as c:
-        html = c.get("/sources").text
-    assert "SAM.gov federal IT contracts" in html and 'hx-post="/sources/1/toggle"' in html
+        html = c.get("/sources?track=consulting").text
+    assert "SAM.gov federal IT contracts" in html and 'data-src-toggle="1"' in html
     asyncio.run(reset_engine())
 
 
 # ----------------------------------------------------------- inline progress (D-UI-20)
 _BUSY_EXPECTED = {
-    "bench.html": ["/bench/run"],
-    "runs.html": ["/runs/now"],
-    "partials/opp_decision.html": ["/escalate", "/research"],
-    "partials/mock_body.html": ["/start"],
-    "partials/mock_active.html": ["/answer", "/end"],
-    "partials/prep_pack.html": ["/build", "/pdf"],
-    "partials/offers_list.html": ["/scripts"],
-    "partials/render_review.html": ["/swap"],
+    "partials/bench_advanced.html": ["/bench/run"],
+    "partials/runs_header.html": ["/runs/start"],
+    "partials/opp_decision.html": ["/escalate"],
+    "partials/pp_chat.html": ["/start", "/answer", "/end"],
+    "partials/pp_pack.html": ["/build"],
+    "partials/pp_preview.html": ["/pdf"],
+    "partials/offer_negotiate.html": ["/scripts"],
+    "partials/tailor_macros.html": ["/pick"],
+    "partials/tailor_pick_dialog.html": ["/pick"],
     "partials/run_now_dialog.html": ["/run-now"],
-    "partials/opp_actions.html": ["/research", "/contacts"],
 }
+
+# Research the company and Find contacts moved to the Role page (task 11): the decision panel and
+# the actions panel now only link to its Organization tab. Both actions post to one route, told
+# apart by hx-vals kind, so every tag that posts to it is checked, not just the first.
+_ROLE_RESEARCH_TEMPLATES = [
+    "partials/role_tab_organization.html",
+    "partials/role_side.html",
+    "partials/role_company_card.html",
+]
 
 
 def _tag_with_post(text: str, route: str) -> str:
@@ -193,6 +202,17 @@ def test_every_slow_action_says_what_it_is_doing(tmpl, routes):
         assert label.strip() and "—" not in label
 
 
+@pytest.mark.parametrize("tmpl", _ROLE_RESEARCH_TEMPLATES)
+def test_every_role_research_button_says_what_it_is_doing(tmpl):
+    text = (_TEMPLATES / tmpl).read_text(encoding="utf-8")
+    tags = re.findall(r"<button\b[^>]*hx-post=\"[^\"]*/role/research\"[^>]*>", text)
+    assert tags, tmpl
+    for tag in tags:
+        assert 'data-busy-text="' in tag, (tmpl, tag)
+        label = re.search(r'data-busy-text="([^"]+)"', tag).group(1)
+        assert label.strip() and "—" not in label
+
+
 def test_base_shows_the_busy_text_inline_and_not_as_a_cursor():
     assert "data-busy-text" in _BASE
     assert "import-status busy-status" in _BASE and "className = 'spin'" in _BASE
@@ -202,7 +222,8 @@ def test_base_shows_the_busy_text_inline_and_not_as_a_cursor():
 
 
 def test_bench_run_disables_its_button_while_running():
-    tag = _tag_with_post((_TEMPLATES / "bench.html").read_text(encoding="utf-8"), "/bench/run")
+    text = (_TEMPLATES / "partials/bench_advanced.html").read_text(encoding="utf-8")
+    tag = _tag_with_post(text, "/bench/run")
     assert 'hx-disabled-elt="find button"' in tag
 
 
@@ -224,8 +245,8 @@ def test_models_page_marks_the_selected_window():
     forget_engine()
     with _client() as c:
         html = c.get("/models?since=30").text
-    assert 'class="btn ghost primary"' in html
-    assert html.count('class="btn ghost primary"') == 1
+    assert 'class="k-chip is-on"' in html
+    assert html.count('class="k-chip is-on"') == 1
     asyncio.run(reset_engine())
 
 
@@ -328,9 +349,10 @@ def test_loading_is_visible_without_the_mouse():
 
 
 def test_filters_tab_points_at_the_profile_not_the_yaml_and_lan_says_why():
-    settings = (_TEMPLATES / "settings.html").read_text(encoding="utf-8")
-    assert "come from your profile and the Core tab, not from a file" in settings
-    assert "Open Kestrel from a phone or tablet" in settings and 'href="/help#lan"' in settings
+    roles = (_TEMPLATES / "partials" / "st_rules.html").read_text(encoding="utf-8")
+    assert "Change in Profile" in roles and "Rules file: filters.yml" in roles  # not a file to edit
+    access = (_TEMPLATES / "partials" / "st_access.html").read_text(encoding="utf-8")
+    assert "Only works on your own network" in access and "Only this computer can change" in access
     help_ = (_TEMPLATES / "help.html").read_text(encoding="utf-8")
     assert 'id="lan"' in help_ and "same home network" in help_
 
@@ -358,7 +380,7 @@ def test_with_enough_data_and_no_client_the_narrative_is_offered(monkeypatch):
 
     from kestrel.analytics.metrics import collect_metrics as real_metrics
 
-    async def _pending(session, client, track):
+    async def _pending(session, client, track, **kw):
         return AnalyticsSummary(track=track, metrics=await real_metrics(session, track),
                                 discriminating=True, insufficient_data=False,
                                 summary_md="verdict", headline_finding="verdict",
@@ -370,9 +392,10 @@ def test_with_enough_data_and_no_client_the_narrative_is_offered(monkeypatch):
     forget_engine()
     with _client() as c:
         page = c.get("/analytics").text
-        assert 'data-testid="write-narrative"' in page
+        assert 'data-testid="rewrite-summary"' in page
+        assert 'data-testid="an-written"' not in page  # nothing written until it is asked for
         after = c.post("/analytics/narrative?track=employment").text
-        assert 'data-testid="write-narrative"' not in after
+        assert 'id="honest-summary"' in after
     asyncio.run(reset_engine())
 
 

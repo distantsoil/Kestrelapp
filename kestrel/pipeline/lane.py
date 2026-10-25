@@ -117,12 +117,23 @@ async def is_idle(session: AsyncSession) -> bool:
     return new == 0
 
 
-def _free(task: Task, *, on: str | None) -> None:
+def _free(
+    task: Task,
+    *,
+    on: str | None,
+    online_approval: dict[str, list[str]] | None = None,
+) -> None:
     payload = dict(task.payload or {})
     task.priority = int(payload.pop("lane_priority", 0) or 0)
     payload["lane"] = 0
     if on:
         payload["lane_released_on"] = on
+    if online_approval is not None:
+        from kestrel.services.online_consent import read_approval
+
+        approval = read_approval(online_approval)
+        if approval:
+            payload["online_approval"] = approval
     task.payload = payload
     task.updated_at = utcnow_iso()
 
@@ -166,13 +177,17 @@ async def release_due(
     return len(tasks)
 
 
-async def release_all(sessionmaker: async_sessionmaker[AsyncSession]) -> int:
+async def release_all(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    online_approval: dict[str, list[str]] | None = None,
+) -> int:
     """The operator's one-shot "Score everything now": every waiting lane task joins the normal
     flow. Does not count against the daily cap and does not stay on."""
     async with sessionmaker() as s:
         tasks = await _pending_lane_tasks(s)
         for t in tasks:
-            _free(t, on=None)
+            _free(t, on=None, online_approval=online_approval)
         await s.commit()
     log.info("lane.released_all", count=len(tasks))
     return len(tasks)

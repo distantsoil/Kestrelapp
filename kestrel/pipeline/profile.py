@@ -21,6 +21,8 @@ from typing import Any
 import yaml
 
 from kestrel import paths
+from kestrel.rules.margin import normalize_margin
+from kestrel.services.names import normalize_name_fields
 
 
 def _ns(obj: Any) -> Any:
@@ -52,6 +54,15 @@ def load_profile(track: str) -> SimpleNamespace | None:
     block = _load_yaml().get(track)
     if not isinstance(block, dict):
         return None
-    block = dict(block)
+    block = normalize_name_fields(block)
     block.setdefault("requires_sponsorship", False)
+    # The near-floor margins (D-RULES-2): an absent key reads as the default, so a profile saved
+    # before the setting existed keeps near-floor roles and no rule meets a missing attribute.
+    for terms_key, margin_key in (
+        ("employment_terms", "comp_floor_margin_pct"),
+        ("consulting_terms", "day_rate_floor_margin_pct"),
+    ):
+        terms = block.get(terms_key)
+        if isinstance(terms, dict):  # a track without this section stays without it
+            block[terms_key] = {**terms, margin_key: normalize_margin(terms.get(margin_key))}
     return _ns(block)

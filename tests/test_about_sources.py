@@ -1,10 +1,10 @@
-"""The source catalog and the Help page built from it.
+"""The source catalog, and the About page facts that used to sit beside it on Help.
 
 The catalog's point is that it cannot drift from the registries: every registered adapter and
 signal source is listed and described, no description survives for a kind that no longer exists,
-and the example config per kind passes the exact validator the Sources page runs before saving. The
-Help page (/help) renders the catalog, the hard-rule-1 wording, and the links to Backup and
-Settings; /about is its own page since D-UI-6. docs/SOURCES.md must name every kind too."""
+and the example config per kind passes the exact validator the Sources page runs before saving.
+/about is its own page since D-UI-6; Help (D-UI-124) holds articles, not the catalog.
+docs/SOURCES.md must name every kind too."""
 
 from __future__ import annotations
 
@@ -91,54 +91,31 @@ def test_region_note_states_the_us_default_and_the_worldwide_path():
         assert row.rate_limit, f"{row.kind} has no rate limit note"
 
 
-# ----------------------------------------------------------------------------------- help page
-def test_help_page_renders_the_catalog_and_the_boundaries():
-    with _client() as c:
-        r = c.get("/help")
-    assert r.status_code == 200
-    body = r.text
-    assert "<h1>Help</h1>" in body
-    for row in source_catalog():
-        assert row.kind in body, row.kind
-        assert row.name in body, row.name
-    # The pipeline table, hard rule 1 in plain words, and what leaves the machine.
-    for tier in ("Tier 0", "Tier 1", "Tier 2", "Tier 3"):
-        assert tier in body
-    assert "never submits an application" in body
-    assert "never clicks apply" in body
-    assert "Nothing, by default" in body
-    assert 'href="/backup"' in body
-    assert 'href="/settings"' in body
-    assert "US-centric" in body
-    assert "Adding an adapter" in body
-    # Em dashes are banned in UI copy.
-    assert "—" not in body.split("<main")[1]
-
-
-def test_about_is_its_own_page_and_help_links_to_it():
-    """/about used to alias Help; it is now the About page (D-UI-6) and Help points at it."""
+# ------------------------------------------------------------------------- the about page
+def test_about_is_its_own_page_and_links_to_help():
+    """/about used to alias Help; it is now the About page (D-UI-6) and points at Help."""
     with _client() as c:
         about = c.get("/about")
         helped = c.get("/help")
     assert about.status_code == 200
     assert "<h1>About</h1>" in about.text
     assert "<h1>Help</h1>" not in about.text
-    assert 'href="/help"' in helped.text
-    assert ">Help</a>" in helped.text
-    assert ">About</a>" in helped.text
-    assert 'href="/about">About</a>' in helped.text.split("<main")[1]
+    assert 'href="/help"' in about.text and "<h1>Help</h1>" in helped.text
 
 
-def test_help_page_renders_without_a_hardware_profile_and_with_one():
+def test_about_shows_the_hardware_profile_only_when_one_was_chosen():
+    """The hardware profile `kestrel setup` chose moved from Help to About's component versions
+    (with the port Kestrel is serving on); with no profile there is no row."""
     from kestrel.llm import profiles
 
     with _client() as c:
-        r = c.get("/help")
-        assert "not checked yet" in r.text
+        r = c.get("/about")
+        assert "Hardware profile" not in r.text
+        assert "Kestrel is serving on port" in r.text
         profiles.save_active_profile("rtx-16gb", "16 GB VRAM detected")
-        r2 = c.get("/help")
-    assert "rtx-16gb" in r2.text
-    assert "16 GB VRAM detected" in r2.text
+        r2 = c.get("/about")
+    assert "Hardware profile" in r2.text
+    assert "rtx-16gb" in r2.text and "16 GB VRAM detected" in r2.text
 
 
 # ---------------------------------------------------------------------------------------- docs

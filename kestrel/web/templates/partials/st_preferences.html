@@ -1,0 +1,88 @@
+{# Preferences (D-UI-106, D-UI-109, D-UI-112): what you're looking for, appearance, region and
+   notifications. Each control saves as it changes (static/js/settings.js) and shows a message
+   with Undo. The theme is a per-browser choice; the color scheme is the default every browser
+   sees first. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-tracks" data-testid="st-tracks">
+  {{ st.head("What you're looking for", 'list', sub='Turning one off hides it everywhere. Nothing is deleted.') }}
+  <div class="st-row st-row--first"><div class="st-row__t"><b>Employment</b><span class="st-dsm">Full-time and part-time roles.</span></div>
+    {{ st.sw('employment', 'Employment', 'employment' in pf.tracks, {'data-st-url': '/settings/prefs/tracks', 'data-st-track': 'employment'}) }}</div>
+  <div class="st-row"><div class="st-row__t"><b>Consulting and contract work</b><span class="st-dsm">Short projects, contracts and fractional roles.</span></div>
+    {{ st.sw('consulting', 'Consulting and contract work', 'consulting' in pf.tracks, {'data-st-url': '/settings/prefs/tracks', 'data-st-track': 'consulting'}) }}</div>
+  <p class="st-qn" id="st-trk-note" role="status"></p>
+</section>
+
+<section class="k-card st-card" id="st-appearance" data-testid="st-appearance">
+  {{ st.head('Appearance', 'palette') }}
+  <div class="st-row st-row--first"><div class="st-row__t"><b>Theme</b><span class="st-dsm">Light, dark, or follow your computer.</span></div>
+    <div class="k-seg" role="group" aria-label="Theme" data-k-seg data-st-theme>
+      <button type="button" value="light" aria-pressed="false">Light</button><button type="button" value="dark" aria-pressed="false">Dark</button><button type="button" value="auto" aria-pressed="false">Match computer</button></div></div>
+  <div class="st-row st-row--col"><div class="st-row__t"><b>Color scheme</b><span class="st-dsm">Changes colors across Kestrel. High contrast uses full-strength text, stronger borders, and thicker keyboard focus rings.</span></div>
+    <div class="st-sws" role="radiogroup" aria-label="Color scheme">
+      {% for sid, name in pf.schemes %}<button type="button" class="st-swb{% if pf.scheme == sid %} is-on{% endif %}" role="radio" aria-checked="{{ 'true' if pf.scheme == sid else 'false' }}" data-st-scheme="{{ sid }}" data-testid="st-scheme-{{ sid }}"><span class="st-sw-ex st-sw-ex--{{ sid }}" aria-hidden="true"><i></i><i></i></span><span>{{ name }}</span></button>{% endfor %}
+    </div></div>
+  <div class="st-row st-picrow" id="st-picture"><span class="st-av st-big st-a-{{ pf.avatar }}" id="st-avbig" aria-hidden="true">{% if pf.avatar == 'photo' and pf.photo %}<img src="{{ pf.photo }}" alt="">{% elif pf.avatar == 'initial' %}{{ pf.initial }}{% else %}{{ st.sic(pf.avatar) }}{% endif %}</span>
+    <div class="st-row__t"><b>Your picture</b><span class="st-dsm">Shows in the top right corner. It stays on this computer and never goes on a resume or an export.</span>
+      <div class="st-avs" role="radiogroup" aria-label="Your picture">
+        {% for k in pf.avatar_icons %}<button type="button" class="st-av st-a-{{ k }}{% if pf.avatar == k %} is-on{% endif %}" role="radio" aria-checked="{{ 'true' if pf.avatar == k else 'false' }}" data-st-avatar="{{ k }}" aria-label="{{ pf.avatar_names[k] }}" data-testid="st-av-{{ k }}">{% if k == 'initial' %}{{ pf.initial }}{% else %}{{ st.sic(k) }}{% endif %}</button>{% endfor %}
+        <label class="k-btn k-btn--sm st-file">{{ st.sic('up', 'k-ic--sm') }}Upload a photo<input type="file" id="st-photo" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-testid="st-photo"></label>
+        {% if pf.photo %}<button type="button" class="k-link" id="st-photo-remove" data-testid="st-photo-remove">Remove photo</button>{% endif %}
+      </div></div></div>
+  <div class="st-row"><div class="st-row__t"><b>Scene</b><span class="st-dsm" id="st-scene-line" data-testid="st-scene-line"></span></div>
+    <button type="button" class="k-btn k-btn--sm" data-st-open="scenes" data-k-slideover="#st-mg-scenes" data-testid="st-manage-scenes">Manage scenes &rsaquo;</button></div>
+  <div class="st-row"><div class="st-row__t"><b>Animate the scene</b><span class="st-dsm">Turn off to keep the art still.</span></div>
+    {{ st.sw('ui.scene_animate', 'Animate the scene', pf.scene_animate, {'data-st-ui': ''}) }}</div>
+  <div class="st-row"><div class="st-row__t"><b>Seasonal touches</b><span class="st-dsm">Small extras on a few dates each year.</span></div>
+    {{ st.sw('ui.touches_enabled', 'Seasonal touches', pf.touches_enabled, {'data-st-ui': ''}) }}</div>
+  <p class="st-qn" id="st-next-touch" data-testid="st-next-touch"></p>
+  <div class="st-sum2"><span id="st-touch-count" data-testid="st-touch-count"></span><button type="button" class="k-btn k-btn--sm" data-st-open="touches" data-k-slideover="#st-mg-touches" data-testid="st-manage-touches">Manage touches &rsaquo;</button></div>
+  <div class="st-row"><div class="st-row__t"><b>Text size</b><span class="st-dsm">Makes words larger or smaller.</span></div>
+    <div class="k-seg" role="group" aria-label="Text size" data-k-seg data-st-ui-seg="ui.text_size">{% for v, label in pf.text_sizes %}<button type="button" value="{{ v }}" class="{% if pf.text_size == v %}is-on{% endif %}" aria-pressed="{{ 'true' if pf.text_size == v else 'false' }}" data-testid="st-size-{{ v }}">{{ label }}</button>{% endfor %}</div></div>
+  <div class="st-row"><div class="st-row__t"><b>Reduce motion</b><span class="st-dsm">Fewer animations and slides.</span></div>
+    {{ st.sw('ui.reduce_motion', 'Reduce motion', pf.reduce_motion, {'data-st-ui': ''}) }}</div>
+</section>
+
+<section class="k-card st-card" id="st-region" data-testid="st-region">
+  {{ st.head('Region', 'pin') }}
+  <div class="st-row st-row--first"><div class="st-row__t"><b>Country</b><span class="st-dsm">Kestrel supports the US only for now. More countries are coming.</span></div>
+    <span class="st-lockrow">{{ st.sic('lock', 'k-ic--sm') }}<span class="k-select"><select disabled aria-label="Country"><option>United States</option></select></span></span></div>
+  <div class="st-row"><div class="st-row__t"><b>Currency</b><span class="st-dsm">Used for pay and offers.</span></div><span class="st-ro">US dollars</span></div>
+  <div class="st-row"><div class="st-row__t"><b>Date format</b><span class="st-dsm">How dates look.</span></div>
+    <span class="k-select"><select aria-label="Date format" data-st-ui-sel="region.date_format" data-testid="st-date-format">{% for v, label in pf.date_formats %}<option value="{{ v }}"{% if pf.date_format == v %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></span></div>
+  <div class="st-row"><div class="st-row__t"><b>Time</b><span class="st-dsm">12-hour or 24-hour clock.</span></div>
+    <div class="k-seg" role="group" aria-label="Time" data-k-seg data-st-ui-seg="region.time_format">{% for v, label in pf.time_formats %}<button type="button" value="{{ v }}" class="{% if pf.time_format == v %}is-on{% endif %}" aria-pressed="{{ 'true' if pf.time_format == v else 'false' }}" data-testid="st-time-{{ v }}">{{ label }}</button>{% endfor %}</div></div>
+  <div class="st-pv">{{ st.sic('clock') }}<small>PREVIEW</small><span id="st-fmt-preview" data-testid="st-fmt-preview">{{ pf.region_preview }}</span></div>
+</section>
+
+<section class="k-card st-card" id="st-notify" data-testid="st-notify">
+  {{ st.head('Notifications', 'bell') }}
+  <div class="st-kind">Tell me about</div>
+  {% for group, (name, hint, kinds_) in pf.notify_kinds %}
+  <div class="st-row{% if loop.first %} st-row--first{% endif %}"><div class="st-row__t"><b>{{ name }}</b><span class="st-dsm">{{ hint }}</span></div>
+    <input type="checkbox" class="st-check" data-st-key="{{ group }}" data-st-url="/settings/prefs/notify" {% if pf.notify_on[group] %}checked{% endif %} aria-label="{{ name }}" data-testid="st-notify-{{ group }}"></div>
+  {% endfor %}
+  <div class="st-kind st-kind--gap">Where</div>
+  <div class="st-row st-row--first"><div class="st-row__t"><b>Bell in Kestrel</b><span class="st-dsm">Always shows here.</span></div><span class="k-pill k-pill--good">Always on</span></div>
+  <div class="st-row"><div class="st-row__t"><b>Computer notifications</b><span class="st-dsm">Small pop-ups from your computer.</span></div>
+    {{ st.sw('desktop', 'Computer notifications', pf.toast, {'data-st-url': '/settings/prefs/notify'}) }}</div>
+  <div class="st-row"><div class="st-row__t"><b>Play a sound</b><span class="st-dsm">A short sound with each alert.</span></div>
+    {{ st.sw('notify.sound', 'Play a sound', pf.sound, {'data-st-ui': '', 'data-st-sound-toggle': ''}) }}</div>
+  <div class="st-fold st-flat{% if pf.sound %} is-on{% endif %}" id="st-snd-fold"{% if not pf.sound %} hidden{% endif %}>
+    <div class="st-snd">
+      <span class="k-select"><select aria-label="Sound" data-st-ui-sel="notify.sound_name" data-testid="st-sound-name">{% for v, label in pf.sounds %}<option value="{{ v }}"{% if pf.sound_name == v %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></span>
+      <button type="button" class="k-btn k-btn--sm" id="st-play" data-testid="st-play">{{ st.sic('play', 'k-ic--sm') }}Play</button>
+      <label for="st-vol">Volume</label>
+      <input type="range" id="st-vol" min="0" max="100" value="{{ pf.volume }}" aria-label="Volume" data-testid="st-volume"><span class="st-vol" id="st-vol-t">{{ pf.volume }}%</span>
+    </div>
+  </div>
+  <p class="st-qn">Quiet hours also mute sounds.</p>
+  <div class="st-row"><div class="st-row__t"><b>Quiet hours</b><span class="st-dsm">No pop-ups during these hours.</span></div>
+    <span class="st-qt"><span class="k-select"><select aria-label="From" data-st-quiet="start" data-testid="st-quiet-start"{% if not pf.quiet.enabled %} disabled{% endif %}>{% for v, label in pf.quiet_starts %}<option value="{{ v }}"{% if pf.quiet.start == v %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></span>to<span class="k-select"><select aria-label="To" data-st-quiet="end" data-testid="st-quiet-end"{% if not pf.quiet.enabled %} disabled{% endif %}>{% for v, label in pf.quiet_ends %}<option value="{{ v }}"{% if pf.quiet.end == v %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></span></span>
+    {{ st.sw('notify.quiet_hours', 'Quiet hours', pf.quiet.enabled, {'data-st-quiet-toggle': ''}) }}</div>
+</section>
+
+{# The two managers: slide-overs the scene art fills in (static/js/settings.js). #}
+{% import "ui/macros.html" as ui %}
+{% call ui.slide_over('st-mg-scenes', 'Scenes') %}<div id="st-mg-scenes-body" class="st-mgbody"></div>{% endcall %}
+{% call ui.slide_over('st-mg-touches', 'Seasonal touches') %}<div id="st-mg-touches-body" class="st-mgbody"></div>{% endcall %}
+<script type="application/json" id="st-prefs-data">{{ pf.data_json|safe }}</script>

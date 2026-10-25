@@ -1,19 +1,14 @@
-"""Run detail (SPEC-INTERFACES 2.1, `GET /runs/{run_id}`) and the quarantine surface (hard rule 3:
-structured output or failure, never silently dropped). Three routes:
+"""Run detail (SPEC-INTERFACES 2.1, `GET /runs/{run_id}`) and the quarantine data layer (hard rule
+3: structured output or failure, never silently dropped).
 
-  - `GET /runs/{run_id}`        one pipeline run's counts, plus a best-effort picture of the scrape
-                                 runs and evaluations that fall inside its time window.
-  - `GET /quarantine`           every quarantined LLM response, newest first, with the raw text
-                                 preserved and escaped (never `|safe`, since it is untrusted model
-                                 output).
-  - `POST /quarantine/{id}/retry`  re-queues the opportunity for the tier that failed. The page's
-                                 Retry on a scored tier (1 or 2, or a failed score-again) opens the
-                                 Score again dialog instead, preselected to the model that failed
-                                 (D-UI-71); this route stays for Tier 3 and rows without a role,
-                                 which only explain where to go. This route
-                                 must never call an LLM itself; it only writes a stage change and
-                                 a Task row, so the background worker does the actual re-evaluation
-                                 later (hard rule 4: uncertainty escalates, it never rejects).
+  - `GET /runs/{run_id}`   one pipeline run's counts, plus a best-effort picture of the scrape
+                            runs and evaluations that fall inside its time window.
+
+The quarantine page itself, Needs another try (D-UI-104), is kestrel.web.pages.needs_try; it reads
+`_quarantine_rows` and `_retry_quarantine` from here. `_retry_quarantine` re-queues the opportunity
+for the tier that failed. It must never call an LLM itself; it only writes a stage change and a
+Task row, so the background worker does the actual re-evaluation later (hard rule 4: uncertainty
+escalates, it never rejects). Tier 3 and rows without a role only explain where to go.
 
 `Run` carries no foreign key to `ScrapeRun` or `Opportunity`/`Evaluation` (checked kestrel/db/models
 directly: no `run_id` column anywhere outside `Run.id` itself), so "affected" rows are matched by
@@ -29,15 +24,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Evaluation, Opportunity, Quarantine, Run, ScrapeRun, Source, Task
-from kestrel.llm import credit
 from kestrel.pipeline._shared import parse_rescore_failure
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.queue.rescore import requeue_rescore_task
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
-from kestrel.web.pages.rescore import outcome_for
 from kestrel.web.queries import (
-    failure_summary,
     live_activity,
     open_quarantine_clause,
     quarantine_needs_you_clause,
@@ -98,8 +90,13 @@ async def _evaluations_during(session: AsyncSession, run: Run, limit: int = 100)
 
 
 async def _run_context(request: Request, session: AsyncSession, run: Run) -> dict:
+    from kestrel.web.pages import runs_page as rp
+
     activity = await live_activity(session)  # reuse: quarantined count, no new query for it
     return {
+        "row": rp.history_row(run), "chart": rp.throughput(run),
+        "sources": await rp.sources_in(session, run), "counts_json": run.counts or {},
+        "on_page": True,
         "title": f"Run {run.id}",
         "query": dict(request.query_params),
         "run": run,
@@ -143,13 +140,15 @@ RESOLVED_CAP = 200
 
 
 async def _quarantine_rows(
-    session: AsyncSession, *, open_cap: int = OPEN_CAP, resolved_cap: int = RESOLVED_CAP
+    session: AsyncSession, *, open_cap: int = OPEN_CAP, resolved_cap: int = RESOLVED_CAP,
+    opportunity_id: int | None = None, quarantine_id: int | None = None,
 ) -> list[dict]:
     """Every open quarantine row (newest first, up to `open_cap`), then the newest resolved ones
     (up to `resolved_cap`). Each is marked `resolved` when a later score of the same role at the
     same or a higher tier superseded it (web.queries.quarantine_superseded), `queued` when a
     task that would resolve it is in flight (quarantine_queued_clause), `hidden` when its role is
-    hidden, and `needs_you` when it counts toward the one "needs you" number (D-UI-70)."""
+    hidden, and `needs_you` when it counts toward the one "needs you" number (D-UI-70).
+    `opportunity_id` or `quarantine_id` narrows it to one role or one row (a single-row swap)."""
     cols = (
         Quarantine, Opportunity, quarantine_queued_clause().label("queued"),
         quarantine_needs_you_clause().label("needs_you"),
@@ -159,6 +158,10 @@ async def _quarantine_rows(
         .join(Opportunity, Opportunity.id == Quarantine.opportunity_id, isouter=True)
         .order_by(Quarantine.id.desc())
     )
+    if opportunity_id is not None:
+        base = base.where(Quarantine.opportunity_id == opportunity_id)
+    if quarantine_id is not None:
+        base = base.where(Quarantine.id == quarantine_id)
     open_rows = (await session.execute(base.where(open_quarantine_clause()).limit(open_cap))).all()
     done_rows = (
         await session.execute(base.where(quarantine_superseded()).limit(resolved_cap))
@@ -188,38 +191,6 @@ async def _open_total(session: AsyncSession) -> int:
     )
 
 
-async def _quarantine_context(request: Request) -> dict:
-    """Three lists: a failure that parked the role (its stage is quarantined, or Tier 1 promoted
-    it); a failed score-again of a role already scored, whose earlier score stands and whose
-    stage was never touched, shown apart so it never reads as a parked role; and, as history, the
-    failures a later score already resolved (D-UI-70), which no count calls failed. The banner
-    reads failure_summary, the number Today, the rail and the tray show."""
-    async with sessionmaker()() as s:
-        rows = await _quarantine_rows(s)
-        needs_you = (await failure_summary(s)).total
-        open_total = await _open_total(s)
-    open_rows = [r for r in rows if not r["resolved"]]
-    return {
-        "query": dict(request.query_params),
-        "rows": [r for r in open_rows if not r["rescore"]],
-        "rescore_rows": [r for r in open_rows if r["rescore"]],
-        "resolved_rows": [r for r in rows if r["resolved"]],
-        "needs_you": needs_you,
-        "open_more": max(0, open_total - len(open_rows)),
-        "outcome": outcome_for(request.query_params),
-        "retry_error": None,
-    }
-
-
-@router.get("/quarantine", response_class=HTMLResponse)
-async def quarantine_list(request: Request):
-    ctx = await _quarantine_context(request)
-    ctx["title"] = "Failed scoring"
-    is_hx = request.headers.get("HX-Request")
-    tmpl = "partials/quarantine_list.html" if is_hx else "quarantine.html"
-    return templates().TemplateResponse(request, tmpl, ctx)
-
-
 async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | None:
     """Re-queue the opportunity behind one quarantine row. Returns an error string on a handled
     failure (unknown id, orphaned row), or None on success. Never calls the LLM or any network
@@ -247,6 +218,13 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
         # Re-queue the same score-again, model override included; never touch the stage.
         earlier = await session.get(Task, task_id) if task_id else None
         payload = dict(earlier.payload or {}) if earlier is not None else {}
+        override = payload.get("model_override") or {}
+        if override.get("backend") not in (None, "local"):
+            # Hard rule 1: an online try was confirmed once, in its own dialog. Trying again must
+            # not send the posting out again without the operator saying yes again.
+            await session.commit()
+            return ("That try used an online model. Use Try with a different model to confirm "
+                    "sending it again, or pick a model on this computer.")
         added = await requeue_rescore_task(
             session, opp.id, payload, earlier.type if earlier is not None else "t2"
         )
@@ -278,21 +256,3 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
                        extra={"requested": True})
     await session.commit()
     return None
-
-
-@router.post("/quarantine/{quarantine_id}/retry", response_class=HTMLResponse)
-async def retry(request: Request, quarantine_id: int):
-    retry_error: str | None = None
-    credit.clear()
-    async with sessionmaker()() as s:
-        try:
-            retry_error = await _retry_quarantine(s, quarantine_id)
-        except Exception as exc:  # a write path must never turn into a 500
-            await s.rollback()
-            log.warning("quarantine_retry_failed", quarantine_id=quarantine_id,
-                        error_type=type(exc).__name__, error=str(exc))
-            retry_error = f"Could not retry quarantine #{quarantine_id}: {plain_error(exc)}"
-    ctx = await _quarantine_context(request)
-    ctx["title"] = "Failed scoring"
-    ctx["retry_error"] = retry_error
-    return templates().TemplateResponse(request, "partials/quarantine_list.html", ctx)

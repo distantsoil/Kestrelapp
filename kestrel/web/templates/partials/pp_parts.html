@@ -1,0 +1,4 @@
+{# Out-of-band pieces of the Interview prep body: each is swapped into its own id, so a tick, a
+   swapped story or a note never moves the rest of the page. `parts` names them. #}
+{% set oob = True %}
+{% for part in parts %}{% include "partials/" ~ part ~ ".html" %}{% endfor %}

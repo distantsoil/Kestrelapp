@@ -134,6 +134,7 @@ async def submit_answer(
     *,
     proof_points: list | None = None,
     stories: list[Story] | None = None,
+    ran_on: str | None = None,
 ) -> dict | None:
     """Critique the answer to the pending question (P9), record the turn, and pose the next
     question. Returns the filled transcript turn, or None if there was no pending question or the
@@ -180,6 +181,8 @@ async def submit_answer(
     pending["critique"] = {"worked_well": v.worked_well, "improvements": list(v.improvements)}
     pending["scores"] = scores
     pending["unsupported_claims"] = list(v.unsupported_claims)
+    if ran_on:
+        pending["ran_on"] = ran_on  # "computer" or "online", shown on the feedback
 
     transcript.append(_pending_turn(v.next_question.strip()))
     ms.transcript = transcript
@@ -210,3 +213,50 @@ async def end_session(session: AsyncSession, mock_session_id: int) -> MockSessio
     await session.commit()
     await session.refresh(ms)
     return ms
+
+
+async def skip_question(
+    session: AsyncSession, mock_session_id: int, candidates: list[str]
+) -> str | None:
+    """Swap the pending question for another of the role's likely questions that this session has
+    not asked. Returns the new question, or None when there is nothing else to ask (the pending
+    one stays). Skipping records nothing about the operator: no answer, no score."""
+    ms = await session.get(MockSession, mock_session_id)
+    if ms is None or ms.ended_at is not None:
+        return None
+    # copies: a JSON column is not change-tracked
+    transcript = [dict(t) for t in ms.transcript or []]
+    pending = next((t for t in transcript if t.get("answer") is None), None)
+    if pending is None:
+        return None
+    asked = {str(t.get("question") or "").strip().casefold() for t in transcript}
+    pick = next((q for q in candidates if q.strip().casefold() not in asked), None)
+    if pick is None:
+        return None
+    pending["question"] = pick.strip()
+    ms.transcript = transcript
+    await session.commit()
+    return pending["question"]
+
+
+async def acknowledge_claim(
+    session: AsyncSession, mock_session_id: int, turn_index: int, claim_index: int
+) -> bool:
+    """"Got it" on a flagged claim: remember the operator has seen it, so it stays dismissed after
+    a reload. The claim and the turn are left as they were (the flag is still on the record)."""
+    ms = await session.get(MockSession, mock_session_id)
+    if ms is None:
+        return False
+    # copies: a JSON column is not change-tracked
+    transcript = [dict(t) for t in ms.transcript or []]
+    if not 0 <= turn_index < len(transcript):
+        return False
+    turn = transcript[turn_index]
+    claims = turn.get("unsupported_claims") or []
+    if not 0 <= claim_index < len(claims):
+        return False
+    seen = sorted({*(turn.get("claims_seen") or []), claim_index})
+    turn["claims_seen"] = seen
+    ms.transcript = transcript
+    await session.commit()
+    return True

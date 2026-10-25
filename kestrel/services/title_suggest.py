@@ -76,14 +76,19 @@ async def pending(session: AsyncSession) -> bool:
     return bool(n)
 
 
-async def request_title_suggestions(session: AsyncSession, reason: str) -> bool:
+async def request_title_suggestions(
+    session: AsyncSession, reason: str, *, consent: dict | None = None
+) -> bool:
     """Queue one run unless one is already waiting or running. Flushes, never commits: the
-    caller commits with its own change (a resume import). True when a task was added."""
+    caller commits with its own change (a resume import). True when a task was added. `consent`
+    is the confirmation of an online send (kestrel.services.online_consent.consent_payload); an
+    automatic request has none, and a drain holds it if Tier 2 is online by then."""
     if await pending(session):
         return False
     session.add(
         Task(
-            type=TASK_TYPE, payload={"reason": reason, "requested_at": utcnow_iso()},
+            type=TASK_TYPE,
+            payload={"reason": reason, "requested_at": utcnow_iso(), **(consent or {})},
             max_attempts=MAX_ATTEMPTS,
         )
     )
@@ -169,13 +174,14 @@ async def maybe_request(sm: async_sessionmaker[AsyncSession], *, force: bool = F
         return False
 
 
-async def _runs_online(session: AsyncSession) -> bool:
-    """Whether P15's tier would go to an external backend with the settings in effect now."""
+async def _runs_online(session: AsyncSession, prompt: str = PROMPT) -> bool:
+    """Whether the prompt's tier (P15's by default) would go to an external backend with the
+    settings in effect now."""
     from kestrel.llm.prompts import load_prompt
     from kestrel.services.setting_overrides import load_settings_with_db
 
     settings = await load_settings_with_db(session)
-    tier = load_prompt(PROMPT).tier
+    tier = load_prompt(prompt).tier
     llm = settings.llm
     if llm.mode == "hosted" and tier in llm.hosted_tiers:
         return True
@@ -221,6 +227,18 @@ def _target_titles() -> list[str]:
 
     terms = load_state().tracks["employment"].get("employment_terms") or {}
     return [str(t).strip() for t in (terms.get("target_titles") or []) if str(t).strip()]
+
+
+def tier_of(prompt: str) -> str:
+    from kestrel.llm.prompts import load_prompt
+
+    return load_prompt(prompt).tier
+
+
+async def _hold(sm: async_sessionmaker[AsyncSession]) -> None:
+    async with sm() as s:
+        await _record_run(s, added=0, status="skipped_online")
+        await s.commit()
 
 
 async def _record_failure(sm: async_sessionmaker[AsyncSession]) -> None:
@@ -348,6 +366,7 @@ async def drain_title_suggestions(
     raw reply is kept for review and retrying would loop. Never raises into the worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
     from kestrel.queue.queue import TaskQueue
+    from kestrel.services.online_consent import held_at_run_time
 
     queue = TaskQueue(sm)
     wid = "pipeline-titles"
@@ -356,6 +375,12 @@ async def drain_title_suggestions(
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
             break
+        # Tier 2 may have gone online since this was queued. A task without a confirmation for
+        # the model configured now never sends (it needs a click on Suggest again).
+        if await held_at_run_time(sm, settings, tier_of(PROMPT), task.payload):
+            await _hold(sm)
+            await queue.complete(task.id, worker_id=wid)
+            continue
         beat = asyncio.create_task(_renew(queue, task.id, wid))
         try:
             async with sm() as s:

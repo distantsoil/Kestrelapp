@@ -47,14 +47,7 @@ router = APIRouter()
 ACTIONS = ("pull", "build", "verify", "check", "cancel")
 FIRST_RUN_REDIRECT = True
 
-BANNER = (
-    '<div class="warnbox" id="finish-setup" style="display:flex;align-items:center;gap:1rem;'
-    'flex-wrap:wrap;margin-bottom:1rem"><div><b>Finish setup.</b> Kestrel is not fully set up '
-    "yet. The setup guide picks up where you left off: how Kestrel thinks, who you are, what you "
-    'want, and your first search.</div><a class="btn pri" href="/onboarding">Finish setup</a>'
-    "</div>"
-)
-# The banner goes just inside <main> (the shell's content column), or <body> when there is none.
+# The gap panel goes just inside <main> (the shell's content column), or <body> when there is none.
 _MAIN_TAG = re.compile(r"<main\b[^>]*>", re.IGNORECASE)
 _BODY_TAG = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
 
@@ -267,23 +260,23 @@ async def setup_action(request: Request, name: str):
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_with_banner(request: Request):
-    """A fresh install opens the onboarding; an unfinished one gets the Finish setup banner."""
+    """A fresh install opens the onboarding. An unfinished one gets the Finish setup banner, which
+    Today prints itself (kestrel.web.pages.today, D-UI-156)."""
     from kestrel.web.pages.dashboard import dashboard
 
     async with sessionmaker()() as s:
         fresh = await ob.is_fresh_install(s)
-        done = (not fresh) and await ob.is_complete(s)
     if fresh and FIRST_RUN_REDIRECT and not request.headers.get("HX-Request"):
         return RedirectResponse("/onboarding", status_code=303)
     response = await dashboard(request)
     gap = linux_gap_html()
-    if done and not gap:
+    if not gap:
         return response
     body = bytes(response.body).decode("utf-8", "replace")
     m = _MAIN_TAG.search(body) or _BODY_TAG.search(body)
     if m is None:
         return response
-    body = body[: m.end()] + gap + ("" if done else BANNER) + body[m.end() :]
+    body = body[: m.end()] + gap + body[m.end() :]
     return HTMLResponse(body, status_code=response.status_code)
 
 

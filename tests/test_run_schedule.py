@@ -100,14 +100,15 @@ def test_runs_page_has_the_schedule_panel_and_saves_it(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = _fresh_app()
     page = client.get("/runs").text
-    assert 'data-testid="run-schedule"' in page and 'value="off" checked' in page
+    assert 'data-testid="run-schedule"' in page
+    assert 'name="kind" value="off"' in page  # the segmented control's value (Off is selected)
     saved = client.post(
         "/runs/schedule", data={"kind": "weekly", "weekday": "4", "time": "18:30"}
     ).text
-    assert "Saved: weekly on Friday at 18:30; next Friday" in saved
-    assert 'value="weekly" checked' in saved and 'value="4" selected' in saved
+    assert "Saved: weekly on Friday at 18:30." in saved and "Next run: Friday" in saved
+    assert 'name="kind" value="weekly"' in saved and 'value="4" selected' in saved
     page = client.get("/runs").text
-    assert "weekly on Friday at 18:30" in page
+    assert "Weekly on Friday at 18:30" in page
     cleared = client.post("/runs/schedule", data={"kind": "off"}).text
     assert "Saved: off." in cleared
     assert "—" not in saved

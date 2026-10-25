@@ -1,0 +1,53 @@
+{% import "ui/macros.html" as ui %}
+{# Model check card (D-UI-105, D-UI-147): the one button, what it rests on, and, while the queued
+   task runs, its live progress and Cancel in place. Polls while a check is waiting or running;
+   when it ends the response also carries the result and earlier checks out of band. #}
+{% set st = ck_status %}
+<section class="k-card mo-card mo-check-card" id="ck-card" data-testid="ck-card" data-state="{{ st.state }}"
+  {% if st.live %}hx-get="/bench/panel" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <div>
+    <h2>Is your AI still the right fit for you?</h2>
+    <p class="mo-lede">Kestrel tests the models it uses against an answer key of roles with known verdicts, so you can keep the one that thinks most like you. The key is your own ratings once you use them; until then it is a shipped set of example roles.</p>
+  </div>
+  <div class="mo-counter" data-testid="ck-counter">
+    <span class="mo-ring" data-p="{{ ((ck_kept * 20 / ck_rated)|round|int * 5) if ck_rated else 0 }}" aria-hidden="true"></span>
+    <div><b>{{ ck_rated }}</b><span>roles you rated</span>{% if ck_rated %}<span>{{ ck_kept }} kept · {{ ck_passed }} passed on</span>{% endif %}</div>
+  </div>
+
+  {% if ck_notice %}<p class="mo-msg mo-notice {{ 'is-good' if ck_notice_ok else 'is-bad' }}" role="status" data-testid="ck-notice">{{ ck_notice }}</p>{% endif %}
+
+  {% if st.live %}
+  <div class="mo-live" data-testid="ck-live">
+    <progress class="mo-prog" max="100" value="{{ st.progress.percent if st.progress and st.progress.percent else 3 }}" aria-label="Model check progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ st.progress.percent if st.progress else 0 }}"></progress>
+    <p data-testid="ck-progress-text"><b>{% if st.state == 'waiting' %}Waiting to start{% else %}Checking {{ st.progress.step or 'your models' }}{% if ck_prog_model %} with {{ ck_prog_model }}{% endif %}{% endif %}</b>
+      <span class="k-muted">{% if st.progress and st.progress.total %} · {{ st.progress.done }} of {{ st.progress.total }} done{% endif %}</span></p>
+    <p class="k-muted">Runs in the background; picks up after a restart.</p>
+    <div class="mo-actions"><button type="button" class="k-btn" hx-post="/bench/cancel" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-cancel">Cancel</button></div>
+  </div>
+  {% else %}
+  <form class="mo-run" hx-post="/bench/start" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-form">
+    <input type="hidden" name="online_approval" value='{{ ck_approval }}'>
+    {% if st.state == 'failed' %}<p class="mo-msg is-bad" data-testid="ck-failed">The last check stopped before it finished. Press Check my models to try again.</p>
+    <details class="mo-details"><summary>Show details</summary><p class="mo-mono-line">{{ st.error }}</p></details>{% endif %}
+    <button type="submit" class="k-btn k-btn--primary" {% if not ck_enough %}disabled{% endif %} data-testid="ck-run">{{ ui.icon('play', 'k-ic--sm') }}Check my models</button>
+    {% if not ck_enough %}
+      <p class="mo-msg is-warn" data-testid="ck-too-few">Too few rated roles to check ({{ ck_rated }} of {{ ck_min }} needed). <a class="k-link" href="/calibrate">Rate a few in Calibrate</a>, then come back.</p>
+    {% else %}
+      <label class="mo-opt-line"><input type="checkbox" name="deeper" data-testid="ck-deeper"> Also check Deeper read</label>
+      <p class="mo-opt-sub">Deeper read sends the whole posting, so a paid model uses more credit here than in other steps.</p>
+      {% if ck_provider %}
+      <label class="mo-opt-line"><input type="checkbox" name="online" data-testid="ck-online"> Include online models ({{ ck_provider }})</label>
+      <p class="mo-opt-sub" data-testid="ck-online-sends">Sends to {{ ck_provider }}: for Quick screen, {{ ck_sends.tier1 }}; for Rating, {{ ck_sends.tier2 }}; and, only if you tick Deeper read, for Deeper read, {{ ck_sends.tier3 }}. A free and a paid model are tried; the paid one uses your credit. Without this, only models on this computer are tested.</p>
+      {% if ck_employer == 'hidden' %}<p class="mo-opt-sub" data-testid="ck-online-employer">Confidential mode is on: your current employer is replaced with a code before anything is sent.</p>
+      {% elif ck_employer == 'held' %}<p class="mo-opt-sub" data-testid="ck-online-employer">Confidential mode is on and no current employer is chosen under Settings, Core, so online models are skipped and nothing is sent.</p>{% endif %}
+      {% endif %}
+      <p class="k-muted mo-opt-sub mo-opt-sub--flush" data-testid="ck-key">Scores Quick screen and Rating against {{ ck_key.line }}. About {{ ck_minutes }} minutes. Runs in the background.</p>
+      <button type="button" class="k-btn k-btn--sm" hx-post="/bench/answer-key" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-key-build">{{ 'Update the answer key from my ratings' if ck_key.uses_mine else 'Use my ratings as the answer key' }}</button>
+    {% endif %}
+  </form>
+  {% include "partials/bench_advanced.html" %}
+  {% endif %}
+</section>
+{% if ck_oob %}
+  {% include "partials/bench_result.html" %}
+{% endif %}

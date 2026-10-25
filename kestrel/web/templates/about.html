@@ -1,113 +1,173 @@
+{# About (D-UI-6, D-UI-125, SPEC-INTERFACES 2.1 /about). Built on the shared design system. Every
+   version shown comes from the page context (kestrel.__version__ and installed package
+   metadata), never from this file. The promises and helper cards open flyouts; component
+   versions, diagnostics and the third-party notices sit behind native toggles. #}
 {% extends "base.html" %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
+{# The shared icon set has no gift, eye, hand or external-link glyph (macros.html is shared and
+   not edited here), so About draws them inline with currentColor, as the mockup does. #}
+{% set AB_GLYPHS = {
+  'gift': '<path d="M20 12v9H4v-9M2 7h20v5H2zM12 21V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z"/>',
+  'eye': '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  'hand': '<path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10V6a2 2 0 0 0-4 0v8l-1.5-1.5a2 2 0 0 0-3 2.6L6 20a5 5 0 0 0 4 2h3a6 6 0 0 0 6-6v-5a2 2 0 0 0-4 0"/>',
+  'ext': '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'
+} %}
+{% macro glyph(name, cls='') -%}
+{%- if name in AB_GLYPHS -%}<svg class="k-ic {{ cls }}" viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-glyph="{{ name }}">{{ AB_GLYPHS[name]|safe }}</svg>{%- else -%}{{ ui.icon(name, cls) }}{%- endif -%}
+{%- endmacro %}
 {% block title %}About · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/pages/about.css">
+<script src="/static/js/about.js" defer></script>
+{% endblock %}
 {% block content %}
-<h1>About</h1>
+<div class="ab-wrap"><div class="ab-page">
+  {% call ui.scene_band('About', sub='Who made Kestrel, what it promises, and where your files are.') %}{% endcall %}
+  <div class="k-layout">
+    <div class="k-layout__main">
 
-<div class="panel">
-  <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap">
-    <img class="mark" src="/static/icon.svg" alt="" width="56" height="56">
-    <div>
-      <h2 style="margin:0">Kestrel</h2>
-      <div>Version <span class="mono" id="about-version">{{ version }}</span>
-        &middot; <a href="{{ changelog_url }}" target="_blank" rel="noopener">Release notes</a></div>
-      <div class="muted">
-        {% if frozen %}packaged desktop build{% else %}source checkout{% endif %}
-        &middot; Python {{ python_version }} &middot; {{ platform }}
+      <section class="k-card ab-id" data-testid="about-id">
+        <button type="button" class="ab-mark" id="ab-mark" aria-label="Kestrel"><img src="/static/icon.svg" alt="" width="84" height="84"></button>
+        <div class="ab-id__who k-grow">
+          <h2>Kestrel</h2>
+          <div class="ab-vline">
+            <span class="ab-vtag" id="about-version" data-testid="about-version">Version {{ version }}</span>
+            <span class="k-muted">{{ os_label }}</span>
+            <a class="k-link" href="{{ changelog_url }}" target="_blank" rel="noopener" data-testid="release-notes">Release notes</a>
+          </div>
+          <div class="ab-copy k-muted">Copyright 2026 M Crowle-Groves · PolyForm Noncommercial License 1.0.0</div>
+        </div>
+        <div class="ab-upd">
+          <button type="button" class="k-btn k-btn--sm" hx-post="/updates/check" hx-vals='{"surface": "about"}' hx-target="#update-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="check-updates">Check for updates</button>
+          <div id="update-result" class="ab-result" aria-live="polite"></div>
+          <span id="update-last-checked" class="ab-last">Last checked: {{ update_last_checked }}</span>
+        </div>
+      </section>
+
+      <div id="promises">
+      {% call ui.section_card('Our promises', 'shield', 'good') %}
+        <div class="ab-prom" data-testid="promises">
+          {% for p in promises %}
+          <button type="button" class="ab-pr" data-k-flyout="#ab-fly-p{{ loop.index0 }}" aria-controls="ab-fly-p{{ loop.index0 }}" aria-expanded="false">
+            <span class="k-badge{% if p.tone %} k-badge--{{ p.tone }}{% endif %}">{{ glyph(p.icon) }}</span>
+            <b>{{ p.title }}</b>
+            <span class="ab-pr__t">{{ p.summary }}</span>
+            {{ ui.icon('arrow', 'k-ic--sm') }}
+          </button>
+          {% endfor %}
+        </div>
+      {% endcall %}
       </div>
-      <div class="muted">Copyright 2026 M Crowle-Groves &middot; PolyForm Noncommercial License 1.0.0
-        &middot; free for noncommercial use, not for sale</div>
+
+      {% call ui.section_card('Built with', 'bird', 'tier') %}
+        <p class="k-muted ab-sub">AI models that helped write and review Kestrel:</p>
+        <div class="ab-mk" data-testid="built-with">{% for m in built_with %}<span>{{ m }}</span>{% endfor %}</div>
+        <p class="k-muted ab-credits" data-testid="credits">Built on {% for c in built_on %}<a class="k-link" href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}. Ideas from {% for c in inspired_by %}<a class="k-link" href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a>{% if loop.revindex == 2 %} and {% elif not loop.last %}, {% endif %}{% endfor %}; no code or text was taken from them.</p>
+
+        <details class="ab-tog" id="ab-versions" data-testid="component-versions">
+          <summary>Component versions</summary>
+          <table class="ab-comp" id="ab-comp">
+            <tbody>
+              {% for label, value in components %}<tr><td>{{ label }}</td><td>{{ value }}</td></tr>{% endfor %}
+              <tr hx-get="/about/ollama" hx-trigger="load" hx-swap="outerHTML"><td>Ollama (on this computer)</td><td>Checking…</td></tr>
+            </tbody>
+          </table>
+          <div class="ab-acts"><button type="button" class="k-btn k-btn--sm" data-copy-versions data-testid="copy-versions">Copy versions for a bug report</button></div>
+        </details>
+
+        <details class="ab-tog" id="diagnostics" data-testid="diagnostics-panel">
+          <summary>Diagnostics for a bug report</summary>
+          {% if desktop %}
+          <p>When something goes wrong, save one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click, saved to your Downloads folder, and is never sent anywhere by Kestrel.</p>
+          {# Desktop app: saved straight to Downloads, no browser download flyout (D-UI-41). #}
+          <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="diagnostics-save" hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
+          <div id="diagnostics-result"></div>
+          {% else %}
+          <p>When something goes wrong, download one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click and is never sent anywhere by Kestrel.</p>
+          <a class="k-btn k-btn--sm k-btn--primary" href="/about/diagnostics" data-testid="diagnostics-download">Download diagnostics</a>
+          {% endif %}
+          <h4>What it contains</h4>
+          <ul>{% for name, what in bundle_contents %}<li><span class="mono">{{ name }}</span>: {{ what }}.</li>{% endfor %}</ul>
+          <h4>What it never contains</h4>
+          <ul>{% for item in bundle_excluded %}<li>{{ item }}.</li>{% endfor %}</ul>
+          <p class="k-muted">Open the zip before you send it if you want to check; every file in it is plain text.</p>
+        </details>
+
+        <details class="ab-tog" id="ab-notices" data-testid="notices">
+          <summary>Third-party notices</summary>
+          <p class="k-muted">Each library inside Kestrel keeps its own license. <a class="k-link" href="/about/notices" target="_blank" rel="noopener">Open the notices as a page</a>.</p>
+          <pre class="ab-notes" id="ab-notes-text" tabindex="0">Loading…</pre>
+        </details>
+      {% endcall %}
     </div>
-  </div>
-  <div class="formgrid" style="margin-top:1rem">
-    <label>Data folder</label>
-    <div>
-      <code class="mono">{{ data_home }}</code>
-      <button type="button" class="btn ghost" data-path="{{ data_home }}"
-              @click="navigator.clipboard.writeText($el.dataset.path)"
-              title="Copy path">Copy</button>
-    </div>
-  </div>
-  <p style="margin-top:1rem">Kestrel is a free job search app for any job seeker, and you are not
-  the product. It runs on your own computer (Windows, macOS or Linux), finds openings, scores
-  them for fit, tailors your own resume text to each role, tracks every application to its
-  outcome, and learns from the decisions you record. An optional second track covers consulting
-  and contract work; it is off by default.</p>
-  <p>Your search stays on this computer. The AI runs here by default; you can choose an online
-  model with your own key (OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible
-  service), and Kestrel asks before anything goes online and shows exactly what would be sent.
-  It never applies, emails or messages anyone for you; it drafts, recommends, and hands over.</p>
-  <p class="muted">Built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and LongCat. The source is public under the
-  PolyForm Noncommercial License 1.0.0 (see <span class="mono">LICENSE.md</span>).</p>
-  {# D-UI-64, amended: here the first button checks for updates (the same /updates/check as Help
-     and Settings) instead of linking the site, which Help still links. #}
-  <p class="site-links" data-testid="site-links"><button class="btn" type="button" hx-post="/updates/check" hx-target="#update-result" hx-swap="innerHTML">Check for updates</button> <a class="btn pri" href="https://ko-fi.com/distantsoil" target="_blank" rel="noopener">Support Kestrel on Ko-fi</a>
-    <span id="update-last-checked" class="muted">Last checked: {{ update_last_checked }}</span></p>
-  <div id="update-result"></div>
-</div>
 
-<div class="split">
-  <div class="panel">
-    <h2>Source and issues</h2>
-    <p>Source code; issues and feature requests go here.</p>
-    <a class="btn" href="{{ github_url }}" target="_blank" rel="noopener">GitHub repository</a>
-    <p class="muted" style="margin-top:.6rem"><span class="mono">{{ github_url }}</span></p>
-  </div>
-  <div class="panel">
-    <h2>Support the project</h2>
-    <p>Kestrel is free. If it earned you an interview, you can support its development.</p>
-    <a class="btn primary" href="{{ kofi_url }}" target="_blank" rel="noopener">Support on Ko-fi</a>
-    <p class="muted" style="margin-top:.6rem"><span class="mono">{{ kofi_url }}</span></p>
-  </div>
-</div>
+    {% call ui.help_column() %}
+      <article class="k-hcard k-hcard--good" id="files" data-testid="about-files">
+        <div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('folder') }}</span><h3>Where your files live</h3></div>
+        {% for key, label, path in [('data', 'Your data', data_home), ('logs', 'Logs', logs_dir)] %}
+        <div class="ab-frow">
+          <div class="ab-frow__l"><b>{{ label }}</b>
+            <button type="button" class="k-btn k-btn--sm" data-copy-target="ab-path-{{ key }}">Copy</button>
+            {% if can_open_folder %}<button type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "{{ key }}"}' hx-target="#ab-open-note" hx-swap="innerHTML" data-testid="open-{{ key }}">Open</button>{% endif %}
+          </div>
+          <code id="ab-path-{{ key }}" class="mono" title="{{ path }}" data-testid="path-{{ key }}">{{ path }}</code>
+        </div>
+        {% endfor %}
+        <span id="ab-open-note" aria-live="polite"></span>
+        {{ ui.flyout_trigger('ab-fly-files') }}
+      </article>
 
-<div class="panel">
-  <h2>Built on</h2>
-  <p class="muted">Open-source software Kestrel ships, each under its own license. The full license
-  text of every bundled library is in the <a href="/about/notices" target="_blank" rel="noopener">third-party notices</a>.</p>
-  <ul>
-    {% for c in built_on %}
-    <li><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a> ({{ c.license }}): {{ c.what }}.</li>
-    {% endfor %}
-  </ul>
-  <h2>Inspired by</h2>
-  <p class="muted">Projects whose ideas shaped Kestrel. No code or text was taken from them;
-  <span class="mono">REFERENCES.md</span> records what each one contributed.</p>
-  <ul>
-    {% for c in inspired_by %}
-    <li><a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a> ({{ c.license }}): {{ c.what }}.</li>
-    {% endfor %}
-  </ul>
-</div>
+      <article class="k-hcard k-hcard--info" data-testid="about-support">
+        <div class="k-hcard__head"><span class="k-badge">{{ ui.icon('plug') }}</span><h3>Source and support</h3></div>
+        <div class="ab-lnk"><div class="k-grow"><b>Source code and issues</b><span class="k-muted">Read it, report a bug, ask for a feature.</span></div><a class="k-btn k-btn--sm" href="{{ github_url }}" target="_blank" rel="noopener">GitHub {{ glyph('ext', 'k-ic--sm') }}</a></div>
+        <div class="ab-lnk"><div class="k-grow"><b>Support the project</b><span class="k-muted">Optional. Kestrel stays free.</span></div><a class="k-btn k-btn--sm k-btn--primary" href="{{ kofi_url }}" target="_blank" rel="noopener">Ko-fi {{ glyph('ext', 'k-ic--sm') }}</a></div>
+        <div class="ab-lnk"><div class="k-grow"><b>kestrelapp.co</b><span class="k-muted">Guides and release notes.</span></div><a class="k-btn k-btn--sm" href="{{ site_url }}" target="_blank" rel="noopener">Visit {{ glyph('ext', 'k-ic--sm') }}</a></div>
+        {{ ui.flyout_trigger('ab-fly-support') }}
+      </article>
 
-<div class="panel" id="diagnostics">
-  <h2>Diagnostics</h2>
-  {% if desktop %}
-  <p>When something goes wrong, save one zip and attach it to a GitHub issue or hand it to
-  whoever asked for it. It is built when you click, saved to your Downloads folder, and is never
-  sent anywhere by Kestrel.</p>
-  {# Desktop app: saved straight to Downloads, no browser download flyout (D-UI-41). #}
-  <button class="btn primary" type="button" data-testid="diagnostics-save"
-          hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML"
-          data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
-  <div id="diagnostics-result"></div>
-  {% else %}
-  <p>When something goes wrong, download one zip and attach it to a GitHub issue or hand it to
-  whoever asked for it. It is built when you click and is never sent anywhere by Kestrel.</p>
-  <a class="btn primary" href="/about/diagnostics">Download diagnostics</a>
-  {% endif %}
-  <h3 style="margin-top:1rem">What it contains</h3>
-  <ul>
-    {% for name, what in bundle_contents %}
-    <li><span class="mono">{{ name }}</span>: {{ what }}.</li>
-    {% endfor %}
-  </ul>
-  <h3>What it never contains</h3>
-  <ul>
-    {% for item in bundle_excluded %}
-    <li>{{ item }}.</li>
-    {% endfor %}
-  </ul>
-  <p class="muted">Open the zip before you send it if you want to check; every file in it is
-  plain text.</p>
-</div>
+      {{ ui.help_card('The license in plain words', ['Free to use, read and change, if it is not for profit.', 'Selling it or using it in a business needs permission.', 'Your own data and documents are always yours.'], 'good', 'text', 'ab-fly-license') }}
+
+      <article class="k-hcard k-hcard--warn" data-testid="about-wrong">
+        <div class="k-hcard__head"><span class="k-badge k-badge--warn">{{ ui.icon('diag') }}</span><h3>Something wrong?</h3></div>
+        <ul class="k-hcard__list"><li>Copy your versions and paste them into a bug report.</li><li>Diagnostics live in Settings &gt; Your data.</li><li>Help has fixes for common problems.</li></ul>
+        <div class="ab-acts"><button type="button" class="k-btn k-btn--sm" data-copy-versions>Copy versions</button><a class="k-btn k-btn--sm" href="/help">Open Help</a></div>
+        {{ ui.flyout_trigger('ab-fly-wrong') }}
+      </article>
+    {% endcall %}
+  </div>
+
+  {% for p in promises %}
+  {% call ui.flyout('ab-fly-p' ~ loop.index0, p.title, eyebrow='Our promises') %}{{ p.body|safe }}{% endcall %}
+  {% endfor %}
+  {% call ui.flyout('ab-fly-files', 'Where your files live', eyebrow='About') %}
+    <h6>What is in each</h6>
+    <ul><li>Your data: profile, roles, ratings, documents and backups.</li><li>Logs: a plain record of what Kestrel did, for finding problems.</li></ul>
+    <h6>Backups and diagnostics</h6>
+    <p>Backups, restores and the diagnostics file are in Settings &gt; Your data. Nothing here needs a command line.</p>
+  {% endcall %}
+  {% call ui.flyout('ab-fly-support', 'Source and support', eyebrow='About') %}
+    <h6>Reporting a bug</h6>
+    <p>Open an issue on GitHub. Include your version from this page and, if you can, the diagnostics file.</p>
+    <h6>Where the money goes</h6>
+    <p>Ko-fi support goes to the person who builds Kestrel. It does not buy features or priority.</p>
+  {% endcall %}
+  {% call ui.flyout('ab-fly-license', 'The license in plain words', eyebrow='About') %}
+    <h6>PolyForm Noncommercial 1.0.0</h6>
+    <p>A standard license that allows personal, hobby, research and similar noncommercial use. Copies you share must carry the license text. The full text is in LICENSE.md in the source.</p>
+    <h6>Using Kestrel to find a job</h6>
+    <p>That is a personal use and is covered.</p>
+    <h6>Libraries inside Kestrel</h6>
+    <p>Each keeps its own license. The full texts are under Third-party notices on this page.</p>
+  {% endcall %}
+  {% call ui.flyout('ab-fly-wrong', 'Something wrong?', eyebrow='About') %}
+    <h6>What the copy includes</h6>
+    <p>Only the version and component list shown on this page. No personal data.</p>
+    <h6>Before you report</h6>
+    <p>Help, under Troubleshooting, covers slow scoring, failed roles and odd scores. Most are fixed by Check my models.</p>
+  {% endcall %}
+  <div class="ab-glider" id="ab-glider" aria-hidden="true"><svg viewBox="0 0 54 28"><g class="ab-glider__w"><path d="M2 14 Q14 2 27 12 Q40 2 52 14 Q40 9 27 16 Q14 9 2 14z" fill="currentColor"/></g></svg></div>
+</div></div>
 {% endblock %}

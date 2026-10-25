@@ -1,0 +1,25 @@
+{# Where the likely questions come from and the control to write a new list (P14, D-INTERVIEW-1).
+   The same state the role page shows; it asks for this strip with ?view=prep. #}
+{% import "partials/online_ask.html" as online_ask %}
+<div class="pp-qstate" id="questions-card" data-testid="questions-card">
+  <b>Likely interview questions</b>
+  {%- if qview.questions %}
+  <span class="k-muted">The prep pack, practice and the debrief use this list.</span>
+  {%- elif qview.pending %}<span class="k-muted" data-testid="questions-pending">Writing the list.</span>
+  {%- elif qview.failed %}<span class="k-muted" data-testid="questions-failed">No list was made. The scored review's questions still apply. <a href="/quarantine">Failed scoring</a></span>
+  {%- elif qview.applied %}<span class="k-muted" data-testid="questions-none">No list yet. The scored review's questions apply until you write one.</span>
+  {%- else %}<span class="k-muted">Marking this role Applied writes the list. Until then the scored review's questions apply.</span>
+  {%- endif %}
+  {%- if qnote %}<span class="k-muted" role="status" data-testid="questions-note">{{ qnote }}</span>{% endif %}
+  {%- if qview.questions and not has_pack %}
+  <ol class="pp-qlist" data-testid="question-list">{% for q in qview.questions %}<li data-testid="question">{{ q.question }}</li>{% endfor %}</ol>
+  {%- endif %}
+  {%- if qview.applied %}
+  <form hx-post="/opportunities/{{ opp_id }}/questions/regenerate?view=prep"
+        hx-target="#questions-card" hx-swap="outerHTML">
+    {{ online_ask.ask(qview.route, 'questions', 'write the list') }}
+    <button type="submit" class="k-btn k-btn--sm" data-testid="questions-regenerate"
+          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>
+  </form>
+  {%- endif %}
+</div>

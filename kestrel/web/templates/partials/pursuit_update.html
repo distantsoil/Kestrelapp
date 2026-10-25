@@ -1,0 +1,9 @@
+{# What an action answers with: the board (the swap target), then, out of band, the rail, the count
+   line and, when one is open, the panel. A swap changes only what changed, in place. #}
+{# The board is the swap target itself, so it is not marked out of band. #}
+{% with oob=False %}{% include "partials/pursuit_board.html" %}{% endwith %}
+{% include "partials/pursuit_rail.html" %}
+<span id="apps-counts" class="ap-counts k-muted" hx-swap-oob="true">{% include "partials/pursuit_counts.html" %}</span>
+{% if panel %}
+<div id="ap-panel-in" class="ap-panel-in" hx-swap-oob="true">{% with c=panel.c, history=panel.history, outcome=panel.outcome, form=panel.form, buttons=panel.buttons, results=panel.results, furthest=panel.furthest, today=panel.today, follow_up=panel.follow_up, docs_used=panel.docs_used, reason=panel.reason, reason_locked=panel.reason_locked, stage_label=panel.stage_label, short_date=panel.short_date %}{% include "partials/pursuit_panel.html" %}{% endwith %}</div>
+{% endif %}

@@ -1,9 +1,6 @@
-{# The "Applied?" button after its one click (D-UI-51): green, with the way to a different date.
-   Asks the board to refresh a moment later, which moves the card to its new column. #}
-<div class="applied-quick done" id="applied-{{ pid }}" data-testid="applied-done"
-     hx-get="/pursuits?view=kanban&track={{ track }}" hx-trigger="load delay:2s"
-     hx-target="#board" hx-swap="innerHTML">
-  <button class="btn small good" type="button" disabled draggable="false">{{ done }}</button>
-  <div class="meta">Moving to {{ moving_to }} &middot; recorded today, follow up in 7 days. Use the
-    card's Stage menu to change it.</div>
+{# The "I applied" one-click answer, kept for callers that post the quick route (D-UI-51). The
+   board's own button now opens the form in the panel. #}
+<div class="ap-applied-done" id="applied-{{ pid }}" data-testid="applied-done">
+  <button class="k-btn k-btn--sm k-btn--done" type="button" disabled>{{ done }}</button>
+  <span class="k-muted">Moving to {{ moving_to }} &middot; recorded today, follow up in 7 days. Use the card's Stage label to change it.</span>
 </div>

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Setting, Source, Task
+from kestrel.db.models import ScrapeRun, Setting, Source, Task
 from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
 from kestrel.pipeline import lane, recheck, runlog
@@ -160,6 +160,7 @@ class Worker:
         self._paused = paused or (lambda: False)
         self._client = client
         self._settings = settings
+        self._online_approval: dict | None = None
         self._queue = TaskQueue(sessionmaker)
         self._stop = stop or asyncio.Event()
         self._progress = progress or (lambda _m: None)
@@ -172,12 +173,13 @@ class Worker:
         """Stop requested or worker paused: claim nothing more (finding 2)."""
         return self._stop.is_set() or self._paused()
 
-    def apply_settings(self, settings: Settings) -> None:
+    def apply_settings(self, settings: Settings, *, online_approval: dict | None = None) -> None:
         """Swap in freshly resolved settings for the worker AND its client. The client resolves
         each tier's backend and model from its own `settings`, so updating only the worker's copy
         (what the serve loop used to do) left the client on the settings it was built with and
         a Settings-page change to a tier never reached the model call."""
         self._settings = settings
+        self._online_approval = online_approval
         if hasattr(self._client, "settings"):
             self._client.settings = settings
         self.refresh_profiles()
@@ -293,6 +295,9 @@ class Worker:
         worker_id = f"pipeline-{task_type}"
         done_lock = asyncio.Lock()
         group: list[Any] = [None]  # the lease filter of the model group being drained
+        # Tasks held this drain for an unapproved destination go back to pending; excluding them
+        # keeps the drain from leasing the same held task again in a loop.
+        held_ids: set[int] = set()
 
         async def one_worker(idx: int) -> None:
             wid = f"{worker_id}-{idx}"
@@ -305,6 +310,9 @@ class Worker:
                 where = group[0] if excl is None else (
                     excl if group[0] is None else and_(group[0], excl)
                 )
+                if held_ids:
+                    skip = Task.id.not_in(held_ids)
+                    where = skip if where is None else and_(where, skip)
                 task = await self._queue.lease(
                     wid, types=[task_type], lease_seconds=_TASK_LEASE_S, where=where
                 )
@@ -327,7 +335,28 @@ class Worker:
             failed send both go back to the queue (the page shows the reason and Try again) and the
             worker keeps draining."""
             opp_id = payload.get("opportunity_id")
+            if self._online_approval is not None and "online_approval" not in payload:
+                payload = {**payload, "online_approval": self._online_approval}
+                async with self._sm() as session:
+                    stored = await session.get(Task, task.id)
+                    if stored is not None and stored.status == "leased" and stored.worker_id == wid:
+                        stored.payload = payload
+                        await session.commit()
             settings, client = await self._task_settings(task_type, payload)
+            from kestrel.services.online_consent import held_for_approval
+
+            tier = "tier1" if task_type == "t1" else "tier2"
+            client_settings = getattr(client, "settings", settings)
+            if held_for_approval(settings, (tier,), payload) or held_for_approval(
+                client_settings, (tier,), payload
+            ):
+                held_ids.add(task.id)
+                await self._queue.defer(
+                    task.id,
+                    "held: online destination changed or was not confirmed",
+                    worker_id=wid,
+                )
+                return
             kwargs: dict = {}
             if task_type == "t2":
                 kwargs["changed"] = bool(payload.get("changed"))
@@ -336,6 +365,8 @@ class Worker:
                     kwargs["requested_at"] = payload.get("requested_at")
                     kwargs["task_id"] = task.id
             if task_type == "t1":
+                if "online_approval" in payload:
+                    kwargs["online_approval"] = payload["online_approval"]
                 if payload.get("rescore"):
                     # A score-again of a role Tier 1 set aside: the stage stays as it was
                     # until this task runs (queue.rescore), so the handler is told.
@@ -658,42 +689,92 @@ class Worker:
             timeout=ing.request_timeout_s,
             respect_robots=ing.respect_robots,
         ) as http:
+            held_scrapes: set[int] = set()  # held this cycle; never leased again in a loop
             while not self._halted():
-                task = await self._queue.lease(wid, types=["scrape"], lease_seconds=1800)
+                task = await self._queue.lease(
+                    wid, types=["scrape"], lease_seconds=1800,
+                    where=Task.id.not_in(held_scrapes) if held_scrapes else None,
+                )
                 if task is None:
                     break
                 source_id = (task.payload or {}).get("source_id")
+                attempt_started = utcnow_iso()
+                previous_run_id = 0
                 try:
+                    payload = task.payload or {}
+                    if self._online_approval is not None and "online_approval" not in payload:
+                        payload = {**payload, "online_approval": self._online_approval}
+                        async with self._sm() as session:
+                            stored = await session.get(Task, task.id)
+                            if stored is not None and stored.status == "leased":
+                                stored.payload = payload
+                                await session.commit()
                     async with self._sm() as s:
                         src = await s.get(Source, source_id) if source_id is not None else None
                         kind = src.kind if src else None
+                        previous_run_id = await s.scalar(
+                            select(func.max(ScrapeRun.id)).where(ScrapeRun.source_id == source_id)
+                        ) or 0
                     if kind is None:
                         raise ValueError(f"source {source_id!r} not found")
                     if kind in SIGNAL_SOURCE_KINDS:
+                        from kestrel.services.online_consent import held_for_approval
+
+                        client_settings = getattr(self._client, "settings", self._settings)
+                        if (
+                            held_for_approval(self._settings, ("trigger",), payload)
+                            or held_for_approval(client_settings, ("trigger",), payload)
+                        ):
+                            held_scrapes.add(task.id)
+                            await self._queue.defer(
+                                task.id,
+                                "held: online destination changed or was not confirmed",
+                                worker_id=wid,
+                            )
+                            continue
                         outcome = await run_signal_source(
                             self._sm, source_id, http=http, client=self._client,
                             settings=self._settings,
                         )
                     else:
-                        payload = task.payload or {}  # D-UI-72: a scan's one-run model
                         outcome = await run_source(
                             self._sm, source_id, http=http,
                             model_override=payload.get("model_override"),
                             model_label=payload.get("model_label"),
+                            online_approval=payload.get("online_approval"),
                         )
                 except Exception as exc:  # the source's own run recorded what it could
                     log.error("scrape_task_crash", task=task.id, source=source_id, error=str(exc))
                     await self._queue.fail(task.id, str(exc), worker_id=wid, retry=False)
                     stats.errors += 1
-                    # A crash before the runner recorded a scrape_run leaves last_run_at where it
-                    # was, and the scheduler would re-enqueue (and dead-letter) every tick. Advance
-                    # it so the source waits out its cadence like a failed run does.
-                    with contextlib.suppress(Exception):
+                    try:
                         async with self._sm() as s:
                             src = await s.get(Source, source_id) if source_id is not None else None
                             if src is not None:
-                                src.last_run_at = utcnow_iso()
+                                finished = utcnow_iso()
+                                run = await s.scalar(
+                                    select(ScrapeRun).where(
+                                        ScrapeRun.source_id == source_id,
+                                        ScrapeRun.id > previous_run_id,
+                                        ScrapeRun.started_at >= attempt_started,
+                                    ).order_by(ScrapeRun.id.desc()).limit(1)
+                                )
+                                if run is None:
+                                    run = ScrapeRun(
+                                        source_id=source_id, started_at=attempt_started,
+                                        status="running", counts={},
+                                    )
+                                    s.add(run)
+                                if run.status == "running":
+                                    run.status = "failed"
+                                    run.finished_at = finished
+                                    run.error = f"{type(exc).__name__}: {exc}"
+                                    run.counts = {**(run.counts or {}), "errors": 1}
+                                src.last_run_at = finished
                                 await s.commit()
+                    except SQLAlchemyError as history_error:
+                        log.error("scrape_crash_history_failed", task=task.id,
+                                  source=source_id, error=str(history_error))
                     continue
                 await self._queue.complete(task.id, worker_id=wid)
                 stats.completed += 1

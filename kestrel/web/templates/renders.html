@@ -1,17 +1,80 @@
+{# Tailor resume (D-UI-120). Built on the shared design system: ui/macros.html for the band, the
+   help cards, the flyouts, the slide-over and the modal; tokens for every color. #body is what
+   Pick again and the refresh after Undo swap; a swap or a look change updates single parts out
+   of band (partials/tailor_update.html). #}
 {% extends "base.html" %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
 {% block title %}{{ title }} · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/pages/tailor.css">
+<script src="/static/js/tailor.js" defer></script>
+{% endblock %}
 {% block content %}
-<h1>Tailor {{ "capability statement" if master and master.doc_kind != "resume" else "resume" }}</h1>
-{% if back %}
-<p><a href="{{ back }}" data-testid="render-back">&larr; Back to {{ "Applications" if back.startswith("/pursuits") else "the role" }}</a></p>
-{% else %}
-<p><a href="/documents{% if master %}?master_id={{ master.id }}{% endif %}" data-testid="render-back">&larr; Back to Documents</a></p>
-{% endif %}
-<p class="muted" data-testid="tailor-intro">Kestrel picked a wording for each part of your resume to match this role. Review the picks, swap any you disagree with, then render the PDF.</p>
-{% if new_render_error %}
-  <div class="warnbox">{{ new_render_error }}</div>
-{% endif %}
-<div id="render-content">
-  {% include "partials/render_review.html" %}
-</div>
+{% set kind = ('capability statement' if master and master.doc_kind != 'resume' else 'resume') %}
+<div class="tl-wrap"><div class="tl-page" data-render="{{ render.id if render else '' }}" data-back="{{ back or '' }}">
+  {% set crumb %}<nav class="tl-crumb" aria-label="Breadcrumb">
+    {% if back %}<a href="{{ '/pursuits' if back.startswith('/pursuits') else back }}" data-testid="render-back">&larr; Back to {{ (w.apps if w else 'Applications') if back.startswith('/pursuits') else 'the role' }}</a>
+    {% else %}<a href="/documents{% if master %}?master_id={{ master.id }}{% endif %}" data-testid="render-back">&larr; Back to Documents</a>{% endif %}
+    {% if back and back.startswith('/opportunities') and opportunity %} › <span>{{ opportunity.title or 'Role' }}</span>{% endif %}
+  </nav>{% endset %}
+  {% call ui.scene_band(title, crumb=crumb) %}
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#tl-help-fly" aria-controls="tl-help-fly" aria-expanded="false" data-testid="tl-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+  {% endcall %}
+  {% if new_render_error %}
+    <div class="tl-wban tl-wban--bad" role="alert"><span class="tl-hb">{{ ui.icon('alert') }}</span><div class="tl-grow"><b>{{ new_render_error }}</b></div></div>
+  {% endif %}
+  <div id="tl-body" data-testid="tl-body">{% include "partials/render_review.html" %}</div>
+  {# Where the online ask lands, and the gate for a line that still needs a pick. #}
+  <div id="tl-dialog"></div>
+  <div class="k-modal tl-gate" id="tl-gate" role="dialog" aria-modal="true" aria-labelledby="tl-gate-t" aria-hidden="true" data-k-static data-testid="tl-gate">
+    <div class="k-modal__head"><h2 id="tl-gate-t" data-tl-gate-title>1 line still needs your pick.</h2></div>
+    <div class="k-modal__body"><p data-tl-gate-body>Kestrel used your first wording there. Download anyway?</p></div>
+    <div class="k-modal__foot">
+      <button type="button" class="k-btn k-btn--primary" data-k-close data-tl-choose data-testid="tl-choose">Choose now</button>
+      <button type="button" class="k-btn" data-tl-anyway data-testid="tl-anyway">Download anyway</button>
+    </div>
+  </div>
+  <div class="k-modal k-modal--sheet tl-zoom" id="tl-zoom" role="dialog" aria-modal="true" aria-labelledby="tl-zoom-t" aria-hidden="true">
+    <div class="k-modal__head"><h2 id="tl-zoom-t">Your {{ kind }}, full size</h2></div>
+    <div class="k-modal__body tl-zoom__body" data-tl-zoom-body></div>
+    <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close>Close</button></div>
+  </div>
+  {% call ui.flyout('tl-help-fly', 'How Tailor ' ~ kind ~ ' works', help_href='/help') %}
+    <h4>The short version</h4>
+    <p>Kestrel looks at this role and picks which of your own wordings to use for each line. You check each pick, swap any you like, then download the PDF.</p>
+    <h4>The three parts</h4>
+    <ul><li>Left: each line with its pick and the reason.</li><li>Middle: the page as it will print.</li><li>Right: what the role asks for and what your documents cover.</li></ul>
+    <h4>Good to know</h4>
+    <p>Kestrel never applies or sends anything for you.</p>
+  {% endcall %}
+  {% call ui.flyout('tl-how-fly', 'How Kestrel picked', help_href='/help') %}
+    <h4>Why your own words</h4>
+    <p>Every line in the {{ kind }} is text you wrote in Profile, printed exactly as written. Kestrel only decides which of your wordings fits this role best.</p>
+    <h4>If a pick fails a check</h4>
+    <p>If Kestrel names a wording you never wrote, the line is marked "Needs your pick" and your first wording shows until you choose. Nothing is ever filled in for you.</p>
+    <h4>Pick again</h4>
+    <p>Asks Kestrel to choose again. Lines you changed yourself stay as you set them.</p>
+  {% endcall %}
+  {% call ui.flyout('tl-change-fly', 'Change a line', help_href='/help') %}
+    <h4>Swapping</h4>
+    <p>A swap shows in the preview at once and is marked "Your choice". Kestrel learns from your swaps over time.</p>
+    <h4>Need a new wording</h4>
+    <p>Add it in Profile, Documents. It appears here as another choice, so every line stays your own.</p>
+  {% endcall %}
+  {% call ui.flyout('tl-fit-fly', 'Fit the page', help_href='/help') %}
+    <h4>The limit</h4>
+    <p>The page limit is set in Settings. If the {{ kind }} runs over, the notice lists every optional line that is showing, in order. Leave out the ones you can spare.</p>
+    <h4>Zoom</h4>
+    <p>Use the minus and plus buttons above the preview to read small text, or Enlarge for the full page.</p>
+  {% endcall %}
+  {% call ui.flyout('tl-apply-fly', 'Before you apply', help_href='/help') %}
+    <h4>What each button does</h4>
+    <p>Download PDF saves a file to your computer. Use for this {{ w.app if w else 'application' }} attaches this version to the role in {{ w.apps if w else 'Applications' }} so you can find it later. Neither sends anything.</p>
+    <h4>Privacy</h4>
+    <p>Hide my current employer swaps in your neutral label. The PDF holds no company names in its file details.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

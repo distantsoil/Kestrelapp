@@ -28,6 +28,7 @@ from kestrel.llm.client import LLMClient
 from kestrel.llm.guard import QuarantineHook
 from kestrel.llm.prompts import load_prompt
 from kestrel.pipeline._shared import run_prompt_hosted
+from kestrel.research.errors import raise_if_transport_failure
 from kestrel.research.excerpts import ExcerptSet
 from kestrel.research.validation import email_verbatim, valid_source_index
 
@@ -101,6 +102,8 @@ async def discover_contacts(
     *,
     opportunity: Opportunity | None = None,
     make_drafts: bool = True,
+    commit: bool = True,
+    raise_on_transport: bool = False,
 ) -> list[Contact]:
     """Run P6 against `excerpts`, validate every returned person in code, and persist the survivors
     as `Contact` rows (plus a draft `OutreachDraft` each, when `make_drafts`). Returns the created
@@ -125,8 +128,11 @@ async def discover_contacts(
         opportunity_id=opportunity.id if opportunity else None,
         on_quarantine=_quarantine_hook(session),
     )
+    if raise_on_transport:
+        raise_if_transport_failure(result)
     if not result.ok or result.value is None:
-        await session.commit()  # persist any quarantine row the hook staged
+        if commit:
+            await session.commit()
         return []
 
     source_texts = excerpts.texts()
@@ -167,5 +173,6 @@ async def discover_contacts(
             )
         created.append(contact)
 
-    await session.commit()
+    if commit:
+        await session.commit()
     return created

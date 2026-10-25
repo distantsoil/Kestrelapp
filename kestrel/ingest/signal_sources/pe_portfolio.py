@@ -99,7 +99,9 @@ class PePortfolioSignalSource:
             firm_name = firm["name"]
             firm_url = firm["url"]
             try:
-                html = await client.get_text(firm_url, rate_per_sec=rate, check_robots=True)
+                html = await client.get_text(
+                    firm_url, rate_per_sec=rate, check_robots=True, public_only=True
+                )
             except Exception as exc:  # one bad/disallowed firm never sinks the whole source
                 log.warning(
                     "pe_portfolio.fetch_failed", firm=firm_name, url=firm_url, error=str(exc)

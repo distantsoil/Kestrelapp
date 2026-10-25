@@ -237,6 +237,22 @@ kestrel serve
 kestrel worker
 ```
 
+## Local verification
+
+Run `uv sync --extra dev`, then `uv run --extra dev python scripts/check.py` before pushing.
+The gate runs lint and the full pytest suite with pytest-xdist, using half the logical CPUs,
+capped at 8 workers with a minimum of 1. `KESTREL_TEST_WORKERS` overrides that default;
+`--workers N` takes precedence over the environment. Tests use isolated processes, per-test
+temporary data folders, and OS-assigned loopback ports. `--workers 0` runs the same suite serially.
+Use `--junitxml <path>` to save individual outcomes for a serial/parallel comparison.
+Set `KESTREL_LIVE_BROWSER=1` to include the opt-in browser tests in either mode.
+`--quick` still selects only the existing packaging and notices guards and is not a push gate.
+
+SQLite connections use WAL with `synchronous=NORMAL`, including migration connections.
+This keeps the database consistent after a crash while avoiding a disk sync for every commit.
+A power loss can discard recent committed transactions; queued tasks resume from their last
+durable state (D-UI-174).
+
 ## Architecture notes
 
 - **Local-first:** Inference runs on your Ollama instance by default. A hosted Tier 3 backend is optional and opt-in per opportunity.

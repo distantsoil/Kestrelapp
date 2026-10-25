@@ -7,6 +7,7 @@ Regional Health)."""
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -428,6 +429,21 @@ def test_web_import_uses_the_setting_table_layer_so_hosted_rows_resolve(monkeypa
     assert _FakeP7LLM.calls[-1]["model"] == get_settings().llm.tiers["docsel"].model
     _seed_hosted_rows()
     r = client.post("/api/documents/import", data={"track": "employment", "text": md})
+    assert r.status_code == 200 and 'data-testid="doc-online-send"' in r.text
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.services.online_consent import destination_id
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async def route_dest():
+        async with get_sessionmaker()() as s:
+            settings = await load_settings_with_db(s)
+            return settings, destination_id(settings, "docsel")
+
+    settings, dest = asyncio.run(route_dest())
+    r = client.post("/api/documents/import", data={
+        "track": "employment", "text": md, "confirmed": "1",
+        "model": settings.llm.tiers["docsel"].model, "dest": dest,
+    })
     assert r.status_code == 200 and "Proposed import" in r.text
     assert _FakeP7LLM.calls[-1]["model"] == "hosted/p7-model"
 

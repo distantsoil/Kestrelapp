@@ -379,7 +379,7 @@ def test_settings_hosted_flow(monkeypatch):
     client = _fresh_app()
 
     # The page has the tab, and the partial shows both external backends with no key.
-    assert "Hosted (BYOK)" in client.get("/settings").text
+    assert 'data-testid="st-key"' in client.get("/settings").text  # the quick key entry
     body = client.get("/settings/hosted").text
     assert "openmodel" in body and "no key saved" in body
     # Key names are for power users only: under Show details (release round R1).

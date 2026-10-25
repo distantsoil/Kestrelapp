@@ -1,0 +1,41 @@
+{# The comparison of open offers (D-UI-122, spec 4.4). Money rows are bars with the best
+   highlighted; judgment rows are the operator's own stars beside the source fact. Each row has a
+   live weight. There is no total and no winner. Rating a star swaps this block and nothing else;
+   moving a weight swaps only the summary. #}
+<div id="of-matrix" class="of-matrix">
+{%- if matrix %}
+  <div class="of-cmp" data-testid="of-matrix" style="--of-cols: {{ matrix.columns|length }}" role="table" aria-label="Comparison matrix">
+    <div class="of-cmp__hd" role="columnheader">What matters to you<span>Drag to set how much each one counts</span></div>
+    {%- for col in matrix.columns %}
+    <div class="of-cmp__hd" role="columnheader"><span class="of-mono of-mono--{{ col.mono_i }}" aria-hidden="true">{{ col.mono }}</span><span class="of-cmp__who"><b title="{{ col.org }}">{{ col.org }}</b><span title="{{ col.title }}">{{ col.title }}</span></span></div>
+    {%- endfor %}
+    {%- for r in matrix.rows %}
+    <div class="of-cmp__row" role="row" data-row="{{ r.key }}">
+      <div class="of-cmp__lbl" role="rowheader">
+        <span class="of-cmp__name">{{ r.label }} <small>· {{ r.sub }}</small></span>
+        <span class="of-wt"><input type="range" class="of-w" min="0" max="5" step="1" name="{{ r.key }}" value="{{ r.weight }}" aria-label="Weight for {{ r.label }}"
+          hx-post="/offers/weights" hx-trigger="input changed delay:250ms" hx-include="#of-matrix .of-w" hx-target="#of-summary" hx-swap="outerHTML"><em>{{ r.word }}</em></span>
+      </div>
+      {%- for cell in r.cells %}
+      <div class="of-cell{% if cell.top %} is-top{% endif %}" role="cell">
+        {%- if r.kind == 'rating' %}
+        <span class="of-src" title="{{ cell.fact }}">{{ cell.fact }}</span>
+        <span class="of-stars" role="group" aria-label="Your rating for {{ r.label }}">
+          {%- for n in (1, 2, 3, 4, 5) %}<button type="button" class="{% if cell.rating and n <= cell.rating %}is-on{% endif %}" aria-label="{{ n }} of 5" aria-pressed="{{ 'true' if cell.rating == n else 'false' }}"
+            hx-post="/offers/{{ cell.track }}/{{ cell.offer_id }}/rate" hx-vals='{"axis": "{{ r.key }}", "value": {{ n }}}' hx-target="#of-matrix" hx-swap="outerHTML">★</button>{% endfor -%}
+        </span>
+        {%- else %}
+        <b>{{ cell.text }}</b>
+        {%- if cell.n is not none %}<span class="of-cbar"><i style="width:{{ cell.pct }}%"></i></span>{% endif %}
+        {%- endif %}
+      </div>
+      {%- endfor %}
+    </div>
+    {%- endfor %}
+  </div>
+  <p class="of-foot of-how">{% if con %}Engagement value is the day rate times the days committed.{% else %}First-year total is base, target bonus, signing and one fourth of the equity estimate. Four-year value assumes no raises.{% endif %} Stars are your own rating; Kestrel never sets one.</p>
+  {% include "partials/offer_summary.html" %}
+{%- else %}
+  <section class="k-card of-note-card" data-testid="of-matrix-wait">The comparison appears when two or more offers are open.</section>
+{%- endif %}
+</div>

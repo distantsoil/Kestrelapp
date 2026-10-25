@@ -1,0 +1,60 @@
+{# Organization tab: public company facts, blank when unknown and never model-guessed (hard rule
+   7), the way to the Company page (which owns the summary; this tab does not repeat it), and
+   Research and Contacts. `research`, `contacts` and `org_signals` are redacted JSON copies; org_site
+   is the route's display copy of the website (never print org.url or org.domain here). Contacts are
+   public business contact information only, and nothing is ever sent to them. #}
+{% from "partials/role_icons.html" import ric %}
+<div id="rl-orgtab" class="rl-orgtab" data-tab="organization"
+  {% if research_jobs|selectattr('live')|list %}hx-get="/opportunities/{{ opp.id }}/role/research"
+  hx-trigger="every 2s [!document.querySelector('dialog:modal')]" hx-swap="outerHTML"{% endif %}>
+  <section class="k-card rl-card" data-testid="org-card">
+  {% if org %}
+    <header class="k-sec-head"><span class="k-badge">{{ ric('building') }}</span><div class="k-grow"><h3>{{ org.name }}</h3></div>
+      <a class="k-link" href="/orgs/{{ org.id }}" data-testid="company-page">Open the company page →</a></header>
+    <div class="rl-facts2" data-testid="org-facts">
+      <span><b>Sector</b>{% if org.sector %}{{ org.sector|replace('_', ' ') }}{% else %}<i class="rl-unk">Not known</i>{% endif %}</span>
+      <span><b>Size</b>{% if org.size_band %}{{ org.size_band }}{% else %}<i class="rl-unk">Not known</i>{% endif %}</span>
+      <span><b>Ownership</b>{% if org.ownership %}{{ org.ownership|replace('_', ' ') }}{% else %}<i class="rl-unk">Not known</i>{% endif %}</span>
+      <span><b>Based in</b>{% if org.hq_location %}{{ org.hq_location }}{% else %}<i class="rl-unk">Not known</i>{% endif %}</span>
+      <span><b>Website</b>{% if org_site and org_site.href %}<a class="k-link" href="{{ org_site.href }}" target="_blank" rel="noopener">{{ org_site.text }} ↗</a>{% elif org_site %}<span class="rl-quiet">{{ org_site.text }}</span>{% else %}<i class="rl-unk">Not known</i>{% endif %}</span>
+    </div>
+    {% if research_jobs %}
+    <div class="rl-research-jobs" aria-live="polite" data-testid="research-jobs">
+      {% for job in research_jobs %}
+      <div class="rl-research-job" data-testid="research-job" data-state="{{ job.status }}">
+        <div><h4 class="rl-h4">{{ job.label }}</h4>
+          <p class="rl-dsm">{% if job.status == 'cancelled' %}Cancelled.{% elif job.status in ('dead', 'failed') %}Could not finish. Start again to try another pass.{% elif job.status == 'pending' %}Waiting for the worker.{% else %}{{ job.progress }}{% endif %}</p>
+          {% if job.live %}<p class="rl-dsm">Runs in the background and resumes after a restart.</p>{% endif %}
+        </div>
+        {% if job.live %}<button type="button" class="k-btn k-btn--sm"
+          hx-post="/opportunities/{{ opp.id }}/role/research/{{ job.id }}/cancel" hx-swap="none"
+          data-testid="research-cancel" aria-label="Cancel {{ job.label|lower }}">Cancel</button>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <p class="rl-dsm">From public sources only. Facts Kestrel could not find are left blank, never guessed.</p>
+    <p class="rl-dsm" data-testid="org-research">
+      {% if research %}Researched {{ date_display(research.researched_at) or 'earlier' }}{% if research.insufficient_sources %}. Fewer than two public sources, so too few to rely on{% endif %}{% if research.angle %}. Angle: {{ research.angle }}{% endif %}.
+      {% else %}Not researched yet.{% endif %}
+      {{ org_signals|length }} signal{{ '' if org_signals|length == 1 else 's' }} on file · {{ contacts|length }} contact{{ '' if contacts|length == 1 else 's' }} on file.
+    </p>
+    <div class="rl-btns">
+      <button type="button" class="k-btn k-btn--sm" hx-post="/opportunities/{{ opp.id }}/role/research" hx-vals='{"kind": "company"}' hx-swap="none" data-busy-text="Researching the company…" data-testid="org-research-btn">Research company</button>
+      <button type="button" class="k-btn k-btn--sm" hx-post="/opportunities/{{ opp.id }}/role/research" hx-vals='{"kind": "contacts"}' hx-swap="none" data-busy-text="Looking for public contacts…" data-testid="org-contacts-btn">Find contacts</button>
+    </div>
+    {% if org_signals %}
+    <h4 class="rl-h4">Signals</h4>
+    <ul class="rl-list">{% for sig in org_signals[:4] %}<li>{% if sig is mapping %}{% if sig.get('category') %}<span class="k-pill k-pill--info">{{ sig.category }}</span> {% endif %}{{ sig.get('statement') or sig }}{% if sig.get('observed_at') %} <span class="rl-quiet">{{ date_display(sig.observed_at) }}</span>{% endif %}{% else %}{{ sig }}{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if contacts %}
+    <h4 class="rl-h4">Contacts</h4>
+    <ul class="rl-list" data-testid="contacts">{% for c in contacts[:6] %}<li>{{ c.name }}{% if c.title %} <span class="rl-quiet">· {{ c.title }}</span>{% endif %}{% if c.contact_type %} <span class="k-pill k-pill--info">{{ c.contact_type|replace('_', ' ') }}</span>{% endif %}{% if c.linkedin_url %} <a class="k-link" href="{{ c.linkedin_url }}" target="_blank" rel="noopener">LinkedIn ↗</a>{% endif %}</li>{% endfor %}</ul>
+    <p class="rl-dsm">Drafted outreach is on the <a class="k-link" href="/orgs/{{ org.id }}">company page</a>. Nothing is ever sent for you.</p>
+    {% endif %}
+  {% else %}
+    <header class="k-sec-head"><span class="k-badge">{{ ric('building') }}</span><div class="k-grow"><h3>No company linked</h3></div></header>
+    <p class="rl-quiet">No company is linked to this {{ w.role }} yet{% if opp.org_name %} (the posting says {{ opp.org_name }}){% endif %}. Facts appear here once Kestrel knows which company it is.</p>
+  {% endif %}
+  </section>
+</div>

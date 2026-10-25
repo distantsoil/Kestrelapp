@@ -1,0 +1,8 @@
+{# Get your connections file: the four steps. You download it from LinkedIn yourself; Kestrel
+   never signs in there and never scrapes. #}
+{% import "ui/macros.html" as ui %}
+{% call ui.modal('st-how-dialog', 'Get your connections file', [{'label': 'Close', 'close': True}, {'label': 'Choose file', 'kind': 'primary', 'close': True, 'attrs': {'data-st-pick-contacts': ''}}]) %}
+  <p class="st-dsm">You download it from LinkedIn yourself. Kestrel never signs in there.</p>
+  <ol class="st-ol">{% for s in steps %}<li><i>{{ loop.index }}</i><span>{{ s }}</span></li>{% endfor %}</ol>
+  <p class="st-note">LinkedIn usually takes about 10 minutes.</p>
+{% endcall %}

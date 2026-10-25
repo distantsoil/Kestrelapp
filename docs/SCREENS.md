@@ -20,7 +20,7 @@ apply to or follow up on) and Schedule (when the next run is), and setup items f
 a minute; the sidebar's status rail shows the worker, model, last scan and hosted key at all
 times.
 
-![The Today page with a guide strip, the Your next three things list (apply to roles on your list, follow up on an overdue application), the Overnight counts and the setup items, in the sidebar shell.](images/dashboard-dark.png)
+![The Today page with the Your next three things list (apply to roles on your list, follow up on an overdue application), the Overnight counts and the setup items, in the sidebar shell.](images/dashboard-dark.png)
 
 **The Pipeline is a triage list in fit groups.** Rows sit under Worth a look, Maybe and Not scored
 yet, with Not a fit collapsed at the bottom and its count split between rules and the model. Each

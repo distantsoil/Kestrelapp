@@ -1,0 +1,11 @@
+{# Keep near-floor roles (D-RULES-2): one control for the pay floor and the day-rate floor. The
+   caller sets margin_name (the form field), margin_value (a stop, as text), margin_what ("pay
+   floor" or "day-rate floor") and margin_id. A segmented control, so Exact is one click. #}
+{% import "ui/macros.html" as ui %}
+<div class="pf-margin" data-testid="near-floor">
+  <span class="pf-margin__title" id="{{ margin_id }}-l">Keep near-floor roles</span>
+  {{ ui.segmented(margin_name, margin_options, margin_value, 'Keep near-floor roles') }}
+  <small class="pf-hint" data-testid="near-floor-hint" data-pf-margin-hint data-what="{{ margin_what }}">
+    <span data-pf-margin-text>{% if margin_value == '0' %}Exact: a role whose posted pay tops out below your {{ margin_what }} is set aside.{% else %}Roles within {{ margin_value }}% below your {{ margin_what }} stay in, marked "Just under your pay floor".{% endif %}</span>
+    A role with no posted pay is always kept.</small>
+</div>

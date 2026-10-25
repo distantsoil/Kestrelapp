@@ -147,48 +147,119 @@ def test_about_renders_version_links_and_credits():
     body = r.text
     main = body.split("<main")[1]
     assert "<h1>About</h1>" in body
-    assert f'id="about-version">{kestrel.__version__}<' in body
-    assert "source checkout" in body and "Python 3." in body
-    assert str(paths.data_home()) in body
+    assert f'id="about-version" data-testid="about-version">Version {kestrel.__version__}<' in body
+    assert "Copyright 2026 M Crowle-Groves" in body
+    assert "PolyForm Noncommercial License 1.0.0" in body
+    assert str(paths.data_home()) in body and str(paths.logs_dir()) in body
     assert f'href="{GITHUB}" target="_blank" rel="noopener"' in body
     assert f'href="{KOFI}" target="_blank" rel="noopener"' in body
-    assert KOFI in body
-    assert "Kestrel is free. If it earned you an interview" in body
-    assert "issues and feature requests go here" in body
-    for name in ("career-ops", "JobSpy", "parametric-resume-builder"):
-        assert f">{name}</a> (MIT)" in body, name
-    built, inspired = body.split("<h2>Inspired by</h2>")
-    assert ">JobSpy</a>" in built.split("<h2>Built on</h2>")[1]
-    assert ">career-ops</a>" in inspired and ">parametric-resume-builder</a>" in inspired
+    assert 'href="https://kestrelapp.co" target="_blank" rel="noopener"' in body
+    assert "Optional. Kestrel stays free." in body
+    # Built on JobSpy; ideas from career-ops and parametric-resume-builder, linked to their repos.
+    credits = body.split('data-testid="credits"')[1].split("</p>")[0]
+    for name, url in (("JobSpy", "https://github.com/speedyapply/JobSpy"),
+                      ("career-ops", "https://github.com/santifer/career-ops"),
+                      ("parametric-resume-builder",
+                       "https://github.com/ConstanzaSchibber/parametric-resume-builder")):
+        assert f'href="{url}" target="_blank" rel="noopener">{name}</a>' in credits, name
+    assert credits.index("JobSpy") < credits.index("Ideas from") < credits.index("career-ops")
+    assert "no code or text was taken from them" in credits
     assert 'href="/about/notices"' in body
-    assert 'href="/about/diagnostics"' in body
+    assert 'href="/about/diagnostics"' in body  # a plain browser keeps the download
     for name, _what in diagnostics.CONTENTS:
         assert name in main, name
     for item in diagnostics.EXCLUDED:
         assert item in main, item
-    assert "never applies, emails or messages anyone for you" in body
     assert "—" not in main
 
 
-def test_help_keeps_its_content_and_nav_lists_both_pages():
-    from kestrel.ingest.catalog import source_catalog
+def test_about_lists_the_five_promises_each_with_its_own_flyout():
+    with _client() as c:
+        body = c.get("/about").text
+    rows = body.split('data-testid="promises"')[1].split("</section>")[0]
+    titles = ["Free", "You are not the product", "Never applies for you",
+              "Asks before going online", "Source is public"]
+    assert re.findall(r"<b>([^<]+)</b>", rows) == titles
+    for i, _title in enumerate(titles):
+        assert f'data-k-flyout="#ab-fly-p{i}"' in rows
+        assert f'id="ab-fly-p{i}"' in body
+    assert "It never applies, emails or messages anyone." in rows
+    assert "Under PolyForm Noncommercial 1.0.0." in rows
+    assert 'id="promises"' in body  # Help links /about#promises
+    # The flyouts add information the rows do not carry.
+    assert "Chipping in" in body and "What Kestrel does reach out to" in body
+    assert "LinkedIn" in body and "Each time" in body and "Why it matters" in body
+    assert "LICENSE.md" in body
+
+
+def test_about_built_with_names_every_model_in_the_claude_md_list():
+    with _client() as c:
+        body = c.get("/about").text
+    chips = body.split('data-testid="built-with"')[1].split("</div>")[0]
+    assert re.findall(r"<span>([^<]+)</span>", chips) == [
+        "Claude", "ChatGPT", "Qwen", "DeepSeek", "NVIDIA Nemotron", "MiniMax M3", "LongCat",
+        "Kimi K2.7", "MiMo",
+    ]
+    assert "AI models that helped write and review Kestrel" in body
+
+
+def test_about_files_card_has_copy_and_open_only_where_the_shell_can_open():
+    from kestrel.web import desktop_bridge
 
     with _client() as c:
-        helped = c.get("/help")
-        about = c.get("/about")
-    assert helped.status_code == 200
-    assert "<h1>Help</h1>" in helped.text
-    for row in source_catalog():
-        assert row.kind in helped.text, row.kind
-    assert 'hx-post="/updates/check"' in helped.text
-    assert 'href="/about">About</a>' in helped.text.split("<main")[1]
-    for body in (helped.text, about.text):
-        side = body.split('<aside class="side"')[1].split("</aside>")[0]
-        assert 'href="/help"' in side and ">Help</a>" in side
-        assert 'href="/about"' in side and ">About</a>" in side
-        assert '{label: "About", href: "/about"}' in body  # the command palette
-    assert 'href="/about" class="active"' in about.text
-    assert 'href="/help" class="active"' in helped.text
+        plain = c.get("/about").text
+        files = plain.split('data-testid="about-files"')[1].split("</article>")[0]
+        assert "Copy</button>" in files and 'data-testid="open-data"' not in files
+        opened: list[Path] = []
+        desktop_bridge.set_folder_handler(opened.append)
+        try:
+            desktop = c.get("/about").text
+            files = desktop.split('data-testid="about-files"')[1].split("</article>")[0]
+            assert 'data-testid="open-data"' in files and 'data-testid="open-logs"' in files
+            assert c.post("/about/folder/open", data={"which": "data"}).text.count("Opened") == 1
+            assert c.post("/about/folder/open", data={"which": "logs"}).status_code == 200
+            assert opened == [paths.data_home(), paths.logs_dir()]
+            refused = c.post("/about/folder/open", data={"which": "../etc"})
+            assert "not a folder Kestrel can open" in refused.text
+            assert opened == [paths.data_home(), paths.logs_dir()]  # nothing else was opened
+        finally:
+            desktop_bridge.set_folder_handler(None)
+        assert "Could not open it" in c.post("/about/folder/open", data={"which": "data"}).text
+
+
+def test_component_versions_come_from_the_running_environment(monkeypatch):
+    import platform
+    import sqlite3
+    from importlib.metadata import version
+
+    with _client() as c:
+        body = c.get("/about").text
+    table = body.split('id="ab-comp"')[1].split("</table>")[0]
+    rows = dict(re.findall(r"<tr><td>([^<]+)</td><td>([^<]+)</td></tr>", table))
+    assert rows["Python"] == platform.python_version()
+    assert rows["FastAPI"] == version("fastapi")
+    assert rows["SQLAlchemy"] == version("sqlalchemy")
+    assert rows["Database (SQLite)"] == sqlite3.sqlite_version
+    assert "Kestrel is serving on port" in rows
+    # Ollama is asked for after the page loads, so the page never waits on it.
+    assert 'hx-get="/about/ollama" hx-trigger="load"' in table
+    from kestrel import setup
+
+    monkeypatch.setattr(setup, "ollama_version", lambda url, timeout=3.0: "0.9.9")
+    with _client() as c:
+        found = c.get("/about/ollama").text
+    assert "0.9.9" in found and "<tr" in found
+    monkeypatch.setattr(setup, "ollama_version", lambda url, timeout=3.0: None)
+    with _client() as c:
+        assert "not found" in c.get("/about/ollama").text
+
+
+def test_help_keeps_its_nav_entry_and_about_is_active_on_about():
+    with _client() as c:
+        helped = c.get("/help").text
+        about = c.get("/about").text
+    assert 'href="/about" class="active"' in about
+    assert 'href="/help" class="active"' in helped
 
 
 # --------------------------------------------------------------------------------- diagnostics
@@ -359,6 +430,74 @@ def test_build_bundle_without_a_database_or_logs(tmp_path, monkeypatch):
     assert doctor["error"] == "RuntimeError: ollama exploded" and doctor["results"] == []
 
 
+@pytest.mark.parametrize("private_url", [
+    "http://192.168.50.20:8080/v1", "https://private-model.example.test/tenant/v1",
+    "http://llm:8080/v1",
+])
+def test_diagnostics_masks_yaml_backend_addresses_in_every_member(
+    tmp_path, monkeypatch, private_url,
+):
+    from urllib.parse import urlsplit
+
+    from kestrel import doctor as doctor_mod
+    from kestrel.config import get_settings
+
+    config = yaml.safe_load(paths.config_file("settings.yml").read_text(encoding="utf-8"))
+    config["llm"]["backends"]["private"] = {
+        "provider": "generic", "base_url": private_url, "external": True,
+    }
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("settings.yml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    settings = get_settings()
+    assert settings.llm.backends["private"].base_url == private_url
+    host = urlsplit(private_url).hostname
+    paths.logs_dir().mkdir(parents=True, exist_ok=True)
+    paths.logs_dir().joinpath("kestrel.log").write_text(
+        f"Request to {private_url}/chat/completions failed; host={host}", encoding="utf-8",
+    )
+
+    def doctor(*, quick=False):
+        raise RuntimeError(f"Cannot reach {private_url}; host={host}")
+
+    monkeypatch.setattr(doctor_mod, "run_doctor", doctor)
+    archive = diagnostics.build_bundle(settings, out_dir=tmp_path / "bundle")
+    members = _zip(archive.read_bytes())
+    for name, content in members.items():
+        assert private_url.encode() not in content, name
+        assert f"host={host}".encode() not in content, name
+    summary = yaml.safe_load(members["summary.json"])
+    backend = summary["hosted_mode"]["backends"]["private"]
+    assert backend["base_url"] == diagnostics.REDACTED
+    assert backend["provider"] == "generic" and backend["external"] is True
+    exported = yaml.safe_load(members["settings.redacted.yml"])
+    assert exported["settings"]["llm"]["backends"]["private"]["base_url"] == diagnostics.REDACTED
+    assert "host=<redacted>" in yaml.safe_load(members["doctor.json"])["error"]
+    assert b"host=<redacted>" in members["logs/kestrel.log"]
+    assert get_settings().llm.backends["private"].base_url == private_url
+
+
+def test_diagnostics_redacts_employer_and_secret_backend_names(tmp_path, monkeypatch):
+    from kestrel import doctor as doctor_mod
+    from kestrel.config import BackendConfig, get_settings
+
+    settings = get_settings()
+    for name in (_EMPLOYER, _ENV_KEY):
+        settings.llm.backends[name] = BackendConfig(base_url="http://llm:8080/v1")
+
+    def doctor(*, quick=False):
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(doctor_mod, "run_doctor", doctor)
+    archive = diagnostics.build_bundle(
+        settings, out_dir=tmp_path, redaction={_EMPLOYER: _PLACEHOLDER},
+    )
+    members = _zip(archive.read_bytes())
+    for name, content in members.items():
+        assert _EMPLOYER.encode() not in content, name
+        assert _ENV_KEY.encode() not in content, name
+    assert "llm" in yaml.safe_load(members["settings.redacted.yml"])["settings"]
+
+
 def test_redact_tree_masks_secret_names_and_shaped_values_only():
     tree = {
         "api_key": "ollama",
@@ -434,29 +573,43 @@ def test_diagnostics_counts_tier0_set_asides_by_rule_name_only():
 
 
 # ------------------------------------------------------------------------- updates and notes
-def test_about_has_a_check_for_updates_button_where_the_site_link_was():
-    """The top card's link row offers Check for updates (the same /updates/check every other
-    surface uses) in place of the kestrelapp.co button, with the result shown in the card."""
+def test_about_has_a_check_for_updates_button_beside_the_version():
+    """The identity card offers Check for updates (the shared /updates/check, asking for About's
+    wording) and shows when it last ran; the Ko-fi link sits in the support card."""
     with _client() as c:
         body = c.get("/about").text
-    row = body.split('data-testid="site-links"')[1].split("</p>")[0]
-    assert 'hx-post="/updates/check"' in row and ">Check for updates</button>" in row
-    assert 'href="https://kestrelapp.co"' not in row, "the site button should be replaced here"
-    assert 'href="https://ko-fi.com/distantsoil"' in row  # Ko-fi stays
+    card = body.split('data-testid="about-id"')[1].split("</section>")[0]
+    assert 'hx-post="/updates/check"' in card and ">Check for updates</button>" in card
+    assert '"surface": "about"' in card
+    assert 'href="https://kestrelapp.co"' not in card, "no site button in the identity card"
+    assert 'href="https://ko-fi.com/distantsoil"' in body  # Ko-fi stays, in Source and support
     # Targets the check's response swaps into, including its out-of-band "Last checked" line;
     # without them the click renders nothing and htmx logs an error.
     assert 'id="update-result"' in body and 'id="update-last-checked"' in body
+    assert "Last checked: never" in body
 
 
 def test_about_links_the_release_notes_beside_the_version():
     with _client() as c:
         body = c.get("/about").text
-    line = body.split('id="about-version"')[1].split("</div>")[0]
+    line = body.split('id="about-version" ')[1].split("</div>")[0]
     assert f'href="{GITHUB}/blob/main/CHANGELOG.md"' in line and ">Release notes</a>" in line
-    assert 'class="btn' not in line, "a plain text link, not a button"
+    assert 'class="k-btn' not in line, "a plain text link, not a button"
 
 
 def test_the_about_check_reports_through_the_shared_route():
     with _client() as c:
-        r = c.post("/updates/check")
+        r = c.post("/updates/check", data={"surface": "about"})
     assert r.status_code == 200 and 'data-testid="update-result"' in r.text
+
+
+def test_about_icons_match_the_mockup_and_external_links_are_marked():
+    """Free, Not the product and Never applies use gift, eye and hand; GitHub, Ko-fi and Visit
+    carry the external-link glyph."""
+    with _client() as c:
+        body = c.get("/about").text
+    rows = body.split('data-testid="promises"')[1].split("</section>")[0]
+    for name in ("gift", "eye", "hand"):
+        assert f'data-glyph="{name}"' in rows
+    support = body.split('data-testid="about-support"')[1].split("</article>")[0]
+    assert support.count('data-glyph="ext"') == 3

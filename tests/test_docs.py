@@ -67,14 +67,18 @@ class _FakeP3LLM:
         return ChatResult(content=json.dumps(payload), model=self.settings.llm.tiers[tier].model)
 
 
-async def test_hallucinated_key_falls_back_to_defaults_not_the_bad_key(sm):
+async def test_hallucinated_key_is_flagged_per_line_and_never_reaches_the_selection(sm):
     settings = get_settings()
     async with sm() as s:
         ids = await seed_all(s)
         catalog = await load_catalog(s, ids["resume"])
         sel = await select_config(s, _FakeP3LLM(settings), catalog)
-    assert sel.defaults_used is True  # validation failure -> flagged
-    assert sel.config["slots"]["r1b1"] == "cost"  # the DEFAULT, never the hallucinated key
+    # Tailor (14): the valid picks survive and only the failed line is surfaced, per line, as
+    # "needs your pick" (hard rule 2: surfaced, never silently defaulted, never written).
+    assert sel.defaults_used is False
+    assert sel.needs_pick == {"r1b1": "HALLUCINATED"}
+    assert sel.config["slots"]["r1b1"] == "cost"  # the operator's standard wording holds the line
+    assert sel.config["slots"]["r1b2"] == "accuracy"  # the valid picks are kept
     assert "HALLUCINATED" not in sel.config["slots"].values()
 
 

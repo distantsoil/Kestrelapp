@@ -1,0 +1,14 @@
+{# The answer to a link, name or feed check, inside the Add sheet (D-UI-102). A good answer
+   carries the pick that turns Add on; a refusal carries none and says what to do instead. #}
+{% import "ui/macros.html" as ui %}
+{% if tone == 'match' %}
+<div class="src-match" data-testid="check-match">
+  <b>{{ text }}</b><span class="src-sub">{{ extra }}</span>
+  <input type="hidden" name="pick" value="{{ pick }}">
+</div>
+<div class="k-field"><label for="sh-name">Name in your list</label><input id="sh-name" class="k-input" type="text" name="company" value="{{ name }}"></div>
+{% else %}
+<div class="src-msg is-{{ 'good' if tone == 'good' else ('bad' if tone == 'bad' else ('warn' if tone == 'warn' else 'info')) }}" role="status" data-testid="check-{{ tone }}">{{ ui.icon('check' if tone in ('good', 'info') else 'alert') }}<div>{{ text }}</div></div>
+{% if pick %}<input type="hidden" name="pick" value="{{ pick }}">{% endif %}
+{% if pick and name %}<div class="k-field"><label for="sh-name">Name in your list</label><input id="sh-name" class="k-input" type="text" name="company" value="{{ name }}"></div>{% endif %}
+{% endif %}

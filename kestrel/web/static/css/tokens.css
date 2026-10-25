@@ -1,0 +1,220 @@
+/* Kestrel design tokens (UI overhaul, Phase 1). Source: the private overhaul notes*-locked.html,
+   conflicts resolved in favor of the settings mockup. Paper and Indigo is the default scheme;
+   Teal, Plum and Graphite are [data-scheme] overrides that move only the accent family.
+   Theme: the OS preference applies unless <html data-theme="light|dark"> pins it.
+   Every UI color comes from here; components.css holds no color literal (tests/test_ui_tokens.py).
+   Text-on-ground pairs are held at WCAG AA (4.5:1) in both themes and all four schemes by the
+   same test; change a value here only with that test green.
+   The scene tokens (--sky-* --m* --tree* --orb --glow --water* ...) feed the scene art in
+   static/js/scenes/ (the locked design mockup (kept privately)/CONTRACT.md). */
+
+/* ---- light (also what a pinned light theme gets), and the shared non-color tokens.
+   Every selector here is written :root:root:root (specificity 0,3,0) and the sheet loads AFTER
+   the legacy kestrel.css, so these tokens win on every name both sheets define (--paper --ink
+   --line --muted --good --warn --bad --shadow, and the --bg alias chain), in light, dark and
+   every scheme. The legacy sheet's highest token selector is 0,3,0 (teal, dark), so a tie
+   also goes to this file by source order. Legacy-only names (--accent --warm --keep ...) keep
+   resolving from kestrel.css. tests/test_ui_tokens.py checks the effective cascade. ---- */
+:root:root:root {
+  --font:"Manrope","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;
+  --fs-xs:11px;--fs-sm:12.5px;--fs-md:14px;--fs-lg:16px;--fs-xl:19px;--fs-2xl:28px;--fs-3xl:34px;
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:20px;--sp-6:24px;--sp-7:32px;--sp-8:40px;
+  --r-xs:5px;--r-sm:8px;--r-md:10px;--r-lg:14px;--r-xl:16px;--r-pill:20px;
+  --side-w:232px;--side-w-narrow:68px;--help-w:330px;--content-pad:30px;--flyout-w:440px;--slideover-w:470px;--modal-w:520px;
+  --ease:cubic-bezier(.22,.8,.3,1);--dur-1:.15s;--dur-2:.3s;--dur-3:.45s;
+  --z-overlay:30;--z-flyout:40;--z-toast:60;
+  color-scheme:light;
+  --bg:#F5F7FC;--paper:#FFFFFF;--side:#FFFFFF;--ink:#141A33;--muted:#454C69;--line:#E3E7F1;--soft:#EEF1FD;
+  --brand:#4F5BD5;--brand-ink:#FFFFFF;--brand-2:#9AA3F5;
+  --good:#1E8E5A;--good-bg:#E4F6EC;--warn:#B26A00;--warn-bg:#FFF2D9;--bad:#C2413B;--bad-bg:#FDE9E7;
+  --good-ink:#14683F;--warn-ink:#7A4800;--bad-ink:#A32D28;
+  --tint-warn:#FFF8EA;--tint-warn-line:#F6E2B8;--tint-info:#F1F4FF;--tint-info-line:#DCE2FB;
+  --link-ink:#3B46B8;--chip-i-bg:#E7EAFD;--chip-i-ink:#3540A8;
+  --tg0:#FDE9E7;--tg0i:#B23A34;--tg1:#FFF2D9;--tg1i:#8A5300;--tg2:#E6EDFF;--tg2i:#3A55C8;--tg3:#EFE8FF;--tg3i:#6A44C8;--tgd:#E4F6EC;--tgdi:#1E7A4E;
+  --shadow:0 10px 28px rgba(20,26,51,.10);--shadow-pop:0 10px 28px rgba(20,26,51,.10),0 24px 60px rgba(20,26,51,.18);--shadow-side:-18px 0 40px rgba(10,14,34,.18);--shadow-soft:0 1px 3px rgba(20,26,51,.08);
+  --scrim:rgba(10,14,34,.18);--wash:rgba(255,255,255,.2);--toast-bg:#1B2140;--toast-ink:#FFFFFF;--toast-action:#C3C9FF;
+  --main-bg:linear-gradient(180deg,#E1E8FF 0,#F5F7FC 460px);--side-bg:#FFFFFF;
+  --sky-top:#F5F7FC;--sky-bot:#E1E8FF;--m1:#D3DCFB;--m1s:#BCC8F6;--m2:#AFBDF3;--m2s:#93A3EC;--m3:#7F8FE4;--m3s:#6A7BDB;--snow:#FFFFFF;--tree:#4E5CD2;--tree2:#6B79DE;--tree3:#8B97E8;--orb:#F7C873;--glow:#FBE3AE;--mist:#FFFFFF;--bird:#5E6584;--z1:#E8857D;--z2:#EDBF55;--z3:#5DBB8A;
+  --water:#C3CFF8;--water2:#9FB0F0;--lite:#F7C873;--sand:#E6E1F7;--sand2:#CFC6EE;--leaf:#8E9BE6;--aur1:#7FD8C4;--aur2:#B49BF0;
+}
+/* ---- dark: the OS preference, unless the page pins light ---- */
+@media (prefers-color-scheme: dark) {
+  :root:root:root:not([data-theme="light"]) {
+    --bg:#070A18;--paper:#121834;--side:#0A0E22;--ink:#E8EBF8;--muted:#B6BCD8;--line:#262C48;--soft:#1D2343;
+    --brand:#7B86F0;--brand-ink:#0D1122;--brand-2:#4F5BD5;
+    --good:#4CC98A;--good-bg:#163426;--warn:#F2B44C;--warn-bg:#3A2B10;--bad:#F07A73;--bad-bg:#3D1C1B;
+    --good-ink:#4CC98A;--warn-ink:#F2B44C;--bad-ink:#FFB4AE;
+    --tint-warn:#211C14;--tint-warn-line:#4A3A1C;--tint-info:#161D38;--tint-info-line:#2B3563;
+    --link-ink:#C3C9FF;--chip-i-bg:#2A3270;--chip-i-ink:#DDE1FF;
+    --tg0:#3D1C1B;--tg0i:#F4A29C;--tg1:#3A2B10;--tg1i:#F2C46E;--tg2:#1B2650;--tg2i:#9DB0FF;--tg3:#2A1E4F;--tg3i:#C3AEFF;--tgd:#163426;--tgdi:#7FD8A6;
+    --shadow:0 10px 28px rgba(0,0,0,.45);--shadow-pop:0 10px 28px rgba(0,0,0,.45),0 24px 60px rgba(0,0,0,.5);--shadow-side:-18px 0 40px rgba(0,0,0,.5);--shadow-soft:0 1px 3px rgba(0,0,0,.4);
+    --scrim:rgba(3,5,12,.5);--wash:rgba(255,255,255,.14);--toast-bg:#E8EBF8;--toast-ink:#141A33;--toast-action:#3B46B8;
+    --main-bg:linear-gradient(180deg,#2C3A86 0,#1A2358 300px,#0D1230 650px,#070A18 100%);--side-bg:linear-gradient(180deg,#141B3E 0,#090D20 50%,#03050C 100%);
+    --sky-top:#0E1330;--sky-bot:#2C3A86;--m1:#33408A;--m1s:#2A3576;--m2:#283270;--m2s:#1F285D;--m3:#1C2456;--m3s:#161D48;--snow:#AEB8EE;--tree:#111842;--tree2:#18205A;--tree3:#212B6C;--orb:#F1EBCF;--glow:#8E96D6;--mist:#6D79C8;--bird:#AEB4D6;--z1:#B4524B;--z2:#B88A2E;--z3:#3A9A6A;
+    --water:#25307A;--water2:#1A2360;--lite:#F2D488;--sand:#2E3578;--sand2:#252C66;--leaf:#2A3577;--aur1:#4FC7A9;--aur2:#9C7FE8;
+    color-scheme:dark;
+  }
+}
+
+/* ---- dark: pinned ---- */
+:root:root:root[data-theme="dark"] {
+  --bg:#070A18;--paper:#121834;--side:#0A0E22;--ink:#E8EBF8;--muted:#B6BCD8;--line:#262C48;--soft:#1D2343;
+  --brand:#7B86F0;--brand-ink:#0D1122;--brand-2:#4F5BD5;
+  --good:#4CC98A;--good-bg:#163426;--warn:#F2B44C;--warn-bg:#3A2B10;--bad:#F07A73;--bad-bg:#3D1C1B;
+  --good-ink:#4CC98A;--warn-ink:#F2B44C;--bad-ink:#FFB4AE;
+  --tint-warn:#211C14;--tint-warn-line:#4A3A1C;--tint-info:#161D38;--tint-info-line:#2B3563;
+  --link-ink:#C3C9FF;--chip-i-bg:#2A3270;--chip-i-ink:#DDE1FF;
+  --tg0:#3D1C1B;--tg0i:#F4A29C;--tg1:#3A2B10;--tg1i:#F2C46E;--tg2:#1B2650;--tg2i:#9DB0FF;--tg3:#2A1E4F;--tg3i:#C3AEFF;--tgd:#163426;--tgdi:#7FD8A6;
+  --shadow:0 10px 28px rgba(0,0,0,.45);--shadow-pop:0 10px 28px rgba(0,0,0,.45),0 24px 60px rgba(0,0,0,.5);--shadow-side:-18px 0 40px rgba(0,0,0,.5);--shadow-soft:0 1px 3px rgba(0,0,0,.4);
+  --scrim:rgba(3,5,12,.5);--wash:rgba(255,255,255,.14);--toast-bg:#E8EBF8;--toast-ink:#141A33;--toast-action:#3B46B8;
+  --main-bg:linear-gradient(180deg,#2C3A86 0,#1A2358 300px,#0D1230 650px,#070A18 100%);--side-bg:linear-gradient(180deg,#141B3E 0,#090D20 50%,#03050C 100%);
+  --sky-top:#0E1330;--sky-bot:#2C3A86;--m1:#33408A;--m1s:#2A3576;--m2:#283270;--m2s:#1F285D;--m3:#1C2456;--m3s:#161D48;--snow:#AEB8EE;--tree:#111842;--tree2:#18205A;--tree3:#212B6C;--orb:#F1EBCF;--glow:#8E96D6;--mist:#6D79C8;--bird:#AEB4D6;--z1:#B4524B;--z2:#B88A2E;--z3:#3A9A6A;
+  --water:#25307A;--water2:#1A2360;--lite:#F2D488;--sand:#2E3578;--sand2:#252C66;--leaf:#2A3577;--aur1:#4FC7A9;--aur2:#9C7FE8;
+  color-scheme:dark;
+}
+/* ---- color schemes (Paper and Indigo is the default and needs no override) ---- */
+:root:root:root[data-scheme="indigo"] {
+    --brand-2:#9AA3F5;
+}
+/* Paper and Teal (brand darkened from the mockup 0E7C74 so brand text on --soft clears 4.5:1) */
+:root:root:root[data-scheme="teal"] {
+  --brand:#0B726B;
+  --soft:#E2F4F2;
+  --tint-info:#EFF9F8;
+  --tint-info-line:#CDE8E5;
+  --link-ink:#0A5F59;
+  --chip-i-bg:#DDF1EF;
+  --chip-i-ink:#0A5F59;
+}
+/* Paper and Plum */
+:root:root:root[data-scheme="plum"] {
+  --good:#14683F;--warn:#7A4800;--bad:#A32D28;
+  --brand:#8A3A8F;--brand-2:#8A3A8F;
+  --soft:#F5E8F6;
+  --tint-info:#FAF1FA;
+  --tint-info-line:#EBD3EC;
+  --link-ink:#6E2873;
+  --chip-i-bg:#F1DEF2;
+  --chip-i-ink:#6E2873;
+}
+/* Paper and Graphite */
+:root:root:root[data-scheme="graphite"] {
+  --good:#14683F;--warn:#7A4800;--bad:#A32D28;
+  --brand:#3F4660;--brand-2:#3F4660;
+  --soft:#ECEEF4;
+  --tint-info:#F3F4F8;
+  --tint-info-line:#D9DCE6;
+  --link-ink:#2F3650;
+  --chip-i-bg:#E3E6EF;
+  --chip-i-ink:#2F3650;
+}
+@media (prefers-color-scheme: dark) {
+  :root:root:root:not([data-theme="light"])[data-scheme="teal"] {
+    --brand:#4DD0C4;
+    --brand-ink:#04211E;
+    --soft:#12302D;
+    --tint-info:#0F2624;
+    --tint-info-line:#1F4A46;
+    --link-ink:#9BE8E0;
+    --chip-i-bg:#16403C;
+    --chip-i-ink:#C9F5F0;
+  }
+  :root:root:root:not([data-theme="light"])[data-scheme="plum"] {
+  --good:#4CC98A;--warn:#F2B44C;--bad:#F07A73;
+    --brand:#D68CDB;--brand-2:#D68CDB;
+    --brand-ink:#2A0F2D;
+    --soft:#3A1F3D;
+    --tint-info:#2A172D;
+    --tint-info-line:#52305A;
+    --link-ink:#EBC0EE;
+    --chip-i-bg:#4A2A4E;
+    --chip-i-ink:#F5DDF7;
+  }
+  :root:root:root:not([data-theme="light"])[data-scheme="graphite"] {
+  --good:#4CC98A;--warn:#F2B44C;--bad:#F07A73;
+    --brand:#AEB6D6;--brand-2:#AEB6D6;
+    --brand-ink:#12162A;
+    --soft:#262B3F;
+    --tint-info:#1B2033;
+    --tint-info-line:#363D5A;
+    --link-ink:#D3D8EE;
+    --chip-i-bg:#31374F;
+    --chip-i-ink:#E4E8F7;
+  }
+}
+:root:root:root[data-theme="dark"][data-scheme="teal"] {
+  --brand:#4DD0C4;
+  --brand-ink:#04211E;
+  --soft:#12302D;
+  --tint-info:#0F2624;
+  --tint-info-line:#1F4A46;
+  --link-ink:#9BE8E0;
+  --chip-i-bg:#16403C;
+  --chip-i-ink:#C9F5F0;
+}
+:root:root:root[data-theme="dark"][data-scheme="plum"] {
+  --good:#4CC98A;--warn:#F2B44C;--bad:#F07A73;
+  --brand:#D68CDB;--brand-2:#D68CDB;
+  --brand-ink:#2A0F2D;
+  --soft:#3A1F3D;
+  --tint-info:#2A172D;
+  --tint-info-line:#52305A;
+  --link-ink:#EBC0EE;
+  --chip-i-bg:#4A2A4E;
+  --chip-i-ink:#F5DDF7;
+}
+:root:root:root[data-theme="dark"][data-scheme="graphite"] {
+  --good:#4CC98A;--warn:#F2B44C;--bad:#F07A73;
+  --brand:#AEB6D6;--brand-2:#AEB6D6;
+  --brand-ink:#12162A;
+  --soft:#262B3F;
+  --tint-info:#1B2033;
+  --tint-info-line:#363D5A;
+  --link-ink:#D3D8EE;
+  --chip-i-bg:#31374F;
+  --chip-i-ink:#E4E8F7;
+}
+
+/* Preview colors stay constant when the active theme or scheme changes. */
+:root:root:root {
+  --scheme-indigo-light:#4F5BD5;--scheme-indigo-dark:#7B86F0;
+  --scheme-teal-light:#0B726B;--scheme-teal-dark:#4DD0C4;
+  --scheme-plum-light:#8A3A8F;--scheme-plum-dark:#D68CDB;
+  --scheme-graphite-light:#3F4660;--scheme-graphite-dark:#AEB6D6;
+  --scheme-contrast-light:#000066;--scheme-contrast-dark:#FFFF00;
+}
+
+/* High contrast: plain surfaces, full-strength ink and no subtle status tints.
+   Aliases cover the remaining legacy pages as well as the design system. */
+:root:root:root[data-scheme="contrast"] {
+  --bg:#FFFFFF;--paper:#FFFFFF;--ink:#000000;--brand:#000066;--brand-ink:#FFFFFF;
+  --side:var(--paper);--muted:var(--ink);--line:var(--ink);--soft:var(--paper);
+  --brand-2:var(--brand);--link-ink:var(--brand);--focus-ring:var(--ink);
+  --good:var(--ink);--warn:var(--ink);--bad:var(--ink);
+  --good-ink:var(--ink);--warn-ink:var(--ink);--bad-ink:var(--ink);
+  --good-bg:var(--paper);--warn-bg:var(--paper);--bad-bg:var(--paper);
+  --tint-info:var(--paper);--tint-warn:var(--paper);
+  --tint-info-line:var(--line);--tint-warn-line:var(--line);
+  --chip-i-bg:var(--paper);--chip-i-ink:var(--ink);
+  --tg0:var(--paper);--tg1:var(--paper);--tg2:var(--paper);--tg3:var(--paper);--tgd:var(--paper);
+  --tg0i:var(--ink);--tg1i:var(--ink);--tg2i:var(--ink);--tg3i:var(--ink);--tgdi:var(--ink);
+  --toast-bg:var(--paper);--toast-ink:var(--ink);--toast-action:var(--brand);
+  --main-bg:var(--bg);--side-bg:var(--paper);
+  --shadow:none;--shadow-pop:none;--shadow-side:none;--shadow-soft:none;
+  --wash:transparent;
+  --accent:var(--brand);--accent-deep:var(--brand);--accent-tint:var(--paper);
+  --action:var(--brand);--action-fg:var(--brand-ink);
+  --warm:var(--bg);--bg-alt:var(--paper);--panel:var(--paper);--border:var(--line);
+  --text:var(--ink);--orange:var(--brand);--orange-600:var(--brand);--orange-100:var(--paper);
+  --good-tint:var(--paper);--warn-tint:var(--paper);--bad-tint:var(--paper);
+  --keep:var(--ink);--keep-tint:var(--paper);--keep-fg:var(--ink);--ok:var(--ink);
+}
+@media (prefers-color-scheme: dark) {
+  :root:root:root:not([data-theme="light"])[data-scheme="contrast"] {
+    --bg:#000000;--paper:#000000;--ink:#FFFFFF;--brand:#FFFF00;--brand-ink:#000000;
+  }
+}
+:root:root:root[data-theme="dark"][data-scheme="contrast"] {
+  --bg:#000000;--paper:#000000;--ink:#FFFFFF;--brand:#FFFF00;--brand-ink:#000000;
+}

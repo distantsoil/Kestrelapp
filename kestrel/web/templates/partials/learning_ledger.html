@@ -26,7 +26,7 @@
     <tbody>
       {% for r in rows %}
       <tr>
-        <td class="mono">{{ (r.created_at or '')[:10] }}</td>
+        <td class="mono">{{ date_display(r.created_at) }}</td>
         <td>
           <a href="/opportunities/{{ r.opportunity_id }}">{{ r.title or 'untitled' }}</a>
           <span class="muted">{{ r.org or '' }} · {{ r.track }}</span>
@@ -145,7 +145,7 @@
         <dt>Reranker</dt>
         <dd>
           {% if t.reranker.active %}
-            promoted, trained {{ (t.reranker.trained_at or '')[:10] }} on {{ t.reranker.n_samples }} decisions
+            promoted, trained {{ date_display(t.reranker.trained_at) }} on {{ t.reranker.n_samples }} decisions
             under sklearn {{ t.reranker.sklearn_version }}{% if not t.reranker.loadable %};
             <b>its files are missing or built under another sklearn, so the quick screen falls back to the model</b>{% endif %}.
             {{ t.reranker.labels_since_training }} decision{{ '' if t.reranker.labels_since_training == 1 else 's' }}
@@ -154,7 +154,7 @@
             not promoted; the rule-based quick screen is in charge.
           {% endif %}
           {% if t.reranker.last_drift_demotion_at %}
-            Last demoted for drift {{ t.reranker.last_drift_demotion_at[:10] }}.
+            Last demoted for drift {{ date_display(t.reranker.last_drift_demotion_at) }}.
           {% endif %}
         </dd>
       </dl>
@@ -172,7 +172,7 @@
         <td class="mono">{{ f.name }}</td>
         <td class="mono">{{ f.size|comma }} bytes</td>
         <td>{{ f.track or '' }}</td>
-        <td class="mono">{{ (f.trained_at or '')[:19] }}</td>
+        <td class="mono">{{ date_display(f.trained_at, kind='datetime', time_style='24h_seconds', separator='T') }}</td>
         <td class="mono">{{ f.sklearn_version or '' }}</td>
         <td>{% if f.active %}<span class="pill ok">active</span>{% endif %}
             {% if not f.kestrel_wrote_it %}<span class="pill grey">not Kestrel's; reset leaves it</span>{% endif %}</td>

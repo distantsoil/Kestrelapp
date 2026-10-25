@@ -104,7 +104,9 @@ def _real_identity_terms() -> list[str]:
         for track in data.values():
             if not isinstance(track, dict):
                 continue
-            for key in ("full_name", "email", "phone", "location", "headline"):
+            for key in (
+                "first_name", "last_name", "full_name", "email", "phone", "location", "headline",
+            ):
                 val = track.get(key)
                 if isinstance(val, str) and len(val.strip()) > 3:
                     terms.append(val.strip())
@@ -170,13 +172,11 @@ async def _seed(sm) -> dict:
         Pursuit,
         Quarantine,
         Run,
-        Setting,
         Source,
         StatusEvent,
     )
     from kestrel.docs.seed import _ensure_layouts
     from kestrel.services import onboarding as ob
-    from kestrel.web.deps import GUIDES
 
     ids: dict = {}
     async with sm() as s:
@@ -363,7 +363,6 @@ async def _seed(sm) -> dict:
         await _ensure_layouts(s)
         # A finished onboarding, so "/" is Today and "/setup" is Settings > System.
         await ob.save(s, ob.OnboardingState(completed=True, completed_at=now.isoformat()))
-        s.add(Setting(key="ui.guides_dismissed", value=[k for k in GUIDES if k != "today"]))
 
         s.add(
             Run(

@@ -12,13 +12,26 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 
 # ------------------------------------------------------------------------------------ validators
 def _truncate(n: int) -> AfterValidator:
     def v(x):
         return x[:n] if isinstance(x, str) else x
+
+    return AfterValidator(v)
+
+
+def _truncate_words(n: int) -> AfterValidator:
+    """Cut an overlong string at a word boundary and end it with an ellipsis, so it never reads
+    as a clipped sentence. Truncation, never rejection."""
+
+    def v(x):
+        if not isinstance(x, str) or len(x) <= n:
+            return x
+        cut = x[: n - 1].rsplit(" ", 1)[0].rstrip(" ,;:.")
+        return (cut or x[: n - 1]) + "\u2026"
 
     return AfterValidator(v)
 
@@ -768,6 +781,54 @@ class P15TitleSuggestions(_Base):
     titles: Annotated[list[P15Title], _cap(10), _max_items(10)]
 
 
+# ===== P16 — company summary (sourced, advisory, displayed only; D-LLM-9)
+# The registered model takes any integer source index; kestrel.research.org_summary builds a
+# per-call subclass whose indexes are an enum of the supplied excerpt indexes and which checks every
+# figure against the excerpts the sentence cites (the P3 and P13 pattern, plus the figure check).
+ORG_TAG_KEYS = ("does", "serves", "direction", "hiring")
+MAX_SUMMARY_SENTENCES = 5
+MAX_SUMMARY_TAGS = 4
+
+
+class P16Sentence(_Base):
+    text: Annotated[str, _truncate_words(300)]
+    source_indexes: Annotated[list[int], _dedupe_cap(4), _max_items(4)]
+
+
+class P16Tag(_Base):
+    key: Literal["does", "serves", "direction", "hiring"]
+    text: Annotated[str, _truncate_words(80)]
+    source_indexes: Annotated[list[int], _dedupe_cap(3), _max_items(3)]
+
+
+class P16OrgSummary(_Base):
+    sentences: Annotated[
+        list[P16Sentence], _cap(MAX_SUMMARY_SENTENCES), _max_items(MAX_SUMMARY_SENTENCES)
+    ]
+    tags: Annotated[list[P16Tag], _cap(MAX_SUMMARY_TAGS), _max_items(MAX_SUMMARY_TAGS)]
+    insufficient: bool
+
+
+class P17FollowUp(_Base):
+    subject: Annotated[str, _truncate(160)]
+    body: Annotated[str, _truncate(1200)]
+    checks: Annotated[list[Annotated[str, _truncate(240)]], _cap(5), _max_items(5)]
+
+    @field_validator("subject", "body")
+    @classmethod
+    def usable_text(cls, value: str) -> str:
+        if not value.strip() or "\u2014" in value:
+            raise ValueError("Use nonempty text without em dashes")
+        return value.strip()
+
+    @field_validator("checks")
+    @classmethod
+    def plain_checks(cls, value: list[str]) -> list[str]:
+        if any("\u2014" in item for item in value):
+            raise ValueError("Use checks without em dashes")
+        return value
+
+
 # Registry: prompt version string -> pydantic model. Used by the guard/caller to pick the model.
 SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "triage/v1": P1Triage,
@@ -790,4 +851,6 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "resume_assess/v1": P13ResumeAssess,
     "interview_questions/v1": P14InterviewQuestions,
     "title_suggest/v1": P15TitleSuggestions,
+    "org_summary/v1": P16OrgSummary,
+    "follow_up/v1": P17FollowUp,
 }

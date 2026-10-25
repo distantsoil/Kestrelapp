@@ -1,0 +1,11 @@
+{# About's answer to Check for updates (D-UI-125). Kestrel only says a version exists and where
+   to get it; there is no self-update. Token classes only; the last-checked line swaps out of band. #}
+{% from "ui/macros.html" import icon %}
+{% if outcome == 'available' %}
+<span class="ab-res is-info" role="status" data-testid="update-result">Kestrel {{ version }} is available. <a class="k-link" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co</a></span>
+{% elif outcome == 'current' %}
+<span class="ab-res is-good" role="status" data-testid="update-result">{{ icon('check', 'k-ic--sm') }}You have the latest version</span>
+{% else %}
+<span class="ab-res" role="status" data-testid="update-result">Couldn’t reach kestrelapp.co. Kestrel will try again later.</span>
+{% endif %}
+<span id="update-last-checked" class="ab-last" hx-swap-oob="true">Last checked: {{ last_checked }}</span>

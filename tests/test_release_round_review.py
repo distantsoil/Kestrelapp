@@ -199,7 +199,9 @@ def test_2_a_linkedin_only_source_stays_off_says_why_and_offers_the_default_boar
         JobSpyAdapter().validate_config(src.config)  # a run-now or scheduled scan refuses
     with _client() as c:
         page = c.get("/sources").text
-        assert 'data-testid="no-boards"' in page and "Use Kestrel's default boards" in page
+        assert "default boards" in page.split('data-testid="source-reason"')[1]  # the row says why
+        drawer = c.get(f"/sources/{sid}/drawer").text
+        assert 'data-testid="no-boards"' in drawer and "Use Kestrel's default boards" in drawer
         refused = c.post(f"/sources/{sid}/toggle").text
         assert "default boards" in refused
         assert _run(lambda s: s.get(Source, sid)).enabled is False  # Turn on did not turn it on

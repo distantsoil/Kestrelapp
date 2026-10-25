@@ -1,0 +1,149 @@
+{# The slide-over panel for one card (D-UI-100). Same shell as Pipeline's panel: it slides over the
+   board, never pushes it. Record buttons say what the operator did; none of them sends or
+   contacts anything. #}
+{% import "partials/pursuit_icons.html" as ic %}
+{% set p = c.pursuit %}
+{% set wide = track == 'consulting' %}
+<div class="ap-panel-body" data-panel-id="{{ p.id }}" data-testid="apps-panel">
+<div class="k-flyout__head">
+  <div class="k-grow">
+    <small class="ap-kind" data-col="{{ c.column }}">{{ c.stage_label }}</small>
+    <h2 id="ap-panel-t">{{ c.title }}</h2>
+    <div class="ap-o">{{ c.org_name or 'Unknown organization' }}{% if c.place %} · {{ c.place }}{% endif %}</div>
+  </div>
+  <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ ic.icon('x') }}</button>
+</div>
+<div class="k-flyout__body">
+  <div class="ap-pmeta">
+    {% if c.fit.score %}<span class="k-pill k-pill--good">{{ ic.icon('check') }}Fit {{ c.fit.score }}</span>{% else %}<span class="k-pill k-pill--info">Being scored</span>{% endif %}
+    <button type="button" class="ap-stg" data-stage-menu aria-haspopup="menu" aria-label="Stage: {{ c.stage_label }}. Change stage">{{ c.stage_label }}{{ ic.icon('down', 'k-ic--sm') }}</button>
+    {% if c.priority %}<span class="k-pill k-pill--bad">High priority</span>{% endif %}
+    {% if c.pay %}<span class="ap-v">{{ c.pay }}</span>{% endif %}
+  </div>
+
+  {% if c.folded %}
+  <section class="ap-lead ap-lead--closed">
+    <h4>{{ c.stage_label }}{% if c.closed_on %} · closed {{ c.closed_on }}{% endif %}</h4>
+    <p>{% set fstage = (outcome.furthest_stage if outcome else none) or p.outcome_stage %}{% set freason = reason %}{% if fstage %}Furthest stage: {{ stage_label(fstage) }}{% else %}Furthest stage: not recorded{% endif %}{% if outcome and outcome.days_to_first_response is not none %} · first reply after {{ outcome.days_to_first_response }} days{% endif %}{% if freason %}<br>{{ freason }}{% endif %}</p>
+  </section>
+  {% else %}
+  <section class="ap-lead{% if c.overdue %} is-late{% endif %}">
+    <h4>{% if c.next.text %}Next: {{ c.next.text }}{% else %}No next step yet{% endif %}</h4>
+    <p>{% if c.next.text %}{% if c.quiet_days %}{{ c.next.when|capitalize }}. {{ c.quiet_days }} days with no update.{% elif c.next.when %}{{ c.next.when|capitalize }}.{% endif %}{% else %}Add one from Follow-ups so it shows there.{% endif %}</p>
+  </section>
+  {% endif %}
+
+  <section class="ap-sec">
+    <h4>Record what happened</h4>
+    <div class="ap-rbtns">
+      {% for label, key in buttons %}
+        {% if key.startswith('form:') %}
+        <button type="button" class="k-btn k-btn--sm{% if loop.first and not c.folded %} ap-nx{% endif %}" data-testid="rec-{{ key[5:] }}"
+                hx-get="/pursuits/{{ p.id }}/panel?form={{ key[5:] }}" hx-target="#ap-panel-in" hx-swap="innerHTML">{{ label }}</button>
+        {% else %}
+        <button type="button" class="k-btn k-btn--sm{% if loop.first and not c.folded %} ap-nx{% endif %}" data-testid="rec-{{ key }}"
+                hx-post="/pursuits/{{ p.id }}/act/{{ key }}">{{ label }}</button>
+        {% endif %}
+      {% endfor %}
+      <a class="k-btn k-btn--sm" href="/prep/{{ c.opp.id }}?auto=1" data-testid="board-interview-prep">{{ words(track).interview_prep }}</a>
+      {% if c.column in ('to_apply', 'to_contact') %}<a class="k-btn k-btn--sm" href="{{ c.tailor_href }}" data-testid="panel-tailor">{{ 'Capability statement' if wide else 'Tailor resume' }}</a>{% endif %}
+    </div>
+
+    {% if form == 'applied' %}
+    <form class="ap-pform" hx-post="/pursuits/{{ p.id }}/act/applied" data-testid="form-applied">
+      <h4>{{ 'Record that you reached out' if wide else 'Record that you applied' }}</h4>
+      <input type="hidden" name="panel" value="{{ p.id }}">
+      <label class="ap-fl">Which {{ 'document' if wide else 'resume' }} did you send?
+        <select name="document_id">
+          <option value="">None / not tailored</option>
+          {% for d in c.docs %}<option value="{{ d.id }}" {% if d.id == c.default_doc %}selected{% endif %}>{{ d.label }}</option>{% endfor %}
+        </select></label>
+      <details class="ap-disc"><summary>{{ 'Reached out' if wide else 'Applied' }} today, {{ today[5:7]|int }}/{{ today[8:10]|int }}</summary>
+        <label class="ap-fl">{{ 'Reached out' if wide else 'Applied' }} on<input type="date" name="applied_on" value="{{ today }}"></label></details>
+      <label class="ap-fl">Follow up on<input type="date" name="follow_up" value="{{ follow_up }}"></label>
+      <p class="ap-v">Kestrel adds a follow-up reminder. It never contacts anyone for you.</p>
+      <div class="ap-actions"><button type="submit" class="k-btn k-btn--primary k-btn--sm">Save</button>
+        <button type="button" class="k-btn k-btn--sm" hx-get="/pursuits/{{ p.id }}/panel" hx-target="#ap-panel-in" hx-swap="innerHTML">Cancel</button></div>
+    </form>
+    {% elif form == 'interview' %}
+    <form class="ap-pform" hx-post="/pursuits/{{ p.id }}/act/{{ 'call' if wide else 'interview' }}" data-testid="form-interview">
+      <h4>{{ 'Call scheduled' if wide else 'Interview scheduled' }}</h4>
+      <input type="hidden" name="panel" value="{{ p.id }}">
+      <div class="ap-frow2">
+        <label class="ap-fl">Date<input type="date" name="when" value="{{ today }}" required></label>
+        <label class="ap-fl">Time <span class="ap-v">(optional)</span><input type="time" name="at_time"></label>
+      </div>
+      <label class="ap-fl">What kind
+        <select name="kind">
+          {% if wide %}<option>Discovery call</option><option selected>Video call</option><option>Phone call</option>
+          {% else %}<option>Phone screen</option><option selected>Video call</option><option>On site</option>{% endif %}
+        </select></label>
+      <div class="ap-actions"><button type="submit" class="k-btn k-btn--primary k-btn--sm">Save</button>
+        <button type="button" class="k-btn k-btn--sm" hx-get="/pursuits/{{ p.id }}/panel" hx-target="#ap-panel-in" hx-swap="innerHTML">Cancel</button></div>
+    </form>
+    {% elif form == 'outcome' %}
+    <form class="ap-pform" hx-post="/pursuits/{{ p.id }}/outcome" data-testid="form-outcome">
+      <h4>How did it end?</h4>
+      <input type="hidden" name="panel" value="{{ p.id }}">
+      {% if reason_locked %}<input type="hidden" name="reason_locked" value="1">{% endif %}
+      <fieldset class="ap-fl"><legend>Result</legend>
+        <div class="ap-radios">
+          {% for st, label in results %}<label class="ap-radio"><input type="radio" name="final_status" value="{{ st }}" required {% if st == p.status %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}
+        </div>
+      </fieldset>
+      <div class="ap-frow2">
+        <label class="ap-fl">Furthest stage
+          <select name="furthest_stage">
+            {% for st, label in furthest %}<option value="{{ st }}" {% if st == ((outcome.furthest_stage if outcome else none) or p.outcome_stage or p.status) %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select></label>
+        <label class="ap-fl">Days to first reply<input type="number" min="0" name="days_to_first_response" value="{{ outcome.days_to_first_response if outcome and outcome.days_to_first_response is not none else '' }}" placeholder="Unknown"></label>
+      </div>
+      <label class="ap-fl">Reason (optional)<input name="rejection_reason" value="{{ reason }}" placeholder="What you learned, in a line" autocomplete="off"></label>
+      <p class="ap-v">Outcomes help Kestrel learn what leads somewhere. They stay on this computer.</p>
+      <div class="ap-actions"><button type="submit" class="k-btn k-btn--primary k-btn--sm">Save outcome</button>
+        <button type="button" class="k-btn k-btn--sm" hx-get="/pursuits/{{ p.id }}/panel" hx-target="#ap-panel-in" hx-swap="innerHTML">Cancel</button></div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="ap-sec">
+    <h4>Documents</h4>
+    {% for d in docs_used %}
+    <div class="ap-docl">{{ ic.icon('profile') }}<span class="k-grow">{{ d.label }}</span><a class="k-link" href="/renders/{{ d.id }}">Open</a></div>
+    {% else %}
+    <div class="ap-v">None yet. {{ 'Build a capability statement' if wide else 'Tailor a resume' }} for this role from the full role page.</div>
+    {% endfor %}
+    {% if p.applied_at %}<div class="ap-v">{{ 'Reached out' if wide else 'Applied' }} {{ short_date(p.applied_at) }}</div>{% endif %}
+  </section>
+
+  <section class="ap-sec">
+    <h4>Notes</h4>
+    {% if c.notes_locked %}
+    <textarea class="ap-note" aria-label="Notes" readonly data-testid="panel-notes">{{ c.notes }}</textarea>
+    <p class="ap-v">Confidential mode hides your employer in these notes, so they are read-only here.</p>
+    {% else %}
+    <textarea class="ap-note" name="notes" data-testid="panel-notes" aria-label="Notes" placeholder="Anything to remember: who you spoke with, what they asked"
+              hx-post="/pursuits/{{ p.id }}/notes" hx-trigger="change, keyup changed delay:700ms" hx-swap="none">{{ c.notes }}</textarea>
+    {% endif %}
+  </section>
+
+  {% if p.status not in ('shortlisted', 'preparing', 'researching') %}
+  <section class="ap-sec">
+    <form hx-post="/pursuits/{{ p.id }}/reposts" hx-trigger="change" hx-swap="none">
+      <label class="ap-check" title="Once applied, a new posting of the same role is hidden on arrival as a re-post. Tick to see such listings anyway."><input type="checkbox" name="allow" value="on" {% if p.allow_reposts %}checked{% endif %} aria-label="Show new listings of this role"> Show new listings of this role</label>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="ap-sec">
+    <h4>History</h4>
+    <div class="ap-hist" data-testid="panel-history">
+      {% for h in history %}<div class="ap-he{% if loop.first %} is-last{% endif %}"><i></i><b>{{ h.text }}</b><small>{{ h.date }}</small></div>{% endfor %}
+    </div>
+  </section>
+</div>
+<div class="k-flyout__foot">
+  <button type="button" class="k-btn" data-panel-remove data-id="{{ p.id }}" data-confirm="{{ 'offer' if c.has_offers else '' }}" data-testid="panel-remove">Remove</button>
+  <a class="k-btn k-btn--primary" href="/opportunities/{{ c.opp.id }}" data-testid="panel-full">Open full role {{ ic.icon('arrow', 'k-ic--sm') }}</a>
+</div>
+</div>

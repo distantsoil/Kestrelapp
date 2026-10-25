@@ -1,0 +1,20 @@
+{# The compact company card beside Your view: the public facts Kestrel has (blank when unknown,
+   never guessed), whether it has been researched, and the way to the Organization tab and the
+   Company page. #}
+{% from "partials/role_icons.html" import ric %}
+{% set bits = [org.sector, org.size_band, org.hq_location]|select|list if org else [] %}
+<section class="k-card rl-card" id="rl-company" data-testid="company-card">
+  <header class="k-sec-head"><span class="k-badge">{{ ric('building') }}</span><div class="k-grow"><h3>{{ org_name }}</h3></div></header>
+  {% if org %}
+    <div class="rl-dsm rl-dsm--ink" data-testid="company-facts">{% if bits %}{{ bits|map('replace', '_', ' ')|join(' · ') }}{% else %}Nothing public on file yet.{% endif %}</div>
+    <div class="rl-dsm" data-testid="company-research">{% if research %}Researched {{ date_display(research.researched_at) or 'earlier' }}{% if research.insufficient_sources %} (too few sources to rely on){% endif %}.{% else %}Not researched yet.{% endif %}</div>
+    <div class="rl-btns">
+      <button type="button" class="k-btn k-btn--sm" hx-post="/opportunities/{{ opp.id }}/role/research" hx-vals='{"kind": "company"}' hx-swap="none" data-busy-text="Researching the company…" data-testid="research-company">Research company</button>
+      {% if org_site and org_site.href %}<a class="k-btn k-btn--sm" href="{{ org_site.href }}" target="_blank" rel="noopener">Company website {{ ric('ext', 'k-ic--sm') }}</a>{% endif %}
+      <a class="k-btn k-btn--sm" href="/opportunities/{{ opp.id }}/organization" hx-get="/opportunities/{{ opp.id }}/tab/organization" hx-target="#rl-pane" hx-swap="innerHTML" hx-push-url="/opportunities/{{ opp.id }}/organization" data-tab="organization" data-testid="company-more">More</a>
+    </div>
+  {% else %}
+    <div class="rl-dsm">No company is linked to this {{ w.role }} yet{% if opp.org_name %} (the posting says {{ opp.org_name }}){% endif %}.</div>
+  {% endif %}
+  <div class="rl-dsm rl-fine">Public sources only. Blank when unknown, never guessed.</div>
+</section>

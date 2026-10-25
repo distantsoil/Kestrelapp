@@ -214,38 +214,35 @@ def test_page_renders_header_tabs_and_right_column():
         r = c.get(f"/opportunities/{ids['opp']}")
     assert r.status_code == 200
     html = r.text
-    # header: breadcrumb, title, the fit word (D-UI-45); the actions are in the decision panel
-    assert "Pipeline ›" in html
-    assert "VP of Information Technology" in html
-    assert 'data-testid="verdict-pill"' in html and 'data-fit="strong fit">strong fit<' in html
+    # header: breadcrumb, title, the primary posting button; no fit pill beside the title
+    assert 'href="/opportunities">Pipeline</a>' in html and "VP of Information Technology" in html
+    assert 'data-testid="open-posting"' in html and "Open original posting" in html
     assert ">apply<" not in html and "Start pursuit" not in html
-    assert "On my shortlist · applied" in html  # the seeded pursuit shows as the state
+    # the facts row
+    facts = html.split('data-testid="facts"')[1].split("</div>")[0]
+    for expected in (_EMPLOYER, "Austin, TX", "$230,000 to $260,000", "Found"):
+        assert expected in facts, expected
+    # five tabs, each with its own URL and loading its partial in place
+    for t in ("evaluation", "posting", "organization", "documents", "history"):
+        assert f"/opportunities/{ids['opp']}/tab/{t}" in html, t
+    assert f'href="/opportunities/{ids["opp"]}/posting"' in html
+    # the evaluation tab is rendered inline on the first paint
+    assert 'data-testid="verdict-pill"' in html and 'data-fit="strong fit"' in html
+    assert "The model and the scoring rules agree: strong fit." in html
+    assert "3,100 tokens in" in html and "a local model" in html
+    assert 'class="rl-dim"' in html and "Role fit" in html and "Domain match" in html
+    assert "Why it is a strong match" in html and "Written by Kestrel" in html
+    # the decision column: Shortlist is on (a pursuit exists), Prepare is open, Research is on
+    assert 'data-testid="on-my-list"' in html and "On my shortlist" in html
     assert (
         f"/renders/new?master_id={ids['master']}&amp;opportunity_id={ids['opp']}"
         f"&amp;from=/opportunities/{ids['opp']}"
     ) in html
-    assert ">Deeper read with a stronger model<" in html
-    assert f"/opportunities/{ids['opp']}/escalate" in html and "Escalate" not in html
-    # the fact row
-    facts = html.split('data-testid="facts"')[1].split("</div>")[0]
-    for expected in (_EMPLOYER, "Austin, TX, hybrid", "$230k to $260k", "via Greenhouse",
-                     "seen 3 times, unchanged"):
-        assert expected in facts, expected
-    # five tabs, each loading its partial
-    for t in ("evaluation", "posting", "organization", "documents", "history"):
-        assert f"/opportunities/{ids['opp']}/tab/{t}" in html, t
-    # the evaluation tab is rendered inline on the first paint
-    assert "The model and the scoring rules agree: strong fit." in html
-    # 4.6 and 4.5 differ, so both show, named for what they are (D-UI-45)
-    assert "4.6<small>model's score</small>" in html
-    assert "4.5<small>weighted score</small>" in html and "<small>holistic" not in html
-    assert "A · What this actually is" in html and "B · Why you" in html
-    assert "G · Legitimacy" in html and "Compensation corpus" in html
-    assert 'class="dimrow"' in html and "Role fit" in html
-    # right column
-    assert ">Disagree with the fit?<" in html and 'name="fit" value="maybe"' in html
-    assert 'id="tier3-card"' in html and "Nothing is sent until you confirm" in html
-    assert 'id="documents-card"' in html and "1 render for this role" in html
+    assert 'data-testid="research"' in html and 'data-testid="find-contacts"' in html
+    assert 'data-testid="escalate"' in html and ">Deeper read<" in html
+    # Your view replaces the always-visible override control
+    assert 'data-testid="your-view"' in html and 'name="fit" value="maybe"' not in html
+    assert 'data-testid="documents-card"' in html and "Tailored resume" in html
 
 
 def test_tab_partials_return_their_content():
@@ -255,8 +252,7 @@ def test_tab_partials_return_their_content():
         assert ev.status_code == 200
         assert 'data-tab="evaluation"' in ev.text
         assert "The model and the scoring rules agree" in ev.text
-        assert "What would worry a hiring committee" in ev.text  # the gaps list under B
-        assert "3,100 tokens in" in ev.text and "a local model" in ev.text
+        assert "Worth watching" in ev.text or "Gaps" in ev.text
 
         posting = c.get(f"/opportunities/{ids['opp']}/tab/posting")
         assert posting.status_code == 200
@@ -266,9 +262,10 @@ def test_tab_partials_return_their_content():
 
         org = c.get(f"/opportunities/{ids['opp']}/tab/organization")
         assert org.status_code == 200
-        assert "eighteen months into a roll-up" in org.text
         assert "Jane Doe" in org.text and "raised a round" in org.text
         assert f"/orgs/{ids['org']}" in org.text
+        assert "eighteen months into a roll-up" not in org.text  # the Company page owns it
+        assert "Not known" in org.text  # blank facts say so; nothing is guessed
 
         docs = c.get(f"/opportunities/{ids['opp']}/tab/documents")
         assert docs.status_code == 200
@@ -277,34 +274,45 @@ def test_tab_partials_return_their_content():
 
         hist = c.get(f"/opportunities/{ids['opp']}/tab/history")
         assert hist.status_code == 200
-        assert "Tier 2 evaluation" in hist.text and "kestrel-tier2" in hist.text
+        assert "Scored 4.6 by Full review" in hist.text and "kestrel-tier2" in hist.text
+        assert "prompt version evaluate/v1" in hist.text
         assert "shortlisted to applied" in hist.text
         assert "Deeper read sent to OpenRouter" in hist.text and "$0.0213" in hist.text
+        assert "Found on Greenhouse board" in hist.text
         assert "Tier 3 transmission" not in hist.text
 
+        for name in ("posting", "organization", "documents", "history"):
+            full = c.get(f"/opportunities/{ids['opp']}/{name}")
+            assert full.status_code == 200 and 'id="rl-body"' in full.text
+            assert f'data-tab="{name}"' in full.text
         assert c.get(f"/opportunities/{ids['opp']}/tab/nope").status_code == 404
         assert c.get("/opportunities/999999/tab/posting").status_code == 404
+        assert c.get("/opportunities/999999/posting").status_code == 404
         assert c.get("/opportunities/999999").status_code == 404
 
 
-def test_tier3_card_states_destination_and_estimate_and_sends_nothing():
+def test_deeper_read_asks_first_and_sends_nothing():
     ids = asyncio.run(_seed())
     with _client() as c:
-        html = c.get(f"/opportunities/{ids['opp']}").text
-    card = html.split('id="tier3-card"')[1].split('id="t3-escalate"')[0]
-    # destination: the configured backend and model (packaged settings.yml: OpenRouter)
-    assert "OpenRouter" in card
-    assert "anthropic/claude-sonnet-4.6" in card
-    # the token estimate from the read-only preview, and the cost line
-    assert "tokens in" in card
-    assert "cost depends on the model" in card or "about $" in card or "under $" in card
-    assert "Nothing is sent until you confirm" in card
-    # no key configured in tests: preview only, and the card says so
-    assert "Preview only" in card
-    # the card itself carries no send: no confirm form, no transmit button
-    assert "escalate/confirm" not in card
-    assert "Transmit" not in card
-    assert "confirmation_token" not in card
+        page = c.get(f"/opportunities/{ids['opp']}").text
+        assert "escalate/confirm" not in page and "confirmation_token" not in page
+        dlg = c.get(f"/opportunities/{ids['opp']}/role/deeper").text
+    # destination, model, what is sent and the cost before any send; no key in tests: preview only
+    assert "OpenRouter" in dlg and "anthropic/claude-sonnet-4.6" in dlg
+    assert "tokens in" in dlg and ("cost depends on the model" in dlg or "about $" in dlg)
+    assert "Show exactly what is sent" in dlg and 'name="confirmation_token"' in dlg
+    assert "Nothing is sent until you press Send" in dlg
+    # no key configured: the dialog is a preview only and offers no way to send
+    assert "Preview only" in dlg and 'data-testid="deeper-send"' not in dlg
+    assert "Transmit" not in dlg
+    # the send route refuses without the dialog's confirmation, whatever the page said
+    with _client() as c:
+        r = c.post(f"/opportunities/{ids['opp']}/role/deeper/send",
+                   data={"confirmation_token": "x"})
+        assert "Nothing was sent. Confirm in the dialog first." in r.headers["hx-trigger"]
+        r = c.post(f"/opportunities/{ids['opp']}/role/deeper/send",
+                   data={"confirmation_token": "x", "confirmed": "1"})
+        assert "Nothing was sent" in r.headers["hx-trigger"]
 
 
 def test_tier3_cost_uses_a_cached_price_and_never_the_network(monkeypatch):
@@ -345,7 +353,9 @@ def test_confidential_mode_redacts_the_employer_everywhere_on_the_page():
     assert f"VP of Information Technology at {_PLACEHOLDER}" in page
     assert f"Head of IT for {_PLACEHOLDER}" in page
     # the Tier 3 card says the employer is redacted before any send
-    assert "Employer redacted" in page.split('id="tier3-card"')[1]
+    with _client() as c:
+        dlg = c.get(f"/opportunities/{ids['opp']}/role/deeper").text
+    assert "your current employer is hidden" in dlg or "no redaction map" in dlg
 
 
 def test_confidential_mode_redacts_urls_source_and_dedup_copies_in_the_tabs():
@@ -361,8 +371,8 @@ def test_confidential_mode_redacts_urls_source_and_dedup_copies_in_the_tabs():
         assert _DOMAIN not in low and "northwindfreight" not in low, f"{name} leaked the domain"
         assert "northwind-freight" not in low, f"{name} leaked the board slug"
         assert "greenhouse.io" not in low, f"{name} kept a link that reveals the employer"
-    assert "source posting" in posting and f"{_PLACEHOLDER} careers" in posting
-    assert "Also seen (1)" in posting and f"VP IT, {_PLACEHOLDER}" in posting
+    assert f"{_PLACEHOLDER} careers" in posting
+    assert "Also posted on (1)" in posting and f"VP IT, {_PLACEHOLDER}" in posting
     assert "website redacted" in org and "https://" not in org.split("Website")[1][:200]
 
 
@@ -384,12 +394,9 @@ def test_confidential_mode_off_shows_the_real_name():
 
 
 # ------------------------------------------------------------------------------ your call
-def test_override_from_the_new_page_still_records_a_label():
+def test_override_api_still_records_a_label_and_the_page_shows_it():
     ids = asyncio.run(_seed())
     with _client() as c:
-        page = c.get(f"/opportunities/{ids['opp']}").text
-        # the control posts to the same route it always did
-        assert f'hx-post="/api/opportunities/{ids["opp"]}/override"' in page
         r = c.post(
             f"/api/opportunities/{ids['opp']}/override",
             data={"mode": "agree"}, headers={"HX-Request": "true"},
@@ -402,7 +409,6 @@ def test_override_from_the_new_page_still_records_a_label():
             headers={"HX-Request": "true"},
         )
         assert r2.status_code == 200 and "You said not a fit." in r2.text
-        # the page reflects the latest call against the fit
         page2 = c.get(f"/opportunities/{ids['opp']}").text
         assert "You said <b>not a fit</b>; the fit says strong fit." in page2
         hist = c.get(f"/opportunities/{ids['opp']}/tab/history").text
@@ -416,11 +422,11 @@ def test_tailor_is_disabled_with_a_reason_when_no_master_exists():
     with _client() as c:
         page = c.get(f"/opportunities/{ids['opp']}").text
         docs = c.get(f"/opportunities/{ids['opp']}/tab/documents").text
-    header = page.split('data-testid="tailor"')[0][-200:]
-    assert "disabled" in header
+    tailor = page.split('data-testid="tailor"')[0][-200:]
+    assert "disabled" in tailor and "No active resume yet" in tailor
     assert "no active document master for the employment track" in page
     assert "/renders/new?master_id=" not in page
-    assert "disabled" in docs and "No active document master" in docs
+    assert "disabled" in docs and "No active resume yet" in docs
 
 
 def test_posting_tab_states_why_a_posting_closed_and_when_it_looked_closed_once():

@@ -20,6 +20,7 @@ No network, no model: a fake client and respx-free routes."""
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -345,18 +346,18 @@ def test_run_now_routes_queue_a_one_shot_mode(monkeypatch):
     assert st["mode"] == "local" and st["pending_mode"] is None
     strip = client.get("/runs/strip").text
     assert "idle · local models" in strip and "next cycle" not in strip
-    page = client.get("/runs").text
-    assert 'name="mode" value="hosted"' in page and "unavailable: " in page and "disabled" in page
-    panel = page.split("<h2 style=\"margin-top:0\">Run now</h2>")[1].split("</form>")[0]
-    assert "—" not in panel  # no em dashes in the Run now copy
+    sheet = client.get("/runs/start/choose").text  # "This run only" (D-UI-103)
+    assert 'name="mode" value="hosted"' in sheet and "Not available: " in sheet
+    assert 'value="hosted" disabled' in sheet
+    assert "—" not in sheet and "—" not in client.get("/runs").text  # no em dashes in the copy
 
     # hosted cannot be queued yet; nothing is written
-    r = client.post("/api/run/now?mode=hosted")
+    r = client.post("/api/run/now?mode=hosted&confirmed=1")
     assert r.status_code == 400 and "acknowledged" in r.json()["reason"]
     assert client.get("/api/status").json()["pending_mode"] is None
     r = client.post("/api/run/now?mode=cloud")
     assert r.status_code == 400 and "unknown mode" in r.json()["reason"]
-    r = client.post("/runs/now", data={"mode": "hosted"})
+    r = client.post("/runs/now", data={"mode": "hosted", "confirmed": "1"})
     assert "Not queued" in r.text and "acknowledged" in r.text
 
     # default mode queues local
@@ -371,11 +372,26 @@ def test_run_now_routes_queue_a_one_shot_mode(monkeypatch):
             s.add(Setting(key=k, value=v))
 
     _app_db(seed)
-    r = client.post("/runs/now", data={"mode": "hosted"})
+
+    async def approval(s):
+        from kestrel.services.online_consent import approval_for
+
+        return approval_for(await load_settings_with_db(s, mode="hosted"), ("tier1", "tier2"))
+
+    shown = json.dumps(_app_db(approval))
+    # A confirmation without the destinations it showed, or naming others, queues nothing.
+    r = client.post("/runs/now", data={"mode": "hosted", "confirmed": "1"})
+    assert "Queued" not in r.text and "changed since the dialog opened" in r.text
+    stale = json.dumps({"tier1": ["frontier|https://elsewhere.example/v1|x"]})
+    r = client.post("/runs/now", data={"mode": "hosted", "confirmed": "1",
+                                       "online_approval": stale})
+    assert "Queued" not in r.text
+    r = client.post("/runs/now", data={"mode": "hosted", "confirmed": "1",
+                                       "online_approval": shown})
     assert "Queued" in r.text and "<b>hosted</b>" in r.text
     assert client.get("/api/status").json()["pending_mode"] == "hosted"
     assert "next cycle: hosted" in client.get("/runs/strip").text
-    assert "Queued: the next worker cycle runs on <b>hosted</b>" in client.get("/runs").text
+    assert "Next run only: <b>Online</b>" in client.get("/runs").text
 
     # the loop's consumer takes it once
     assert _app_db(take_run_mode) == "hosted"
@@ -388,8 +404,9 @@ def test_run_now_routes_queue_a_one_shot_mode(monkeypatch):
         s.add(Run(name="pipeline", status="done", mode=None, counts={}))
 
     _app_db(add_runs)
-    page = client.get("/runs").text
-    assert '<span class="badge">hosted</span>' in page and "unknown" in page
+    page = client.get("/runs/history?all=1").text
+    assert 'rn-md is-online' in page and ">Online</span>" in page  # a hosted run carries its tag
+    assert page.count('data-testid="rn-run"') == 2  # a run with no recorded mode has no tag
 
 
 # --------------------------------------------------------------------------------------- 6. CLI
@@ -431,3 +448,34 @@ def test_cli_mode_flag_helper():
 def test_modes_constant_matches_the_literal():
     assert config_mod.MODES == ("local", "hosted")
     assert config_mod.HOSTED_REQUIRED_TIERS == ("tier1", "tier2")
+
+
+async def test_a_task_confirmed_for_another_destination_is_held_once_not_looped(sm):
+    """D-UI-178: work stamped with an approval runs only on the destinations it names. A changed
+    destination holds it (pending, reason kept) and the drain finishes instead of leasing the
+    same held task again forever; unstamped work under the accepted disclosure still runs."""
+    import asyncio as _asyncio
+
+    from kestrel.db.models import Task
+    from kestrel.pipeline._shared import HandlerOutcome
+    from kestrel.pipeline.worker import TierStats
+
+    await _seed_rows(sm, _rows(mode="hosted"))
+    async with sm() as s:
+        settings = await load_settings_with_db(s)
+    worker = Worker(sm, FakeLLM(settings), settings)
+    calls: list[int] = []
+
+    async def handler(_sm, _client, _settings, *, opportunity_id, **_kw):
+        calls.append(opportunity_id)
+        return HandlerOutcome("done", 0)
+
+    stale = {"tier1": ["frontier|https://elsewhere.example/v1|other"]}
+    await worker._queue.enqueue("t1", {"opportunity_id": 1, "online_approval": stale})
+    await worker._queue.enqueue("t1", {"opportunity_id": 2})
+    await _asyncio.wait_for(worker.drain_tier("t1", 1, handler, TierStats()), timeout=20)
+    async with sm() as s:
+        rows = {t.payload["opportunity_id"]: t
+                for t in (await s.execute(select(Task))).scalars().all()}
+    assert calls == [2]
+    assert rows[1].status == "pending" and "held" in rows[1].last_error

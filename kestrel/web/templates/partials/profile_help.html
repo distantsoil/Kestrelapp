@@ -1,0 +1,60 @@
+{# The help column and its flyouts for each Profile tab (mockup help copy, adjusted to what
+   Kestrel really does). Included twice: part='cards' inside the layout, part='flyouts' after it. #}
+{% import "ui/macros.html" as ui %}
+{% set key = 'con' if tab == 'consulting' else ('emp' if tab == 'employment' else ('loc' if tab == 'location' else ('docs' if tab == 'documents' else tab))) %}
+{% set H = {
+  'about': [
+    ('What your details do', 'profile', 'info', ['They head your resume and capability statement.', 'Nothing leaves this computer unless you choose an online model.', 'Your first name is how Kestrel greets you.'],
+     '<h4>Where each detail shows up</h4><p>Your name, headline, email, phone and city print at the top of every document Kestrel makes. Change them here at any time.</p><h4>First and last name</h4><p>The first name is required and is what Kestrel greets you by. The resume header uses both. A one-word name leaves the last name empty.</p><h4>If a detail is wrong</h4><p>Fix it here, then use the preview in Documents to see the change.</p>'),
+    ('Keeping your search private', 'lock', 'warn', ['Confidential mode swaps your current employer for a neutral label.', 'It applies to documents and to lists you might show someone.', 'Other employers print as you wrote them.'],
+     '<h4>What gets hidden</h4><p>Only the employer you name. Kestrel replaces it with your label in resumes, PDFs and lists.</p><h4>What does not change</h4><p>Your own text stays as you wrote it. If you mention the company inside a bullet, edit that bullet in Documents.</p>'),
+    ('Saving your changes', 'check', 'good', ['Edits show a Save bar at the bottom.', 'Save or discard before you switch tabs.', 'Undo after saving brings back the last version.'],
+     '<h4>Why a Save bar</h4><p>These tabs feed the filters that decide what you see, so changes apply only when you save.</p><h4>Documents are different</h4><p>Each line in Documents saves as you type.</p><h4>Made a mistake</h4><p>Use Undo in the message that appears after saving.</p>')],
+  'emp': [
+    ('How titles are used', 'tune', 'info', ['Kestrel searches every title you list, on every board.', 'It also tries close versions. Remove any that miss.', 'A title to skip sets a role aside only when it clearly matches.'],
+     '<h4>Close versions</h4><p>For each title Kestrel adds up to 3 close versions, such as "Sr." for "Senior". They are listed so you can remove the ones that bring in the wrong jobs.</p><h4>Titles to skip</h4><p>If a title only might match, Kestrel keeps the role and scores it. Wrongly dropping a good role is worse than reading one extra.</p><h4>Suggested titles</h4><p>Suggestions come from your resume. You choose which to keep.</p>'),
+    ('Pay and level', 'offers', 'good', ['Your floor is the lowest pay you would consider.', 'Roles with no pay listed are always kept.', 'Level helps Kestrel judge fit. Pick the closest.'],
+     '<h4>Floor and target</h4><p>Roles that clearly pay below your floor are set aside. The target is what a good offer looks like for you.</p><h4>Keep near-floor roles</h4><p>Pick a margin and a role that tops out a little below your floor stays, labeled "Just under your pay floor", so you can decide. Exact keeps nothing below the floor.</p><h4>Currency</h4><p>Currency follows Region in Settings. Kestrel does not convert between currencies.</p>'),
+    ('Seniority', 'profile', 'warn', ['Titles ranked below your level are set aside.', 'A title with no clear rank passes.', 'Close titles are scored, not rejected.'],
+     '<h4>How it is used</h4><p>The level is a floor on the seniority words in a title. A title that carries no seniority word is kept for you to judge.</p>')],
+  'con': [
+    ('What you offer', 'profile', 'info', ['List the kinds of work you sell.', 'Kestrel uses them to find and rate leads.', 'Sectors to skip set a lead aside.'],
+     '<h4>Be specific</h4><p>"Order-to-cash cleanup for distributors" finds better leads than "consulting".</p><h4>Skipped sectors</h4><p>A lead is set aside only when it clearly matches a skipped sector.</p>'),
+    ('Day rate', 'offers', 'good', ['Your floor is the lowest day rate you would take.', 'Leads that clearly pay less are set aside.', 'Leads with no rate are kept.'],
+     '<h4>Floor and target</h4><p>Same idea as pay for a job, counted per day.</p><h4>Keep near-floor leads</h4><p>The same margin control as on Employment: a lead a little under your rate floor stays, labeled, so you can decide.</p>'),
+    ('How this track works', 'scan', 'warn', ['It watches public company events, not just postings.', 'Kestrel never contacts anyone for you.', 'Your document is the capability statement.'],
+     '<h4>Trigger events</h4><p>An acquisition closing, an investment, a leader leaving: public facts that mean a company may soon need outside help. They come from public filings and the news sources you turn on under Sources.</p>')],
+  'loc': [
+    ('Places are names, not distances', 'pin', 'info', ['Kestrel matches the place names you list.', 'Add towns people also call your area.', 'It never measures miles.'],
+     '<h4>Why no distance</h4><p>Kestrel has no map service, on purpose, so nothing about where you live is sent anywhere.</p><h4>Also counts as</h4><p>If your area has other names, such as a nearby suburb, add them so those postings are kept.</p>'),
+    ('Remote roles', 'check', 'good', ['Choose where you could work remotely from.', 'Roles that name another place are set aside.', 'Roles that do not say where are kept.'],
+     '<h4>Unclear locations</h4><p>If a posting says only "Remote" or leaves the place blank, Kestrel keeps it and you decide.</p>'),
+    ('When a role is missed', 'alert', 'warn', ['Open the role and check its location text.', 'Add that wording to a place you accept.', 'Run again to see it.'],
+     '<h4>Common cause</h4><p>The posting uses a spelling or nearby town you did not list. Adding it is usually enough.</p>')],
+  'stories': [
+    ('What a story is', 'profile', 'info', ['A short true account in three parts.', 'Situation, what you did, and the result.', 'Kestrel never rewrites them.'],
+     '<h4>Why they matter</h4><p>Interview prep picks the stories that best answer each likely question. They are your words, kept exactly as you wrote them.</p><h4>One bank</h4><p>The same stories appear under Interview prep. Editing in either place changes both.</p>'),
+    ('Writing a good one', 'check', 'good', ['Use real numbers when you have them.', 'Keep it to a few sentences per part.', 'One story per accomplishment.'],
+     '<h4>Example</h4><p>Situation: three sites reported differently. Action: built one weekly report. Result: leadership saw one picture.</p>'),
+    ('Your privacy', 'lock', 'warn', ['Stories stay on this computer.', 'They go online only if you pick an online model and approve.', 'Confidential mode applies here too.'],
+     '<h4>Before anything is sent</h4><p>Kestrel shows what will be sent and asks first.</p>')],
+  'docs': [
+    ('Your words, picked per role', 'profile', 'info', ['Each line can have several wordings you wrote.', 'For each role Kestrel picks one wording per line.', 'Kestrel only picks among your wordings.'],
+     '<h4>How it works</h4><p>You write the lines once, with a few wordings for the ones that matter. When you tailor a resume, Kestrel chooses among your wordings and you can swap any of them.</p><h4>What prints</h4><p>Exactly the text you see here, word for word.</p>'),
+    ('Add another wording', 'wand', 'good', ['Click any line to edit it. It saves as you type.', 'Suggest wordings shows drafts to keep or discard.', 'A suggested draft is not used until you click Add.'],
+     '<h4>Suggestions</h4><p>A suggestion rephrases your line without adding facts. Keep it only if it sounds like you.</p><h4>Themes</h4><p>The small theme labels help Kestrel match a line to a role. Add or remove them freely.</p>'),
+    ('Import a resume', 'up', 'warn', ['Word files read best. PDFs work, so check the result.', 'You review every line before anything saves.', 'Any line that is not word for word is flagged.'],
+     '<h4>Steps</h4><p>Choose a file or paste text. Kestrel reads it and proposes where each line goes. Nothing is saved until you accept.</p><h4>If a line is flagged</h4><p>Fix it to match your source or leave it out.</p>'),
+    ('Preview and check', 'scan', 'info', ['The preview is one true page, scaled to fit.', 'Enlarge shows the same page, line for line.', 'Assess this resume gives advice only. It changes nothing.'],
+     '<h4>Assess this resume</h4><p>Kestrel reads your resume and names strengths, gaps and lines to strengthen. It never writes replacement text. If you use an online model, Kestrel asks first and shows what is sent.</p>')]
+} %}
+{% set items = H.get(key) or H['about'] %}
+{% if part == 'cards' %}
+  {% for t, ic, acc, lines, body in items %}
+    {{ ui.help_card(t, lines, acc, ic, 'pf-fly-' ~ key ~ '-' ~ loop.index) }}
+  {% endfor %}
+{% else %}
+  {% for t, ic, acc, lines, body in items %}
+    {% call ui.flyout('pf-fly-' ~ key ~ '-' ~ loop.index, t, help_href='/help') %}{{ body | safe }}{% endcall %}
+  {% endfor %}
+{% endif %}

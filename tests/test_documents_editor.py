@@ -271,7 +271,7 @@ def test_documents_tab_offers_font_and_alignment_and_the_preview_uses_them(monke
     soup = BeautifulSoup(html, "html.parser")
     fonts = [o["value"] for o in soup.select("select#font option")]
     assert fonts[0] == "" and {"Georgia", "Calibri", "Segoe UI"} <= set(fonts)
-    assert soup.select("select#header_align option")
+    assert soup.select("input#header_align + button, #header_align ~ button")
     r = client.post(f"/documents/{master_id}/preview",
                     data={"font": "Arial", "header_align": "center"})
     inner = BeautifulSoup(BeautifulSoup(r.text, "html.parser").iframe["srcdoc"], "html.parser")
@@ -299,10 +299,10 @@ def test_test_render_and_the_review_carry_the_look(monkeypatch):
     assert r.status_code == 303 and seen["font"] == "Calibri" and seen["header_align"] == "center"
     rid = int(r.headers["location"].rsplit("/", 1)[1])
     page = client.get(f"/renders/{rid}").text
-    assert 'data-testid="render-look"' in page and "<iframe" in page
+    assert 'data-testid="tl-look"' in page and "<iframe" in page
     r = client.post(f"/renders/{rid}/look", data={"layout": "", "font": "Georgia",
                                                   "header_align": ""})
-    assert r.status_code == 200 and "Showing Georgia" in r.text
+    assert r.status_code == 200 and "data-font=" in r.text and "Georgia" in r.text
     (row,) = _rows(DocRender, id=rid)
     assert row.config["font"] == "Georgia" and "header_align" not in row.config
     bad = client.post(f"/renders/{rid}/look", data={"layout": "<b>nope</b>"})
@@ -310,9 +310,9 @@ def test_test_render_and_the_review_carry_the_look(monkeypatch):
 
 
 def test_review_keeps_the_way_back_and_speaks_of_applications_and_leads(monkeypatch):
-    """A look change on a render with a PDF starts a new render; the redirect keeps `from` (from
-    the form or the page the request came from). The attach button and its result say
-    application, or lead on the consulting track, never pursuit."""
+    """A look change updates the review in place (the way back is in the page, which a swap never
+    redraws). The attach button and its result say application, or lead on the consulting track,
+    never pursuit; a second press detaches."""
     from kestrel.db.engine import get_sessionmaker, reset_engine
     from kestrel.db.models import DocRender, Opportunity, Pursuit
 
@@ -337,15 +337,14 @@ def test_review_keeps_the_way_back_and_speaks_of_applications_and_leads(monkeypa
     rid = asyncio.run(seed("employment"))
     page = client.get(f"/renders/{rid}?from=/pursuits").text
     assert "Use for this application" in page and "pursuit" not in _visible_text(page).lower()
-    assert '<input type="hidden" name="from" value="/pursuits">' in page
-    r = client.post(f"/renders/{rid}/look", data={"layout": "", "font": "Georgia",
-                                                  "from": "/pursuits"})
-    assert "from=%2Fpursuits" in r.headers["HX-Redirect"]
-    r = client.post(f"/renders/{rid}/look", data={"font": "Georgia"},
-                    headers={"HX-Current-URL": f"http://t/renders/{rid}?from=/opportunities/1"})
-    assert "from=%2Fopportunities%2F1" in r.headers["HX-Redirect"]
-    attached = client.post(f"/renders/{rid}/attach").text
-    assert attached.endswith("Attached to this application.</span>")
+    assert 'href="/pursuits" data-testid="render-back"' in page
+    r = client.post(f"/renders/{rid}/look", data={"layout": "", "font": "Georgia"},
+                    headers={"HX-Request": "true"})
+    assert r.status_code == 200 and "HX-Redirect" not in r.headers
+    attached = client.post(f"/renders/{rid}/attach")
+    assert "Attached to this application." in attached.text
+    assert "Attached to your Acme application" in attached.headers["HX-Trigger"]
+    assert "Removed from this application." in client.post(f"/renders/{rid}/attach").text
     lead = asyncio.run(seed("consulting"))
     assert "Use for this lead" in client.get(f"/renders/{lead}").text
     assert "Attached to this lead." in client.post(f"/renders/{lead}/attach").text
@@ -469,7 +468,7 @@ def test_prompt_p13_is_registered_and_says_it_never_writes_resume_text():
 
 
 # ------------------------------------------------------------- Bench and Calibrate purpose
-@pytest.mark.parametrize("name,words", [("bench.html", "choose which model runs each tier"),
+@pytest.mark.parametrize("name,words", [("bench.html", "choose which model runs each step"),
                                          ("calibrate.html", "scoring learns your taste")])
 def test_bench_and_calibrate_say_what_they_are_for(name, words):
     body = (Path(paths.web_templates_dir()) / name).read_text(encoding="utf-8")

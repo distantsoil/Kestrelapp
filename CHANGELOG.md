@@ -4,6 +4,10 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The About page and README credit MiniMax M3 (formerly listed under its stealth name, Space Bunny) and add Kimi K2.7 and MiMo: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, MiniMax M3, LongCat, Kimi K2.7 and MiMo.
+
 ## [0.6.5] - 2026-10-23
 
 ### New
@@ -19,7 +23,6 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 - Turn LAN access on or off from Settings, after creating a shared secret. It takes effect after a restart.
 - Change which model each tier uses from Settings > Models.
 - With an OpenRouter key, the status rail shows what you have spent this month.
-- A notice that a refreshed look for Kestrel is coming. It closes for good with Got it.
 
 ### Changed
 

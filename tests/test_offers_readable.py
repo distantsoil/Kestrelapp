@@ -61,10 +61,14 @@ async def test_money_band_and_benchmark_are_readable():
     flat = " ".join(t.split())
     assert "$178,500 to $210,000" in flat
     assert "$178,500.0" not in t
-    bench = flat[flat.index("Benchmark:"):]
-    bench = bench[: bench.index("</div>")]
+    start = flat.index('data-testid="of-bench"')
+    bench = flat[start: flat.index("</div>", start)]
     assert ">=" not in bench and "&gt;=" not in bench
-    assert "not enough data yet (0 of the 5 needed)" in bench
+    # Under five observations: the count in words, no range (hard rule 6).
+    assert "Too few similar roles (0)" in bench
+    assert "Under 5, so Kestrel shows no range." in bench
+    # The corpus's own sentence stays behind Show details.
+    assert "not enough data yet (0 of the 5 needed)" in flat
 
 
 async def test_competing_offers_show_org_and_role_not_pursuit_number():
@@ -155,7 +159,7 @@ async def test_confidential_mode_redacts_the_negotiation_scripts(monkeypatch, on
     async def fake_conf(_session):
         return (True, emap) if on else (False, _Map())
 
-    async def fake_draft(_s, _client, pid, *, walk_away):
+    async def fake_draft(_s, _client, pid, *, walk_away, **_more):
         assert pid == pursuit_id and walk_away == "200000"
         return _script_result()
 

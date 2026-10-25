@@ -1,0 +1,4 @@
+{# The filter chips, plus the count pill out of band (the pill sits in the scene band). #}
+{% from "ui/macros.html" import chip %}
+{% for key, label in filters %}{{ chip(label, counts[key], key == step, {'data-testid': 'rt-chip-' ~ key, 'hx-get': '/quarantine?step=' ~ key, 'hx-target': '#rt-card', 'hx-swap': 'outerHTML', 'hx-push-url': 'false'}) }}{% endfor %}
+<span id="rt-count" hx-swap-oob="true" class="k-pill {{ 'k-pill--warn' if waiting else 'k-pill--good' }}" data-testid="rt-count">{% if waiting %}{{ waiting }} {{ 'role' if waiting == 1 else 'roles' }} waiting{% else %}All clear{% endif %}</span>

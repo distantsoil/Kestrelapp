@@ -1,0 +1,11 @@
+{# History tab: found, quick screen, scored (model and prompt version), shortlisted, your rating,
+   and every deeper read, newest first. `history` is the redacted timeline from role_view. #}
+{% from "partials/role_icons.html" import ric %}
+<div id="rl-histtab" class="rl-histtab" data-tab="history">
+  <section class="k-card rl-card">
+    <header class="k-sec-head"><span class="k-badge">{{ ric('clock') }}</span><div class="k-grow"><h3>History</h3></div></header>
+    <div class="rl-tl" data-testid="timeline">
+      {% for h in history %}<div class="rl-tl__it" data-kind="{{ h.kind }}"><b>{{ h.title }}</b><small{% if h.at %} title="{{ date_display(h.at, kind='datetime', time_style='24h') }} UTC"{% endif %}>{{ h.when or 'undated' }}{% if h.sub %} · {{ h.sub }}{% endif %}</small></div>{% endfor %}
+    </div>
+  </section>
+</div>

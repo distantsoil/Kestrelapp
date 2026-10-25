@@ -1,0 +1,11 @@
+{# Track chooser for the two panes that hold one set per track (Which roles you see, Scoring and
+   learning). Shown only when both tracks are in use; each button loads the pane for that track
+   in place. #}
+{% if tracks|length > 1 %}
+<div class="st-trackbar" role="group" aria-label="Track" data-testid="st-trackbar">
+  <span class="st-trackbar__l">Track</span>
+  <div class="k-seg" data-k-seg>
+    {% for t in tracks %}<button type="button" class="{% if t == track %}is-on{% endif %}" aria-pressed="{{ 'true' if t == track else 'false' }}" hx-get="/settings/section/{{ pane }}?track={{ t }}" hx-target="#st-pane-{{ pane }}" hx-swap="outerHTML" data-testid="st-track-{{ t }}">{{ 'Employment' if t == 'employment' else 'Consulting' }}</button>{% endfor %}
+  </div>
+</div>
+{% endif %}

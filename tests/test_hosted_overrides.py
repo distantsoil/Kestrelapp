@@ -121,8 +121,10 @@ def test_free_model_is_blocked_while_the_backend_denies_data_collection():
 def test_models_page_without_a_key_says_where_to_connect(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = _fresh_app()
-    body = client.get("/models").text
-    panel = body.split('data-testid="hosted-overrides"')[1].split('id="model-compare"')[0]
+    page = client.get("/models").text
+    # The panel is the Manage overrides drawer: the page offers it, the panel loads on demand.
+    assert 'data-testid="mo-overrides-open"' in page and 'hx-get="/models/hosted/overrides"' in page
+    panel = client.get("/models/hosted/overrides").text
     assert 'data-testid="override-open"' in panel and "—" not in panel
     # The shipped frontier tier is the only assignment; opening without a key says why.
     with respx.mock as router:
@@ -141,7 +143,7 @@ def test_override_flow_save_all_label_connect_rerun_and_reset():
     default_t2 = defaults["tier2"]["model"]
     assert overrides == {} and set(defaults) >= {"tier1", "tier2", "tier3", "frontier"}
 
-    body = client.get("/models").text
+    body = client.get("/models/hosted/overrides").text
     assert 'data-testid="override-open"' in body and "(Override)" not in body
     assert 'data-testid="label-tier2">Default<' in body
 
@@ -458,7 +460,7 @@ def test_advanced_save_leaves_an_untouched_set_elsewhere_tier_alone():
     r = client.post("/settings/hosted/tiers", data=form)
     assert f"tier3: frontier/{_PAID}" in r.text and "docsel:" not in r.text.split("Saved:")[1]
     assert set(_state()[1]) == {"tier3"}
-    body = client.get("/models").text
+    body = client.get("/models/hosted/overrides").text
     assert 'data-testid="label-docsel">Set elsewhere<' in body
     assert 'data-testid="label-tier3">(Override · paid)<' in body
 
@@ -517,10 +519,11 @@ def test_picker_labels_each_models_json_mode_and_a_json_mode_override_is_sent_js
 def test_settings_models_tab_lazy_loads_the_panel_not_a_static_table(monkeypatch):
     client = _fresh_app()
     body = client.get("/settings").text
-    tab = body.split("x-show=\"tab==='models'\" x-cloak")[1].split("</section>")[0]
-    assert 'hx-get="/settings/models"' in tab and 'hx-trigger="intersect once"' in tab
+    # The Models tab is the Models page now (D-UI-106): Settings carries no static table of tiers
+    # and no dead Test button, and the checklist arrives lazily.
+    assert 'hx-get="/settings/computer/checklist"' in body and 'hx-trigger="load"' in body
     assert "disabled title=\"Test needs the local model running\"" not in body  # dead button gone
-    assert "<table" not in tab  # the panel arrives lazily
+    assert "<table" not in body.split('id="st-sec-computer"')[1].split("</section>")[0]
 
 
 def test_settings_models_panel_shows_effective_tiers_profile_and_the_override_loader(

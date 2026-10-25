@@ -106,17 +106,19 @@ def _without_details(html: str) -> str:
 # ------------------------------------------------------------------------------ your searches
 def test_searches_are_listed_by_summary_with_no_query_text_by_default():
     _profile()
-    _run(_build())
+    _run(_build(enable=True))
     with _client() as c:
         html = c.get("/sources").text
+        sid = _run(_rows())["Jobs near Austin"].id
+        drawer = c.get(f"/sources/{sid}/drawer").text
     assert 'data-testid="your-searches"' in html
     assert "within 50 miles of Austin, TX" in html and "Remote VP of IT" in html
-    section = html.split('data-testid="your-searches"')[1]
-    section = section.split('data-testid="sources-advanced"')[0]
-    visible = _without_details(section)
-    assert "Intern" not in visible and "search_term" not in visible  # query only in details
-    assert "Show details" in section and "search_term" in section
-    assert visible.count('data-testid="search-row"') == 2
+    section = html.split('data-testid="group-boards"')[1].split('data-testid="group-ats"')[0]
+    assert section.count('data-testid="source-row"') == 2
+    assert "Intern" not in section and "search_term" not in section  # query only in details
+    assert "From your profile" in section  # the origin tag
+    details = drawer.split('data-testid="drawer-details"')[1]
+    assert "Show details" in drawer and "search_term" in details
 
 
 def test_no_searches_points_at_the_profile():
@@ -162,7 +164,7 @@ def test_editing_a_generated_search_makes_it_custom_and_a_rebuild_leaves_it_alon
             "cadence_hours": "12", "config": json.dumps(config),
         })
         assert r.status_code == 200
-        assert "will no longer follow your profile" in c.get("/sources").text
+        assert "no longer follows your profile" in c.get(f"/sources/{row.id}/drawer").text
     edited = _run(_rows())["Jobs near Austin"]
     assert edited.origin == "custom" and edited.config["search_term"] == '"CIO"'
     _run(_build())  # a profile save rebuilds
@@ -196,7 +198,8 @@ def test_boards_found_in_searches_are_marked_and_counted_and_switch_off_alone():
         _run(_seed())
         page = c.get("/sources").text
         assert 'data-testid="found-boards">1 company board' in page
-        assert "found in your searches." in page and 'data-testid="found-board"' in page
+        assert "found in your searches." in page
+        assert "Found by Kestrel" in page.split('data-testid="group-ats"')[1]
         sid = _run(_rows())["Northwind jobs (Greenhouse)"].id
         assert c.post(f"/sources/{sid}/toggle").status_code == 200
     row = _run(_rows())["Northwind jobs (Greenhouse)"]
@@ -239,7 +242,7 @@ def test_company_board_lookup_failure_says_so_and_adds_nothing():
             r = c.post("/sources/company-board", data={"company": "Nobody Corp"})
     assert r.status_code == 200
     assert "No public Greenhouse, Lever, Ashby or SmartRecruiters board was found" in r.text
-    assert 'id="add-source"' in r.text  # the manual form is right there
+    assert 'data-testid="add-source"' in r.text  # Add a source is right there
     assert 0 < route.call_count <= 12  # bounded
     assert _run(_rows()) == {}
 
@@ -437,9 +440,10 @@ def test_consulting_off_hides_it_everywhere_and_on_brings_it_back():
         assert 'class="track-switch"' in c.get("/help").text
         assert 'data-tab="consulting"' in c.get("/profile").text
         assert 'data-track="consulting"' in c.get("/profile?tab=about").text
-        src = c.get("/sources").text
+        src = c.get("/sources?track=consulting").text
         assert "SAM.gov federal IT contracts" in src and 'data-testid="sam-help"' in src
-        assert "Tracks I use" in c.get("/settings").text
+        assert "SAM.gov federal IT contracts" not in c.get("/sources?track=employment").text
+        assert 'data-testid="st-tracks"' in c.get("/settings").text
 
         r = c.post("/settings/tracks", data={"tracks": ["employment"]})
         assert r.status_code == 200 and r.headers.get("HX-Refresh") == "true"
@@ -448,14 +452,14 @@ def test_consulting_off_hides_it_everywhere_and_on_brings_it_back():
         assert 'data-tab="consulting"' not in c.get("/profile").text
         assert 'data-track="consulting"' not in c.get("/profile?tab=about").text
         assert c.get("/profile?tab=consulting").status_code == 200  # the route still works
-        src = c.get("/sources").text
+        src = c.get("/sources?track=consulting").text  # a switched-off track never shows
         assert "SAM.gov" not in src and "pe-portfolio" not in src
         assert '<option value="sam_gov"' not in src
 
         c.post("/settings/tracks", data={"tracks": ["employment", "consulting"]})
         assert 'class="track-switch"' in c.get("/help").text
         assert 'data-tab="consulting"' in c.get("/profile").text
-        assert "SAM.gov federal IT contracts" in c.get("/sources").text
+        assert "SAM.gov federal IT contracts" in c.get("/sources?track=consulting").text
     assert "SAM.gov federal IT contracts" in _run(_rows())  # the data never left
 
 
@@ -488,7 +492,7 @@ def test_a_job_search_row_shows_postings_per_board_and_flags_a_silent_one():
 
     assert DEFAULT_SITES == ("indeed", "glassdoor")
     _profile()
-    _run(_build())
+    _run(_build(enable=True))
 
     async def _seed():
         async with get_sessionmaker()() as s:
@@ -512,6 +516,8 @@ def test_a_job_search_row_shows_postings_per_board_and_flags_a_silent_one():
     _run(_seed())
     with _client() as c:
         html = c.get("/sources").text
-    assert "Indeed 3, Glassdoor 0" in " ".join(html.split())
-    assert "Glassdoor found nothing this run." in html
-    assert "Indeed found nothing" not in html
+        sid = _run(_rows())["Jobs near Austin"].id
+        drawer = c.get(f"/sources/{sid}/drawer").text
+    assert "Indeed 3, Glassdoor 0" in " ".join(drawer.split())
+    assert "Glassdoor found nothing this check." in html
+    assert "Indeed found nothing" not in html and "Indeed found nothing" not in drawer

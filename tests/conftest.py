@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import os
 
-import pytest
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import async_sessionmaker
+# One math thread per process, set before numpy or sklearn load. With several suites running at
+# once on a small machine, BLAS's default thread pools oversubscribe the cores and the reranker
+# tests stall; the app already fits with n_jobs=1, so this changes no result.
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -20,9 +26,24 @@ def _isolate_data_home(tmp_path_factory):
     test's file can never block another's. Each shared-db test already migrates/seeds per test, so
     the stronger isolation costs only a mktemp. The cached app engine is dropped on teardown so no
     test reuses an engine bound to a now-stale per-test path."""
+    from kestrel import paths
     from kestrel.db.engine import forget_engine
+    from tests import throwaway
 
-    os.environ["KESTREL_DATA_HOME"] = str(tmp_path_factory.mktemp("kestrel_home"))
+    home = tmp_path_factory.mktemp("kestrel_home")
+    os.environ["KESTREL_DATA_HOME"] = str(home)
+    throwaway.mark(home)
+    # The guard for every test: the data home and the database must resolve under pytest's own
+    # temp root. If they do not (an environment override that wins, a path change), stop the whole
+    # session before any test can touch an operator's real data.
+    root = tmp_path_factory.getbasetemp().resolve()
+    for name, found in (("data_home", paths.data_home()), ("db_path", paths.db_path())):
+        if root not in found.resolve().parents:
+            pytest.exit(
+                f"paths.{name}() is {found}, outside pytest's temp root {root}; "
+                "refusing to run tests against real data",
+                returncode=3,
+            )
     yield
     forget_engine()  # drop the cached engine WITHOUT awaiting dispose (its owning loop may be gone)
 
@@ -41,14 +62,11 @@ def _no_first_run_redirect(monkeypatch):
 def _reset_status_caches():
     """The status rail caches its Ollama probe in a process-global dict; a probe one test faked
     must never answer the next test's request."""
-    from kestrel.web.deps import forget_dismissed_guides
     from kestrel.web.routes_control import reset_status_caches
 
     reset_status_caches()
-    forget_dismissed_guides()
     yield
     reset_status_caches()
-    forget_dismissed_guides()
 
 
 @pytest.fixture(autouse=True)
@@ -160,6 +178,18 @@ async def sm(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_dns(monkeypatch):
+    """No test resolves a name (hard rule: tests never touch the network). The SSRF guard for
+    operator-supplied links (kestrel.ingest.http.assert_public_url) resolves a host, so every
+    name resolves to one public documentation-range address. A test of the guard itself
+    overrides this seam."""
+    async def _public(host: str, port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr("kestrel.ingest.http._resolve", _public)
+
+
+@pytest.fixture(autouse=True)
 def _worker_unpaused():
     """The worker's pause flag is process-global (kestrel.web.app._paused). A test that pauses
     and fails before resuming would leave every later test paused, so reset it after each test."""
@@ -181,6 +211,7 @@ def _reset_desktop_bridge():
     desktop_bridge.set_focus_handler(None)
     desktop_bridge.set_quit_handler(None)
     desktop_bridge.set_reveal_handler(None)
+    desktop_bridge.set_folder_handler(None)
 
 
 @pytest.fixture

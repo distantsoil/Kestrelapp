@@ -29,26 +29,44 @@ MODE_KEY = "llm.mode"
 @dataclass(frozen=True)
 class StepInfo:
     key: str
-    title: str
-    track: str | None = None  # shown only when this track is in use
+    title: str  # the page heading
+    label: str  # the short name in the progress row
+    sub: str  # the line under the heading
+    track: str | None = None  # kept for callers; every step shows for every track
 
 
-# Every step, in order. Employment and consulting terms are separate steps so choosing one
-# track removes the other's step from the flow and from the count.
+# The six steps (D-UI-30 as revised by D-UI-116 and D-UI-155), in order. The old tracks, employment,
+# consulting, location and done steps are folded into About you, What you want and the
+# walkthrough, so choosing one track leaves the other's questions out of step 5 and the count.
 STEPS: tuple[StepInfo, ...] = (
-    StepInfo("welcome", "Welcome"),
-    StepInfo("models", "How Kestrel will think"),
-    StepInfo("tracks", "What you are looking for"),
-    StepInfo("about", "About you"),
-    StepInfo("resume", "Your resume"),
-    StepInfo("employment", "What you want in a job", track="employment"),
-    StepInfo("consulting", "What you want in consulting work", track="consulting"),
-    StepInfo("location", "Where you will work"),
-    StepInfo("searches", "Your searches"),
-    StepInfo("done", "Done"),
+    StepInfo(
+        "welcome", "Let's set up Kestrel", "Welcome",
+        "Kestrel finds roles, scores the fit and tailors your own resume lines.",
+    ),
+    StepInfo(
+        "models", "How should Kestrel think?", "Thinking",
+        "Kestrel uses an AI model to read roles and score fit. Pick where it runs.",
+    ),
+    StepInfo("about", "About you", "You", "Just the basics. You can add more later."),
+    StepInfo(
+        "resume", "Your resume", "Resume",
+        "Kestrel only ever uses your own words, exactly as you wrote them.",
+    ),
+    StepInfo(
+        "wants", "What you want", "Wants", "A few short answers. Everything here can change later."
+    ),
+    StepInfo(
+        "searches", "Your searches", "Searches",
+        "This is what Kestrel will look for. Nothing starts until you say so.",
+    ),
 )
 STEP_KEYS: tuple[str, ...] = tuple(s.key for s in STEPS)
 _BY_KEY = {s.key: s for s in STEPS}
+# A state stored by the ten-step wizard reads as the nearest step of the six (resumable).
+_LEGACY = {
+    "tracks": "about", "employment": "wants", "consulting": "wants", "location": "wants",
+    "done": "searches",
+}
 
 
 def step_info(key: str) -> StepInfo:
@@ -56,8 +74,22 @@ def step_info(key: str) -> StepInfo:
 
 
 def steps_for(tracks: tuple[str, ...] | list[str]) -> list[StepInfo]:
-    """The steps for the tracks in use, in order."""
-    return [s for s in STEPS if s.track is None or s.track in tracks]
+    """The steps for the tracks in use, in order (all six; the tracks change step 5's sections)."""
+    return list(STEPS)
+
+
+def _known(key: Any) -> str | None:
+    key = _LEGACY.get(key, key)
+    return key if key in STEP_KEYS else None
+
+
+def _known_list(values: Any) -> list[str]:
+    out: list[str] = []
+    for v in values or []:
+        k = _known(v)
+        if k and k not in out:
+            out.append(k)
+    return out
 
 
 @dataclass
@@ -68,19 +100,21 @@ class OnboardingState:
     completed: bool = False
     completed_at: str | None = None
     started_at: str = field(default_factory=utcnow_iso)
+    # Set by an Edit link on the searches step: the step to return to after the edit's save.
+    ret: str | None = None
 
     @classmethod
     def from_value(cls, value: Any) -> OnboardingState:
         if not isinstance(value, dict):
             return cls()
-        step = value.get("step")
         return cls(
-            step=step if step in STEP_KEYS else "welcome",
-            visited=[k for k in (value.get("visited") or []) if k in STEP_KEYS],
-            skipped=[k for k in (value.get("skipped") or []) if k in STEP_KEYS],
+            step=_known(value.get("step")) or "welcome",
+            visited=_known_list(value.get("visited")),
+            skipped=_known_list(value.get("skipped")),
             completed=bool(value.get("completed")),
             completed_at=value.get("completed_at") or None,
             started_at=str(value.get("started_at") or utcnow_iso()),
+            ret=_known(value.get("ret")),
         )
 
     def to_value(self) -> dict[str, Any]:
@@ -139,13 +173,15 @@ async def restart(session: AsyncSession) -> OnboardingState:
 
 
 def _order(key: str) -> int:
-    return STEP_KEYS.index(key) if key in STEP_KEYS else 0
+    known = _known(key)
+    return STEP_KEYS.index(known) if known else 0
 
 
 def current_key(current: str, tracks: tuple[str, ...] | list[str]) -> str:
     """The stored step, or the next one in the flow when the stored step no longer applies
     (consulting terms after the operator switched to employment only)."""
     keys = [s.key for s in steps_for(tracks)]
+    current = _known(current) or current
     if current in keys:
         return current
     return next((k for k in keys if _order(k) > _order(current)), keys[-1])

@@ -28,7 +28,7 @@ from kestrel.ingest import board_discovery, smart_filter
 from kestrel.pipeline import lane
 from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tasks import enqueue_once
-from kestrel.rules import helpers
+from kestrel.rules import helpers, margin
 from kestrel.services import run_model, tier0_override
 from kestrel.services.run_model import T2_ONLY_KEY
 
@@ -43,6 +43,8 @@ class Tier0Result:
     reason: str | None = None
     soft_hits: list[str] = field(default_factory=list)
     geo_uncertain: bool = False
+    # What the operator sees on a kept role, e.g. "Below your minimum" (D-RULES-2).
+    tags: list[str] = field(default_factory=list)
 
 
 def evaluate_tier0(
@@ -64,8 +66,12 @@ def evaluate_tier0(
     ev = helpers.build_evaluator(
         opp=opp, org=org, profile=profile, source=source, settings=settings
     )
+    # Rules the operator switched off in Settings (D-UI-106): skipped, never deleted.
+    off = set((getattr(getattr(settings, "tier0", None), "rules_off", None) or {}).get(track, ()))
 
     for rule in ([] if skip_blockers else groups.get("hard_blockers", []) or []):
+        if rule.get("id") in off:
+            continue
         try:
             if ev.eval(rule["when"]):
                 return Tier0Result(
@@ -91,6 +97,7 @@ def evaluate_tier0(
         pre_score=round(pre_score, 4),
         soft_hits=hits,
         geo_uncertain=geo_uncertain,
+        tags=[margin.NEAR_FLOOR_TAG] if margin.SOFT_ID in hits else [],
     )
 
 

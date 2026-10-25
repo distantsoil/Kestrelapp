@@ -1,123 +1,74 @@
+{# One run's page (D-UI-103, SPEC-INTERFACES 2.1 /runs/{id}): the same summary the history drawer
+   shows, then the searches and the roles scored in the run's time window. #}
 {% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
 {% block title %}{% if run %}Run {{ run.id }}{% else %}Run{% endif %} · Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/css/pages/runs.css">{% endblock %}
 {% block content %}
-<p><a href="/runs">&larr; Runs</a></p>
-{% if run is none %}
-  <div class="warnbox">No such run{% if load_error %}: {{ load_error }}{% endif %}.</div>
-{% else %}
-  <h1>Run #{{ run.id }}: {{ run.name }}</h1>
-  <p class="muted">
-    {{ run.track or 'both tracks' }} &middot; <span class="badge">{{ run.status }}</span> &middot;
-    started {{ run.started_at }}{% if run.finished_at %} &middot; finished {{ run.finished_at }}{% endif %}
-  </p>
-  {% if run.notes %}<p>{{ run.notes }}</p>{% endif %}
-
-  <div class="panel">
-    <h2>Throughput by step</h2>
-    {% set counts = run.counts or {} %}
-    {% if counts %}
-      <div style="overflow-x:auto">
-      <table class="data">
-        <thead><tr><th>Step</th><th class="num">Seen</th><th class="num">Passed</th>
-          <th class="num">Rejected / errors</th><th>Rate</th></tr></thead>
-        <tbody>
-          {% set c0 = counts.get('tier0', {}) %}
-          <tr>
-            <td title="Tier 0">Rules check</td><td class="num mono">{{ c0.get('seen', 0) }}</td>
-            <td class="num mono">{{ c0.get('pass', 0) }}</td>
-            <td class="num mono">{{ c0.get('reject', 0) }}</td>
-            <td class="muted">deterministic rules, no rate</td>
-          </tr>
-          {% set c1 = counts.get('tier1', {}) %}
-          <tr>
-            <td title="Tier 1">Quick screen</td><td class="num mono">-</td>
-            <td class="num mono">{{ c1.get('completed', 0) }}</td>
-            <td class="num mono">{{ c1.get('errors', 0) }}</td>
-            <td>
-              {% if c1.get('completed', 0) < 5 %}
-                <span class="muted">{{ too_few(c1.get('completed', 0)) }}</span>
-              {% else %}{{ c1.get('per_minute', 0) }}/min{% endif %}
-            </td>
-          </tr>
-          {% set c2 = counts.get('tier2', {}) %}
-          <tr>
-            <td title="Tier 2">Full review</td><td class="num mono">-</td>
-            <td class="num mono">{{ c2.get('completed', 0) }}</td>
-            <td class="num mono">{{ c2.get('errors', 0) }}</td>
-            <td>
-              {% if c2.get('completed', 0) < 5 %}
-                <span class="muted">{{ too_few(c2.get('completed', 0)) }}</span>
-              {% else %}{{ c2.get('per_minute', 0) }}/min{% endif %}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      </div>
-    {% else %}
-      <p class="muted">No counts recorded yet{% if run.status == 'running' %} (run is still in progress){% endif %}.</p>
-    {% endif %}
+<div class="rn-wrap"><div class="rn-page">
+  {% set crumb %}<nav class="rn-crumb" aria-label="Breadcrumb"><a href="/runs">Runs</a> › <span>{% if run %}Run {{ run.id }}{% else %}Not found{% endif %}</span></nav>{% endset %}
+  {% call ui.scene_band('Run' ~ (' #' ~ run.id if run else ''), crumb=crumb) %}
+    {% if run %}<span class="k-pill{{ ' k-pill--' ~ row.status.tone if row.status.tone }}" data-testid="rn-status">{{ row.status.label }}</span>
+    <span class="k-muted">{{ run.name }} · {{ run.track or 'both tracks' }}</span>{% endif %}
+  {% endcall %}
+  {% if run is none %}
+    <div class="rn-note is-warn" role="alert">No such run{% if load_error %}: {{ load_error }}{% endif %}.</div>
+  {% else %}
+  <div class="k-layout">
+    <div class="k-layout__main">
+      <section class="k-card k-card--info rn-hist">
+        {% include "partials/runs_drawer.html" %}
+      </section>
+      <section class="k-card rn-hist">
+        <header class="k-sec-head"><span class="k-badge">{{ ui.icon('scan') }}</span><div class="k-grow"><h3>Searches in this run</h3>
+          <p>Kestrel does not link searches to runs by id, so this is a best-effort match on start time, not a guaranteed join.</p></div></header>
+        {% if scrape_runs %}
+        <div class="k-table-wrap"><table class="k-table">
+          <thead><tr><th>Source</th><th>Status</th><th>Started</th><th>Finished</th><th>Counts</th></tr></thead>
+          <tbody>
+          {% for r in scrape_runs %}
+            <tr>
+              <td>{{ r.source_name or '-' }}</td>
+              <td>{{ r.scrape.status }}</td>
+              <td><small>{{ date_display(r.scrape.started_at, 'raw') }}</small></td>
+              <td><small>{{ date_display(r.scrape.finished_at, 'raw') or '-' }}</small></td>
+              <td><small>{{ r.scrape.counts | run_counts }}</small>{% if r.scrape.counts | run_model_label %}<br><small data-testid="run-model-used">on {{ r.scrape.counts | run_model_label }}</small>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        {% else %}<p class="k-muted rn-empty">No searches were found in this run's time window.</p>{% endif %}
+      </section>
+      <section class="k-card rn-hist">
+        <header class="k-sec-head"><span class="k-badge">{{ ui.icon('star') }}</span><div class="k-grow"><h3>Roles scored in this run</h3></div></header>
+        {% if evaluations %}
+        <div class="k-table-wrap"><table class="k-table">
+          <thead><tr><th>Role</th><th>Step</th><th>Verdict</th><th>Score</th><th>Scored</th></tr></thead>
+          <tbody>
+          {% for r in evaluations %}
+            <tr>
+              <td><a class="k-link" href="/opportunities/{{ r.opp.id }}">{{ r.opp.title or r.opp.id }}</a></td>
+              <td>{{ {1: 'Quick screen', 2: 'Rating', 3: 'Deeper read'}.get(r.ev.tier, r.ev.tier) }}</td>
+              <td>{{ r.ev.verdict or '-' }}</td>
+              <td>{{ '%.2f'|format(r.ev.score) if r.ev.score is not none else '-' }}</td>
+              <td><small>{{ date_display(r.ev.created_at, 'raw') }}</small></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        {% if evaluations|length < 5 %}<p class="k-muted rn-small">{{ too_few(evaluations|length) }}: not enough scores in this window to draw any conclusion from.</p>{% endif %}
+        {% else %}<p class="k-muted rn-empty">No roles were scored in this run's time window.</p>{% endif %}
+      </section>
+    </div>
+    {% call ui.help_column() %}
+      <section class="k-card k-card--warn rn-nat">
+        <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ui.icon('restore') }}</span><div class="k-grow"><h3>Needs another try</h3>
+          <p>{{ quarantined_count }} {{ 'role' if quarantined_count == 1 else 'roles' }} across the whole app</p></div></header>
+        <p class="rn-small"><a class="k-link" href="/quarantine">See the roles that need another try</a></p>
+      </section>
+    {% endcall %}
   </div>
-
-  <div class="panel">
-    <h2 title="Quarantine">Failed scoring</h2>
-    <p>{{ quarantined_count }} {{ 'posting' if quarantined_count == 1 else 'postings' }} failed scoring system-wide.
-      <a href="/quarantine">View failed scoring &rarr;</a></p>
-  </div>
-
-  <div class="panel">
-    <h2>Scrape runs in this window</h2>
-    <p class="muted">Kestrel does not link ingestion runs to pipeline runs by id, so this is a
-      best-effort match on start time, not a guaranteed join.</p>
-    {% if scrape_runs %}
-      <div style="overflow-x:auto">
-      <table class="data">
-        <thead><tr><th>#</th><th>Source</th><th>Status</th><th>Started</th><th>Finished</th><th>Counts</th></tr></thead>
-        <tbody>
-        {% for row in scrape_runs %}
-          <tr>
-            <td class="mono">{{ row.scrape.id }}</td>
-            <td>{{ row.source_name or '-' }}</td>
-            <td><span class="badge">{{ row.scrape.status }}</span></td>
-            <td class="mono"><small>{{ row.scrape.started_at }}</small></td>
-            <td class="mono"><small>{{ row.scrape.finished_at or '-' }}</small></td>
-            <td><small class="mono">{{ row.scrape.counts | run_counts }}</small>{% if row.scrape.counts | run_model_label %}<br><small data-testid="run-model-used">on {{ row.scrape.counts | run_model_label }}</small>{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      </div>
-    {% else %}
-      <p class="muted">No scrape runs found in this run's time window.</p>
-    {% endif %}
-  </div>
-
-  <div class="panel">
-    <h2>Opportunities evaluated in this window</h2>
-    {% if evaluations %}
-      <div style="overflow-x:auto">
-      <table class="data">
-        <thead><tr><th>Opportunity</th><th class="num">Tier</th><th>Verdict</th>
-          <th class="num">Score</th><th>Evaluated</th></tr></thead>
-        <tbody>
-        {% for row in evaluations %}
-          <tr>
-            <td><a href="/opportunities/{{ row.opp.id }}">{{ row.opp.title or row.opp.id }}</a></td>
-            <td class="num mono">{{ row.ev.tier }}</td>
-            <td><span class="badge {{ verdict_class(row.ev.verdict) }}">{{ row.ev.verdict or '-' }}</span></td>
-            <td class="num mono">{{ '%.2f'|format(row.ev.score) if row.ev.score is not none else '-' }}</td>
-            <td class="mono"><small>{{ row.ev.created_at }}</small></td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      </div>
-      {% if evaluations|length < 5 %}
-        <p class="muted">Too few to judge ({{ evaluations|length }} of 5 needed): not enough evaluations in
-          this window to draw any conclusion from.</p>
-      {% endif %}
-    {% else %}
-      <p class="muted">No evaluations recorded in this run's time window.</p>
-    {% endif %}
-  </div>
-{% endif %}
+  {% endif %}
+</div></div>
 {% endblock %}

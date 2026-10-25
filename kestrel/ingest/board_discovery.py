@@ -157,7 +157,9 @@ async def resolve_short_link(url: str, http: HttpClient) -> BoardRef | None:
     """The board a grnh.se short link points at: one request with redirects off, then the
     Location header read like any other posting link. Any failure is None, never an error."""
     try:
-        r = await http.request("GET", url, follow_redirects=False, retries=1)
+        r = await http.request(
+            "GET", url, follow_redirects=False, retries=1, public_only=True
+        )
     except Exception as exc:  # network, robots, rate: a link that cannot be read is skipped
         log.debug("board_discovery.short_link_failed", error=type(exc).__name__)
         return None

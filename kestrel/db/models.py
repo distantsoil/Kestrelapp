@@ -30,6 +30,10 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     track: Mapped[str] = mapped_column(String, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # first_name is required and greets the operator; full_name is derived (D-UI-117) and kept
+    # for the resume header and for a profile saved before the split.
+    first_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String, nullable=True)
     full_name: Mapped[str | None] = mapped_column(String, nullable=True)
     email: Mapped[str | None] = mapped_column(String, nullable=True)
     phone: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -92,6 +96,9 @@ class Org(Base):
     signals: Mapped[list | None] = mapped_column(JSON, default=list)
     first_seen_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     last_seen_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    # Hide this company (D-UI-123): its roles stay out of Pipeline and Today, never deleted.
+    # None is visible; a value is when it was hidden. Unhide clears it.
+    hidden_at: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     opportunities: Mapped[list[Opportunity]] = relationship(back_populates="org")
 
@@ -486,6 +493,65 @@ class Contact(Base):
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
 
 
+class OrgSummary(Base):
+    """The sourced company summary (P16, D-LLM-9, SPEC-MODULES 2.1): one row per organization.
+    `sentences` is `[{text, source_indexes}]`, `tags` is `[{key, text, source_indexes}]`,
+    `sources` the excerpts used. `status` is ok, insufficient or quarantined."""
+
+    __tablename__ = "org_summary"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("org.id"), unique=True)
+    sentences: Mapped[list] = mapped_column(JSON, default=list)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    generated_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    insufficient_sources: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default="ok")
+
+
+class ContactImport(Base):
+    """One applied LinkedIn connections import (D-UI-115, SPEC-MODULES 2.3). The file itself is
+    never kept, and no email address from it is ever stored (D-UI-131)."""
+
+    __tablename__ = "contact_import"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    imported_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    file_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    n_new: Mapped[int] = mapped_column(Integer, default=0)
+    n_changed: Mapped[int] = mapped_column(Integer, default=0)
+    n_missing: Mapped[int] = mapped_column(Integer, default=0)
+    kept_missing: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ConnectionPosition(Base):
+    """Where a connection works, or worked as far as earlier imports show. A person has one
+    current row and zero or more earlier ones (the "used to work here" history)."""
+
+    __tablename__ = "connection_position"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contact_id: Mapped[int] = mapped_column(ForeignKey("contact.id"), index=True)
+    company_name: Mapped[str | None] = mapped_column(String, nullable=True)  # as in the file
+    org_id: Mapped[int | None] = mapped_column(ForeignKey("org.id"), nullable=True, index=True)
+    match: Mapped[str] = mapped_column(String, default="none")  # sure|possible|manual|none
+    # True once the operator ruled on this company (confirm, change, or Not a match), so a later
+    # import reuses the answer instead of matching again. Only "none" needs it to be told apart
+    # from a company that simply had no match yet.
+    operator_decided: Mapped[bool] = mapped_column(Boolean, default=False)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    connected_on: Mapped[str | None] = mapped_column(String, nullable=True)  # ISO date
+    first_import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_import.id"), nullable=True
+    )
+    last_import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_import.id"), nullable=True
+    )
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class OutreachDraft(Base):
     __tablename__ = "outreach_draft"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -656,6 +722,7 @@ class EngagementOffer(Base):
     exclusivity: Mapped[str | None] = mapped_column(Text, nullable=True)
     ip_terms: Mapped[str | None] = mapped_column(Text, nullable=True)
     notice_period: Mapped[str | None] = mapped_column(String, nullable=True)
+    deadline: Mapped[str | None] = mapped_column(String, nullable=True)  # migration 0024
     received_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     status: Mapped[str] = mapped_column(String, default="verbal")
     notes_md: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import iso, utcnow_iso
 from kestrel.db.models import Notification, Opportunity, Pursuit
+from kestrel.ingest.http import UnsafeURLError
 from kestrel.intelligence.ghost import recompute_ghost
 
 log = structlog.get_logger()
@@ -80,7 +81,7 @@ async def check_liveness(
 
     expired: str | None = None  # the closed_reason this read would give, when it is expired
     try:
-        body = await http.get_text(opp.url, check_robots=True)
+        body = await http.get_text(opp.url, check_robots=True, public_only=True)
         if page_says_closed(body):
             expired = "page_text"
     except httpx.HTTPStatusError as exc:
@@ -91,7 +92,7 @@ async def check_liveness(
             # A 5xx/429/403 is a transient failure, not a closed role: leave liveness unchanged.
             log.debug("liveness_transient", url=opp.url, status=status)
             return previous
-    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+    except (httpx.HTTPError, httpx.InvalidURL, UnsafeURLError) as exc:
         log.debug("liveness_fetch_failed", url=opp.url, error=str(exc))
         return previous
 

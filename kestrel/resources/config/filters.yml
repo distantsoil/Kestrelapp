@@ -10,7 +10,9 @@
 employment:
   hard_blockers:
     - id: comp_floor
-      when: "comp_max_below(opp, profile.employment_terms.comp_floor_usd)"
+      # The near-floor margin (D-RULES-2): a ceiling a little under the floor passes, tagged
+      # "Below your minimum" by the near_floor soft signal. No posted pay always passes.
+      when: "comp_max_below(opp, margin_floor(profile.employment_terms.comp_floor_usd, profile.employment_terms.comp_floor_margin_pct))"
       reason: "Comp ceiling below floor"
     - id: sponsorship
       when: "profile.requires_sponsorship and regex(opp.description_md, '(?i)(cannot|unable to|will not) (provide|offer) (visa )?sponsor')"
@@ -38,6 +40,7 @@ employment:
     # title_contains_any (strict substring), and title_equals_any stays strict exact.
     - { id: title_exact,       when: "title_near_equals_any(opp, profile.employment_terms.target_titles)", weight: 2.0 }
     - { id: title_contains,    when: "title_near_any(opp, profile.employment_terms.target_titles)", weight: 1.0 }
+    - { id: near_floor,        when: "comp_max_near_floor(opp, profile.employment_terms.comp_floor_usd, profile.employment_terms.comp_floor_margin_pct)", weight: 0.0 }
     - { id: comp_above_target, when: "comp_max_at_least(opp, profile.employment_terms.comp_target_usd)", weight: 1.0 }
     - { id: direct_ats,        when: "source_kind_in(source, ['greenhouse','lever','ashby','workday','smartrecruiters','rippling','adp','paylocity','workable'])", weight: 0.8 }
     - { id: fresh,             when: "age_days(opp.date_posted) <= 3", weight: 0.5 }
@@ -51,7 +54,7 @@ employment:
 consulting:
   hard_blockers:
     - id: rate_floor
-      when: "comp_max_below(opp, profile.consulting_terms.day_rate_floor)"
+      when: "comp_max_below(opp, margin_floor(profile.consulting_terms.day_rate_floor, profile.consulting_terms.day_rate_floor_margin_pct))"
       reason: "Day rate below floor"
     - id: too_short
       when: "trigger_int_below(opp, 'engagement_days', profile.consulting_terms.min_engagement_days)"
@@ -67,6 +70,7 @@ consulting:
       when: "opp.event_date is not None and age_days(opp.event_date) > settings.consulting.max_trigger_age_days"
       reason: "Trigger event window closed"
   soft_signals:
+    - { id: near_floor,     when: "comp_max_near_floor(opp, profile.consulting_terms.day_rate_floor, profile.consulting_terms.day_rate_floor_margin_pct)", weight: 0.0 }
     - { id: pe_backed,      when: "org.ownership == 'pe_backed'", weight: 1.5 }
     - { id: target_size,    when: "value_in(org.size_band, profile.consulting_terms.target_org_size)", weight: 1.0 }
     - { id: target_sector,  when: "value_in(org.sector, profile.consulting_terms.target_sectors)", weight: 1.0 }

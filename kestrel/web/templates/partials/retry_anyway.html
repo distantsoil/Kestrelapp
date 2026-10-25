@@ -1,0 +1,11 @@
+{# Score it anyway (D-UI-74): says what it skips before it does it. #}
+{% from "ui/macros.html" import modal %}
+{% set go_attrs = {'data-testid': 'rt-anyway-go', 'hx-post': '/quarantine/' ~ quarantine_id ~ '/anyway', 'hx-target': '#' ~ dom_id, 'hx-swap': 'outerHTML'} %}
+{% call modal('rt-anyway-dialog', 'Score ' ~ role ~ ' anyway?', [
+  {'label': 'Cancel', 'close': True},
+  {'label': 'Score it anyway', 'kind': 'primary', 'close': True, 'attrs': go_attrs}
+]) %}
+  {% if org %}<p class="k-muted">{{ org }}</p>{% endif %}
+  <p>This skips your rules check, such as the places, pay limits and titles you set aside. A role you would normally pass on may get a score.</p>
+  <p>The role keeps whatever score it earns, and you can still hide it from Pipeline later.</p>
+{% endcall %}

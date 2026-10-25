@@ -1,0 +1,63 @@
+{# One Applications card (D-UI-100). The attributes the page script filters on are all built on
+   the server from what is on screen (redacted in confidential mode), so no employer name rides in
+   an attribute that confidential mode hides. #}
+{% macro card(c, track, ui) -%}
+{% set p = c.pursuit %}
+<article class="ap-card{% if c.closed %} is-closed{% endif %}{% if c.is_new %} is-new{% endif %}" draggable="true" tabindex="0"
+         data-testid="pcard" data-id="{{ p.id }}" data-col="{{ c.column }}" data-search="{{ c.search }}"
+         data-closed="{{ 1 if c.closed else 0 }}" data-folded="{{ 1 if c.folded else 0 }}"
+         data-applied="{{ c.applied }}" data-updated="{{ c.updated }}" data-added="{{ c.added }}"
+         data-fit="{{ c.fit.value if c.fit.value is not none else '' }}" data-pri="{{ 1 if c.priority else 0 }}"
+         data-work="{{ c.work }}" data-company="{{ (c.org_name or '')|lower }}"
+         data-quiet="{{ 1 if c.overdue else 0 }}" data-new="{{ 1 if c.is_new else 0 }}"
+         data-tailor="{{ c.tailor_href }}" data-full="/opportunities/{{ c.opp.id }}"
+         data-confirm="{{ 'offer' if c.has_offers else '' }}"
+         aria-label="{{ c.title }}, {{ c.org_name or 'unknown organization' }}, {{ c.stage_label }}">
+  <div class="ap-c1">
+    <span class="ap-mono" data-slot="{{ c.slot }}" aria-hidden="true">{{ c.letters }}</span>
+    <div class="k-grow">
+      <div class="ap-t">{{ c.title }}</div>
+      <div class="ap-o">{{ c.org_name or 'Unknown organization' }}</div>
+    </div>
+    <button type="button" class="ap-kb" data-more aria-haspopup="menu" aria-label="More actions for {{ c.title }}">{{ ui.icon('more', 'k-ic--sm') }}</button>
+  </div>
+  <div class="ap-tags">
+    {%- if c.fit.score %}<span class="k-pill k-pill--info">Fit {{ c.fit.score }}</span>{% else %}<span class="k-pill k-pill--info">Being scored</span>{% endif -%}
+    {%- if c.priority %}<span class="k-pill k-pill--bad" data-testid="priority-tag">High priority</span>{% endif -%}
+    {%- if c.is_new %}<span class="k-pill ap-newtag">New</span>{% endif -%}
+    {%- if c.quiet_days %}<span class="k-pill k-pill--warn" data-testid="quiet">{{ ui.icon('clock') }}{{ c.quiet_days }} day{{ '' if c.quiet_days == 1 else 's' }} quiet</span>{% endif -%}
+  </div>
+  {% if c.folded %}
+  <div class="ap-next">{{ ui.icon('check') }}<span>{{ c.stage_label }}{% if c.closed_on %} · closed {{ c.closed_on }}{% endif %}</span></div>
+  {% elif c.next.text %}
+  <div class="ap-next">{{ ui.icon(c.next.icon) }}<span><b>Next:</b> {{ c.next.text }}{% if c.next.when %} · {{ c.next.when }}{% endif %}</span></div>
+  {% endif %}
+  {% if c.ghost_hint %}
+  <div class="ap-next ap-ghost" data-testid="ghost-hint"><span>No reply in {{ c.ghost_hint }} days.</span>
+    <button type="button" class="k-btn k-btn--sm" data-testid="ghost-hint-act" data-act
+            hx-post="/pursuits/{{ p.id }}/status" hx-vals='{"to_status": "{{ c.ghost_status }}"}'>{{ 'Mark as ghosted' if track == 'employment' else 'Mark as no response' }}</button></div>
+  {% endif %}
+  <div class="ap-foot">
+    <button type="button" class="ap-stg" data-stage-menu aria-haspopup="menu" aria-label="Stage: {{ c.stage_label }}. Change stage">{{ c.stage_label }}{{ ui.icon('down', 'k-ic--sm') }}</button>
+    {% if c.step %}
+    <button type="button" class="k-btn k-btn--sm ap-nx" data-step-kind="{{ c.step.kind }}" data-step-key="{{ c.step.key }}" data-testid="next-step">{{ c.step.label }}</button>
+    {% endif %}
+  </div>
+</article>
+{%- endmacro %}
+
+{% macro table_row(c, track, ui, n) -%}
+{% set p = c.pursuit %}
+<tr class="ap-row" tabindex="0" data-testid="prow" data-id="{{ p.id }}" data-ord="{{ n }}" data-col="{{ c.column }}"
+    data-search="{{ c.search }}" data-closed="{{ 1 if c.closed else 0 }}" data-folded="{{ 1 if c.folded else 0 }}"
+    data-applied="{{ c.applied }}" data-updated="{{ c.updated }}" data-added="{{ c.added }}"
+    data-fit="{{ c.fit.value if c.fit.value is not none else '' }}" data-pri="{{ 1 if c.priority else 0 }}"
+    data-work="{{ c.work }}" data-company="{{ (c.org_name or '')|lower }}" data-quiet="{{ 1 if c.overdue else 0 }}"
+    data-activity="{{ p.last_activity_at or '' }}">
+  <td><div class="ap-rolecell"><span class="ap-mono" data-slot="{{ c.slot }}" aria-hidden="true">{{ c.letters }}</span><span class="ap-tt"><b>{{ c.title }}</b><small>{{ c.org_name or 'Unknown organization' }}</small></span></div></td>
+  <td><span class="k-pill ap-stagepill" data-col="{{ c.column }}">{{ c.stage_label }}</span></td>
+  <td>{% if c.folded %}<span class="k-muted">Closed</span>{% elif c.next.text %}{{ c.next.text }}{% else %}<span class="k-muted">None</span>{% endif %}</td>
+  <td class="{% if c.overdue %}ap-late{% endif %}">{% if c.folded %}<span class="k-muted">-</span>{% elif c.quiet_days %}{{ c.quiet_days }} day{{ '' if c.quiet_days == 1 else 's' }} quiet{% elif c.next.when %}{{ c.next.when }}{% else %}<span class="k-muted">-</span>{% endif %}</td>
+  <td>{% if c.fit.score %}{{ c.fit.score }}{% else %}<span class="k-muted">Being scored</span>{% endif %}</td>
+</tr>
+{%- endmacro %}

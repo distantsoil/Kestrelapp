@@ -29,11 +29,12 @@ async def _seed_org() -> int:
         return org.id
 
 
-def test_a14_warm_paths_empty_state_has_no_linkedin_hint():
+def test_a14_people_you_know_empty_state_points_to_the_import():
+    """D-UI-123 replaced the Warm paths empty state: with no import the section invites one and
+    names LinkedIn, and the D-UI-131 disclosure line appears only once people were imported."""
     org_id = asyncio.run(_seed_org())
     with TestClient(build_app(worker=False)) as c:
         text = c.get(f"/orgs/{org_id}").text
-    assert "No warm paths found yet." in text
-    assert "Add known contacts to surface one." in text
-    assert "LinkedIn" not in text
-    assert "Import LinkedIn connections" not in text
+    assert "Import your LinkedIn connections to see people you know at this company" in text
+    assert "Because you imported these connections from LinkedIn" not in text
+    assert "No warm paths found yet." not in text

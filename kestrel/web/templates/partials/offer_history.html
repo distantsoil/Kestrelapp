@@ -1,0 +1,18 @@
+{# History: past offers. Under five there is no pattern to show, and it says so with the count
+   (hard rule 6). #}
+{% from "ui/macros.html" import icon %}
+<section class="k-card of-hist" data-testid="of-history">
+  <header class="k-sec-head"><span class="k-badge">{{ icon('restore') }}</span><div class="k-grow"><h3>Past offers</h3></div></header>
+  {%- if history %}
+  <div class="of-hrow of-hrow--hd"><span>{{ 'Engagement' if con else 'Role' }}</span><span>{{ 'Day rate' if con else 'Base' }}</span><span>Outcome</span><span>When</span></div>
+  {%- for h in history %}
+  <div class="of-hrow" data-testid="of-hrow"><span><b title="{{ h.who }} · {{ h.org }}">{{ h.who }} · {{ h.org }}</b></span><span>{{ h.value or 'Not given' }}</span><span><span class="k-pill k-pill--{{ 'good' if h.good else 'info' }}">{{ h.outcome }}</span></span><span class="k-muted">{{ h.when }}</span></div>
+  {%- endfor %}
+  {%- if past_n < min_obs %}
+  <span class="of-insuf">{{ icon('alert', 'k-ic--sm') }}{{ past_n }} past {{ 'offer' if past_n == 1 else 'offers' }}. Too few to show a pattern ({{ past_n }})</span>
+  {%- endif %}
+  {%- else %}
+  <p class="k-muted">No past offers yet. Accepted, declined and expired offers collect here.</p>
+  <span class="of-insuf">{{ icon('alert', 'k-ic--sm') }}0 past offers. Too few to show a pattern (0)</span>
+  {%- endif %}
+</section>

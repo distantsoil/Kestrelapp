@@ -28,6 +28,7 @@ _PAGES = ["/", "/opportunities", "/pursuits", "/documents", "/profile", "/storie
 
 _TEMPLATES = Path(paths.web_templates_dir())
 _CSS = Path(paths.web_static_dir()) / "css" / "kestrel.css"
+_COMPONENTS_CSS = Path(paths.web_static_dir()) / "css" / "components.css"
 
 # Classes that templates set but that are state hooks for HTMX or Alpine, or that a page sets
 # only for a test selector, never styling targets in their own right.
@@ -107,11 +108,14 @@ def test_base_renders_the_three_groups_and_every_link():
             assert item.href in links, item.label
             assert f'title="{item.label}"' in html
     # The labels the proposal names, and the ones it renames.
-    for label in ("Today", "Pipeline", "Applications", "Profile", "My stories", "Offers",
+    for label in ("Today", "Pipeline", "Applications", "Profile", "Interview prep", "Offers",
                   "Calibrate", "Analytics", "Sources", "Models", "Settings", "Help", "Runs",
-                  "Bench"):
+                  "About"):
         assert f">{label}</a>" in html, label
+    # Bench left the sidebar (D-DRIFT-11): it is Model check, reached from Models.
+    assert ">Bench</a>" not in html and 'href="/bench"' not in _links(html)
     assert ">Dashboard</a>" not in html and ">Stories</a>" not in html
+    assert ">My stories</a>" not in html
     # Brand mark: the icon plus the word, not split.
     assert '<img class="mark" src="/static/icon.svg"' in html
     assert '<span class="word">Kestrel</span>' in html
@@ -134,9 +138,11 @@ def test_base_renders_the_three_groups_and_every_link():
 
 @pytest.mark.parametrize(
     ("path", "active_href"),
-    [("/", "/"), ("/opportunities", "/opportunities"), ("/quarantine", "/opportunities"),
+    [("/", "/"), ("/opportunities", "/opportunities"), ("/quarantine", "/runs"),
      ("/pursuits", "/pursuits"), ("/stories", "/stories"), ("/settings", "/settings"),
-     ("/about", "/about"), ("/runs", "/runs"), ("/bench", "/bench")],
+     ("/about", "/about"), ("/runs", "/runs"),
+     # Model check (/bench) highlights Models, where it now lives (D-DRIFT-11).
+     ("/bench", "/models")],
 )
 def test_active_class_follows_the_current_path(path, active_href):
     asyncio.run(_seed())
@@ -167,7 +173,7 @@ def test_html_carries_the_stored_scheme_for_the_first_paint():
     assert html.startswith('<!doctype html>\n<html lang="en" data-scheme="teal"')
     # The pre-paint script is in <head>, ahead of the stylesheet, so there is no flash.
     head = html.split("</head>")[0]
-    assert head.index("kestrel-scheme") < head.index("kestrel.css")
+    assert head.index("kestrel-scheme") < head.index('rel="stylesheet"')
 
 
 def test_a_bad_stored_scheme_falls_back_to_the_default():
@@ -250,17 +256,21 @@ def test_appearance_route_writes_the_row_and_refuses_an_unknown_scheme():
     assert asyncio.run(_setting("ui.scheme")) == "teal"  # the refusals wrote nothing
 
 
-def test_settings_page_has_the_appearance_tab():
+def test_settings_page_has_the_appearance_section_with_the_shown_schemes():
     asyncio.run(_seed([Setting(key="ui.scheme", value="teal")]))
     with _client() as c:
         html = c.get("/settings").text
-    assert ">Appearance</button>" in html
-    assert 'hx-post="/settings/appearance"' in html
-    assert html.count('class="scheme-card"') == 2
-    assert "Paper and Indigo" in html and "Graphite and Teal" in html
-    assert 'value="teal" x-model="scheme"\n                 checked' in html
+        pane = c.get("/settings/section/preferences").text
+    assert 'data-scheme="teal"' in html
+    assert "Paper and Indigo" in pane and "Paper and Teal" in pane
+    from kestrel.config import UI_SCHEMES
+
+    assert pane.count("data-st-scheme=") == len(UI_SCHEMES)
+    for scheme in UI_SCHEMES:
+        assert f'data-st-scheme="{scheme}"' in pane
+    assert 'aria-checked="true" data-st-scheme="teal"' in pane
     for mode in ("light", "dark", "auto"):
-        assert f'name="theme" value="{mode}" x-model="theme"' in html
+        assert f'value="{mode}"' in pane
 
 
 # ----------------------------------------------------------------------------------- sweep
@@ -300,7 +310,10 @@ def _template_classes() -> dict[str, set[str]]:
 
 
 def test_stylesheet_has_a_rule_for_every_template_class():
-    css = _CSS.read_text(encoding="utf-8")
+    # The k- classes of the shared macros (templates/ui) live in components.css; a converted
+    # screen keeps its own sheet beside them (retry.css, pages/*.css), loaded through
+    # base.html's head_extra.
+    css = "".join(p.read_text(encoding="utf-8") for p in sorted(_CSS.parent.rglob("*.css")))
     missing = {
         token: sorted(files)
         for token, files in _template_classes().items()
@@ -395,3 +408,17 @@ def test_qr_ground_and_ink_tokens_are_fixed_light_in_every_scheme_block():
 def test_board_cards_stay_unselectable_so_dragging_still_works():
     css = _CSS.read_text(encoding="utf-8")
     assert re.search(r"\.pcard\s*\{[^}]*user-select:\s*none", css)
+
+
+def test_no_page_in_the_nav_renders_a_guide_strip():
+    """D-UI-146: the per-page guide strips are gone; each page's How it works button is its help."""
+    asyncio.run(_seed())
+    paths_in_nav = {item.href for _g, items in deps.NAV_GROUPS for item in items}
+    with _client() as c:
+        for path in sorted(set(_PAGES) | paths_in_nav):
+            r = c.get(path, follow_redirects=True)
+            assert r.status_code == 200, path
+            for gone in ('data-testid="guide-strip"', "data-guide=", 'class="guide-strip"',
+                         "/guides/"):
+                assert gone not in r.text, (path, gone)
+        assert c.post("/guides/today/dismiss").status_code in (404, 405)

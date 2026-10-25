@@ -307,11 +307,15 @@ async def recent_labels(
     return [_redact_row(r, mapping, enabled=enabled) for r in rows], total
 
 
-async def export_labels(session: AsyncSession) -> list[dict]:
-    """Every decision in both tables, oldest first, as JSON-serializable dicts. NOT redacted: this
-    is the operator's own data leaving by their own click, and a redacted export could not be
-    re-imported or audited. The page says so beside the button."""
+async def export_labels(session: AsyncSession, *, redact: bool = False) -> list[dict]:
+    """Every decision in both tables, oldest first, as JSON-serializable dicts. Not redacted by
+    default: the old Learning tab's export was the operator's own data leaving by their own
+    click. Settings > Scoring and learning passes `redact=True`, so with Confidential mode on the
+    current employer is replaced exactly as in every other output (SPEC-INTERFACES 2.6)."""
     rows, _ = await _rows(session, track=None, limit=None, offset=0)
+    if redact:
+        enabled, mapping = await confidential(session)
+        rows = [_redact_row(r, mapping, enabled=enabled) for r in rows]
     out = [asdict(r) | {"agreed": r.agreed} for r in reversed(rows)]
     return out
 
@@ -496,6 +500,13 @@ async def _ml_files(session: AsyncSession) -> list[MlFile]:
             )
         )
     return out
+
+
+async def track_summary(
+    session: AsyncSession, track: str, settings: Settings
+) -> TrackSummary:
+    """One track's summary, without the other track's queries or the ml folder listing."""
+    return await _track_summary(session, track, settings, await _weight_override_keys(session))
 
 
 async def summary(session: AsyncSession, settings: Settings) -> LedgerSummary:

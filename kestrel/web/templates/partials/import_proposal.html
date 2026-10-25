@@ -19,6 +19,8 @@
     {# Retry on the text already read: no re-upload, no re-conversion. Same processing panel. #}
     {% include "partials/import_processing.html" %}
   {% endif %}
+{% elif proposal and proposal.value and ob %}
+  {% include "partials/onboarding_proposal.html" %}
 {% elif proposal and proposal.value %}
   <div class="panel" style="margin-top:.8rem; padding:1rem">
     <h3>Proposed import</h3>

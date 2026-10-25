@@ -274,7 +274,9 @@ def _verification(report: dict[str, Any] | None) -> tuple[str, str]:
     }
     probed = [rows[n] for n in VERIFY_ROWS if n in rows]
     failed = [r for r in probed if r.get("status") == "FAIL"]
-    when = str(report.get("ran_at", ""))[:16].replace("T", " ")
+    from kestrel.date_display import format_display
+
+    when = format_display(report.get("ran_at"), kind="datetime", time_style="24h")
     if failed:
         first = failed[0]
         return "failed", f"{first.get('name')} failed on {when}: {first.get('detail', '')}"

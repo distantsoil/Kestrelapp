@@ -146,6 +146,27 @@ def test_a_hosted_pick_uses_its_json_mode_while_hosted_mode_is_on(app, monkeypat
     assert 'data-testid="assess-hosted-note"' in body and "to that provider" in body
     r = client.post(f"/documents/{master_id}/assess", data={"model": "hosted:vendor/json-mode"})
     assert "vendor/json-mode" in r.text and "this run only" in r.text
+    assert _Fake.sent == []
+    from kestrel.services.online_consent import destination_id
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async def route_dest():
+        async with get_sessionmaker()() as s:
+            settings = await load_settings_with_db(s)
+            tiers = {
+                **settings.llm.tiers,
+                "tier2": settings.llm.tiers["tier2"].model_copy(
+                    update={"backend": "frontier", "model": "vendor/json-mode"}
+                ),
+            }
+            llm = settings.llm.model_copy(update={"tiers": tiers})
+            return destination_id(settings.model_copy(update={"llm": llm}), "tier2")
+
+    dest = asyncio.run(route_dest())
+    r = client.post(f"/documents/{master_id}/assess", data={
+        "model": "vendor/json-mode", "confirmed": "1",
+        "model_choice": "hosted:vendor/json-mode", "dest": dest,
+    })
     (sent,) = _Fake.sent
     assert sent["model"] == "vendor/json-mode" and sent["backend"] == "frontier"
     assert sent["settings"].llm.hosted_model_caps["vendor/json-mode"].json_mode == "json_object"

@@ -1,0 +1,37 @@
+{% import "ui/macros.html" as ui %}
+{% set send_attrs = {'data-testid': 'doc-online-send', 'hx-post': post_url, 'hx-include': '#' ~ dialog_id ~ '-form', 'hx-target': target, 'hx-swap': 'innerHTML'} %}
+{% set actions = [{'label': 'Cancel', 'close': True}] %}
+{% if route.employer != 'held' %}
+  {% set actions = actions + [{'label': action, 'kind': 'primary', 'close': True, 'attrs': send_attrs, 'vals': {'confirmed': '1', 'model': route.model, 'dest': route.dest}}] %}
+{% endif %}
+{% call ui.modal(dialog_id, action ~ ' with an online model?', actions, static=True) %}
+  <p class="k-muted">{{ route.provider }}, using your own credit. This action would use <b>{{ route.model }}</b>, for this run only.</p>
+  <div class="doc-online-send">
+    <b>What will be sent</b>
+    <ul>
+      <li>{{ route.sends }}.</li>
+      {% if route.this_send %}<li>{{ route.this_send|capitalize }}.</li>{% endif %}
+    </ul>
+    {% if route.employer == 'hidden' %}
+      <p><b>Confidential mode is on:</b> your current employer is hidden before anything is sent.</p>
+    {% elif route.employer == 'held' %}
+      <p><b>This send will be held.</b> Confidential mode is on and no current employer is chosen. Choose it in Settings first.</p>
+    {% elif route.employer == 'unmarked' %}
+      <p><b>No current employer is marked yet.</b> Confidential mode is on, so your whole resume goes as written, including your current employer's name, only because you confirm it here. Mark your employer after the import to hide it from then on.</p>
+    {% else %}
+      <p>Confidential mode is off, so the employer's name is not hidden.</p>
+    {% endif %}
+    <p>{{ route.provider }} handles what it receives under its own terms.</p>
+  </div>
+  <form id="{{ dialog_id }}-form">
+    {% for key, value in extra.items() %}
+      <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endfor %}
+  </form>
+{% endcall %}
+<script>
+  (function () {
+    var modal = document.getElementById('{{ dialog_id }}');
+    if (modal && window.KUI) window.KUI.openModal(modal);
+  })();
+</script>

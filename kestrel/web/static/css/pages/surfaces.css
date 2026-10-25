@@ -1,0 +1,194 @@
+/* Small surfaces (D-UI-152): Score again, Run now, the error page, the update banner and what's
+   new, announcements and the notification list. Token colors only (tests/test_ui_tokens.py), every
+   class prefixed sf-. The look follows the locked design mockup (kept privately)
+   Loaded by each fragment that needs it, so it works on converted and legacy pages alike. */
+
+/* ----------------------------------------------------------------------------- the dialog */
+dialog.sf-dialog { padding: 0; border: 1px solid var(--line); border-radius: var(--r-xl);
+  background: var(--paper); color: var(--ink); box-shadow: var(--shadow-pop);
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: hidden;
+  font: var(--fs-md)/1.5 var(--font); }
+dialog.sf-dialog[open] { display: flex; flex-direction: column; }
+dialog.sf-dialog::backdrop { background: var(--scrim); }
+dialog.sf-dialog, dialog.sf-dialog * { box-sizing: border-box; }
+dialog.sf-dialog :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px;
+  border-radius: var(--r-xs); }
+.sf-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.sf-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px 6px; }
+.sf-head h2 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3; white-space: nowrap;
+  text-transform: none; letter-spacing: normal; color: var(--ink); }
+.sf-head .sf-x { margin-left: auto; }
+.sf-sub { padding: 0 22px 4px; margin: 0; color: var(--muted); }
+.sf-body { padding: 10px 22px 16px; overflow: auto; display: flex; flex-direction: column;
+  gap: 12px; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.sf-foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+  padding: 14px 22px; border-top: 1px solid var(--line); background: var(--bg); }
+.sf-foot .sf-l { margin-right: auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.sf-foot .k-btn { flex: none; padding: 8px 18px; }
+.sf-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  flex: none; background: var(--soft); color: var(--brand); }
+.sf-ic .k-ic { width: 20px; height: 20px; }
+.sf-ic--warn { background: var(--warn-bg); color: var(--warn); }
+.sf-ic--bad { background: var(--bad-bg); color: var(--bad); }
+.sf-ic--good { background: var(--good-bg); color: var(--good); }
+.sf-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sf-muted { color: var(--muted); }
+.sf-small { font-size: 13px; }
+a.sf-a { color: var(--link-ink); font-weight: 700; text-decoration: none; cursor: pointer; }
+a.sf-a:hover { text-decoration: underline; }
+.sf-x { flex: none; }
+
+/* ------------------------------------------------------------------------------- choices */
+.sf-card { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px;
+  background: var(--paper); }
+.sf-card--info { background: var(--tint-info); border-color: var(--tint-info-line); }
+.sf-card--warn { background: var(--tint-warn); border-color: var(--tint-warn-line); }
+.sf-card--bad { background: var(--bad-bg); border-color: var(--bad); }
+.sf-card p { margin: 0 0 6px; color: var(--ink); }
+.sf-card p:last-child { margin-bottom: 0; }
+.sf-stack { display: flex; flex-direction: column; gap: 8px; }
+.sf-choice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--r-lg); cursor: pointer;
+  background: var(--paper); margin: 0;
+  transition: background var(--dur-1), border-color var(--dur-1); }
+.sf-choice:hover { background: var(--soft); }
+.sf-choice:has(input:checked) { border-color: var(--brand); background: var(--tint-info); }
+.sf-choice > input { margin: 3px 0 0; accent-color: var(--brand); width: 16px; height: 16px;
+  flex: none; }
+.sf-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sf-tx > span { color: var(--muted); font-size: 13px; }
+.sf-chk { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; margin: 0; }
+.sf-chk > input { margin-top: 4px; accent-color: var(--brand); width: 16px; height: 16px;
+  flex: none; }
+.sf-pick { margin-top: 8px; }
+.sf-pick .model-picker, .sf-pick .ke-combo { width: 100%; min-width: 0; }
+.sf-what { display: flex; flex-direction: column; gap: 6px; }
+.sf-ln { display: flex; gap: 10px; align-items: flex-start; }
+.sf-ln > .k-ic { width: 16px; height: 16px; margin-top: 3px; color: var(--brand); }
+.sf-ln > span { flex: 1; min-width: 0; }
+.sf-list { display: flex; flex-direction: column; gap: 2px; }
+.sf-li { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--r-md); cursor: pointer; margin: 0; }
+.sf-li:hover { background: var(--soft); }
+.sf-li > input { accent-color: var(--brand); width: 16px; height: 16px; flex: none; }
+.sf-li .sf-tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.sf-list[data-off] { opacity: .45; pointer-events: none; }
+.sf-status:empty { display: none; }
+.sf-status { font-size: var(--fs-sm); }
+.sf-status .score-again-done { color: var(--good); }
+.sf-status .score-again-error { color: var(--bad); }
+.sf-confirm[hidden], .sf-main[hidden] { display: none !important; }
+
+/* ----------------------------------------------------------------------------- the banner */
+.sf-bn { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--tint-info-line); border-radius: var(--r-lg); padding: 9px 12px;
+  background: var(--tint-info); color: var(--ink); margin: 0 0 12px; }
+.sf-bn--warn { background: var(--tint-warn); border-color: var(--tint-warn-line); }
+.sf-bn .sf-ic { width: 30px; height: 30px; border-radius: 8px; }
+.sf-bn .sf-ic .k-ic { width: 16px; height: 16px; }
+.sf-bn .sf-msg { flex: 1; min-width: 220px; }
+.sf-bn .sf-msg b { font-weight: 700; }
+.sf-bn .k-btn { flex: none; }
+.sf-bn .sf-more { flex-basis: 100%; padding: 0 42px; color: var(--muted); font-size: 13px; }
+.sf-bn .sf-more[hidden] { display: none; }
+
+/* --------------------------------------------------------------------- what's new, release */
+.sf-new { display: flex; gap: 14px; align-items: flex-start; }
+.sf-new .sf-tx > span { color: var(--muted); }
+.sf-priv { display: flex; gap: 10px; align-items: center; padding: 10px 12px;
+  border-radius: var(--r-md); background: var(--good-bg); color: var(--ink); }
+.sf-priv .k-ic { color: var(--good); }
+.sf-notes h4 { margin: 10px 0 4px; font-size: var(--fs-md); }
+.sf-notes ul { margin: 0 0 6px; padding-left: 20px; }
+.sf-inline { margin: 0 0 12px; }
+.sf-inline .sf-body { padding-top: 6px; }
+
+/* ----------------------------------------------------------------------------- error page */
+.sf-err-wrap { min-height: 60vh; display: grid; place-items: center; padding: 24px 16px; }
+.sf-err { width: min(520px, 100%); background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--shadow-pop); overflow: hidden; }
+.sf-err .sf-body { align-items: flex-start; }
+.sf-err-actions { display: flex; gap: 8px; align-items: center; }
+.sf-code { font: 12.5px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 10px 12px; color: var(--ink); overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; width: 100%; margin: 0; }
+.sf-details[hidden] { display: none; }
+.sf-details { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+
+/* ------------------------------------------------------------------------ notifications */
+.sf-notes-list { display: flex; flex-direction: column; }
+.sf-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 6px;
+  border-bottom: 1px solid var(--line); }
+.sf-note:last-child { border-bottom: 0; }
+.sf-note.is-unread { border-left: 3px solid var(--brand); padding-left: 9px; }
+.sf-note .sf-ic { width: 28px; height: 28px; border-radius: 8px; }
+.sf-note .sf-ic .k-ic { width: 15px; height: 15px; }
+.sf-note .sf-tx > b { font-weight: 700; }
+.sf-note-when { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.sf-note-open { margin-top: 4px; align-self: flex-start; }
+.sf-empty { color: var(--muted); padding: 10px 6px; margin: 0; }
+
+/* ------------------------------------------------------------------------ announcements */
+.sf-notice { display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+  border: 1px solid var(--tint-info-line); border-radius: var(--r-lg);
+  background: var(--tint-info); color: var(--ink); margin: 0 0 12px; }
+.sf-notice .sf-msg { flex: 1; min-width: 0; }
+
+/* -------------------------------------------------------------------------- score history */
+.sf-hist { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.sf-hist h3 { margin: 0; font-size: var(--fs-sm); color: var(--muted); font-weight: 700; }
+.sf-hist-compare { margin: 0; font-size: var(--fs-sm); }
+.sf-hist ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  gap: 4px; }
+.sf-hist li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px;
+  align-items: center; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: var(--r-md); background: var(--paper); font-size: var(--fs-sm); }
+.sf-hist-date { color: var(--muted); white-space: nowrap; }
+.sf-hist-model { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-hist-good { color: var(--good); font-weight: 700; }
+.sf-hist-warn { color: var(--warn); font-weight: 700; }
+.sf-hist-bad { color: var(--bad); font-weight: 700; }
+.sf-hist-idle { color: var(--muted); }
+.sf-hist-score { font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-choice { transition: none; }
+}
+
+/* ------------------------------------------------------------------------ the bell panel */
+.sf-np { display: flex; flex-direction: column; gap: 4px; min-width: min(380px, 86vw);
+  font-size: var(--fs-md); color: var(--ink); }
+.sf-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.sf-tab { background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
+  padding: 8px 12px; font: inherit; font-weight: 700; color: var(--muted); cursor: pointer;
+  white-space: nowrap; }
+.sf-tab:hover { color: var(--ink); }
+.sf-tab.is-on { color: var(--brand); border-bottom-color: var(--brand); }
+.sf-tab-n { margin-left: 6px; padding: 0 7px; border-radius: var(--r-pill);
+  background: var(--warn-bg); color: var(--warn-ink); font-size: 12px; }
+.sf-gh { font-size: 11px; letter-spacing: .09em; font-weight: 700; color: var(--muted);
+  padding: 10px 6px 2px; text-transform: uppercase; }
+.sf-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--brand); margin-right: 6px; vertical-align: 1px; }
+.sf-note > .sf-tx { gap: 4px; }
+.sf-note > .sf-tx > span:not(.sf-note-meta) { color: var(--muted); font-size: 13px; }
+.sf-note-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sf-menu { position: relative; flex: none; }
+.sf-menu > summary { list-style: none; cursor: pointer; }
+.sf-menu > summary::-webkit-details-marker { display: none; }
+.sf-menu-list { position: absolute; right: 0; top: 100%; z-index: 5; min-width: 190px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop); padding: 4px; display: flex; flex-direction: column; }
+.sf-menu-list button { background: none; border: 0; text-align: left; padding: 7px 10px;
+  border-radius: var(--r-sm); font: inherit; color: var(--ink); cursor: pointer; }
+.sf-menu-list button:hover { background: var(--soft); }
+.sf-np-foot { margin: 6px 6px 2px; color: var(--muted); font-size: 12px; }
+
+/* Score again footer: the two button groups swap in place; their wrappers add no box. */
+.sf-foot-main, .sf-foot-confirm { display: contents; }
+
+/* Run now: the choices fieldset and the footer wrappers add no box of their own. */
+.sf-choices { border: 0; margin: 0; padding: 0; min-width: 0; }
+.sf-foot-main[hidden], .sf-foot-confirm[hidden] { display: none; }
+/* The error page title. */
+.sf-err-title { margin: 0; font-size: 20px; font-weight: 700; text-transform: none; letter-spacing: normal; }

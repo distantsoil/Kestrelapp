@@ -1,0 +1,28 @@
+{# Your practice so far: one bar per finished session, plus the one in progress. Under five
+   sessions it says so instead of drawing a trend (hard rule 6). #}
+{% import "partials/pp_icons.html" as i %}
+<section class="k-card pp-hist" id="pp-hist"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-hist">
+  <header class="k-sec-head"><span class="k-badge k-badge--good">{{ i.pi('analytics') }}</span><div class="k-grow"><h3>Your practice so far</h3></div></header>
+  {%- if chart or live_mean %}
+  <div class="pp-bars" role="img" aria-label="Average score for each practice session, out of 5">
+    {%- for c in chart %}<div class="pp-bar" style="height: {{ (c.mean / 5 * 100)|round(1) }}%"><span>{{ '%.1f'|format(c.mean) }}</span></div>{% endfor %}
+    {%- if live_mean %}<div class="pp-bar is-now" style="height: {{ (live_mean / 5 * 100)|round(1) }}%"><span>{{ '%.1f'|format(live_mean) }}</span></div>{% endif %}
+  </div>
+  <div class="pp-barlbl">{% for c in chart %}<span>{{ c.label }}</span>{% endfor %}{% if live_mean %}<span>Today</span>{% endif %}</div>
+  {%- else %}
+  <p class="k-muted">No finished sessions yet. Answer a question and the score shows here.</p>
+  {%- endif %}
+  {%- if not trend_ok %}
+  <span class="pp-insuf" data-testid="pp-insufficient">{{ i.pi('alert', 'k-ic--sm') }}Not enough sessions yet to show a trend ({{ sessions }} of {{ trend_min }})</span>
+  {%- else %}
+  <p class="pp-sub" data-testid="pp-trend">{{ sessions }} finished sessions.</p>
+  {%- endif %}
+  {%- if history %}
+  <ul class="pp-sessions">
+    {%- for h in history[:6] %}
+    <li><button type="button" class="k-link" hx-get="/mock/session/{{ h.id }}" hx-target="#pp-chat" hx-swap="outerHTML" data-testid="pp-review">{{ h.mode.replace('_', ' ')|capitalize }} · {{ h.started_at | iso_to_local }}</button>
+      <span class="pp-sub">{{ h.question_count }} {{ 'answer' if h.question_count == 1 else 'answers' }}</span></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>

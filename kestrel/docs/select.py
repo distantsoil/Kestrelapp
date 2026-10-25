@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Evaluation, Opportunity
 from kestrel.docs.catalog import MasterCatalog, default_config, schema_inputs
+from kestrel.llm.docselect import slot_problems
 from kestrel.llm.guard import GuardResult, run_doc_select
 from kestrel.llm.prompts import load_prompt
 from kestrel.pipeline._shared import encode_send, plan_hosted_send
@@ -29,6 +30,10 @@ class Selection:
     defaults_used: bool
     coherence_check: str | None = None
     error: str | None = None
+    # Slots whose pick failed the catalog check (slot key -> the key the model named). The rest
+    # of the model's picks are valid and kept; these keep the standard wording and the page
+    # marks them "Needs your pick". Never filled in with a guess (hard rule 2).
+    needs_pick: dict[str, str | None] | None = None
 
 
 def _catalog_text(catalog: MasterCatalog) -> str:
@@ -155,7 +160,40 @@ async def select_config(
         return Selection(
             config=config, rationale=rationale, defaults_used=False, coherence_check=coherence
         )
+    partial = _partial_selection(catalog, si, result)
+    if partial is not None:
+        return partial
     # Validation or repair failure: render with DEFAULTS, flag it, never substitute the bad key.
     return Selection(
         config=default_config(catalog), rationale={}, defaults_used=True, error=result.error
+    )
+
+
+def _partial_selection(catalog: MasterCatalog, si: dict, result: GuardResult) -> Selection | None:
+    """When the answer parsed and only some SLOT picks failed the catalog check (the layout and
+    summary are real), keep every valid pick and mark the failed slots instead of throwing the
+    whole answer away. A failed slot keeps the operator's standard wording and is reported in
+    `needs_pick` so the page asks the operator to choose; the bad key is never written."""
+    if result.value is None or not (result.error or "").startswith("doc-select validation"):
+        return None
+    data = result.value.model_dump()
+    layout_keys = {x["key"] if isinstance(x, dict) else x for x in si["layouts"]}
+    summary_keys = {x["key"] if isinstance(x, dict) else x for x in si["summary_variants"]}
+    if data.get("layout") not in layout_keys or data.get("summary") not in summary_keys:
+        return None
+    bad = slot_problems(data, slots=si["slots"])
+    if not bad:
+        return None
+    config, rationale, coherence = _config_from_selection(result.value)
+    known = {sl.key: sl for sl in catalog.all_slots()}
+    slots = {k: v for k, v in config["slots"].items() if k in known and k not in bad}
+    for key in bad:
+        sl = known[key]
+        slots[key] = sl.default_variant_key or (sl.variants[0].key if sl.variants else "")
+    config["slots"] = slots
+    for key in bad:
+        rationale.pop(key, None)
+    return Selection(
+        config=config, rationale=rationale, defaults_used=False, coherence_check=coherence,
+        needs_pick=bad,
     )

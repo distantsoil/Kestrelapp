@@ -273,7 +273,53 @@ Signals are categorized (`ownership`, `funding`, `growth`, `layoffs`, `leadershi
 record**, so they accumulate across every opportunity at that organization and feed the
 consulting track's multi-signal promotion rule.
 
+**Company summary (P16, D-UI-123, D-LLM-9).** The company page (`SPEC-INTERFACES.md` §2.1
+`/orgs/{id}`) opens with a short summary written from the same public sources, so the operator
+reads three or four sentences instead of the research memo. It is a separate, cheaper pass than
+P5: P5 is the deep synthesis behind a role or a Research click; P16 is a labeled overview that
+exists for every company the operator opens or follows.
+
+**`org_summary`** — `id`, `org_id`, `sentences` json (an ordered array of `{text, source_indexes}`),
+`tags` json (an array of `{key, text, source_indexes}` with `key` one of `does`, `serves`,
+`direction`, `hiring`; a tag is left out when the sources do not say), `sources` json
+(the excerpts used: `{index, url, title, kind, fetched_at}`), `model`, `prompt_version`,
+`generated_at`, `insufficient_sources` bool, `source_count` int, `status` (`ok` | `insufficient` |
+`quarantined`).
+
+- Sources are acquired exactly as in the list above (direct fetch of company URLs, the ATS board,
+  SEC EDGAR, optional SearXNG, operator paste), politely and with `robots.txt` respected, and
+  refreshed about once a week; **no new fetch behavior** is added by the summary. The company page
+  can show a source list only from this set.
+- Fewer than two sources: `insufficient_sources` is true, **no model call is made**, and the page
+  says "Not enough public information to write a summary yet. Kestrel found N sources."
+- **The model summarizes supplied excerpts only; it does not browse and never invents.** Every
+  sentence carries at least one `source_index` that resolves to a supplied excerpt, and the page
+  shows it as a numbered marker that opens the source and the date it was seen. Any figure, name or
+  date in a sentence must appear in one of the excerpts it cites. A failure of these checks is a
+  validation failure: one repair call, then a quarantine row (`tier` 16, raw response kept) and the
+  page keeps the previous summary or shows the not-enough state, never an unsourced sentence.
+- Contacts and people names come only from the supplied excerpts and are not part of the summary.
+- A **Refresh** control queues a new `org_summary` task (resumable, a `task` row). A stale summary
+  (older than `ttl_days`) is labeled with its date.
+- It runs on the tier-2 model. When Tier 2 is a hosted model, nothing is sent until the operator
+  presses Refresh (no automatic pass sends data online without a user action, as P15).
+- The page labels it "Written by the AI on this computer" (or names the online model), says it
+  "can be wrong, so check the sources", and never presents it as a fact table: the public facts
+  (headcount, headquarters, filings) are shown separately with their own sources.
+- Public pay on the company page is arithmetic over `comp_observation` rows (§6.1) scoped to the
+  organization, with the usual under-five rule, not model output.
+
 ### 2.2 Contacts
+
+**Background work (D-UI-167).** Role-page Company research and Find contacts enqueue
+`org_research` and `org_contacts` task rows, respectively. The worker drains them together on
+Tier 3 after Tier 2 work, never beside another model tier. Progress and Cancel appear in the
+Role page's Organization tab. A restart reclaims unfinished leases; results and completion
+commit together so a restart cannot duplicate contacts or lose completed research. Cancel
+stops in-flight work and discards uncommitted results. Existing results remain visible.
+Online approval is bound to the configured backend, URL and model. The worker reloads settings
+and checks Hosted mode and confidential handling again before sending. A changed destination
+or missing approval holds the task for a new explicit action, never silently sends it.
 
 **`contact`** — `id`, `org_id`, `name`, `title`, `contact_type` (`hiring_manager` | `recruiter` |
 `peer` | `exec` | `referral` | `board` | `pe_operator`), `linkedin_url`, `email`, `phone`,
@@ -285,7 +331,8 @@ Discovery rules, enforced in validation, not just in the prompt:
 - **Never invent a person.** Every contact must carry a `source_index` resolving to supplied
   text.
 - **Never construct or guess an email.** If it is not present verbatim in a source, it is null.
-  No pattern-guessing from a domain.
+  No pattern-guessing from a domain. The LinkedIn connections import (§2.3) **never stores an
+  email address**: the column is dropped when the file is read.
 - Rank by usefulness for this opportunity: hiring manager for the function beats generalist
   recruiter beats peer beats unrelated executive. For consulting: economic buyer beats
   operating partner beats functional lead.
@@ -306,19 +353,66 @@ sends, and no automation touches any social platform.**
 (`message` | `call` | `meeting` | `email` | `event`), `direction`, `occurred_at`, `summary`,
 `outcome`.
 
-**Seeding:** the operator exports their LinkedIn connections as CSV (a legitimate first-party
-data export offered by the platform; **no scraping, no automation**) and imports it. Fields
-available are name, company, position, connected-on date.
+**Seeding: the connections import (D-UI-115).** The operator exports their LinkedIn connections as
+CSV (a legitimate first-party data export offered by the platform; **no scraping, no automation,
+Kestrel never signs in to LinkedIn**) and imports it from Settings > Your data > Your contacts
+(`SPEC-INTERFACES.md` §2.6). Fields read are name, company, position and connected-on date. The
+file's email column is **dropped at read time and never stored**, so a contact created by this
+import has `email` null. The preamble lines a real export prepends (the "Notes:" lines and a blank
+line) are skipped. Nothing is stored until the operator presses Apply. All of it stays on the
+operator's computer; the import is a single first-party file the operator chose, not "public data"
+in the sense of hard rule 7, and holds only the fields above.
+
+Two tables record it:
+
+- **`contact_import`** — `id`, `imported_at`, `file_name`, `row_count`, `n_new`, `n_changed`,
+  `n_missing`, `kept_missing` bool. One row per applied import. The file itself is not kept.
+- **`connection_position`** — `id`, `contact_id`, `company_name` (as in the file), `org_id`
+  nullable, `match` (`sure` | `possible` | `manual` | `none`), `title`, `connected_on`,
+  `operator_decided` bool (the operator ruled on this company name, so a later import reuses the
+  answer; this tells a remembered Not a match apart from a name that simply had no match yet),
+  `first_import_id`, `last_import_id`, `is_current` bool. A person has one current row and zero or
+  more earlier rows. The profile URL column is not read either; only name, company, position and
+  connected-on are kept.
+
+*Company matching.* Each distinct company name in the file is matched to an `org`. A match is
+**Sure** when the normalized names are equal (case, punctuation and common suffixes such as Inc,
+LLC, Co and Corp ignored; "&" equals "and") and **Possible** when one name contains the other or
+they share their leading words ("Cedar Ridge" and "Cedar Ridge Foods"). A Possible match is
+shown for the operator to confirm, change to a similar company, or mark Not a match; the choice
+is remembered (`match` becomes `manual` or `none`) and reused by later imports. Contacts the import creates
+carry `contact.source` = `linkedin_import`; Remove all contacts deletes only those and their
+`connection_position` rows. An unmatched
+company is kept for later, and a person with no company is counted but not matched. No fuzzy match
+is ever applied silently.
+
+*Phase 1: import and diff.* The first import creates contacts and current positions. A newer file
+is compared with the stored state, by name plus connected-on date, and reports **new** people,
+people whose company or position **changed**, and people **not in this file**. For people not in
+the file the operator chooses to keep them or remove them. Applying writes the changes in one
+transaction and records a `contact_import` row.
+
+*Phase 2: history.* When a person's company changes, the earlier position is kept with
+`is_current` false and the import that last saw it, so Kestrel can say a person used to work at an
+organization. The only history is what earlier imports contained; Kestrel does not look anyone up.
 
 **Warm path finding.** Given a target org, surface in ranked order:
 
-1. Direct connections currently at the org.
-2. Direct connections formerly at the org.
-3. Direct connections at a company that shares an investor with the org (PE portfolio overlap).
-4. Contacts who share a former employer with a known decision maker at the org.
+1. **Works here now:** direct connections whose current position matches the org.
+2. **Used to work here:** direct connections whose earlier position, from an earlier import,
+   matches the org.
 
-This is a graph query over `connection` and `contact`, no ML needed, and for the consulting
-track it is frequently the highest-value screen in the entire application.
+Each line shows the person's name, title, how long ago the file was imported and the match
+confidence (a Possible match that the operator has not confirmed is labeled as such). This is a
+graph query over `connection_position`, no ML needed. **Two further paths are deferred** (see
+the private decision log, Deferred): connections at a company that shares an investor with the org (PE
+portfolio overlap), and contacts who share a former employer with a known decision maker at the
+org. Both need data the import does not carry and raise public-wording questions (Kestrel reads
+only a file the operator downloads), so neither is added without a spec decision first. No path is
+second-degree.
+
+Nothing here contacts anyone. A drafted note is text the operator copies and sends themselves
+(hard rule 1).
 
 ---
 
@@ -351,6 +445,15 @@ are disposable. Consolidated they become the operator's actual interview prepara
 
 **Gap analysis is the point.** Knowing you have no good failure story is more useful than
 having forty mediocre ones.
+
+**Stories the operator writes (D-UI-97, D-UI-121).** The operator can add a story from a gap or
+evidence line on a role, from Interview prep, or from Profile > Stories. The sheet has three
+labeled boxes (what was the situation, what did you do, what changed), stored as `situation`,
+`action` and `result` exactly as typed; `task` and `reflection` stay empty unless the operator
+fills them. The story is saved as `operator_edited` and canonical, so no later merge overwrites it,
+and Kestrel never rewrites it. "Save and re-score this role" queues a single-role re-score task
+that includes the new story. The bank is shown as the Story bank tab of Interview prep and the
+Stories tab of Profile; it is one bank.
 
 ### 3.2 Prep packs
 
@@ -437,6 +540,10 @@ Grounded in the operator's own accumulated data, not model priors:
 
 Output is a range with an explicit sample size. **When the sample is under five, say so and
 lower the confidence rather than presenting a precise-looking number from three data points.**
+The interface words it "Not enough data yet" with the count and hides the bracket, and the same
+rule applies before any offer exists: the Offers page's "What roles like yours pay" view shows
+ranges against the operator's floor and target with the sample size in words, and "Too few" under
+five (D-UI-122).
 
 ### 4.3 Scripts
 
@@ -459,7 +566,11 @@ operator does, and the model works within it.**
 
 When more than one offer is open, a comparison matrix across total first-year compensation,
 four-year value, level and scope, reporting line, location and travel, organizational risk from
-research signals, and trajectory fit. Weights are the operator's, adjustable live.
+research signals, and trajectory fit (shown to the operator as career direction). Weights are the
+operator's, adjustable live. The matrix states how each money row is computed: first-year total is
+base, target bonus, signing bonus and one fourth of the equity estimate; four-year value assumes no
+raises (D-UI-122). Judgment rows are the operator's own star ratings shown beside the source
+fact; the summary reads "Ahead on ..." and says it reflects the operator's weights and ratings.
 
 Presented as analysis, never as a recommendation to accept. This is a life decision and the
 tool's job is to make the trade-offs legible.
@@ -492,6 +603,16 @@ built up front; the models it trains come online as data accumulates.
 Every one of these is cheap to capture at the moment the operator is already acting. **The UI
 must never present labeling as a separate chore**; it is a one-click side effect of reviewing.
 
+**How the interface asks (D-UI-99).** Calibrate asks "Good match?" and takes a rating of Poor,
+Weak, Maybe, Good or Great, stored as `label.score` 1 to 5, with the system's score hidden until
+the rating is given. The optional "Tell Kestrel why" stores reason chips and per-dimension nudges
+as `label.rationale` and `label.dimensions`, and a verdict derived from the score with the
+operator's cutoffs (SPEC.md §7.3). The role page's "Your view" card (Yes or Adjust) and the four
+"Not for me because..." reasons in Pipeline write the same records; shortlisting a low score and
+hiding a high score for a fit reason are read implicitly as "too low" and "too high". Skipping a
+queue item writes nothing and can be undone. Ratings can be changed later, and a changed rating
+replaces the label and is shown as Changed in the history.
+
 ### 5.2 Weight recalibration
 
 When labeled examples reach `settings.learning.min_labels_for_calibration` (default 30):
@@ -499,7 +620,12 @@ When labeled examples reach `settings.learning.min_labels_for_calibration` (defa
 1. Fit dimension weights to minimize error between `Σ(dimension × weight)` and the operator's
    own score, using ridge regression with non-negativity and a sum-to-one constraint.
 2. Report current versus proposed weights, and cross-validated mean absolute error for each.
-3. **The operator accepts or rejects.** Never applied silently.
+3. **The operator accepts or rejects.** Never applied silently. The interface shows the weights
+   as read-only bars with no manual sliders: the only way a weight changes is an offered
+   suggestion, where the operator presses Accept or Not now (D-UI-108). Before offering one, the
+   system replays the operator's past ratings with the proposed weights and offers it only if they
+   match the operator's calls better. An accepted change can be undone, and "Restore original
+   weights" returns the shipped defaults.
 4. Store as **`calibration`** — `id`, `track`, `created_at`, `n_samples`, `previous_weights`
    json, `proposed_weights` json, `cv_mae_previous`, `cv_mae_proposed`, `status`
    (`proposed` | `accepted` | `rejected`), `decided_at` — so any regression is traceable and
@@ -511,6 +637,9 @@ and that divergence is itself informative.
 ### 5.3 Few-shot example selection
 
 The cheapest large quality win available, and it should be built early.
+
+Few-shot retrieval starts once `settings.learning.min_labels_for_few_shot` (default 15, deliberately
+lower than the calibration bar) labeled examples exist.
 
 For every Tier 2 call, retrieve `settings.learning.few_shot_k` (default 3) past evaluations
 where the operator either confirmed the score or corrected it, selected by embedding similarity
@@ -524,7 +653,8 @@ Injected as compact `{summary, dimensions, holistic, verdict, one-line rationale
 evaluations, to control token cost. The IDs used are recorded in `evaluation.few_shot_ids` so
 any result is reproducible.
 
-Below the minimum label count, run zero-shot and record that.
+Below the minimum label count, run zero-shot and record that. In the interface this stage reads
+"use your ratings as examples" and has an on and off switch (D-UI-108).
 
 ### 5.4 The learned reranker
 
@@ -570,6 +700,11 @@ Three details that will otherwise bite:
 - **Set `n_jobs=1`.** joblib's loky backend re-executes `sys.executable`, which inside a frozen
   PyInstaller application relaunches the whole app rather than spawning a worker.
 
+In the interface the reranker is "your own sorting model": it says that Kestrel tests it on the
+operator's ratings first, uses it only if it beats the built-in scoring (criterion 3), and stops
+using it if it slips, shows since when it has been in use and how often it is checked, and has an
+on and off switch. After a failed promotion Kestrel retries every 50 ratings (D-UI-99).
+
 **Drift detection.** Rolling MAE over the last 50 labeled items. Rising past
 `settings.learning.drift_threshold` demotes the reranker back to LLM Tier 1 automatically and
 raises a notification. Job markets change; a model trained in July should not be trusted
@@ -587,9 +722,11 @@ Rank unlabeled evaluated opportunities by an uncertainty score combining:
 - Distance from existing labeled examples in embedding space, to cover unrepresented regions
 - Recency weighting, so the labeled set tracks the current market
 
-Surface the top ten as a **"Calibrate" queue**: description on the left, the system's evaluation
-on the right, and one-click agree / adjust score / full override. Target under 30 seconds per
-item. Ten minutes a week meaningfully improves everything downstream.
+Surface the top ten as a **"Calibrate" queue**: the description on the left and a one-click
+rating ("Good match?", Poor to Great) first. The system's evaluation is revealed on the right
+only after the operator has rated, so the rating is not anchored on the model's score (D-UI-99);
+an optional "Tell Kestrel why" captures reasons and per-dimension nudges, and Skip is available.
+Target under 30 seconds per item. Ten minutes a week meaningfully improves everything downstream.
 
 The gold set used by `bench` is **regenerated from these labels** once there are enough, so
 model comparison is measured against the operator's real judgment rather than synthetic
@@ -613,7 +750,7 @@ Computed and surfaced:
 - Time-to-first-response distribution, which sets the ghosting threshold empirically instead of
   by guess.
 
-When response data contradicts scoring, the system says so on the dashboard. That is the whole
+When response data contradicts scoring, the system says so on Analytics (its Summary) and on Today. That is the whole
 point of collecting it.
 
 ### 5.7 Prompt versioning
@@ -712,7 +849,9 @@ ingested -> tier0 pass -> tier1 pass -> tier2 evaluated -> shortlisted
 for consulting by trigger event type. Each shows count, conversion, and sample size.
 
 **Cost and throughput:** tokens consumed per tier, wall-clock per run, items per minute,
-projected time for a run of N, and how much the reranker has saved since promotion.
+projected time for a run of N, and how much the reranker has saved since promotion. These and the
+quality figures below are shown on the Models page, not on Analytics (D-UI-101); Analytics keeps
+a pointer card.
 
 **Quality:** JSON validity rate, quarantine rate, repair rate, override rate (how often the
 operator disagrees), score-vs-outcome correlation, and Block F question-prediction hit rate from
@@ -721,7 +860,12 @@ interview debriefs.
 **Time:** applications per week, time from shortlist to submission, time to first response by
 source, and current pipeline age with stale items flagged.
 
-**The honest summary.** A short generated narrative at the top: what is working, what is not,
+**Exports (D-UI-101).** An Export menu offers the summary and charts as a PDF, all numbers as a
+CSV, and every application with its history as a CSV. Files are written locally through the Save
+dialog; nothing is sent. This is new scope recorded in the private decision log.
+
+**The honest summary.** Titled "Summary" on the page, with a Rewrite summary button and an
+"Updated" time. A short generated narrative at the top: what is working, what is not,
 and the one thing most worth changing. Grounded strictly in the numbers on the page, with
 explicit sample sizes, and **it must be willing to say the system is not discriminating well
 when that is what the data shows.** An analytics page that always reports good news is worse

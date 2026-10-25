@@ -1,8 +1,9 @@
 {% if notice %}
-{# Good news, not a warning: the indigo guide-strip style (D-UI-47), not the amber warning box. #}
-<div class="guide-strip" role="status" data-testid="announcement" data-announcement-id="{{ notice.id }}">
-  <span class="guide-text">{{ notice.text }}</span>
-  <button class="guide-x" type="button" aria-label="Got it, hide this notice"
+{# Good news, not a warning: the quiet info strip (D-UI-152), not the amber warning box. #}
+<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<div class="sf-notice" role="status" data-testid="announcement" data-announcement-id="{{ notice.id }}">
+  <span class="sf-msg">{{ notice.text }}</span>
+  <button class="k-btn k-btn--sm" type="button" aria-label="Got it, hide this notice"
           hx-post="/announcements/{{ notice.id }}/dismiss"
           hx-target="#announcement-slot" hx-swap="innerHTML">Got it</button>
 </div>

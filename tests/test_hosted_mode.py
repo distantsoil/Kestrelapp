@@ -160,6 +160,80 @@ def test_tier3_escalation_optin_is_unchanged_by_hosted_mode(monkeypatch):
 
 
 # ----------------------------------------------------------------------- 2. redaction on send
+@pytest.mark.parametrize("task_type", ["t1", "t2"])
+@pytest.mark.parametrize("with_map", [True, False])
+async def test_drain_rechecks_confidential_mode_after_cycle_started(
+    sm, monkeypatch, task_type, with_map,
+):
+    from kestrel.pipeline.worker import TierStats, Worker
+    from kestrel.queue.queue import TaskQueue
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    stage = "t0_pass" if task_type == "t1" else "t1_pass"
+    opportunity_id = await _seed(sm, stage=stage, with_map=with_map)
+    tier = "tier1" if task_type == "t1" else "tier2"
+    settings = _hosted_settings(tier, confidential=False)
+    queue = TaskQueue(sm)
+    await queue.enqueue(task_type, {"opportunity_id": opportunity_id})
+    with respx.mock:
+        route = respx.post(_OR_CHAT).mock(return_value=Response(200, json={
+            "choices": [{"message": {"content": _p1(None) if task_type == "t1" else _p2(None)}}],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+        }))
+        async with httpx.AsyncClient() as http:
+            worker = Worker(sm, LLMClient(settings, http=http), settings)
+            async with sm() as session:
+                session.add(Setting(key="confidential_mode", value=True))
+                await session.commit()
+            stats = TierStats()
+            await worker.drain_tier(
+                task_type, 1, handle_t1 if task_type == "t1" else handle_t2, stats,
+            )
+    assert stats.errors == 0
+    assert settings.confidential_mode is False
+    if with_map:
+        assert route.called
+        for call in route.calls:
+            blob = call.request.content.decode()
+            assert _EMPLOYER not in blob and _coded(blob)
+    else:
+        assert not route.called
+        async with sm() as session:
+            quarantines = (await session.execute(select(Quarantine))).scalars().all()
+            assert quarantines
+            opportunity = await session.get(Opportunity, opportunity_id)
+            assert opportunity.stage not in {"t1_reject", "t0_reject"}
+
+
+@pytest.mark.parametrize("tier", ["tier1", "tier2", "tier3", "trigger"])
+async def test_send_plan_rechecks_each_send_even_in_the_same_session(sm, tier):
+    await _seed(sm, stage="t1_pass", with_map=True)
+    settings = _hosted_settings(tier, confidential=False)
+    async with sm() as session:
+        assert not (await _shared.plan_hosted_send(session, settings, tier)).mapping
+        async with sm() as writer:
+            writer.add(Setting(key="confidential_mode", value=True))
+            await writer.commit()
+        plan = await _shared.plan_hosted_send(session, settings, tier)
+        assert plan.mapping and not plan.refuse
+        sent, _ = _shared.encode_send([{"role": "user", "content": _EMPLOYER}], plan.mapping)
+        assert _EMPLOYER not in sent[0]["content"]
+        async with sm() as writer:
+            row = await writer.get(Setting, "confidential_mode")
+            row.value = False
+            await writer.commit()
+        assert not (await _shared.plan_hosted_send(session, settings, tier)).mapping
+    assert settings.confidential_mode is False
+
+
+async def test_invalid_confidential_setting_refuses_the_send(sm):
+    settings = _hosted_settings("tier2", confidential=False)
+    async with sm() as session:
+        session.add(Setting(key="confidential_mode", value="invalid"))
+        await session.commit()
+        assert (await _shared.plan_hosted_send(session, settings, "tier2")).refuse
+
+
 async def test_tier1_redacts_the_employer_before_a_hosted_send(sm, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     oid = await _seed(sm, stage="t0_pass", with_map=True)
@@ -743,3 +817,18 @@ def test_switching_to_local_unroutes_a_legacy_external_tier_row(monkeypatch):
     # a second switch has nothing to move and says nothing about it
     r = client.post("/settings/hosted/switch", data={"mode": "local"})
     assert "Also moved back" not in r.text and "now runs on local models" in r.text
+
+
+@pytest.mark.parametrize("key", ["llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at"])
+async def test_hosted_mode_turned_off_after_the_client_was_built_refuses_the_send(sm, key):
+    """A client built earlier (a cycle, or before a public fetch) still holds active settings;
+    Hosted mode switched off or its acknowledgement cleared since then stops the send."""
+    from kestrel.db.models import Setting
+
+    await _seed(sm, stage="t0_pass", with_map=True)
+    settings = _hosted_settings("tier1", confidential=False)
+    async with sm() as s:
+        s.add(Setting(key=key, value=None if key.endswith("_at") else False))
+        await s.commit()
+        plan = await _shared.plan_hosted_send(s, settings, "tier1")
+    assert plan.refuse and "turned off" in plan.refuse

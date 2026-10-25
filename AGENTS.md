@@ -25,7 +25,7 @@ second track for consulting and contract work exists but is optional and off by 
 The public promises (kestrelapp.co) are binding on the code: free and "you are not the product";
 never applies, emails or messages anyone; asks before anything goes to an online model; source
 public under PolyForm Noncommercial 1.0.0; built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA
-Nemotron, Space Bunny and LongCat. Do not assume the original operator's hardware, seniority,
+Nemotron, MiniMax M3, LongCat, Kimi K2.7 and MiMo. Do not assume the original operator's hardware, seniority,
 location or field anywhere in shipped defaults, copy or examples.
 
 ## Source of truth
@@ -71,6 +71,10 @@ network.
 
 **No scope creep.** This specification is complete; there is no v2 backlog. If something is not
 in a spec file, it is deferred, not put into the code.
+
+**A feature reachable only from the CLI is a bug, never a spec correction.** Kestrel is app first:
+every capability has a place in the interface. If something can only be done from the command line,
+fix the interface; do not change the spec to describe the CLI-only path (D-UI-129).
 
 **Commit at every phase boundary**, conventional-commit style (`feat:`, `fix:`, `test:`, `chore:`).
 

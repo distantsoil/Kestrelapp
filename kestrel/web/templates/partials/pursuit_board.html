@@ -1,130 +1,54 @@
-{% from "partials/_remove_confirm.html" import remove_confirm %}
-{% if notice %}<p class="pnotice {% if not notice.ok %}bad{% endif %}" role="status" data-testid="board-notice">{{ notice.text }}</p>{% endif %}
-{% if view == 'table' %}
-  <table class="data">
-    <thead><tr><th>{{ words(track).role | capitalize }}</th><th>Org</th><th>Status</th><th>{{ words(track).applied_done }}</th><th>Next action</th><th>Due</th><th title="Once applied, a new posting of the same role is hidden on arrival as a re-post. Tick to see such listings anyway (aggregators that re-list one title).">Re-posts</th></tr></thead>
-    <tbody>
-      {% for c in cards %}
-        <tr data-search="{{ c.search }}" data-col="{{ c.column }}" data-closed="{{ 1 if c.closed else 0 }}" data-ord="{{ loop.index }}" data-company="{{ (c.org_name or '')|lower }}" data-activity="{{ c.pursuit.last_activity_at or '' }}" data-applied="{{ c.pursuit.applied_at or '' }}" data-updated="{{ c.updated }}">
-          <td><a href="/opportunities/{{ c.opp.id }}">{{ c.opp.title or 'Untitled' }}</a></td>
-          <td>{{ c.org_name or '' }}</td>
-          <td><span class="pill">{{ stage_name(c.pursuit.status, track) }}</span></td>
-          <td class="mono">{{ (c.pursuit.applied_at or '')[:10] }}</td>
-          <td>{{ c.pursuit.next_action or '' }}</td>
-          <td class="{% if c.overdue %}gap{% endif %}">{{ (c.pursuit.next_action_at or '')[:10] }}</td>
-          <td><form hx-post="/pursuits/{{ c.pursuit.id }}/reposts" hx-trigger="change" hx-swap="none" style="margin:0"><label title="Allow re-posts of this role to surface"><input type="checkbox" name="allow" value="on" {% if c.pursuit.allow_reposts %}checked{% endif %} aria-label="Allow re-posts for {{ c.opp.title or 'this pursuit' }}"> allow</label></form></td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-{% else %}
-  <p class="dnd-hint muted" data-testid="dnd-hint"><span class="grip" aria-hidden="true">⠿</span> Drag a card to another column, or use its buttons.</p>
-  <div class="kanban four" data-testid="board" data-track="{{ track }}">
+{# The board or the table (D-UI-100). Everything an action swaps lives under #apps-board. Filters
+   run in the page script over the data-* attributes, so a search never asks the server. #}
+{% import "partials/pursuit_icons.html" as ic %}
+{% from "partials/pursuit_card.html" import card, table_row %}
+{% set wide = track == 'consulting' %}
+<div id="apps-board" class="ap-boardwrap" data-testid="board" data-track="{{ track }}" data-view="{{ 'table' if view == 'table' else 'board' }}"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if notice %}<p class="{{ 'k-sr-only' if notice.ok else 'ap-notice' }}" role="status" data-testid="board-notice">{{ notice.text }}</p>{% endif %}
+  {% if not cards %}
+  <div class="ap-empty" data-testid="apps-empty">
+    <span class="k-badge k-badge--lg">{{ ic.icon('apps') }}</span>
+    <div>
+      <b>{{ 'No leads yet.' if wide else 'No applications yet.' }}</b>
+      <span>{{ 'Shortlist a role in Pipeline, add one you found elsewhere, or bring in the applications you already sent.' if not wide else 'Add a lead from Pipeline, add one you found elsewhere, or bring in the leads you already have.' }}</span>
+      <a class="k-btn k-btn--sm" href="/settings#applied" data-testid="applied-import-link-empty">{{ ic.icon('upload') }}{{ 'Import past leads' if wide else 'Import past applications' }}</a>
+    </div>
+  </div>
+  {% endif %}
+  <div class="ap-nomatch" id="apps-nomatch" data-testid="filter-empty" hidden>
+    <b>Nothing matches.</b><span>Try fewer words or a different stage.</span>
+    <button type="button" class="k-btn k-btn--sm" data-clear-filters data-testid="clear-filters">Clear filters</button>
+  </div>
+  {% if view == 'table' %}
+  <div class="ap-tablewrap">
+    <table class="ap-table" data-testid="apps-table">
+      <thead><tr><th scope="col">{{ 'Lead' if wide else 'Role' }}</th><th scope="col">Stage</th><th scope="col">Next step</th><th scope="col">Due</th><th scope="col">Fit</th></tr></thead>
+      <tbody>
+        {% for c in cards %}{{ table_row(c, track, ic, loop.index) }}{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="ap-board" data-testid="apps-board-grid" style="--n:4">
     {% for column in columns %}
-      <div class="col" data-col="{{ column.col.key }}" data-status="{{ column.col.first }}">
-        <h3>{{ column.col.label }} <span class="muted ccount" data-total="{{ column.cards|length }}">{{ column.cards|length }}</span></h3>
+    <section class="ap-col" data-testid="apps-col" data-col="{{ column.col.key }}" data-col-label="{{ column.col.label }}" data-status="{{ column.col.first }}" style="--cc: var(--ap-c{{ loop.index }})" aria-label="{{ column.col.label }}">
+      <div class="ap-colh"><span class="ap-cdot" aria-hidden="true"></span><b>{{ column.col.label }}</b><span class="ap-cn" data-total="{{ column.cards|length }}">{{ column.cards|length }}</span></div>
+      <div class="ap-cap">{{ column.col.caption }}</div>
+      <div class="ap-cards">
+        {% for c in column.open %}{{ card(c, track, ic) }}{% endfor %}
+        <div class="ap-cempty"{% if column.open %} hidden{% endif %}>{{ 'Shortlist a role in Pipeline, or add one you found elsewhere.' if loop.first else 'Nothing here yet. Drag a card here or use its stage label.' }}</div>
+        <button type="button" class="k-btn k-btn--sm ap-colmore" data-colmore data-testid="show-all" data-col="{{ column.col.key }}" hidden>Show all {{ column.open|length }}</button>
         {% if column.col.key == 'closed' %}
-          <button type="button" class="btn small ghost" data-testid="closed-toggle" x-show="foldable" x-cloak
-                  @click="closedHidden = !closedHidden" x-text="closedLabel">Show closed</button>
+        <div class="ap-closedg{% if closed_open %} is-open{% endif %}" data-testid="closed-group">
+          <button type="button" class="ap-cgh" data-testid="closed-toggle" aria-expanded="{{ 'true' if closed_open else 'false' }}"><span>Closed ({{ column.folded|length }})</span>{{ ic.icon('down', 'k-ic--sm') }}</button>
+          <div class="ap-cgx"><div class="ap-cgi">
+            {% for c in column.folded %}{{ card(c, track, ic) }}{% endfor %}
+          </div></div>
+        </div>
         {% endif %}
-        {% for c in column.cards %}
-          {% set pid = c.pursuit.id %}
-          <div class="card pcard {% if c.overdue %}overdue{% endif %}" draggable="true" data-id="{{ pid }}" data-col="{{ column.col.key }}" data-search="{{ c.search }}" data-closed="{{ 1 if c.closed else 0 }}" data-applied="{{ c.applied }}" data-updated="{{ c.updated }}">
-            <span class="grip" aria-hidden="true" title="Drag this card to another column">⠿</span>
-            <div><a href="/opportunities/{{ c.opp.id }}" draggable="false">{{ c.opp.title or 'Untitled' }}</a></div>
-            <div class="meta">{{ c.org_name or 'unknown' }}</div>
-            {% if c.quiet_days %}<div class="meta gap" data-testid="quiet">{{ c.quiet_days }} day{{ '' if c.quiet_days == 1 else 's' }} quiet</div>{% endif %}
-            {% if c.ghost_hint %}
-              <div class="meta gap" data-testid="ghost-hint">No reply in {{ c.ghost_hint }} days.
-                <button class="btn small" type="button" draggable="false" data-testid="ghost-hint-act"
-                        hx-post="/pursuits/{{ pid }}/status" hx-vals='{"to_status": "{{ c.ghost_status }}"}'
-                        hx-target="#board" hx-swap="innerHTML">Mark as {{ stage_name(c.ghost_status, track) }}?</button></div>
-            {% endif %}
-            {% if c.sub %}<div class="meta">{{ c.sub }}</div>{% endif %}
-            <label class="stagesel meta">Stage
-              <select name="to_status" draggable="false" aria-label="Stage for {{ c.opp.title or 'this role' }}"
-                      hx-post="/pursuits/{{ pid }}/status" hx-trigger="change" hx-target="#board" hx-swap="innerHTML">
-                {% for st in statuses %}<option value="{{ st }}" {% if st == c.pursuit.status %}selected{% endif %}>{{ stage_name(st, track) }}</option>{% endfor %}
-              </select></label>
-            <div class="pactions">
-              <a class="btn small" href="/prep/{{ c.opp.id }}?auto=1" draggable="false" data-testid="board-interview-prep">{{ words(track).interview_prep }}</a>
-              {% if column.col.key in ('to_apply', 'to_contact') %}
-                <a class="btn small" href="{{ c.tailor_href }}" draggable="false" data-testid="board-tailor">{{ words(track).tailor }}</a>
-              {% endif %}
-              {% for v in c.verbs %}
-                {% if v.key == 'applied' %}
-                  <div class="applied-quick" id="applied-{{ pid }}" data-testid="applied-quick">
-                    <button class="btn small" type="button" draggable="false" data-testid="applied-button"
-                            hx-post="/pursuits/{{ pid }}/act/applied/quick"
-                            hx-vals='{"document_id": "{{ c.default_doc or '' }}"}'
-                            hx-target="#applied-{{ pid }}" hx-swap="outerHTML">{{ v.label }}</button>
-                    <details class="datedisc pform">
-                      <summary draggable="false">different date</summary>
-                      <form class="pformbody" hx-post="/pursuits/{{ pid }}/act/applied" hx-target="#board" hx-swap="innerHTML">
-                        <label>Which {{ words(track).doc }} did you send?
-                          <select name="document_id" draggable="false">
-                            <option value="">None / not tailored</option>
-                            {% for d in c.docs %}<option value="{{ d.id }}" {% if d.id == c.default_doc %}selected{% endif %}>{{ d.label }}</option>{% endfor %}
-                          </select></label>
-                        <label>{{ words(track).applied_done }} on <input type="date" name="applied_on" value="{{ today }}"></label>
-                        <label>Follow up on <input type="date" name="follow_up" value="{{ follow_up }}"></label>
-                        <button class="btn small primary" type="submit" draggable="false">Save</button>
-                      </form>
-                    </details>
-                  </div>
-                {% elif v.key == 'heard_back' %}
-                  <details class="pform">
-                    <summary class="btn small" draggable="false">{{ v.label }}</summary>
-                    <form class="pformbody" hx-post="/pursuits/{{ pid }}/act/heard_back" hx-target="#board" hx-swap="innerHTML">
-                      <label>Note <span class="muted">(optional)</span> <input type="text" name="note"></label>
-                      <button class="btn small primary" type="submit" draggable="false">Save</button>
-                    </form>
-                  </details>
-                {% elif v.key == 'interview' %}
-                  <details class="pform">
-                    <summary class="btn small" draggable="false">{{ v.label }}</summary>
-                    <form class="pformbody" hx-post="/pursuits/{{ pid }}/act/interview" hx-target="#board" hx-swap="innerHTML">
-                      <label>Date <input type="date" name="when" value="{{ today }}" required></label>
-                      <label>Time <span class="muted">(optional)</span> <input type="time" name="at_time"></label>
-                      <button class="btn small primary" type="submit" draggable="false">Save</button>
-                    </form>
-                  </details>
-                {% else %}
-                  <button class="btn small" type="button" draggable="false" hx-post="/pursuits/{{ pid }}/act/{{ v.key }}" hx-target="#board" hx-swap="innerHTML">{{ v.label }}</button>
-                {% endif %}
-              {% endfor %}
-              {% if c.needs_outcome %}
-                <details class="pform">
-                  <summary class="btn small" draggable="false">Record outcome</summary>
-                  <form class="pformbody" hx-post="/pursuits/{{ pid }}/outcome" hx-target="#board" hx-swap="innerHTML">
-                    <label>Result
-                      <select name="final_status">
-                        {% for st in outcome_choices %}<option value="{{ st }}" {% if st == c.pursuit.status %}selected{% endif %}>{{ stage_name(st) }}</option>{% endfor %}
-                      </select></label>
-                    <label>Furthest stage
-                      <select name="furthest_stage">
-                        {% for st in stage_choices %}<option value="{{ st }}" {% if st == c.pursuit.status %}selected{% endif %}>{{ stage_name(st) }}</option>{% endfor %}
-                      </select></label>
-                    <label>Reason <span class="muted">(optional)</span> <input type="text" name="rejection_reason"></label>
-                    <label>Days to first reply <span class="muted">(optional)</span> <input type="number" name="days_to_first_response" min="0"></label>
-                    <button class="btn small primary" type="submit" draggable="false">Save</button>
-                  </form>
-                </details>
-              {% elif column.col.key == 'closed' and c.pursuit.outcome %}
-                <div class="meta">Outcome recorded</div>
-              {% endif %}
-              <button class="btn small" type="button" draggable="false" data-testid="board-remove"
-                      hx-post="/pursuits/{{ pid }}/remove" hx-target="#board" hx-swap="innerHTML"
-                      hx-confirm="{{ remove_confirm(words(track), c.pursuit) }}">{{ words(track).remove_from_list }}</button>
-            </div>
-          </div>
-        {% else %}
-          <p class="muted">{{ column.col.empty }}</p>
-        {% endfor %}
-        <button type="button" class="btn small ghost" data-colmore data-testid="show-all" data-col="{{ column.col.key }}" hidden
-                @click="expandCol('{{ column.col.key }}')">Show all {{ column.cards|length }}</button>
       </div>
+    </section>
     {% endfor %}
   </div>
-  <p class="muted" style="margin-top:.5rem">Buttons record what you did and move the card. You can also drag a card to another column, or change its stage; every change is kept as an audit event.</p>
-{% endif %}
+  {% endif %}
+</div>

@@ -28,7 +28,9 @@ def _repair_streams() -> None:
 def cli_args(argv: list[str]) -> list[str]:
     """The arguments that mean "run the CLI, not the window". Finder on older macOS launched apps
     with a `-psn_<n>` process-serial-number argument; that is a launch artifact, never a command."""
-    return [a for a in argv[1:] if not a.startswith("-psn_")]
+    # `--tray` is how the start-with-my-computer entry launches the app (kestrel.services.
+    # autostart): open quietly in the tray. It is a launch option, never a command.
+    return [a for a in argv[1:] if not a.startswith("-psn_") and a != "--tray"]
 
 
 def main() -> None:

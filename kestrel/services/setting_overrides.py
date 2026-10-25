@@ -41,17 +41,25 @@ TRANSIENT_KEYS = frozenset({
 
 
 # Setting rows that hold content or UI state, not configuration: interview prep notes (up to 20k
-# characters each, one row per role), the last story build, dismissed guide strips and asks.
+# characters each, one row per role), the last story build, dismissed asks.
 # Kept out of the config layer so a polled page (the status rail, Today's progress panel) does
 # not read every note on every poll. Excluded in SQL, so the values are never even fetched.
 # `tier0_override.` is Score this role anyway (kestrel.services.tier0_override, D-UI-74),
 # `run_model.pending.` a run's one-run model waiting for Tier 0 (kestrel.services.run_model,
-# D-UI-72), and `sources.title_variants_removed` the search variants taken out (D-TTL-2).
+# D-UI-72), `retry_removed.` a role taken off Needs another try (kestrel.services.retry_removal,
+# D-UI-104), `saved_role.` a role kept with Save for later (kestrel.services.saved_roles, D-UI-96),
+# `undo.pursuit.` an Applications Undo snapshot (kestrel.services.pursuit_undo), and
+# `sources.title_variants_removed` the search variants taken out (D-TTL-2).
 NON_CONFIG_PREFIXES: tuple[str, ...] = (
-    "prep_notes.", "tier0_override.", "run_model.pending.", "tier0_recheck.",
+    "prep_notes.", "tier0_override.", "run_model.pending.", "tier0_recheck.", "retry_removed.",
+    "saved_role.",
+    "undo.pursuit.", "undo.applied.",
 )
 STATE_KEYS = frozenset({
-    "stories.last_build", "ui.guides_dismissed", "ui.asks_dismissed",
+    "stories.last_build", "ui.asks_dismissed",
+    # Retired (D-UI-146): the page guide strips are gone, but old installs may still hold this row.
+    # It stays listed so it is tolerated as state and never read as configuration.
+    "ui.guides_dismissed",
     # What the user last chose on the page itself (the announcement they closed, the board's
     # date range and column cap), never configuration.
     "ui.announcements_dismissed", "ui.board_range", "ui.board_cap", "ui.show_balance",
@@ -132,7 +140,9 @@ async def load_settings_with_db(
     return config_mod.load_settings(db_overrides=await db_override_dict(session), mode=mode)
 
 
-async def queue_run_mode(session: AsyncSession, mode: str) -> None:
+async def queue_run_mode(
+    session: AsyncSession, mode: str, *, online_approval: object = None
+) -> None:
     """Record that the next worker cycle must run in `mode`. Validates the name and, for
     "hosted", that hosted mode can actually run (HostedModeError otherwise); nothing is queued
     that the loop would have to refuse. The caller commits.
@@ -140,15 +150,20 @@ async def queue_run_mode(session: AsyncSession, mode: str) -> None:
     Written as one upsert, not load-then-set: the serve loop's take_run_mode can delete the row
     between a load here and the flush, and an UPDATE of a vanished row is a StaleDataError at
     commit (a 500 from the Run now routes). ON CONFLICT lands the new value either way."""
-    if mode not in config_mod.MODES:
-        known = ", ".join(config_mod.MODES)
+    if mode not in config_mod.RUN_CHOICES:
+        known = ", ".join(config_mod.RUN_CHOICES)
         raise ValueError(f"unknown run mode {mode!r}; expected one of {known}")
-    if mode == "hosted":
+    if mode in ("hosted", "both"):
         problem = config_mod.hosted_mode_problem(await load_settings_with_db(session))
         if problem is not None:
             raise config_mod.HostedModeError(problem)
-    stmt = insert(Setting).values(key=PENDING_RUN_MODE_KEY, value=mode)
-    stmt = stmt.on_conflict_do_update(index_elements=[Setting.key], set_={"value": mode})
+    value: object = mode
+    if online_approval is not None:
+        from kestrel.services.online_consent import read_approval
+
+        value = {"mode": mode, "online_approval": read_approval(online_approval)}
+    stmt = insert(Setting).values(key=PENDING_RUN_MODE_KEY, value=value)
+    stmt = stmt.on_conflict_do_update(index_elements=[Setting.key], set_={"value": value})
     await session.execute(stmt)
     # A copy already loaded in this session (a prior peek) would otherwise keep the old value,
     # or claim a row that the upsert just recreated under it.
@@ -160,7 +175,11 @@ async def queue_run_mode(session: AsyncSession, mode: str) -> None:
 async def peek_run_mode(session: AsyncSession) -> str | None:
     """The queued one-shot mode, if any, without consuming it (for the status strip)."""
     row = await session.get(Setting, PENDING_RUN_MODE_KEY)
-    return row.value if row is not None and isinstance(row.value, str) else None
+    if row is None:
+        return None
+    if isinstance(row.value, dict):
+        return row.value.get("mode") if isinstance(row.value.get("mode"), str) else None
+    return row.value if isinstance(row.value, str) else None
 
 
 async def take_run_mode(session: AsyncSession) -> str | None:
@@ -169,7 +188,20 @@ async def take_run_mode(session: AsyncSession) -> str | None:
     row = await session.get(Setting, PENDING_RUN_MODE_KEY)
     if row is None:
         return None
-    mode = row.value if isinstance(row.value, str) else None
+    mode = row.value.get("mode") if isinstance(row.value, dict) else row.value
     await session.delete(row)
     await session.commit()
     return mode
+
+
+async def take_run_request(session: AsyncSession) -> dict:
+    """Consume the queued mode and its online approval snapshot."""
+    row = await session.get(Setting, PENDING_RUN_MODE_KEY)
+    if row is None:
+        return {}
+    value = row.value
+    await session.delete(row)
+    await session.commit()
+    if isinstance(value, dict):
+        return dict(value)
+    return {"mode": value} if isinstance(value, str) else {}

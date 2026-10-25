@@ -1,265 +1,119 @@
+{# Applications / Leads (D-UI-100, SPEC-INTERFACES 2.1 /pursuits). Built on the shared design
+   system; the board, the rail and the panel are partials an action swaps in place. #}
 {% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
+{% import "partials/pursuit_icons.html" as ic %}
 {% block title %}{{ page_label }} · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/pages/applications.css">
+<script src="/static/js/applications.js" defer></script>
+{% endblock %}
 {% block content %}
-<div x-data='pursuitFilter({{ {"q": query.get("q") or "", "stages": (query.get("stage") or "").split(","), "showClosed": query.get("closed") != "0", "sort": query.get("sort") or "", "range": board_range, "cap": board_cap, "closedHidden": closed_hidden, "today": today}|tojson }})'
-     @keydown.window="onKey($event)" data-testid="pursuit-filter-scope">
-<div class="phead">
-  <h1 style="margin-right:auto">{{ page_label }}</h1>
-  <a class="btn ghost" href="/settings#applied" data-testid="applied-import-link">Import past applications</a>
-  <div class="tabs" style="border:none;margin:0">
-    <a href="/pursuits?view=kanban&track={{ track }}" :href="tabHref('kanban')" class="{% if view == 'kanban' %}active{% endif %}">Board</a>
-    <a href="/pursuits?view=table&track={{ track }}" :href="tabHref('table')" class="{% if view == 'table' %}active{% endif %}">Table</a>
-  </div>
-</div>
+{% set wide = track == 'consulting' %}
+<div class="ap-page" id="apps-page" data-testid="pursuit-filter-scope" data-track="{{ track }}"
+     data-range="{{ board_range }}" data-cap="{{ board_cap }}" data-open-closed="{{ 1 if closed_open else 0 }}"
+     data-view="{{ 'table' if view == 'table' else 'board' }}" data-today="{{ today }}"
+     data-last-col="{{ columns[-1].col.key }}" data-noun="{{ page_label }}"
+     hx-target="#apps-board" hx-swap="outerHTML" hx-push-url="false">
+{# The container the @container rules measure holds the page content only: a container is a
+   containing block for fixed descendants, so the panel, menus and sheet sit beside it. #}
+<div class="ap-wrap"><div class="ap-main">
 
-<p class="muted" data-testid="never-applies" style="margin:.2rem 0 .8rem">
-{% if track == 'consulting' %}Kestrel never contacts anyone for you. Add {{ words(track).roles }} here, prepare the {{ words(track).doc }}, and record what you did; it tracks the rest.
-{% else %}Kestrel never applies for you. Add {{ words(track).roles }} here, tailor the {{ words(track).doc }}, and record what you did; it tracks the rest.{% endif %}</p>
+  {% call ui.scene_band(page_label) %}
+    <span class="ap-counts k-muted" id="apps-counts">{% include "partials/pursuit_counts.html" %}</span>
+  {% endcall %}
 
-{% for o in off_tracks or [] %}
-<p class="warnbox" data-testid="off-track-pursuits" data-track="{{ o.track }}" style="margin:0 0 .8rem">{{ o.name }} is switched off, so it no longer searches or scores, but {{ o.open }} open {{ words(o.track).role if o.open == 1 else words(o.track).roles }} {{ 'is' if o.open == 1 else 'are' }} still there. <a href="/pursuits?track={{ o.track }}">Open the {{ o.name }} {{ words(o.track).board }}</a></p>
-{% endfor %}
+  {% for o in off_tracks or [] %}
+  <p class="ap-notice" data-testid="off-track-pursuits" data-track="{{ o.track }}">{{ o.name }} is switched off, so it no longer searches or scores, but {{ o.open }} open {{ words(o.track).role if o.open == 1 else words(o.track).roles }} {{ 'is' if o.open == 1 else 'are' }} still there. <a href="/pursuits?track={{ o.track }}">Open the {{ o.name }} {{ words(o.track).board }}</a></p>
+  {% endfor %}
 
-<details class="addrole" data-testid="add-role">
-  <summary class="btn">Add a role I found elsewhere</summary>
-  <form class="addrole-form" hx-post="/pursuits/add" hx-target="#board" hx-swap="innerHTML"
-        hx-on::after-request="if (event.detail.successful) { this.reset(); }">
-    <input type="hidden" name="track" value="{{ track }}">
-    <label>Link to the posting <span class="muted">(optional)</span>
-      <input type="url" name="url" placeholder="https://" autocomplete="off"></label>
-    <label>Or paste the posting text
-      <textarea name="text" rows="4" placeholder="Paste the job description here"></textarea></label>
-    <div class="row">
-      <label>Title <span class="muted">(optional)</span> <input type="text" name="title"></label>
-      <label>Organization <span class="muted">(optional)</span> <input type="text" name="org_name"></label>
+  <div class="ap-bar" role="search" data-testid="pursuit-filters">
+    <label class="ap-sbox">{{ ic.icon('search') }}<span class="k-sr-only">Search {{ words(track).roles }}</span>
+      <input type="search" id="ap-q" name="q" value="{{ query.get('q') or '' }}" placeholder="Search titles and companies" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" data-testid="pursuit-search"></label>
+    <div class="ap-view" role="group" aria-label="View">
+      <button type="button" data-view-btn="board" class="{% if view != 'table' %}is-on{% endif %}" aria-pressed="{{ 'false' if view == 'table' else 'true' }}"
+              hx-get="/pursuits?view=kanban&track={{ track }}" data-testid="view-board">{{ ic.icon('board', 'k-ic--sm') }}Board</button>
+      <button type="button" data-view-btn="table" class="{% if view == 'table' %}is-on{% endif %}" aria-pressed="{{ 'true' if view == 'table' else 'false' }}"
+              hx-get="/pursuits?view=table&track={{ track }}" data-testid="view-table">{{ ic.icon('table', 'k-ic--sm') }}Table</button>
     </div>
-    <p class="muted">Kestrel reads the link once, politely, the way a browser would. If it cannot, paste the text instead. Nothing is sent anywhere.</p>
-    <button class="btn primary" type="submit">{{ words(track).add_to_list }}</button>
-  </form>
-</details>
-
-<div class="pfilter" role="search" data-testid="pursuit-filters">
-  <div class="pfilter-row">
-    <label class="pfilter-search">
-      <span class="sr-only">Search {{ words(track).roles }}</span>
-      <input type="search" x-ref="q" x-model="q" @keydown.escape.prevent="q = ''" name="q"
-             value="{{ query.get('q') or '' }}" autocomplete="off" spellcheck="false"
-             placeholder="Search company, title, place or notes   ( / )" data-testid="pursuit-search">
-    </label>
-    <label class="pfilter-check"><input type="checkbox" x-model="showClosed" data-testid="show-closed" {% if query.get('closed') != '0' %}checked{% endif %}> Show closed</label>
-    {% if view == 'table' %}
-    <label class="pfilter-sort">Sort
-      <select x-model="sort" data-testid="pursuit-sort">
-        <option value="" {% if not query.get('sort') %}selected{% endif %}>Board order</option>
-        <option value="activity" {% if query.get('sort') == 'activity' %}selected{% endif %}>Last activity</option>
-        <option value="company" {% if query.get('sort') == 'company' %}selected{% endif %}>Company</option>
-        <option value="applied" {% if query.get('sort') == 'applied' %}selected{% endif %}>Date {{ words(track).applied_done|lower }}</option>
-      </select></label>
-    {% endif %}
-    <label class="pfilter-sort">Updated
-      <select x-model="range" data-testid="range-select">
-        {% for r in range_choices %}<option value="{{ r }}" {% if r == board_range %}selected{% endif %}>{{ 'All time' if r == '0' else 'Last ' ~ r ~ ' days' }}</option>{% endfor %}
-      </select></label>
-    {% if view != 'table' %}
-    <label class="pfilter-sort">Per column
-      <select x-model="cap" data-testid="cap-select">
-        {% for n in cap_choices %}<option value="{{ n }}" {% if n == board_cap %}selected{% endif %}>{{ 'All' if n == '0' else n }}</option>{% endfor %}
-      </select></label>
-    {% endif %}
-    <button type="button" class="btn small ghost" x-show="active" x-cloak @click="clear()" data-testid="clear-filters-inline">Clear filters</button>
+    <span class="k-grow"></span>
+    <a class="k-btn k-btn--sm" href="/settings#applied" data-testid="applied-import-link">{{ ic.icon('upload') }}{{ 'Import past leads' if wide else 'Import past applications' }}</a>
+    <button type="button" class="k-btn k-btn--primary k-btn--sm" data-k-modal="#ap-add" data-testid="add-role">{{ ic.icon('plus') }}{{ 'Add a lead I found elsewhere' if wide else 'Add a role I found elsewhere' }}</button>
   </div>
-  <div class="pfilter-row" role="group" aria-label="Stage">
-    {% for column in columns %}
-    <button type="button" class="chip" :class="{ on: stages.includes('{{ column.col.key }}') }" :aria-pressed="stages.includes('{{ column.col.key }}')" @click="toggleStage('{{ column.col.key }}')" data-testid="stage-chip" data-stage="{{ column.col.key }}">{{ column.col.label }}</button>
-    {% endfor %}
-    <span class="muted pfilter-count" role="status" aria-live="polite" data-testid="filter-count" x-text="countText">Showing {{ cards|length }} of {{ cards|length }}</span>
+  <div class="ap-bar" id="ap-chips" role="group" aria-label="Stage">
+    <button type="button" class="k-chip is-on" data-chip="all" aria-pressed="true" data-testid="stage-chip" data-stage="all">All<span class="k-chip__n">{{ counts.open + counts.closed }}</span></button>
+    {% for column in columns %}<button type="button" class="k-chip" data-chip="{{ column.col.key }}" aria-pressed="false" data-testid="stage-chip" data-stage="{{ column.col.key }}">{{ column.col.label }}<span class="k-chip__n">{{ column.cards|length }}</span></button>{% endfor %}
+    <button type="button" class="k-chip" id="ap-mf-btn" aria-expanded="false" aria-controls="ap-mf" data-testid="more-filters">{{ ic.icon('filters', 'k-ic--sm') }}More filters</button>
+    <button type="button" class="k-btn k-btn--sm k-btn--quiet" data-clear-filters hidden data-testid="clear-filters-inline">Clear filters</button>
+    <span class="k-muted ap-count" role="status" aria-live="polite" data-testid="filter-count">Showing {{ cards|length }} of {{ cards|length }}</span>
   </div>
-</div>
-<div class="pfilter-empty" x-show="total > 0 && matched === 0" x-cloak data-testid="filter-empty">
-  <p>Nothing matches. Try fewer words or a different stage.</p>
-  <button type="button" class="btn" @click="clear()" data-testid="clear-filters">Clear filters</button>
-</div>
+  <div class="ap-mf" id="ap-mf" data-mf><div class="ap-mfi">
+    <label class="ap-fl">Fit score<select data-f="fit"><option value="">Any</option><option value="3.5">3.5 and up</option><option value="4">4.0 and up</option></select></label>
+    <label class="ap-fl">Priority<select data-f="pri"><option value="">Any</option><option value="1">High priority only</option></select></label>
+    <label class="ap-fl">Work type<select data-f="work"><option value="">Any</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
+    <label class="ap-fl">Company<input data-f="company" placeholder="Any company" autocomplete="off"></label>
+    <label class="ap-fl">Added<select data-f="added"><option value="">Any time</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
+    <label class="ap-fl">Follow-ups<select data-f="due"><option value="">Show all</option><option value="1">Only overdue</option></select></label>
+    <label class="ap-fl">Updated<select data-f="range" data-testid="range-select">{% for r in range_choices %}<option value="{{ r }}" {% if r == board_range %}selected{% endif %}>{{ 'All time' if r == '0' else 'Last ' ~ r ~ ' days' }}</option>{% endfor %}</select></label>
+    <label class="ap-fl">Per column<select data-f="cap" data-testid="cap-select">{% for n in cap_choices %}<option value="{{ n }}" {% if n == board_cap %}selected{% endif %}>{{ 'All' if n == '0' else n }}</option>{% endfor %}</select></label>
+  </div></div>
 
-<div id="board">{% include "partials/pursuit_board.html" %}</div>
+  <div class="ap-split" id="ap-split">
+    <div class="ap-appgrid">
+      {% include "partials/pursuit_board.html" %}
+      {% include "partials/pursuit_rail.html" %}
+    </div>
+  </div>
+</div></div>
+
+  {# The panel: it slides over the board and never pushes it (D-UI-100). #}
+  <aside class="k-flyout ap-panel" id="ap-panel" role="dialog" aria-modal="false" aria-labelledby="ap-panel-t" aria-hidden="true">
+    <div id="ap-panel-in" class="ap-panel-in"></div>
+  </aside>
+
+  {# One menu of every fine stage (the keyboard alternative to dragging), one per next-step choice
+     list and one for More. The page script places them next to what opened them. #}
+  <div id="ap-menus" tabindex="-1">
+  <div class="ap-menu" id="ap-menu-stage" role="menu" aria-label="Change stage" hidden>
+    {% for g in stage_groups %}<div class="ap-mh" role="presentation">{{ g.label }}</div>
+      {% for st, label in g.stages %}<button type="button" role="menuitem" data-stage-pick="{{ st }}">{{ label }}</button>{% endfor %}{% endfor %}
+    <div class="ap-mhint">Every change is saved to the history.</div>
+  </div>
+  {% for name, items in menus.items() %}
+  <div class="ap-menu" id="ap-menu-{{ name }}" role="menu" aria-label="Next step" hidden>
+    {% for label, key in items %}<button type="button" role="menuitem" data-pick="{{ key }}">{{ label }}</button>{% endfor %}
+  </div>
+  {% endfor %}
+  <div class="ap-menu" id="ap-menu-more" role="menu" aria-label="More actions" hidden>
+    <button type="button" role="menuitem" data-more-pick="tailor">{{ 'Capability statement' if wide else 'Tailor resume' }}</button>
+    <button type="button" role="menuitem" data-more-pick="full">Open full role</button>
+    <button type="button" role="menuitem" data-more-pick="priority" data-testid="menu-priority">Mark high priority</button>
+    <button type="button" role="menuitem" data-more-pick="link">Copy link</button>
+    <button type="button" role="menuitem" data-more-pick="remove" data-testid="board-remove">Remove from {{ page_label }}</button>
+  </div>
+  </div>
+
+  {% call ui.modal('ap-follow-up', 'Draft follow-up', static=True) %}
+    <div id="ap-follow-up-body"{% if auto_draft %} data-auto-draft="{{ auto_draft }}"{% endif %}></div>
+    <div class="ap-actions"><button type="button" class="k-btn" data-k-close>Close</button></div>
+  {% endcall %}
+
+  {# Add a role found elsewhere: a link (read once, politely) and/or pasted text. #}
+  {% call ui.modal('ap-add', 'Add ' ~ ('a lead' if wide else 'a role') ~ ' you found elsewhere') %}
+    <form id="ap-add-form" class="ap-addform" hx-post="/pursuits/add" data-testid="add-role-form">
+      <input type="hidden" name="track" value="{{ track }}">
+      <p class="ap-v">Paste a link, the posting text, or both. Kestrel scores it like any other role. A link is read once, as a public page, and if that fails the text you pasted is kept. Nothing is sent anywhere.</p>
+      <label class="ap-fl">Link to the posting<input type="url" name="url" placeholder="https://" autocomplete="off"></label>
+      <label class="ap-fl">Or paste the posting text<textarea name="text" rows="5" placeholder="Paste the job description here"></textarea></label>
+      <div class="ap-frow2">
+        <label class="ap-fl">Title <span class="ap-v">(optional)</span><input type="text" name="title" autocomplete="off"></label>
+        <label class="ap-fl">Organization <span class="ap-v">(optional)</span><input type="text" name="org_name" autocomplete="off"></label>
+      </div>
+      <div class="ap-sherr" id="ap-add-err" role="alert"></div>
+      <div class="ap-actions"><button type="submit" class="k-btn k-btn--primary k-btn--sm">{{ words(track).add_to_list }}</button><button type="button" class="k-btn k-btn--sm" data-k-close>Cancel</button></div>
+    </form>
+  {% endcall %}
 </div>
-
-<script>
-  // Live search and filters. Client side: every card and row carries a `data-search` string the
-  // server built from what is shown on screen (redacted in confidential mode), so 300 items filter
-  // instantly. State lives in the URL query (q, stage, closed, sort) so a reload or a switch
-  // between Board and Table keeps it. Re-applied after every board refresh.
-  function pursuitFilter(init) {
-    const fold = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-    return {
-      q: init.q, stages: init.stages.filter(Boolean), showClosed: init.showClosed, sort: init.sort,
-      range: init.range, cap: init.cap, closedHidden: init.closedHidden, closedCount: 0, expanded: [],
-      total: 0, shown: 0, matched: 0,
-      get active() { return !!(this.q || this.stages.length || !this.showClosed || this.range !== '0'); },
-      get foldable() { return this.closedCount > 0 && !this.q.trim() && !this.stages.length; },
-      get closedLabel() { return this.closedHidden ? 'Show ' + this.closedCount + ' closed' : 'Hide closed'; },
-      get countText() { return 'Showing ' + this.shown + ' of ' + this.total; },
-      init() {
-        ['q', 'stages', 'showClosed', 'sort', 'range', 'cap', 'closedHidden'].forEach(k => this.$watch(k, () => this.apply()));
-        // What the user chose here is the default next time (a setting row, not the browser).
-        ['range', 'cap'].forEach(k => this.$watch(k, v => {
-          fetch('/pursuits/prefs', { method: 'POST', body: new URLSearchParams({ [k]: v }) }).catch(() => {});
-        }));
-        this.$watch('closedHidden', v => {
-          fetch('/pursuits/prefs', { method: 'POST', body: new URLSearchParams({ closedcol: v ? 'hide' : 'show' }) }).catch(() => {});
-        });
-        document.body.addEventListener('htmx:afterSwap', () => this.$nextTick(() => this.apply()));
-        this.apply();
-      },
-      toggleStage(k) {
-        this.stages = this.stages.includes(k) ? this.stages.filter(s => s !== k) : [...this.stages, k];
-      },
-      clear() { this.q = ''; this.stages = []; this.showClosed = true; this.range = '0'; },
-      expandCol(k) {
-        this.expanded = this.expanded.includes(k) ? this.expanded.filter(c => c !== k) : [...this.expanded, k];
-        this.apply();
-      },
-      params() {
-        const p = new URLSearchParams(location.search);
-        const set = (k, v) => { if (v) p.set(k, v); else p.delete(k); };
-        set('q', this.q.trim());
-        set('stage', this.stages.join(','));
-        set('closed', this.showClosed ? '' : '0');
-        set('sort', this.sort);
-        set('range', this.range === '0' ? '' : this.range);
-        set('cap', this.cap === '0' ? '' : this.cap);
-        set('closedcol', this.closedHidden ? 'hide' : '');
-        return p;
-      },
-      tabHref(view) {
-        const p = this.params();
-        p.set('view', view);
-        if (view !== 'table') p.delete('sort');
-        return '/pursuits?' + p.toString();
-      },
-      onKey(e) {
-        const t = e.target, tag = t && t.tagName;
-        const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable);
-        if (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault(); this.$refs.q.focus(); this.$refs.q.select();
-        }
-      },
-      apply() {
-        const words = fold(this.q).split(' ').filter(Boolean);
-        const items = document.querySelectorAll('#board [data-search]');
-        let shown = 0, closedShown = 0;
-        const perCol = {};
-        // A card is out of range when its last activity is older than N days; one with no date
-        // is never hidden by the range (an unknown is kept, not dropped).
-        const limit = Number(this.range) || 0;
-        const today = Date.parse((init.today || '') + 'T00:00:00Z');
-        const inRange = el => {
-          const d = Date.parse((el.dataset.updated || '') + 'T00:00:00Z');
-          return !limit || isNaN(d) || isNaN(today) || (today - d) / 86400000 <= limit;
-        };
-        items.forEach(el => {
-          const ok = words.every(w => el.dataset.search.includes(w))
-            && (!this.stages.length || this.stages.includes(el.dataset.col))
-            && (this.showClosed || el.dataset.closed !== '1')
-            && inRange(el);
-          el.hidden = !ok;
-          if (ok) { shown++; perCol[el.dataset.col] = (perCol[el.dataset.col] || 0) + 1; }
-          if (ok && el.dataset.closed === '1') closedShown++;
-        });
-        this.total = items.length; this.matched = shown;  // the empty state: nothing matches
-        // Closed means a closed STATUS (data-closed), never the column: an open offer sits in the
-        // employment "closed" column and must never be folded away as if it were closed.
-        this.closedCount = closedShown;
-        // Board only: fold the closed column only when the user hid it and no search or stage chip is looking
-        // for it, and show the first N cards of each column with a "Show all" for the rest.
-        const folded = this.closedHidden && !this.q.trim() && !this.stages.length;
-        const cap = Number(this.cap) || 0;
-        const seen = {}, held = {};
-        document.querySelectorAll('#board .pcard').forEach(el => {
-          if (el.hidden) return;
-          const col = el.dataset.col;
-          if (el.dataset.closed === '1' && folded) { el.hidden = true; shown--; return; }
-          seen[col] = (seen[col] || 0) + 1;
-          if (cap && seen[col] > cap && !this.expanded.includes(col)) { el.hidden = true; held[col] = (held[col] || 0) + 1; shown--; }
-        });
-        this.shown = shown;  // what is actually on screen, after the fold and the column caps
-        document.querySelectorAll('#board [data-colmore]').forEach(b => {
-          const col = b.dataset.col, n = held[col] || 0;
-          const open = this.expanded.includes(col) && cap && (perCol[col] || 0) > cap;
-          b.hidden = !(n || open);
-          b.textContent = n ? 'Show all ' + (perCol[col] || 0) : 'Show fewer';
-        });
-        document.querySelectorAll('#board .col').forEach(col => {
-          const n = col.querySelector('.ccount');
-          if (n) n.textContent = perCol[col.dataset.col] || 0;
-        });
-        const body = document.querySelector('#board table.data tbody');
-        if (body) {
-          const key = { activity: r => r.dataset.activity, applied: r => r.dataset.applied, company: r => r.dataset.company }[this.sort];
-          const rows = [...body.querySelectorAll('tr[data-ord]')];
-          rows.sort((a, b) => {
-            if (!key) return a.dataset.ord - b.dataset.ord;
-            const x = key(a), y = key(b);
-            if (this.sort === 'company') return x.localeCompare(y) || a.dataset.ord - b.dataset.ord;
-            if (!x !== !y) return x ? -1 : 1;  // empty dates last
-            return (x < y ? 1 : x > y ? -1 : 0) || a.dataset.ord - b.dataset.ord;  // newest first
-          });
-          rows.forEach(r => body.appendChild(r));
-        }
-        const qs = this.params().toString();
-        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
-      },
-    };
-  }
-</script>
-
-<script>
-  // Native drag-and-drop, bound ONCE to the document and delegated, so a board refresh (which
-  // swaps the cards) never adds a second set of listeners. Only the card itself starts a drag
-  // (links, selects and buttons inside it are draggable="false"); dragend clears everything, so a
-  // drag that is cancelled or dropped outside a column cannot leave a stale card behind. On drop,
-  // POST the target column's first status (writes a status_event), then refresh the board.
-  (function () {
-    if (window.__pursuitDnD) return;
-    window.__pursuitDnD = true;
-    let dragId = null, dragCol = null, dragEl = null;
-    const clearOver = () => document.querySelectorAll('.kanban .col.dragover')
-      .forEach(c => c.classList.remove('dragover'));
-    const colOf = e => (e.target && e.target.closest) ? e.target.closest('.kanban .col') : null;
-    document.addEventListener('dragstart', e => {
-      const t = e.target;
-      if (!t || !t.classList || !t.classList.contains('pcard')) { dragId = null; return; }
-      dragId = t.dataset.id; dragCol = t.dataset.col; dragEl = t;
-      t.classList.add('dragging');
-      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); }
-    });
-    document.addEventListener('dragend', () => {
-      if (dragEl) dragEl.classList.remove('dragging');
-      dragId = dragCol = dragEl = null;
-      clearOver();
-    });
-    document.addEventListener('dragover', e => {
-      const col = colOf(e);
-      if (!col || dragId === null) return;
-      e.preventDefault(); clearOver(); col.classList.add('dragover');
-    });
-    document.addEventListener('dragleave', e => {
-      const col = colOf(e);
-      if (col && !col.contains(e.relatedTarget)) col.classList.remove('dragover');
-    });
-    document.addEventListener('drop', async e => {
-      const col = colOf(e);
-      if (!col || dragId === null) return;
-      e.preventDefault(); clearOver();
-      const id = dragId, from = dragCol;
-      dragId = dragCol = null;
-      if (from === col.dataset.col) return;
-      try {
-        const body = new URLSearchParams({ to_status: col.dataset.status });
-        await fetch(`/pursuits/${id}/status`, { method: 'POST', body });
-        const track = col.closest('.kanban').dataset.track;
-        htmx.ajax('GET', `/pursuits?view=kanban&track=${track}`, { target: '#board', swap: 'innerHTML' });
-      } catch (err) { /* leave the board unchanged on failure */ }
-    });
-  })();
-</script>
 {% endblock %}

@@ -92,16 +92,29 @@ def test_script_and_css_exist_and_use_theme_tokens_only():
     text = js.read_text("utf-8")
     for needle in ("ArrowDown", "Escape", "Enter", "aria-activedescendant", "aria-expanded"):
         assert needle in text
-    css = (Path(paths.web_static_dir()) / "css" / "kestrel.css").read_text("utf-8")
-    block = css.split("the model combobox (D-UI-69)")[1].split("\n\n")[0]
-    assert ".ke-combo-list" in block and "focus-visible" in block
-    assert not re.search(r"#[0-9a-fA-F]{3,6}\b", block)
+    # Pages that load shell.css instead of kestrel.css (Models, Model check) need the rules too.
+    for sheet in ("kestrel.css", "components.css"):
+        css = (Path(paths.web_static_dir()) / "css" / sheet).read_text("utf-8")
+        block = css.split("the model combobox (D-UI-69)")[1].split("\n\n")[0]
+        assert ".ke-combo-list" in block and "focus-visible" in block, sheet
+        assert not re.search(r"#[0-9a-fA-F]{3,6}\b", block), sheet
+        assert ".model-picker" in css and ".ke-native[hidden]" in css, sheet
+
+
+def test_pages_that_use_the_combobox_link_a_sheet_that_styles_it():
+    web = Path(paths.web_static_dir()).parent / "templates"
+    for page in ("bench.html", "models.html"):
+        text = (web / page).read_text("utf-8")
+        assert "/static/css/shell.css" in text and "kestrel.css" not in text, page
+    # shell.css is what those pages load, so components.css (loaded by base.html) must carry it.
+    base = (web / "base.html").read_text("utf-8")
+    assert "/static/css/components.css" in base
 
 
 def test_existing_callers_render_the_combobox():
     root = Path(paths.web_templates_dir())
-    for rel in ("bench.html", "partials/model_overrides.html", "partials/assess_model.html",
-                "partials/score_again_dialog.html"):
+    for rel in ("partials/bench_advanced.html", "partials/model_overrides.html",
+                "partials/assess_model.html", "partials/score_again_dialog.html"):
         assert "model_select(" in (root / rel).read_text("utf-8"), rel
 
 

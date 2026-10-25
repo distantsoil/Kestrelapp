@@ -1,0 +1,17 @@
+{# The tabs row: three tabs on the left, How it works and Download PDF on the right. #}
+{% import "partials/pp_icons.html" as i %}
+<div class="pp-tabrow" id="pp-tabs"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-tabs">
+  <nav class="pp-tabs" role="tablist" aria-label="Interview prep">
+    {%- for key, label in tabs %}
+    <a role="tab" class="pp-tab{% if key == tab %} is-on{% endif %}" aria-selected="{{ 'true' if key == tab else 'false' }}" data-testid="pp-tab-{{ key }}" href="{{ base }}?tab={{ key }}" hx-get="{{ base }}?tab={{ key }}" hx-target="#pp-body" hx-swap="innerHTML" hx-push-url="true">{{ label }}{% if key == 'bank' and story_count %}<b class="pp-tab__n">{{ story_count }}</b>{% endif %}</a>
+    {%- endfor %}
+  </nav>
+  <div class="pp-tabacts">
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#pp-how-fly" aria-controls="pp-how-fly" aria-expanded="false" data-testid="pp-how">{{ i.pi('help', 'k-ic--sm') }}How it works</button>
+    {%- if opp is not none and has_pack %}
+    <button type="button" class="k-btn k-btn--sm" hx-get="/prep/{{ opp.id }}/preview" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-pdf">{{ i.pi('dl', 'k-ic--sm') }}Download PDF</button>
+    {%- else %}
+    <button type="button" class="k-btn k-btn--sm" disabled title="Build the prep pack first" data-testid="pp-pdf">{{ i.pi('dl', 'k-ic--sm') }}Download PDF</button>
+    {%- endif %}
+  </div>
+</div>

@@ -1,9 +1,11 @@
-<div class="card" data-testid="update-disclosure" style="margin-bottom:12px">
-  <p style="margin:0 0 .6rem">Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent. Kestrel never downloads or installs anything; you choose if and when to update.</p>
-  <p style="display:flex;gap:.5rem;margin:0">
-    <button class="btn primary" type="button" hx-post="/updates/disclosure/ok"
-            hx-target="#disclosure-slot" hx-swap="innerHTML">OK</button>
-    <button class="btn" type="button" hx-post="/updates/disclosure/off"
-            hx-target="#disclosure-slot" hx-swap="innerHTML">Turn off</button>
-  </p>
+{# The one-time disclosure of the daily update check (D-UPD-1, restyled D-UI-152). #}
+{% from "ui/macros.html" import icon %}
+<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<div class="sf-bn" role="status" data-testid="update-disclosure">
+  <span class="sf-ic" aria-hidden="true">{{ icon('shield') }}</span>
+  <span class="sf-msg">Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent. Kestrel never downloads or installs anything; you choose if and when to update.</span>
+  <button class="k-btn k-btn--sm k-btn--primary" type="button" hx-post="/updates/disclosure/ok"
+          hx-target="#disclosure-slot" hx-swap="innerHTML">OK</button>
+  <button class="k-btn k-btn--sm" type="button" hx-post="/updates/disclosure/off"
+          hx-target="#disclosure-slot" hx-swap="innerHTML">Turn off</button>
 </div>

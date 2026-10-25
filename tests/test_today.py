@@ -415,37 +415,25 @@ def test_confidential_mode_redacts_org_title_and_summary():
 
 
 # -------------------------------------------------------------------------------------- page
-def test_today_page_renders_review_act_schedule_and_asks():
-    """D-UI-51, D-UI-60: the Review / Act / Schedule cards (Schedule replaced Overnight), the
-    asks below the rule, and the persistent run panel above them."""
+def test_today_page_renders_the_strip_matches_decisions_and_applications():
+    """D-UI-92: the status strip, Top matches, Decisions waiting and Applications needing action
+    replace the Review / Act / Schedule cards, the run panel and the asks. The queries the old
+    cards printed are unchanged (tested above); the page prints the new sections."""
     asyncio.run(_seed())
     with _client() as c:
         r = c.get("/")
     assert r.status_code == 200
     body = r.text
-    for card in ("today-run", "today-review", "today-act", "today-schedule", "today-asks"):
-        assert f'data-testid="{card}"' in body
-    assert 'data-testid="today-overnight"' not in body and "today-next" not in body
-    assert "Things to finish" in body and "Setup, when you have a minute" not in body
-    review = body.split('data-testid="today-review"')[1].split('data-testid="today-act"')[0]
-    # a (strong), b (your call) and d; c and f are Applied now (#37), g's pursuit is closed, and e
-    # (a Tier 1 keep) is still being scored, which outranks its open pursuit.
-    assert ">3<small>roles worth a look</small>" in review
-    assert "1 strong fit, 1 your call." in review
-    assert 'href="/opportunities"' in review and ">Open Pipeline<" in review
-    # The top three by fit number, each with its word, and "2 more" (D-UI-60).
-    top = review.split('data-testid="review-top"')[1].split("</div>")[0]
-    assert top.count('class="review-row"') == 3 and 'data-fit="strong fit"' in top
-    assert 'data-testid="review-more"' not in review  # exactly three roles: nothing more
-    act = body.split('data-testid="today-act"')[1].split('data-testid="today-schedule"')[0]
-    assert ">2<small>things to do</small>" in act
-    assert "0 on your shortlist to apply to · 2 follow-ups due (VP of IT f, 30 days quiet)" in act
-    assert ">Open Applications<" in act
-    sched = body.split('data-testid="today-schedule"')[1].split('data-testid="today-setup-rule"')[0]
-    assert 'data-testid="schedule-mode">Model on this computer<' in sched
-    assert "No schedule set." in sched and "No scheduled run yet" in sched
-    assert 'data-tip="Idle"' in sched
-    assert "Fit scoring in progress" not in body  # one progress figure: the run panel (R1)
+    for hook in ("td-strip", "td-matches", "td-decisions", "td-apps"):
+        assert f'data-testid="{hook}"' in body
+    for gone in ("today-run", "today-review", "today-act", "today-schedule", "today-asks",
+                 "Things to finish"):
+        assert gone not in body
+    assert body.index('data-testid="td-strip"') < body.index('data-testid="td-matches"') < \
+        body.index('data-testid="td-decisions"')
+    # The follow-up that is 30 days quiet is an application needing action.
+    apps = body.split('data-testid="td-apps"')[1].split("</section>")[0]
+    assert "VP of IT f" in apps and "ago" in apps
     assert "—" not in body.split("<main")[-1]
     assert "#D4622A" not in body.split("<main")[-1]  # theme variables only
 
@@ -456,7 +444,8 @@ def test_today_page_redacts_under_confidential_mode_and_takes_a_track():
         body = c.get("/?track=employment").text
         consulting = c.get("/?track=consulting").text
     assert _EMPLOYER not in body
-    assert "Nothing worth a look yet." in consulting
+    assert 'id="today" data-track="consulting"' in consulting
+    assert 'data-testid="td-none"' in consulting  # no consulting roles found today
 
 
 def test_today_page_with_an_empty_database():
@@ -467,8 +456,9 @@ def test_today_page_with_an_empty_database():
     with _client() as c:
         r = c.get("/")
     assert r.status_code == 200
-    panel = r.text.split('data-testid="today-run"')[1].split('data-testid="today-review"')[0]
-    assert 'data-run="none"' in r.text and "No runs yet" in panel and "Scan now" in panel
+    strip = r.text.split('data-testid="td-strip"')[1].split('data-testid="td-matches"')[0]
+    assert 'data-state="none"' in r.text and "No runs yet" in strip and "Run now" in strip
+    assert 'data-testid="td-none"' in r.text and "No matches yet" in r.text
 
 
 def test_a_failing_search_is_the_first_ask_with_its_last_error():
@@ -585,22 +575,21 @@ def test_today_with_an_empty_database_says_nothing_is_waiting():
     assert _act() == {"n": 0, "apply": 0, "follow_up": 0, "earliest": None}
     with _client() as c:
         body = c.get("/").text
-    assert "Nothing worth a look yet." in body
-    assert "Nothing on your shortlist yet and no follow-ups due." in body
+    assert "No matches yet" in body
+    assert "Nothing is waiting on you." in body and "Nothing is due this week." in body
 
 
-def test_setup_asks_sit_below_the_cards_under_a_rule():
+def test_the_asks_are_off_the_page_but_the_failed_role_note_stays_in_the_retry_note():
+    """D-UI-92: the page no longer carries the asks (the sidebar status and the nav badge do),
+    and a failed role is the retry note's job. The ask lines themselves are unchanged."""
     asyncio.run(_seed())
     with _client() as c:
         body = c.get("/").text
-    assert (
-        body.index('data-testid="today-run"')
-        < body.index('data-testid="today-review"')
-        < body.index('data-testid="today-setup-rule"')
-        < body.index('data-testid="today-asks"')
-    )
-    assert "roles worth a look" in body
-    assert "1 posting failed scoring" in body.split('data-testid="today-asks"')[1]
+    assert 'data-testid="today-asks"' not in body and 'data-testid="today-setup-rule"' not in body
+    asks = asyncio.run(_with_session(lambda s: system_asks(s, _settings(), None)))
+    assert any(a["key"] == "quarantine" and a["title"] == "1 posting failed scoring" for a in asks)
+    retry = body.split('data-testid="td-retry"')[1].split("</div>")[0]
+    assert "1 role needs another try." in retry and 'href="/quarantine"' in retry
 
 
 # ------------------------------------------------------------------- scoring progress panel
@@ -675,8 +664,12 @@ def test_open_failures_show_on_today_and_the_rail_whatever_the_last_run_said(mon
     monkeypatch.setattr("kestrel.web.queries.open_quarantine_count", eight)
     with _client() as c:
         body = c.get("/").text
+        panel = c.get("/today/run").text
         rail = c.get("/status/rail").text
-    line = body.split('data-testid="open-failed"')[1].split("</p>")[0]
+    # Today says it in the retry note; the run-panel partial and the rail keep their wording.
+    note = body.split('data-testid="td-retry"')[1].split("</div>")[0]
+    assert 'href="/quarantine"' in note and "8 roles need another try." in note
+    line = panel.split('data-testid="open-failed"')[1].split("</p>")[0]
     assert 'href="/quarantine"' in line and "8 roles failed scoring" in line
     assert 'data-rail="failed"' in rail and "8 roles failed scoring" in rail
     assert 'href="/quarantine"' in rail
@@ -688,7 +681,8 @@ def test_open_failures_show_on_today_and_the_rail_whatever_the_last_run_said(mon
     monkeypatch.setattr("kestrel.web.queries.open_quarantine_count", none)
     _patch_progress(monkeypatch, dict(EMPTY, last_run=last))
     with _client() as c:
-        assert 'data-testid="open-failed"' not in c.get("/").text
+        assert 'data-testid="td-retry"' not in c.get("/").text
+        assert 'data-testid="open-failed"' not in c.get("/today/run").text
         assert 'data-rail="failed"' not in c.get("/status/rail").text
     assert today_page.run_panel  # the panel is the Today surface now
 
@@ -710,25 +704,30 @@ def _scored_roles(n: int) -> None:
     asyncio.run(_with_session(_add))
 
 
+def _asks():
+    return asyncio.run(_with_session(lambda s: system_asks(s, _settings(), "employment")))
+
+
 def test_the_calibrate_ask_shows_once_after_a_finished_run_and_can_be_dismissed():
+    """The ask is still computed (the notification and the nav badge read the same count); Today
+    no longer prints it (D-UI-92), so the dismiss route and the ask text are checked directly."""
     asyncio.run(_seed())
-    with _client() as c:
-        assert 'data-ask="taste"' not in c.get("/").text  # 4 scored roles: too few to rate
+    assert "taste" not in [a["key"] for a in _asks()]  # 4 scored roles: too few to rate
     _scored_roles(12)
+    asks = _asks()
+    taste = next(a for a in asks if a["key"] == "taste")
+    assert taste["title"] == "Teach Kestrel your taste."
+    assert taste["line"] == ("Rate 15 scored roles and it starts ranking the way you would. "
+                             "Takes about five minutes.")
+    assert taste["href"] == "/calibrate?track=employment"
+    # It stands in for the bare label-count ask while it shows.
+    assert "labels:employment" not in [a["key"] for a in asks]
     with _client() as c:
-        body = c.get("/").text
-        asks = body.split('data-testid="today-asks"')[1]
-        assert 'data-ask="taste"' in asks
-        assert "Teach Kestrel your taste." in asks
-        assert ("Rate 15 scored roles and it starts ranking the way you would. Takes about five "
-                "minutes.") in asks
-        assert 'href="/calibrate?track=employment"' in asks
-        # It stands in for the bare label-count ask while it shows.
-        assert "more ratings" not in asks
         assert c.post("/today/asks/nope/dismiss").status_code == 404
         assert c.post("/today/asks/taste/dismiss").status_code == 200
-        after = c.get("/").text
-    assert 'data-ask="taste"' not in after and "12 more ratings" in after
+    after = _asks()
+    assert "taste" not in [a["key"] for a in after]
+    assert next(a for a in after if a["key"] == "labels:employment")["title"] == "12 more ratings"
 
     async def _row(s):
         return (await s.get(Setting, "ui.asks_dismissed")).value
@@ -739,39 +738,9 @@ def test_the_calibrate_ask_shows_once_after_a_finished_run_and_can_be_dismissed(
 def test_the_calibrate_ask_waits_for_a_finished_run():
     asyncio.run(_seed(with_run=False))
     _scored_roles(15)
-    with _client() as c:
-        assert 'data-ask="taste"' not in c.get("/").text
+    assert "taste" not in [a["key"] for a in _asks()]
 
 
-# ------------------------------------------------------------------------------ guide strip
-def test_guide_strip_renders_dismisses_and_comes_back_from_help():
-    asyncio.run(_seed())
-    with _client() as c:
-        assert 'data-guide="today"' in c.get("/").text
-        page = c.get("/").text
-        assert "Start here. Review the roles worth a look, then work your shortlist." in page
-        assert ">Got it</button>" in page and "This page" not in page
-        assert c.post("/guides/nope/dismiss").status_code == 404
-        assert c.post("/guides/today/dismiss").status_code == 200
-        assert 'data-guide="today"' not in c.get("/").text
-        assert 'data-guide="models"' in c.get("/models").text  # per page
-        assert "Show the guides again" in c.get("/help").text
-        assert c.post("/guides/restore").status_code == 200
-        assert 'data-guide="today"' in c.get("/").text
-
-
-def test_guide_dismissal_is_a_settings_row_not_browser_storage():
-    asyncio.run(_seed())
-    with _client() as c:
-        c.post("/guides/pipeline/dismiss")
-
-    async def _row(s):
-        return (await s.get(Setting, "ui.guides_dismissed")).value
-
-    assert asyncio.run(_with_session(_row)) == ["pipeline"]
-
-
-# ------------------------------------------------------------- review round: one worth count
 def test_worth_a_look_counts_tier3_and_your_call_and_the_nav_badge_shares_it():
     """One "worth a look" count for Today and the sidebar badge, by the Pipeline's rules: the
     latest evaluation (a Tier 3 apply over a Tier 2 consider counts), your call counts, and an
@@ -858,32 +827,9 @@ def test_quarantine_copy_follows_the_stored_error():
     assert "ran out of room" not in quarantine_line(1, Counter(schema=1))
     # The seed's one parked row failed on its schema, so Today never says "ran out of room".
     asyncio.run(_seed())
-    with _client() as c:
-        asks = c.get("/").text.split('data-testid="today-asks"')[1]
+    asks = " ".join(f"{a['title']} {a['line']}" for a in _asks())
     assert "1 posting failed scoring" in asks and "ran out of room" not in asks
     assert "not in the required format" in asks
-
-
-def test_guide_for_reads_the_setting_once_and_a_dismiss_invalidates_it(monkeypatch):
-    from kestrel.web import deps
-
-    asyncio.run(_seed())
-    calls = []
-    real = deps._read_setting_row
-
-    def counting(key, *a, **kw):
-        if key == deps.GUIDES_KEY:
-            calls.append(key)
-        return real(key, *a, **kw)
-
-    monkeypatch.setattr(deps, "_read_setting_row", counting)
-    assert deps.guide_for("/") is not None and deps.guide_for("/pursuits") is not None
-    assert len(calls) == 1  # cached per process, not a sqlite read per render
-    with _client() as c:
-        c.post("/guides/today/dismiss")
-        assert deps.guide_for("/") is None
-        c.post("/guides/restore")
-        assert deps.guide_for("/") is not None
 
 
 def test_today_help_and_escalate_use_the_operator_words(monkeypatch):
@@ -894,9 +840,10 @@ def test_today_help_and_escalate_use_the_operator_words(monkeypatch):
     with _client() as c:
         body = c.get("/").text
         help_page = c.get("/help").text
-    assert "1 application past 21 days with no reply" in body  # f, silent for 30 days
     assert "pursuits past" not in body and "pursuit past" not in body
-    assert "becomes keep" not in help_page and "goes on to a full read" in help_page
+    assert "VP of IT f" in body  # f, silent for 30 days, is an application needing action
+    assert "becomes keep" not in help_page
+    assert "When it is unsure, the role is kept" in help_page
 
     async def fake(_s, _c, _settings, _opp_id, *, confirmation_token):
         return EscalationResult(sent=True, transmission_id=7, evaluation_id=9, verdict="apply",
@@ -909,48 +856,18 @@ def test_today_help_and_escalate_use_the_operator_words(monkeypatch):
 
 
 def test_about_and_help_link_the_site_and_ko_fi():
-    """D-UI-64: both pages carry the link row in their main card. Help links the site; About puts
-    Check for updates in that first slot instead (the site stays one click away on Help)."""
+    """D-UI-64, as the locked mockups settle it: About carries Check for updates and, in Source and
+    support, the site and Ko-fi; Help's More help card carries the site."""
     asyncio.run(_seed())
     with _client() as c:
-        for path in ("/about", "/help"):
-            line = c.get(path).text.split('data-testid="site-links"')[1].split("</p>")[0]
-            if path == "/help":
-                assert 'href="https://kestrelapp.co"' in line and ">kestrelapp.co</a>" in line
-            else:
-                assert ">Check for updates</button>" in line
-            assert 'href="https://ko-fi.com/distantsoil"' in line
-            assert ">Support Kestrel on Ko-fi</a>" in line
-
-
-def test_every_guide_starts_with_the_action():
-    from kestrel.web.deps import GUIDES
-
-    assert {"today", "pipeline", "applications", "documents", "stories", "models", "sources",
-            "settings", "calibrate"} <= set(GUIDES)
-    for key, g in GUIDES.items():
-        assert not g["text"].startswith("This page"), key
-        assert "—" not in g["text"], key
-    from kestrel.web.deps import guide_for
-
-    assert guide_for("/opportunities", "employment")["text"] == (
-        "Pick the roles you want and add them to your shortlist. Grey rows are still being "
-        "scored."
-    )
-    assert guide_for("/pursuits", "employment")["text"] == (
-        "Tailor your resume, then press Applied? Kestrel tracks the follow-ups."
-    )
-    assert guide_for("/documents", "employment")["text"] == (
-        "Build your resume once, in your own words. Kestrel picks the best wording for each role."
-    )
-    # D-UI-54: the consulting track never reads job-seeker copy.
-    for key, g in GUIDES.items():
-        text = guide_for(g["path"], "consulting")["text"]
-        assert "{" not in text, key
-        assert "shortlist" not in text and "resume" not in text, key
-    assert guide_for("/pursuits", "consulting")["text"] == (
-        "Tailor your capability statement, then press Reached out? Kestrel tracks the follow-ups."
-    )
+        about = c.get("/about").text
+        helped = c.get("/help").text
+    assert ">Check for updates</button>" in about
+    support = about.split('data-testid="about-support"')[1].split("</article>")[0]
+    assert 'href="https://ko-fi.com/distantsoil"' in support and ">Ko-fi " in support
+    assert 'href="https://kestrelapp.co"' in support and ">Visit " in support
+    more = helped.split('data-testid="hp-more-actions"')[1].split("</div>")[0]
+    assert 'href="https://kestrelapp.co"' in more and ">kestrelapp.co</a>" in more
 
 
 def test_the_speed_note_is_on_models_settings_and_onboarding():
@@ -959,15 +876,42 @@ def test_the_speed_note_is_on_models_settings_and_onboarding():
     note = ("Free models, online or on your own computer, are often much slower than paid ones. "
             "A first scan can take an hour or more; Today shows the progress.")
     root = Path(paths.web_templates_dir())
-    for name in ("models.html", "settings.html", "partials/onboarding_body.html"):
+    for name in ("models.html", "partials/st_mode.html", "partials/onboarding_body.html"):
         assert note in (root / name).read_text(encoding="utf-8"), name
 
 
-def test_calibrate_opens_with_an_intro_panel():
+def test_calibrate_explains_itself_in_the_how_it_works_flyout():
+    # The old intro panel became the How it works flyout (D-UI-99): what it does, how many
+    # ratings it needs, and the page's purpose line, with no jargon about "informative" roles.
     asyncio.run(_seed())
     with _client() as c:
         body = c.get("/calibrate").text
-    intro = body.split('data-testid="calibrate-intro"')[1].split("</div>")[0]
-    assert "What it does." in intro and "How many." in intro and "How long." in intro
-    assert "About five minutes for 15" in intro
+    fly = body.split('id="cal-how-fly"')[1]
+    assert "What you do" in fly and "What your ratings change" in fly
+    assert "At 15 ratings" in fly and "At 30" in fly
+    assert 'data-testid="page-purpose"' in body and "does not review your resume" in body
     assert "ten most informative" not in body
+
+
+def test_hx_trigger_filters_are_valid_htmx():
+    """htmx ends a trigger filter at the FIRST `]`, so `[!q('dialog[open]')]` is cut mid-selector,
+    and a filter must sit directly after its event name (`evt[filter] from:body`), not after the
+    modifiers. Either mistake logs htmx:syntax:error on every load (the Today strip did both).
+    `every 5s [filter]` is the one form that takes a space."""
+    import re
+    from pathlib import Path
+
+    import kestrel.web
+
+    root = Path(kestrel.web.__file__).parent / "templates"
+    bad: list[str] = []
+    for path in root.rglob("*.html"):
+        for attr in re.findall(r'hx-trigger="([^"]*)"', path.read_text(encoding="utf-8")):
+            for m in re.finditer(r"(\S*?)(\s*)\[(.*?)\]", attr):
+                before, gap, inner = m.groups()
+                every = r"every\s+(?:\d+(?:ms|s|m)|\{\{.*?\}\})\s*$"
+                if "[" in inner:
+                    bad.append(f"{path.name}: nested bracket in filter: {attr}")
+                elif gap and not re.search(every, attr[: m.end(1)]):
+                    bad.append(f"{path.name}: filter not directly after event name: {attr}")
+    assert not bad, bad

@@ -1,0 +1,113 @@
+{# One Pipeline row (D-UI-96): hover checkbox, company monogram, title with the fit pill and the
+   shortlist tag, "org · place · pay" and the score with how long ago the role was found. One
+   warning icon with a tooltip appears only when something is wrong; a healthy row carries no
+   badges. Clicking the row slides the panel in (pipeline.js); the checkbox, the buttons and the
+   menu keep their own clicks. Every verdict word comes from kestrel.web.fit (row.fit), every
+   other part from kestrel.web.pipeline_view (row.view). Import:
+   {% from "partials/pl_row.html" import row, signal_row with context %} #}
+{% import "ui/macros.html" as ui %}
+{% set scoring_pill = {'running': 'scoring…', 'queued': 'queued', 'background': 'background', 'held': 'held', 'not_queued': 'not queued', 'failed': 'failed', 'stuck': 'stuck', 'removed': 'not scored'} %}
+{% set scoring_tip = {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A company-board role the smart filter did not keep. It scores in the background when Kestrel is idle.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.', 'removed': 'You removed this role from Needs another try. It has no score.'} %}
+
+{% macro check_box(label) -%}
+  <button type="button" class="pl-ck" data-pl-pick aria-label="Select {{ label }}" aria-pressed="false">{{ ui.icon('check') }}</button>
+{%- endmacro %}
+
+{% macro more_menu(id, org_id, saved=False) -%}
+  {# Save for later keeps a role under the Saved chip without deciding. Hide this company: every
+     role of it leaves Pipeline and Today, with Undo. #}
+  <details class="pl-more" data-pl-more>
+    <summary class="k-iconbtn" aria-label="More for this role" title="More">{{ ui.icon('settings', 'k-ic--sm') }}</summary>
+    <div class="pl-more__menu" role="menu">
+      {% if saved %}<button type="button" role="menuitem" hx-post="/opportunities/{{ id }}/decide/unsave"
+              hx-swap="none" data-testid="unsave-role">Remove from Saved</button>
+      {% else %}<button type="button" role="menuitem" hx-post="/opportunities/{{ id }}/decide/save"
+              hx-swap="none" data-testid="save-role">Save for later</button>{% endif %}
+      {% if org_id %}<button type="button" role="menuitem" hx-post="/opportunities/{{ id }}/decide/hide-company"
+              hx-swap="none" data-testid="hide-company">Hide this company</button>{% endif %}
+    </div>
+  </details>
+{%- endmacro %}
+
+{% macro row(r, nf=False) -%}
+  {% set ft = r.fit %}
+  {% set v = r.view %}
+  {% set o = r.opp %}
+  {% set unscored = ft.word == 'new' %}
+  {% set tone = 'wait' if unscored else ft.tone %}
+  <div class="pl-row is-{{ 'failed' if ft.group == 'failed' else ('new' if unscored else ('nf' if nf else tone)) }}{% if nf %} pl-row--nf{% endif %}" role="listitem" tabindex="0"
+       id="row-{{ o.id }}" data-id="{{ o.id }}" data-group="{{ ft.group }}" data-testid="pl-row"
+       data-title="{{ o.title or '(untitled)' }}"{% if r.saved %} data-saved="1"{% endif %}>
+    {% if nf %}<span class="pl-ck-gap"></span>{% else %}{{ check_box(o.title or 'this role') }}{% endif %}
+    <span class="pl-mono pl-mono-{{ v.mono.tone }}" aria-hidden="true">{{ v.mono.letters }}</span>
+    <div class="pl-main">
+      {% if o.track == 'consulting' and o.opp_type in ('contract_posting', 'rfp', 'referral') %}
+        <div class="pl-kind">{{ {'contract_posting': 'Contract posting', 'rfp': 'RFP', 'referral': 'Referral'}[o.opp_type] }}</div>
+      {% endif %}
+      <div class="pl-title">
+        <span class="pl-title__t">{{ o.title or '(untitled)' }}</span>
+        {% if unscored %}
+          {% set st = r.scoring or 'not_queued' %}
+          <span class="k-pill pl-pill-new" title="{{ scoring_tip.get(st, '') }}" data-fit="new" data-scoring="{{ st }}">{{ scoring_pill.get(st, 'queued') }}</span>
+        {% elif ft.tone == 'good' %}
+          <span class="k-pill k-pill--good" data-fit="{{ ft.word }}">{{ ui.icon('check') }}{{ ft.word|capitalize }}</span>
+        {% elif ft.tone == 'warn' %}
+          <span class="k-pill k-pill--warn" data-fit="{{ ft.word }}">{{ ui.icon('alert') }}{{ ft.word|capitalize }}</span>
+        {% else %}
+          <span class="k-pill" data-fit="{{ ft.word }}">{{ ft.word|capitalize }}</span>
+        {% endif %}
+        {% if r.mine and r.mine != ft.word %}<span class="pl-tag" data-mine="{{ r.mine }}" title="The word you picked">you said {{ r.mine }}</span>{% endif %}
+        {% if r.pursuit_id and r.pursuit_status and ft.group == 'applied' %}<span class="pl-tag pl-tag--on" title="Where this application stands" data-testid="pursuit-status">{{ r.pursuit_status|replace('_', ' ') }}</span>
+        {% elif r.pursuit_id %}<span class="pl-tag pl-tag--on" data-testid="on-shortlist">{{ 'In my leads' if o.track == 'consulting' else 'On my shortlist' }}</span>{% endif %}
+        {% if r.saved %}<span class="pl-tag" data-testid="saved-tag">Saved</span>{% endif %}
+        {% if v.near_floor %}<span class="pl-tag pl-tag--warn" data-testid="near-floor" title="The posted pay is a little under your minimum. Kestrel kept it for you to decide.">Below your minimum</span>{% endif %}
+        {% if o.archived_at %}<span class="pl-tag" data-reason="{{ o.archive_reason or '' }}">hidden{% if o.archive_reason %}: {{ archive_reasons.get(o.archive_reason, o.archive_reason)|lower }}{% endif %}{% if o.stage_reason and o.stage_reason.startswith('Re-post') %} ({{ o.stage_reason|lower }}){% endif %}</span>{% endif %}
+        {% if v.warn %}<span class="pl-warn" tabindex="0" data-testid="row-warning" aria-label="{{ v.warn }}">{{ ui.icon('alert', 'k-ic--sm') }}<span class="pl-tip" role="tooltip">{{ v.warn }}</span></span>{% endif %}
+      </div>
+      {# The why clause: an unscored row says why it stopped (D-UI-56): the quarantine reason in
+         plain words for Scoring failed, "scoring stopped" for a stuck orphan, and for a role
+         taken off Needs another try, that it was (D-UI-133) with the way back. #}
+      {% set why = (r.failed_reason or ft.why) if r.scoring == 'failed' else ('scoring stopped' if r.scoring == 'stuck' else ('removed from Needs another try' if r.scoring == 'removed' else ft.why)) %}
+      {% set parts = [v.org, v.place, ((v.pay ~ (' (estimate)' if v.estimate and not v.pay.endswith('est.') else '')) if v.pay else ('Pay not listed' if not unscored and not nf else '')), v.value, ('Seen ' ~ ('twice' if o.seen_count == 2 else o.seen_count ~ ' times')) if o.seen_count and o.seen_count > 1 else '', why] %}
+      <div class="pl-meta">{{ parts|select|join(' · ') }}{% if r.scoring == 'removed' %} <a href="/quarantine" data-testid="removed-undo">Undo in Needs another try</a>{% endif %}</div>
+    </div>
+    <div class="pl-end">
+      {% if nf %}
+        {% if o.stage in ('t0_reject', 't1_reject') %}
+          <button type="button" class="k-btn k-btn--sm" hx-post="/opportunities/{{ o.id }}/decide/keep-anyway" hx-swap="none" data-testid="keep-anyway">Keep it anyway</button>
+        {% endif %}
+      {% elif unscored and r.scoring in ('failed', 'stuck') %}
+        <span class="row-score-again" data-testid="row-score-again"><a class="k-btn k-btn--sm" href="/rescore/choose?opp_ids={{ o.id }}&page=1&next=/opportunities">Score again</a></span>
+      {% elif unscored %}
+        <div class="pl-score"><small>{{ {'running': 'scoring…', 'queued': 'waiting', 'removed': 'not scored'}.get(r.scoring, '') }}</small>
+          <span class="pl-age{% if v.found.fresh %} is-fresh{% endif %}" title="{{ v.found.title }}">{{ v.found.text }}</span></div>
+      {% else %}
+        <div class="pl-score pl-score--{{ ft.tone }}" data-fit-score>{{ '%.1f'|format(ft.score) if ft.score is not none else '' }} <small>/ 5</small>
+          <span class="pl-age{% if v.found.fresh %} is-fresh{% endif %}" title="{{ v.found.title }}">{{ v.found.text }}</span></div>
+      {% endif %}
+      {% if not nf %}{{ more_menu(o.id, o.org_id, r.saved) }}{% endif %}
+    </div>
+  </div>
+{%- endmacro %}
+
+{# A Consulting signal (a public event, not a posting). Same row, with its own type label. #}
+{% macro signal_row(x) -%}
+  {% set o = x.opp %}
+  {% set v = x.view %}
+  <div class="pl-row {{ 'is-good' if (x.score or 0) >= 3.5 else 'is-warn' }}" role="listitem" tabindex="0"
+       id="row-{{ o.id }}" data-id="{{ o.id }}" data-group="signal" data-testid="pl-signal"
+       data-title="{{ o.title or '(untitled)' }}">
+    {{ check_box(o.title or 'this signal') }}
+    <span class="pl-mono pl-mono--sig" aria-hidden="true">{{ ui.icon({'leadership': 'profile', 'acquisition': 'apps', 'expansion': 'sources', 'funding': 'offers'}.get(x.type_key, 'analytics')) }}</span>
+    <div class="pl-main">
+      <div class="pl-kind">{{ x.type_label }}</div>
+      <div class="pl-title"><span class="pl-title__t">{{ v.org }}: <span class="pl-title__ev">{{ o.title or '' }}</span></span>
+        {% if x.pursuit_id %}<span class="pl-tag pl-tag--on" data-testid="in-leads">In my leads</span>{% endif %}</div>
+      <div class="pl-meta">{{ [(o.trigger_data or {}).get('source_label') or 'Public source', v.date]|select|join(' · ') }}</div>
+    </div>
+    <div class="pl-end">
+      <div class="pl-score pl-score--{{ 'good' if (x.score or 0) >= 3.5 else 'warn' }}">{% if x.score is not none %}{{ '%.1f'|format(x.score) }} <small>/ 5</small>{% else %}<small>not scored</small>{% endif %}
+        <span class="pl-age{% if v.found.fresh %} is-fresh{% endif %}" title="{{ v.found.title }}">{{ v.found.text }}</span></div>
+    </div>
+  </div>
+{%- endmacro %}

@@ -1,11 +1,7 @@
-{% if notice %}<div class="warnbox" style="margin-bottom:.8rem">{{ notice }}</div>{% endif %}
-{% if ran %}
-<p class="muted" style="margin-bottom:.6rem">Requested step <b>{{ tier|tier_label }}</b>, model
-  <b class="mono">{{ model }}</b>{% if backend %} on backend <b>{{ backend }}</b>{% endif %}{% if prompt_version %},
-  prompt version <b class="mono">{{ prompt_version }}</b>{% endif %}. No model was called for this
-  click -- see the notice above for why.</p>
-{% endif %}
-<table class="data">
+{# The comparison from stored answers: agreement between stored evaluations and the operator's own
+   ratings (SPEC-MODULES 5.5). Sample size stated; under five it is labeled too few (hard rule 6). #}
+{% if notice %}<p class="mo-msg is-warn" data-testid="bench-notice">{{ notice }}</p>{% endif %}
+<div class="mo-scroll"><table class="k-table">
   <thead>
     <tr>
       <th>Step</th><th>Model</th><th>Prompt version</th><th>Track</th><th>Items</th>
@@ -16,21 +12,21 @@
     {% for r in rows %}
     <tr>
       <td>{{ r.tier|tier_label }}</td>
-      <td class="mono">{{ r.model }}</td>
-      <td class="mono">{{ r.prompt_version }}</td>
+      <td>{{ r.model }}</td>
+      <td>{{ r.prompt_version }}</td>
       <td>{{ r.track }}</td>
-      <td>{{ r.n }}{% if not r.sufficient %} <span class="pill">insufficient, n&lt;5</span>{% endif %}</td>
+      <td>{{ r.n }}{% if not r.sufficient %} <span class="k-pill">too few, under 5</span>{% endif %}</td>
       <td>{% if r.exact_match_rate is not none %}{{ '%.0f'|format(r.exact_match_rate * 100) }}%{% else %}-{% endif %}</td>
       <td>{% if r.mae is not none %}{{ '%.2f'|format(r.mae) }}{% else %}-{% endif %}</td>
     </tr>
     {% else %}
     <tr>
-      <td colspan="7" class="muted" style="text-align:center;padding:1.2rem">
-        No gold runs yet. No opportunity has both a stored evaluation and your label yet --
-        this table is real, computed data, never a placeholder number. Label a few items from the
-        Calibrate queue to start building it.
+      <td colspan="7" class="k-muted">
+        Nothing to compare yet. No role has both a stored answer and your rating. This table is
+        real, computed data, never a placeholder number. Rate a few roles in Calibrate to start
+        building it.
       </td>
     </tr>
     {% endfor %}
   </tbody>
-</table>
+</table></div>

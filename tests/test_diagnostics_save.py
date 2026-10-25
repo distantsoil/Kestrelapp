@@ -40,7 +40,7 @@ def stub_build(monkeypatch) -> list[Path]:
     """build_bundle writes a tiny real zip into whatever folder the route asks for."""
     seen: list[Path] = []
 
-    def _build(settings, *, out_dir, redaction=None):
+    def _build(settings, *, out_dir, redaction=None, **_):
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         archive = out / NAME
@@ -82,7 +82,7 @@ def test_desktop_saves_to_downloads_and_opens_the_folder(downloads, stub_build, 
     assert saved.is_file() and stub_build == [saved]
     assert "Saved to" in r.text and str(saved) in r.text
     assert 'data-testid="diagnostics-open-folder"' in r.text and NAME in r.text
-    assert 'class="okbox"' in r.text  # the theme's success style, not a fixed color
+    assert 'class="ab-saved"' in r.text  # a theme-token style, not a fixed color
 
     r = c.post("/about/diagnostics/reveal", data={"name": NAME})
     assert r.status_code == 200 and "Opened the folder" in r.text
@@ -104,10 +104,10 @@ def test_a_downloads_folder_that_cannot_be_written_falls_back_to_kestrels_export
 ):
     real = diagnostics.build_bundle
 
-    def _build(settings, *, out_dir, redaction=None):
+    def _build(settings, *, out_dir, redaction=None, **_):
         if Path(out_dir) == downloads:
             raise PermissionError(13, "Access is denied", str(out_dir))
-        return real(settings, out_dir=out_dir, redaction=redaction)
+        return real(settings, out_dir=out_dir, redaction=redaction, **_)
 
     monkeypatch.setattr(diagnostics, "build_bundle", _build)
     c = _client()
@@ -165,7 +165,7 @@ def test_a_database_error_during_the_build_is_shown_not_swallowed(downloads, mon
     button did nothing visible."""
     import sqlite3
 
-    def _broken(settings, *, out_dir, redaction=None):
+    def _broken(settings, *, out_dir, redaction=None, **_):
         raise sqlite3.DatabaseError("file is not a database")
 
     monkeypatch.setattr(diagnostics, "build_bundle", _broken)

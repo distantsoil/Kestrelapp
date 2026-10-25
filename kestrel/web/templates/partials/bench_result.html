@@ -1,0 +1,91 @@
+{% import "ui/macros.html" as ui %}
+{# Model check result (D-UI-105): a summary line, a card per step with a change, one quiet line for
+   the rest, the main button named by its action, Undo after, and See the numbers (one table per
+   step with its own caption). The rated-role count always sits beside a figure; under five it says
+   too few. Earlier checks follow, dated in words. Swapped in place; out of band after a check. #}
+<div id="ck-result" data-testid="ck-result"{% if ck_oob %} hx-swap-oob="outerHTML"{% endif %}>
+{% if not ck_latest %}
+  <section class="k-card mo-card" data-testid="ck-none">
+    <header class="mo-head"><span class="k-badge">{{ ui.icon('analytics') }}</span><div class="k-grow"><h3>No check yet</h3><p class="k-muted">Your first result will show here, with a plain recommendation for each step.</p></div></header>
+  </section>
+{% else %}
+  {% set changes = ck_changes %}
+  <section class="k-card mo-card {{ 'mo-edge-good' if changes else 'mo-edge-info' }}" data-testid="ck-recommendation">
+    <header class="mo-head"><span class="k-badge {{ 'k-badge--good' if changes else '' }}">{{ ui.icon('check' if changes else 'info') }}</span>
+      <div class="k-grow"><h3>Recommendation</h3></div>
+      <span class="k-muted" data-testid="ck-from">From your check on {{ ck_when }} · {{ ck_latest.answer_key_roles }} roles in the answer key{% if ck_latest.answer_key %} ({{ ck_latest.answer_key }}){% endif %}</span></header>
+    {% if not ck_steps or not (ck_steps|selectattr('enough')|list) %}
+      <p data-testid="ck-summary"><b>Too few rated roles to check your models yet.</b> Rate at least {{ ck_min }} roles in Calibrate, then check again.</p>
+    {% else %}
+      <p data-testid="ck-summary"><b>{{ ck_lead }}</b>{% if ck_rest %} {{ ck_rest }}{% endif %}</p>
+    {% endif %}
+    {% for h in ck_held %}<p class="mo-msg is-warn" data-testid="ck-held">{{ h.model }} ({{ h.step }}) was not tested online. Confidential mode is on and no current employer is chosen under Settings, Core, so nothing was sent.</p>{% endfor %}
+
+    {% for c in changes %}
+    <article class="mo-result-step" data-testid="ck-change-{{ c.step }}">
+      <h4>{{ c.title }}</h4>
+      <p>{{ c.text }}</p>
+      <ul class="mo-chips">
+        <li>{{ ui.icon('check') }}<span>{{ c.points_line }}</span></li>
+        {% if c.time_line %}<li class="is-warn">{{ ui.icon('clock') }}<span>{{ c.time_line }}</span></li>{% endif %}
+        <li>{{ ui.icon('cloud' if c.online else 'cpu') }}<span>{{ c.where_line }}</span></li>
+      </ul>
+      {% if c.local_line %}<p class="k-muted" data-testid="ck-local-{{ c.step }}">{{ c.local_line }}</p>{% endif %}
+      {% if c.online %}<p class="k-muted" data-testid="ck-sends-{{ c.step }}">Switching sends {{ ck_sends[c.tier] }} to {{ ck_provider or 'your provider' }}, and uses your credit. Kestrel asks first.</p>{% endif %}
+      {% if c.applied %}<p class="mo-quiet">{{ ui.icon('check') }}<span>In use now.</span></p>{% endif %}
+    </article>
+    {% endfor %}
+
+    {% if ck_quiet %}
+    <p class="mo-eyebrow">No change needed</p>
+    {% for q in ck_quiet %}<p class="mo-quiet" data-testid="ck-quiet-{{ q.step }}">{{ ui.icon('check' if q.enough else 'alert') }}<span>{{ q.text }}</span></p>{% endfor %}
+    {% endif %}
+
+    {% set todo = changes|rejectattr('applied')|list %}
+    {% set online_todo = todo|selectattr('online')|list %}
+    {% if todo %}
+    <form class="mo-undo-row" hx-post="/bench/apply" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-apply-form">
+      {% for c in todo %}<input type="hidden" name="step" value="{{ c.step }}">{% endfor %}
+      {% if online_todo %}<label class="mo-lbl"><input type="checkbox" name="confirm" data-testid="ck-confirm-online"> I understand this sends {% for c in online_todo %}{{ ck_sends[c.tier] }}{% if online_todo|length > 1 %} (for {{ c.label }}){% endif %}{% if not loop.last %}; and {% endif %}{% endfor %} to {{ ck_provider or 'my provider' }} and uses my credit.</label>{% endif %}
+      <button class="k-btn k-btn--primary" type="submit" data-testid="ck-apply">{% if todo|length == 1 %}Switch {{ todo[0].label }} to {{ todo[0].best_name }}{% else %}Make {{ todo|length }} changes{% endif %}</button>
+      <span class="k-muted">You can switch back any time on Models.</span>
+    </form>
+    {% if todo|length > 1 %}
+    <div class="mo-actions">
+      {% for c in todo %}<form class="mo-actions" hx-post="/bench/apply" hx-target="#ck-card" hx-swap="outerHTML"><input type="hidden" name="step" value="{{ c.step }}">{% if c.online %}<label class="mo-lbl"><input type="checkbox" name="confirm"> I understand this sends {{ ck_sends[c.tier] }} to {{ ck_provider or 'my provider' }} and uses my credit.</label>{% endif %}<button class="k-btn k-btn--sm" type="submit" data-testid="ck-apply-{{ c.step }}">Switch {{ c.label }}</button></form>{% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+    {% set undoable = changes|selectattr('applied')|selectattr('tier', 'in', ck_undo)|list %}
+    {% if undoable %}
+    <form class="mo-undo-row" hx-post="/bench/undo" hx-target="#ck-card" hx-swap="outerHTML">
+      {% for c in undoable %}<input type="hidden" name="step" value="{{ c.step }}"><input type="hidden" name="token_{{ c.step }}" value="{{ ck_undo[c.tier] }}">{% endfor %}
+      <button class="k-btn" type="submit" data-testid="ck-undo">Undo</button><span class="k-muted">Puts {{ undoable|map(attribute='label')|join(' and ') }} back as it was.</span>
+    </form>
+    {% endif %}
+
+    <details class="mo-adv" data-testid="ck-numbers">
+      <summary>See the numbers</summary>
+      {% for t in ck_numbers %}
+      <h4>{{ t.label }}</h4>
+      <p class="k-muted">{{ t.caption }}, from {{ t.n }} roles in the answer key{% if t.n < ck_min %} (too few to judge, {{ ck_min }} needed){% endif %}. Not comparable with the other steps.</p>
+      <div class="mo-scroll"><table class="k-table">
+        <thead><tr><th>Model</th><th>Where</th><th>Matches the answer key</th><th>Answers in</th><th>Readable the first time</th></tr></thead>
+        <tbody>{% for r in t.rows %}<tr><td>{{ r.name }}</td><td>{{ 'Online' if r.online else 'This computer' }}</td>
+          <td>{% if r.agree is none %}Could not be tested{% elif r.few %}Too few roles to judge ({{ r.n }} of {{ ck_min }} needed){% else %}{{ r.agree }}% of {{ r.n }}{% endif %}</td>
+          <td>{% if r.secs is none %}-{% else %}about {{ r.secs }} s{% endif %}</td>
+          <td>{% if r.valid is none %}-{% else %}{{ r.valid }}%{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+      {% endfor %}
+    </details>
+  </section>
+{% endif %}
+
+{% if ck_history %}
+  <section class="k-card mo-card" data-testid="ck-history">
+    <header class="mo-head"><span class="k-badge">{{ ui.icon('restore') }}</span><div class="k-grow"><h3>Earlier checks</h3></div></header>
+    <table class="mo-hist"><tbody>
+      {% for h in ck_history %}<tr><td><b>{{ h.when }}</b></td><td>{{ h.what }}</td><td>{{ h.roles }} roles</td><td>{{ h.outcome }}</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+{% endif %}
+</div>

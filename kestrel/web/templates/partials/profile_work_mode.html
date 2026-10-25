@@ -1,0 +1,8 @@
+{# Work mode: the ways of working the person would take. A preference the scoring model reads,
+   never a filter. The caller sets wm_modes (the saved list) and wm_id. #}
+<div class="pf-checks pf-checks--modes" data-testid="work-mode" role="group" aria-label="Work mode">
+  {% for key, label in work_modes %}
+    <label class="pf-check"><input type="checkbox" name="mode_{{ key }}" value="on"
+      {% if key in (wm_modes or []) %}checked{% endif %}> <span>{{ label }}</span></label>
+  {% endfor %}
+</div>

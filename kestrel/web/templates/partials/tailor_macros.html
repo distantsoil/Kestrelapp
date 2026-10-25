@@ -1,0 +1,329 @@
+{# Tailor resume (D-UI-120): the pieces of the page, one macro per part that changes on its own.
+   Each macro draws a single element with an id, so a swap can replace exactly that part out of
+   band (partials/tailor_update.html) and the full page can draw them all (render_review.html).
+   Nothing here writes text for the operator: every line printed is a wording of theirs. #}
+{% import "ui/macros.html" as ui %}
+
+{# ------------------------------------------------------------------------------ header #}
+{% macro head(ctx, oob=false) %}
+{% set render = ctx.render %}{% set opp = ctx.opportunity %}{% set w = ctx.w %}
+{% set fit = ctx.fit %}
+<div class="tl-head" id="tl-head" {% if oob %}hx-swap-oob="outerHTML"{% endif %} data-testid="tl-head" data-needs="{{ ctx.needs_n }}">
+  {% if fit is not none %}
+  {% set c = 163.36 %}
+  <svg class="tl-ring" viewBox="0 0 64 64" role="img" aria-label="Fit {{ fit }} out of 5" data-testid="tl-fit">
+    <circle cx="32" cy="32" r="26" fill="none" stroke="var(--line)" stroke-width="6"/>
+    <circle cx="32" cy="32" r="26" fill="none" stroke="{{ 'var(--good)' if fit >= 4 else 'var(--warn)' }}" stroke-width="6" stroke-linecap="round" stroke-dasharray="{{ (fit / 5 * c)|round(1) }} {{ c }}" transform="rotate(-90 32 32)"/>
+    <text x="32" y="38" text-anchor="middle" font-weight="800" font-size="17" fill="var(--ink)">{{ fit }}</text>
+  </svg>
+  {% elif opp %}
+  <span class="tl-ring tl-ring--none" title="This role has not been scored yet">Not scored</span>
+  {% endif %}
+  <div class="tl-head__who">
+    <div class="tl-ttl">
+      {% if opp %}
+      <h2><button type="button" class="tl-ttl__link" data-k-slideover="#tl-post" aria-controls="tl-post" title="View the job posting">{{ opp.title or 'Untitled role' }}</button></h2>
+      <button type="button" class="k-btn k-btn--sm" data-k-slideover="#tl-post" aria-controls="tl-post" data-testid="tl-view-posting">{{ ui.icon('profile', 'k-ic--sm') }}View posting</button>
+      {% else %}
+      <h2>{{ ctx.master.name if ctx.master else 'Your document' }}</h2>
+      {% endif %}
+    </div>
+    <div class="tl-facts">
+      {% if opp and ctx.org_name %}<span>{{ ui.icon('folder', 'k-ic--sm') }}{{ ctx.org_name }}</span>{% endif %}
+      {% if ctx.facts %}<span>{{ ui.icon('pin', 'k-ic--sm') }}{{ ctx.facts }}</span>{% endif %}
+      <span>{{ ui.icon('profile', 'k-ic--sm') }}From your {{ ctx.master.name if ctx.master else 'document' }}</span>
+    </div>
+  </div>
+  <div class="tl-head__acts">
+    {% if ctx.needs_n %}<span class="tl-dlnote" data-testid="tl-needs-note">{{ ui.icon('alert', 'k-ic--sm') }}{{ ctx.needs_n }} {{ 'line needs' if ctx.needs_n == 1 else 'lines need' }} your pick</span>{% endif %}
+    {% if render.opportunity_id %}
+    <button type="button" class="k-btn{% if ctx.attached %} k-btn--done{% endif %}" id="tl-use" data-testid="tl-use"
+            data-tl-gate="use" data-needs="{{ ctx.needs_n }}" aria-pressed="{{ 'true' if ctx.attached else 'false' }}"
+            hx-post="/renders/{{ render.id }}/attach" hx-swap="none">{{ ui.icon('check', 'k-ic--sm') }}{% if ctx.attached %}Attached{% else %}Use for this {{ w.app }}{% endif %}</button>
+    {% endif %}
+    <a class="k-btn k-btn--primary" id="tl-dl" data-testid="tl-download" href="/renders/{{ render.id }}/download"
+       data-tl-gate="download" data-needs="{{ ctx.needs_n }}" data-name="{{ ctx.dl_name }}">{{ ui.icon('dl', 'k-ic--sm') }}Download PDF</a>
+  </div>
+  <span id="tl-attach-note" class="k-sr-only" role="status">{{ ctx.attach_note or '' }}</span>
+</div>
+{% endmacro %}
+
+{# ------------------------------------------------------------------- warnings and the proof #}
+{% macro warn(ctx, oob=false) %}
+<div id="tl-warn" data-testid="tl-warn" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  {% if ctx.pick_error %}
+  <div class="tl-wban tl-wban--bad" role="alert" data-testid="tl-pick-error">
+    <span class="tl-hb">{{ ui.icon('alert') }}</span>
+    <div class="tl-grow"><b>{{ ctx.pick_error }}</b></div>
+  </div>
+  {% endif %}
+  {% if ctx.needs_n %}
+  <div class="tl-wban" role="alert" data-testid="unresolved-keys">
+    <span class="tl-hb">{{ ui.icon('alert') }}</span>
+    <div class="tl-grow">
+      <b>Kestrel couldn't pick a wording for {{ ctx.needs_n }} {{ 'line' if ctx.needs_n == 1 else 'lines' }}.</b>
+      <span class="tl-mini">{{ 'It is' if ctx.needs_n == 1 else 'They are' }} marked below and {{ 'uses' if ctx.needs_n == 1 else 'use' }} your first wording until you choose.</span>
+      <ul class="tl-needlist">
+        {% for n in ctx.need_rows %}
+        <li data-need="{{ n.slot }}">{{ n.label }}{% if n.bad %}: asked for <span class="mono">{{ n.bad }}</span>, which you never wrote{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    <button type="button" class="k-btn k-btn--sm" data-tl-show data-testid="tl-show-me">Show me</button>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro pick_button(ctx, label) %}
+{% set render = ctx.render %}
+{% if render.opportunity_id %}
+  {% if ctx.route.online %}
+  <button type="button" class="k-btn k-btn--sm" data-testid="tl-pick" data-tl-ask
+          hx-get="/renders/{{ render.id }}/pick" hx-target="#tl-dialog" hx-swap="innerHTML">{{ label }}</button>
+  {% else %}
+  <button type="button" class="k-btn k-btn--sm" data-testid="tl-pick" hx-post="/renders/{{ render.id }}/pick"
+          hx-target="#tl-body" hx-swap="innerHTML" hx-disabled-elt="this"
+          data-busy-text="Picking on this computer. This can take a minute.">{{ label }}</button>
+  {% endif %}
+{% endif %}
+{% endmacro %}
+
+{% macro proof(ctx) %}
+{% set pick = ctx.pick %}{% set render = ctx.render %}
+<div class="tl-proof{% if pick.state == 'failed' %} is-bad{% endif %}" id="tl-proof" data-testid="tl-proof" data-pick="{{ pick.state }}">
+  <span class="tl-hb tl-hb--g">{{ ui.icon('text') }}</span>
+  <div class="tl-grow">
+    <b>Every line is your own text, word for word.</b>
+    {% if pick.state == 'picked' %}
+    <span class="tl-mini">Kestrel picked which of your wordings fits this role. It did not write or change any of them.</span>
+    {% elif pick.state == 'failed' %}
+    <span class="tl-mini">Kestrel could not make its picks for this role, so your first wording shows on every line. Pick again, or choose each line yourself.</span>
+    {% else %}
+    <span class="tl-mini">Kestrel has not picked for this role yet, so your first wording shows on every line.{% if not render.opportunity_id %} Open this from a role to have Kestrel pick.{% endif %}</span>
+    {% endif %}
+  </div>
+  {% if pick.state == 'picked' %}
+  <span class="tl-mini tl-nowrap" data-testid="tl-picked-by">{{ 'Picked by an online model' if pick.online else 'Picked on this computer' }}{% if pick.seconds %} · {{ pick.seconds }} {{ 'second' if pick.seconds == 1 else 'seconds' }}{% endif %}{% if pick.model %}
+    <button type="button" class="k-link tl-linkbtn" data-tl-details aria-expanded="false" data-testid="tl-details">Show details</button><span id="tl-model" hidden> · {{ pick.model }}</span>{% endif %}</span>
+  {% endif %}
+  {{ pick_button(ctx, 'Pick again' if pick.state != 'none' else 'Pick for this role') }}
+</div>
+{% endmacro %}
+
+{# ---------------------------------------------------------------------------- slot cards #}
+{% macro badge(state) -%}
+{%- if state == 'needs' -%}<span class="tl-badge tl-badge--e">Needs your pick</span>
+{%- elif state == 'you' -%}<span class="tl-badge tl-badge--u">Your choice</span>
+{%- elif state == 'out' -%}<span class="tl-badge tl-badge--h">Left out</span>
+{%- elif state == 'first' -%}<span class="tl-badge tl-badge--h">Your first wording</span>
+{%- else -%}<span class="tl-badge tl-badge--k">Picked</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro card(c, ctx, oob=false) %}
+{% set render = ctx.render %}
+<div class="tl-slot{% if c.state == 'needs' %} is-err is-open{% endif %}" id="tl-card-{{ c.key }}" data-slot="{{ c.key }}" data-state="{{ c.state }}" data-testid="tl-card" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <div class="tl-sl"><span>{{ c.label }}</span>{{ badge(c.state) }}</div>
+  <div class="tl-pick{% if c.hidden %} is-none{% endif %}" data-testid="tl-pick-text">{% if c.hidden %}Not on this {{ ctx.kind_word }}.{% else %}{{ c.text }}{% endif %}</div>
+  <div class="tl-why{% if c.state == 'needs' %} is-bad{% endif %}">
+    {{ ui.icon('alert' if c.state == 'needs' else 'wand', 'k-ic--sm') }}
+    <span data-testid="tl-reason">
+      {%- if c.state == 'needs' -%}
+        {%- if c.bad and c.bad_model -%}The AI asked for a wording called "{{ c.bad }}". You do not have one, so nothing was invented. Choose below.
+        {%- elif c.bad -%}The saved wording "{{ c.bad }}" no longer exists. Your first wording shows until you choose below.
+        {%- else -%}Kestrel did not name a wording for this line. Your first wording shows until you choose below.{%- endif -%}
+      {%- elif c.state == 'you' -%}You chose this. Kestrel learns from your swaps.
+      {%- elif c.state == 'first' -%}Kestrel has not picked for this role yet.
+      {%- elif c.reason -%}{{ c.reason }}
+      {%- elif c.state == 'out' -%}Left off this version only. Your wording is kept.
+      {%- else -%}Picked for this role.{%- endif -%}
+    </span>
+  </div>
+  {% set choices = c.n + (1 if c.optional else 0) %}
+  {% if choices > 1 %}
+  <form class="tl-alts" hx-post="/renders/{{ render.id }}/swap" hx-trigger="change" hx-swap="none" hx-disabled-elt="find input">
+    <input type="hidden" name="slot_key" value="{{ c.key }}">
+    <div class="tl-alts__in">
+      {% for w in c.wordings %}
+      <label class="tl-alt{% if w.key == c.current and not c.hidden and c.state != 'needs' %} is-on{% endif %}">
+        <input type="radio" name="variant_key" value="{{ w.key }}" aria-label="Use this wording for {{ c.label }}"{% if w.key == c.current and not c.hidden and c.state != 'needs' %} checked{% endif %}>
+        <span class="tl-rd" aria-hidden="true"></span><span>{{ w.text }}</span>
+      </label>
+      {% endfor %}
+      {% if c.optional %}
+      <label class="tl-alt{% if c.hidden %} is-on{% endif %}">
+        <input type="radio" name="variant_key" value="hide" aria-label="Leave {{ c.label }} out"{% if c.hidden %} checked{% endif %}>
+        <span class="tl-rd" aria-hidden="true"></span><span class="tl-mini">Leave this line out</span>
+      </label>
+      {% endif %}
+    </div>
+  </form>
+  <button type="button" class="tl-altbtn" data-tl-more aria-expanded="{{ 'true' if c.state == 'needs' else 'false' }}">{% if c.state == 'needs' %}Your wordings{% elif c.n > 1 %}Other wordings ({{ c.n - 1 }}){% else %}Show or leave out{% endif %}{{ ui.icon('chev', 'k-ic--sm') }}</button>
+  {% else %}
+  <div class="tl-mini tl-only">Only one wording. <a class="k-link" href="/documents{% if ctx.master %}?master_id={{ ctx.master.id }}{% endif %}">Add another in Profile › Documents</a></div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro skills_card(s, ctx, oob=false) %}
+{% set render = ctx.render %}
+<div class="tl-slot" id="tl-card-skills" data-slot="skills" data-state="{{ s.state }}" data-testid="tl-card-skills" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <div class="tl-sl"><span>{{ s.label }}</span>{{ badge(s.state) }}</div>
+  {% for g in s.groups %}
+  <form class="tl-skill" hx-post="/renders/{{ render.id }}/skills" hx-trigger="change" hx-swap="none">
+    <input type="hidden" name="group" value="{{ g.key }}"><input type="hidden" name="on" value="0">
+    <label class="k-switch"><input type="checkbox" role="switch" name="on" value="1"{% if g.on %} checked{% endif %} aria-label="Show {{ g.label }}"><span class="k-switch__track" aria-hidden="true"></span>
+      <span><b>{{ g.label }}</b><span class="tl-mini tl-skill__items">{{ g.list }}</span></span></label>
+  </form>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro slots_col(ctx) %}
+<div class="tl-stack" id="tl-slots" data-testid="tl-slots">
+  {% if ctx.catalog_missing %}<p class="k-muted">The document this came from no longer exists, so the other wordings cannot be shown.</p>{% endif %}
+  {% if ctx.summary_card %}{{ card(ctx.summary_card, ctx) }}{% endif %}
+  {% for g in ctx.groups %}
+    {% if g.title %}<div class="tl-grp">{{ g.title }}</div>{% endif %}
+    {% for c in g.cards %}{{ card(c, ctx) }}{% endfor %}
+  {% endfor %}
+  {% if ctx.skills_card %}{{ skills_card(ctx.skills_card, ctx) }}{% endif %}
+  {% if not ctx.groups and not ctx.summary_card and not ctx.catalog_missing %}
+  <p class="k-muted">This document has no lines yet. Add them in <a class="k-link" href="/documents">Profile › Documents</a>.</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# ------------------------------------------------------------------------ page guard #}
+{% macro guard(ctx, oob=false) %}
+{% set g = ctx.guard %}
+<div id="tl-guard" class="tl-pgw {{ 'is-over' if g.over else 'is-ok' }}" role="status" data-testid="tl-guard" {% if oob %}hx-swap-oob="outerHTML"{% endif %}
+     data-limit="{{ g.limit }}" data-saved="{{ g.pages if g.pages is not none else '' }}" data-stale="{{ '1' if g.stale else '0' }}">
+  <div class="tl-pgw__ok"{% if g.over %} hidden{% endif %}>{{ ui.icon('check', 'k-ic--sm') }}<span data-tl-pgok>{% if g.stale or g.pages is none %}Fits on {{ g.limit }} {{ 'page' if g.limit == 1 else 'pages' }}.{% else %}Fits on {{ g.pages }} {{ 'page' if g.pages == 1 else 'pages' }}.{% endif %}</span></div>
+  <div class="tl-pgw__over"{% if not g.over %} hidden{% endif %}>{{ ui.icon('alert', 'k-ic--sm') }}
+    <div class="tl-grow"><b data-tl-pgover>{{ g.pages }} {{ 'page' if g.pages == 1 else 'pages' }}, your limit is {{ g.limit }}.</b>
+      {% if g.optional %}<span class="tl-mini">Leave out:</span>
+      {% for o in g.optional %}
+      <button type="button" class="k-btn k-btn--sm" hx-post="/renders/{{ ctx.render.id }}/swap" hx-vals='{{ {"slot_key": o.key, "variant_key": "hide"}|tojson }}' hx-swap="none" title="{{ o.short }}">{{ o.label }}{% if o.short %} · {{ o.short }}{% endif %}</button>
+      {% endfor %}
+      {% else %}<span class="tl-mini">Every optional line is already left out. Choose a shorter wording or a smaller font size.</span>{% endif %}
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{# ----------------------------------------------------------------------------- the look #}
+{% macro look(ctx, oob=false) %}
+{% set lk = ctx.look %}{% set render = ctx.render %}
+{% if lk %}
+<div class="tl-look" id="tl-look" data-testid="tl-look" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <form class="tl-lrow" id="tl-look-form" hx-post="/renders/{{ render.id }}/look" hx-trigger="tl-look" hx-swap="none">
+    <input type="hidden" name="layout" value="{{ lk.here.layout }}"><input type="hidden" name="size" value="{{ lk.here.size }}"><input type="hidden" name="margins" value="{{ lk.here.margins }}">
+    <span class="tl-lg"><span class="tl-lb">Look</span><span class="tl-segx" role="group" aria-label="Look">
+      {% for l in lk.layouts %}<button type="button" data-tl-look="layout" value="{{ l.key }}" class="{{ 'is-on' if l.key == lk.here.layout }}" aria-pressed="{{ 'true' if l.key == lk.here.layout else 'false' }}">{{ l.label }}</button>{% endfor %}</span></span>
+    <span class="tl-lg"><span class="tl-lb">Font size</span><span class="tl-segx" role="group" aria-label="Font size">
+      {% for v, t in [('smaller', 'Smaller'), ('default', 'Default'), ('larger', 'Larger')] %}<button type="button" data-tl-look="size" value="{{ v }}" class="{{ 'is-on' if v == lk.here.size }}" aria-pressed="{{ 'true' if v == lk.here.size else 'false' }}">{{ t }}</button>{% endfor %}</span></span>
+    <span class="tl-lg"><span class="tl-lb">Margins</span><span class="tl-segx" role="group" aria-label="Margins">
+      {% for v, t in [('narrow', 'Narrow'), ('normal', 'Normal')] %}<button type="button" data-tl-look="margins" value="{{ v }}" class="{{ 'is-on' if v == lk.here.margins }}" aria-pressed="{{ 'true' if v == lk.here.margins else 'false' }}">{{ t }}</button>{% endfor %}</span></span>
+  </form>
+  <div class="tl-note" data-testid="tl-look-note">
+    {% if lk.same %}<span>Same as your Profile look ({{ lk.profile_label }}).</span>
+    {% else %}<span>Only for this {{ ctx.w.app }}. Your Profile look stays {{ lk.profile_label }}.</span>
+    <button type="button" class="tl-linkbtn" hx-post="/renders/{{ render.id }}/look/default" hx-swap="none" data-testid="tl-make-default">Make this my default</button>{% endif %}
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{# ------------------------------------------------------------------ What Kestrel chose #}
+{% macro changes(ctx, oob=false) %}
+<div id="tl-chg" class="k-card tl-chg" hidden data-testid="tl-chg" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <header class="k-sec-head"><span class="k-badge">{{ ui.icon('wand') }}</span><div class="k-grow"><h3>What Kestrel chose, and why</h3></div></header>
+  <p class="tl-mini">Choices only. No text was written or changed.</p>
+  {% for ch in ctx.changes %}
+  {% set c = ch.card %}
+  <div class="tl-chgrow">
+    <span class="tl-badge tl-badge--{{ 'u' if c.state == 'you' else 'e' if c.state == 'needs' else 'h' if c.state in ('out', 'first') else 'k' }}">{{ 'You' if c.state == 'you' else 'Needs you' if c.state == 'needs' else 'Out' if c.state == 'out' else 'First' if c.state == 'first' else 'AI' }}</span>
+    <div class="tl-grow"><b>{{ ch.label }}</b> · {{ c.chosen_label }}
+      <div class="tl-mini">{% if c.state == 'you' %}Your swap. Saved so Kestrel learns from it.{% elif c.state == 'needs' %}A pick that failed its check. Your first wording shows until you choose.{% elif c.state == 'first' %}Not picked yet.{% elif c.reason %}{{ c.reason }}{% else %}Picked for this role.{% endif %}</div>
+    </div>
+  </div>
+  {% endfor %}
+  {% if not ctx.changes %}<p class="k-muted">No lines yet.</p>{% endif %}
+</div>
+{% endmacro %}
+
+{# ------------------------------------------------------------------------- right column #}
+{% macro reqs(ctx, oob=false) %}
+<section class="k-card" id="tl-reqs" data-testid="tl-reqs" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <header class="k-sec-head"><span class="k-badge">{{ ui.icon('compass') }}</span><div class="k-grow"><h3>What they ask for</h3></div></header>
+  {% for r in ctx.reqs %}
+  <div class="tl-req tl-req--{{ r.status }}" {% if r.slot %}data-req="{{ r.slot }}" {% endif %}data-testid="tl-req">
+    <span class="tl-req__ic">{{ ui.icon('check' if r.status == 'm' else 'alert' if r.status == 'p' else 'x', 'k-ic--sm') }}</span>
+    <div>{{ r.text }}<small>{{ r.note or ('Covered' if r.status == 'm' else 'Partly covered' if r.status == 'p' else 'Not in your documents') }}{% if r.slot %} · hover to see the line{% endif %}</small></div>
+  </div>
+  {% endfor %}
+  {% if not ctx.reqs %}<p class="k-muted tl-mini">{% if ctx.has_eval %}The score did not list anything this role asks for.{% else %}This role has not been scored yet, so there is nothing to compare. Score it from Pipeline.{% endif %}</p>{% endif %}
+</section>
+{% endmacro %}
+
+{% macro words(ctx, oob=false) %}
+<section class="k-card" id="tl-words" data-testid="tl-words" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ ui.icon('scan') }}</span><div class="k-grow"><h3>Words from the posting</h3></div></header>
+  <div class="tl-chips">
+    {% for k in ctx.kw %}<span class="tl-kw {{ 'is-y' if k.held else 'is-n' }}" data-testid="tl-kw">{% if k.held %}{{ ui.icon('check', 'k-ic--sm') }}{% endif %}{{ k.term }}</span>{% endfor %}
+  </div>
+  {% if not ctx.kw %}<p class="k-muted tl-mini">No posting text is saved for this role.</p>{% endif %}
+  <p class="tl-mini tl-top">Green words are already in your text. Kestrel will not add a word you did not write. To use one, add it to a line in <a class="k-link" href="/documents{% if ctx.master %}?master_id={{ ctx.master.id }}{% endif %}">Profile › Documents</a>.</p>
+</section>
+{% endmacro %}
+
+{% macro privacy(ctx, oob=false) %}
+{% set p = ctx.privacy %}{% set render = ctx.render %}
+<section class="k-card" id="tl-priv" data-testid="tl-priv" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ ui.icon('lock') }}</span><div class="k-grow"><h3>Privacy</h3></div></header>
+  <form hx-post="/renders/{{ render.id }}/privacy" hx-trigger="change" hx-swap="none" class="tl-skill">
+    <input type="hidden" name="on" value="0">
+    <label class="k-switch"><input type="checkbox" role="switch" name="on" value="1"{% if p.on %} checked{% endif %}{% if p.forced or not p.marked %} disabled{% endif %} data-testid="tl-conf"><span class="k-switch__track" aria-hidden="true"></span>
+      <span><b>Hide my current employer</b>
+      <span class="tl-mini tl-skill__items">{% if not p.marked %}No current employer is marked. Mark it in Profile › Documents.{% elif p.forced %}Confidential mode is on in Settings, so it stays hidden.{% else %}Shows "{{ p.label }}" instead.{% endif %}</span></span></label>
+  </form>
+  <p class="tl-mini tl-top">The PDF carries no company names in its file details.</p>
+</section>
+{% endmacro %}
+
+{# ---------------------------------------------------------------------- the posting #}
+{% macro posting(ctx, oob=false) %}
+<div id="tl-post-body" data-testid="tl-post-body" {% if oob %}hx-swap-oob="outerHTML"{% endif %}>
+  {% set p = ctx.posting %}
+  {% if p %}
+  <div class="tl-pm">
+    <span>{{ ui.icon('folder', 'k-ic--sm') }}{{ ctx.org_name or 'Unnamed organization' }}</span>
+    {% if p.place %}<span>{{ ui.icon('pin', 'k-ic--sm') }}{{ p.place }}</span>{% endif %}
+    {% if p.pay %}<span>{{ ui.icon('profile', 'k-ic--sm') }}{{ p.pay }}</span>{% endif %}
+    {% if p.posted %}<span>{{ ui.icon('clock', 'k-ic--sm') }}Posted {{ date_display(p.posted) }}</span>{% endif %}
+  </div>
+  {% if p.url %}
+  <div class="tl-pa"><a class="k-btn k-btn--sm" href="{{ p.url }}" target="_blank" rel="noopener noreferrer" data-testid="tl-open-posting">{{ ui.icon('arrow', 'k-ic--sm') }}Open original posting</a>
+    <span class="tl-mini">Opens in your browser. Kestrel never applies for you.</span></div>
+  {% endif %}
+  <div class="tl-pb">
+    <div class="tl-leg"><span class="tl-leg--m">{{ ui.icon('check', 'k-ic--sm') }}Covered</span><span class="tl-leg--p">{{ ui.icon('alert', 'k-ic--sm') }}Partly covered</span><span>{{ ui.icon('x', 'k-ic--sm') }}Not in your documents</span></div>
+    <p class="tl-mini">Hover a marked line to see the matching line in your {{ ctx.kind_word }}.</p>
+    {% for r in p.rows %}
+      {% if r.kind == 'h' %}<h6>{{ r.text }}</h6>
+      {% elif r.kind == 'li' %}<ul><li>{% if r.req %}<span class="tl-pq tl-pq--{{ r.status }}"{% if r.req != 'none' %} data-req="{{ r.req }}"{% endif %} title="{{ r.name }}">{{ r.text }}</span>{% else %}{{ r.text }}{% endif %}</li></ul>
+      {% else %}<p>{% if r.req %}<span class="tl-pq tl-pq--{{ r.status }}"{% if r.req != 'none' %} data-req="{{ r.req }}"{% endif %} title="{{ r.name }}">{{ r.text }}</span>{% else %}{{ r.text }}{% endif %}</p>{% endif %}
+    {% endfor %}
+    {% if not p.rows %}<p class="k-muted">The posting text is not saved for this role. Use Open original posting to read it.</p>{% endif %}
+  </div>
+  {% else %}
+  <div class="tl-pb"><p class="k-muted">This version is not for a role, so there is no posting.</p></div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# --------------------------------------------------------------------- the preview source #}
+{% macro src(ctx, live) %}
+<textarea id="tl-src" hidden aria-hidden="true" tabindex="-1" data-testid="tl-src">{% if live %}{{ ctx.preview_html }}{% endif %}</textarea>
+{% endmacro %}

@@ -1,6 +1,9 @@
-"""The networking graph (SPEC-MODULES 2.3): LinkedIn CSV import (a legitimate first-party export
-the operator downloads themselves; no scraping, no automation) and warm-path finding, a plain
-graph query over `contact` and `connection` with no ML.
+"""The networking graph (SPEC-MODULES 2.3): warm-path finding, a plain graph query over
+`contact` and `connection` with no ML. The LinkedIn CSV import (a first-party export the operator
+downloads themselves; no scraping, no automation) lives in `kestrel.research.connections`;
+`import_linkedin_csv` here is its one-step wrapper. The current warm-path query for an
+organization is `connections.connection_paths` (works here now, used to work here); the four
+tiers below predate D-UI-115 and the last two are deferred.
 
 Warm-path tiers, ranked:
 1. Direct connections currently at the target org.
@@ -12,15 +15,14 @@ Each contact is surfaced once, in its best (lowest-numbered) tier."""
 
 from __future__ import annotations
 
-import csv
-import io
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Connection, Contact, Interaction, Org
 from kestrel.ingest.orgs import normalized_name, resolve_org
+from kestrel.research import connections
 
 _DECISION_MAKER_TYPES = ("exec", "hiring_manager", "board", "pe_operator")
 _INVESTOR_CATEGORIES = ("pe_investment", "acquisition")
@@ -33,82 +35,37 @@ class WarmPath:
     reason: str
 
 
-def _find_header_index(lines: list[str]) -> int | None:
-    for i, line in enumerate(lines):
-        if "First Name" in line and "Company" in line:
-            return i
-    return None
-
-
 async def import_linkedin_csv(session: AsyncSession, csv_text: str) -> int:
-    """Parse a LinkedIn "Connections.csv" first-party export. Real exports prepend a few
-    "Notes:" preamble lines and a blank line before the actual header row; skip everything up to
-    and including the line that names both "First Name" and "Company" columns, then parse the rest
-    with csv.DictReader so quoted fields (embedded commas) are handled correctly. Robust to a
-    missing/renamed column: DictReader.get() returns None rather than raising.
+    """Import a LinkedIn "Connections.csv" first-party export in one step, as before D-UI-115:
+    every person with a company becomes a contact at that company's organization (created when
+    it does not exist yet, so the warm paths below see them), and importing the same file again
+    refreshes rather than duplicates. Returns how many people in the file have a company, or 0
+    when the text is not a connections export.
 
-    Idempotent: a row is upserted on (source='linkedin_csv', normalized name, org), so re-importing
-    the same export refreshes title/email and never duplicates a Contact or its Connection."""
-    text = csv_text.lstrip("﻿")
-    lines = text.splitlines()
-    header_idx = _find_header_index(lines)
-    if header_idx is None:
+    It runs on the connections importer (`kestrel.research.connections`), so the Email Address
+    column is never read, earlier positions are kept as history and a person is stored once. The
+    interface previews the diff first (`connections.preview_import`) and does not create
+    organizations; this wrapper keeps the one-step contract."""
+    try:
+        parsed = connections.parse_connections_csv(csv_text)
+    except connections.ConnectionsFileError:
         return 0
-    body = "\n".join(lines[header_idx:])
-    reader = csv.DictReader(io.StringIO(body))
-
-    count = 0
-    for row in reader:
-        if not row:
-            continue
-        company = (row.get("Company") or "").strip()
-        if not company:
-            continue
-        first = (row.get("First Name") or "").strip()
-        last = (row.get("Last Name") or "").strip()
-        name = " ".join(f"{first} {last}".split())
-        if not name:
-            continue
-        email = (row.get("Email Address") or "").strip() or None
-        position = (row.get("Position") or "").strip() or None
-
-        org = await resolve_org(session, name=company, domain=None)
-        contact = (
-            await session.execute(
-                select(Contact)
-                .where(
-                    Contact.source == "linkedin_csv",
-                    Contact.org_id == org.id,
-                    func.lower(Contact.name) == name.lower(),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if contact is None:
-            contact = Contact(
-                org_id=org.id,
-                name=name,
-                title=position,
-                email=email,
-                source="linkedin_csv",
-                relationship="known",
-            )
-            session.add(contact)
-            await session.flush()  # need contact.id for the Connection FK
-        else:  # the export is first-party and current: refresh what it states, keep the rest
-            contact.title = position or contact.title
-            contact.email = email or contact.email
-        has_connection = (
-            await session.execute(
-                select(Connection.id).where(Connection.contact_id == contact.id).limit(1)
-            )
-        ).scalar_one_or_none()
-        if has_connection is None:
-            session.add(Connection(contact_id=contact.id, how_known="LinkedIn", strength="known"))
-        count += 1
-
-    await session.commit()
-    return count
+    # One transaction: the organizations, the import and the links commit together or not at all.
+    try:
+        resolved: dict[str, int] = {}
+        for company in sorted({r.company for r in parsed.rows if r.company}):
+            resolved[company] = (await resolve_org(session, name=company, domain=None)).id
+        await connections.apply_import(session, parsed, commit=False)
+        # The old contract: a company's organization is the one resolve_org names (it also folds
+        # "Holdings" and "Group"), whatever the Sure/Possible rule made of it. Link those, unless
+        # the operator already ruled on the name.
+        for company, org_id in resolved.items():
+            await connections.adopt_org(session, company, org_id, commit=False)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return sum(1 for r in parsed.rows if r.company)
 
 
 def _norm_map(values: list | None) -> dict[str, str]:
@@ -171,6 +128,7 @@ async def warm_paths(
                     select(Contact).where(
                         Contact.org_id == target_org_id,
                         Contact.contact_type.in_(_DECISION_MAKER_TYPES),
+                        connections.not_imported_connection(),
                     )
                 )
             )

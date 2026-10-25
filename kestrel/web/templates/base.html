@@ -1,5 +1,6 @@
-<!doctype html>
-<html lang="en" data-scheme="{{ ui_scheme() }}" x-data="chrome()">
+{# Settings > Preferences reach every page here, once: text size and Reduce motion as
+   attributes on <html> (components.css reads them), the avatar in the top bar below. #}{% set prefs = ui_prefs() %}<!doctype html>
+<html lang="en" data-scheme="{{ ui_scheme() }}" data-text-size="{{ prefs.text_size }}" data-reduce-motion="{{ '1' if prefs.reduce_motion else '0' }}" x-data="chrome()">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,7 +13,7 @@
         var t = localStorage.getItem('kestrel-theme');
         if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
         var s = localStorage.getItem('kestrel-scheme');
-        if (s === 'indigo' || s === 'teal') document.documentElement.setAttribute('data-scheme', s);
+        if (s === 'indigo' || s === 'teal' || s === 'plum' || s === 'graphite' || s === 'contrast') document.documentElement.setAttribute('data-scheme', s);
       } catch (e) {}
     })();
   </script>
@@ -23,8 +24,25 @@
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon-512.png">
   <meta name="theme-color" content="#4F5BD5">
-  <link rel="stylesheet" href="/static/css/kestrel.css">
+  {# Stylesheets, in this order: the legacy sheet, then the design system. tokens.css wins on
+     every name both define (higher selector specificity, later in source), so every page reads
+     the new --paper, --ink, --line and --bg. A converted screen overrides legacy_css with
+     nothing. #}
+  {% block legacy_css %}<link rel="stylesheet" href="/static/css/kestrel.css">{% endblock %}
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  {# A converted screen adds its own sheet and script here (token colors only). #}
+  {% block head_extra %}{% endblock %}
   <script src="/static/js/htmx.min.js" defer></script>
+  {# Scenes and seasonal touches register on window, the band renderer draws them, then the UI
+     runtime (theme, toasts, flyouts, slide-overs, modals). Deferred scripts run in order. #}
+  <script src="/static/js/scenes/scenes-base.js" defer></script>
+  <script src="/static/js/scenes/scenes-a.js" defer></script>
+  <script src="/static/js/scenes/scenes-b.js" defer></script>
+  <script src="/static/js/scenes/seasons-a.js" defer></script>
+  <script src="/static/js/scenes/seasons-b.js" defer></script>
+  <script src="/static/js/scenes/scene-band.js" defer></script>
+  <script src="/static/js/kestrel-ui.js" defer></script>
   <script src="/static/js/alpine.min.js" defer></script>
   <script>
     // Busy feedback for every htmx request (kestrel.css body.busy): counted, so overlapping
@@ -72,6 +90,7 @@
   </script>
 </head>
 <body>
+{% from "ui/macros.html" import toast_region %}
 {% set cur = active_track(request) %}
 {% set p = request.url.path %}
 {% set icons = {
@@ -83,7 +102,6 @@
   'offers': '<path d="M3 12l9-9h9v9l-9 9z"/><circle cx="16" cy="8" r="1.5"/>',
   'calibrate': '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   'analytics': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-  'bench': '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/>',
   'setup': '<path d="M12 2l3 5h5l-4 4 1.5 6L12 14l-5.5 3L8 11 4 7h5z"/>',
   'sources': '<path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/>',
   'models': '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
@@ -92,6 +110,14 @@
   'help': '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
   'about': '<circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>',
   'more': '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'
+} %}
+{% set avatar_marks = {
+  'bird': '<path d="M3 16c5 0 8-2 9-6l1-3 3 1 4-1-3 3c-.2 6-4 9-10 9H3z"/><path d="M16 9h.01"/>',
+  'leaf': '<path d="M5 19C5 9 11 5 20 4c0 9-4 15-13 15zM5 19l8-8"/>',
+  'star': '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  'mountain': '<path d="M2 19l7-12 4 7 3-4 6 9z"/>',
+  'compass': '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'
 } %}
 {% macro icon(name) -%}
 <svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ icons[name]|safe }}</svg>
@@ -162,6 +188,13 @@
           <a class="menu-link" href="/settings#appearance">Save as the default under Settings</a>
         </div>
       </div>
+      {# Account slot: Profile is where the operator's own details live (no sign-in exists). #}
+      {% set av = prefs.avatar %}
+      <a class="k-avatar k-avatar--{{ av }}" href="/profile" title="Profile" aria-label="Profile" data-avatar="{{ av }}">
+        {%- if av == 'photo' and prefs.photo %}<img src="{{ prefs.photo }}" alt="">
+        {%- elif av == 'initial' and prefs.initial %}<span class="k-avatar__letter" aria-hidden="true">{{ prefs.initial }}</span>
+        {%- elif av in ('bird', 'leaf', 'star', 'sun', 'mountain', 'compass') %}<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true">{{ avatar_marks[av]|safe }}</svg>
+        {%- else %}<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>{% endif %}</a>
       {% if desktop_can_quit() %}
       {# Closing the window keeps Kestrel in the tray; this ends it (D-UI-27). #}
       <button class="btn ghost" type="button" title="Quit Kestrel: stop searching and close"
@@ -174,14 +207,13 @@
       <div id="update-banner" hx-get="/updates/banner" hx-trigger="load, every 300s, updates-changed from:body"
            hx-swap="innerHTML"></div>
       <div id="update-modal"></div>
-      {# One-time local announcement (WP-22): fixed text from kestrel/web/announcements.py. #}
-      <div id="announcement-slot" hx-get="/announcements" hx-trigger="load" hx-swap="innerHTML"></div>
+      {# One-time local announcement (WP-22, D-UI-157): Today only. Today puts the slot in its own
+         content (templates/dashboard.html); no other page carries it. #}
       {# A one-line notice carried by a redirect (?msg=<code>), e.g. a refused or partial reset.
          The URL carries a code only; the sentence is looked up (kestrel/web/flash.py), so an
          unknown code shows nothing (WP-08, #21). #}
       {% set flash = flash_text(request.query_params.get('msg')) if request is defined else None %}
       {% if flash %}<div class="warnbox" role="status" data-testid="flash" style="margin-bottom:.8rem">{{ flash }}</div>{% endif %}
-      {% include "partials/guide_strip.html" %}
       {% block content %}{% endblock %}
     </main>
   </div>
@@ -205,13 +237,17 @@
 
 <div class="palette-backdrop" x-show="palette" x-cloak @click="palette = false"
      @keydown.escape.window="palette = false"></div>
-<div class="palette" x-show="palette" x-cloak>
-  <input type="text" x-model="q" x-ref="pq" placeholder="Go to…"
-         @keydown.enter="go()" @keydown.down.prevent="idx = Math.min(idx + 1, filtered().length - 1)"
-         @keydown.up.prevent="idx = Math.max(idx - 1, 0)" @input="idx = 0">
-  <ul>
-    <template x-for="(item, i) in filtered()" :key="item.href">
-      <li :class="{ sel: i === idx }" @click="location.href = item.href"
+<div class="palette" x-show="palette" x-cloak role="dialog" aria-modal="true" aria-label="Search or jump to">
+  <input type="text" x-model="q" x-ref="pq" placeholder="Search or jump to…" autocomplete="off"
+         role="combobox" aria-expanded="true" aria-controls="palette-list"
+         :aria-activedescendant="filtered().length ? 'palette-opt-' + idx : null"
+         @keydown.enter="go()" @keydown.tab.prevent
+         @keydown.down.prevent="idx = Math.min(idx + 1, filtered().length - 1); scrollSel()"
+         @keydown.up.prevent="idx = Math.max(idx - 1, 0); scrollSel()" @input="idx = 0">
+  <ul id="palette-list" role="listbox" aria-label="Pages and settings">
+    <template x-for="(item, i) in filtered()" :key="item.href + item.label">
+      <li role="option" :id="'palette-opt-' + i" :aria-selected="i === idx ? 'true' : 'false'"
+          :class="{ sel: i === idx }" @click="location.href = item.href"
           @mouseenter="idx = i"><span x-text="item.label"></span>
         <span class="mono muted" x-text="item.href"></span></li>
     </template>
@@ -228,23 +264,30 @@
         if (s === 'indigo' || s === 'teal') return s;
         return document.documentElement.getAttribute('data-scheme') || 'indigo';
       })(),
-      palette: false, q: '', idx: 0, more: false,
+      palette: false, opener: null, q: '', idx: 0, more: false,
       pages: [
         {% for group, items in nav_groups %}{% for it in items %}
         {label: {{ it.label_for(cur)|tojson }}, href: {{ it.href|tojson }}},
         {% endfor %}{% endfor %}
-        {label: 'Failed scoring', href: '/quarantine'}, {label: 'Backup', href: '/backup'},
+        {label: 'Needs another try', href: '/quarantine'}, {label: 'Backup', href: '/backup'},
+        {label: 'Model check', href: '/bench'},
+        {label: 'Settings: Appearance', href: '/settings#appearance'},
+        {label: 'Settings: Models', href: '/settings#models'},
+        {label: 'Settings: System', href: '/settings#system'},
+        {label: 'Settings: Learning', href: '/settings#learning'},
+        {label: 'Settings: Updates', href: '/settings#updates'},
       ],
       init() {
-        this.$watch('theme', v => {
-          localStorage.setItem('kestrel-theme', v);
-          if (v === 'auto') document.documentElement.removeAttribute('data-theme');
-          else document.documentElement.setAttribute('data-theme', v);
-        });
+        // One source for appearance writes: KUI (kestrel-ui.js) owns storage and the attribute.
+        this.$watch('theme', v => { window.KUI.setTheme(v); });
         if (this.theme !== 'auto') document.documentElement.setAttribute('data-theme', this.theme);
-        this.$watch('scheme', v => {
-          try { localStorage.setItem('kestrel-scheme', v); } catch (e) {}
-          document.documentElement.setAttribute('data-scheme', v);
+        this.$watch('scheme', v => { window.KUI.setScheme(v); });
+        // The palette is modal: Tab stays in its field, and closing returns focus to the opener.
+        this.$watch('palette', v => {
+          if (!v && this.opener && this.opener.focus && document.contains(this.opener)) {
+            this.opener.focus();
+          }
+          if (!v) this.opener = null;
         });
         document.documentElement.setAttribute('data-scheme', this.scheme);
         if ('serviceWorker' in navigator) {
@@ -273,12 +316,19 @@
         }
       },
       openPalette() {
+        this.opener = document.activeElement;
         this.palette = true; this.more = false;
         this.$nextTick(() => this.$refs.pq && this.$refs.pq.focus());
       },
       setTrack(v) {
         try { localStorage.setItem('kestrel-track', v); } catch (e) {}
         document.cookie = 'kestrel-track=' + v + '; path=/; max-age=31536000; samesite=lax';
+      },
+      scrollSel() {
+        this.$nextTick(() => {
+          const el = document.getElementById('palette-opt-' + this.idx);
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+        });
       },
       filtered() {
         const q = this.q.toLowerCase();
@@ -288,6 +338,7 @@
     };
   }
 </script>
+{{ toast_region() }}
 {% include "partials/toast.html" %}
 {% include "partials/quit_confirm.html" %}
 </body>

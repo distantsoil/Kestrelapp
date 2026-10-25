@@ -110,7 +110,8 @@ async def test_a_new_install_is_employment_only(sm):
         assert await s.get(Setting, tracks_svc.KEY) is None
     assert tracks_svc.consulting_enabled() is False
     steps = [st.key for st in onboarding.steps_for(tracks_svc.DEFAULT)]
-    assert "employment" in steps and "consulting" not in steps
+    # Six steps whatever the tracks (D-UI-155): the tracks change step 5's sections, not the flow.
+    assert steps == ["welcome", "models", "about", "resume", "wants", "searches"]
 
 
 async def test_an_existing_install_keeps_both_tracks(sm):

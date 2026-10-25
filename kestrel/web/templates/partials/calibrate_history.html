@@ -1,0 +1,39 @@
+{# Learning history: one line per rated role, newest first, 8 a page. `oob` marks the
+   out-of-band copy. Hard rule 6: under five ratings the header says there is not enough yet. #}
+{% import "ui/macros.html" as ui %}
+<section id="cal-history" class="k-card cal-hist" data-testid="cal-history"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <header class="cal-hist__head">
+    <span class="k-badge">{{ ui.icon('clock') }}</span><h3>Learning history</h3>
+    <span class="cal-sm cal-dsm cal-push" data-testid="cal-hist-count">
+      {% if history.total == 0 %}Nothing yet
+      {% elif history.total < 5 %}Close on {{ history.close }} of {{ history.total }}. <i>Not enough ratings yet (n={{ history.total }})</i>
+      {% else %}You and Kestrel were close on {{ history.close }} of {{ history.total }}{% endif %}
+    </span>
+  </header>
+  {% if history.rows %}
+  <table class="cal-table cal-htable">
+    <thead><tr><th>When</th><th>Role</th><th>You said</th><th>Kestrel</th><th>Result</th><th><span class="cal-sr">Change</span></th></tr></thead>
+    <tbody>
+      {% for h in history.rows %}
+      <tr data-testid="hist-{{ h.opp_id }}">
+        <td class="cal-dsm">{{ h.when }}</td>
+        <td><b>{{ h.title }}</b>{% if h.org %} <span class="cal-dsm">· {{ h.org }}</span>{% endif %}</td>
+        <td>{{ h.said_word }}</td>
+        <td class="cal-kcell">{% if h.kestrel is not none %}<span class="cal-kb"><u style="width: {{ h.kestrel * 20 }}%"></u></span><b>{{ '%.1f'|format(h.kestrel) }}</b>{% else %}<span class="cal-dsm">None</span>{% endif %}</td>
+        <td><span class="k-pill {{ 'k-pill--info' if h.changed else ('k-pill--good' if h.result == 'Close' else 'k-pill--warn') }}">{{ h.result }}</span></td>
+        <td class="cal-r"><button type="button" class="k-link" data-testid="change-{{ h.opp_id }}" hx-get="/calibrate/card" hx-vals='{{ {"since": since, "skip": skip, "change": h.opp_id}|tojson }}' hx-target="#cal-card" hx-swap="outerHTML">Change</button></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if history.pages > 1 %}
+  <div class="cal-pager">
+    <span class="cal-sm cal-dsm">{{ history.page * 8 + 1 }} to {{ history.page * 8 + history.rows|length }} of {{ history.total }}</span>
+    <button type="button" class="k-btn k-btn--sm" {% if history.page == 0 %}disabled{% else %}hx-get="/calibrate/history" hx-vals='{{ {"page": history.page - 1, "since": since, "skip": skip}|tojson }}' hx-target="#cal-history" hx-swap="outerHTML"{% endif %}>Newer</button>
+    <button type="button" class="k-btn k-btn--sm" {% if history.page + 1 >= history.pages %}disabled{% else %}hx-get="/calibrate/history" hx-vals='{{ {"page": history.page + 1, "since": since, "skip": skip}|tojson }}' hx-target="#cal-history" hx-swap="outerHTML"{% endif %}>Older</button>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="cal-dsm">Nothing yet. Your ratings show up here.</p>
+  {% endif %}
+</section>

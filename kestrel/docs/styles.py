@@ -26,6 +26,11 @@ FONTS: dict[str, str] = {
 
 ALIGNS = ("left", "center")
 
+# Per-application size and margins (the Tailor page's Look control). Presentation only, chosen
+# from these lists and never from free text, because the values reach the stylesheet.
+SIZES: dict[str, float] = {"smaller": 0.92, "default": 1.0, "larger": 1.08}
+MARGINS: dict[str, str] = {"normal": "0.5in", "narrow": "0.35in"}
+
 # The visual treatments the document template knows (CSS classes on <body>).
 STYLES = ("classic", "executive", "condensed", "modern", "traditional", "clean", "compact")
 
@@ -107,12 +112,17 @@ def resolve_style(
     accent = valid_accent(config.get("accent")) or valid_accent((saved or {}).get("accent"))
     if accent:
         out["accent"] = accent
-    font = config.get("font")
+    # The render's own choice wins; else the Look saved on the document (Profile > Documents).
+    font = config.get("font") or (saved or {}).get("font")
     if isinstance(font, str) and font in FONTS:
         out["font"] = font
-    align = config.get("header_align")
+    align = config.get("header_align") or (saved or {}).get("header_align")
     if isinstance(align, str) and align in ALIGNS:
         out["align"] = align
     out["font_css"] = FONTS[out["font"]]
     out["layout"] = layout_key or ""
+    size = config.get("size") or (saved or {}).get("size")
+    out["size"] = size if isinstance(size, str) and size in SIZES else "default"
+    margins = config.get("margins") or (saved or {}).get("margins")
+    out["margins"] = margins if isinstance(margins, str) and margins in MARGINS else "normal"
     return out

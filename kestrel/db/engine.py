@@ -1,6 +1,6 @@
 """Async engine (aiosqlite) for the app and a sync engine for Alembic, against the SAME file.
 
-Every connection sets WAL and a 5s busy timeout (required for worker + web coexistence, SPEC.md
+Every connection sets WAL, synchronous=NORMAL, and a 5s busy timeout (SPEC.md, D-UI-174,
 CLAUDE.md). Foreign keys are enforced. The worker, scheduler, and every session live on one loop
 (SPEC-INTERFACES.md 1.1); this module holds a single app engine, resettable for tests."""
 
@@ -23,6 +23,7 @@ from kestrel import paths
 def _apply_pragmas(dbapi_conn, _record) -> None:
     cur = dbapi_conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
     cur.execute("PRAGMA busy_timeout=5000")
     cur.execute("PRAGMA foreign_keys=ON")
     cur.close()

@@ -1,0 +1,21 @@
+{# Download PDF, step one: the prep pack as the pages that will be saved. The pages are the PDF's
+   own at true Letter size, scaled to fit, never reflowed. Paper is white with ink by design. #}
+{% import "partials/pp_icons.html" as i %}
+<div class="k-modal pp-preview" id="pp-preview" role="dialog" aria-modal="true" aria-labelledby="pp-preview-t" aria-hidden="true" data-testid="pp-preview">
+  <div class="pp-preview__head">
+    <div class="k-grow"><h2 id="pp-preview-t">Your prep pack</h2><span class="k-muted">Page <span id="pp-pgn">1</span> of {{ pages|length }}</span></div>
+    {%- if pack and pages %}
+    <button type="button" class="k-btn k-btn--primary k-btn--sm" hx-post="/prep/{{ pack.id }}/pdf" hx-target="#pp-pdf-status" hx-swap="innerHTML" hx-disabled-elt="this" data-busy-text="Making the PDF." data-testid="pp-pdf-go">Download PDF</button>
+    {%- endif %}
+    <button type="button" class="k-btn k-btn--sm" data-k-close data-testid="pp-pdf-close">Close</button>
+  </div>
+  <div id="pp-pdf-status" aria-live="polite"></div>
+  <div class="pp-preview__scroll" id="pp-pages" data-file="{{ file_name }}">
+    <style>{{ paper_css|safe }}</style>
+    {%- for p in pages %}
+    <div class="pp-sheet-wrap"><div class="pdfpg">{{ p|safe }}</div></div>
+    {%- else %}
+    <p class="k-muted">Build the prep pack first. There is nothing to preview yet.</p>
+    {%- endfor %}
+  </div>
+</div>

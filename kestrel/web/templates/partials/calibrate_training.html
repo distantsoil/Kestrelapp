@@ -1,0 +1,11 @@
+<div id="cal-training" class="k-card cal-training" data-testid="cal-training"{% if training.pending %}
+     hx-get="/calibrate/training" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <p>Your own sorting model trains on this computer. It is used only if it passes every check.
+    After an unsuccessful attempt, Kestrel tries again after 50 more rated roles.</p>
+  <button type="button" class="k-btn k-btn--sm" hx-post="/calibrate/train"
+          hx-target="#cal-training" hx-swap="outerHTML" data-testid="cal-train"
+          {% if training.pending or not build_model %}disabled{% endif %}>Train sorting model</button>
+  {% if not build_model %}<p>Switched off in <a href="/settings#scoring">Settings &gt; Scoring and learning</a>.</p>{% endif %}
+  {% if training.message %}<p role="status">{{ training.message }}</p>{% endif %}
+  {% if training.detail %}<details><summary>Show training details</summary><p>{{ training.detail }}</p></details>{% endif %}
+</div>

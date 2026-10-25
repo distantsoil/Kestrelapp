@@ -1,0 +1,13 @@
+{# One Connect's result in the onboarding model step (D-UI-40). `r` is a
+   services.hosted_connect.ConnectOutcome; `testid` names the box for the tests. Theme tokens
+   only, so it follows Light, Dark and every scheme. #}
+{% import "ui/macros.html" as ui %}
+<div class="ob-note{% if not r.ok %} ob-note--warn{% endif %}" role="status" aria-live="polite"
+     data-testid="{{ testid }}" data-connect-ok="{{ 'true' if r.ok else 'false' }}">
+  {{ ui.icon('check' if r.ok else 'alert') }}
+  <div>
+    <b data-testid="{{ testid }}-headline">{{ r.headline }}</b>
+    {% if r.detail %}<span class="ob-dsm">{{ r.detail }}</span>{% endif %}
+    {% if r.ok and r.defaults %}<span class="ob-dsm" data-testid="{{ testid }}-defaults">These are defaults. <a class="k-link" href="/models#hosted-overrides">Override a tier on the Models page</a>.</span>{% endif %}
+  </div>
+</div>

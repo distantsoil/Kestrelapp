@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from kestrel.db.engine import make_async_engine, make_sync_engine
+
 EXPECTED_TABLES = {
     # SPEC.md 4
     "profile",
@@ -99,3 +101,25 @@ async def test_wal_and_busy_timeout_on_every_connection(sm):
     assert str(mode).lower() == "wal"
     assert int(timeout) == 5000
     assert int(fk) == 1
+
+
+async def test_new_async_connections_use_normal_synchronous(tmp_path):
+    engine = make_async_engine(tmp_path / "async.db")
+    try:
+        for _connection_number in range(2):
+            async with engine.connect() as connection:
+                assert (await connection.execute(text("PRAGMA synchronous"))).scalar_one() == 1
+            await engine.dispose()
+    finally:
+        await engine.dispose()
+
+
+def test_new_sync_connections_use_normal_synchronous(tmp_path):
+    engine = make_sync_engine(tmp_path / "sync.db")
+    try:
+        for _connection_number in range(2):
+            with engine.connect() as connection:
+                assert connection.execute(text("PRAGMA synchronous")).scalar_one() == 1
+            engine.dispose()
+    finally:
+        engine.dispose()

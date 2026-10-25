@@ -11,10 +11,12 @@ from functools import cache
 from typing import Any
 
 import structlog
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
-from kestrel.db.models import Quarantine
+from kestrel.db.models import Quarantine, Setting
 from kestrel.llm.guard import GuardResult, QuarantineHook, run_prompt
 from kestrel.llm.prompts import PromptSpec, load_prompt
 from kestrel.privacy import EmployerMap
@@ -129,12 +131,33 @@ async def plan_hosted_send(
     session: AsyncSession, settings: Settings, tier: str, *, master_id: int | None = None
 ) -> HostedPlan:
     """Decide redaction or refusal for a tier BEFORE its prompt is rendered. Reads the operator's
-    own employer map from the session: the one document's map when the send is about one
-    document (`master_id`, D-PRIV-1), else the union across documents."""
+    current confidential-mode setting and employer map from the session: the one document's map
+    when the send is about one document (`master_id`, D-PRIV-1), else the union across documents."""
     if not tier_is_hosted(settings, tier):
         return HostedPlan()
     hm = settings.llm.hosted_mode
-    if not settings.confidential_mode or not hm.redact_confidential:
+    # The client was built from settings read earlier (a cycle, or before a public fetch). Hosted
+    # mode turned off since then must stop this send, whatever the client still holds.
+    switched_off = dict((await session.execute(
+        select(Setting.key, Setting.value).where(Setting.key.in_(
+            ("llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at")
+        ))
+    )).all())
+    if any(key in switched_off and not switched_off[key]
+           for key in ("llm.hosted_mode.enabled", "llm.hosted_mode.acknowledged_at")):
+        return HostedPlan(
+            external=True, refuse="hosted send refused: Hosted mode was turned off before sending"
+        )
+    row = (await session.execute(
+        select(Setting.value).where(Setting.key == "confidential_mode")
+    )).first()
+    try:
+        confidential = (
+            TypeAdapter(bool).validate_python(row[0]) if row else settings.confidential_mode
+        )
+    except ValidationError:
+        return HostedPlan(external=True, refuse="hosted send refused: invalid confidential mode")
+    if not confidential or not hm.redact_confidential:
         return HostedPlan(external=True)
     from kestrel.docs.current_employer import load_employer_map
 

@@ -77,13 +77,13 @@ def _searches(html: str) -> list[str]:
 def test_both_views_render_the_search_filters_count_and_empty_state(view):
     with _client() as c:
         html = c.get(f"/pursuits?view={view}").text
-    for marker in ("pursuit-search", "show-closed", "stage-chip", "filter-count",
-                   "filter-empty", "clear-filters"):
+    for marker in ("pursuit-search", "stage-chip", "filter-count", "filter-empty",
+                   "clear-filters", "more-filters", "range-select", "cap-select"):
         assert f'data-testid="{marker}"' in html, marker
     assert "Showing 3 of 3" in html
     assert "Nothing matches" in html
     assert len(_searches(html)) == 3
-    assert ("pursuit-sort" in html) is (view == "table")
+    assert ('data-testid="apps-table"' in html) is (view == "table")
 
 
 def test_search_text_covers_company_title_location_and_notes_without_punctuation():
@@ -96,11 +96,10 @@ def test_search_text_covers_company_title_location_and_notes_without_punctuation
 
 def test_q_and_filters_prefill_from_the_url():
     with _client() as c:
-        html = c.get("/pursuits?view=table&q=remote+us&stage=applied&closed=0&sort=company").text
+        html = c.get("/pursuits?view=table&q=remote+us&stage=applied&range=30&cap=5").text
     assert 'value="remote us"' in html
-    assert '"showClosed": false' in html
-    assert '"stages": ["applied"]' in html
-    assert '<option value="company" selected>' in html
+    assert 'data-view="table"' in html
+    assert '<option value="30" selected>' in html and '<option value="5" selected>' in html
 
 
 def test_confidential_mode_keeps_the_employer_out_of_what_search_matches():
@@ -163,17 +162,17 @@ def test_the_range_control_offers_seven_fourteen_thirty_ninety_and_all():
         html = c.get("/pursuits").text
     select = html.split('data-testid="range-select"')[1].split("</select>")[0]
     assert re.findall(r'<option value="(\d+)"', select) == ["7", "14", "30", "90", "0"]
-    assert '"range": "0"' in html  # nothing is hidden until the user chooses
+    assert 'data-range="0"' in html  # nothing is hidden until the user chooses
 
 
 def test_range_prefills_from_the_url_then_the_saved_default():
     with _client() as c:
-        assert '"range": "30"' in c.get("/pursuits?range=30").text
+        assert 'data-range="30"' in c.get("/pursuits?range=30").text
         assert c.post("/pursuits/prefs", data={"range": "14", "cap": "25"}).status_code == 200
         assert _stored("ui.board_range") == "14" and _stored("ui.board_cap") == "25"
         html = c.get("/pursuits").text
-        assert '"range": "14"' in html and '"cap": "25"' in html
-        assert '"range": "90"' in c.get("/pursuits?range=90").text  # the URL wins
+        assert 'data-range="14"' in html and 'data-cap="25"' in html
+        assert 'data-range="90"' in c.get("/pursuits?range=90").text  # the URL wins
 
 
 def test_prefs_ignore_values_that_are_not_offered():
@@ -183,26 +182,22 @@ def test_prefs_ignore_values_that_are_not_offered():
     assert _stored("ui.board_range") is None and _stored("ui.board_cap") is None
 
 
-def test_the_closed_column_folds_and_each_column_can_show_all():
+def test_the_closed_group_is_collapsed_by_default_and_each_column_can_show_all():
     with _client() as c:
         html = c.get("/pursuits").text
-    assert 'data-testid="closed-toggle"' in html
+        opened = c.get("/pursuits?open=closed").text
+    assert 'data-testid="closed-toggle"' in html and "Closed (1)" in html
+    assert 'class="ap-closedg"' in html and 'data-open-closed="0"' in html
+    assert 'class="ap-closedg is-open"' in opened and 'data-open-closed="1"' in opened
     assert html.count('data-testid="show-all"') == 4  # one per column
     assert 'data-testid="cap-select"' in html
-    assert '"closedHidden": false' in html  # shown by default; hiding is the user's choice
 
 
-def test_the_closed_column_state_prefills_from_the_url_then_the_saved_choice():
+def test_there_is_no_closed_column_preference_any_more():
+    """The Closed group's state lives in the URL (open=closed) only; range and cap are saved."""
     with _client() as c:
-        assert '"closedHidden": true' in c.get("/pursuits?closedcol=hide").text
         assert c.post("/pursuits/prefs", data={"closedcol": "hide"}).status_code == 200
-        assert _stored("ui.board_closed") == "hide"
-        assert '"closedHidden": true' in c.get("/pursuits").text
-        assert '"closedHidden": false' in c.get("/pursuits?closedcol=show").text  # URL wins
-        assert c.post("/pursuits/prefs", data={"closedcol": "show"}).status_code == 200
-        assert '"closedHidden": false' in c.get("/pursuits").text
-        assert c.post("/pursuits/prefs", data={"closedcol": "banana"}).status_code == 200
-        assert _stored("ui.board_closed") == "show"  # an unoffered value is ignored
+    assert _stored("ui.board_closed") is None
 
 
 def test_confidential_mode_does_not_put_the_employer_in_the_new_attributes():

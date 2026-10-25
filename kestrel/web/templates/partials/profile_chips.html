@@ -1,0 +1,18 @@
+{# A list of short phrases as chips (the mockup's title chips). The chips are the display; the
+   hidden textarea named chip_name carries one phrase per line, which is exactly what the save
+   route reads, so the form posts the same way with or without the chips. profile.js adds and
+   removes chips and keeps the textarea in step. The caller sets chip_name, chip_items,
+   chip_id, chip_label and chip_placeholder, and chip_tone ('' or 'skip'). #}
+{% import "ui/macros.html" as ui %}
+<div class="pf-chipbox" data-pf-chips="{{ chip_name }}" data-testid="chips-{{ chip_name }}">
+  <textarea name="{{ chip_name }}" class="k-sr-only" tabindex="-1" aria-hidden="true" data-pf-chips-value>{{ (chip_items or []) | join('\n') }}</textarea>
+  <ul class="pf-chips" aria-label="{{ chip_label }}">
+    {% for item in chip_items or [] %}
+    <li class="pf-chip{% if chip_tone == 'skip' %} pf-chip--skip{% endif %}" data-pf-chip><span>{{ item }}</span>
+      <button type="button" class="pf-chip__x" data-pf-chip-remove aria-label="Remove {{ item }}">{{ ui.icon('x', 'k-ic--sm') }}</button></li>
+    {% endfor %}
+    <li class="pf-chipadd"><label class="k-sr-only" for="{{ chip_id }}">{{ chip_label }}: add one</label>
+      <input class="k-input" id="{{ chip_id }}" type="text" data-pf-chip-input maxlength="200"
+             placeholder="{{ chip_placeholder }}" autocomplete="off"></li>
+  </ul>
+</div>

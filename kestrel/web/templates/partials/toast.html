@@ -125,8 +125,18 @@
       timers[id] = null;
       if (!opts.sticky) timers[id] = setTimeout(function () { hide(id); }, 6000);
     }
+    // Plain notes, with or without Undo, go through the shared toast region (kestrel-ui.js); a
+    // note with a destination (href) keeps the legacy box, which can link. The sticky scan toast above stays here: it is
+    // persistent, cross-tab and clickable, which the shared region does not model.
     window.kestrelToast = function (text, opts) {
-      return show(text, Object.assign({}, opts || {}, {sticky: false}));
+      opts = opts || {};
+      if (window.KUI && !opts.href) {
+        // Undo rides along (D-UI-152): the shared region owns the button and its longer timeout.
+        var undoable = typeof opts.undo === 'function' || !!opts.undoUrl;
+        return window.KUI.toast(text, {tone: opts.tone, timeout: undoable ? undefined : 6000,
+          undo: opts.undo, undoUrl: opts.undoUrl, undoLabel: opts.undoLabel});
+      }
+      return show(text, Object.assign({}, opts, {sticky: false}));
     };
     // The end of the search step is not the end of the run (D-UI-63): scoring may continue, so
     // this never says "finished". The run panel says "Last run ... finished" when it closes.

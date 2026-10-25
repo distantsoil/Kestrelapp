@@ -1,11 +1,53 @@
-{% if not rows %}
-  <p class="muted">No notifications.</p>
-{% else %}
-  {% for n in rows %}
-    <div class="notif {% if not n.read_at %}unread{% endif %}">
-      <div><span class="pill">{{ n.severity }}</span> <b>{{ n.title }}</b></div>
-      {% if n.body %}<div class="muted">{{ n.body }}</div>{% endif %}
-      <div class="mono muted" style="font-size:.72rem">{{ n.created_at }}</div>
+{# The bell panel (D-UI-94, D-UI-152): tabs All and Needs attention; items grouped Today,
+   Yesterday and Earlier, each with an unread dot, a track label when both tracks are on, a plain
+   relative time, a human severity, an Unresolved badge for a problem kind and one context action
+   by kind (a due follow-up opens Applications; there is no Draft follow-up, D-UI-148). The
+   overflow menu has Mark as read or unread. The Dismissed tab, Dismiss and Turn off this kind
+   need new storage and are shown disabled as not recorded (deferred, D-UI-152). Every button
+   answers with this panel again, and the bell count swaps out of band. Styles:
+   static/css/pages/surfaces.css. #}
+{% from "ui/macros.html" import icon %}
+<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<div id="sf-np" class="sf-np" data-testid="notifications-panel" data-tab="{{ tab }}">
+  <span id="bellcount" class="badge" hx-swap-oob="true">{{ unread if unread else '' }}</span>
+  <div class="sf-tabs" role="tablist" aria-label="Notifications">
+    {% for key, label in [('all', 'All'), ('attention', 'Needs attention')] %}
+    <button type="button" role="tab" class="sf-tab{% if tab == key %} is-on{% endif %}" aria-selected="{{ 'true' if tab == key else 'false' }}"
+            data-testid="notif-tab-{{ key }}"
+            hx-get="/notifications/list?tab={{ key }}" hx-target="#sf-np" hx-swap="outerHTML">{{ label }}{% if key == 'attention' and attention_n %}<span class="sf-tab-n">{{ attention_n }}</span>{% endif %}</button>
+    {% endfor %}
+    <button type="button" role="tab" class="sf-tab" disabled aria-selected="false" title="Not recorded yet" data-testid="notif-tab-dismissed">Dismissed</button>
+  </div>
+  {% if not groups %}
+  <p class="sf-empty" data-testid="notif-empty">{% if tab == 'attention' %}Nothing needs your attention.{% else %}No notifications.{% endif %}</p>
+  {% else %}
+  <div class="sf-notes-list">
+    {% for group, items in groups %}
+    <div class="sf-gh">{{ group }}</div>
+    {% for n in items %}
+    <div class="sf-note{% if n.unread %} is-unread{% endif %}" data-testid="notif-item" data-kind="{{ n.kind }}">
+      <span class="sf-ic sf-ic--{{ n.tone if n.tone in ('good', 'warn', 'bad') else 'info' }}" aria-hidden="true">{{ icon('alert' if n.attention else ('check' if n.tone == 'good' else 'bell')) }}</span>
+      <span class="sf-tx">
+        <b>{% if n.unread %}<span class="sf-dot" aria-label="Unread"></span>{% endif %}{{ n.title }}</b>
+        {% if n.body %}<span>{{ n.body }}</span>{% endif %}
+        <span class="sf-note-meta">
+          <span class="k-pill k-pill--{{ n.tone }}">{{ n.severity_word }}</span>
+          {% if n.unresolved %}<span class="k-pill k-pill--warn" data-testid="notif-unresolved">Unresolved</span>{% endif %}
+          {% if n.track %}<span class="k-pill">{{ n.track }}</span>{% endif %}
+          <span class="sf-note-when">{{ n.when }}</span>
+        </span>
+        {% if n.action %}<a class="k-btn k-btn--sm sf-note-open" href="{{ n.action.href }}"{% if n.action.external %} target="_blank" rel="noopener noreferrer"{% endif %} data-testid="notif-action">{{ n.action.label }}</a>{% endif %}
+      </span>
+      <details class="sf-menu">
+        <summary class="k-iconbtn" aria-label="More for this notification" title="More">&hellip;</summary>
+        <div class="sf-menu-list" role="menu">
+          <button type="button" role="menuitem" hx-post="/notifications/{{ n.id }}/{{ 'read' if n.unread else 'unread' }}?tab={{ tab }}" hx-target="#sf-np" hx-swap="outerHTML" data-testid="notif-toggle-read">Mark as {{ 'read' if n.unread else 'unread' }}</button>
+          <button type="button" role="menuitem" disabled title="Not recorded yet">Dismiss</button>
+        </div>
+      </details>
     </div>
-  {% endfor %}
-{% endif %}
+    {% endfor %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

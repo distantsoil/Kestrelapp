@@ -82,7 +82,7 @@
   {% else %}
     <div class="run-head"><h3 data-testid="run-headline">No runs yet</h3></div>
     <div class="run-prog dim" aria-hidden="true"><i></i></div>
-    <p class="quiet run-line">Press Scan now to run the first search. The progress shows here.</p>
+    <p class="quiet run-line">Press Run now to run the first search. The progress shows here.</p>
   {% endif %}
   {% if (rs.active or rs.paused) and (rs.set_aside or rs.failed) %}
     <p class="quiet run-line" data-testid="run-line2">{{ second_line()|trim }}</p>

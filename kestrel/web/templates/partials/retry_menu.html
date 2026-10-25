@@ -1,0 +1,18 @@
+{# The Try with a different model menu: this computer first (free), then online (asks first). #}
+<div class="rt-menu" role="menu" data-testid="rt-menu">
+  <div class="rt-kind">On this computer, free</div>
+  {% for o in local_options %}
+  <button type="button" role="menuitem" name="model" value="{{ o.tag }}" data-testid="rt-local"
+          hx-post="/quarantine/{{ quarantine_id }}/model" hx-target="#{{ dom_id }}" hx-swap="outerHTML">{{ o.name }}<span>{{ o.note }}</span></button>
+  {% else %}
+  <p class="rt-menu-note">{{ local_note or 'No other model on this computer can score a role right now.' }}</p>
+  {% endfor %}
+  <hr>
+  <div class="rt-kind">Online, uses your credit</div>
+  {% if hosted_ready %}
+  <button type="button" role="menuitem" data-testid="rt-online"
+          hx-get="/quarantine/{{ quarantine_id }}/online" hx-target="#rt-dialog" hx-swap="innerHTML">{{ hosted_label }}<span>Asks before sending anything.</span></button>
+  {% else %}
+  <p class="rt-menu-note">{{ hosted_note or 'No online service is set up. Add a key under Models to use one.' }}</p>
+  {% endif %}
+</div>

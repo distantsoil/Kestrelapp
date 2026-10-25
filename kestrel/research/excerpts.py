@@ -103,7 +103,7 @@ async def _company_pages(builder: _Builder, http: Any, org: Org) -> None:
             break
         url = urljoin(base, path) if path else base
         try:
-            html = await http.get_text(url, check_robots=True)
+            html = await http.get_text(url, check_robots=True, public_only=True)
         except Exception as exc:  # one dead path never sinks acquisition
             log.debug("research_page_skip", url=url, error=str(exc))
             continue

@@ -1,0 +1,34 @@
+{# The ask-first dialog for a pick on an online model (D-UI-120). What is sent comes from the Hosted
+   mode disclosure the operator acknowledged (route.sends), never from words written here. The
+   server checks the confirmation, the model and the employer state again when the pick is
+   asked for. #}
+{% set route = ctx.route %}
+<div class="k-modal" id="tl-pick-dlg" role="dialog" aria-modal="true" aria-labelledby="tl-pick-dlg-t" aria-hidden="true" data-k-static data-testid="tl-ask">
+  <div class="k-modal__head"><h2 id="tl-pick-dlg-t">Pick again with an online model</h2></div>
+  <form hx-post="/renders/{{ ctx.render.id }}/pick" hx-target="#tl-body" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
+        data-busy-text="Picking with {{ route.model }}. This can take a minute." data-tl-pickform>
+    <div class="k-modal__body">
+      {% if route.online %}
+      <p>{{ route.provider }} will choose which of your wordings fits this role, using your own credit. Model: <b>{{ route.model }}</b>.</p>
+      <ul class="tl-asklist">
+        <li data-testid="tl-sends">Sends {{ route.sends }}.</li>
+        <li>For this pick that means {{ route.pick_sends }}.</li>
+      </ul>
+      {% if route.employer == 'hidden' %}<p data-testid="tl-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+      {% elif route.employer == 'held' %}<p data-testid="tl-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a class="k-link" href="/documents">Choose your employer in Profile › Documents</a> first.</p>{% endif %}
+      <p><b>Not sent:</b> your name, contact details and your resume file. {{ route.provider }} handles what it receives under its own terms. It chooses among your wordings; it cannot write or change any of them.</p>
+      {% if route.employer != 'held' %}
+      <label class="tl-confirm"><input type="checkbox" name="confirmed" value="1" required data-testid="tl-confirm"> Send this to {{ route.provider }} to pick my wordings</label>
+      <input type="hidden" name="model" value="{{ route.model }}">
+      <input type="hidden" name="dest" value="{{ route.dest }}">
+      {% endif %}
+      {% else %}
+      <p>Kestrel picks on this computer now. Nothing leaves it.</p>
+      {% endif %}
+    </div>
+    <div class="k-modal__foot">
+      <button type="button" class="k-btn" data-k-close>Cancel</button>
+      {% if route.employer != 'held' %}<button type="submit" class="k-btn k-btn--primary" data-testid="tl-send">Send and pick</button>{% endif %}
+    </div>
+  </form>
+</div>

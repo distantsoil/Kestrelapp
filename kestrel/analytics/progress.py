@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
 from kestrel.db.models import Evaluation, Opportunity, Run, Task
+from kestrel.services.hidden_orgs import hidden_opportunity_ids, opp_visible_clause
 
 EMPTY: dict[str, Any] = {
     "active": False,
@@ -278,7 +279,8 @@ async def scoring_progress(
     live = (
         await session.execute(
             select(oid, Task.status).where(
-                Task.type.in_(SCORING_TASK_TYPES), _in_flight(), oid.is_not(None)
+                Task.type.in_(SCORING_TASK_TYPES), _in_flight(), oid.is_not(None),
+                oid.not_in(hidden_opportunity_ids()),  # a hidden company is not counted
             )
         )
     ).all()
@@ -314,7 +316,8 @@ async def scoring_progress(
         scored, failed, set_aside = (
             await session.execute(
                 select(_n(_SCORED_STAGES), _n(_FAILED_STAGES), _n(_SET_ASIDE_STAGES)).where(
-                    Opportunity.id.in_(finished_ids), Opportunity.id.not_in(live_ids)
+                    Opportunity.id.in_(finished_ids), Opportunity.id.not_in(live_ids),
+                    opp_visible_clause(),
                 )
             )
         ).one()

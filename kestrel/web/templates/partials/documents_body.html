@@ -1,15 +1,21 @@
+{% import "ui/macros.html" as ui %}
 {% include "partials/employer_banner.html" %}
 
-<div class="tabs">
-  {% for m in masters %}
-    <a href="/documents?master_id={{ m.id }}"
-       class="{% if selected and m.id == selected.id %}active{% endif %}">
-      {{ m.name }} <span class="muted">({{ m.track }}/{{ m.doc_kind }})</span></a>
-  {% endfor %}
-  {% if not masters %}<span class="muted">No documents yet. Start a blank one or import one below.</span>{% endif %}
+<div class="pf-drow">
+  <div class="pf-doccards" role="tablist" aria-label="Your documents" data-testid="doc-cards">
+    {% for m in masters %}
+      <a role="tab" href="/documents?master_id={{ m.id }}" data-doc-card="{{ m.id }}"
+         class="pf-doccard{% if selected and m.id == selected.id %} is-on{% endif %}"
+         {% if selected and m.id == selected.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %}>
+        <b>{{ m.name }}</b>
+        <small>{{ 'Consulting' if m.track == 'consulting' else 'Employment' }} · {{ 'Capability statement' if m.doc_kind == 'capability_statement' else 'Resume' }}</small></a>
+    {% endfor %}
+    {% if not masters %}<span class="pf-hint">No documents yet. Start a blank one or import one below.</span>{% endif %}
+  </div>
+  <a class="k-btn k-btn--sm" href="#import-form" data-testid="pf-import-jump">{{ ui.icon('up', 'k-ic--sm') }}Import a resume</a>
 </div>
-<details class="addrole new-document" data-testid="new-document" {% if not masters %}open{% endif %}>
-  <summary class="btn small">Start a blank document without an import</summary>
+<details class="pf-details new-document" data-testid="new-document" {% if not masters %}open{% endif %}>
+  <summary>Start a blank document without an import</summary>
   <form hx-post="/documents/new" hx-swap="none" class="formgrid section-form">
     <label for="new-doc-track">Track</label>
     <select id="new-doc-track" name="track"><option value="employment">Job search</option>{% if consulting_enabled() %}<option value="consulting">Consulting</option>{% endif %}</select>
@@ -24,51 +30,76 @@
 </details>
 
 {% if selected %}
-<div class="split">
-  <div>
-    <div class="formgrid" style="margin-bottom:.8rem" data-testid="doc-look">
-      <label for="layout">Layout</label>
-      <span><select id="layout" name="layout">
-        {% for lay in layouts %}<option value="{{ lay }}">{{ lay }}{% if layout_looks and layout_looks[lay] %} ({{ layout_looks[lay].font }}{% if layout_looks[lay].align == "center" %}, centered{% endif %}){% endif %}</option>{% endfor %}
-      </select>
-      <span class="muted">Section order and look for the preview and the test render.</span></span>
-      <label for="font">Font</label>
-      <span><select id="font" name="font">
-        <option value="">Layout default</option>
-        {% for f in fonts or [] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
-      </select>
-      <span class="muted">Fonts that ship with Windows and print the same in the PDF.</span></span>
-      <label for="header_align">Name and headline</label>
-      <span><select id="header_align" name="header_align">
-        <option value="">Layout default</option>
-        <option value="left">Left aligned</option>
-        <option value="center">Centered</option>
-      </select></span>
-      {# Accent color (D-DOC-4): saved on this document, used by the preview, every test render
-         and the pipeline's renders. Presets, or a custom six-digit hex color. #}
-      <label for="accent">Accent color</label>
-      <span data-testid="doc-accent"><select id="accent" name="accent"
-              hx-post="/documents/{{ selected.id }}/accent" hx-trigger="change"
-              hx-include="#accent, #accent_custom" hx-target="#accent-status" hx-swap="innerHTML">
-        <option value=""{% if not accent_saved %} selected{% endif %}>Layout default</option>
-        {% for name, hex in accent_presets.items() %}<option value="{{ hex }}"{% if accent_saved == hex %} selected{% endif %}>{{ name }} ({{ hex }})</option>{% endfor %}
-        <option value="custom"{% if accent_is_custom %} selected{% endif %}>Custom…</option>
-      </select>
-      <input id="accent_custom" name="accent_custom" type="text" size="9" maxlength="7"
-             placeholder="#1F3A5F" aria-label="Custom accent color, six-digit hex"
-             value="{{ accent_saved if accent_is_custom else '' }}"
-             pattern="#[0-9A-Fa-f]{6}"
-             hx-post="/documents/{{ selected.id }}/accent" hx-trigger="change"
-             hx-include="#accent, #accent_custom" hx-target="#accent-status" hx-swap="innerHTML">
-      <span id="accent-status" aria-live="polite"></span>
-      <span class="muted">Headings, rules and markers. Saved for this document.</span></span>
-    </div>
+<div class="pf-dgrid">
+  <div class="pf-dmain">
+    {# The Look (D-DOC-1, D-DOC-4): the default for every render of this document. Each change
+       saves on its own (POST /documents/{id}/look) and redraws the preview. The accent is a
+       document color, so its swatches carry literal colors, not UI tokens. #}
+    {% set accent_name = namespace(v='Layout default') %}
+    {% for name, hex in accent_presets.items() %}{% if accent_saved == hex %}{% set accent_name.v = name %}{% endif %}{% endfor %}
+    {% if accent_is_custom %}{% set accent_name.v = accent_saved %}{% endif %}
+    <details class="k-card pf-look" id="pf-look" data-testid="doc-look-card">
+      <summary class="pf-look__head"><span class="k-badge k-badge--warn">{{ ui.icon('wand') }}</span>
+        <b>Look</b>
+        <span class="pf-hint k-grow">{{ (layout_choices | selectattr(0, 'equalto', layout_saved) | map(attribute=1) | first) or 'Layout default' }} · {{ font_saved or 'Font default' }} · {{ accent_name.v }}</span>
+        <span class="pf-look__chev" aria-hidden="true">{{ ui.icon('chev', 'k-ic--sm') }}</span></summary>
+      <div class="pf-look__body" id="pf-look-body" data-testid="doc-look"
+           hx-post="/documents/{{ selected.id }}/look" hx-trigger="change"
+           hx-include="#pf-look-body input, #pf-look-body select" hx-target="#look-status"
+           hx-swap="innerHTML">
+        <div class="pf-lookrow">
+          <div class="pf-f">
+            <label id="look-layout-l">Layout</label>
+            {% if layout_choices %}
+            <div class="k-seg pf-seg" role="group" aria-labelledby="look-layout-l" data-k-seg data-pf-layout>
+              <input type="hidden" id="layout" name="layout" value="{{ layout_saved }}">
+              {% for key, label in layout_choices %}<button type="button" value="{{ key }}" class="{% if key == layout_saved %}is-on{% endif %}" aria-pressed="{{ 'true' if key == layout_saved else 'false' }}"{% if layout_looks and layout_looks[key] %} title="{{ layout_looks[key].font }}{% if layout_looks[key].align == 'center' %}, centered{% endif %}"{% endif %}>{{ label }}</button>{% endfor %}
+            </div>
+            <small class="pf-hint">Section order and look for the preview and the test render.</small>
+            {% else %}
+            <input type="hidden" id="layout" name="layout" value="">
+            <small class="pf-hint" data-testid="no-layouts">No layouts are installed yet, so the document uses its standard order.</small>
+            {% endif %}
+          </div>
+          <div class="pf-f">
+            <label id="look-align-l">Header</label>
+            <div class="k-seg pf-seg" role="group" aria-labelledby="look-align-l" data-k-seg>
+              <input type="hidden" id="header_align" name="header_align" value="{{ align_saved }}">
+              {% for key, label in (('', 'Layout default'), ('left', 'Left'), ('center', 'Centered')) %}<button type="button" value="{{ key }}" class="{% if key == align_saved %}is-on{% endif %}" aria-pressed="{{ 'true' if key == align_saved else 'false' }}">{{ label }}</button>{% endfor %}
+            </div>
+            <small class="pf-hint">Where your name and headline sit.</small>
+          </div>
+        </div>
+        <div class="pf-lookrow">
+          <div class="pf-f">
+            <label for="font">Font</label>
+            <span class="k-select"><select id="font" name="font">
+              <option value="">Layout default</option>
+              {% for f in fonts or [] %}<option value="{{ f }}"{% if f == font_saved %} selected{% endif %}>{{ f }}</option>{% endfor %}
+            </select></span>
+            <small class="pf-hint">Fonts that ship with Windows and print the same in the PDF.</small>
+          </div>
+          <div class="pf-f" data-testid="doc-accent">
+            <label id="look-accent-l">Accent color</label>
+            <div class="pf-swatches" role="group" aria-labelledby="look-accent-l" data-pf-swatches>
+              <input type="hidden" id="accent" name="accent" value="{{ 'custom' if accent_is_custom else (accent_saved or '') }}">
+              <button type="button" class="pf-swatch pf-swatch--none{% if not accent_saved %} is-on{% endif %}" data-accent="" title="Layout default" aria-label="Layout default accent" aria-pressed="{{ 'false' if accent_saved else 'true' }}"></button>
+              {% for name, hex in accent_presets.items() %}<button type="button" class="pf-swatch{% if accent_saved == hex %} is-on{% endif %}" data-accent="{{ hex }}" title="{{ name }}" aria-label="{{ name }}" aria-pressed="{{ 'true' if accent_saved == hex else 'false' }}" style="--sw: {{ hex }}"></button>{% endfor %}
+              <label class="pf-swatch pf-swatch--custom{% if accent_is_custom %} is-on{% endif %}" title="Your own color"><span class="k-sr-only">Your own color</span>
+                <input type="color" id="accent_custom" name="accent_custom" value="{{ (accent_saved if accent_is_custom else '#1F3A5F') | lower }}"></label>
+            </div>
+            <small class="pf-hint">The accent colors the resume's headings and rules. It does not change Kestrel's own colors.</small>
+          </div>
+        </div>
+        <span id="look-status" class="pf-look__status" aria-live="polite"></span>
+      </div>
+    </details>
     {% include "partials/doc_basics.html" %}
     <div id="tree">{% include "partials/doc_tree.html" %}</div>
     {% include "partials/doc_optional_sections.html" %}
   </div>
 
-  <div class="doc-side">
+  <div class="pf-dprev" data-testid="doc-preview-col">
     {# What the left column means, in the operator's terms (D-UI-18). Stays in view while the
        tree scrolls; the preview sits under it. #}
     <details class="help panel" data-testid="doc-help">
@@ -91,17 +122,17 @@
         <dt>Accent color</dt><dd>The color of headings and rules. Pick a preset or type a
           six-digit hex color; it is saved for this document.</dd>
       </dl>
-      <p><b>What to do now:</b> read each role, fix any detail the import flagged, then click
-        Live preview. Test render makes the PDF. "Assess this resume" asks the model how it reads
+      <p><b>What to do now:</b> read each role, fix any detail the import flagged, then check
+        the preview. Preview as PDF makes the file. "Assess this resume" asks the model how it reads
         for your target titles; it only advises and never changes your text.</p>
     </details>
-    <div style="display:flex; gap:.5rem; margin-bottom:.5rem; flex-wrap:wrap">
-      <button class="btn" hx-post="/documents/{{ selected.id }}/preview"
-              hx-include="#layout, #font, #header_align, #accent, #accent_custom"
-              hx-target="#preview" hx-swap="innerHTML" data-busy-text="Rendering…">Live preview</button>
-      <a class="btn ghost" href="/renders/new?master_id={{ selected.id }}" id="test-render"
-         data-busy-text="Rendering the PDF…">Test render (PDF)</a>
-      <button class="btn ghost" id="assess-btn" hx-get="/documents/{{ selected.id }}/assess/choose"
+    <div class="pf-tb">
+      <b>Live preview</b>
+      <button class="k-btn k-btn--sm" type="button" data-pf-enlarge data-testid="doc-enlarge"
+              aria-haspopup="dialog">Enlarge</button>
+      <a class="k-btn k-btn--sm" href="/renders/new?master_id={{ selected.id }}" id="test-render"
+         data-busy-text="Rendering the PDF…">Preview as PDF</a>
+      <button class="k-btn k-btn--sm" id="assess-btn" hx-get="/documents/{{ selected.id }}/assess/choose"
               hx-target="#assess-dialog-slot" hx-swap="innerHTML" hx-disabled-elt="this"
               aria-haspopup="dialog" data-testid="assess-btn"
               data-busy-text="Opening the model choice.">Assess this {{ "resume" if selected.doc_kind == "resume" else "capability statement" }}</button>
@@ -136,14 +167,20 @@
       </script>
     </div>
     <div id="assessment" data-testid="assessment"></div>
-    <div id="preview" class="preview-frame">
-      <p class="muted" style="padding:1rem">Click “Live preview” to render the current variants.</p>
+    {# One true-size page, scaled with a transform and never re-flowed, so it matches Enlarge
+       line for line (D-UI-126). It renders on load and again when the Look changes. #}
+    <div id="preview" class="pf-preview" data-testid="doc-preview"
+         hx-post="/documents/{{ selected.id }}/preview" hx-trigger="load, change from:#pf-look, pf-refresh"
+         hx-include="#layout, #font, #header_align, #accent, #accent_custom" hx-swap="innerHTML">
+      <p class="pf-hint pf-preview__wait">Rendering the preview…</p>
     </div>
   </div>
 </div>
 {% endif %}
 
-<h2 style="margin-top:2rem">Import a resume or capability statement</h2>
+<section class="k-card pf-import" id="pf-import">
+<header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ui.icon('up') }}</span>
+  <div class="k-grow"><h3>Import a resume or capability statement</h3></div></header>
 <p class="muted">Upload a file (.md, .txt, .pdf, .docx, .doc) or paste markdown. The text that was
 read is shown first, then the proposal for review, with any bullet that is not verbatim from your
 source flagged. Nothing is written until you accept.</p>
@@ -168,6 +205,7 @@ out by position, so check the extracted text before accepting.</p>
   </div>
 </form>
 <div id="import-proposal" class="import-result"></div>
+</section>
 <script>
   // Import status (D-IMPORT-2). Step one reports Uploading with a percentage, then Reading once
   // the bytes are sent; step two (partials/import_processing.html) counts the seconds it has run.

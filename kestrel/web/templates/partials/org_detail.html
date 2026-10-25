@@ -1,185 +1,216 @@
-<h1>{{ display_name or org.name }}</h1>
+{# The Company page body (D-UI-123, locked mockup company-mockup-locked.html). Sections in the
+   spec's order: open roles, the sourced summary, what Kestrel knows, pay, people you know,
+   public contacts, history. Public data only; blanks stay blank, never guessed (hard rule 7). #}
+{% import "ui/macros.html" as ui %}
+{% from "partials/company_macros.html" import ci, actions, banner %}
+<div class="co-page" id="co-page" data-org="{{ org.id }}">
+  {% set crumb %}<nav class="co-crumb" aria-label="Breadcrumb"><a href="/opportunities">Pipeline</a> › <span>{{ display_name or org.name }}</span></nav>{% endset %}
+  {% set lede %}<p class="co-meta" data-testid="co-meta">
+    {% if org.sector %}<span>{{ ci('building') }}{{ org.sector }}</span>{% endif %}
+    {% if org.size_band %}<span>{{ ci('users') }}{{ org.size_band }}</span>{% endif %}
+    {% if org.hq_location %}<span>{{ ci('pin') }}{{ org.hq_location }}</span>{% endif %}
+    {% if site and site.lower().startswith(('http://', 'https://')) %}<a href="{{ site }}" target="_blank" rel="noopener noreferrer">{{ site_label }}{{ ci('ext') }}</a>{% endif %}
+  </p>{% endset %}
+  {% set shown = display_name or org.name %}
+  {% set head %}<span class="co-mono" aria-hidden="true" data-testid="co-mono">{{ (shown.split()|map('first')|join)[:2]|upper }}</span>{{ shown }}{% endset %}
+  {% call ui.scene_band(head, crumb=crumb, lede=lede) %}
+    {{ actions(org, hidden) }}
+  {% endcall %}
+  {{ banner(org, hidden) }}
 
-<div class="panel">
-  <div class="formgrid">
-    <div class="muted">Sector</div><div>{{ org.sector or '-' }}</div>
-    <div class="muted">Ownership</div><div>{{ org.ownership or '-' }}</div>
-    <div class="muted">Size band</div><div>{{ org.size_band or '-' }}</div>
-    <div class="muted">HQ</div><div>{{ org.hq_location or '-' }}</div>
-    <div class="muted">Website</div>
-    <div>
-      {% if org.url %}<a href="{{ org.url }}" target="_blank" rel="noopener">{{ org.domain or org.url }} ↗</a>
-      {% elif org.domain %}<a href="https://{{ org.domain }}" target="_blank" rel="noopener">{{ org.domain }} ↗</a>
-      {% else %}<span class="muted">-</span>{% endif %}
-    </div>
-    <div class="muted">First / last seen</div>
-    <div class="mono">{{ (org.first_seen_at or '')[:10] or '-' }} → {{ (org.last_seen_at or '')[:10] or '-' }}</div>
-  </div>
-</div>
+  <div class="k-layout">
+    <div class="k-layout__main co-body" id="co-body">
 
-<div class="panel">
-  <h2>Signals over time{% if signals %} ({{ signals|length }}){% endif %}</h2>
-  {% if signals %}
-    <table class="data">
-      <thead><tr><th>Observed</th><th>Category</th><th>Statement</th><th>Source</th></tr></thead>
-      <tbody>
-        {% for sig in signals %}
-          <tr>
-            <td class="mono">{{ (sig.observed_at or '')[:10] or '-' }}</td>
-            <td>{% if sig.category %}<span class="pill">{{ sig.category }}</span>{% else %}-{% endif %}</td>
-            <td>{{ sig.statement or sig or '-' }}</td>
-            <td>
-              {% if sig.source_url %}<a href="{{ sig.source_url }}" target="_blank" rel="noopener">source ↗</a>
-              {% else %}<span class="muted">-</span>{% endif %}
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">No signals recorded yet.</p>
-  {% endif %}
-</div>
-
-<div class="split">
-  <div class="panel">
-    <h2>Research</h2>
-    {% if research %}
-      {% if research.insufficient_sources %}
-        <div class="warnbox">Insufficient public sources: this research is not solid enough to
-        rely on alone.</div>
-      {% endif %}
-      <p class="muted mono">researched {{ (research.researched_at or '')[:10] or '-' }} ·
-        ttl {{ research.ttl_days }}d</p>
-      {% if research.summary_md %}
-        <div style="white-space:pre-wrap">{{ research.summary_md }}</div>
-      {% else %}
-        <p class="muted">No summary.</p>
-      {% endif %}
-      {% if research.angle %}<p><b>Angle:</b> {{ research.angle }}</p>{% endif %}
-      {% if research.signals %}
-        <p style="margin-bottom:.25rem"><b>Signals from this pass</b></p>
-        <ul>{% for sig in research.signals %}<li>{{ sig.statement or sig }}</li>{% endfor %}</ul>
-      {% endif %}
-      {% if research.unknowns %}
-        <p style="margin-bottom:.25rem"><b>Unknowns</b></p>
-        <ul>{% for u in research.unknowns %}<li>{{ u.statement or u }}</li>{% endfor %}</ul>
-      {% endif %}
-    {% else %}
-      <p class="muted">No research on file yet.</p>
-    {% endif %}
-  </div>
-
-  <div class="panel">
-    <h2>Warm paths{% if warm_paths %} ({{ warm_paths|length }}){% endif %}</h2>
-    {% if warm_paths %}
-      <table class="data">
-        <thead><tr><th>Tier</th><th>Contact</th><th>Reason</th></tr></thead>
-        <tbody>
-          {% for w in warm_paths %}
-            <tr>
-              <td><span class="pill">tier {{ w.tier }}</span></td>
-              <td>{{ w.contact.name }}{% if w.contact.title %}
-                <span class="muted">({{ w.contact.title }})</span>{% endif %}</td>
-              <td>{{ w.reason }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="muted">No warm paths found yet. Add known contacts to surface one.</p>
-    {% endif %}
-  </div>
-</div>
-
-<div class="panel">
-  <h2>Contacts &amp; drafted outreach{% if contacts %} ({{ contacts|length }}){% endif %}</h2>
-  <p class="muted">Drafts are text to copy yourself. Kestrel never sends anything on your behalf.</p>
-  {% if contacts %}
-    {% for row in contacts %}
-      {% set c = row.contact %}
-      <div class="card">
-        <div>
-          <b>{{ c.name }}</b>{% if c.title %} <span class="muted">({{ c.title }})</span>{% endif %}
-          {% if c.contact_type %}<span class="pill">{{ c.contact_type }}</span>{% endif %}
-          {% if c.confidence is not none %}
-            <span class="muted mono">conf {{ '%.2f'|format(c.confidence) }}</span>
-          {% endif %}
+      {# ------------------------------------------------------------------ open roles #}
+      <section class="k-card" id="co-roles" data-testid="co-roles">
+        <header class="k-sec-head"><span class="k-badge">{{ ui.icon('apps') }}</span>
+          <div class="k-grow"><h3>Roles here <span class="co-count">{{ roles|length }}</span></h3><p>Your open roles from this company</p></div></header>
+        {% for r in roles %}
+        <div class="co-role">
+          <div class="co-rt"><b title="{{ r.title }}">{{ r.title }}</b>
+            <div class="co-rs"><span>{{ r.place }}</span>
+              {% if r.chip %}<span class="co-chk is-{{ r.chip.state }}" tabindex="0" data-testid="co-chip">{{ ci('clock' if r.chip.state in ('stale', 'closed') else 'check') }}{{ r.chip.text }}<span class="co-tip" role="tooltip">{{ r.chip.tip }}</span></span>{% endif %}
+            </div></div>
+          {{ ui.pill(r.stage, r.tone if r.tone in ('good', 'warn', 'bad', 'info') else '') }}
+          <div class="co-score">{% if r.score is not none %}{{ '%.1f'|format(r.score) }}<small> /5</small>{% else %}<small>Not scored</small>{% endif %}</div>
+          <a class="k-link co-open" href="/opportunities/{{ r.id }}">Open role ›</a>
         </div>
-        <div class="muted">
-          {% if c.email %}{{ c.email }}{% endif %}
-          {% if c.linkedin_url %} · <a href="{{ c.linkedin_url }}" target="_blank" rel="noopener">LinkedIn ↗</a>{% endif %}
-        </div>
-        {% if row.drafts %}
-          {% for d in row.drafts %}
-            <div style="margin-top:.6rem">
-              <div class="muted mono">{{ d.channel }} · <span class="pill">{{ d.status }}</span>
-                {% if d.subject %} · {{ d.subject }}{% endif %}</div>
-              <textarea readonly style="width:100%;min-height:4.5rem;white-space:pre-wrap"
-                        onclick="this.select()">{{ d.body or '' }}</textarea>
-              <button type="button" class="btn"
-                      onclick="var t=this.previousElementSibling; t.select();
-                        if (navigator.clipboard) { navigator.clipboard.writeText(t.value).catch(function(){}); }
-                        this.textContent='Copied';">Copy</button>
-            </div>
-          {% endfor %}
         {% else %}
-          <p class="muted">No drafted outreach for this contact yet.</p>
+        <p class="co-none">No open roles from this company right now.</p>
+        {% endfor %}
+      </section>
+
+      {# ------------------------------------------------------------------ the summary #}
+      {% include "partials/company_summary.html" %}
+
+      {# ------------------------------------------------------------------ what Kestrel knows #}
+      <section class="k-card" id="co-knows" data-testid="co-knows">
+        <header class="k-sec-head"><span class="k-badge k-badge--good">{{ ci('building') }}</span>
+          <div class="k-grow"><h3>What Kestrel knows</h3><p>Public facts, each with its source</p></div></header>
+        <div class="co-kind">Facts</div>
+        {% if knows.facts %}
+        <div class="co-fh"><span>What</span><span>Public source</span><span>Seen</span></div>
+        {% for f in knows.facts %}
+        <div class="co-row" id="co-src-{{ f.n }}"><span class="co-tx" title="{{ f.what }}"><i class="co-rn">{{ f.n }}</i>{{ f.what }}</span>
+          {% if f.url %}<a class="co-src" href="{{ f.url }}" target="_blank" rel="noopener noreferrer"><span>{{ f.kind }}</span>{{ ci('ext') }}</a>{% else %}<span class="co-src is-plain"><span>{{ f.kind }}</span></span>{% endif %}
+          <span class="co-dt">{{ f.seen }}</span></div>
+        {% endfor %}
+        {% else %}
+        <p class="co-none">Kestrel has not read this company's public pages yet.</p>
         {% endif %}
-      </div>
-    {% endfor %}
-  {% else %}
-    <p class="muted">No contacts on file for this org yet.</p>
-  {% endif %}
-</div>
-
-<div class="panel">
-  <h2>Opportunities ever seen{% if opportunities %} ({{ opportunities|length }}){% endif %}</h2>
-  {% if opportunities %}
-    <table class="data">
-      <thead><tr><th>Title</th><th>Stage</th><th>Ghost score</th><th>Liveness</th><th>First seen</th></tr></thead>
-      <tbody>
-        {% for o in opportunities %}
-          <tr>
-            <td><a href="/opportunities/{{ o.id }}">{{ o.title or 'Untitled' }}</a></td>
-            <td><span class="pill">{{ o.stage }}</span></td>
-            <td class="mono {% if o.ghost_score >= 0.5 %}gap{% endif %}">{{ '%.2f'|format(o.ghost_score) }}</td>
-            <td{% if o.liveness == 'closed' and closed_reason_text(o.closed_reason) %} title="{{ closed_reason_text(o.closed_reason) }}"{% endif %}>{{ o.liveness }}</td>
-            <td class="mono">{{ (o.first_seen_at or '')[:10] }}</td>
-          </tr>
+        {% if knows.signals %}
+        <div class="co-kind co-kind--gap">Recent signals</div>
+        {% for s in knows.signals %}
+        <div class="co-row"><span class="co-tx" title="{{ s.what }}">{{ s.what }}</span>
+          {% if s.url %}<a class="co-src" href="{{ s.url }}" target="_blank" rel="noopener noreferrer"><span>{{ s.source }}</span>{{ ci('ext') }}</a>{% else %}<span class="co-src is-plain"><span>{{ s.source }}</span></span>{% endif %}
+          <span class="co-dt">{{ s.seen }}</span></div>
         {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">No opportunities recorded at this org yet.</p>
-  {% endif %}
-</div>
+        {% endif %}
+        <details class="co-det"><summary>Show details</summary><div class="co-dtx">Kestrel reads only public pages and filings, such as the company's own website, careers page and news page, and filings like SEC EDGAR. It follows each site's rules for automated visitors, identifies itself politely, waits between requests and never signs in anywhere. Facts are rechecked about once a week, and the date shown is when Kestrel last saw it.</div></details>
+      </section>
 
-<div class="panel">
-  <h2>Comp observations{% if comp_n_total %} ({{ comp_n_total }} raw){% endif %}</h2>
-  {% if comp_groups %}
-    <table class="data">
-      <thead><tr><th>Title</th><th>Geo</th><th>Interval</th><th>Range</th><th>Currency</th><th>n</th></tr></thead>
-      <tbody>
-        {% for g in comp_groups %}
-          <tr>
-            <td>{{ g.normalized_title }}</td>
-            <td>{{ g.geo_bucket or '-' }}</td>
-            <td>{{ g.interval or '-' }}</td>
-            <td class="mono">
-              {% if g.min is not none or g.max is not none %}
-                {{ '%.0f'|format(g.min) if g.min is not none else '-' }} – {{ '%.0f'|format(g.max) if g.max is not none else '-' }}
-              {% else %}-{% endif %}
-            </td>
-            <td>{{ g.currency or '-' }}</td>
-            <td class="mono {% if g.insufficient %}gap{% else %}covered{% endif %}">
-              {{ g.n }}{% if g.insufficient %} ({{ too_few(g.n) }}){% endif %}
-            </td>
-          </tr>
+      {# ------------------------------------------------------------------ pay #}
+      <section class="k-card" id="co-pay" data-testid="co-pay">
+        <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ci('pay') }}</span>
+          <div class="k-grow"><h3>Pay at this company</h3><p>{% if pay.enough %}{{ pay.n }} similar roles{% else %}Too few to tell ({{ pay.n }}){% endif %}</p></div></header>
+        {% if pay.enough %}
+        <div class="co-stats">
+          <div><div class="co-dl">Typical</div><b>{{ pay.typical }}</b></div>
+          <div><div class="co-dl">Middle half of roles</div><b>{{ pay.middle }}</b></div>
+          <div><div class="co-dl">Lowest to highest</div><b>{{ pay.spread }}</b></div>
+        </div>
+        <div class="co-bar" role="img" aria-label="Typical pay {{ pay.typical }}, middle half {{ pay.middle }}">
+          <i class="co-bar__w" style="left:{{ pay.bar.lo }}%;width:{{ pay.bar.spanw }}%"></i>
+          <i class="co-bar__m" style="left:{{ pay.bar.q1 }}%;width:{{ pay.bar.q3w }}%"></i>
+          <i class="co-bar__d" style="left:{{ pay.bar.typical }}%"></i>
+        </div>
+        <div class="co-sc"><span>{{ pay.scale[0] }}</span><span>{{ pay.scale[1] }}</span></div>
+        <p class="co-foot" data-testid="co-pay-basis">Based on {{ pay.n }} similar roles that list their pay. These are the company's posted ranges, not what people were offered.</p>
+        <details class="co-det"><summary>Show details</summary><div class="co-dtx">Kestrel took the posted yearly pay from this company's public postings that list it, turned each range into its midpoint, then set the middle half and the full spread. Postings with no pay listed, or listed per hour or per month, were left out.</div></details>
+        {% else %}
+        <div class="co-few" data-testid="co-pay-few">{{ ci('pay', 'k-ic--lg') }}<div><b>Too few to tell ({{ pay.n }})</b><div>Kestrel has seen pay on only {{ pay.n }} similar roles here. It needs at least 5 before it shows a range.</div></div></div>
+        <p class="co-foot">Pay comes from postings that list it. Similar roles means this company's own postings.</p>
+        {% endif %}
+      </section>
+
+      {# ------------------------------------------------------------------ people you know #}
+      <section class="k-card" id="co-know" data-testid="co-know">
+        <header class="k-sec-head"><span class="k-badge k-badge--good">{{ ci('users') }}</span>
+          <div class="k-grow"><h3>People you know here</h3><p>{% if know.imported and know.when %}From your contacts imported {{ know.when|replace('Today', 'today') }}{% else %}Only from your own imported connections{% endif %}</p></div></header>
+        {% if know.imported %}
+          {% for group, label in [(True, 'Works here now'), (False, 'Used to work here')] %}
+            {% set rows = know.people|selectattr('now', 'equalto', group)|list %}
+            {% if rows %}<div class="co-kind">{{ label }}</div>
+              {% for p in rows %}
+              <div class="co-kn" data-testid="co-person">
+                <span class="co-av" aria-hidden="true">{{ (p.name.split()|map('first')|join)[:2]|upper }}</span>
+                <div class="co-pn"><b>{{ p.name }}</b><span>{{ p.title or '' }}</span></div>
+                <span class="co-how">{{ p.how }}{% if p.imported %} · imported {{ p.imported|replace('Today', 'today') }}{% endif %}</span>
+                {% if p.drafts %}<button type="button" class="k-btn k-btn--sm" data-k-modal="#co-draft-c{{ p.id }}">{{ ci('copy') }}View draft</button>{% else %}<span></span>{% endif %}
+              </div>
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+          {% if not know.people %}<p class="co-none">No one in your contacts is listed here.</p>{% endif %}
+          {% if know.line %}<p class="co-note" data-testid="co-linkedin-line">{{ ci('shield') }}<span>{{ know.line }}</span></p>{% endif %}
+          <p class="co-foot">Kestrel never sends anything. A draft is text you copy and send yourself. Nobody is contacted.</p>
+        {% else %}
+        <div class="co-knempty" data-testid="co-know-empty">{{ ci('users', 'k-ic--lg') }}<div class="k-grow"><b>See who you know here</b><span class="co-t">Import your LinkedIn connections to see people you know at this company. You download the file from LinkedIn; Kestrel never logs in there.</span></div>
+          <a class="k-btn k-btn--sm k-btn--primary" href="/settings#your-data">Import contacts</a></div>
+        {% endif %}
+      </section>
+
+      {# ------------------------------------------------------------------ public contacts #}
+      <section class="k-card" id="co-people" data-testid="co-people">
+        <header class="k-sec-head"><span class="k-badge">{{ ci('users') }}</span>
+          <div class="k-grow"><h3>Public contacts</h3><p>Publicly listed business contacts only</p></div></header>
+        {% for c in contacts %}
+        <div class="co-person" data-testid="co-contact">
+          <span class="co-av" aria-hidden="true">{{ (c.name.split()|map('first')|join)[:2]|upper }}</span>
+          <div class="co-pn"><b>{{ c.name }}</b><span>{{ c.title or '' }}</span></div>
+          <span class="co-seen" title="{{ c.url or '' }}">{{ c.page }}{% if c.seen %} · Seen {{ c.seen }}{% endif %}</span>
+          <div class="co-acts">
+            {% if c.url %}<a class="k-btn k-btn--sm" href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ ci('ext') }}Open page</a>{% endif %}
+            <button type="button" class="k-btn k-btn--sm" data-copy="{{ c.details }}" data-done="Copied the publicly listed details. Nothing was sent.">{{ ci('copy') }}Copy details</button>
+            {% if c.drafts %}<button type="button" class="k-btn k-btn--sm" data-k-modal="#co-draft-c{{ c.id }}">View draft</button>{% endif %}
+          </div>
+        </div>
+        {% else %}
+        <p class="co-none">No public contacts on file. Kestrel only lists names the company made public itself.</p>
         {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">No comp observations for this org or its size band yet.</p>
-  {% endif %}
+        <p class="co-note">{{ ci('shield') }}<span>Kestrel never sends anything. A draft is text you copy and send yourself. It only shows publicly listed business contact details and never messages anyone.</span></p>
+      </section>
+
+      {# ------------------------------------------------------------------ history #}
+      <section class="k-card" id="co-hist" data-testid="co-hist">
+        <header class="k-sec-head"><span class="k-badge">{{ ui.icon('clock') }}</span>
+          <div class="k-grow"><h3>Your history here</h3><p>{% if applications %}{{ applications }} application{{ '' if applications == 1 else 's' }}{% else %}No applications{% endif %}</p></div></header>
+        {% for h in history %}
+        <div class="co-hist"><div class="co-rt"><b>{{ h.title }}</b>{% if h.note %}<span>{{ h.note }}</span>{% endif %}</div><span class="co-dt">{{ h.applied }}</span>{{ ui.pill(h.status, h.tone) }}</div>
+        {% endfor %}
+        {% if history %}<p class="co-foot" data-testid="co-reply">{{ reply_line }}</p>
+        {% else %}<p class="co-none">You have not applied here yet. Roles you apply to will show up here with how they went.</p>{% endif %}
+      </section>
+
+      {% if research %}
+      <details class="k-card co-research" data-testid="co-research"><summary>Earlier research on this company</summary>
+        <p class="k-muted">Written {{ date_display(research.researched_at) or 'earlier' }}{% if research.insufficient_sources %}. It rested on too few public sources to rely on alone{% endif %}.</p>
+        {% if research.summary_md %}<div class="co-pre">{{ research.summary_md }}</div>{% endif %}
+        {% if research.angle %}<p><b>Angle:</b> {{ research.angle }}</p>{% endif %}
+        {% if research.unknowns %}<p><b>Not found:</b></p><ul>{% for u in research.unknowns %}<li>{{ u }}</li>{% endfor %}</ul>{% endif %}
+      </details>
+      {% endif %}
+    </div>
+
+    {% call ui.help_column() %}
+      {{ ui.help_card('Public pages and filings only', ['Kestrel reads a company’s own pages and public filings. It never signs in anywhere.'], 'info', 'info', 'co-src-fly') }}
+      {{ ui.help_card('The summary', ['Written by the AI from the public sources listed here. It can be wrong, so check the sources.'], 'info', 'compass', 'co-sum-fly') }}
+      {{ ui.help_card('Hiding a company', ['Hide keeps its roles out of Pipeline and Today. Undo it here or in Settings.'], 'warn', 'alert', 'co-hide-fly') }}
+      {{ ui.help_card('Reaching people', ['Only names the company made public, and people you already know. Kestrel never messages anyone.'], 'good', 'shield', 'co-reach-fly') }}
+    {% endcall %}
+  </div>
+
+  {# Drafts the operator can copy. Nothing is sent from here (hard rule 1). #}
+  {% for group in (know.people + contacts) if group.drafts %}
+    {% call ui.modal('co-draft-c' ~ (group.id), 'Draft note for ' ~ group.name, [{'label': 'Close', 'close': True}]) %}
+      <p class="k-muted">Edit it, then copy it and send it yourself. Kestrel never sends anything.</p>
+      {% for d in group.drafts %}
+      <pre class="co-draft" id="co-draft-{{ d.id }}">{{ d.body or '' }}</pre>
+      <button type="button" class="k-btn k-btn--sm" data-copy-from="#co-draft-{{ d.id }}" data-done="Draft copied. Kestrel never sends anything.">{{ ci('copy') }}Copy draft</button>
+      {% endfor %}
+    {% endcall %}
+  {% endfor %}
+
+  {% call ui.flyout('co-src-fly', 'Public pages and filings', help_href='/help') %}
+    <h4>Public pages and filings only</h4>
+    <p>Kestrel reads a company's own website, careers page and news page, and public filings such as annual reports. It never signs in anywhere and never uses private data.</p>
+    <h4>How to tell what to trust</h4>
+    <p>Every fact shows where it came from and when Kestrel saw it. Press the source to read the original. If a fact looks wrong, trust the source, not Kestrel.</p>
+    <h4>Why some facts are missing</h4>
+    <p>Small and private companies publish less. A blank is not a warning sign, it only means nothing public was found.</p>
+  {% endcall %}
+  {% call ui.flyout('co-sum-fly', 'The summary', help_href='/help') %}
+    <h4>Where it comes from</h4>
+    <p>The AI writes it from the public sources listed in What Kestrel knows. The small numbers point to the source for each sentence.</p>
+    <h4>When there is not enough</h4>
+    <p>With fewer than two public sources Kestrel writes nothing and does not ask a model to guess.</p>
+    <h4>Refresh</h4>
+    <p>Refresh writes it again. On a model on this computer it just runs. On an online model Kestrel shows exactly what is sent and waits for your yes.</p>
+  {% endcall %}
+  {% call ui.flyout('co-hide-fly', 'Hiding a company', help_href='/help') %}
+    <h4>What Hide does</h4>
+    <p>Roles from this company stop showing in Pipeline and Today. Kestrel still keeps what it already found, so you can change your mind.</p>
+    <h4>How to undo</h4>
+    <p>Press Undo right after, or Show this company here. You can also manage the whole list in Settings under Hidden companies.</p>
+    <h4>Hide or just pass</h4>
+    <p>Hide when you never want to see them again. To pass on one role, use Not interested on that role instead.</p>
+  {% endcall %}
+  {% call ui.flyout('co-reach-fly', 'Reaching people', help_href='/help') %}
+    <h4>What you will see</h4>
+    <p>Names, titles and business contact details that the company has made public, such as a team page. Each one shows where it was found.</p>
+    <h4>People you know here</h4>
+    <p>Only if you imported your LinkedIn connections file, which you download from LinkedIn yourself. Kestrel reads it on your own computer, never logs in to LinkedIn, and lists only people who work here now or used to, based on your earlier import.</p>
+    <h4>What to do with it</h4>
+    <p>You decide whether to write to someone, and you write it yourself. A draft is text you copy and send from your own email.</p>
+  {% endcall %}
 </div>

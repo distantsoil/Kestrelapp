@@ -1,266 +1,106 @@
+{# Models (D-UI-105, D-UI-147, SPEC-INTERFACES 2.1 /models). Built on the shared design system:
+   ui/macros.html, tokens for every color. Each card is a partial that swaps itself in place.
+   The comparison from stored evaluations stays, behind Show details at the foot. #}
 {% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
 {% block title %}Models · Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/models.css">
+<script src="/static/js/models.js" defer></script>
+{% endblock %}
 {% block content %}
-<div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap">
-  <h1 style="margin-right:auto">Models
-    <span class="badge">{{ track or 'both tracks' }}</span>
-    <span class="badge">{% if since %}last {{ since }} days{% else %}all time{% endif %}</span>
-  </h1>
-  <span class="muted">Window:</span>
-  {% for d in since_choices %}
-    <a class="btn ghost{% if since == d %} primary{% endif %}"
-       href="/models?track={{ track }}&since={{ d }}">{{ d }}d</a>
-  {% endfor %}
-  <a class="btn ghost{% if not since %} primary{% endif %}" href="/models?track={{ track }}">All</a>
-</div>
-<p class="muted">Which model has done the work at each tier and how it has done, from your
-own evaluation rows. Agreement with your labels is the only quality signal the model
-does not report about itself. Every rate is shown beside the sample size it rests on; anything
-under five labeled evaluations says "too few to judge" rather than being shown as if it were solid.
-Switch tracks with the Emp/Con toggle in the top bar.</p>
-<p class="muted" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
+<div class="mo-wrap"><div class="mo-page">
+  {% call ui.scene_band('Models') %}
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#mo-how-fly" aria-controls="mo-how-fly" aria-expanded="false" data-testid="mo-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+    <a class="k-btn k-btn--sm k-btn--primary" href="/bench" data-testid="mo-check-btn">{{ ui.icon('bench', 'k-ic--sm') }}Check my models</a>
+  {% endcall %}
 
-{# -------------------------------------------------------------------- the one-paragraph verdict #}
-<div class="panel" style="border-left:3px solid var(--orange)">
-  <h2>Where things stand</h2>
-  {% if not rows %}
-    <p>No evaluations {% if since %}in the last {{ since }} days{% endif %}{% if track %} on the
-    {{ track }} track{% endif %} yet. Run the pipeline and label a few results from Calibrate to
-    start a comparison.</p>
-  {% else %}
-    <p>
-      {{ n_evaluations }} evaluations across {{ rows|length }} model and prompt combinations.
-      {% for tier in tiers %}
-        {% set b = best[tier] %}
-        {% if b %}
-          {{ tier|tier_label }}: <b class="mono">{{ b.model }}</b> ({{ b.prompt_version }}) agrees with
-          you on {{ '%.0f'|format(b.agreement_rate * 100) }}% of {{ b.n_labeled }} labeled
-          evaluations{% if b.mean_abs_score_error is not none %}, mean absolute score error
-          {{ '%.2f'|format(b.mean_abs_score_error) }}{% endif %}.
-        {% else %}
-          {{ tier|tier_label }}: {{ too_few(max_labeled[tier]) }} to say which model agrees with you.
-        {% endif %}
-      {% endfor %}
-    </p>
+  {% if last_check and last_check.changes %}
+  <div class="mo-banner" data-testid="mo-suggestion">{{ ui.icon('analytics') }}<span><b>{{ last_check.summary }}</b> From your check on {{ last_check_when }}.</span><a class="k-link" href="/bench">See Model check</a></div>
   {% endif %}
-  <p class="muted" style="margin-top:.4rem">
-    Configured now:
-    {% for name, cfg in configured.items() %}
-      <span class="mono">{{ name }}={{ cfg.model }}</span>{% if cfg.backend != 'local' %}
-      <span class="pill">{{ cfg.backend }}</span>{% endif %}{% if not loop.last %} &middot; {% endif %}
-    {% endfor %}
-  </p>
-</div>
 
-{# ----------------------------------------------------------------- hardware and hosted settings #}
-<div class="split">
-  <div class="panel">
-    <h2 title="Hardware profile">Your computer</h2>
-    {% if hardware %}
-      <p><b class="mono" title="Hardware profile">{{ hardware.profile }}</b>
-        {% if hardware.chosen_at %}<span class="muted">chosen {{ hardware.chosen_at }}</span>{% endif %}</p>
-      {% if hardware.reason %}<p class="muted">{{ hardware.reason }}</p>{% endif %}
-    {% else %}
-      <p class="muted">Kestrel has not checked this computer yet. Open <a href="/setup">Setup</a>
-      to check it and pick models that fit.</p>
-    {% endif %}
-  </div>
-  <div class="panel">
-    <h2>Online model service</h2>
-    {% if provider and provider.base_url %}
-      <div class="formgrid">
-        <label>Backend</label><div class="mono">{{ provider.backend_name }} ({{ provider.provider }},
-          {{ provider.protocol }})</div>
-        <label>Model</label><div class="mono">{{ provider.model or '(none)' }}</div>
-        <label>Endpoint</label><div class="mono">{{ provider.base_url }}</div>
-        <label>Key</label>
-        <div{% if provider.env_name %} title="Stored as {{ provider.env_name }}"{% endif %}>{% if provider.key_present %}saved{% else %}not set: <a href="/settings#hosted">add it in Settings &gt; Hosted</a>{% endif %}</div>
-      </div>
-    {% else %}
-      <p class="muted">No hosted backend configured.</p>
-    {% endif %}
-    <p class="muted" style="margin-top:.5rem">Hosted sends are opt-in per opportunity and only
-    happen after you confirm the payload. Manage keys under
-    <a href="/settings">Settings &gt; Hosted (BYOK)</a>; pick your own model per tier under
-    <a href="#hosted-overrides">Hosted models per tier</a> below.</p>
-  </div>
-</div>
+  <p class="mo-uses" data-testid="mo-uses"><span class="k-muted">Kestrel uses</span>
+    <span class="k-pill {{ 'k-pill--good' if choice == 'local' else ('k-pill--warn' if choice == 'hosted' else 'k-pill--info') }}">{{ ui.icon('laptop' if choice == 'local' else 'cloud') }}{{ choice_label }}</span>
+    <a class="k-link" href="/settings#system" data-testid="mo-change-mode">Change in Settings</a></p>
 
-{# ------------------------------------------------- hosted model overrides per tier (D-UI-42) #}
-{% include "partials/model_overrides.html" %}
+  <p data-testid="speed-note" class="k-muted md-speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
 
-{# ---------------------------------------------------------------------------- comparison table #}
-<div class="panel">
-  <h2>Comparison by tier, model, and prompt version</h2>
-  <p class="muted">Click a column header to sort. Agreement is exact-verdict agreement with
-  your latest label on the same opportunity; n_labeled is its denominator. Cost is summed
-  from hosted transmissions; local models have no cost to sum and show "local".</p>
-  <table class="data" id="model-compare">
-    <thead>
-      <tr>
-        <th data-sort="num">Step</th>
-        <th data-sort="text">Model</th>
-        <th data-sort="text">Prompt</th>
-        <th data-sort="num">Rated</th>
-        <th data-sort="num">Mean score</th>
-        <th>Verdicts</th>
-        <th data-sort="num">Agreement</th>
-        <th data-sort="num">Score error</th>
-        <th data-sort="num">Latency ms</th>
-        <th data-sort="num">Tokens in / out</th>
-        <th data-sort="num">Cost</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in rows %}
-      <tr>
-        <td class="mono" data-v="{{ r.tier }}">{{ r.tier|tier_label }}</td>
-        <td class="mono" data-v="{{ r.model }}">{{ r.model }}{% if r.hosted %}
-          <span class="pill">hosted</span>{% endif %}</td>
-        <td class="mono" data-v="{{ r.prompt_version }}">{{ r.prompt_version }}</td>
-        <td class="mono" data-v="{{ r.n }}">{{ r.n }}</td>
-        <td class="mono" data-v="{{ r.mean_score if r.mean_score is not none else -1 }}">
-          {% if r.mean_score is not none %}{{ '%.2f'|format(r.mean_score) }}{% else %}-{% endif %}
-        </td>
-        <td class="mono">
-          {% for v, c in r.verdicts.items()|sort %}{{ v }} {{ c }}{% if not loop.last %}, {% endif %}{% endfor %}
-        </td>
-        <td class="mono" data-v="{{ r.agreement_rate if r.agreement_rate is not none else -1 }}">
-          {% if r.insufficient %}
-            <span class="pill">{{ too_few(r.n_labeled) }}</span>
-          {% elif r.agreement_rate is not none %}
-            {{ '%.0f'|format(r.agreement_rate * 100) }}% of {{ r.n_labeled }}
+  <div class="k-layout">
+    <div class="k-layout__main mo-main">
+      <div class="mo-two">
+        {# ------------------------------------------------------------ This computer #}
+        <section class="k-card mo-card {{ 'mo-edge-warn' if (cpu_only or local_pill[1] == 'warn') else 'mo-edge-good' }}" id="mo-computer" data-testid="mo-computer">
+          <header class="mo-head"><span class="k-badge k-badge--lg {{ 'k-badge--warn' if cpu_only else 'k-badge--good' }}">{{ ui.icon('laptop') }}</span>
+            <div class="k-grow"><h3>On this computer {{ ui.pill(local_pill[0], local_pill[1]) }}</h3><p class="k-muted">Private. Works offline.</p></div></header>
+          <div class="mo-row"><b class="mo-name" title="{{ local_model }}">{{ local_model }}</b>
+            <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-change" hx-get="/models/change/tier2" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-local">Change model</button></div>
+          <dl class="mo-strip">
+            <div><dt>Size</dt><dd>{{ local_billions or 'Not known' }}</dd></div>
+            <div><dt title="How much text the model can read at once, in pages of about 500 words">Can read</dt><dd>About {{ local_pages }} pages at once</dd></div>
+            <div><dt>Memory needed</dt><dd>{{ local_size or 'Not known' }}</dd></div>
+            <div><dt>Runs on</dt><dd>{% for c in hw_chips %}{% if not loop.first %} · {% endif %}{{ c }}{% endfor %}</dd></div>
+          </dl>
+          {% if cpu_only %}
+          <p class="mo-rec is-warn" data-testid="mo-cpu-note">{{ ui.icon('alert') }}<span>No graphics card found. Scoring is slow on this computer; an online model is faster. <button type="button" class="k-link" data-k-slideover="#mo-online-so" hx-get="/models/online?open=1" hx-target="#mo-online-body" hx-swap="innerHTML">Set up an online model</button></span></p>
           {% else %}
-            too few to judge
+          <p class="mo-rec is-good">{{ ui.icon('check') }}<span>{{ recommendation }}</span></p>
           {% endif %}
-        </td>
-        <td class="mono" data-v="{{ r.mean_abs_score_error if r.mean_abs_score_error is not none else 99 }}">
-          {% if r.insufficient %}<span class="pill">{{ too_few(r.n_labeled) }}</span>
-          {% elif r.mean_abs_score_error is not none %}{{ '%.2f'|format(r.mean_abs_score_error) }}
-          {% else %}-{% endif %}
-        </td>
-        <td class="mono" data-v="{{ r.mean_latency_ms or 0 }}">
-          {% if r.mean_latency_ms is not none %}{{ '%.0f'|format(r.mean_latency_ms) }}{% else %}-{% endif %}
-        </td>
-        <td class="mono" data-v="{{ r.mean_prompt_tokens or 0 }}">
-          {% if r.mean_prompt_tokens is not none %}{{ '%.0f'|format(r.mean_prompt_tokens) }} /
-          {{ '%.0f'|format(r.mean_completion_tokens) }}{% else %}-{% endif %}
-        </td>
-        <td class="mono" data-v="{{ r.cost_usd if r.cost_usd is not none else -1 }}">
-          {{ r.cost_label }}{% if r.hosted %} <span class="muted">({{ r.n_costed_sends }} of
-          {{ r.n_hosted_sends }} sends priced)</span>{% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="11" class="muted" style="text-align:center;padding:1.2rem">
-        No evaluations in this window. This table is computed from stored rows and is never a
-        placeholder.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted" style="margin-top:.5rem">To run a controlled comparison against the gold set
-  and promote a winner, use the <a href="/bench">Bench</a> page.</p>
-</div>
+        </section>
+        {# ------------------------------------------------------------------ Online #}
+        {% include "partials/models_online_card.html" %}
+      </div>
 
-{# ------------------------------------------------------------------------------ recent history #}
-<div class="panel">
-  <h2>Recent evaluations</h2>
-  <p class="muted">The last {{ history|length }} evaluations, newest first. "Agreed" compares the
-  model's verdict with your latest label on the same opportunity; blank means no label
-  yet.</p>
-  <table class="data">
-    <thead>
-      <tr>
-        <th>When</th><th>Opportunity</th><th>Step</th><th>Model</th><th>Verdict</th>
-        <th>Score</th><th>Your label</th><th>Agreed</th><th>Latency ms</th><th>Tokens</th><th>Cost</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for h in history %}
-      <tr>
-        <td class="mono muted">{{ h.created_at[:16] }}</td>
-        <td><a href="/opportunities/{{ h.opportunity_id }}">{{ h.title or '(untitled)' }}</a>
-          <span class="muted">{{ h.org or '' }}</span> <span class="pill">{{ h.track }}</span></td>
-        <td class="mono">{{ h.tier|tier_label }}</td>
-        <td class="mono">{{ h.model }}{% if h.hosted %} <span class="pill">hosted</span>{% endif %}</td>
-        <td>{% if h.verdict %}<span class="badge {{ h.verdict }}">{{ h.verdict }}</span>{% else %}-{% endif %}</td>
-        <td class="mono">{% if h.score is not none %}{{ '%.2f'|format(h.score) }}{% else %}-{% endif %}</td>
-        <td>{% if h.operator_verdict %}<span class="badge {{ h.operator_verdict }}">{{ h.operator_verdict }}</span>{% else %}-{% endif %}</td>
-        <td class="mono">
-          {% if h.agreed is true %}<span class="covered">&#10003; yes</span>
-          {% elif h.agreed is false %}<span class="gap">&#10007; no</span>
-          {% else %}-{% endif %}
-        </td>
-        <td class="mono">{{ h.latency_ms }}</td>
-        <td class="mono">{{ h.prompt_tokens }} / {{ h.completion_tokens }}</td>
-        <td class="mono">{{ h.cost_label }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="11" class="muted" style="text-align:center;padding:1.2rem">
-        No evaluations yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+      {% include "partials/models_steps.html" %}
 
-{# ------------------------------------------------------------------------------- bench results #}
-<div class="panel">
-  <h2>Benchmark runs</h2>
-  {% if not bench.persisted %}
-    <div class="warnbox" style="margin-bottom:.6rem">No stored benchmark run. {{ bench.note }}</div>
-  {% endif %}
-  {% if bench.goldsets %}
-  <table class="data">
-    <thead><tr><th>Track</th><th>Gold set</th><th>Items</th><th>Status</th></tr></thead>
-    <tbody>
-      {% for g in bench.goldsets %}
-      <tr>
-        <td>{{ g.track }}</td>
-        <td>{% if g.present %}present{% else %}missing{% endif %}</td>
-        <td class="mono">{{ g.n_items }}{% if g.insufficient %} <span class="pill">{{ too_few(g.n_items) }}</span>{% endif %}</td>
-        <td class="muted">
-          {% if not g.present %}Run <span class="mono">kestrel goldset regen --track {{ g.track }}</span>.
-          {% elif g.placeholder %}Shipped placeholder: invented items, so agreement against it says
-          nothing about your judgment. Label real items and regenerate.
-          {% else %}Regenerated from your own labels.{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-  <p class="muted" style="margin-top:.5rem">Run <span class="mono">kestrel bench --models a,b</span>
-  from a terminal for a controlled comparison, then promote the winner on
-  <a href="/bench">Bench</a>.</p>
-</div>
+      <div class="mo-two">
+        {% include "partials/models_health.html" %}
+        {% include "partials/models_downloads.html" %}
+      </div>
 
-<script>
-  // Client-side column sort for the comparison table: each sortable cell carries its raw value in
-  // data-v, so "insufficient (n=2)" sorts below every real rate rather than being parsed as one.
-  (function () {
-    const table = document.getElementById('model-compare');
-    if (!table) return;
-    table.querySelectorAll('th[data-sort]').forEach((th, _i) => {
-      const idx = Array.from(th.parentNode.children).indexOf(th);
-      th.style.cursor = 'pointer';
-      th.addEventListener('click', () => {
-        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
-        table.querySelectorAll('th').forEach(h => delete h.dataset.dir);
-        th.dataset.dir = dir;
-        const body = table.tBodies[0];
-        const rows = Array.from(body.rows).filter(r => r.cells.length > 1);
-        const key = r => {
-          const v = r.cells[idx].dataset.v ?? r.cells[idx].textContent.trim();
-          return th.dataset.sort === 'num' ? parseFloat(v) : v.toLowerCase();
-        };
-        rows.sort((a, b) => {
-          const x = key(a), y = key(b);
-          const c = x < y ? -1 : x > y ? 1 : 0;
-          return dir === 'asc' ? c : -c;
-        });
-        rows.forEach(r => body.appendChild(r));
-      });
-    });
-  })();
-</script>
+      <div class="mo-two">
+        {% include "partials/models_quality.html" %}
+        {% include "partials/models_speed_card.html" %}
+      </div>
+
+      {% include "partials/models_history.html" %}
+    </div>
+    {% call ui.help_column() %}
+      {{ ui.help_card('What each step does', ['Rules and Quick screen: fast filters.', 'Rating: reads the whole posting.', 'Deeper read: only when you ask.'], 'info', 'cpu', 'mo-steps-fly') }}
+      {{ ui.help_card('On this computer or online', ['This computer: private and free.', 'Online: faster, paid per use.', 'Kestrel asks before anything goes online.'], 'warn', 'cloud', 'mo-where-fly') }}
+      {{ ui.help_card('Checks and fixes', ['Model check: after a new model or 30 ratings.', 'Room to read: pages a model takes in at once.', 'The health check tests it with a hidden word.'], 'good', 'shield', 'mo-checks-fly') }}
+    {% endcall %}
+  </div>
+
+  {# The Change model drawer and the online setup both load their body in place. #}
+  {% call ui.slide_over('mo-change', 'Change model') %}<div id="mo-change-body" class="mo-drawer-body"></div>{% endcall %}
+  {% call ui.slide_over('mo-online-so', 'Online model') %}<div id="mo-online-body" class="mo-drawer-body">{% include "partials/models_online.html" %}</div>{% endcall %}
+  {% call ui.slide_over('mo-overrides-so', 'Model overrides') %}<div id="mo-overrides-body" class="mo-drawer-body"></div>{% endcall %}
+
+  {% call ui.flyout('mo-how-fly', 'How Models works', help_href='/help') %}
+    <h4>One model per step</h4>
+    <p>Every role goes through up to five steps. Each step has a model, on this computer or online. The table shows which, and how well it matches your own ratings.</p>
+    <h4>Changing one</h4>
+    <p>Press Change on a row. Kestrel lists models that fit this computer first. A model that is not downloaded starts downloading when you pick it.</p>
+    <h4>Is another model better for you?</h4>
+    <p>Press Check my models. Kestrel tests the alternatives against an answer key, your own ratings once you use them, and tells you plainly whether to switch.</p>
+  {% endcall %}
+  {% call ui.flyout('mo-steps-fly', 'What each step does', help_href='/help') %}
+    <h4>Rules</h4><p>Your own filters for title, place and pay. No AI.</p>
+    <h4>Quick screen</h4><p>Reads the start of each posting and sets aside clear misses. Uncertain roles are kept, never dropped.</p>
+    <h4>Rating</h4><p>Reads the whole posting and scores how well it fits you.</p>
+    <h4>Resume picking</h4><p>Chooses among your own resume lines. It never writes new ones.</p>
+    <h4>Deeper read</h4><p>Only when you ask, on one role. It checks the role and the company.</p>
+  {% endcall %}
+  {% call ui.flyout('mo-where-fly', 'On this computer or online', help_href='/help') %}
+    <h4>On this computer</h4><p>Private and free. Nothing leaves your computer.</p>
+    <h4>Online</h4><p>Faster and paid per use, with your own key. The role text and the profile lines a step needs go to the provider, and Kestrel asks first. The model that finds similar roles always stays on this computer.</p>
+    <h4>Both</h4><p>Everything runs here except Deeper read, which runs online when you ask.</p>
+  {% endcall %}
+  {% call ui.flyout('mo-checks-fly', 'Checks and fixes', help_href='/help') %}
+    <h4>Room to read</h4><p>How much text a model takes in at once, in pages of about 500 words. Too little and long postings are cut short without any warning.</p>
+    <h4>The hidden-word test</h4><p>Kestrel hides a word near the end of a long posting and asks the model to find it. That proves the model really read to the end.</p>
+    <h4>Fix it</h4><p>Rebuilds Kestrel's models with the right room to read, then tests again.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

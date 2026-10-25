@@ -1,0 +1,31 @@
+{# Posting tab: the text as posted, "Also posted on" the other copies of the same posting with
+   source links, and the liveness read. posting_link, source_name and dedup_rows are the route's
+   display copies (confidential mode redacts them); never print opp.url or source.name here. #}
+{% from "partials/role_icons.html" import ric %}
+<div id="rl-tab-posting" class="rl-postab" data-tab="posting">
+  <section class="k-card rl-card rl-posting">
+    <div class="rl-dsm" data-testid="posting-sources">Shown exactly as posted.
+      {% if source_name %}Posted on <b>{{ source_name }}</b>{% if posting_link and posting_link.href %} <a class="k-link" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="posting-link">{{ posting_link.text }} ↗</a>{% elif posting_link %} <span class="rl-quiet">({{ posting_link.text }})</span>{% endif %}.
+      {% elif posting_link and posting_link.href %}<a class="k-link" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="posting-link">{{ posting_link.text }} ↗</a>.
+      {% elif opp.opp_type == 'manual' %}Pasted by you.{% endif %}
+      {% if dedup_rows %}<span data-testid="also-posted">Also posted on ({{ dedup_rows|length }}):
+        {% for m in dedup_rows %}<a class="k-link" href="/opportunities/{{ m.id }}">{{ m.title }}</a>{% if m.href %} <a class="k-link" href="{{ m.href }}" target="_blank" rel="noopener" aria-label="Open that posting">↗</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+    </div>
+    <p class="rl-liveline">
+      <span class="k-pill k-pill--{{ 'good' if opp.liveness == 'live' else ('bad' if opp.liveness in ('gone', 'closed') else 'info') }}"{% if opp.liveness == 'closed' and closed_reason_text(opp.closed_reason) %} title="{{ closed_reason_text(opp.closed_reason) }}"{% elif (opp.liveness_strikes or 0) >= 1 %} title="The posting page looked closed once; Kestrel checks again before closing it"{% endif %} data-testid="liveness-pill">{{ opp.liveness or 'unchecked' }}</span>
+      {% if opp.liveness == 'closed' and closed_reason_text(opp.closed_reason) %}<span class="rl-quiet" data-testid="closed-reason">{{ closed_reason_text(opp.closed_reason) }}.</span>
+      {% elif (opp.liveness_strikes or 0) >= 1 %}<span class="rl-quiet" data-testid="liveness-strike">Looked closed once; checking again.</span>{% endif %}
+      {% if opp.liveness_checked_at %}<span class="rl-quiet">checked {{ date_display(opp.liveness_checked_at) }}</span>{% endif %}
+    </p>
+    <div class="rl-desc" data-testid="description">{{ description_display or '(no description)' }}</div>
+    <details class="rl-details"><summary>Show details</summary>
+      <dl class="rl-kv">
+        <dt>Posted</dt><dd>{{ date_display(opp.date_posted, fallback=opp.date_posted) or 'not stated' }}</dd>
+        <dt>Seen</dt><dd>first {{ date_display(opp.first_seen_at) or 'unknown' }} · last {{ date_display(opp.last_seen_at) or 'unknown' }} · {{ opp.seen_count or 1 }} time{{ '' if (opp.seen_count or 1) == 1 else 's' }}{% if (opp.version or 1) > 1 %} · changed {{ opp.version - 1 }} time{{ '' if opp.version == 2 else 's' }}{% else %} · unchanged{% endif %}</dd>
+        <dt>Source</dt><dd>{% if source %}{{ source_name }} <span class="rl-quiet">({{ source.kind }})</span>{% else %}<span class="rl-quiet">manual</span>{% endif %}</dd>
+        <dt>Ghost score</dt><dd>{{ '%.2f'|format(opp.ghost_score or 0) }}</dd>
+        {% if opp.employment_type %}<dt>Type</dt><dd>{{ opp.employment_type }}</dd>{% endif %}
+      </dl>
+    </details>
+  </section>
+</div>

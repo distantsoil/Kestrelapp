@@ -400,6 +400,7 @@ async def test_a_transport_error_goes_back_to_the_queue(sm):
 
 # ------------------------------------------------------------------------- hosted routing
 async def test_a_hosted_tier_redacts_the_employer_before_the_send(sm):
+    from kestrel.services.online_consent import destination_id
     from tests.test_hosted_mode import _EMPLOYER, _PLACEHOLDER, _coded, _hosted_settings
 
     mid = await _seed_master(sm)
@@ -411,8 +412,12 @@ async def test_a_hosted_tier_redacts_the_employer_before_the_send(sm):
         await s.commit()
     settings = _hosted_settings("tier2", confidential=True)
     client = _Client(settings=settings)
-    async with sm() as s:
-        await ts.request_title_suggestions(s, "manual")
+    async with sm() as s:  # a confirmed send, as Suggest again posts it
+        await ts.request_title_suggestions(
+            s, "manual", consent={
+                "consented_model": settings.llm.tiers["tier2"].model,
+                "consented_destination": destination_id(settings, "tier2"),
+            })
         await s.commit()
     await ts.drain_title_suggestions(sm, client, settings)
     sent = "\n".join(m["content"] for m in client.calls[0]["messages"])
@@ -428,10 +433,10 @@ def test_the_prompt_loads_and_registers():
     assert "—" not in spec.system + spec.user
 
 
-def test_the_migration_head_is_0022():
+def test_the_migration_head_is_0023_or_later():
     from kestrel.db.migrate import head_revision
 
-    assert head_revision() == "0022"
+    assert head_revision() >= "0023"  # later migrations stack on it (0024: engagement deadline)
 
 
 async def test_a_title_cannot_be_stored_twice_in_any_case(sm):
@@ -503,7 +508,9 @@ def test_the_employment_tab_shows_the_suggestions_and_accept_changes_the_profile
     emp = web.get("/profile?tab=employment&track=employment")
     assert "/profile/title-suggestions" in emp.text
     r = web.post("/title-suggestions/1/accept")
-    assert r.status_code == 200 and r.headers.get("HX-Refresh") == "true"
+    assert r.status_code == 200 and "HX-Refresh" not in r.headers
+    assert json.loads(r.headers["HX-Trigger"])["pf-title-accepted"] == {
+        "title": "Operations Analyst"}
     assert _target_titles() == ["Operations Analyst"]
     after = web.get("/profile/title-suggestions").text
     assert "Process Improvement Lead" in after and ">Operations Analyst<" not in after
@@ -518,6 +525,10 @@ def test_unknown_ids_and_refresh_never_error(web):
     r = web.post("/title-suggestions/refresh")
     assert r.status_code == 200
 
+    page = web.get("/profile/title-suggestions")
+    poll_url = re.search(r'hx-get="([^"]+)"', page.text).group(1)
+    assert web.get(poll_url).status_code == 204
+
     async def n(sm):
         return await _count(sm, Task, Task.type == ts.TASK_TYPE)
 
@@ -525,16 +536,19 @@ def test_unknown_ids_and_refresh_never_error(web):
     assert "resume" in r.text.lower()
 
 
-def test_onboarding_employment_step_carries_the_suggestions_slot():
+def test_onboarding_wants_step_carries_the_suggestions_slot():
     from pathlib import Path
 
     import kestrel.web
 
     body = Path(kestrel.web.__file__).parent / "templates/partials/onboarding_body.html"
     text = body.read_text(encoding="utf-8")
-    start = text.split("{% elif key == 'employment' %}")[1]
-    step = start.split("{% elif key == 'consulting' %}")[0]
-    assert 'hx-get="/profile/title-suggestions"' in step
+    step = text.split("{% elif key == 'wants' %}")[1].split("{% elif key == 'searches' %}")[0]
+    # Inside the jobs section only, and it posts nothing from the form around it.
+    jobs = step.split("{% if 'consulting' in tracks %}")[0]
+    assert 'hx-get="/profile/title-suggestions"' in jobs and 'hx-params="none"' in jobs
+    # The form around it targets the whole step; the slot must answer into itself instead.
+    assert 'hx-target="#title-suggestions"' in jobs
 
 
 async def test_no_automatic_pass_when_tier_2_runs_online(sm, monkeypatch):

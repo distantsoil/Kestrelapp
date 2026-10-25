@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import String, and_, case, cast, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -29,12 +29,16 @@ from kestrel.db.models import (
     Quarantine,
     Run,
     ScrapeRun,
+    Setting,
     Source,
     StatusEvent,
     Task,
     VerdictOverride,
 )
+from kestrel.research.connections import not_imported_connection
 from kestrel.services import run_model
+from kestrel.services.hidden_orgs import not_hidden_org_clause, opp_visible_clause
+from kestrel.urls import safe_web_url
 from kestrel.web.fit import (
     GROUP_APPLIED,
     GROUP_FAILED,
@@ -55,6 +59,9 @@ _SORTS = {
     "first_seen": (Opportunity.first_seen_at, True),
     "pre_score": (Opportunity.pre_score, True),
     "ghost": (Opportunity.ghost_score, True),
+    # The Pipeline's sort menu (D-UI-96): oldest first and the company's name.
+    "oldest": (Opportunity.first_seen_at, False),
+    "company": (func.lower(func.coalesce(Org.name, Opportunity.org_name, "")), False),
 }
 
 
@@ -80,6 +87,9 @@ class OppFilters:
     # and Unhide puts one back. Nothing here deletes a row.
     include_archived: bool = False
     hidden_only: bool = False
+    # A hidden company's roles are out of Pipeline (D-UI-123 amended); only the Settings list of
+    # hidden companies and a role page reached by its link ever need them.
+    include_hidden_orgs: bool = False
     # The triage chips (docs/UI_PROPOSAL.html Screen 2). Shortlisted is "has a pursuit row"; new
     # today is "first seen since 00:00 UTC". Both are additive to the older filters above.
     shortlisted: bool = False
@@ -91,6 +101,24 @@ class OppFilters:
     # Grouped list only (D-UI-62): "main" pages the visible groups and leaves Not a fit out;
     # "not_fit" pages Not a fit alone, for its own section below the others.
     section: str = "main"
+    # More filters (D-UI-96). `saved` is the Saved chip. `pay_min` is the operator's pay floor or
+    # target for the pay filter (roles with no posted pay stay, hard rule 4). `work_type` is the
+    # remote type, `posted_days` the age of the posting, `warnings` "no_ghost" or "review",
+    # `liveness` and `legitimacy` the posting checks.
+    saved: bool = False
+    # "floor" or "target": the page route turns it into `pay_min` from the operator's profile.
+    pay: str | None = None
+    pay_min: float | None = None
+    work_type: str | None = None
+    posted_days: int | None = None
+    warnings: str | None = None
+    liveness: str | None = None
+    legitimacy: str | None = None
+    # Consulting's two tabs (D-UI-96): "opportunities" leaves trigger events out, "signals" lists
+    # only them. None (the Employment track, and the JSON API) filters nothing.
+    kind: str | None = None
+    # Rows shown per fit group on the grouped list (Show 25 more raises one group's number).
+    limits: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -119,6 +147,14 @@ class OppRow:
     scoring: str | None = None
     # Scoring failed rows only: the latest quarantine error in plain words (fit.failure_words).
     failed_reason: str | None = None
+    # The operator took this role off Needs another try (D-UI-133). It is not scored and not
+    # failed: the row says so and links back there to undo.
+    removed: bool = False
+    # Kept with Save for later (kestrel.services.saved_roles).
+    saved: bool = False
+    # What the Pipeline template prints for the row (kestrel.web.pipeline_view.row_view), set
+    # by the page after confidential-mode redaction.
+    view: dict | None = None
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
@@ -228,6 +264,8 @@ _SCORING_TASKS = ("embed", "t1", "t2", "t3", "rescore")
 # The ones that can move a parked role out of Scoring failed (an embed only refreshes a vector).
 _RESCORING_TASKS = ("t1", "t2", "t3", "rescore")
 _FAILED_IDS_CAP = 500
+# Rows a fit group shows before Show 25 more (D-UI-96).
+GROUP_ROWS = 25
 
 
 def _in_flight_now():
@@ -254,9 +292,13 @@ def live_scoring_exists():
 
 def failed_scoring_clause():
     """An active role in Scoring failed: parked (quarantined or error) with no live scoring task
-    (D-UI-56). _group_expr puts these first, ahead of every operator label."""
+    (D-UI-56). _group_expr puts these first, ahead of every operator label. A role the operator
+    removed from Needs another try is not counted (D-UI-133): it waits in Being scored, not
+    scored, so the chip, the group and that page agree. A newer failure brings it back."""
     return and_(
-        func.coalesce(Opportunity.stage, "").in_(_PARKED_STAGES), ~live_scoring_exists()
+        func.coalesce(Opportunity.stage, "").in_(_PARKED_STAGES),
+        ~live_scoring_exists(),
+        ~_retry_removed(Opportunity.id),
     )
 
 
@@ -293,10 +335,35 @@ def quarantine_superseded():
     )
 
 
+def _retry_removed(opportunity_id):
+    """EXISTS the operator's Remove for this role (Needs another try, D-UI-104) with no failure
+    newer than it. `opportunity_id` is a column of the enclosing statement. A role that fails
+    again after a Remove comes back to the list; nothing is ever deleted."""
+    from kestrel.services.retry_removal import PREFIX
+
+    newer = aliased(Quarantine)
+    return (
+        select(Setting.key)
+        .where(
+            Setting.key == literal(PREFIX).concat(cast(opportunity_id, String)),
+            # correlate_except: auto-correlation only reaches the nearest enclosing select, and
+            # the role's own table sits one level further out.
+            ~select(newer.id)
+            .where(
+                newer.opportunity_id == opportunity_id,
+                newer.created_at > func.json_extract(Setting.value, "$.at"),
+            )
+            .correlate_except(newer)
+            .exists(),
+        )
+        .exists()
+    )
+
+
 def open_quarantine_clause():
-    """A quarantine row nothing has resolved yet (D-UI-70): every row the Failed scoring page
-    lists in its main tables."""
-    return ~quarantine_superseded()
+    """A quarantine row nothing has resolved yet (D-UI-70) and the operator has not removed from
+    the list (D-UI-104): every row the Needs another try page lists."""
+    return and_(~quarantine_superseded(), ~_retry_removed(Quarantine.opportunity_id))
 
 
 def quarantine_queued_clause():
@@ -320,7 +387,10 @@ def quarantine_queued_clause():
 def _quarantine_role_hidden():
     return (
         select(Opportunity.id)
-        .where(Opportunity.id == Quarantine.opportunity_id, Opportunity.archived_at.is_not(None))
+        .where(
+            Opportunity.id == Quarantine.opportunity_id,
+            or_(Opportunity.archived_at.is_not(None), ~opp_visible_clause()),
+        )
         .correlate(Quarantine)
         .exists()
     )
@@ -379,7 +449,8 @@ async def failure_summary(session: AsyncSession, track: str | None = None) -> Fa
         else:
             put(("o", int(oid)), "other")
     parked = select(Opportunity.id).where(
-        failed_scoring_clause(), Opportunity.archived_at.is_(None)
+        failed_scoring_clause(), Opportunity.archived_at.is_(None), opp_visible_clause(),
+        ~_retry_removed(Opportunity.id),
     )
     if track in ("employment", "consulting"):
         parked = parked.where(Opportunity.track == track)
@@ -411,7 +482,7 @@ async def scoring_failed_count(session: AsyncSession, track: str | None = None) 
     stmt = (
         select(func.count())
         .select_from(Opportunity)
-        .where(failed_scoring_clause(), Opportunity.archived_at.is_(None))
+        .where(failed_scoring_clause(), Opportunity.archived_at.is_(None), opp_visible_clause())
     )
     if track in ("employment", "consulting"):
         stmt = stmt.where(Opportunity.track == track)
@@ -562,6 +633,9 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
         # quarantined until its task runs (queue.rescore), and is queued, not failed.
         if r.opp.id in state:
             r.scoring = state[r.opp.id]
+        elif r.removed:
+            # Taken off Needs another try (D-UI-133): not scored, and not failed either.
+            r.scoring = "removed"
         elif r.opp.id in stuck:
             r.scoring = "stuck"
         else:
@@ -590,6 +664,8 @@ def _apply_filters(stmt, f: OppFilters):
         stmt = stmt.where(Opportunity.archived_at.is_not(None))
     elif not f.include_archived:
         stmt = stmt.where(Opportunity.archived_at.is_(None))
+    if not f.include_hidden_orgs:
+        stmt = stmt.where(not_hidden_org_clause())
     if f.track in ("employment", "consulting"):
         stmt = stmt.where(Opportunity.track == f.track)
     if f.stage:
@@ -602,6 +678,10 @@ def _apply_filters(stmt, f: OppFilters):
         stmt = stmt.where(Evaluation.score <= f.score_max)
     if f.needs_review:
         stmt = stmt.where(Evaluation.needs_review.is_(True))
+        if f.grouped:
+            # Your call is a role the operator has not decided (D-UI-96): their own word, from
+            # the latest label that `_with_operator` joins, takes it off the chip.
+            stmt = stmt.where(VerdictOverride.operator_verdict.is_(None))
     if f.ghost_min is not None:
         stmt = stmt.where(Opportunity.ghost_score >= f.ghost_min)
     if f.org:
@@ -619,7 +699,67 @@ def _apply_filters(stmt, f: OppFilters):
         stmt = stmt.where(Pursuit.id.is_not(None))
     if f.new_today:
         stmt = stmt.where(Opportunity.first_seen_at >= local_day_start_iso())
+    if f.saved:
+        stmt = stmt.where(saved_clause())
+    if f.pay_min is not None:
+        # A role with no posted pay is kept: a missing number is not a low one (hard rule 4).
+        # Only pay quoted in the track's own unit (a year; a day for Consulting) is compared: an
+        # hourly rate is not under an annual floor.
+        native = (
+            Opportunity.comp_interval == "day"
+            if f.track == "consulting"
+            else func.coalesce(Opportunity.comp_interval, "year") == "year"
+        )
+        # An estimate is not posted pay, and another currency is not compared with this floor.
+        stmt = stmt.where(
+            or_(
+                Opportunity.comp_max.is_(None),
+                Opportunity.comp_source == "inferred",
+                ~native,
+                and_(
+                    Opportunity.comp_currency.is_not(None), Opportunity.comp_currency != "USD"
+                ),
+                Opportunity.comp_max >= f.pay_min,
+            )
+        )
+    if f.work_type in ("remote", "hybrid", "onsite"):
+        stmt = stmt.where(Opportunity.remote_type == f.work_type)
+    if f.posted_days:
+        cutoff = iso(datetime.now(UTC) - timedelta(days=f.posted_days))
+        posted = func.coalesce(Opportunity.date_posted, Opportunity.first_seen_at)
+        stmt = stmt.where(posted >= cutoff)
+    if f.warnings == "no_ghost":
+        stmt = stmt.where(Opportunity.ghost_score < GHOST_WARN)
+    elif f.warnings == "review":
+        stmt = stmt.where(Evaluation.needs_review.is_(True))
+        if f.grouped:  # the same meaning as the Your call chip: roles you have not decided
+            stmt = stmt.where(VerdictOverride.operator_verdict.is_(None))
+    if f.kind == "signals":
+        stmt = stmt.where(Opportunity.opp_type == "trigger_event")
+    elif f.kind == "opportunities":
+        stmt = stmt.where(Opportunity.opp_type != "trigger_event")
+    if f.liveness:
+        stmt = stmt.where(Opportunity.liveness == f.liveness)
+    if f.legitimacy:
+        stmt = stmt.where(func.json_extract(Evaluation.legitimacy, "$.status") == f.legitimacy)
     return stmt
+
+
+# The ghost score at or above which a row carries the warning icon (kestrel.web.routes_pages
+# already treated 0.6 as "may be a ghost posting").
+GHOST_WARN = 0.6
+
+
+def saved_clause():
+    """EXISTS the operator's Save for later for this role (kestrel.services.saved_roles)."""
+    from kestrel.services.saved_roles import PREFIX
+
+    return (
+        select(Setting.key)
+        .where(Setting.key == literal(PREFIX).concat(cast(Opportunity.id, String)))
+        .correlate(Opportunity)
+        .exists()
+    )
 
 
 def local_day_start_iso(now: datetime | None = None) -> str:
@@ -651,7 +791,10 @@ async def quarantined_count(session: AsyncSession, track: str | None = None) -> 
     stmt = (
         select(func.count())
         .select_from(Opportunity)
-        .where(Opportunity.stage == "quarantined", Opportunity.archived_at.is_(None))
+        .where(
+            Opportunity.stage == "quarantined", Opportunity.archived_at.is_(None),
+            opp_visible_clause(),
+        )
     )
     if track in ("employment", "consulting"):
         stmt = stmt.where(Opportunity.track == track)
@@ -665,6 +808,85 @@ async def any_opportunities(session: AsyncSession, track: str | None = None) -> 
     if track in ("employment", "consulting"):
         stmt = stmt.where(Opportunity.track == track)
     return (await session.execute(stmt)).scalar_one() > 0
+
+
+# Consulting's Signals tab (D-UI-96): the stored trigger event types, grouped into the four chips
+# the operator reads. Anything else (a security incident, a compliance duty) is "Other".
+SIGNAL_TYPES: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("leadership", "Leadership change", frozenset({"cio_departure", "cto_departure"})),
+    ("acquisition", "Acquisition", frozenset({"acquisition", "divestiture", "pe_investment"})),
+    ("expansion", "Expansion", frozenset({"expansion", "rapid_it_hiring"})),
+    ("funding", "Funding", frozenset({"funding_round"})),
+)
+
+
+def signal_type(opp: Opportunity) -> tuple[str, str]:
+    """(chip key, chip label) for a trigger event."""
+    event = str((opp.trigger_data or {}).get("event_type") or "")
+    for key, label, kinds in SIGNAL_TYPES:
+        if event in kinds:
+            return key, label
+    return "other", "Other"
+
+
+@dataclass
+class SignalRow:
+    opp: Opportunity
+    ev: Evaluation | None
+    org_name: str | None
+    pursuit_id: int | None
+    type_key: str
+    type_label: str
+    view: dict | None = None
+
+    @property
+    def score(self) -> float | None:
+        if self.ev is None:
+            return None
+        return self.ev.score if self.ev.score is not None else self.ev.weighted_score
+
+
+async def list_signals(
+    session: AsyncSession, f: OppFilters, *, limit: int = 200
+) -> list[SignalRow]:
+    """Every trigger event on the track (newest first, capped), with its evaluation if one ran.
+    `f.hidden_only` lists the Not relevant ones. Chips and the week split are the caller's."""
+    flt = replace(f, kind="signals", grouped=False)
+    stmt = _base_stmt(flt, Opportunity, Evaluation, Org.name, Pursuit.id).order_by(
+        Opportunity.first_seen_at.desc(), Opportunity.id.desc()
+    )
+    rows = (await session.execute(stmt.limit(limit))).all()
+    out = []
+    for o, e, on, pid in rows:
+        key, label = signal_type(o)
+        out.append(SignalRow(opp=o, ev=e, org_name=on or o.org_name, pursuit_id=pid,
+                             type_key=key, type_label=label))
+    return out
+
+
+async def chip_counts(session: AsyncSession, f: OppFilters) -> dict[str, int]:
+    """The numbers on Pipeline's chips (D-UI-96): over the track's visible roles, not over the
+    search or the other chips, so a chip says what it would show on its own. `failed` is the
+    Needs another try count (failure_summary, removed roles excluded), the one number every
+    surface shows for what needs the operator (D-UI-70)."""
+    base = OppFilters(track=f.track, grouped=True)
+
+    async def count(flt: OppFilters, *where) -> int:
+        stmt = _with_operator(_base_stmt(flt, func.count(Opportunity.id)))
+        for w in where:
+            stmt = stmt.where(w)
+        return int((await session.execute(stmt)).scalar_one() or 0)
+
+    out = {
+        "all": await count(base, _group_expr() != _G[GROUP_NOT_FIT]),
+        "shortlist": await count(replace(base, shortlisted=True)),
+        "your_call": await count(replace(base, needs_review=True)),
+        "scored": await count(replace(base, stage="t2_done")),
+        "new_today": await count(replace(base, new_today=True)),
+        "saved": await count(replace(base, saved=True)),
+    }
+    out["failed"] = await open_quarantine_count(session, f.track)
+    return out
 
 
 async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
@@ -695,22 +917,38 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
             page_size=page_size,
         )
 
-    # Grouped: the same joins plus the operator's latest label, ordered by fit group first.
-    # Two statements, as the flat list: the rows, and the per-group counts (whose sum is the
-    # total).
+    # Grouped: the same joins plus the operator's latest label. The visible groups each give
+    # their first `limits[group]` rows (25 by default, Show 25 more raises one group's number),
+    # in `order` inside the group; Not a fit is its own section, paged alone (D-UI-62). The
+    # per-group counts below are over the whole filter set.
     grp = _group_expr()
     not_fit = _G[GROUP_NOT_FIT]
-    stmt = _with_operator(
-        _base_stmt(
-            f, Opportunity, Evaluation, Org.name, Source.name, Pursuit.id, Pursuit.closed_at,
-            Pursuit.status, VerdictOverride.operator_verdict, VerdictOverride.operator_score,
-            live_scoring_exists().label("live"),
+    cols = (
+        Opportunity, Evaluation, Org.name, Source.name, Pursuit.id, Pursuit.closed_at,
+        Pursuit.status, VerdictOverride.operator_verdict, VerdictOverride.operator_score,
+        # A removed role reads as not scored and not failed, as _group_expr does (D-UI-133).
+        or_(live_scoring_exists(), _retry_removed(Opportunity.id)).label("live"),
+        _retry_removed(Opportunity.id).label("removed"),
+        saved_clause().label("saved"),
+    )
+
+    def _group_stmt(key: str):
+        return (
+            _with_operator(_base_stmt(f, *cols))
+            .where(grp == _G[key])
+            .order_by(order, Opportunity.id.desc())
         )
-    ).order_by(grp, order, Opportunity.id.desc())
-    # Not a fit leaves the grouped paging (D-UI-62): the visible groups page alone, and Not a
-    # fit is its own section with its own paging, so a page is never all hidden rows.
-    stmt = stmt.where(grp == not_fit) if f.section == "not_fit" else stmt.where(grp != not_fit)
-    rows = (await session.execute(stmt.limit(page_size).offset((page - 1) * page_size))).all()
+
+    rows: list = []
+    if f.section == "not_fit":
+        stmt = _group_stmt(GROUP_NOT_FIT)
+        rows = (await session.execute(stmt.limit(page_size).offset((page - 1) * page_size))).all()
+    else:
+        for key in GROUP_ORDER:
+            if key == GROUP_NOT_FIT:
+                continue
+            take = max(1, int(f.limits.get(key) or GROUP_ROWS))
+            rows.extend((await session.execute(_group_stmt(key).limit(take))).all())
     counts_stmt = _with_operator(
         _base_stmt(
             f, grp.label("g"), (Opportunity.stage == "t0_reject").label("rule"), func.count()
@@ -731,8 +969,9 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
             fit=row_fit(o, e, pursued=pid is not None and closed is None,
                         pursuit_status=pstatus, operator_verdict=ov, live=bool(lv)),
             mine=fit_word_for_verdict(ov, os_),
+            removed=bool(rm), saved=bool(sv),
         )
-        for (o, e, on, sn, pid, closed, pstatus, ov, os_, lv) in rows
+        for (o, e, on, sn, pid, closed, pstatus, ov, os_, lv, rm, sv) in rows
     ]
     await scoring_states(session, out)
     failed_ids: list[int] = []
@@ -741,7 +980,7 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
             int(i)
             for i in (
                 await session.execute(
-                    _base_stmt(f, Opportunity.id)
+                    _with_operator(_base_stmt(f, Opportunity.id))
                     .where(failed_scoring_clause())
                     .order_by(Opportunity.id.desc())
                     .limit(_FAILED_IDS_CAP)
@@ -873,6 +1112,9 @@ async def opportunity_history(session: AsyncSession, opp_id: int) -> list[dict[s
             {
                 "at": ev.created_at or "", "kind": "evaluation",
                 "label": f"Tier {ev.tier} evaluation", "detail": detail, "cost_usd": None,
+                # What the Role page's History tab words differently (role_view.history_timeline).
+                "tier": ev.tier, "model": ev.model, "prompt": ev.prompt_version,
+                "score": ev.score, "verdict": ev.verdict,
             }
         )
 
@@ -1025,7 +1267,9 @@ async def org_context(session: AsyncSession, org_id: int | None) -> dict[str, An
     ).scalars().first()
     contacts = (
         await session.execute(
-            select(Contact).where(Contact.org_id == org_id).order_by(Contact.name)
+            select(Contact)
+            .where(Contact.org_id == org_id, not_imported_connection())
+            .order_by(Contact.name)
         )
     ).scalars().all()
     research_json = None
@@ -1042,7 +1286,8 @@ async def org_context(session: AsyncSession, org_id: int | None) -> dict[str, An
     contacts_json = [
         {
             "id": c.id, "name": c.name, "title": c.title, "contact_type": c.contact_type,
-            "linkedin_url": c.linkedin_url, "email": c.email, "confidence": c.confidence,
+            "linkedin_url": safe_web_url(c.linkedin_url),
+            "email": c.email, "confidence": c.confidence,
             "relationship": c.relationship,
         }
         for c in contacts

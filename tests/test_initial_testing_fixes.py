@@ -239,8 +239,7 @@ def test_connect_reached_from_setup_offers_the_way_back(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-ok")
     client = _fresh_app()
     page = client.get("/settings?return_to=setup").text
-    assert 'hx-get="/settings/hosted?return_to=setup"' in page
-    assert 'hx-get="/settings/hosted?return_to=setup"' not in client.get("/settings").text
+    assert 'data-testid="st-nav-computer"' in page  # the old Hosted tab opens This computer
     panel = client.get("/settings/hosted?return_to=setup").text
     assert 'data-testid="setup-origin"' in panel and 'href="/setup"' in panel
     assert 'name="return_to" value="setup"' in panel
@@ -345,7 +344,7 @@ def test_hosted_intro_is_three_panels_with_a_tiers_link(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = _fresh_app()
     page = client.get("/settings").text
-    assert 'data-testid="hosted-intro"' in page and 'href="/help#tiers"' in page
+    assert 'href="/models"' in page  # online keys: Settings holds a quick entry, Models the rest
     assert "second, broader path" not in page
     help_page = client.get("/help").text
     assert 'id="tiers"' in help_page and 'id="tier-names"' in help_page
@@ -354,10 +353,15 @@ def test_hosted_intro_is_three_panels_with_a_tiers_link(monkeypatch):
     assert "—" not in page and "—" not in help_page
 
 
-def test_pursuits_page_says_kestrel_never_applies(monkeypatch):
+def test_pursuits_page_has_no_lede_and_the_promise_lives_in_help_and_about(monkeypatch):
+    # D-UI-100: the board has no lede line; the promise that Kestrel never applies or contacts
+    # anyone lives in Help and About, and in what the buttons do (they only record).
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    body = _fresh_app().get("/pursuits").text
-    assert 'data-testid="never-applies"' in body and "never applies for" in body
+    client = _fresh_app()
+    body = client.get("/pursuits").text
+    assert 'data-testid="never-applies"' not in body and "never applies for" not in body
+    assert "never applies, emails or messages anyone" in client.get("/help").text.lower()
+    assert "never applies, emails or messages anyone" in client.get("/about").text.lower()
 
 
 def test_slow_requests_are_logged_with_their_path(monkeypatch):

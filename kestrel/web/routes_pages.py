@@ -15,10 +15,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm.exc import StaleDataError
 
+from kestrel.date_display import format_display
 from kestrel.db.enums import ARCHIVE_REASONS
 from kestrel.pipeline import lane
 from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.urls import safe_web_url
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.fit import (
@@ -33,20 +35,17 @@ from kestrel.web.fit import (
     fit_word_for_verdict,
     forced_words,
 )
+from kestrel.web.pipeline_view import row_view, signal_view
 from kestrel.web.queries import (
     GROUP_ORDER,
+    GROUP_ROWS,
     OppFilters,
+    OppPage,
     any_opportunities,
     first_sentence,
     get_detail,
     list_opportunities,
-    list_runs,
     live_activity,
-    opportunity_history,
-    opportunity_renders,
-    org_context,
-    quarantined_count,
-    recent_scans,
     row_fit,
 )
 from kestrel.web.redact import redact_name, redact_text, redaction_map
@@ -59,9 +58,19 @@ log = structlog.get_logger()
 _STAGES = ["new", "t0_pass", "t0_reject", "t1_pass", "t1_reject", "t2_done", "quarantined"]
 _VERDICTS = ["apply", "pursue", "consider", "pass", "keep", "kill"]
 _TRUE = ("1", "true", "on", "True")
-# The sort toggle on the triage list, inside each fit group: Newest is the default, Best fit is
-# one click (D-UI-45). Older sort keys (date, pre_score, ghost) still work from a URL.
-_SORTS = [("first_seen", "Newest"), ("score", "Best fit")]
+# The sort toggle on the triage list, inside each fit group: Best fit and Newest, and the menu
+# beside it (D-UI-96). Older sort keys (pre_score, ghost) still work from a URL.
+_SORTS = [("score", "Best fit"), ("first_seen", "Newest")]
+_SORT_MENU = [
+    ("date", "Date posted"), ("first_seen", "First seen"), ("oldest", "Oldest first"),
+    ("company", "Company A to Z"), ("pre_score", "Quick-screen score"),
+    ("ghost", "Ghost posting risk"),
+]
+_SORT_NOTE = {
+    "score": "best fit first", "first_seen": "newest first", "date": "newest posted first",
+    "oldest": "oldest first", "company": "company A to Z", "pre_score": "quick-screen score first",
+    "ghost": "highest ghost risk first",
+}
 # Query parameters that the chips, the search box, and the sort menu do NOT own but must carry
 # along, so an older bookmarked URL keeps filtering while the operator clicks chips.
 _CARRIED = (
@@ -73,20 +82,58 @@ _CARRIED = (
     "verdict",
     "page_size",
     "archived",
+    "pay",
+    "work",
+    "posted",
+    "warn",
+    "live",
+    "legit",
+    "tab",
+    "type",
 )
+# The parameters that mean "the operator chose a filter": with none of them (and no `view`), a
+# track's default saved view applies.
+_FILTER_PARAMS = frozenset(
+    {"q", "stage", "needs_review", "shortlisted", "new_today", "hidden", "saved", "sort", "type"}
+    | set(_CARRIED) - {"tab", "page_size"}
+)
+_GROUP_LIMIT_PARAM = {key: f"lim_{key}" for key in ("worth", "maybe", "applied", "new", "failed")}
+_WORK = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite"}
 
 
 def page_filters(params, request=None) -> OppFilters:
-    """The list filters plus the two chip-only ones (`shortlisted`, `new_today`), which the JSON
-    API does not expose and so `filters_from_query` does not parse. With `request`, the track is
-    the active tab's (D-UI-57): the page never lists both tracks at once."""
+    """The list filters plus the chip-only and More filters ones, which the JSON API does not
+    expose and so `filters_from_query` does not parse. With `request`, the track is the active
+    tab's (D-UI-57): the page never lists both tracks at once."""
     f = filters_from_query(params)
     f.track = active_track(request) if request is not None else f.track
     f.shortlisted = params.get("shortlisted") in _TRUE
     f.new_today = params.get("new_today") in _TRUE
+    f.saved = params.get("saved") in _TRUE
+    f.pay = params.get("pay") if params.get("pay") in ("floor", "target") else None
+    f.work_type = _WORK.get(params.get("work") or "")
+    try:
+        f.posted_days = int(params.get("posted")) if params.get("posted") else None
+    except ValueError:
+        f.posted_days = None
+    f.warnings = params.get("warn") if params.get("warn") in ("no_ghost", "review") else None
+    f.liveness = params.get("live") if params.get("live") in ("live", "closed") else None
+    legit = params.get("legit")
+    f.legitimacy = legit if legit in ("clean", "suspect", "reject") else None
+    f.limits = {}
+    for key, name in _GROUP_LIMIT_PARAM.items():
+        try:
+            n = int(params.get(name) or 0)
+        except ValueError:
+            n = 0
+        if n > 0:
+            f.limits[key] = min(n, 1000)
+    # Consulting reads two tabs; Employment has no trigger events to separate.
+    if f.track == "consulting":
+        f.kind = "signals" if params.get("tab") == "signals" else "opportunities"
     f.grouped = True
     if not params.get("sort"):
-        f.sort = "first_seen"
+        f.sort = "score"
     return f
 
 
@@ -111,34 +158,31 @@ def not_fit_note(page) -> str:
     return f"{by_rules}; {n - rules} scored low by the model."
 
 
-def _groups(page) -> list[dict]:
+def _groups(page, f: OppFilters) -> list[dict]:
     """The Pipeline's visible fit groups in order (Not a fit is its own section, D-UI-62), each
-    with its label, its count over the WHOLE filter set and this page's rows. Every group that
-    has rows anywhere renders its header, even when its rows sit on another page, so a Being
-    scored row is never invisible behind paging; such a header says which page its rows start
-    on (rows arrive in GROUP_ORDER, so that is arithmetic over the counts of the groups ahead
-    of it)."""
+    with its label, its count over the WHOLE filter set and the rows shown so far (25 a group,
+    D-UI-96). `next_limit` is what Show 25 more asks for; `more` is how many that reveals."""
     out = []
-    before = 0
-    size = max(1, page.page_size)
     for key in GROUP_ORDER:
         if key == GROUP_NOT_FIT:
             continue
         count = page.group_counts.get(key, 0)
         rows = [r for r in page.rows if r.fit and r.fit.group == key]
         if count or rows:
+            shown = len(rows)
             out.append(
                 {
                     "key": key,
                     "label": GROUP_LABELS[key],
-                    "count": max(count, len(rows)),
+                    "count": max(count, shown),
                     "rows": rows,
                     "explain": FAILED_NOTE if key == GROUP_FAILED else "",
                     "ids": page.failed_ids if key == GROUP_FAILED else [],
-                    "first_page": before // size + 1,
+                    "more": min(GROUP_ROWS, max(0, count - shown)),
+                    "limit_param": _GROUP_LIMIT_PARAM.get(key),
+                    "next_limit": shown + GROUP_ROWS,
                 }
             )
-        before += count
     return out
 
 
@@ -155,6 +199,13 @@ def _filters_active(f: OppFilters) -> bool:
             f.hidden_only,
             f.shortlisted,
             f.new_today,
+            f.saved,
+            f.pay,
+            f.work_type,
+            f.posted_days,
+            f.warnings,
+            f.liveness,
+            f.legitimacy,
             f.score_min is not None,
             f.score_max is not None,
             f.ghost_min is not None,
@@ -181,41 +232,120 @@ async def favicon():
 async def _redact_rows(s, settings, rows) -> None:
     """Confidential mode: redact the operator's current employer in the list, not only toggle.
     The summary line is the model's own prose and names the employer routinely, so it is
-    redacted with the same map as the org name and the title."""
-    if not settings.confidential_mode:
-        return
-    mapping = await redaction_map(s)
+    redacted with the same map as the org name and the title. Then each row gets the parts a
+    template prints (`row.view`), computed from what the operator will actually read."""
+    if settings.confidential_mode:
+        mapping = await redaction_map(s)
+        for row in rows:
+            row.org_name = redact_name(row.org_name, mapping, enabled=True)
+            row.opp.org_name = redact_name(row.opp.org_name, mapping, enabled=True)
+            row.opp.title = redact_text(row.opp.title, mapping, enabled=True)
+            row.summary = redact_text(row.summary, mapping, enabled=True)
     for row in rows:
-        row.org_name = redact_name(row.org_name, mapping, enabled=True)
-        row.opp.org_name = redact_name(row.opp.org_name, mapping, enabled=True)
-        row.opp.title = redact_text(row.opp.title, mapping, enabled=True)
-        row.summary = redact_text(row.summary, mapping, enabled=True)
+        row.view = row_view(row)
+
+
+async def _redact_signals(s, settings, rows) -> None:
+    """The same for Consulting signal rows: the title and company, then what the row prints."""
+    if settings.confidential_mode:
+        mapping = await redaction_map(s)
+        for row in rows:
+            row.org_name = redact_name(row.org_name, mapping, enabled=True)
+            row.opp.title = redact_text(row.opp.title, mapping, enabled=True)
+    for row in rows:
+        row.view = signal_view(row)
+
+
+# Not a fit's rows come twelve at a time inside their own scroll box (D-UI-96).
+NF_PAGE = 12
+
+
+async def _pay_value(track: str | None, which: str | None) -> float | None:
+    """The operator's pay floor or target for `track` (a year; a day for Consulting), read off
+    the event loop (profile.yml is a file read and a parse). None when it is not set."""
+    import asyncio
+
+    from kestrel.pipeline.profile import load_profile
+
+    if which not in ("floor", "target"):
+        return None
+    try:
+        profile = await asyncio.to_thread(load_profile, track or "employment")
+    except Exception as exc:  # a filter value never breaks the page
+        log.warning("pay_filter_profile_failed", error=str(exc))
+        return None
+    if track == "consulting":
+        terms, key = getattr(profile, "consulting_terms", None), f"day_rate_{which}"
+    else:
+        terms, key = getattr(profile, "employment_terms", None), f"comp_{which}_usd"
+    value = getattr(terms, key, None)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+async def _effective_params(s, request: Request, track: str) -> tuple[dict, list, dict | None]:
+    """(the parameters the page filters by, the track's saved views, the view in use). A saved
+    view's filters sit under whatever the operator then changed; with no filter in the URL at
+    all, the track's default view applies (`view=none` turns that off, `view=<id>` picks one)."""
+    from kestrel.services import saved_views
+
+    params = dict(request.query_params)
+    views = await saved_views.list_views(s, track)
+    chosen = params.pop("view", None)
+    view = None
+    if chosen == "none":
+        view = None
+    elif chosen and chosen.isdigit():
+        view = next((v for v in views if v.id == int(chosen)), None)
+    elif not (set(params) & _FILTER_PARAMS):
+        view = next((v for v in views if v.is_default), None)
+    eff = {**saved_views.params_for(view), **params} if view else params
+    return eff, views, ({"id": view.id, "name": view.name} if view else None)
 
 
 @router.get("/opportunities", response_class=HTMLResponse)
 async def opportunities(request: Request):
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from kestrel.db.base import utcnow_iso
-    from kestrel.db.models import Task
+    from kestrel.db.models import Source, Task
     from kestrel.queue.queue import in_flight
     from kestrel.services.tracks import switched_off_tracks
+    from kestrel.web.queries import chip_counts, list_signals
     from kestrel.web.routes_control import run_active
 
-    f = page_filters(request.query_params, request)
+    track = active_track(request)
     async with sessionmaker()() as s:
-        page = await list_opportunities(s, f)
+        eff, views, active_view = await _effective_params(s, request, track)
+    f = page_filters(eff, request)
+    f.pay_min = await _pay_value(f.track, f.pay)
+    signals_tab = f.kind == "signals"
+    async with sessionmaker()() as s:
+        count_filters = replace(f, kind="opportunities") if f.track == "consulting" else f
+        counts = await chip_counts(s, count_filters)
+        n_signals = 0
+        signal_rows: list = []
+        if f.track == "consulting":
+            n_signals = len(await list_signals(s, replace(f, hidden_only=False, q=None)))
+        if signals_tab:
+            signal_rows = await list_signals(s, f)
+            page = OppPage()
+        else:
+            page = await list_opportunities(s, f)
         settings = await load_settings_with_db(s)
         await _redact_rows(s, settings, page.rows)
+        await _redact_signals(s, settings, signal_rows)
         n_not_fit = page.group_counts.get(GROUP_NOT_FIT, 0)
         # Only Not a fit to show: its first page opens in place (D-UI-62).
         nf_page = None
         if n_not_fit and not page.total:
-            nf_page = await list_opportunities(s, replace(f, section="not_fit", page=1))
+            nf_page = await list_opportunities(
+                s, replace(f, section="not_fit", page=1, page_size=NF_PAGE)
+            )
             await _redact_rows(s, settings, nf_page.rows)
-        quarantined = await quarantined_count(s, f.track)
         # Only when the list is empty: is that "nothing matches" or "nothing ingested yet"?
-        has_any = True if (page.total or n_not_fit) else await any_opportunities(s, f.track)
+        has_any = True
+        if not (page.total or n_not_fit or signal_rows):
+            has_any = await any_opportunities(s, f.track)
         running = await run_active(s)
         # Roles waiting in the background lane explain themselves under Being scored (#34): how
         # many, and whether they start on their own or only on Score everything now.
@@ -229,21 +359,41 @@ async def opportunities(request: Request):
             (await s.execute(select(Task.id).where(in_flight(utcnow_iso())).limit(1))).first()
         )
         background_hosted = bool(background) and lane.scores_on_hosted(settings)
-    query = dict(request.query_params)
-    groups = _groups(page)
+        source_kinds = list(
+            (
+                await s.execute(
+                    select(Source.kind)
+                    .where(Source.track == f.track)
+                    .group_by(Source.kind)
+                    .order_by(func.lower(Source.kind))
+                )
+            ).scalars()
+        )
+    query = {k: v for k, v in eff.items() if k != "open"}
+    try:
+        open_id = int(request.query_params.get("open") or 0) or None
+    except ValueError:
+        open_id = None
     ctx = {
         "page": page,
-        "groups": groups,
+        "groups": _groups(page, f),
         "not_fit": {"count": n_not_fit, "note": not_fit_note(page), "page": nf_page},
         "running": running,
         "polling": polling,
         "f": f,
-        "stages": _STAGES,
-        "verdicts": _VERDICTS,
+        "track": f.track,
+        "signals_tab": signals_tab,
+        "signals": signal_rows,
+        "n_signals": n_signals,
+        "counts": counts,
         "sorts": _SORTS,
+        "sort_menu": _SORT_MENU,
+        "sort_note": _SORT_NOTE.get(f.sort, "newest first"),
+        "views": views,
+        "active_view": active_view,
+        "source_kinds": source_kinds,
         "query": query,
         "confidential": settings.confidential_mode,
-        "quarantined": quarantined,
         "has_any": has_any,
         "filters_active": _filters_active(f),
         "carried": {k: query[k] for k in _CARRIED if query.get(k)},
@@ -252,9 +402,16 @@ async def opportunities(request: Request):
         "being_scored": being_scored,
         "background": background,
         "background_hosted": background_hosted,
-        "scoring_failed": page.group_counts.get(GROUP_FAILED, 0),
+        "scoring_failed": counts["failed"],
+        "total_open": sum(page.group_counts.values()),
         "page_ids": [r.opp.id for r in page.rows],
+        "open_id": open_id,
+        "panel_html": "",
     }
+    if open_id:
+        from kestrel.web.pages.pipeline import render_panel
+
+        ctx["panel_html"] = await render_panel(request, open_id)
     # HTMX chip/search/sort/paginate requests swap only the list; a full load renders the page.
     tmpl = "partials/opp_rows.html" if request.headers.get("HX-Request") else "opportunities.html"
     return templates().TemplateResponse(request, tmpl, ctx)
@@ -262,35 +419,30 @@ async def opportunities(request: Request):
 
 @router.get("/opportunities/not-fit", response_class=HTMLResponse)
 async def opportunities_not_fit(request: Request):
-    """The Not a fit section's rows (D-UI-62), loaded by its Show button, with their own paging
-    (`nf_page`) under the same filters as the list above."""
-    f = page_filters(request.query_params, request)
+    """The Not a fit section's rows (D-UI-62), loaded by its Show button, twelve at a time. Load
+    more asks for the next page and the rows are appended inside the scroll box (`nf_page`),
+    under the same filters as the list above."""
+    track = active_track(request)
+    async with sessionmaker()() as s:
+        eff, _views, _active = await _effective_params(s, request, track)
+    f = page_filters(eff, request)
+    f.pay_min = await _pay_value(f.track, f.pay)
     try:
         nf = max(1, int(request.query_params.get("nf_page") or 1))
     except ValueError:
         nf = 1
     async with sessionmaker()() as s:
-        page = await list_opportunities(s, replace(f, section="not_fit", page=nf))
+        page = await list_opportunities(
+            s, replace(f, section="not_fit", page=nf, page_size=NF_PAGE)
+        )
         settings = await load_settings_with_db(s)
         await _redact_rows(s, settings, page.rows)
     ctx = {
-        "nf": page, "notfit_only": True, "f": f, "query": dict(request.query_params),
+        "nf": page, "notfit_only": True, "append": nf > 1, "f": f,
+        "query": {k: v for k, v in eff.items() if k not in ("open", "nf_page")},
         "archive_reasons": ARCHIVE_REASONS,
     }
     return templates().TemplateResponse(request, "partials/opp_rows.html", ctx)
-
-
-@router.get("/opportunities/{opp_id}/drawer", response_class=HTMLResponse)
-async def opportunity_drawer(request: Request, opp_id: int):
-    """The triage drawer beside the list: the fit word, the Fit / Why / Watch card, the two
-    primary actions, the Disagree control and, once the role is on the list, the follow-ups
-    (partials/opp_decision.html, shared with the detail page). Nothing here writes."""
-    async with sessionmaker()() as s:
-        detail = await _detail_context(s, opp_id)
-        if detail is None:
-            return HTMLResponse('<div class="card">Not found.</div>', status_code=404)
-    detail["view"] = "drawer"
-    return templates().TemplateResponse(request, "partials/opp_drawer.html", detail)
 
 
 # Legitimacy signals (PROMPTS.md P1 and P2 enums) as the operator would say them.
@@ -459,39 +611,10 @@ async def opportunity_expand(request: Request, opp_id: int):
 
 
 # --------------------------------------------------------------------- opportunity detail
-# docs/UI_PROPOSAL.html Screen 3: the decision at the top (verdict pill, three actions), a one-line
-# fact row, five HTMX-loaded tabs, and a right column with Your call, Documents and the Tier 3
-# card. Every org mention goes through the redacted copies built in _detail_context.
+# The Role page (kestrel.web.pages.role) builds on this context. Every org mention goes through
+# the redacted copies built in _detail_context.
 
 _TABS = ("evaluation", "posting", "organization", "documents", "history")
-
-# Provider ids as the operator knows them (the Tier 3 card names the destination).
-_PROVIDER_LABELS = {
-    "openrouter": "OpenRouter",
-    "openmodel": "OpenModel",
-    "anthropic": "Anthropic",
-    "openai": "OpenAI",
-}
-
-
-def _days_ago(iso: str | None) -> str | None:
-    """'today', '6 days ago', or None when the timestamp is missing or unparseable."""
-    if not iso:
-        return None
-    from datetime import UTC, datetime
-
-    try:
-        when = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=UTC)
-    days = (datetime.now(UTC) - when).days
-    if days <= 0:
-        return "today"
-    if days == 1:
-        return "yesterday"
-    return f"{days} days ago"
 
 
 def _money(value: float, currency: str | None) -> str:
@@ -511,36 +634,6 @@ def _comp_line(opp) -> str | None:
     if lo is not None and hi is not None and lo != hi:
         return f"{_money(lo, opp.comp_currency)} to {_money(hi, opp.comp_currency)}{unit}"
     return f"{_money(hi if hi is not None else lo, opp.comp_currency)}{unit}"
-
-
-def _facts(opp, org_name: str | None, source) -> list[str]:
-    """The one-line fact row under the title: org, location and remote type, comp, posted or
-    first seen, source kind, seen count and whether the posting changed."""
-    facts: list[str] = [org_name or "Unknown organization"]
-    place = opp.location_raw or ", ".join(p for p in (opp.city, opp.state) if p) or None
-    remote = opp.remote_type if opp.remote_type and opp.remote_type != "unknown" else None
-    if place and remote:
-        facts.append(f"{place}, {remote}")
-    elif place or remote:
-        facts.append(place or remote)
-    comp = _comp_line(opp)
-    if comp:
-        facts.append(comp)
-    posted = _days_ago(opp.date_posted)
-    if posted:
-        facts.append(f"posted {posted}")
-    else:
-        seen = _days_ago(opp.first_seen_at)
-        facts.append(f"first seen {seen}" if seen else "first seen unknown")
-    if source is not None:
-        facts.append(f"via {source.kind.replace('_', ' ').title() if source.kind else source.name}")
-    elif opp.opp_type == "manual":
-        facts.append("pasted by you")
-    n = opp.seen_count or 1
-    times = "once" if n == 1 else f"{n} times"
-    changed = "unchanged" if (opp.version or 1) <= 1 else f"changed {opp.version - 1}x"
-    facts.append(f"seen {times}, {changed}")
-    return facts
 
 
 def _pick_master(masters: list, track: str):
@@ -575,42 +668,6 @@ def _cost_line(model: str, tokens: int) -> str:
         return "cost depends on the model's price"
     usd = tokens / 1_000_000 * price
     return "under $0.01" if usd < 0.01 else f"about ${usd:.2f}"
-
-
-async def _tier3_card(s, settings, opp_id: int) -> dict:
-    """What the Tier 3 card states BEFORE the preview: the destination (backend, provider, model),
-    the token estimate from the real payload builder (read-only, nothing is sent), the cost line,
-    and why a send is unavailable, if it is. A failure to build the estimate is shown on the card,
-    never a 500 on the page."""
-    from kestrel.llm.providers import provider_status
-    from kestrel.pipeline.tier3 import build_escalation_preview
-
-    st = provider_status(settings)
-    card = {
-        "backend": st.backend_name,
-        "provider": _PROVIDER_LABELS.get(st.provider, st.backend_name),
-        "model": st.model or "(no model configured)",
-        "base_url": st.base_url,
-        "key_present": st.key_present,
-        "tokens": None,
-        "redacted": False,
-        "unavailable": None,
-        "cost": "cost depends on the model's price",
-    }
-    try:
-        preview = await build_escalation_preview(s, settings, opp_id)
-    except Exception as exc:  # the card must say why; the page itself must still render
-        log.warning("tier3.preview_failed", opp_id=opp_id, error=str(exc))
-        card["unavailable"] = f"estimate unavailable: {plain_error(exc)}"
-        return card
-    if preview.error:
-        card["unavailable"] = preview.error
-        return card
-    card["tokens"] = preview.prompt_tokens_estimate
-    card["redacted"] = preview.confidential
-    card["unavailable"] = preview.unavailable
-    card["cost"] = _cost_line(preview.model, preview.prompt_tokens_estimate)
-    return card
 
 
 def _squash(text: str) -> str:
@@ -650,6 +707,7 @@ def _link(
     """{"text", "href"} for an external link in a redacted tab: the text is redacted; a URL that
     reveals the employer keeps neither its text nor its href (the status bar shows an href) and
     shows the placeholder word instead. None when there is no URL."""
+    url = safe_web_url(url)
     if not url:
         return None
     if conf and _url_reveals(url, tokens):
@@ -694,7 +752,7 @@ async def _detail_context(s, opp_id: int) -> dict | None:
         {
             "id": m.id,
             "title": redact_text(m.title, mapping, enabled=conf) or m.id,
-            "href": None if conf and _url_reveals(m.url, tokens) else m.url,
+            "href": None if conf and _url_reveals(m.url, tokens) else safe_web_url(m.url),
         }
         for m in detail["dedup_members"]
     ]
@@ -714,7 +772,6 @@ async def _detail_context(s, opp_id: int) -> dict | None:
             "dedup_rows": dedup_rows,
             "title_display": redact_text(opp.title, mapping, enabled=conf) or "(untitled)",
             "description_display": redact_text(opp.description_md, mapping, enabled=conf),
-            "facts": _facts(opp, org_name, detail["source"]),
             "tailor_master": _pick_master(detail["masters"], opp.track),
             "tabs": _TABS,
         }
@@ -726,22 +783,11 @@ async def _detail_context(s, opp_id: int) -> dict | None:
 
 @router.get("/opportunities/{opp_id}", response_class=HTMLResponse)
 async def opportunity_detail(request: Request, opp_id: int):
-    async with sessionmaker()() as s:
-        detail = await _detail_context(s, opp_id)
-        if detail is None:
-            return HTMLResponse("Not found", status_code=404)
-        # The Deeper read note shows only once the role is on the list (D-UI-45); building its
-        # estimate runs the payload builder, so it is skipped otherwise.
-        detail["tier3"] = (
-            await _tier3_card(s, detail["settings"], opp_id) if detail["pursuit"] else None
-        )
-        detail["renders"] = await opportunity_renders(s, opp_id)
-        if detail["pursuit"]:
-            detail["qview"] = await _questions_view(s, opp_id, detail)
-    detail["request"] = request
-    detail["query"] = dict(request.query_params)
-    detail["tab"] = "evaluation"
-    return templates().TemplateResponse(request, "opportunity_detail.html", detail)
+    """The Role page (kestrel.web.pages.role): Evaluation is the page itself; the other four tabs
+    have their own URLs (/opportunities/{id}/posting and so on)."""
+    from kestrel.web.pages.role import render_page
+
+    return await render_page(request, opp_id, "evaluation")
 
 
 async def _questions_view(s, opp_id: int, detail: dict) -> dict:
@@ -760,10 +806,15 @@ async def regenerate_questions(request: Request, opp_id: int):
 
     from kestrel.db.models import Pursuit
     from kestrel.interview.question_task import is_applied, request_interview_questions
+    from kestrel.services.online_consent import consent_payload, consent_problem
 
     note: str | None = None
+    form = await request.form()
     async with sessionmaker()() as s:
         try:
+            from kestrel.web.pages.prep import questions_route
+
+            route = await questions_route(s)
             pursuit = (
                 await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
             ).scalar_one_or_none()
@@ -771,8 +822,12 @@ async def regenerate_questions(request: Request, opp_id: int):
                 note = "Add this role to your list first."
             elif not await is_applied(s, opp_id):
                 note = "The list is written when you mark this role Applied."
+            elif problem := consent_problem(route, form):
+                note = problem  # an online Tier 2 sends the role: ask first, checked here
             else:
-                queued = await request_interview_questions(s, opp_id, pursuit.id, regenerate=True)
+                queued = await request_interview_questions(
+                    s, opp_id, pursuit.id, regenerate=True, consent=consent_payload(route)
+                )
                 await s.commit()
                 note = (
                     "Queued. The new list replaces this one when it is ready."
@@ -786,41 +841,24 @@ async def regenerate_questions(request: Request, opp_id: int):
         if detail is None:
             return HTMLResponse("Not found", status_code=404)
         qview = await _questions_view(s, opp_id, detail)
+    # The Interview prep page asks for its own, smaller strip (`?view=prep`); the role page keeps
+    # the card.
+    tmpl = (
+        "partials/pp_qstate.html" if request.query_params.get("view") == "prep"
+        else "partials/opp_questions.html"
+    )
     return templates().TemplateResponse(
-        request, "partials/opp_questions.html",
-        {"qview": qview, "qnote": note, "opp_id": opp_id},
+        request, tmpl, {"qview": qview, "qnote": note, "opp_id": opp_id},
     )
 
 
 @router.get("/opportunities/{opp_id}/tab/{name}", response_class=HTMLResponse)
 async def opportunity_tab(request: Request, opp_id: int, name: str):
-    """One tab of the detail page as a partial (partials/opp_tab_<name>.html). The tab name is in
-    the page's URL hash, so a reload re-requests the same tab here."""
-    if name not in _TABS:
-        return HTMLResponse("No such tab", status_code=404)
-    from kestrel.web.redact import redact_json
+    """One tab of the Role page as a partial (partials/role_tab_<name>.html), which the tab
+    links load in place."""
+    from kestrel.web.pages.role import render_tab
 
-    async with sessionmaker()() as s:
-        detail = await _detail_context(s, opp_id)
-        if detail is None:
-            return HTMLResponse("Not found", status_code=404)
-        conf, mapping = detail["confidential"], detail["mapping"]
-        if name == "organization":
-            org = detail["org"]
-            ctx = await org_context(s, org.id if org is not None else None)
-            detail["research"] = redact_json(ctx["research"], mapping, enabled=conf)
-            detail["contacts"] = redact_json(ctx["contacts"], mapping, enabled=conf)
-            detail["org_signals"] = redact_json(
-                list(org.signals or []) if org is not None else [], mapping, enabled=conf
-            )
-        elif name == "documents":
-            detail["renders"] = await opportunity_renders(s, opp_id)
-        elif name == "history":
-            history = await opportunity_history(s, opp_id)
-            detail["history"] = redact_json(history, mapping, enabled=conf)
-    detail["request"] = request
-    detail["tab"] = name
-    return templates().TemplateResponse(request, f"partials/opp_tab_{name}.html", detail)
+    return await render_tab(request, opp_id, name)
 
 
 async def _mode_context(s) -> dict:
@@ -851,7 +889,8 @@ async def _schedule_context(s) -> dict:
     nxt = rs.next_fire(sched, now_local, last)
     return {
         "schedule": sched,
-        "schedule_next": nxt.strftime("%A %Y-%m-%d %H:%M") if nxt else None,
+        "schedule_next": format_display(nxt, "weekday_iso", kind="datetime", time_style="24h")
+        if nxt else None,
         "schedule_last": last,
         "weekdays": rs.WEEKDAYS,
         "local_tz": now_local.tzname() or "local time",
@@ -876,7 +915,9 @@ async def runs_schedule(request: Request):
     async with sessionmaker()() as s:
         await rs.save(s, sched)
         await s.commit()
-        ctx = await _mode_context(s)
+        from kestrel.web.pages.runs_page import card_context
+
+        ctx = await card_context(s)
     ctx["schedule_saved"] = True
     return templates().TemplateResponse(request, "partials/run_schedule.html", ctx)
 
@@ -912,32 +953,6 @@ async def runs_strip(request: Request):
     return templates().TemplateResponse(request, "partials/run_strip.html", ctx)
 
 
-@router.get("/runs", response_class=HTMLResponse)
-async def runs(request: Request):
-    async with sessionmaker()() as s:
-        activity = await live_activity(s)
-        recent = await list_runs(s)
-        scans = await recent_scans(s)
-        from kestrel.analytics.run_summary import run_summary
-        from kestrel.analytics.run_summary import view as run_view
-
-        # The live panel (D-UI-58) covers every track: the worker runs both.
-        run = run_view(await run_summary(s, None))
-        from kestrel.analytics.progress import _model_in_use
-
-        # Only a one-run choice is worth a line here; the standing models live on Models.
-        shown = await _model_in_use(s, await load_settings_with_db(s), bool(run.get("active")))
-        from kestrel.llm import credit
-
-        ctx = {"activity": activity, "runs": recent, "scans": scans, "run": run,
-               "credit_notices": credit.notices(),
-               "run_model": shown if shown and "(this run only)" in shown else None,
-               **(await _mode_context(s)),
-               **(await _keep_awake_context(s))}
-    tmpl = "partials/runs_live.html" if request.headers.get("HX-Request") else "runs.html"
-    return templates().TemplateResponse(request, tmpl, ctx)
-
-
 @router.post("/runs/now", response_class=HTMLResponse)
 async def runs_now(request: Request):
     """The Runs page "Run now" form: queue the next worker cycle on local or hosted models (the
@@ -945,6 +960,7 @@ async def runs_now(request: Request):
     says what is missing."""
     from kestrel.config import MODES, HostedModeError
     from kestrel.llm import credit
+    from kestrel.services.online_consent import online_run_refusal
     from kestrel.services.setting_overrides import queue_run_mode
 
     credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
@@ -953,8 +969,29 @@ async def runs_now(request: Request):
     async with sessionmaker()() as s:
         if mode not in MODES:
             mode = (await load_settings_with_db(s)).llm.mode
+        if mode in ("hosted", "both") and str(form.get("confirmed") or "") != "1":
+            return HTMLResponse(
+                '<span class="warnbox">Nothing was sent. Please confirm the online send '
+                'first.</span>',
+                status_code=400,
+            )
         try:
-            await queue_run_mode(s, mode)
+            settings = await load_settings_with_db(s, mode=mode)
+        except HostedModeError as exc:
+            return HTMLResponse(
+                f'<span class="warnbox">Not queued: {html.escape(plain_error(exc))}.</span>',
+                status_code=400,
+            )
+        refusal = await online_run_refusal(
+            s, settings, mode=mode, confirmed=form.get("confirmed"),
+            approval=form.get("online_approval")
+        )
+        if refusal is not None:
+            return HTMLResponse(
+                f'<span class="warnbox">{html.escape(refusal[0])}</span>', status_code=refusal[1]
+            )
+        try:
+            await queue_run_mode(s, mode, online_approval=form.get("online_approval"))
             await s.commit()
         except HostedModeError as exc:
             return HTMLResponse(

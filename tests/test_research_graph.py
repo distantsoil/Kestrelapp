@@ -27,8 +27,17 @@ Eve,Evans,,Delta Co,COO,05 May 2024
 """
 
 
+async def _seed_orgs(session) -> None:
+    """The importer matches company names to organizations that already exist (it never creates
+    one), so the fixture's companies are created first, as a scan would have."""
+    for name in ("Acme Corp", "Beta Industries", "Gamma LLC", "Delta Co"):
+        await resolve_org(session, name=name, domain=None)
+    await session.commit()
+
+
 async def test_import_linkedin_csv_skips_preamble_and_creates_rows(sm):
     async with sm() as session:
+        await _seed_orgs(session)
         count = await import_linkedin_csv(session, CSV_FIXTURE)
         assert count == 5
 
@@ -50,8 +59,8 @@ async def test_import_linkedin_csv_skips_preamble_and_creates_rows(sm):
         alice = (
             await session.execute(select(Contact).where(Contact.name == "Alice Anderson"))
         ).scalar_one()
-        assert alice.email == "alice@example.com"
-        assert alice.source == "linkedin_csv"
+        assert alice.email is None  # the email column is dropped at read time (D-UI-131)
+        assert alice.source == "linkedin_import"
         assert alice.relationship == "known"
 
         bob = (
@@ -78,6 +87,7 @@ async def test_import_linkedin_csv_skips_preamble_and_creates_rows(sm):
 
 async def test_import_linkedin_csv_twice_does_not_duplicate(sm):
     async with sm() as session:
+        await _seed_orgs(session)
         assert await import_linkedin_csv(session, CSV_FIXTURE) == 5
         # The second export carries an updated title for Alice and an email for Bob.
         updated = CSV_FIXTURE.replace("VP Engineering", "SVP Engineering").replace(
@@ -98,12 +108,13 @@ async def test_import_linkedin_csv_twice_does_not_duplicate(sm):
         bob = (
             await session.execute(select(Contact).where(Contact.name == "Bob Brown"))
         ).scalar_one()
-        assert bob.email == "bob@example.com"
+        assert bob.email is None  # still no email, even when the export carries one
 
 
 async def _seeded_graph(session):
     """Import the fixture, then layer on the former-employer / investor overlap facts a real
     operator would add (LinkedIn's export carries only current company, not history)."""
+    await _seed_orgs(session)
     await import_linkedin_csv(session, CSV_FIXTURE)
 
     acme = (await session.execute(select(Org).where(Org.name == "Acme Corp"))).scalar_one()

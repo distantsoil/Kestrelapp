@@ -11,9 +11,12 @@ from __future__ import annotations
 import glob
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 BROWSER_PATH_ENV = "KESTREL_BROWSER_PATH"
 SKIP_PREFIX = "Browser unavailable"  # scripts/check.py greps skip reasons for this
@@ -104,3 +107,42 @@ async def launch_async(playwright: Any, monkeypatch: pytest.MonkeyPatch | None =
         return browser
     pytest.skip(f"{SKIP_PREFIX}: {'; '.join(errors) or 'no candidates'}")
 
+
+
+def wait_for_layout(page: Page) -> None:
+    """Wait for loaded fonts, completed HTMX swaps, and finite layout animations."""
+    page.wait_for_function("""() => !document.querySelector(
+        '.htmx-request, .htmx-swapping, .htmx-settling')""")
+    for frame in page.frames:
+        frame.evaluate("document.fonts.ready")
+        frame.wait_for_function("""() => {
+            void document.documentElement.offsetWidth;
+            return document.fonts.status === 'loaded' && document.getAnimations().every(
+                animation => animation.effect.getComputedTiming().iterations === Infinity ||
+                    ['finished', 'idle'].includes(animation.playState));
+        }""")
+
+
+# Shared by the *_browser.py tests: how many lines of text an element shows. Lines are
+# clusters of text tops more than 6px apart; rounding top / 6 split one line in two at a bucket
+# edge (a pill and its neighbor either side of it).
+LINES_JS = """el => {
+  // Lines are clusters of text tops more than 6px apart. Bucketing by rounding top / 6 split one
+  // line in two whenever its page offset put a pill and its neighbor on either side of a bucket
+  // edge (the announcement above the strip moved that offset).
+  const tops = [];
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!n.textContent.trim()) continue;
+    // Decorative badges (monograms, glyphs) and tooltips (shown on hover only) are not lines.
+    if (n.parentElement && n.parentElement.closest('[aria-hidden="true"],[role="tooltip"]')) {
+      continue;
+    }
+    const r = document.createRange(); r.selectNodeContents(n);
+    for (const x of r.getClientRects()) if (x.width > 0) tops.push(x.top);
+  }
+  tops.sort((a, b) => a - b);
+  let lines = 0, last = -1e9;
+  for (const t of tops) { if (t - last > 6) lines += 1; last = t; }
+  return lines;
+}"""

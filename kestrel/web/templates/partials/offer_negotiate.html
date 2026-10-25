@@ -1,0 +1,71 @@
+{# Negotiate (D-UI-122): pick an offer, set the walk-away first, enter the ask, pick a situation.
+   The draft panel stays locked until the walk-away is typed. One form carries all of it; a
+   situation press (or Write the draft) posts it and only the draft panel changes. Nothing here
+   sends anything. #}
+{% from "ui/macros.html" import icon %}
+<form id="of-neg-form" class="of-ngrid" data-testid="of-negotiate" data-pursuit="{{ chosen.pursuit_id }}"
+      hx-post="/offers/{{ chosen.pursuit_id }}/scripts" hx-target="#of-draft" hx-swap="innerHTML"
+      hx-trigger="submit" hx-disabled-elt="find .of-act" data-busy-text="{{ 'Writing your draft with ' ~ route.model ~ '.' if route.online else 'Writing your draft on your computer.' }}">
+  <div class="of-ncol">
+    <section class="k-card">
+      <header class="k-sec-head"><span class="k-badge">{{ icon('offers') }}</span><div class="k-grow"><h3>Which offer</h3></div></header>
+      <div class="of-chiprow" role="group" aria-label="Which offer">
+        {%- for x in open_cards %}
+        <button type="button" class="k-chip{% if x.pursuit_id == chosen.pursuit_id %} is-on{% endif %}" aria-pressed="{{ 'true' if x.pursuit_id == chosen.pursuit_id else 'false' }}" data-testid="of-pick"
+                hx-get="/offers?tab=negotiate&pursuit={{ x.pursuit_id }}" hx-include="#of-neg-form" hx-target="#of-body" hx-swap="innerHTML" hx-push-url="false">{{ x.org }}</button>
+        {%- endfor %}
+      </div>
+      <p class="of-foot">{% if con %}{{ chosen.offer.day_rate|money }} a day · {{ chosen.offer.days_committed or 'no' }} days{% else %}Base {{ ov.money_k(chosen.offer.base) or 'not given' }} · first year {{ chosen.total.text }}{% endif %}</p>
+    </section>
+    <section class="k-card of-walk">
+      <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ icon('alert') }}</span><div class="k-grow"><h3>Your walk-away</h3></div></header>
+      <label class="of-fld">The lowest {{ 'day rate' if con else 'base' }} you would accept
+        <input type="hidden" name="walk_away" id="of-walk-val" value="{{ walk }}">
+        <input class="k-input" id="of-walk" data-plain="of-walk-val" autocomplete="off" data-testid="of-walk" placeholder="{{ 'For example 550' if con else 'For example 140,000' }}" value="{{ walk|typed_amount if walk|trim else '' }}">
+        <span class="of-hint">You set this. Kestrel never picks it for you, and every draft stays above it.</span>
+      </label>
+      <label class="of-fld">What you will ask for
+        <input type="hidden" name="ask" id="of-ask-val" value="{{ ask }}">
+        <input class="k-input" id="of-ask" data-plain="of-ask-val" autocomplete="off" data-testid="of-ask" placeholder="Optional" value="{{ ask|typed_amount if ask|trim else '' }}">
+        <span class="of-hint">Optional. Kestrel refuses an ask below your walk-away.</span>
+      </label>
+    </section>
+    <section class="k-card">
+      <header class="k-sec-head"><span class="k-badge">{{ icon('tune') }}</span><div class="k-grow"><h3>Situation</h3></div></header>
+      <input type="hidden" name="situation" id="of-situation" value="{{ picked }}">
+      <div class="of-sits" role="group" aria-label="Situation">
+        {%- for s in sits %}
+        <button type="button" class="of-sit of-act{% if s.key == picked %} is-on{% endif %}" data-sit="{{ s.key }}" data-testid="of-sit" aria-pressed="{{ 'true' if s.key == picked else 'false' }}"{% if s.disabled %} disabled title="Needs a real second offer on record. Kestrel never invents one."{% endif %}>{{ s.name }}<small>{{ 'Needs a second real offer' if s.disabled else s.hint }}</small></button>
+        {%- endfor %}
+      </div>
+    </section>
+  </div>
+  <div class="of-draft" id="of-draft-wrap" data-locked="{{ '0' if walk.strip() else '1' }}" data-testid="of-draft-wrap">
+    <div class="of-locked" data-testid="of-locked">
+      <div>{{ icon('tune', 'k-ic--lg') }}<b>Set your walk-away first</b><p>Kestrel writes every draft within the number you set, so it starts there.</p></div>
+    </div>
+    <div class="of-writing" role="status">{{ 'Writing your draft with ' ~ route.model ~ '…' if route.online else 'Writing your draft on your computer…' }}</div>
+    {%- if route.online %}
+    <div class="of-send" data-testid="of-send">
+      <b>This draft is written by an online model</b>
+      <p class="k-muted">{{ route.provider }}, using your own credit. Model: {{ route.model }}.</p>
+      <ul>
+        <li data-testid="of-sends">{{ route.sends[:1]|upper }}{{ route.sends[1:] }}.</li>
+        <li>For this draft that means {{ route.draft_sends }}.</li>
+      </ul>
+      {%- if route.employer == 'hidden' %}<p data-testid="of-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+      {%- elif route.employer == 'held' %}<p data-testid="of-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
+      <p><b>Not sent:</b> your name, contact details and your resume file. {{ route.provider }} handles what it receives under its own terms.</p>
+      <label class="of-confirm"><input type="checkbox" name="confirmed" value="1" data-testid="of-confirm"> Send this to {{ route.provider }} to write the draft</label>
+      <input type="hidden" name="model" value="{{ route.model }}">
+      <input type="hidden" name="dest" value="{{ route.dest }}">
+    </div>
+    {%- endif %}
+    <div id="of-draft" data-testid="of-draft" aria-live="polite">
+      <div class="of-ready">
+        <div>{{ icon('prep', 'k-ic--lg') }}<b>Ready when you are</b>{% if route.online %}<p>Pick a situation and an online model writes the draft. Read what is sent first, below.</p>{% else %}<p>Pick a situation and Kestrel writes the draft on your computer. Nothing leaves it.</p>{% endif %}
+        <button type="submit" class="k-btn k-btn--primary of-act" data-testid="of-write">Write the draft</button></div>
+      </div>
+    </div>
+  </div>
+</form>

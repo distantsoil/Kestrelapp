@@ -192,16 +192,16 @@ def _get(c, url: str) -> str:
 def _row(html: str, opp_id: int) -> str:
     """The markup of one row, from its opening tag to the next row or the end of the list."""
     anchor = html.index(f'id="row-{opp_id}"')
-    start = html.rfind('<div class="it stripe', 0, anchor)
+    start = html.rfind('<div class="pl-row', 0, anchor)
     rest = html[start:]
-    nxt = re.search(r'<div class="it stripe', rest[1:])
-    return rest[: nxt.start() + 1] if nxt else rest.split("</div>\n  </div>")[0]
+    nxt = re.search(r'<div class="pl-row', rest[1:])
+    return rest[: nxt.start() + 1] if nxt else rest.split("</section>")[0]
 
 
 # ------------------------------------------------------------------------------------- rows
 _OLD_WORDS = re.compile(
     r">\s*(keep|kill|pass|apply|consider|pursue|t0 reject|t0_reject|needs review|shortlisted|"
-    r"shortlist|quarantined|evaluated|override verdict|agree)\s*<",
+    r"quarantined|evaluated|override verdict|agree)\s*<",
     re.IGNORECASE,
 )
 
@@ -210,56 +210,57 @@ def test_list_groups_rows_by_fit_with_one_word_and_one_number_per_row():
     ids = asyncio.run(_seed())
     with _client() as c:
         html = _get(c, "/opportunities")
-    assert 'id="pipeline"' in html and 'id="drawer"' in html
+    assert 'id="pipeline"' in html and 'id="pl-panel"' in html
     # Grouped (D-UI-45, D-UI-51, D-UI-56): Worth a look, Maybe (none here), Being scored,
-    # Scoring failed, Not a fit; Newest first inside each group (same first-seen time: newest id
-    # first). Hidden rows out. The list is one track, the active tab's (D-UI-57): the
-    # consulting lead "c" is on the Consulting tab.
-    assert _row_ids(html) == [ids["b"], ids["a"], ids["d"], ids["e"], ids["k"]]
+    # Scoring failed, Not a fit; Best fit first inside each group (D-UI-96). Hidden rows out. The
+    # list is one track, the active tab's (D-UI-57): the consulting lead "c" is on the
+    # Consulting tab.
+    assert _row_ids(html) == [ids["a"], ids["b"], ids["d"], ids["e"], ids["k"]]
     assert "Worth a look · 2" in html and "Being scored · 1" in html
     assert "Scoring failed · 1" in html
     # Not a fit is its own section below the paged groups, closed until Show (D-UI-62).
     main = html.split('data-testid="not-fit-rows"')[0]
     assert 'data-testid="not-fit-section"' in main and "Not a fit · 1<" in main
-    assert 'data-testid="not-fit-show"' in main and ">Show 1</button>" in main
+    assert 'data-testid="not-fit-show"' in main and ">Show</button>" in main
     assert ids["k"] not in _row_ids(main)
     a = _row(html, ids["a"])
-    # Scored rows are tinted in their tone and the score takes the tone (D-UI-51).
-    assert 'class="it stripe good tinted"' in a and 'data-fit="strong fit">strong fit</span>' in a
-    assert 'data-testid="on-shortlist">on my shortlist</span>' in a
-    assert f"{_EMPLOYER} · Austin, TX, hybrid · $230k to $260k · seen 3×" in a
-    # The summary is the FIRST sentence of block A, not the whole block.
-    assert "Owns IT for Northwind Freight, an acquired carrier mid-integration." in a
-    assert "Reports to the CFO" not in a
-    assert '<span class="score good" data-fit-score>4.6</span>' in a
+    # The row's stripe takes the fit tone and the score takes it too (D-UI-51).
+    assert 'class="pl-row is-good"' in a and 'data-fit="strong fit"' in a
+    assert "Strong fit</span>" in a
+    assert 'data-testid="on-shortlist">On my shortlist</span>' in a
+    assert f"{_EMPLOYER} · Austin, TX · Hybrid · $230,000 to $260,000 · Seen 3 times" in a
+    # No summary on the row (D-UI-96): it is in the panel, where the model's first sentence leads.
+    assert "Owns IT for" not in a and "Reports to the CFO" not in a
+    assert 'data-fit-score>4.6 <small>/ 5</small>' in a
     assert "4.5" not in a  # one number per row: the weighted score is the panel's
+    # A healthy row carries no warning icon and no badge beyond its fit and shortlist tags.
+    assert 'data-testid="row-warning"' not in a
     b = _row(html, ids["b"])
-    assert 'class="it stripe warn tinted"' in b and 'data-fit="your call"' in b
+    assert 'class="pl-row is-warn"' in b and 'data-fit="your call"' in b
     assert "model and score disagree" in b
+    # The needs-review divergence is the one warning icon, with its tooltip.
+    assert 'data-testid="row-warning"' in b and "disagree on this one" in b
     consulting = _get(c, "/opportunities?track=consulting")
     assert _row_ids(consulting) == [ids["c"]]
     c_row = _row(consulting, ids["c"])
-    assert 'class="it stripe good tinted"' in c_row
-    assert "Ridgeline Utilities · consulting · remote · $2,400 a day" in c_row
-    assert "A 90-day integration lead for a utility that closed an acquisition." in c_row
+    assert 'class="pl-row is-good"' in c_row and ">RFP</div>" in c_row
+    assert "Ridgeline Utilities · Remote · $2,400 a day" in c_row
     assert "The COO is the likely buyer" not in c_row
     d = _row(html, ids["d"])
     # Unscored: grey with a dashed stripe and a pill that says where it is, never a dash.
-    assert 'class="it stripe wait"' in d and 'data-fit="new"' in d
+    assert 'class="pl-row is-new"' in d and 'data-fit="new"' in d
     assert 'data-scoring="not_queued">not queued</span>' in d
-    assert 'class="sum"></div>' in d and 'class="score wait" data-fit-score></span>' in d
+    assert "data-fit-score" not in d  # no score, and no dash standing in for one
     k = _row(html, ids["k"])
-    assert 'class="it stripe bad tinted"' in k and 'data-fit="not a fit"' in k
-    assert "data-fit-score></span>" in k
+    assert 'data-fit="not a fit"' in k and "data-fit-score" not in k
     assert 'data-scoring="failed">failed</span>' in _row(html, ids["e"])
-    # The header counts every open role, Not a fit's included; Score again takes this page's
-    # visible rows (Not a fit is its own section, D-UI-62).
+    # The header counts every open role, Not a fit's included. Score again is the bulk bar's
+    # (and Needs another try's): the old toolbar button is gone (D-UI-96).
     assert "5 open · 1 still being scored" in html and "1 failed scoring</a>" in html
-    again = html.split('data-testid="pipeline-score-again"')[1].split("</span>")[0]
-    assert all(str(ids[k]) in again for k in ("a", "b", "d", "e"))
-    # Every row is a drawer loader and a keyboard target.
-    assert html.count(f'hx-get="/opportunities/{ids["a"]}/drawer"') == 1
-    assert 'hx-target="#drawer"' in a and 'tabindex="0"' in a
+    assert 'data-testid="pipeline-score-again"' not in html
+    assert 'data-bulk="score-again"' in html
+    # Every row is a keyboard target; clicking one opens its panel (pipeline.js).
+    assert 'tabindex="0"' in a and 'data-testid="pl-row"' in a
     # The stored enums never reach the operator, and no dashes stand in for a missing number.
     assert not _OLD_WORDS.search(html), _OLD_WORDS.search(html)
     assert "—" not in html and "–" not in html
@@ -315,63 +316,95 @@ def test_the_sql_grouping_agrees_with_fit_for_row_for_row():
         html = _get(c, "/opportunities")
         rules_only = c.get("/opportunities?stage=t0_reject").text
     assert "Maybe · 1" in html
-    note = html.split('data-testid="not-fit-note">')[1].split("</p>")[0]
-    assert note == ("2 set aside by your rules before any model ran (pay 1, title 1); 1 scored "
-                    "low by the model. Not counted in the paging above.")
+    note = html.split('data-testid="not-fit-note">')[1].split("</div>")[0]
+    assert note.startswith("2 set aside by your rules before any model ran (pay 1, title 1); 1 "
+                           "scored low by the model. Not counted in the groups above.")
     # Only rule rejects: the section opens with its first page, no Show button needed.
     assert "Not a fit · 2<" in rules_only and 'data-testid="not-fit-show"' not in rules_only
     assert 'data-testid="not-fit-rows"' in rules_only
     assert ids["a"] not in _row_ids(rules_only) and len(_row_ids(rules_only)) == 2
 
 
-def test_unscored_rows_come_before_not_a_fit_and_every_header_shows_on_every_page():
-    """Hard rule 4: a quarantined row or a Tier 1 keep must not hide pages deep behind Tier 0
-    rejects. Being scored sorts ahead of Not a fit, and every group with rows anywhere renders
-    its header with its total count, even on a page that holds none of its rows."""
+def test_unscored_rows_come_before_not_a_fit_and_not_a_fit_pages_twelve_at_a_time():
+    """Hard rule 4: a quarantined row or a Tier 1 keep must not hide deep behind Tier 0
+    rejects. Being scored sorts ahead of Not a fit; Not a fit never takes a slot in the groups
+    above it (D-UI-62) and pages on its own, twelve at a time with Load more (D-UI-96)."""
     ids = asyncio.run(_seed())
 
     async def rejects(s):
         org = (await s.execute(select(Org))).scalars().first()
         src = (await s.execute(select(Source))).scalars().first()
         s.add_all([_opp(org, src, f"r{i}", stage="t0_reject",
-                        stage_reason="blocker:anti_title: help desk") for i in range(6)])
+                        stage_reason="blocker:anti_title: help desk") for i in range(14)])
         await s.commit()
 
     asyncio.run(_with_session(rejects))
     with _client() as c:
-        first = _get(c, "/opportunities?page_size=4")
-        last = _get(c, "/opportunities?page_size=4&page=3")
-    # Page 1 of the visible groups: Worth a look (2), Being scored, Scoring failed. Not a fit
-    # never takes a page slot (D-UI-62): the four visible rows fit on one page, and the
-    # section below shows its whole count and an accurate note over every page.
+        first = _get(c, "/opportunities")
+        nf1 = c.get("/opportunities/not-fit").text
+        nf2 = c.get("/opportunities/not-fit?nf_page=2").text
     main = first.split('data-testid="not-fit-rows"')[0]
-    assert _row_ids(main) == [ids["b"], ids["a"], ids["d"], ids["e"]]
+    assert _row_ids(main) == [ids["a"], ids["b"], ids["d"], ids["e"]]
     assert "Being scored · 1" in main and "Scoring failed · 1" in main
-    assert "Not a fit · 7<" in main and ">Show 7</button>" in main
-    assert "7 set aside by your rules before any model ran" not in main  # k is the model's
-    assert "6 set aside by your rules before any model ran (title 6); 1 scored low" in main
-    assert "Page 1 of" not in main  # one page of visible rows: no pager
-    # Not a fit pages on its own: 4 a page, so two pages, each with the toggle back.
-    with _client() as c2:
-        nf1 = c2.get("/opportunities/not-fit?page_size=4").text
-        nf2 = c2.get("/opportunities/not-fit?page_size=4&nf_page=2").text
-    assert len(_row_ids(nf1)) == 4 and len(_row_ids(nf2)) == 3
-    assert "Not a fit, page 2 of 2" in nf2 and "nf_page=1" in nf2
+    assert "Not a fit · 15<" in main and ">Show</button>" in main
+    assert "15 set aside by your rules before any model ran" not in main  # k is the model's
+    assert "14 set aside by your rules before any model ran (title 14); 1 scored low" in main
+    assert 'data-testid="show-more-' not in main  # every group fits in its first 25
+    # Not a fit pages on its own: twelve a page, Load more asks for the next.
+    assert len(_row_ids(nf1)) == 12 and len(_row_ids(nf2)) == 3
+    assert "Showing 12 of 15" in nf1 and "nf_page=2" in nf1 and 'data-testid="not-fit-more"' in nf1
+    assert "Showing 15 of 15" in nf2 and 'data-testid="not-fit-more"' not in nf2
+    assert 'hx-swap-oob="true"' in nf2  # the footer is replaced, the rows are appended
     assert not set(_row_ids(nf1)) & set(_row_ids(nf2))
-    # A page past the visible groups has no Not a fit rows in it at all.
-    assert _row_ids(last.split('data-testid="not-fit-rows"')[0]) == []
+
+
+def test_a_group_shows_25_rows_and_show_25_more_asks_for_25_more():
+    """D-UI-96: each fit group pages together, 25 rows at a time, the state kept in the URL."""
+    asyncio.run(_seed())
+
+    async def lots(s):
+        org = (await s.execute(select(Org))).scalars().first()
+        src = (await s.execute(select(Source))).scalars().first()
+        rows = [_opp(org, src, f"w{i}") for i in range(30)]
+        s.add_all(rows)
+        await s.flush()
+        s.add_all([_ev(r, score=4.0 + (i % 10) / 100) for i, r in enumerate(rows)])
+        await s.commit()
+
+    asyncio.run(_with_session(lots))
+    with _client() as c:
+        first = c.get("/opportunities").text
+        more = c.get("/opportunities?lim_worth=50").text
+    worth = first.split('<section class="pl-group" data-group="worth"')[1].split("</section>")[0]
+    assert worth.count('data-testid="pl-row"') == 25 and "Worth a look · 32" in first
+    assert 'data-testid="show-more-worth"' in worth and ">Show 7 more</button>" in worth
+    assert "lim_worth=50" in worth  # the button asks for 25 more than are shown, in the URL
+    worth2 = more.split('<section class="pl-group" data-group="worth"')[1].split("</section>")[0]
+    assert worth2.count('data-testid="pl-row"') == 32
+    assert 'data-testid="show-more-worth"' not in worth2
 
 
 def test_best_fit_sorts_by_the_fit_number_inside_each_group():
     ids = asyncio.run(_seed())
     with _client() as c:
         html = _get(c, "/opportunities?sort=score")
-        newest = _get(c, "/opportunities")
+        default = _get(c, "/opportunities")
+        newest = _get(c, "/opportunities?sort=first_seen")
+        company = c.get("/opportunities?sort=company")
+        oldest = c.get("/opportunities?sort=oldest")
     assert _row_ids(html) == [ids["a"], ids["b"], ids["d"], ids["e"], ids["k"]]
-    assert re.search(r'class="on" data-sort="score"', html)
-    assert re.search(r'class="on" data-sort="first_seen"', newest)
-    assert 'name="sort" value="first_seen"' in newest
-    assert ">Newest</button>" in newest and ">Best fit</button>" in newest
+    assert _row_ids(default) == _row_ids(html)  # Best fit is the default (the locked mockup)
+    assert _row_ids(newest) == [ids["b"], ids["a"], ids["d"], ids["e"], ids["k"]]
+    assert oldest.status_code == 200 and company.status_code == 200
+    assert re.search(r'class="is-on" data-sort="score"', default)
+    assert re.search(r'class="is-on" data-sort="first_seen"', newest)
+    assert 'name="sort" value="score"' in default and 'name="sort" value="first_seen"' in newest
+    assert ">Newest</button>" in default and ">Best fit</button>" in default
+    assert "best fit first" in default and "newest first" in newest
+    # The menu beside the toggle: the rest of the sorts.
+    for label in ("Date posted", "First seen", "Oldest first", "Company A to Z",
+                  "Quick-screen score", "Ghost posting risk"):
+        assert f">{label}</button>" in default, label
 
 
 def test_first_sentence_keeps_abbreviations_and_clips_long_prose():
@@ -391,27 +424,34 @@ def test_each_chip_maps_to_its_query_parameter():
     ids = asyncio.run(_seed())
     with _client() as c:
         base = _get(c, "/opportunities")
-        for name in ("shortlisted", "needs_review", "evaluated", "new_today", "quarantined",
-                     "hidden"):
+        for name in ("all", "shortlisted", "needs_review", "evaluated", "new_today", "saved",
+                     "failed", "hidden"):
             assert f'data-chip="{name}"' in base, name
-        assert 'data-chip="quarantined" aria-pressed="false"' not in base  # attribute order
-        assert re.search(r'data-count="1"[^>]*data-chip="quarantined"', base)
+        # Failed scoring opens Needs another try and carries that page's count.
+        assert re.search(r'href="/quarantine"[^>]*data-chip="failed"[^>]*>Failed scoring'
+                         r'<span class="k-chip__n">1</span>', base)
         assert 'data-chip="clear"' not in base  # nothing active: nothing to clear
-        for label in (">My shortlist<", ">Your call<", ">Scored<", ">New today<",
-                      ">Couldn&#39;t score<", ">Hidden<"):
+        for label in ("My shortlist", "Your call", "Scored", "New today", "Saved",
+                      "Failed scoring", "Hidden", "More filters"):
             assert label in base, label
+        # The counts: all open roles outside Not a fit, my shortlist, your call, scored, new.
+        assert re.search(r'data-chip="all">All<span class="k-chip__n">4</span>', base)
+        assert re.search(r'data-chip="shortlisted">My shortlist<span class="k-chip__n">1</span>',
+                         base)
+        assert re.search(r'data-chip="needs_review">Your call<span class="k-chip__n">1</span>',
+                         base)
 
         shortlisted = _get(c, "/opportunities?shortlisted=1")
         assert _row_ids(shortlisted) == [ids["a"]]
-        assert re.search(r'class="chip on"[^>]*data-chip="shortlisted"', shortlisted)
+        assert re.search(r'class="k-chip is-on"[^>]*data-chip="shortlisted"', shortlisted)
         assert 'data-chip="clear"' in shortlisted
 
         assert _row_ids(_get(c, "/opportunities?needs_review=1")) == [ids["b"]]
         assert _row_ids(_get(c, "/opportunities?stage=t2_done")) == [
-            ids["b"], ids["a"], ids["k"]
+            ids["a"], ids["b"], ids["k"]
         ]
         assert _row_ids(_get(c, "/opportunities?new_today=1")) == [
-            ids["b"], ids["a"], ids["e"], ids["k"]
+            ids["a"], ids["b"], ids["e"], ids["k"]
         ]
         assert _row_ids(_get(c, "/opportunities?stage=quarantined")) == [ids["e"]]
         hidden = _get(c, "/opportunities?hidden=1")
@@ -422,16 +462,20 @@ def test_each_chip_maps_to_its_query_parameter():
         assert _row_ids(_get(c, "/opportunities?track=consulting")) == [ids["c"]]
         assert _row_ids(_get(c, "/opportunities?q=ridgeline&track=consulting")) == [ids["c"]]
         assert _row_ids(_get(c, "/opportunities?q=senior")) == [ids["k"]]
-        # Chips combine: shortlisted AND needs review is empty, with the chips empty state.
+        # Chips combine: shortlisted AND needs review is empty, with the empty state.
         both = _get(c, "/opportunities?shortlisted=1&needs_review=1")
-        assert _row_ids(both) == [] and "No opportunities match these chips" in both
+        assert _row_ids(both) == [] and "Nothing matches these filters" in both
+        assert 'data-testid="clear-filters"' in both and "j</kbd>" in both
         # Sort: newest and ghost are accepted; an HTMX request gets only the list block.
         assert c.get("/opportunities?sort=first_seen").status_code == 200
         part = c.get("/opportunities?sort=ghost", headers={"HX-Request": "true"}).text
         assert part.lstrip().startswith('<div id="pipeline-list"') and "<html" not in part
-        # An older URL's filters ride along as hidden inputs so chips do not drop them.
-        old = _get(c, "/opportunities?score_min=4&org=north")
-        assert 'name="score_min" value="4"' in old and 'name="org" value="north"' in old
+        assert 'id="pl-counts"' in part and 'hx-swap-oob="true"' in part
+        # An older URL's filters ride along (More filters inputs, or hidden fields) so chips do
+        # not drop them.
+        old = _get(c, "/opportunities?score_min=4&org=north&verdict=apply")
+        assert '<option value="4.0" selected>' in old and 'name="org" value="north"' in old
+        assert 'name="verdict" value="apply"' in old
 
 
 def test_empty_state_points_at_sources_and_setup_when_nothing_was_ingested():
@@ -454,58 +498,87 @@ def test_empty_state_points_at_sources_and_setup_when_nothing_was_ingested():
 
 
 # ----------------------------------------------------------------------------------- drawer
-def test_drawer_open_full_page_link_sits_in_the_header_bar_beside_close():
-    """#35: Open full page was a quiet button under the decision panel; it now sits in the header
-    bar, a normal button, next to Close."""
+def test_panel_header_has_the_link_icon_and_close_rightmost_and_the_footer_opens_the_role():
+    """D-UI-96: each panel has its own URL (the link icon copies it) and Close is always the
+    rightmost control; the footer's Open full role goes to the role page. The older /drawer
+    path still answers with the same panel."""
     ids = asyncio.run(_seed())
     with _client() as c:
-        html = c.get(f"/opportunities/{ids['b']}/drawer").text
-    bar = html.split('<div class="bar">', 1)[1].split("</div>", 1)[0]
-    link = f'<a class="btn" href="/opportunities/{ids["b"]}" data-testid="drawer-open">'
-    assert link in bar and ">Open full page<" in bar
-    assert bar.index("drawer-open") < bar.index('aria-label="Close"')
-    assert html.count('data-testid="drawer-open"') == 1
+        html = c.get(f"/opportunities/{ids['b']}/panel").text
+        old = c.get(f"/opportunities/{ids['b']}/drawer").text
+    head = html.split('<div class="pl-dh">', 1)[1].split('<div class="pl-db">')[0]
+    assert head.index("data-pl-copy") < head.index("data-pl-close")
+    assert head.rstrip().endswith("</div>") and head.rindex("data-pl-close") > head.rindex(
+        "data-pl-copy")
+    link = f'<a class="k-btn k-btn--primary" href="/opportunities/{ids["b"]}" '
+    assert link in html and ">Open full role &rarr;<" in html
+    assert html.count('data-testid="panel-open"') == 1
+    assert old == html
 
 
-def test_drawer_has_the_fit_card_two_actions_and_the_disagree_control():
+def test_panel_deep_link_renders_the_panel_open_with_the_list():
+    """?open=<id> is the panel's own URL: Back and a pasted link land on the page with it open."""
     ids = asyncio.run(_seed())
     with _client() as c:
-        html = c.get(f"/opportunities/{ids['b']}/drawer").text
-        a = c.get(f"/opportunities/{ids['a']}/drawer").text
-        assert c.get("/opportunities/999999/drawer").status_code == 404
-    assert "<html" not in html and 'id="drawer-card"' in html
-    assert 'data-fit="your call">your call</span>' in html
-    # Fit: one number of 5, and the two opinions named because they differ.
-    assert "3.8 of 5 · the model said good fit, the scoring rules said maybe" in html
+        page = c.get(f"/opportunities?open={ids['b']}").text
+        none = c.get("/opportunities").text
+    assert f'data-open="{ids["b"]}"' in page and 'class="pl-panel is-open"' in page
+    assert f'<div class="pl-panel__in" data-kind="role" data-id="{ids["b"]}">' in page
+    assert 'class="pl-panel"' in none and "pl-panel__in" not in none
+
+
+def test_panel_has_the_ring_the_boxes_the_summary_and_three_buttons():
+    ids = asyncio.run(_seed())
+    with _client() as c:
+        html = c.get(f"/opportunities/{ids['b']}/panel").text
+        a = c.get(f"/opportunities/{ids['a']}/panel").text
+        assert c.get("/opportunities/999999/panel").status_code == 404
+    assert "<html" not in html and 'data-kind="role"' in html
+    assert 'data-fit="your call"' in html
+    # The score ring and the dimension bars (the model's own rationale stays on the role page).
+    assert 'aria-label="3.8 out of 5"' in html and "Role fit" in html and "Domain match" in html
+    assert html.count('class="pl-dim"') == 2
+    # The two opinions are named because they differ.
+    assert "The model said good fit, the scoring rules said maybe" in html
+    # The model-written summary, labeled, with the disclaimer under it.
     assert "Owns IT for Northwind Freight, an acquired carrier mid-integration." in html
-    assert "Reports to the CFO" not in html  # Why is one line
+    assert "Written by Kestrel's AI from the posting." in html.replace("&#39;", "'")
+    assert "AI overviews are the model" in html.replace("&#39;", "'")
     assert "holistic" not in html and "weighted" not in html
-    # The two primary actions and the posting link.
-    assert f'hx-post="/opportunities/{ids["b"]}/add"' in html and ">Add to my shortlist<" in html
-    assert f'hx-post="/opportunities/{ids["b"]}/not-for-me"' in html and ">Not for me<" in html
-    assert 'href="https://x/pipe-b"' in html and ">Open posting<" in html
-    # Disagree: the four fit words, a required reason, Save; no Agree, no slider.
-    assert ">Disagree with the fit?<" in html
-    for word in ("strong fit", "good fit", "maybe", "not a fit"):
-        assert f'name="fit" value="{word}" required' in html, word
-    assert 'name="reason" required' in html and ">Save<" in html
-    assert 'type="range"' not in html and "Agree" not in html
-    assert f'hx-post="/api/opportunities/{ids["b"]}/override"' in html
-    # The follow-ups wait until the role is on the list.
-    assert "Once it is on your shortlist" not in html and "Deeper read" not in html
-    assert "Once it is on your shortlist" in a and ">Deeper read with a stronger model<" in a
-    assert ">Research the company<" in a and "On my shortlist · shortlisted" in a
-    assert f"&amp;opportunity_id={ids['a']}&amp;from=/opportunities/{ids['a']}" in a
-    assert ">Tailor resume<" in a and "Not for me" not in a
-    assert f'href="/opportunities/{ids["a"]}"' in a and "Open full page" in a
+    # The pay box: the posted pay, no estimate tag, and no bar without the model's read.
+    assert "$230,000 to $260,000" in html and 'class="pl-est"' not in html
+    # The footer: Shortlist, Not for me, Open full role; the reasons are one click away.
+    assert f'hx-post="/opportunities/{ids["b"]}/decide/shortlist"' in html and ">Shortlist<" in html
+    assert "data-pl-ask" in html and ">Not for me<" in html
+    for key, text in (("kind", "Not my kind of role"), ("pay_place", "Pay or location"),
+                      ("level", "Wrong level"), ("later", "Just not now")):
+        tag = f'hx-post="/opportunities/{ids["b"]}/decide/not-for-me?reason={key}"'
+        assert tag in html and f">{text}</button>" in html, key
+    assert "Not for me because…" in html and "Rate it on the full role page" in html
+    # The detailed rating, the follow-ups and the posting link live on the role page.
+    assert "Disagree with the fit?" not in html and 'type="range"' not in html
+    assert "Deeper read" not in html and "Research the company" not in html
     assert not _OLD_WORDS.search(html) and not _OLD_WORDS.search(a)
+    # A shortlisted role shows where it stands and cannot be hidden from here.
+    assert 'data-testid="panel-on-list"' in a and "On my shortlist" in a
+    assert 'data-testid="panel-not-for-me"' not in a and 'data-testid="panel-open"' in a
 
     with _client() as c:
-        no_ev = c.get(f"/opportunities/{ids['d']}/drawer").text
-        hidden = c.get(f"/opportunities/{ids['h']}/drawer").text
-    assert "Being scored" in no_ev and 'data-testid="disagree"' in no_ev
-    assert 'data-testid="restore"' in hidden and 'data-testid="not-for-me"' not in hidden
-    assert "Hidden (applied elsewhere)." in hidden
+        no_ev = c.get(f"/opportunities/{ids['d']}/panel").text
+        hidden = c.get(f"/opportunities/{ids['h']}/panel").text
+        detail = c.get(f"/opportunities/{ids['b']}").text
+        shortlisted = c.get(f"/opportunities/{ids['a']}").text
+    assert 'data-kind="pending"' in no_ev and "Being scored" in no_ev
+    assert 'data-testid="panel-put-back"' in hidden
+    assert 'data-testid="panel-not-for-me"' not in hidden
+    # The role page has Your view (Yes or Adjust) in place of the old rating control, Deeper read
+    # and Research in its decision column, and Prepare open once it is on the shortlist.
+    assert 'data-testid="your-view"' in detail and 'type="range"' not in detail
+    assert "Disagree with the fit?" not in detail
+    assert 'data-testid="escalate"' in detail and 'data-testid="research"' in detail
+    assert 'data-locked="1"' in detail and 'data-locked="1"' not in shortlisted
+    assert f"&amp;opportunity_id={ids['a']}&amp;from=/opportunities/{ids['a']}" in shortlisted
+    assert ">Tailor resume<" in shortlisted
 
 
 def test_watch_names_the_legitimacy_flags_in_plain_words():
@@ -523,15 +596,25 @@ def test_watch_names_the_legitimacy_flags_in_plain_words():
 
     asyncio.run(_with_session(flag))
     with _client() as c:
-        html = c.get(f"/opportunities/{ids['b']}/drawer").text
+        html = c.get(f"/opportunities/{ids['b']}/panel").text
         rows = _get(c, "/opportunities")
-    watch = html.split('data-testid="fit-watch">')[1].split("</dd>")[0]
-    assert watch == ("No pay, location or team named. An agency posting; the client is not "
-                     "named. May be a ghost posting.")
+        detail = c.get(f"/opportunities/{ids['b']}").text
+    # The panel's "Worth checking" lists every line, in plain words.
+    watch = html.split('data-testid="panel-watch"')[1].split('<div class="pl-dgrid">')[0]
+    for line in ("No pay, location or team named.", "An agency posting; the client is not named.",
+                 "May be a ghost posting."):
+        assert line in watch, line
     assert "no_comp" not in html
-    assert ">check the posting<" in _row(rows, ids["b"])
+    # The row carries ONE warning icon whose tooltip says what is wrong.
+    row = _row(rows, ids["b"])
+    assert row.count('data-testid="row-warning"') == 1
+    assert "Check the posting before you rely on it." in row and "Possible ghost posting" in row
+    assert "Worth a second look" in row
     assert watch_lines({"signals": ["brand_new_signal"]}) == ["Brand new signal."]
     assert watch_lines(None) == []
+    for line in ("No pay, location or team named.", "An agency posting; the client is not named.",
+                 "May be a ghost posting."):
+        assert f'data-testid="fit-watch">{line}</li>' in detail, line
 
 
 def test_hidden_class_rule_stays_and_the_decision_actions_swap_the_panel():
@@ -550,29 +633,27 @@ def test_hidden_class_rule_stays_and_the_decision_actions_swap_the_panel():
     assert "div.row.hidden" not in detail_tmpl  # the page-local patch is gone
     ids = asyncio.run(_seed())
     with _client() as c:
-        drawer = c.get(f"/opportunities/{ids['b']}/drawer").text
-        hidden = c.get(f"/opportunities/{ids['h']}/drawer").text
+        drawer = c.get(f"/opportunities/{ids['b']}").text
+        hidden = c.get(f"/opportunities/{ids['h']}").text
         expand = c.get(f"/opportunities/{ids['a']}/expand").text
-    for action in ("add", "not-for-me"):
-        tag = drawer.split(f'/opportunities/{ids["b"]}/{action}"')[1].split(">")[0]
-        assert 'hx-target="#decision" hx-swap="outerHTML"' in tag, action
-    tag = hidden.split(f'/opportunities/{ids["h"]}/restore"')[1].split(">")[0]
-    assert 'hx-target="#decision" hx-swap="outerHTML"' in tag
+    for action in ("shortlist", "not-for-me"):
+        assert f'/opportunities/{ids["b"]}/role/{action}' in drawer, action
+    tag = hidden.split(f'/opportunities/{ids["h"]}/role/put-back"')[1].split(">")[0]
+    assert 'hx-target="#rl-side" hx-swap="outerHTML"' in tag
     assert 'name="fit" value="good fit"' in expand  # the legacy expansion has the control too
 
 
-def test_confidential_mode_redacts_org_and_summary_in_rows_and_drawer():
+def test_confidential_mode_redacts_org_and_summary_in_rows_and_panel():
     ids = asyncio.run(_seed(confidential=True))
     with _client() as c:
         rows = _get(c, "/opportunities")
-        drawer = c.get(f"/opportunities/{ids['a']}/drawer").text
+        panel = c.get(f"/opportunities/{ids['a']}/panel").text
     assert _EMPLOYER not in rows and _PLACEHOLDER in rows
-    assert f"Owns IT for {_PLACEHOLDER}, an acquired carrier" in _row(rows, ids["a"])
-    assert _EMPLOYER not in drawer and _PLACEHOLDER in drawer
-    assert f"Owns IT for {_PLACEHOLDER}" in drawer
+    assert f"{_PLACEHOLDER} · Austin, TX · Hybrid" in _row(rows, ids["a"])
+    assert _EMPLOYER not in panel and _PLACEHOLDER in panel
+    assert f"Owns IT for {_PLACEHOLDER}" in panel
 
 
-# ------------------------------------------------------------------------------------ N+1
 def test_summary_lines_come_from_the_list_query_not_one_statement_per_row():
     asyncio.run(_seed())
 
@@ -639,7 +720,7 @@ def test_add_to_my_list_writes_the_pursuit_and_the_agree_label_once():
         r2 = c.post(f"/opportunities/{ids['c']}/add", headers={"HX-Request": "true"})
         assert r2.status_code == 200 and "Already in your leads" in r2.text
         row = _row(_get(c, "/opportunities?track=consulting"), ids["c"])
-        assert 'data-testid="on-shortlist">in my leads</span>' in row
+        assert 'data-testid="on-shortlist">In my leads</span>' in row
         assert "you said" not in row  # an agree is the same word as the fit
         assert c.post("/opportunities/999999/add").status_code == 200
 
@@ -744,13 +825,10 @@ def test_add_is_one_transaction_and_says_where_the_role_sits(monkeypatch):
         added = c.post(f"/opportunities/{ids['d']}/add").text
         again = c.post(f"/opportunities/{ids['a']}/shortlist").text
         detail = c.get(f"/opportunities/{ids['a']}").text
-    assert "Added to your shortlist (My shortlist)." in added and "pursuit #" not in added
-    assert "Already on your shortlist (My shortlist)." in again
-    assert "On my shortlist (My shortlist)" in detail and "pursuit #" not in detail
-    # The actions panel reloads itself when the decision panel changes the list.
-    assert f'hx-get="/opportunities/{ids["a"]}/actions"' in detail
-    assert "pipelineRefresh from:body" in detail
-    assert f'opportunity_id={ids["a"]}&from=/opportunities/{ids["a"]}' in detail
+    assert "Added to your shortlist (To apply)." in added and "pursuit #" not in added
+    assert "Already on your shortlist (To apply)." in again
+    assert "On my shortlist" in detail and "pursuit #" not in detail
+    assert f'opportunity_id={ids["a"]}&amp;from=/opportunities/{ids["a"]}' in detail
 
 
 # ------------------------------------------------------------- remove from the list (D-UI-75)
@@ -765,8 +843,7 @@ def test_remove_undoes_an_accidental_add_and_its_label():
     with _client() as c:
         c.post(f"/opportunities/{ids['d']}/add")
         panel = c.get(f"/opportunities/{ids['d']}").text
-        assert f'hx-post="/opportunities/{ids["d"]}/remove"' in panel
-        assert ">Remove from my shortlist<" in panel
+        assert f'hx-post="/opportunities/{ids["d"]}/role/unshortlist"' in panel
         r = c.post(f"/opportunities/{ids['d']}/remove", headers={"HX-Request": "true"})
         assert r.status_code == 200 and r.headers["HX-Trigger"] == "pipelineRefresh"
         assert r.text.lstrip().startswith('<div id="decision"')
@@ -808,7 +885,7 @@ def test_remove_after_applying_deletes_the_history_and_warns_first():
     ids = asyncio.run(_seed())
     with _client() as c:
         first = c.get(f"/opportunities/{ids['a']}").text
-        assert 'hx-confirm="Remove this from your shortlist?"' in first
+        assert f'/opportunities/{ids["a"]}/role/unshortlist' in first  # fresh: one click, Undo
 
     async def advance(s):
         stmt = select(Pursuit).where(Pursuit.opportunity_id == ids["a"])
@@ -864,9 +941,8 @@ def test_disagree_maps_the_fit_word_to_a_verdict_and_refreshes_the_row():
         # A word outside the four is tampering; a missing reason is refused as before.
         assert c.post(url_c, json={"fit": "keep", "reason": "x"}).status_code == 422
         assert c.post(url_c, json={"fit": "good fit"}).status_code == 400
-        drawer = c.get(f"/opportunities/{ids['a']}/drawer").text
-    assert 'name="fit" value="not a fit" required checked' in drawer
-    assert "You said not a fit." in drawer
+        drawer = c.get(f"/opportunities/{ids['a']}").text
+    assert "You said <b>not a fit</b>" in drawer
     labels = asyncio.run(_with_session(_labels))
     assert [(lb.operator_verdict, lb.operator_score) for lb in labels] == [
         ("consider", 3.0), ("pursue", 4.75), ("pass", 1.5)
@@ -902,7 +978,7 @@ def test_the_latest_evaluation_prefers_the_highest_tier_over_a_newer_tier1_row()
     with _client() as c:
         html = _row(_get(c, "/opportunities"), ids["a"])
         r = c.post(f"/api/opportunities/{ids['a']}/override", json={"mode": "agree"})
-    assert "data-fit-score>4.6</span>" in html
+    assert "data-fit-score>4.6 <small>" in html
     assert r.json()["override"]["operator_verdict"] == "apply"
 
 
@@ -1138,7 +1214,7 @@ def test_unscored_rows_say_scoring_waiting_or_failed():
     with _client() as c:
         html = _get(c, "/opportunities")
     d = _row(html, ids["d"])
-    assert 'data-scoring="running">scoring…</span>' in d and 'class="it stripe wait"' in d
+    assert 'data-scoring="running">scoring…</span>' in d and 'class="pl-row is-new"' in d
     assert 'data-scoring="failed">failed</span>' in _row(html, ids["e"])
     assert "Being scored · 1" in html and "Scoring failed · 1" in html
 
@@ -1160,20 +1236,24 @@ def test_role_panel_has_the_ai_overview_disclaimer_research_and_score_again():
 
     asyncio.run(_with_session(doubt))
     with _client() as c:
-        b = c.get(f"/opportunities/{ids['b']}/drawer").text
-        a = c.get(f"/opportunities/{ids['a']}/drawer").text
-        d = c.get(f"/opportunities/{ids['d']}/drawer").text
+        panel = c.get(f"/opportunities/{ids['b']}/panel").text
+        b = c.get(f"/opportunities/{ids['b']}").text
+        a = c.get(f"/opportunities/{ids['a']}").text
+        d = c.get(f"/opportunities/{ids['d']}").text
         ev_tab = c.get(f"/opportunities/{ids['b']}/tab/evaluation").text
-    overview = b.split('data-testid="ai-overview"')[1].split('data-actions')[0]
-    assert ">AI overview<" in overview and disclaimer.replace("'", "&#39;") in overview
-    assert ">may not be a real opening<" in overview
-    assert overview.index("may not be a real opening") < overview.index("AI overviews are")
+    assert disclaimer.replace("'", "&#39;") in b  # under the model-written read
+    assert ">may not be a real opening<" in b
     assert disclaimer.replace("'", "&#39;") in ev_tab and ">may not be a real opening<" in ev_tab
+    # The panel says it too: the summary is labeled, and the flag is in "Worth checking".
+    assert "AI overviews are the model" in panel.replace("&#39;", "'")
+    assert "This may not be a real opening." not in panel  # the check is in the row's icon
+    assert "May be collecting resumes, not a real opening." in panel.replace(
+        "&#39;", "'") or "collecting resumes" in panel
     for html in (a, b, d):  # on the list, not on it, and not scored yet
-        assert ">Research the company<" in html
-        assert "data-score-again=" in html
-    assert ">Add to my shortlist<" in b and "my list" not in b
-    assert "On my shortlist · shortlisted" in a
+        assert 'data-testid="research"' in html
+        assert "/rescore/choose?opp_ids=" in html
+    assert 'data-testid="add-to-list"' in b and "my list" not in b
+    assert "On my shortlist" in a
     assert "Being scored" in d
 
 
@@ -1235,10 +1315,12 @@ def test_scoring_failed_is_its_own_group_with_the_reason_and_score_again():
     assert 'id="scoring-failed"' in html
     explain = html.split('data-testid="failed-explain"')[1].split("</div>")[0]
     assert "The model could not finish these. Score them again, or try another model." in explain
-    assert f'data-score-again="{max(ids["e"], er_id)},{min(ids["e"], er_id)}"' in explain
+    # The group links to Needs another try, where each role can be tried again (D-UI-96).
+    assert 'href="/quarantine"' in explain and "Open Needs another try" in explain
     e = _row(html, ids["e"])
     assert "the model repeated itself" in e and 'data-testid="row-score-again"' in e
-    assert f'data-score-again="{ids["e"]}"' in e and ">Score again</button>" in e
+    assert f'href="/rescore/choose?opp_ids={ids["e"]}&page=1&next=/opportunities"' in e
+    assert ">Score again</a>" in e
     rq_row = _row(html, rq_id)
     assert 'data-scoring="queued"' in rq_row and "row-score-again" not in rq_row
     assert "—" not in html
@@ -1284,8 +1366,7 @@ def test_remove_unhides_a_role_imported_as_applied_and_speaks_consulting():
         r = c.post(f"/opportunities/{ids['d']}/remove")
         assert "Removed from your shortlist." in r.text and 'data-testid="add-to-list"' in r.text
         assert ids["d"] in _row_ids(_get(c, "/opportunities"))
-        c.post(f"/opportunities/{ids['c']}/add")
-        lead = c.get(f"/opportunities/{ids['c']}").text
+        lead = c.post(f"/opportunities/{ids['c']}/add").text
         assert ">Remove from my leads<" in lead
         assert 'hx-confirm="Remove this from your leads?"' in lead
 
@@ -1325,15 +1406,15 @@ def test_applied_roles_leave_worth_a_look_for_their_own_group_with_a_status_pill
     new = asyncio.run(_seed_applied(ids))
     with _client() as c:
         html = _get(c, "/opportunities")
-    worth = html.split('<section class="fitgroup" data-group="worth"')[1].split("</section>")[0]
-    applied = html.split('<section class="fitgroup" data-group="applied"')[1].split("</section>")[0]
+    worth = html.split('<section class="pl-group" data-group="worth"')[1].split("</section>")[0]
+    applied = html.split('<section class="pl-group" data-group="applied"')[1].split("</section>")[0]
     # The shortlisted role stays in Worth a look; the applied and interviewing ones moved.
     assert f'id="row-{ids["a"]}"' in worth
     assert f'id="row-{new["ap"]}"' not in worth and f'id="row-{new["iv"]}"' not in worth
     assert f'id="row-{new["ap"]}"' in applied and f'id="row-{new["iv"]}"' in applied
     assert "Applied · 2" in html and "Worth a look · 2" in html
     # Order: Worth a look, Maybe, Applied, Being scored, Scoring failed, Not a fit.
-    sec = '<section class="fitgroup" data-group="'
+    sec = '<section class="pl-group" data-group="'
     assert html.index(sec + 'worth') < html.index(sec + 'applied') < html.index(
         sec + 'new') < html.index(sec + 'failed')
     row = _row(html, new["ap"])
@@ -1342,7 +1423,7 @@ def test_applied_roles_leave_worth_a_look_for_their_own_group_with_a_status_pill
     assert 'data-testid="on-shortlist"' not in row
     assert 'data-testid="pursuit-status">interviewing</span>' in _row(html, new["iv"])
     # A shortlisted role still shows the shortlist pill, not a status.
-    assert 'data-testid="on-shortlist">on my shortlist</span>' in _row(html, ids["a"])
+    assert 'data-testid="on-shortlist">On my shortlist</span>' in _row(html, ids["a"])
     # A closed pursuit is off the shortlist: the model's own group (Maybe), no status pill.
     rj = _row(html, new["rj"])
     assert 'data-group="maybe"' in rj and "pursuit-status" not in rj

@@ -66,13 +66,15 @@ def test_default_copy_on_the_main_pages_has_no_jargon():
                 assert not re.search(pattern, text), (path, pattern)
 
 
-def test_today_says_things_to_finish_and_small_samples_say_too_few_to_judge():
+def test_today_no_longer_carries_the_asks_or_the_honest_line():
+    # D-UI-92: the asks live in the sidebar status and the nav badges, the honest summary in
+    # Analytics (which keeps its own too-few-to-judge wording).
     c = _fresh()
     with c:
         text = _visible(c.get("/").text)
-    assert "Things to finish" in text
+    assert "Things to finish" not in text
     assert "What the system wants from you" not in text
-    assert "too few to judge (0 of 5 needed)" in text
+    assert "Top matches today" in text
 
 
 def test_the_status_rail_uses_plain_words(monkeypatch):
@@ -106,18 +108,12 @@ def test_the_role_panel_and_prep_page_speak_consulting_for_a_lead():
     with c:
         panel = c.get(f"/opportunities/{ids[0]}").text
         prep = c.get(f"/prep/{ids[0]}").text
-    assert 'data-testid="interview-prep"' in panel and ">Meeting prep</a>" in panel
+    assert 'data-testid="interview-prep"' in panel and ">Discovery call prep</a>" in panel
+    prep_btn = panel.split('data-testid="interview-prep"')[1].split("</a>")[0]
+    assert "Interview prep" not in prep_btn  # a lead has meetings, not interviews
     assert 'data-testid="interview-prep">Interview prep' not in panel
-    assert "<h1>Meeting prep</h1>" in prep
-    assert "My notes for this meeting" in prep and "My notes for this interview" not in prep
-
-
-def test_guides_are_track_aware():
-    from kestrel.web.deps import GUIDES, guide_for
-
-    for g in GUIDES.values():
-        text = guide_for(g["path"], "consulting")["text"]
-        assert "{" not in text and "resume" not in text and "shortlist" not in text, g["path"]
+    assert "<h1>Discovery call prep</h1>" in prep
+    assert "Your notes for this meeting" in prep and "Your notes for this interview" not in prep
 
 
 # ----------------------------------------------------------------- interview prep (D-UI-55)
@@ -127,9 +123,11 @@ def test_every_role_panel_and_applications_card_has_an_interview_prep_button():
     with c:
         panel = c.get(f"/opportunities/{ids[0]}").text
         board = c.get("/pursuits").text
+        card = c.get(f"/pursuits/{ids[1]}/panel").text
     assert f'href="/prep/{ids[0]}?auto=1"' in panel and ">Interview prep</a>" in panel
-    assert f'href="/prep/{ids[0]}?auto=1"' in board
-    assert 'data-testid="board-interview-prep"' in board
+    assert 'data-testid="pcard"' in board
+    assert f'href="/prep/{ids[0]}?auto=1"' in card  # the Applications panel
+    assert 'data-testid="board-interview-prep"' in card
 
 
 def test_first_open_builds_the_pack_and_notes_come_first():
@@ -142,8 +140,8 @@ def test_first_open_builds_the_pack_and_notes_come_first():
         built = c.post(f"/prep/{ids[0]}/build").text
         page = c.get(f"/prep/{ids[0]}").text
     for text in (built, page):
-        assert "My notes for this interview" in text
-        assert text.index("My notes for this interview") < text.index("Questions to ask them")
+        assert 'data-testid="prep-notes"' in text and "Your notes for this interview" in text
+        assert "Questions to ask them" in text
     assert 'data-testid="prep-auto-build"' not in page
 
 
@@ -157,6 +155,16 @@ def test_a_pack_built_from_the_role_actions_is_announced_with_a_primary_button()
         r'<a class="btn primary" href="/prep/\d+" data-testid="open-interview-prep">'
         r"Open interview prep</a>", r.text)
     assert "Open prep pack page" not in r.text
+
+
+def _tmsg(resp) -> str:
+    import json as _json
+
+    return _json.loads(resp.headers["HX-Trigger"])["k-toast"]["message"]
+
+
+def _tmsg_or_page(c, resp) -> str:
+    return _tmsg(resp) + c.get("/stories").text
 
 
 # ------------------------------------------------------------------------------ My stories
@@ -228,7 +236,7 @@ def test_dismiss_and_delete_routes_and_the_themed_confirm():
     c = _fresh()
 
     async def _add(s):
-        draft = Story(title="A draft", is_canonical=True, operator_edited=False, themes=[])
+        draft = Story(title="Zebra draft", is_canonical=True, operator_edited=False, themes=[])
         mine = Story(title="Kept story", is_canonical=True, operator_edited=True, themes=[])
         s.add_all([draft, mine])
         await s.commit()
@@ -237,19 +245,24 @@ def test_dismiss_and_delete_routes_and_the_themed_confirm():
     draft_id, mine_id = _run(_add)
     with c:
         page = c.get("/stories").text
-        assert f'hx-post="/stories/{draft_id}/dismiss"' in page and ">Dismiss</button>" in page
-        assert f'data-story-delete="{mine_id}"' in page and ">Delete</button>" in page
-        assert f'data-story-delete="{draft_id}"' not in page  # a draft is dismissed, not deleted
-        assert 'id="story-delete"' in page and 'class="quit-confirm"' in page  # the themed dialog
-        assert "Delete story</button>" in page and "confirm(" not in page
-        gone = c.post(f"/stories/{draft_id}/dismiss", headers={"HX-Request": "true"}).text
-        assert "Draft dismissed" in gone and "A draft" not in gone.split("Stories")[-1]
-        assert "Kept story" in gone
-        assert "already gone" in c.post(f"/stories/{draft_id}/dismiss").text
-        # A saved story is refused by Dismiss and removed by Delete.
-        assert "Kept story" in c.post(f"/stories/{mine_id}/dismiss").text
-        deleted = c.post(f"/stories/{mine_id}/delete", headers={"HX-Request": "true"}).text
-        assert "Story deleted." in deleted and "Kept story" not in deleted.split("Stories")[-1]
+        assert f'hx-post="/stories/{draft_id}/dismiss"' in page and "Keep separate" in page
+        assert "Kept story" in page and "Zebra draft" in page
+        # A saved story is deleted (after asking), never dismissed; a draft the other way round.
+        sheet = c.get(f"/stories/sheet?story={mine_id}").text
+        assert 'data-testid="delete-story"' in sheet
+        draft_sheet = c.get(f"/stories/sheet?story={draft_id}").text
+        assert draft_sheet.count('data-testid="delete-story"') == 0
+        confirm = c.get(f"/stories/{mine_id}/delete-confirm").text
+        assert "Delete story" in confirm and "This cannot be undone." in confirm
+        assert "confirm(" not in confirm
+        gone = c.post(f"/stories/{draft_id}/dismiss", headers={"HX-Request": "true"})
+        assert "Draft dismissed" in _tmsg(gone)
+        listing = c.get("/stories").text
+        assert "Zebra draft" not in listing and "Kept story" in listing
+        assert "already gone" in _tmsg(c.post(f"/stories/{draft_id}/dismiss"))
+        assert "Kept story" in _tmsg_or_page(c, c.post(f"/stories/{mine_id}/dismiss"))
+        deleted = c.post(f"/stories/{mine_id}/delete", headers={"HX-Request": "true"})
+        assert "Story deleted." in _tmsg(deleted) and "Kept story" not in c.get("/stories").text
 
 
 # ------------------------------------------------------------- README / Help / About
@@ -267,7 +280,8 @@ def test_readme_is_app_first_and_has_the_unsigned_beta_section():
                     "OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible",
                     "never applies, emails or messages anyone",
                     "PolyForm Noncommercial License 1.0.0",
-                    "Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and LongCat"):
+                    "Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, MiniMax M3, LongCat, "
+                    "Kimi K2.7 and MiMo"):
         assert promise in first_run or promise.capitalize() in first_run, promise
     assert _DASH not in readme
     assert "kestrel setup" in dev
@@ -281,11 +295,13 @@ def test_help_and_about_state_the_public_promises_and_no_linkedin_source():
     assert ("Kestrel does not search LinkedIn; LinkedIn does not allow automated access. "
             "You can paste a LinkedIn posting by hand.") in helptext
     for text in (helptext, about):
-        assert "any job seeker" in text and "you are not the product" in text
-        assert "OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible" in text
-        assert "never applies, emails or messages anyone" in text
-    assert ("Built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, Space Bunny and "
-            "LongCat.") in about
+        assert "you are not the product" in text.lower()
+        assert "never applies, emails or messages anyone" in text.lower()
+    # Help keeps the provider list in its online-models article; the long product description
+    # was dropped from About (SPEC-INTERFACES 2.1 /about), so it is checked on Help only.
+    assert "OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible" in helptext
+    assert "Claude ChatGPT Qwen DeepSeek NVIDIA Nemotron MiniMax M3 LongCat Kimi K2.7 MiMo" in about
+    assert "AI models that helped write and review Kestrel" in about
     assert "Claude, Qwen and NVIDIA Nemotron" not in about
     assert "PolyForm Noncommercial" in about and "LICENSE.md" in about
     # The source table is generated from the catalog; no row is a LinkedIn source.

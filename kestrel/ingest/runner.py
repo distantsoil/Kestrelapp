@@ -43,6 +43,7 @@ async def run_source(
     http: HttpClient,
     model_override: dict | None = None,
     model_label: str | None = None,
+    online_approval: dict | None = None,
 ) -> RunOutcome:
     """`model_override` is the one-run model choice (D-UI-72, amended): recorded on this
     scrape_run, attached to each role this run stores at stage `new` (a marker Tier 0 consumes,
@@ -104,6 +105,8 @@ async def run_source(
             source.consecutive_failures += 1
 
         if postings is not None:
+            from kestrel.services.online_consent import read_approval
+
             for raw in postings:
                 try:
                     res = await normalize_and_store(session, raw, source=source, scrape_run=run)
@@ -128,6 +131,8 @@ async def run_source(
                                 "version": res.opportunity.version,
                                 **({"model_override": dict(model_override)}
                                    if model_override else {}),
+                                **({"online_approval": read_approval(online_approval)}
+                                   if online_approval is not None else {}),
                             },
                         )
                     await session.commit()  # opportunity + its embed task, atomic and durable

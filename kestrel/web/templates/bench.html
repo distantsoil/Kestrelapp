@@ -1,77 +1,47 @@
+{# Model check (D-UI-105, D-UI-147, SPEC-INTERFACES 2.1 /bench; was Bench). A section of Models:
+   the route keeps its name, the nav highlights Models. One button tests every step; the run is a
+   queued background task with live progress and Cancel in place (partials/bench_panel.html). #}
 {% extends "base.html" %}
-{% from "partials/model_picker.html" import model_select with context %}
-{% block title %}Benchmark · Kestrel{% endblock %}
+{% import "ui/macros.html" as ui %}
+{% block title %}Model check · Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/css/models.css">{% endblock %}
 {% block content %}
-<h1>Benchmark</h1>
-<p data-testid="page-purpose">Bench compares models on a fixed test set so you can
-choose which model runs each tier. It does not review your resume; the resume assessment lives on
-<a href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
-<p class="muted">Pick a model, backend, and prompt version per tier, run against the gold set, and
-promote the winner. Model choice is an empirical question (SPEC.md 8.6) -- nothing here is decided
-by feel.</p>
+<div class="mo-wrap"><div class="mo-page">
+  {% set crumb %}<nav class="mo-crumb" aria-label="Breadcrumb"><a href="/models">Models</a> › <span>Model check</span></nav>{% endset %}
+  {% call ui.scene_band('Model check', crumb=crumb) %}
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#ck-how-fly" aria-controls="ck-how-fly" aria-expanded="false" data-testid="ck-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+  {% endcall %}
+  <p class="k-muted mo-purpose" data-testid="page-purpose">Model check compares models on your own ratings so you can choose which model runs each step. It does not review your resume; that lives on <a class="k-link" href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
 
-<div class="split">
-  <div class="panel">
-    <h2>Run against gold set</h2>
-    {% if models_error %}
-      <div class="warnbox" style="margin-bottom:.6rem">{{ models_error }} Local models are not
-      listed until the AI engine is running{% if hosted_label %}; hosted models still are{% endif %}.</div>
-    {% endif %}
-    {% if hosted_error %}<div class="warnbox" data-testid="bench-hosted-error" style="margin-bottom:.6rem">{{ hosted_error }}</div>{% endif %}
-    {% if hosted_label and not hosted_models %}
-      <p class="muted" style="margin-bottom:.6rem"><a class="btn small" href="/bench?hosted=1" data-testid="bench-load-hosted">Load hosted models</a>
-      adds the models {{ hosted_label }} lists to both pickers.</p>
-    {% endif %}
-    <form hx-post="/bench/run" hx-target="#bench-results" hx-swap="innerHTML"
-          hx-disabled-elt="find button"
-          data-busy-text="Running the gold set. One model call per item; this can take minutes.">
-      <div class="formgrid">
-        <label>Step</label>
-        <select name="tier">
-          {% for t in tiers %}
-          <option value="{{ t }}">{{ t|tier_label }}
-            {% if tier_config[t] %}(currently {{ tier_config[t].model }}){% endif %}</option>
-          {% endfor %}
-        </select>
-        <label>Backend</label>
-        <select name="backend">
-          {% for b in backends %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
-        </select>
-        <label>Model</label>
-        {{ model_select('model', hosted_models, local_models=available_models, hosted_label='Hosted (' ~ hosted_label ~ ')', value_prefix=hosted_prefix, testid='bench-run-model') }}
-        <label>Prompt version</label>
-        <select name="prompt_version">
-          {% for v in prompt_versions %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
-        </select>
-      </div>
-      <button class="btn primary" type="submit" style="margin-top:.6rem">Run against gold set</button>
-    </form>
+  <div class="k-layout">
+    <div class="k-layout__main mo-main">
+      {% include "partials/bench_panel.html" %}
+      {% include "partials/bench_result.html" %}
+    </div>
+    {% call ui.help_column() %}
+      {{ ui.help_card('Why this exists', ['AI models change. New ones arrive, and your ratings grow. A check tells you if another model now matches your judgment better.'], 'good', 'help', 'ck-why-fly') }}
+      {{ ui.help_card('What it measures', ['Mostly one thing: how often a model reaches the same verdict as the answer key, which is your own ratings once you use them.'], 'info', 'analytics', 'ck-measure-fly') }}
+      {{ ui.help_card('How long it takes', ['About ' ~ ck_minutes ~ ' minutes on this computer. It runs in the background.'], 'warn', 'clock', 'ck-time-fly') }}
+    {% endcall %}
   </div>
 
-  <div class="panel">
-    <h2>Promote to tier</h2>
-    <p class="muted">A local model writes the setting-table override for that tier (highest
-    precedence, SPEC.md 4.6). A hosted model becomes that tier's hosted override, shown as
-    "(Override)" on <a href="/models#hosted-overrides">Models</a>. Either takes effect on the next
-    request or task lease, with no restart.</p>
-    <form hx-post="/bench/promote" hx-target="#promote-result" hx-swap="innerHTML"
-          data-busy-text="Promoting…">
-      <div class="formgrid">
-        <label>Step</label>
-        <select name="tier">
-          {% for t in tiers %}<option value="{{ t }}">{{ t|tier_label }}</option>{% endfor %}
-        </select>
-        <label>Model</label>
-        {{ model_select('model', hosted_models, local_models=available_models, hosted_label='Hosted (' ~ hosted_label ~ ')', value_prefix=hosted_prefix, testid='bench-promote-model') }}
-      </div>
-      <button class="btn" type="submit" style="margin-top:.6rem">Promote</button>
-    </form>
-    <div id="promote-result" style="margin-top:.6rem"></div>
-  </div>
-</div>
-
-<h2 style="margin-top:1.5rem">Comparison</h2>
-<div id="bench-results">
-  {% include "partials/bench_table.html" %}
-</div>
+  {% call ui.flyout('ck-how-fly', 'How Model check works', help_href='/help') %}
+    <h4>One button</h4><p>Check my models tests Quick screen and Rating against other models that fit this computer, scoring them against an answer key: your own rated roles once you press Use my ratings as the answer key, otherwise a shipped set of example roles. Deeper read is optional.</p>
+    <h4>In the background</h4><p>The check keeps running if you leave this page, and picks up where it stopped after a restart. Cancel stops it.</p>
+    <h4>What it recommends</h4><p>A change only when a model is clearly better for you. Kestrel prefers a model on this computer unless an online one is at least 5 points better, and always asks before anything goes online.</p>
+  {% endcall %}
+  {% call ui.flyout('ck-why-fly', 'Why this exists', help_href='/help') %}
+    <h4>Models change</h4><p>Better models appear all the time, and your ratings teach Kestrel more about what you like. A check tells you whether to switch.</p>
+    <h4>When to check</h4><p>After you add a model, after every 30 new ratings, and after a model update. Kestrel suggests it on Today.</p>
+  {% endcall %}
+  {% call ui.flyout('ck-measure-fly', 'What it measures', help_href='/help') %}
+    <h4>Matching the answer key</h4><p>For each role in the answer key, Kestrel asks the model the same question and counts how often it reaches the key's verdict. Quick screen is judged on keep or skip; Rating on the verdict. The two are never compared with each other.</p>
+    <h4>Roles in the key</h4><p>Every figure shows how many roles in the answer key it rests on. Under five, it says there is too little to judge.</p>
+  {% endcall %}
+  {% call ui.flyout('ck-time-fly', 'How long it takes', help_href='/help') %}
+    <h4>Time</h4><p>It depends on your computer and the number of models tried. Free online models can be much slower than paid ones.</p>
+    <h4>Cost</h4><p>Models on this computer are free. An online model uses your credit, and only when you tick Include online models.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

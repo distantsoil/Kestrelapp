@@ -247,8 +247,8 @@ def test_a12_axis_labels_in_comparison_matrix():
     assert "Company risk" in html
     assert "Reporting line" in html
     assert "Location and travel" in html
-    assert "Fit with where you are headed" in html
-    assert "Total first-year comp" in html
+    assert "Fit with your direction" in html
+    assert "First-year total" in html
     assert "Four-year value" in html
 
 

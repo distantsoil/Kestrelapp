@@ -1,0 +1,65 @@
+{# The right rail (D-UI-100): Upcoming interviews (calls) and Follow-ups. There is no separate tasks
+   feature: a reminder is the card's own next action and its date. #}
+{% import "partials/pursuit_icons.html" as ic %}
+{% from "ui/macros.html" import segmented %}
+<aside id="apps-rail" class="ap-rail" data-testid="apps-rail" aria-label="Interviews and follow-ups"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <section class="k-card ap-rc" data-testid="rail-interviews">
+    <h3><span class="k-badge">{{ ic.icon('cal') }}</span>{{ 'Upcoming calls' if track == 'consulting' else 'Upcoming interviews' }}<span class="ap-cn">{{ rail.interviews|length }}</span></h3>
+    {% for i in rail.interviews %}
+    <div class="ap-ivr">
+      <div class="ap-dblk">{% if i.date_label %}{{ ic.icon('cal') }}{% else %}<small>{{ i.month }}</small><b>{{ i.day }}</b>{% endif %}</div>
+      <div class="k-grow">
+        <button type="button" class="ap-clip" data-open="{{ i.card.pursuit.id }}">{{ i.card.title }}</button>
+        <div class="ap-v">{{ i.card.org_name or 'Unknown organization' }}</div>
+        <div class="ap-v">{% if i.date_label %}{{ i.date_label }}{% if i.clock %} · {% endif %}{% endif %}{% if i.clock %}{{ i.clock }}{% endif %}{% if i.clock and i.kind %} · {% endif %}{{ i.kind }}</div>
+      </div>
+      <a class="k-btn k-btn--sm" href="/prep/{{ i.card.opp.id }}?auto=1" data-testid="rail-prepare">Prepare</a>
+    </div>
+    {% else %}
+    <div class="ap-v">Nothing scheduled. When you record {{ 'a call' if track == 'consulting' else 'an interview' }}, it shows here.</div>
+    {% endfor %}
+  </section>
+
+  <section class="k-card ap-rc" data-testid="rail-followups">
+    <h3><span class="k-badge k-badge--warn">{{ ic.icon('check') }}</span>Follow-ups<span class="ap-v ap-fuscope" data-fu-scope>due now</span><span class="ap-cn">{{ rail.due_now|length }}</span></h3>
+    {% for f in rail.due_now %}
+    <div class="ap-fu" data-fu="now">
+      <input type="checkbox" aria-label="Mark done: {{ f.card.next.text }}" data-testid="fu-done"
+             hx-post="/pursuits/{{ f.card.pursuit.id }}/done" hx-trigger="change">
+      <span class="k-grow"><b>{{ f.card.next.text }}</b><span class="ap-v">{{ f.card.title }} · {{ f.card.org_name or 'Unknown organization' }}</span>
+        {% if f.draftable %}<button type="button" class="k-btn k-btn--sm ap-draft-btn" data-follow-up="{{ f.card.pursuit.id }}" data-testid="draft-follow-up">Draft follow-up</button>{% endif %}
+      </span>
+      <span class="ap-fd {{ f.tone }}">{{ f.label }}</span>
+    </div>
+    {% else %}
+    <div class="ap-v" data-fu="empty">Nothing due now.</div>
+    {% endfor %}
+    {% for f in rail.later %}
+    <label class="ap-fu" data-fu="later" hidden>
+      <input type="checkbox" aria-label="Mark done: {{ f.card.next.text }}"
+             hx-post="/pursuits/{{ f.card.pursuit.id }}/done" hx-trigger="change">
+      <span class="k-grow"><b>{{ f.card.next.text }}</b><span class="ap-v">{{ f.card.title }} · {{ f.card.org_name or 'Unknown organization' }}</span></span>
+      <span class="ap-fd {{ f.tone }}">{{ f.label }}</span>
+    </label>
+    {% endfor %}
+    {% if rail.later %}<button type="button" class="k-link ap-linkbtn" data-fu-more data-testid="fu-more" data-n="{{ rail.later|length }}" aria-expanded="false">{{ rail.later|length }} more later this week</button>{% endif %}
+    <div class="ap-remf" data-remf>
+      <div class="ap-remi">
+        {% if rail.choices %}
+        <form class="ap-remform" hx-post="/pursuits/reminder" data-testid="reminder-form">
+          <input type="hidden" name="track" value="{{ track }}">
+          <label class="ap-fl">{{ 'Lead' if track == 'consulting' else 'Application' }}
+            <select name="pursuit_id" required>{% for c in rail.choices %}<option value="{{ c.pursuit.id }}">{{ c.title }} · {{ c.org_name or 'Unknown organization' }}</option>{% endfor %}</select></label>
+          <label class="ap-fl">What to do<input name="what" maxlength="120" placeholder="Follow up with the recruiter" autocomplete="off"></label>
+          <div class="ap-fl">When{{ segmented('days', [('0', 'Today'), ('3', 'This week'), ('7', 'Next week')], '0', 'When') }}</div>
+          <div class="ap-actions"><button type="submit" class="k-btn k-btn--primary k-btn--sm">Save reminder</button><button type="button" class="k-btn k-btn--sm" data-remind-close>Cancel</button></div>
+        </form>
+        {% else %}
+        <div class="ap-v">Add {{ 'a lead' if track == 'consulting' else 'an application' }} first, then set a reminder on it.</div>
+        <div class="ap-actions"><button type="button" class="k-btn k-btn--sm" data-remind-close>Close</button></div>
+        {% endif %}
+      </div>
+    </div>
+    <button type="button" class="k-link ap-linkbtn" data-remind-open data-testid="add-reminder" aria-expanded="false">+ Add a reminder</button>
+  </section>
+</aside>

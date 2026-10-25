@@ -72,6 +72,33 @@ def request_reveal(path: Path) -> bool:
         return False
 
 
+_folder_handler: Callable[[Path], None] | None = None
+
+
+def set_folder_handler(fn: Callable[[Path], None] | None) -> None:
+    """The shell registers a handler that opens a folder in the OS file manager (About's Open
+    buttons for the data and logs folders). A plain browser registers nothing."""
+    global _folder_handler
+    _folder_handler = fn
+
+
+def can_open_folder() -> bool:
+    return _folder_handler is not None
+
+
+def request_open_folder(path: Path) -> bool:
+    """Open the folder `path` in the file manager. Returns whether the shell took the request.
+    A local action on the operator's own folder. Never raises."""
+    if _folder_handler is None:
+        return False
+    try:
+        _folder_handler(path)
+        return True
+    except Exception as exc:  # a file-manager quirk must not fail the request
+        log.warning("open_folder_failed", path=str(path), error=f"{type(exc).__name__}: {exc}")
+        return False
+
+
 def request_focus() -> bool:
     """Raise the desktop window if a handler is registered. Returns whether one ran. Never raises:
     a second launch focusing the first must never crash on a slow or backend-quirky show()."""

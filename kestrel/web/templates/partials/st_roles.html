@@ -1,0 +1,8 @@
+{# Which roles you see (D-UI-106, D-UI-107): rules that hide roles, score cutoffs and hidden
+   companies. One set per track in use. #}
+{% import "partials/st_macros.html" as st with context %}
+{% set pane = 'roles' %}
+{% include "partials/st_trackbar.html" %}
+{% include "partials/st_rules.html" %}
+{% include "partials/st_cutoffs.html" %}
+{% include "partials/st_hidden.html" %}

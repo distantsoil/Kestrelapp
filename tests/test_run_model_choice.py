@@ -275,9 +275,9 @@ def test_dialog_markup(monkeypatch):
     assert 'value="kestrel-tier3:latest"' in body and 'data-testid="run-now-pick"' in body
     assert 'name="model_choice" value="usual" checked' in body
     assert "—" not in body
-    panel = client.get("/sources").text
-    assert f'hx-get="/sources/{sid}/run-now/choose"' in panel
-    assert 'type="hidden" name="page"' in panel
+    drawer = client.get(f"/sources/{sid}/drawer").text  # Run now lives in the source drawer
+    assert f'hx-get="/sources/{sid}/run-now/choose"' in drawer
+    assert 'type="hidden" name="page"' in drawer
     page = client.get(f"/sources/{sid}/run-now/choose?page=1").text
     assert "<dialog" in page and "showModal" not in page
     assert f'action="/sources/{sid}/run-now"' in page
@@ -329,7 +329,9 @@ def test_no_script_post_redirects_with_a_fixed_outcome(monkeypatch):
 
 
 def test_scans_list_and_run_panel_say_this_run_only(monkeypatch):
+    from kestrel.db.base import iso
     from kestrel.db.engine import forget_engine, get_sessionmaker
+    from kestrel.db.models import Run
 
     client, sid, _ran = _client(monkeypatch)
 
@@ -337,15 +339,23 @@ def test_scans_list_and_run_panel_say_this_run_only(monkeypatch):
         counts: dict = {"new": 2}
         run_model.stamp(counts, OVERRIDE, "kestrel-tier3 (local)")
         async with get_sessionmaker()() as s:
+            early = iso(datetime.now(UTC) - timedelta(minutes=5))
+            run = Run(name="desktop", status="done", started_at=early,
+                      finished_at=iso(datetime.now(UTC) + timedelta(minutes=5)), counts={})
+            s.add(run)
             s.add(ScrapeRun(source_id=sid, status="ok", counts=counts))
             await s.commit()
+            return run.id
 
-    asyncio.run(seed())
+    run_id = asyncio.run(seed())
     forget_engine()
-    runs = client.get("/runs").text
+    # The Runs page opens a run in its drawer: each search says which model it used.
+    runs = client.get(f"/runs/{run_id}/drawer").text
     assert "on kestrel-tier3 (local) (this run only)" in runs
     assert "&#39;model_override&#39;" not in runs and "model_override_label" not in runs
-    assert "on kestrel-tier3 (local) (this run only)" in client.get("/sources").text
+    drawer = client.get(f"/sources/{sid}/drawer").text
+    assert "on kestrel-tier3 (local) (this run only)" in drawer
+    assert "on kestrel-tier3 (local) (this run only)" in client.get(f"/runs/{run_id}").text
 
 
 # ------------------------------------------------------------- Today's Scan now (D-UI-72 amended)

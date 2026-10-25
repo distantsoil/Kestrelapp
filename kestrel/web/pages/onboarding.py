@@ -1,15 +1,17 @@
-"""The onboarding wizard (D-UI-30): one self-contained flow from how Kestrel thinks to the first
-search, with a help panel on every step.
+"""The onboarding wizard (D-UI-30, D-UI-155): six steps from how Kestrel thinks to the first
+search, with a help column on every step. Welcome, How Kestrel will think, About you, Your resume,
+What you want, Your searches; the walkthrough that follows is Today's (`/?tour=1`).
 
 Every step renders from the real state each time (kestrel.services.onboarding): the progress
-indicator and the step's own status are recomputed on every response, and every save inside the
-wizard returns the whole step (#ob-step), so no indicator can go stale after a save. The local
-model actions poll only their own box; when an action finishes, the poll answers with the
-`ob-refresh` HX-Trigger and the whole step reloads.
+row and the step's own status are recomputed on every response, and every save inside the wizard
+returns the whole step (#ob-step), so no indicator can go stale after a save. The local model
+actions poll only their own box; when an action finishes, the poll answers with the `ob-refresh`
+HX-Trigger and the whole step reloads.
 
 Back and Next are forms: with htmx they swap the step in place, without it they answer 303 to
 /onboarding. Either way the step is written to the setting table first, so a killed app resumes
-where the operator was (hard rule 5).
+where the operator was (hard rule 5). The server decides every requirement; the disabled primary
+and its hint are a courtesy that onboarding.js repeats live.
 
 Nothing here acts externally on the operator's behalf (hard rule 1): the hosted key check is a
 metadata request to the provider the operator chose, the model actions run on this machine, and
@@ -41,87 +43,109 @@ from kestrel.web.flash import flash_redirect
 log = structlog.get_logger()
 router = APIRouter()
 
-PROFILE_STEPS = ("about", "employment", "consulting", "location")
-# Steps with a "Skip for now" (D-UI-65): each can be finished later from Profile or Sources.
-SKIPPABLE = ("resume", "employment", "consulting", "location", "searches")
+# Steps with a "Skip for now" (D-UI-65): only the resume can wait; Kestrel still finds and scores
+# roles without one.
+SKIPPABLE = ("resume",)
 LOCAL_STEP_KEYS = ("ollama", "profile", "pull", "build")
+# Weeks to billed days for the shortest project length: the stored field counts days (D-UI-155).
+DAYS_PER_WEEK = 5
+DEFAULT_MARGIN = 5
 
-# The help panel: what the step is, why it matters, what happens next. Plain words.
-HELP: dict[str, dict[str, str]] = {
-    "welcome": {
-        "what": "A short guided setup. Each step saves as you go, so you can close Kestrel at "
-        "any point and pick up at the same step next time.",
-        "why": "Kestrel can only find and rank the right work once it knows how to think, who "
-        "you are and what you want. This guide asks for exactly that and nothing more.",
-        "next": "You choose how Kestrel runs its AI models: on this computer, or through a "
-        "provider you already pay for.",
-    },
-    "models": {
-        "what": "Kestrel reads every job posting with an AI model. The model can run on this "
-        "computer (Local, free, private) or at a provider such as OpenRouter, OpenAI or "
-        "Anthropic under your own key (Hosted).",
-        "why": "Without a working model nothing gets read or scored. Local needs a capable "
-        "graphics card; Hosted works on any computer.",
-        "next": "You tell Kestrel whether you are after a job, consulting work, or both.",
-    },
-    "tracks": {
-        "what": "Kestrel runs two kinds of search. Employment finds permanent roles. Consulting "
-        "finds fractional and interim engagements, and watches public filings for companies "
-        "that are about to need IT leadership.",
-        "why": "Choosing only what you want keeps the other kind of search, its settings and its "
-        "steps out of your way. You can change this later in Settings.",
-        "next": "You tell Kestrel your name and contact details.",
-    },
-    "about": {
-        "what": "Your name, contact details and headline, plus anything a role must have or "
-        "must avoid.",
-        "why": "Your name and headline go at the top of every tailored document. The SEC "
-        "filings watch needs your email, because the SEC requires a contact on every request. "
-        "Must-have and must-avoid guide the score; they never reject a posting outright.",
-        "next": "You bring in your resume, so Kestrel can tailor it for each role.",
-    },
-    "resume": {
-        "what": "Upload your resume (Word works best) or paste it. Kestrel splits it into roles "
-        "and bullets and shows you the result before anything is saved.",
-        "why": "Tailored documents are built only from your own words: Kestrel picks the bullets "
-        "that fit each role, it never writes new ones. No resume means no tailored documents.",
-        "next": "You set the terms you want: titles, level and pay.",
-    },
-    "employment": {
-        "what": "The titles you want, titles to exclude, the lowest level you would take, and "
-        "your pay floor and target.",
-        "why": "Your titles become the searches Kestrel runs. Excluded titles, the level floor "
-        "and the pay floor reject postings that do not fit, so set them honestly but not "
-        "tightly: a wrongly rejected job is one you never see.",
-        "next": "Consulting terms if you chose consulting, otherwise where you will work.",
-    },
-    "consulting": {
-        "what": "The services you sell, the sectors and company sizes you want, and your day "
-        "rate and engagement length.",
-        "why": "These decide whether a posted engagement or a company's news is worth your "
-        "time, and they shape the consulting searches.",
-        "next": "You tell Kestrel where you will work.",
-    },
-    "location": {
-        "what": "Whether remote work suits you, and the cities and states where you would work "
-        "on site.",
-        "why": "Kestrel matches places by name, not by distance on a map, so list every town "
-        "and suburb you would accept. A posting in a town you did not list is not matched.",
-        "next": "You review the searches Kestrel built from your answers and start them.",
-    },
-    "searches": {
-        "what": "The job searches Kestrel built from your titles, places and services. You never "
-        "write a search yourself; when your profile changes, the searches follow.",
-        "why": "Nothing is searched until you press Start searching. Kestrel then reads public "
-        "job boards politely, a few times a day, and never applies or sends anything for you.",
-        "next": "The first results arrive in a few minutes.",
-    },
-    "done": {
-        "what": "Setup is complete.",
-        "why": "From here Kestrel works in the background: it searches, reads, scores and ranks, "
-        "and leaves every decision and every application to you.",
-        "next": "Open Today each day to see what needs you.",
-    },
+# The help column on every step (what this is, why it matters, what happens next): each card is
+# (title, accent, icon, short lines, flyout paragraphs). Plain words, from the locked mockup.
+_CARD_META = (("What this is", "info", "info"), ("Why it matters", "warn", "compass"),
+              ("What happens next", "good", "arrow"))
+_HELP_RAW: dict[str, list[tuple[list[str], list[tuple[str, str]]]]] = {
+    "welcome": [
+        (["Kestrel finds roles, scores how well they fit, and tailors your own resume lines.",
+          "It tracks what you apply to."],
+         [("What Kestrel does", "It looks at public job boards and company career pages, then "
+           "scores each role against what you tell it you want."),
+          ("What it never does", "It never applies, emails or messages anyone. It drafts and "
+           "hands over, and you decide.")]),
+        (["Setup takes about 5 minutes.", "You can stop anytime."],
+         [("Stopping early", "Close the window whenever you like. Your answers save as you go, "
+           "and Kestrel opens on the same step next time."),
+          ("Changing your mind", "Every answer can be changed later in Settings and Profile.")]),
+        (["Next you choose where the AI runs.", "Then you answer a few short questions."],
+         [("The six steps", "Welcome, how Kestrel thinks, about you, your resume, what you "
+           "want, and your searches. After that a short tour shows you around.")]),
+    ],
+    "models": [
+        (["The AI model reads each role and scores your fit.",
+          "It can run on this computer or online."],
+         [("On this computer", "Free and private. Your computer does the work."),
+          ("Online model", "Uses your own key from a service you pick. You pay that service "
+           "for what you use.")]),
+        (["On this computer, nothing leaves it.", "Online only happens if you choose it."],
+         [("Asking first", "Before anything goes to an online model, Kestrel tells you "
+           "exactly what will be sent and waits for your yes."),
+          ("Your key", "It stays on this computer. Kestrel never shows it again after you "
+           "save it.")]),
+        (["Models download in the background.", "You can keep going while they finish."],
+         [("How long it takes", "A few minutes on a typical connection. A progress bar shows "
+           "where it is."),
+          ("If it stalls", "Kestrel keeps trying. You can also pick the online option and "
+           "switch later.")]),
+    ],
+    "about": [
+        (["Your name, email and city go on your resume.", "Choose jobs, consulting, or both."],
+         [("Consulting and contract work", "Short projects, contracts and fractional roles. If "
+           "you choose it, Kestrel adds a short section on the next steps."),
+          ("Optional details", "Headline, phone and LinkedIn link sit behind Add more "
+           "details.")]),
+        (["Only your first name is required.", "Nothing here is sent anywhere."],
+         [("Where it is used", "These details fill the top of the resumes Kestrel prepares for "
+           "you. They stay on this computer.")]),
+        (["Next, add your resume.", "You can skip that and add it later."],
+         [("If you skip it", "Kestrel still finds and scores roles. It just cannot tailor "
+           "resumes until you add one.")]),
+    ],
+    "resume": [
+        (["Kestrel reads your resume and breaks it into lines.",
+          "It picks from them for each role."],
+         [("Why lines", "Each bullet is kept as you wrote it, so a tailored resume only ever "
+           "contains your own words."),
+          ("File types", "Word, PDF or plain text, or paste it in.")]),
+        (["A line that does not match your file is flagged.", "You decide what to keep."],
+         [("How to tell", "A flagged line differs from your file, often from a line break or a "
+           "number format. Fix it in your file and read it again, or leave it out.")]),
+        (["After you check the text, Kestrel saves it.", "You can edit lines later in Profile."],
+         [("Later changes", "Add variants of a bullet in Profile. Kestrel chooses between them "
+           "per role.")]),
+    ],
+    "wants": [
+        (["These answers shape what Kestrel searches for.", "A few short fields per section."],
+         [("Add more details", "Level, pay flexibility, deal-breakers and more sit behind that "
+           "link, so you only see them if you want them.")]),
+        (["Better answers mean better matches.", "Leave a field blank if unsure."],
+         [("Places", "Kestrel matches places by name, not distance. Add nearby towns you would "
+           "commute to."),
+          ("Pay", "Roles with no listed pay are still shown, marked as estimated.")]),
+        (["Next you see the exact searches.", "You can edit any of them."],
+         [("Nothing runs yet", "Searching only starts after you press Start searching on the "
+           "last step.")]),
+    ],
+    "searches": [
+        (["A plain list of what Kestrel will search.", "Built from your answers."],
+         [("Sources", "Public job boards and company career pages. LinkedIn is never searched, "
+           "but you can paste a posting by hand.")]),
+        (["Check it reads right before you start.", "Use Edit to fix anything."],
+         [("Politeness", "Kestrel searches slowly and follows each site's rules. It never logs "
+           "in anywhere for you.")]),
+        (["Start searching turns searching on.", "Then a short tour shows the app."],
+         [("First results", "Your first roles arrive within a few minutes. Today shows what is "
+           "new."),
+          ("Restart setup", "Settings, then Your data, lets you run setup again anytime.")]),
+    ],
+}
+HELP: dict[str, list[dict[str, Any]]] = {
+    key: [
+        {"title": _CARD_META[i][0], "accent": _CARD_META[i][1], "icon": _CARD_META[i][2],
+         "lines": lines, "more": more, "id": f"ob-h-{key}-{i}"}
+        for i, (lines, more) in enumerate(cards)
+    ]
+    for key, cards in _HELP_RAW.items()
 }
 
 CONSULTING_PLAIN = (
@@ -216,6 +240,25 @@ def _section_saved(pstate: pe.ProfileState, track: str, section: str) -> bool:
     return track in pstate.present and section not in pstate.from_example.get(track, ())
 
 
+def models_done(st: ss.SetupState) -> bool:
+    """Step 2 is done when a way of running is chosen and, for Online or Both, a key is
+    connected. Local models may still be downloading: the operator continues meanwhile."""
+    if not st.choice_explicit:
+        return False
+    if st.choice == "local":
+        return True
+    return st.hosted_problem is None and any(st.hosted_keys.values())
+
+
+def _terms(pstate: pe.ProfileState, track: str, section: str) -> dict:
+    """A saved term section of a track, or {} while it is still only the example's values."""
+    if not _section_saved(pstate, track, section):
+        return {}
+    block = pstate.tracks.get(track) or {}
+    value = block.get(section)
+    return value if isinstance(value, dict) else {}
+
+
 async def _statuses(
     s, state: ob.OnboardingState, tracks: tuple[str, ...], st: ss.SetupState
 ) -> dict[str, str]:
@@ -230,17 +273,19 @@ async def _statuses(
             .where(Source.origin == "generated", Source.enabled.is_(True))
         )
     ).scalar() or 0
+    wants = _section_saved(pstate, primary, "geo_rules")
+    if "employment" in tracks:
+        wants = wants and _section_saved(pstate, "employment", "employment_terms")
+    if "consulting" in tracks:
+        wants = wants and _section_saved(pstate, "consulting", "consulting_terms")
     done = {
         "welcome": "welcome" in state.visited,
-        "models": models_ready(st)[0],
-        "tracks": await s.get(Setting, tracks_svc.KEY) is not None,
-        "about": pstate.exists and pstate.problem is None and not pe.about_missing(pstate),
+        "models": models_done(st),
+        "about": pstate.exists and pstate.problem is None and not pe.about_missing(pstate)
+        and await s.get(Setting, tracks_svc.KEY) is not None,
         "resume": n_docs > 0,
-        "employment": _section_saved(pstate, "employment", "employment_terms"),
-        "consulting": _section_saved(pstate, "consulting", "consulting_terms"),
-        "location": _section_saved(pstate, primary, "geo_rules"),
-        "searches": searching > 0,
-        "done": state.completed,
+        "wants": wants,
+        "searches": searching > 0 and state.completed,
     }
     out = {}
     for key, ok in done.items():
@@ -269,7 +314,21 @@ async def _searches_ctx(s) -> dict[str, Any]:
             .where(Source.origin == "generated", Source.enabled.is_(True))
         )
     ).scalar() or 0
-    return {"specs": result.specs, "specs_by_track": by_track, "searching_on": on > 0}
+    from kestrel.ingest.board_discovery import PLATFORMS
+    from kestrel.ingest.generated import _BOARD_NAMES, SITES, US_NOTE
+
+    companies = (
+        await s.execute(
+            select(func.count())
+            .select_from(Source)
+            .where(Source.kind.in_(tuple(PLATFORMS)), Source.enabled.is_(True))
+        )
+    ).scalar() or 0
+    return {
+        "specs": result.specs, "specs_by_track": by_track, "searching_on": on > 0,
+        "boards": " and ".join(_BOARD_NAMES.get(x, x) for x in SITES),
+        "companies": companies, "us_note": US_NOTE,
+    }
 
 
 def _search_gaps(tracks: tuple[str, ...], pstate: pe.ProfileState) -> list[tuple[str, str]]:
@@ -280,9 +339,9 @@ def _search_gaps(tracks: tuple[str, ...], pstate: pe.ProfileState) -> list[tuple
         terms = block.get("employment_terms") or {}
         geo = block.get("geo_rules") or {}
         if "employment" not in pstate.present or not terms.get("target_titles"):
-            gaps.append(("employment", "Add the titles you want under What you want in a job."))
+            gaps.append(("wants", "Add the jobs you want under What you want."))
         elif not geo.get("remote_ok") and not geo.get("onsite_metros"):
-            gaps.append(("location", "Allow remote work or list a city under Where you will work."))
+            gaps.append(("wants", "Add a place or turn on remote under What you want."))
     if "consulting" in tracks:
         email = any(
             str((pstate.tracks[t] or {}).get("email") or "").strip() for t in pstate.present
@@ -330,6 +389,100 @@ async def _local_ctx(st: ss.SetupState) -> dict[str, Any]:
     }
 
 
+def _hardware_ctx(st: ss.SetupState) -> dict[str, Any]:
+    hw = st.hardware
+    if hw.gpu_vendor == "nvidia" and hw.vram_gb is not None:
+        gpu = f"{hw.vram_gb:g} GB"
+    elif hw.apple_silicon:
+        gpu = "Apple silicon"
+    else:
+        gpu = "Not found"
+    return {
+        "hw_memory": f"{hw.ram_gb:g} GB" if hw.ram_gb is not None else "Unknown",
+        "hw_gpu": gpu,
+        "hw_gpu_found": gpu != "Not found",
+    }
+
+
+def _wants_ctx(tracks: tuple[str, ...], pstate: pe.ProfileState) -> dict[str, Any]:
+    """Prefill for step 5 from what is already saved. A section that is still only the
+    shipped example's values starts blank: example values never become searches."""
+    from kestrel.rules.margin import normalize_margin
+    from kestrel.web.pages.profile import MARGIN_OPTIONS
+
+    primary = _primary_track(tracks)
+    emp = _terms(pstate, "employment", "employment_terms")
+    con = _terms(pstate, "consulting", "consulting_terms")
+    geo = _terms(pstate, primary, "geo_rules")
+    block = pstate.tracks.get(primary) or {}
+    ex_emp = (pstate.examples.get("employment") or {}).get("employment_terms") or {}
+    ex_con = (pstate.examples.get("consulting") or {}).get("consulting_terms") or {}
+    margin = normalize_margin(emp.get(pe.EMPLOYMENT_MARGIN)) if emp else DEFAULT_MARGIN
+    min_days = con.get("min_engagement_days")
+    weeks = ""
+    if isinstance(min_days, int) and min_days > 0:
+        weeks = str(max(1, round(min_days / DAYS_PER_WEEK)))
+    metros = pe.metros_text({"geo_rules": geo}).splitlines()
+    return {
+        "w_titles": list(emp.get("target_titles") or []),
+        "w_pay": emp.get("comp_floor_usd") or "",
+        "w_modes": list(emp.get("work_modes") or []),
+        "w_level": emp.get("seniority_floor") or "",
+        "w_margin": str(margin or DEFAULT_MARGIN),
+        "w_under": bool(emp) and margin != 0,
+        "w_margin_options": tuple(o for o in MARGIN_OPTIONS if o[0] != "0"),
+        "w_deal": list(block.get("must_avoid") or []) if primary in pstate.present else [],
+        "w_services": list(con.get("service_lines") or []),
+        "w_skip": list(con.get("excluded_sectors") or []),
+        "w_rate": con.get("day_rate_floor") or "",
+        "w_weeks": weeks,
+        "w_places": metros,
+        "w_remote": bool(geo.get("remote_ok")),
+        "w_headline": str(block.get("headline") or ""),
+        "w_city": str(block.get("location") or ""),
+        "w_ex_title": ((ex_emp.get("target_titles") or ["Operations Analyst"])[0]),
+        "w_ex_service": ((ex_con.get("service_lines") or ["Process audits"])[0]),
+        "seniority_floors": pe.SENIORITY_FLOORS,
+        "work_modes": pe.WORK_MODES,
+    }
+
+
+def _about_ctx(tracks: tuple[str, ...], pstate: pe.ProfileState) -> dict[str, Any]:
+    block = pstate.tracks.get(_primary_track(tracks)) or {}
+    return {
+        "a": {k: str(block.get(k) or "") for k in pe.ABOUT_TEXT},
+        "track_jobs": "employment" in tracks,
+        "track_consulting": "consulting" in tracks,
+    }
+
+
+def _hint(key: str, ctx: dict[str, Any]) -> str:
+    """Why the step's primary button is off, or ''. The server decides; onboarding.js repeats
+    the same rule live for the two forms."""
+    if key == "models":
+        st = ctx.get("st")
+        if st is None or not st.choice_explicit:
+            return "Choose how Kestrel should think first"
+        if st.choice != "local" and not models_done(st):
+            return "Connect your key first"
+    elif key == "about":
+        a = ctx.get("a") or {}
+        if not a.get("first_name", "").strip():
+            return "Add your first name first"
+        if not (ctx.get("track_jobs") or ctx.get("track_consulting")):
+            return "Pick at least one to continue"
+    elif key == "resume":
+        if not ctx.get("masters"):
+            return "Skip for now: no tailored resumes until you add one."
+    elif key == "wants":
+        tracks = ctx["tracks"]
+        if "employment" in tracks and not ctx.get("w_titles"):
+            return "Add a job title first"
+        if not ctx.get("w_places") and not ctx.get("w_remote"):
+            return "Add a place or turn on remote first"
+    return ""
+
+
 async def _ctx(request: Request, key: str | None = None, **extra) -> dict[str, Any]:
     st = await _setup_state()
     async with sessionmaker()() as s:
@@ -340,6 +493,7 @@ async def _ctx(request: Request, key: str | None = None, **extra) -> dict[str, A
         statuses = await _statuses(s, state, tracks, st)
         steps = ob.steps_for(tracks)
         keys = [x.key for x in steps]
+        pstate = pe.load_state()
         ctx: dict[str, Any] = {
             "title": "Set up Kestrel",
             "query": dict(request.query_params),
@@ -353,46 +507,53 @@ async def _ctx(request: Request, key: str | None = None, **extra) -> dict[str, A
                                                      keys.index(key)},
             "help": HELP[key],
             "tracks": tracks,
-            "tracks_chosen": statuses["tracks"] == "ok",
             "consulting_plain": CONSULTING_PLAIN,
             "state": state,
             "is_first": keys.index(key) == 0,
             "onboarding_complete": state.completed,
+            "ret": state.ret if state.ret and state.ret != key else None,
+            "skippable": key in SKIPPABLE,
+            "st": st,
         }
         if key == "models":
             ready, line = models_status(st, settings, extra.get("connect_ok"))
-            ctx.update(st=st, models_ready=ready, models_line=line, choices=ss.CHOICES,
-                       **_hosted_ctx(settings), **(await _local_ctx(st)))
+            ctx.update(models_ready=ready, models_line=line, choices=ss.CHOICES,
+                       **_hardware_ctx(st), **_hosted_ctx(settings), **(await _local_ctx(st)))
+        elif key == "about":
+            ctx.update(_about_ctx(tracks, pstate))
+            ctx["tracks_chosen"] = await s.get(Setting, tracks_svc.KEY) is not None
         elif key == "resume":
             masters = (await s.execute(select(DocMaster).order_by(DocMaster.id))).scalars().all()
             ctx["masters"] = [
                 {"id": m.id, "name": m.name, "track": m.track, "kind": m.doc_kind}
                 for m in masters
             ]
+            from kestrel.web.pages.documents import _import_model_label
+
+            label = await _import_model_label()
+            ctx["import_label"] = label
+            ctx["import_online"] = settings.llm.mode == "hosted" or "(hosted)" in label
+        elif key == "wants":
+            ctx.update(_wants_ctx(tracks, pstate))
         elif key == "searches":
             ctx.update(await _searches_ctx(s))
-            ctx["gaps"] = _search_gaps(tracks, pe.load_state())
-    if key in PROFILE_STEPS:
-        ctx.update(_profile_form_ctx(key, tracks))
+            ctx["gaps"] = _search_gaps(tracks, pstate)
+            ctx["rows"] = await _search_rows(s, tracks, pstate)
     ctx.update(extra)
+    ctx["hint"] = _hint(key, ctx)
     return ctx
 
 
-def _profile_form_ctx(key: str, tracks: tuple[str, ...]) -> dict[str, Any]:
-    from kestrel.web.pages.profile import _section_ctx
-
-    track = key if key in ("employment", "consulting") else _primary_track(tracks)
-    section = _section_ctx(track)
-    return {
-        **section,
-        "form_post": f"/onboarding/save/{key}",
-        "form_target": "#ob-step",
-        "form_swap": "outerHTML",
-        "ob_next": True,
-        "saved": False,
-        "problem": None,
-        "searches_updated": False,
-    }
+async def _search_rows(s, tracks: tuple[str, ...], pstate: pe.ProfileState) -> dict[str, Any]:
+    """The two plain lines beside the searches: what is hidden and the resume."""
+    primary = _primary_track(tracks)
+    block = pstate.tracks.get(primary) or {}
+    hidden = list(block.get("must_avoid") or []) if primary in pstate.present else []
+    for track in tracks:
+        hidden += [str(x) for x in _terms(pstate, track, "consulting_terms").get(
+            "excluded_sectors") or []]
+    masters = (await s.execute(select(DocMaster.name).order_by(DocMaster.id))).scalars().all()
+    return {"hidden": hidden, "resume_names": list(masters)}
 
 
 def _render_step(request: Request, ctx: dict[str, Any], headers: dict | None = None):
@@ -408,8 +569,11 @@ async def _respond(request: Request, key: str | None = None, **extra) -> Respons
     return RedirectResponse("/onboarding", status_code=303)
 
 
-async def _go(key: str, *, visited: str | None = None, skipped: str | None = None) -> None:
-    """Store the current step (and mark one visited or skipped). Reaching Done completes."""
+async def _go(
+    key: str, *, visited: str | None = None, skipped: str | None = None,
+    ret: str | None = None, clear_ret: bool = False,
+) -> None:
+    """Store the current step (and mark one visited or skipped)."""
     async with sessionmaker()() as s:
         state = await _load_state(s)
         state.step = key
@@ -419,13 +583,21 @@ async def _go(key: str, *, visited: str | None = None, skipped: str | None = Non
             state.skipped.append(skipped)
         if visited and skipped is None and visited in state.skipped:
             state.skipped.remove(visited)
-        if key == "done" and not state.completed:
-            state.completed = True
-            state.completed_at = utcnow_iso()
-            if "done" not in state.visited:
-                state.visited.append("done")
+        if ret:
+            state.ret = ret
+        elif clear_ret or key == state.ret:
+            state.ret = None
         await ob.save(s, state)
         await s.commit()
+
+
+async def _after(key: str, tracks: tuple[str, ...], *, skipped: str | None = None) -> str:
+    """Leave `key` going forward: back to the step an Edit came from, else the next step."""
+    async with sessionmaker()() as s:
+        state = await _load_state(s)
+    nxt = state.ret if state.ret and state.ret != key else ob.next_key(key, tracks)
+    await _go(nxt, visited=key, skipped=skipped, clear_ret=True)
+    return nxt
 
 
 # ------------------------------------------------------------------------------------ routes
@@ -438,6 +610,7 @@ async def onboarding_page(request: Request):
         if want in ctx["reachable"]:
             await _go(want)
     ctx = await _ctx(request)
+    ctx["resumed"] = bool(ctx["state"].visited)  # a page load at a later step is a resume
     from kestrel.desktop import linux_check
 
     ctx["linux_gap"] = linux_check.fallback()
@@ -453,34 +626,41 @@ async def onboarding_step(request: Request):
     return _render_step(request, await _ctx(request))
 
 
-async def _advance_problem(key: str, form: Any) -> str | None:
-    """Why Next cannot leave this step yet, or None. Saves the tracks choice on the way."""
+async def _advance_problem(key: str, tracks: tuple[str, ...]) -> str | None:
+    """Why Next cannot leave this step yet, or None. The server decides; the disabled button is
+    only a courtesy."""
     if key == "models":
         st = await _setup_state()
         if not st.choice_explicit:
-            return "Choose Local, Hosted or Both first. You can finish connecting later."
-    elif key == "tracks":
-        picked = [t for t in form.getlist("track") if t in tracks_svc.BOTH]
-        if not picked:
-            return "Choose at least one: employment, consulting, or both."
-        async with sessionmaker()() as s:
-            await tracks_svc.save_enabled(s, picked)
-            await s.commit()
-        await _rebuild_searches()
+            return "Choose how Kestrel should think first. You can finish connecting later."
+        if not models_done(st):
+            return "Connect your key first, or choose On this computer."
     elif key == "about":
         pstate = pe.load_state()
         if pstate.problem:
             return f"Your profile file cannot be read: {pstate.problem}"
         if not pstate.exists or pe.about_missing(pstate):
-            return "Add your full name and save before you continue. It goes on every document."
-    elif key in ("employment", "consulting", "location"):
+            return (
+                "Add your first name and save before you continue. "
+                "Your name goes on every document."
+            )
         async with sessionmaker()() as s:
-            tracks = await tracks_svc.load_enabled(s)
+            if await s.get(Setting, tracks_svc.KEY) is None:
+                return "Choose at least one: jobs, consulting, or both."
+    elif key == "resume":
+        async with sessionmaker()() as s:
+            n_docs = (await s.execute(select(func.count()).select_from(DocMaster))).scalar() or 0
+        if not n_docs:
+            return "Add your resume first, or choose Skip for now."
+    elif key == "wants":
         pstate = pe.load_state()
-        track = key if key != "location" else _primary_track(tracks)
-        section = {"employment": "employment_terms", "consulting": "consulting_terms",
-                   "location": "geo_rules"}[key]
-        if not _section_saved(pstate, track, section):
+        primary = _primary_track(tracks)
+        saved = _section_saved(pstate, primary, "geo_rules")
+        for track, section in (("employment", "employment_terms"),
+                               ("consulting", "consulting_terms")):
+            if track in tracks:
+                saved = saved and _section_saved(pstate, track, section)
+        if not saved:
             return ("Save this step first with Save and continue. Until you do, these are the "
                     "example's values, not yours, and your searches would use them.")
     return None
@@ -500,23 +680,19 @@ async def onboarding_next(request: Request):
     reachable = set(state.visited) | {k for k in keys if keys.index(k) <= keys.index(stored)}
     posted = str(form.get("step") or "")
     key = ob.current_key(posted, tracks) if posted in reachable else stored
-    if key == "done":
-        return _finish(request)
+    if key == "searches":
+        return await onboarding_start_searching(request)
     # "Skip for now" (D-UI-65) leaves a step that can wait without its save check; the step is
-    # marked skipped and the progress says so. The tracks and models choices, and your name, are
-    # never skippable (no Skip button renders there, and the check still runs).
+    # marked skipped and the progress says so. The models choice and your name are never
+    # skippable (no Skip button renders there, and the check still runs).
     skipping = bool(form.get("skip")) and key in SKIPPABLE
-    problem = None if skipping else await _advance_problem(key, form)
+    problem = None if skipping else await _advance_problem(key, tracks)
     if problem:
         if request.headers.get("HX-Request"):
             return _render_step(request, await _ctx(request, key, nav_problem=problem))
         return RedirectResponse("/onboarding", status_code=303)
-    async with sessionmaker()() as s:
-        tracks = await tracks_svc.load_enabled(s)  # the tracks step may have just changed them
-        n_docs = (await s.execute(select(func.count()).select_from(DocMaster))).scalar() or 0
-    skipped = key if skipping or (key == "resume" and not n_docs) else None
-    nxt = ob.next_key(key, tracks)
-    await _go(nxt, visited=key, skipped=skipped)
+    skipped = key if skipping else None
+    nxt = await _after(key, tracks, skipped=skipped)
     return await _respond(request, nxt)
 
 
@@ -525,17 +701,10 @@ async def advance_after(request: Request, key: str) -> Response:
     and continue", D-UI-65) and send the browser to it."""
     async with sessionmaker()() as s:
         tracks = await tracks_svc.load_enabled(s)
-    nxt = ob.next_key(key, tracks)
-    await _go(nxt, visited=key)
+    nxt = await _after(key, tracks)
     if request.headers.get("HX-Request"):
         return Response(status_code=200, headers={"HX-Redirect": f"/onboarding?step={nxt}"})
     return RedirectResponse(f"/onboarding?step={nxt}", status_code=303)
-
-
-def _finish(request: Request) -> Response:
-    if request.headers.get("HX-Request"):
-        return Response(status_code=200, headers={"HX-Redirect": "/"})
-    return RedirectResponse("/", status_code=303)
 
 
 @router.post("/onboarding/back")
@@ -545,9 +714,19 @@ async def onboarding_back(request: Request):
         state = await _load_state(s)
         tracks = await tracks_svc.load_enabled(s)
     key = ob.current_key(str(form.get("step") or state.step), tracks)
-    prev = ob.prev_key(key, tracks)
-    await _go(prev)
+    prev = state.ret if state.ret and state.ret != key else ob.prev_key(key, tracks)
+    await _go(prev, clear_ret=True)
     return await _respond(request, prev)
+
+
+@router.post("/onboarding/edit/{key}")
+async def onboarding_edit(request: Request, key: str):
+    """An Edit link on the searches step: open that step, and come back to the searches after
+    its save (Back says so too)."""
+    if key not in ob.STEP_KEYS or key == "searches":
+        return HTMLResponse("Unknown step.", status_code=404)
+    await _go(key, ret="searches")
+    return await _respond(request, key)
 
 
 async def _rebuild_searches() -> None:
@@ -556,46 +735,219 @@ async def _rebuild_searches() -> None:
     await rebuild()
 
 
-@router.post("/onboarding/save/{key}", response_class=HTMLResponse)
-async def onboarding_save(request: Request, key: str):
-    """Save a profile step through the Profile page's own service, then return the whole step
-    (or the next one, for Save and continue)."""
-    if key not in PROFILE_STEPS:
-        return HTMLResponse("Unknown step.", status_code=404)
+def _existing_form(track: str, section: str, pstate: pe.ProfileState) -> dict[str, str]:
+    """The saved values of a section as a flat form, so a wizard save that asks for only some
+    fields leaves the others (a restart that kept the operator's details) exactly as they were."""
+    block = pstate.tracks.get(track) or {}
+    out: dict[str, str] = {}
+    if section == "about":
+        for k in pe.ABOUT_TEXT:
+            out[k] = str(block.get(k) or "")
+        for k in pe.ABOUT_LISTS:
+            out[k] = "\n".join(block.get(k) or [])
+        if block.get("requires_sponsorship"):
+            out["requires_sponsorship"] = "on"
+    elif section == "employment":
+        t = _terms(pstate, track, "employment_terms")
+        for k in ("target_titles", "anti_titles"):
+            out[k] = "\n".join(t.get(k) or [])
+        for typ in t.get("excluded_employment_types") or []:
+            out[f"type_{typ}"] = "on"
+        out["seniority_floor"] = str(t.get("seniority_floor") or "")
+        for k in pe.EMPLOYMENT_INTS:
+            out[k] = "" if t.get(k) is None else str(t.get(k))
+    elif section == "consulting":
+        t = _terms(pstate, track, "consulting_terms")
+        for k in pe.CONSULTING_LISTS:
+            out[k] = "\n".join(t.get(k) or [])
+        for k in pe.CONSULTING_INTS:
+            out[k] = "" if t.get(k) is None else str(t.get(k))
+        out["travel_tolerance"] = str(t.get("travel_tolerance") or "")
+        for m in t.get("work_modes") or []:
+            out[f"mode_{m}"] = "on"
+        if t.get(pe.CONSULTING_MARGIN) is not None:
+            out[pe.CONSULTING_MARGIN] = str(t[pe.CONSULTING_MARGIN])
+    elif section == "location":
+        g = _terms(pstate, track, "geo_rules")
+        for k in pe.GEO_FLAGS:
+            if g.get(k):
+                out[k] = "on"
+        for k in pe.GEO_LISTS:
+            out[k] = "\n".join(g.get(k) or [])
+        out["onsite_metros"] = pe.metros_text({"geo_rules": g})
+        if g.get("travel_days_per_month_max") is not None:
+            out["travel_days_per_month_max"] = str(g["travel_days_per_month_max"])
+    return out
+
+
+class _Form(dict):
+    """A flat dict that answers `.get` and `.getlist` like a request form."""
+
+    def getlist(self, key: str) -> list[str]:
+        v = self.get(key)
+        return [] if v is None else [v]
+
+
+def _merged(track: str, section: str, pstate: pe.ProfileState, posted: dict[str, str]) -> _Form:
+    base = _existing_form(track, section, pstate)
+    base.update(posted)
+    return _Form(base)
+
+
+async def _save_everywhere(tracks: tuple[str, ...]) -> None:
+    from kestrel.web.pages.profile import _queue_recheck
+
+    await _rebuild_searches()
+    await _queue_recheck(list(tracks))  # a first profile may release roles set aside before it
+
+
+@router.post("/onboarding/save/about", response_class=HTMLResponse)
+async def onboarding_save_about(request: Request):
+    """Step 3: who you are, and the tracks in use. Saved through the Profile service for every
+    track in use, leaving fields the wizard does not ask for as they were."""
+    form = await request.form()
+    picked = [t for t in tracks_svc.BOTH if t in form.getlist("track")]
+    typed = {k: str(form.get(k) or "").strip() for k in pe.ABOUT_TEXT if k in form}
+    typed.setdefault("first_name", "")
+    pstate = pe.load_state()
+    problem: str | None = None
+    if not typed["first_name"]:
+        problem = "Add your first name first. Kestrel greets you by it."
+    elif not picked:
+        problem = "Choose at least one: jobs, consulting, or both."
+    elif pstate.problem:
+        problem = f"Your profile file cannot be read: {pstate.problem}"
+    tracks = tuple(picked)
+    if problem is None:
+        try:
+            for track in tracks:
+                values = pe.section_from_form("about", _merged(track, "about", pstate, typed))
+                pe.save_section(track, "about", values)
+            async with sessionmaker()() as s:
+                await tracks_svc.save_enabled(s, list(tracks))
+                await s.commit()
+            await _save_everywhere(tracks)
+        except pe.ProfileEditError as exc:
+            problem = plain_error(exc)
+        except OSError as exc:
+            log.warning("profile_write_failed", error_type=type(exc).__name__, error=str(exc))
+            problem = f"Could not write profile.yml: {plain_error(exc)}"
+    if problem is not None:
+        ctx = await _ctx(request, "about", nav_problem=problem)
+        ctx["a"] = {**ctx["a"], **typed}
+        ctx["track_jobs"] = "employment" in picked
+        ctx["track_consulting"] = "consulting" in picked
+        ctx["hint"] = _hint("about", ctx)
+        return _render_step(request, ctx)
+    nxt = await _after("about", tracks)
+    return _render_step(request, await _ctx(request, nxt))
+
+
+def _chip_lines(form: Any, name: str) -> list[str]:
+    return pe.lines(str(form.get(name) or ""))
+
+
+def _on(form: Any, name: str) -> bool:
+    return str(form.get(name) or "") in ("on", "true", "1")
+
+
+@router.post("/onboarding/save/wants", response_class=HTMLResponse)
+async def onboarding_save_wants(request: Request):
+    """Step 5: what you want, per track in use, then where. Each section goes through the
+    Profile service (so the generated searches and the Tier 0 re-check follow), and fields the
+    wizard does not ask for keep their saved values."""
     form = await request.form()
     async with sessionmaker()() as s:
         tracks = await tracks_svc.load_enabled(s)
-    if key in ("employment", "consulting"):
-        targets = [key]
-    else:
-        # About you and the location apply to every track in use, so both tracks' searches and
-        # documents read the same answers.
-        targets = list(tracks)
-    section = "about" if key == "about" else key
+    pstate = pe.load_state()
+    titles = _chip_lines(form, "target_titles")
+    places = _chip_lines(form, "onsite_metros")
+    remote = _on(form, "remote_ok")
     problem: str | None = None
-    try:
-        values = pe.section_from_form(section, form)
-        for track in targets:
-            pe.save_section(track, section, values)
-        await _rebuild_searches()
-        from kestrel.web.pages.profile import _queue_recheck
+    if "employment" in tracks and not titles:
+        problem = "Add a job title first."
+    elif not places and not remote:
+        problem = "Add a place or turn on remote first."
+    elif pstate.problem:
+        problem = f"Your profile file cannot be read: {pstate.problem}"
+    elif not pstate.exists or any(t not in pstate.present for t in tracks):
+        problem = "Add your first name under About you first."
+    if problem is None:
+        try:
+            _save_wants(form, tracks, pstate, titles, places, remote)
+            await _save_everywhere(tracks)
+        except pe.ProfileEditError as exc:
+            problem = plain_error(exc)
+        except OSError as exc:
+            log.warning("profile_write_failed", error_type=type(exc).__name__, error=str(exc))
+            problem = f"Could not write profile.yml: {plain_error(exc)}"
+    if problem is not None:
+        ctx = await _ctx(request, "wants", nav_problem=problem)
+        ctx.update(w_titles=titles, w_places=places, w_remote=remote,
+                   w_pay=str(form.get("comp_floor_usd") or ""),
+                   w_deal=_chip_lines(form, "must_avoid"),
+                   w_services=_chip_lines(form, "service_lines"),
+                   w_skip=_chip_lines(form, "excluded_sectors"),
+                   w_rate=str(form.get("day_rate_floor") or ""),
+                   w_weeks=str(form.get("engagement_weeks") or ""))
+        ctx["hint"] = _hint("wants", ctx)
+        return _render_step(request, ctx)
+    nxt = await _after("wants", tracks)
+    return _render_step(request, await _ctx(request, nxt))
 
-        await _queue_recheck(targets)  # a first profile may release roles set aside before it
-    except pe.ProfileEditError as exc:
-        problem = plain_error(exc)
-    except OSError as exc:
-        log.warning("profile_write_failed", error_type=type(exc).__name__, error=str(exc))
-        problem = f"Could not write profile.yml: {plain_error(exc)}"
-    if problem is None and form.get("_next"):
-        nav_problem = await _advance_problem(key, form)
-        if nav_problem is None:
-            nxt = ob.next_key(key, tracks)
-            await _go(nxt, visited=key)
-            return _render_step(request, await _ctx(request, nxt))
-        return _render_step(
-            request, await _ctx(request, key, saved=True, nav_problem=nav_problem)
-        )
-    return _render_step(request, await _ctx(request, key, saved=problem is None, problem=problem))
+
+def _save_wants(
+    form: Any, tracks: tuple[str, ...], pstate: pe.ProfileState, titles: list[str],
+    places: list[str], remote: bool,
+) -> None:
+    if "employment" in tracks:
+        posted = {
+            "target_titles": "\n".join(titles),
+            "comp_floor_usd": str(form.get("comp_floor_usd") or ""),
+            "seniority_floor": str(form.get("seniority_floor") or ""),
+            pe.EMPLOYMENT_MARGIN: (
+                str(form.get(pe.EMPLOYMENT_MARGIN) or DEFAULT_MARGIN) if _on(form, "under")
+                else "0"
+            ),
+        }
+        for key, _label in pe.WORK_MODES:
+            if _on(form, f"mode_{key}"):
+                posted[f"mode_{key}"] = "on"
+        pe.save_section("employment", "employment", pe.section_from_form(
+            "employment", _merged("employment", "employment", pstate, posted)))
+    if "consulting" in tracks:
+        weeks = str(form.get("engagement_weeks") or "").strip()
+        posted = {
+            "service_lines": "\n".join(_chip_lines(form, "service_lines")),
+            "excluded_sectors": "\n".join(_chip_lines(form, "excluded_sectors")),
+            "day_rate_floor": str(form.get("day_rate_floor") or ""),
+            "min_engagement_days": "",
+        }
+        if weeks:
+            try:
+                posted["min_engagement_days"] = str(int(float(weeks)) * DAYS_PER_WEEK)
+            except ValueError as exc:
+                raise pe.ProfileEditError(
+                    "The project length must be a whole number of weeks."
+                ) from exc
+        pe.save_section("consulting", "consulting", pe.section_from_form(
+            "consulting", _merged("consulting", "consulting", pstate, posted)))
+    for track in tracks:
+        existing = _terms(pstate, track, "geo_rules")
+        posted = {"onsite_metros": "\n".join(places)}
+        if remote:
+            posted["remote_ok"] = "on"
+            if not existing.get("remote_country_allowlist"):
+                posted["remote_country_allowlist"] = "US"
+        merged = _merged(track, "location", pstate, posted)
+        if not remote:
+            merged.pop("remote_ok", None)
+        pe.save_section(track, "location", pe.section_from_form("location", merged))
+    # Deal-breakers read by the scoring model (must avoid), on every track in use.
+    avoid = _chip_lines(form, "must_avoid")
+    for track in tracks:
+        if track in pstate.present:
+            pe.save_section(track, "about", {"must_avoid": avoid})
 
 
 @router.post("/onboarding/models/mode", response_class=HTMLResponse)
@@ -610,10 +962,10 @@ async def onboarding_mode(request: Request):
         await s.commit()
     # The page's own wording names Settings steps; here the next thing is on this page.
     msg = {
-        "local": "Local it is. Check the steps below: Kestrel installs nothing for you, but it "
-        "downloads and builds the models with one click each.",
-        "hosted": "Hosted it is. Connect your provider below.",
-        "both": "Both it is. Set up the local models and connect a provider below.",
+        "local": "On this computer it is. Install the helper and download the models below; "
+        "you can keep going while they finish.",
+        "hosted": "Online model it is. Connect your service below.",
+        "both": "Both it is. Set up the models on this computer and connect a service below.",
     }.get(choice, msg)
     return _render_step(request, await _ctx(request, "models", models_message=msg))
 
@@ -679,29 +1031,42 @@ async def onboarding_local(request: Request):
 @router.post("/onboarding/searches/start", response_class=HTMLResponse)
 async def onboarding_start_searching(request: Request):
     """The one control in the wizard that turns scraping on: switch every generated search on,
-    commit, and queue the first scan the way the tray's Run scan now does."""
+    commit, queue the first scan the way the tray's Run scan now does, finish onboarding and open
+    Today (the first-search state, where the walkthrough begins)."""
     from kestrel.ingest.generated import rebuild_generated_sources
     from kestrel.ingest.scheduler import enqueue_due_scrapes
     from kestrel.queue.queue import TaskQueue
 
+    async with sessionmaker()() as s:
+        tracks = await tracks_svc.load_enabled(s)
+    for gate in ("models", "about"):
+        problem = await _advance_problem(gate, tracks)
+        if problem:
+            return _render_step(request, await _ctx(request, "searches", nav_problem=problem))
     sm = sessionmaker()
     async with sm() as s:
         result = await rebuild_generated_sources(s, enable=True)
         await s.commit()
     if not result.specs:
         msg = "There is nothing to search yet. Fill in the step named below, then come back."
-        return _render_step(request, await _ctx(request, "searches", search_message=msg))
+        return _render_step(request, await _ctx(request, "searches", nav_problem=msg))
     async with sm() as s:
         queued = await enqueue_due_scrapes(s, TaskQueue(sm), operator=True)
-    n = len(result.specs)
-    msg = (
-        f"Searching is on: {n} search{'es' if n != 1 else ''}, {queued} queued to run now. "
-        "The first results appear in Pipeline within a few minutes."
-    )
-    log.info("onboarding_searching_started", searches=n, queued=queued)
-    return _render_step(
-        request, await _ctx(request, "searches", search_message=msg, search_ok=True)
-    )
+    async with sm() as s:
+        state = await _load_state(s)
+        if not state.completed:
+            state.completed = True
+            state.completed_at = utcnow_iso()
+        state.step = "searches"
+        if "searches" not in state.visited:
+            state.visited.append("searches")
+        state.ret = None
+        await ob.save(s, state)
+        await s.commit()
+    log.info("onboarding_searching_started", searches=len(result.specs), queued=queued)
+    if request.headers.get("HX-Request"):
+        return Response(status_code=200, headers={"HX-Redirect": "/?tour=1"})
+    return RedirectResponse("/?tour=1", status_code=303)
 
 
 @router.post("/onboarding/restart")

@@ -79,8 +79,13 @@ def test_banner_shows_version_and_base_wires_it():
         body = c.get("/updates/banner").text
         page = c.get("/help").text
     assert f"Kestrel {NEWER} is available." in body
-    assert "What's new" in body and "Later" in body
-    assert f'href="{PAGE}" target="_blank" rel="noopener noreferrer">Get the update' in body
+    assert "Show details" in body and "Later" in body and "See what is new" in body
+    assert f"You are on {kestrel.__version__}." in body
+    # D-UI-152: no self-update; the banner sends the user to the download page.
+    link = f'href="{PAGE}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co'
+    assert link in body
+    assert "Restart" not in body and "restart" not in body
+    assert "Nothing about you is sent." in body
     assert 'hx-get="/updates/banner"' in page and 'id="update-modal"' in page
 
 
@@ -173,7 +178,8 @@ def test_disclosure_card_once_and_turn_off():
 
 
 def _checkbox_line(body: str) -> str:
-    return next(ln for ln in body.splitlines() if 'value="on"' in ln and "updates_enabled" in ln)
+    return next(ln for ln in body.splitlines()
+                if 'type="checkbox"' in ln and 'name="updates_enabled"' in ln)
 
 
 def _client_settings() -> str:
@@ -202,7 +208,10 @@ def test_whats_new_card_shows_once():
     asyncio.run(_prepare(**_newer_state(upgraded_from="0.0.0")))
     with _client() as c:
         body = c.get("/updates/whats-new-card").text
-        assert f"You're on {kestrel.__version__}. Here's what changed." in body
+        assert f"Kestrel is now on version {kestrel.__version__}" in body
+        assert "up from 0.0.0. Here is what changed." in body
+        assert "Nothing about you was sent to check for updates." in body
+        assert "Got it" in body and "See every change" in body
         assert "ancient" in body and "Faster" not in body  # only releases <= running version
         assert c.post("/updates/whats-new/dismiss").text == ""
         assert c.get("/updates/whats-new-card").text == ""
@@ -242,13 +251,38 @@ def test_settings_toggle_persists():
         assert "checked" in _checkbox_line(c.get("/settings").text)
 
 
-def test_help_has_check_button_and_old_route_is_gone():
+def test_about_has_check_button_and_old_help_route_is_gone():
+    """The check lives on About (SPEC-INTERFACES 2.1 /about); Help no longer carries it."""
     asyncio.run(_prepare())
     with _client() as c:
-        body = c.get("/help").text
-        assert 'hx-post="/updates/check"' in body
+        body = c.get("/about").text
+        assert 'hx-post="/updates/check"' in body and ">Check for updates</button>" in body
         assert "update_check_url" not in body
+        assert 'hx-post="/updates/check"' not in c.get("/help").text
         assert c.post("/help/update-check").status_code in (404, 405)
+
+
+def test_about_check_says_where_to_get_it_and_never_offers_to_install(monkeypatch):
+    """Kestrel never installs on its own: the answer names the version and links the download
+    page, in About's wording ("Kestrel X.Y.Z is available. Get it from kestrelapp.co")."""
+    asyncio.run(_prepare())
+    with _client() as c:
+        _stub_check(monkeypatch, latest=NEWER)
+        r = c.post("/updates/check", data={"surface": "about"})
+        assert f"Kestrel {NEWER} is available." in r.text
+        assert f'href="{PAGE}"' in r.text and "Get it from kestrelapp.co</a>" in r.text
+        assert 'id="update-last-checked"' in r.text and "hx-swap-oob" in r.text
+        lowered = r.text.lower()
+        assert "install" not in lowered and "restart" not in lowered and "<button" not in lowered
+        _stub_check(monkeypatch, latest=kestrel.__version__)
+        r = c.post("/updates/check", data={"surface": "about"})
+        assert "You have the latest version" in r.text and "Up to date" not in r.text
+        _stub_check(monkeypatch, latest=None, ok=False)
+        r = c.post("/updates/check", data={"surface": "about"})
+        assert "Couldn’t reach kestrelapp.co. Kestrel will try again later." in r.text
+        # Any other caller keeps the shared wording.
+        _stub_check(monkeypatch, latest=kestrel.__version__)
+        assert "Up to date (running" in c.post("/updates/check").text
 
 
 def test_no_em_dash_in_new_templates_or_copy():

@@ -6,13 +6,13 @@
   /* ATS-safe: single column, no layout tables, real Unicode bullets, selectable text, standard
      headings. Print stylesheet only; no generator string anywhere. Each layout's look is a class
      on <body> (D-DOC-1); the font is one of a fixed list (kestrel.docs.styles). */
-  @page { size: Letter; margin: 0.5in; }
+  @page { size: Letter; margin: {{ style.page_margin }}; }
   /* The accent (D-DOC-4) is a validated #RRGGBB (kestrel.docs.styles.valid_accent). Every style
      draws its headings, rules and markers from it; --accent-soft is the lighter rule tone. */
   :root { --accent: {{ style.accent }};
           --accent-soft: color-mix(in srgb, {{ style.accent }} 45%, #ffffff); }
   * { box-sizing: border-box; }
-  body { font-family: {{ style.font_css | safe }}; font-size: 10.5pt; line-height: 1.35;
+  body { font-family: {{ style.font_css | safe }}; font-size: {{ (10.5 * style.font_scale) | round(2) }}pt; line-height: 1.35;
          color: #111; margin: 0; }
   header.doc { margin-bottom: 10pt; }
   header.doc .name { font-size: 20pt; font-weight: 700; letter-spacing: .01em; }
@@ -143,7 +143,7 @@
 </style>
 </head>
 {%- set inline_dates = style.style in ("condensed", "compact") -%}
-<body class="style-{{ style.style }} align-{{ style.align }}" data-layout="{{ style.layout }}" data-font="{{ style.font }}" data-accent="{{ style.accent }}">
+<body class="style-{{ style.style }} align-{{ style.align }}" data-margins="{{ style.margins }}" data-layout="{{ style.layout }}" data-font="{{ style.font }}" data-accent="{{ style.accent }}">
   <header class="doc">
     {% if header.name %}<div class="name">{{ header.name }}</div>{% endif %}
     {% if header.headline %}<div class="headline">{{ header.headline }}</div>{% endif %}
@@ -162,9 +162,9 @@
   <section class="block" data-block="{{ block.heading | lower }}">
     <h2 class="section-heading">{{ block.heading }}</h2>
     {% if block.type == "summary" %}
-      <p class="summary" data-summary="1">{{ block.text }}</p>
+      <p class="summary" data-summary="1" data-slot="summary">{{ block.text }}</p>
     {% elif block.type == "skills" %}
-      <div class="skills">
+      <div class="skills" data-slot="skills">
         {% for g in block.skills %}
         <div class="group"><span class="label">{{ g["label"] }}:</span> {{ g["items"] | join(", ") }}</div>
         {% endfor %}
@@ -179,7 +179,7 @@
         {% if role.context %}<div class="context">{{ role.context }}</div>{% endif %}
         {% if role.bullets %}
         <ul class="bullets">
-          {% for bl in role.bullets %}<li data-vk="{{ bl.key }}">{{ bl.text }}</li>{% endfor %}
+          {% for bl in role.bullets %}<li data-vk="{{ bl.key }}" data-slot="{{ bl.slot }}">{{ bl.text }}</li>{% endfor %}
         </ul>
         {% endif %}
       </div>

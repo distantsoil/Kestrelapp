@@ -6,7 +6,6 @@ tools. Offline: a migrated SQLite file and the test client."""
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -60,51 +59,51 @@ def _give_master(master_id: int, **fields) -> None:
 
 # ------------------------------------------------------------------------------- drag fix
 def test_board_drag_script_binds_once_and_clears_on_dragend():
+    from pathlib import Path
+
+    from kestrel import paths
+
     c = _fresh()
     _seed()
     with c:
         html = c.get("/pursuits").text
-    assert html.count("document.addEventListener('dragstart'") == 1
-    assert "document.addEventListener('dragend'" in html
-    assert "window.__pursuitDnD" in html  # a second run of the script binds nothing
-    assert "DOMContentLoaded" not in html and "htmx:afterSwap" not in html.split("<script>")[-1]
-    assert "dragId = dragCol = dragEl = null" in html  # dragend clears the card
-    assert "dragId === null" in html  # a drop with no card in hand is ignored
-    card = html.split('class="card pcard')[1].split("</select>")[0]
-    assert 'href="/opportunities/' in card and 'draggable="false"' in card
-    assert re.search(r'<a href="/opportunities/\d+" draggable="false"', card)
-    assert re.search(r'<select name="to_status" draggable="false"', card)
-    assert "⠿" in card and "Drag a card to another column, or use its buttons." in html
+    js = (Path(paths.web_static_dir()) / "js" / "applications.js").read_text(encoding="utf-8")
+    # The script is one external file bound once on the document (a board swap adds nothing).
+    assert html.count("/static/js/applications.js") == 1
+    assert js.count("doc.addEventListener('dragstart'") == 1
+    assert "doc.addEventListener('dragend'" in js
+    assert "drag.id = drag.col = drag.el = null" in js  # dragend clears the card
+    assert "drag.id === null" in js  # a drop with no card in hand is ignored
+    card = html.split('data-testid="pcard"')[1].split("</article>")[0]
+    assert 'draggable="true"' in html.split('data-testid="pcard"')[0].rsplit("<article", 1)[1]
+    assert "Head of IT" in card
 
 
 # --------------------------------------------------------------------- My shortlist, Applied?
-def test_the_shortlisted_stage_reads_my_shortlist_but_is_stored_unchanged():
+def test_the_shortlisted_stage_reads_shortlisted_but_is_stored_unchanged():
     c = _fresh()
     _, pid = _seed(status="shortlisted")
     with c:
         html = c.get("/pursuits").text
         table = c.get("/pursuits?view=table").text
-    assert ">My shortlist</option>" in html and ">shortlisted</option>" not in html
-    assert 'value="shortlisted" selected' in html
-    assert "My shortlist" in table
+    assert ">Shortlisted</button>" in html.split('id="ap-menu-stage"')[1]
+    assert ">shortlisted<" not in html
+    assert 'data-stage-pick="shortlisted"' in html
+    assert "Shortlisted" in table
     assert _pursuit(pid)[0].status == "shortlisted"
 
 
-def test_applied_button_is_neutral_and_one_click_records_today():
+def test_applied_one_click_records_today_with_a_follow_up():
     c = _fresh()
     opp_id, pid = _seed()
     rid = _add_render(opp_id)
     with c:
         html = c.get("/pursuits").text
-        assert ">Applied?</button>" in html and "I applied" not in html
-        button = html.split('data-testid="applied-button"')[0].rsplit("<button", 1)[1]
-        assert "primary" not in button  # neutral until clicked
-        assert f'"document_id": "{rid}"' in html  # the latest render for the role
-        assert "different date" in html and 'name="applied_on"' in html
+        assert ">I applied</button>" in html  # the card opens the form; nothing is recorded yet
+        assert _pursuit(pid)[0].status == "shortlisted"
         r = c.post(f"/pursuits/{pid}/act/applied/quick", data={"document_id": str(rid)})
         assert r.status_code == 200
-        assert "✓ Applied" in r.text and "btn small good" in r.text
-        assert 'hx-trigger="load delay:2s"' in r.text  # the board refreshes, moving the card
+        assert "✓ Applied" in r.text
         board = c.get("/pursuits?view=kanban&track=employment").text
         assert "Head of IT" in _column(board, "Applied")
     p, events = _pursuit(pid)
@@ -151,17 +150,16 @@ def _seed_tailor():
     return render_id, master_id
 
 
-def test_tailor_lists_summary_first_then_bullets_then_skills_each_with_actions():
+def test_tailor_lists_summary_first_then_bullets_then_skills_each_with_its_wordings():
     render_id, _ = _seed_tailor()
     html = _client().get(f"/renders/{render_id}").text
-    assert html.index('data-testid="part-summary"') < html.index('data-testid="part-s1"')
-    assert html.index('data-testid="part-s1"') < html.index('data-testid="part-skills"')
-    summary = html.split('data-testid="part-summary"')[1].split('data-testid="part-s1"')[0]
+    assert html.index(' id="tl-card-summary"') < html.index(' id="tl-card-s1"')
+    assert html.index(' id="tl-card-s1"') < html.index(' id="tl-card-skills"')
+    summary = html.split(' id="tl-card-summary"')[1].split(' id="tl-card-s1"')[0]
     assert "Technology leader, fifteen years." in summary
-    assert "Swap (2)" in summary and "Edit wording" in summary and ">Hide</button>" in summary
-    skills = html.split('data-testid="part-skills"')[1]
-    assert "Identity: Entra ID, Okta" in skills and "Edit on Documents" in skills
-    assert ">Hide</button>" in skills
+    assert "Other wordings (1)" in summary and "Operator who ships." in summary
+    skills = html.split(' id="tl-card-skills"')[1]
+    assert "Identity" in skills and "Entra ID, Okta" in skills
 
 
 def test_edit_wording_saves_a_new_operator_variant_and_selects_it():
@@ -170,7 +168,7 @@ def test_edit_wording_saves_a_new_operator_variant_and_selects_it():
     typed = "Cut run costs 37% and doubled uptime, 120 people, 4 sites."  # numbers not in original
     r = c.post(f"/renders/{render_id}/wording", data={"slot_key": "s1", "text": typed})
     assert r.status_code == 200 and "Saved as a new wording of your own" in r.text
-    assert typed in r.text and "Led the IT function." in r.text  # the original stays under Swap
+    assert typed in r.text and "Led the IT function." in r.text  # the original stays a choice
 
     async def _state(s):
         v = (await s.execute(select(DocVariant).where(DocVariant.text == typed))).scalar_one()
@@ -215,14 +213,22 @@ def test_edit_wording_on_the_summary_adds_a_summary_wording_and_refuses_empty_te
                   data={"slot_key": "ghost", "text": "x"}).status_code == 400
 
 
+def _preview_of(text: str):
+    """The preview document a swap answers with (the #tl-src source the page patches the frame
+    from), parsed."""
+    from bs4 import BeautifulSoup
+
+    src = BeautifulSoup(text, "html.parser").select_one("textarea#tl-src")
+    return BeautifulSoup(src.get_text(), "html.parser")
+
+
 def test_hide_works_on_a_required_part_the_summary_and_skills_for_this_render_only():
     render_id, master_id = _seed_tailor()
     c = _client()
     for slot in ("s1", "summary", "skills"):
         r = c.post(f"/renders/{render_id}/swap", data={"slot_key": slot, "variant_key": "hide"})
         assert r.status_code == 200
-    assert r.text.count("Hidden from this resume.") == 3 and "Show again" in r.text
-    preview = r.text.split("srcdoc=")[1]
+    preview = _preview_of(r.text).get_text()
     assert "Led the IT function." not in preview and "Technology leader" not in preview
     assert "Identity" not in preview
 
@@ -237,6 +243,7 @@ def test_hide_works_on_a_required_part_the_summary_and_skills_for_this_render_on
     back = c.post(f"/renders/{render_id}/swap", data={"slot_key": "summary",
                                                       "variant_key": "summary_2"})
     assert "Operator who ships." in back.text and "hide_summary" not in _read(_state)[0]
+    assert "Operator who ships." in _preview_of(back.text).get_text()
     assert c.post(f"/renders/{render_id}/swap",
                   data={"slot_key": "skills", "variant_key": "bogus"}).status_code == 400
 
@@ -346,9 +353,9 @@ def test_prep_notes_save_per_role_and_survive_a_rebuild():
     opp_id, _ = _seed()
     with c:
         page = c.get(f"/prep/{opp_id}").text
-        assert "My notes for this interview" in page and 'data-testid="prep-notes"' in page
+        assert "Your notes for this interview" in page and 'data-testid="prep-notes"' in page
         r = c.post(f"/prep/{opp_id}/notes", data={"notes": "  Ask about the board.  "})
-        assert "Saved" in r.text and "Ask about the board." in r.text
+        assert "Saved" in r.text
         assert "Ask about the board." in c.get(f"/prep/{opp_id}").text
         assert c.post("/prep/9999/notes", data={"notes": "x"}).status_code == 404
 
@@ -365,20 +372,25 @@ def test_prep_notes_save_per_role_and_survive_a_rebuild():
     assert _read(_gone) is None
 
 
+def _toast_msg(resp) -> str:
+    import json as _json
+
+    return _json.loads(resp.headers["HX-Trigger"])["k-toast"]["message"]
+
+
 def test_add_a_story_creates_an_operator_owned_story_and_the_lede_is_rewritten():
     c = _fresh()
     with c:
         page = " ".join(c.get("/stories").text.split())
-        assert ("Your interview stories, in your own words. Build drafts from your notes and the "
-                "interview questions Kestrel drafted for each scored role, or add one yourself. "
-                "A draft is yours once you save it; nothing rewrites it after that.") in page
+        assert "Your interview stories, in your own words." in page
+        assert "A draft is yours once you save it; nothing rewrites it after that." in page
         assert "+ Add a story" in page and "Build stories" in page
         bad = c.post("/stories", data={"title": " "})
-        assert "give the story a title" in bad.text
+        assert "give the story a title" in _toast_msg(bad)
         r = c.post("/stories", data={
             "title": "The migration", "situation": "Two data centers", "task": "Merge them",
             "action": "I led it", "result": "Saved 20%", "reflection": "Start earlier"})
-        assert "Story added" in r.text and "The migration" in r.text
+        assert "Story saved" in _toast_msg(r) and "The migration" in r.text
 
     async def _stories(s):
         return (await s.execute(select(Story))).scalars().all()
@@ -398,9 +410,10 @@ def test_build_stories_enqueues_one_task_and_the_worker_runs_it_with_the_notes(m
     opp_id, _ = _seed()
     with c:
         r = c.post("/stories/build")
-        assert "Building stories in the background" in r.text and 'hx-trigger="every 5s"' in r.text
+        assert "Building stories in the background" in _toast_msg(r)
+        assert 'hx-trigger="every 5s"' in r.text
         again = c.post("/stories/build")
-        assert "already running" in again.text
+        assert "already running" in _toast_msg(again)
 
     async def _tasks(s):
         return (await s.execute(select(Task).where(Task.type == TASK_TYPE))).scalars().all()

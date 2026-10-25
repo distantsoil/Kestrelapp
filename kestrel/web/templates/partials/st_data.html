@@ -1,0 +1,72 @@
+{# Your data (D-UI-106, D-UI-114, D-UI-115): backups, import past applications, your contacts,
+   diagnostics and the danger zone. The id your-data is the anchor the Company page links to. #}
+{% import "partials/st_macros.html" as st with context %}
+<span id="your-data" class="st-anchor"></span>
+<section class="k-card st-card" id="st-backups" data-testid="st-backups">
+  {{ st.head('Backups', 'dl') }}
+  <div class="st-row st-row--first">
+    <div class="st-row__t"><b>Where your data lives</b><code class="st-path" data-testid="st-data-path" title="{{ data_dir }}">{{ data_dir }}</code></div>
+    {% if data_size %}<span class="st-use" data-testid="st-data-size">Uses {{ data_size }}</span>{% endif %}
+    {% if can_open_folder %}<button type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "data"}' hx-target="#st-folder-res" hx-swap="innerHTML" data-testid="st-open-folder">{{ st.sic('folder', 'k-ic--sm') }}Open folder</button><span id="st-folder-res" class="st-dsm" role="status"></span>{% endif %}
+  </div>
+  <div class="st-hact st-hact--rule">
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" id="st-backup" data-st-backup data-testid="st-backup">{{ st.sic('dl', 'k-ic--sm') }}Download a backup</button>
+    <button type="button" class="k-btn k-btn--sm" id="st-restore-pick" data-testid="st-restore">{{ st.sic('restore', 'k-ic--sm') }}Restore from a file</button>
+    <span class="st-dsm" id="st-lastbk" data-testid="st-lastbk">Last backup: {{ last_backup }}</span>
+  </div>
+  <input type="file" id="st-restore-file" name="backup_file" accept=".zip" form="st-restore-form" hidden data-testid="st-restore-file">
+  <div id="st-restore-res" class="st-restore-res" role="status" data-testid="st-restore-res"></div>
+  <div class="st-p2">
+    {{ st.lbox('in', 'Included', ['Profile', 'Roles and scores', 'Applications', 'Documents', 'Settings']) }}
+    {{ st.lbox('out', 'Never included', ['Online model keys', 'Logs'], 'Keys stay on this computer.') }}
+  </div>
+  <div class="k-modal" id="st-restore-dialog" role="dialog" aria-modal="true" aria-labelledby="st-restore-dialog-t" aria-hidden="true" data-k-static>
+    <form id="st-restore-form" hx-post="/settings/restore" hx-encoding="multipart/form-data" hx-target="#st-restore-res" hx-swap="innerHTML" hx-vals='{"from_settings": "1"}'>
+      <div class="k-modal__head"><h2 id="st-restore-dialog-t">Restore this backup?</h2></div>
+      <div class="k-modal__body">
+        <p class="st-dsm" id="st-restore-name" data-testid="st-restore-name"></p>
+        <div class="st-keep st-keep--warn">{{ st.sic('warn') }}<div class="k-grow"><b>This replaces everything in Kestrel now.</b><span class="st-dsm">Kestrel saves a backup of what is here first.</span></div></div>
+      </div>
+      <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close data-st-restore-cancel>Cancel</button>
+        <button type="submit" class="k-btn k-btn--primary" data-k-close data-testid="st-restore-go">Restore</button></div>
+    </form>
+  </div>
+</section>
+{% include "partials/st_import.html" %}
+{% include "partials/st_contacts.html" %}
+<section class="k-card st-card" id="st-diag" data-testid="st-diag">
+  {{ st.head('Diagnostics', 'diag') }}
+  <div class="st-hact st-hact--first">
+    {% if desktop %}<button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/about/diagnostics/save" hx-target="#st-diag-res" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…" data-testid="st-diag-save">{{ st.sic('dl', 'k-ic--sm') }}Download a diagnostics file</button>
+    {% else %}<a class="k-btn k-btn--sm k-btn--primary" href="/about/diagnostics" download data-testid="st-diag-download">{{ st.sic('dl', 'k-ic--sm') }}Download a diagnostics file</a>{% endif %}
+    <span class="st-dsm">For troubleshooting. You choose whether to share it.</span></div>
+  <div id="st-diag-res" class="st-diag-res" role="status"></div>
+  <p class="st-dsm">Made only when you ask. Kestrel never sends it: if you want help, attach it to a message to support.</p>
+  <div class="st-p2">
+    {{ st.lbox('in', 'Included', ['App version', 'Recent logs', 'Settings', 'Health check results']) }}
+    {{ st.lbox('out', 'Never included', ['Your profile and resumes', 'Online model keys', 'Roles and applications']) }}
+  </div>
+</section>
+<section class="k-dz st-dz" id="st-danger" aria-labelledby="st-danger-t" data-testid="st-danger">
+  <div class="k-dz__head">{{ st.sic('warn', 'k-ic--lg') }}<span id="st-danger-t">Danger zone</span></div>
+  <div class="k-dz__body">
+    <div class="k-dz__row"><div class="k-grow"><b>Restart setup</b><span class="st-dsm">Walks you through first-run setup again. Your profile, documents and roles stay.</span></div>
+      <form method="post" action="/onboarding/restart"><input type="hidden" name="choice" value="keep"><button class="k-btn k-btn--sm" type="submit" data-testid="st-restart">Restart setup</button></form></div>
+    <div class="k-dz__row"><div class="k-grow"><b>Clear everything</b><span class="st-dsm">Deletes all data. Online model keys stay. Kestrel saves a backup first.</span></div>
+      <button class="k-btn k-btn--sm k-btn--danger" type="button" data-k-modal="#st-clear-dialog" data-testid="st-clear">Clear everything</button></div>
+  </div>
+  <div class="k-modal" id="st-clear-dialog" role="dialog" aria-modal="true" aria-labelledby="st-clear-dialog-t" aria-hidden="true" data-k-static>
+    <form method="post" action="/onboarding/restart">
+      <input type="hidden" name="choice" value="clear">
+      <div class="k-modal__head"><h2 id="st-clear-dialog-t">Clear everything?</h2></div>
+      <div class="k-modal__body">
+        <p class="st-dsm">This deletes your profile, roles, applications and documents. Kestrel saves a backup first, next to your data folder, and never deletes it.</p>
+        <label class="st-ck"><input type="checkbox" name="keep_keys" value="on" checked> Keep my online model keys</label>
+        <label class="st-dsm st-lbl" for="st-clear-reset">Type RESET to continue</label>
+        <input class="k-input" id="st-clear-reset" name="confirm" autocomplete="off" placeholder="RESET" data-testid="st-clear-reset">
+      </div>
+      <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close>Cancel</button>
+        <button type="submit" class="k-btn k-btn--danger" id="st-clear-go" disabled data-testid="st-clear-go">Clear everything</button></div>
+    </form>
+  </div>
+</section>

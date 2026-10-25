@@ -1,0 +1,5 @@
+{# Compare: a card per offer, then the comparison of the open ones (D-UI-122). #}
+<div class="of-cards" data-testid="of-cards">
+  {%- for c in cards %}{% include "partials/offer_card.html" %}{% endfor -%}
+</div>
+{% include "partials/offer_matrix.html" %}

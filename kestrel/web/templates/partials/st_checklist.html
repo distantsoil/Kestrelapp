@@ -1,0 +1,40 @@
+{# Setup checklist (SPEC-INTERFACES 2.6 item 1): four buttons in order. Install the engine,
+   Download models (resumable, with progress and a way to pause), Tune them for Kestrel, Check
+   everything works. A hardware profile choice in plain words; raw names and the commands appear
+   only under Show details. Polls every 2 seconds while work runs, then stops. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card{% if ck_choice == 'hosted' %} is-offline{% endif %}" id="st-chk" data-testid="st-chk"
+  {% if ck_live %}hx-get="/settings/computer/checklist" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% call st.head('Setup checklist', 'check') %}<span class="k-pill" data-testid="st-chk-tally">{{ ck_done }} of {{ ck_total }} steps ready</span>{% endcall %}
+  {% if ck_choice == 'hosted' %}<p class="st-dim">{{ st.sic('info', 'k-ic--sm') }}Not needed while you use only an online model.</p>{% endif %}
+  <p class="st-dsm st-hw" data-testid="st-hardware">{{ hardware_line }}.{% if recommended_online %} An online model is the better fit for this computer: {{ recommended_reason }}.{% endif %}</p>
+  {% if ck_low_spec %}<p class="st-note st-note--bad" role="alert" data-testid="st-lowspec">{{ ck_low_spec }}</p>{% endif %}
+  {% if ck_message %}<p class="st-note st-note--{{ 'good' if ck_ok else 'bad' }}" role="status" data-testid="st-chk-message">{{ ck_message }}</p>{% endif %}
+  <div class="st-cs-list">
+  {% for r in ck_rows %}
+    <div class="st-cs{% if r.done %} is-done{% endif %}" data-step="{{ r.key }}" data-testid="st-step-{{ r.key }}">
+      <span class="st-bub">{% if r.done %}{{ st.sic('check', 'k-ic--sm') }}{% else %}{{ loop.index }}{% endif %}</span>
+      <div class="st-cs__t"><b>{{ r.title }}</b><span class="st-dsm">{{ r.line }}</span>
+        {% if r.show_progress %}<div class="st-prog" role="progressbar" aria-label="{{ r.title }}"{% if r.pct is not none %} aria-valuenow="{{ r.pct }}"{% endif %}><i style="width: {{ r.pct if r.pct is not none else 8 }}%"></i></div>{% endif %}
+        {% if r.note %}<span class="st-dsm">{{ r.note }}</span>{% endif %}
+      </div>
+      <span class="k-pill{% if r.chip[1] != 'muted' %} k-pill--{{ r.chip[1] }}{% endif %}">{{ r.chip[0] }}</span>
+      <div class="st-cs__b">
+        {% if r.link %}<a class="k-btn k-btn--sm" href="{{ r.link[0] }}" target="_blank" rel="noopener">{{ r.link[1] }}</a>{% endif %}
+        <button type="button" class="k-btn k-btn--sm{% if r.primary %} k-btn--primary{% endif %}" hx-post="/settings/computer/action/{{ r.button[1] }}" hx-target="#st-chk" hx-swap="outerHTML"{% if r.disabled %} disabled{% endif %} data-testid="st-act-{{ r.button[1] }}">{{ r.button[0] }}</button>
+        {% if r.link2 %}<a class="k-link" href="{{ r.link2[0] }}">{{ r.link2[1] }}</a>{% endif %}
+      </div>
+      {% if r.commands %}<div class="st-cs__d">{{ st.det(r.commands|join('\n')) }}</div>{% endif %}
+    </div>
+  {% endfor %}
+  </div>
+  <div class="st-profile">
+    <label for="st-profile-sel"><b>Which kind of computer is this?</b><span class="st-dsm">Kestrel picks the models that fit. Change it if it guessed wrong.</span></label>
+    <form class="st-profile__f" hx-post="/settings/computer/profile" hx-target="#st-chk" hx-swap="outerHTML" hx-trigger="change">
+      <span class="k-select"><select id="st-profile-sel" name="profile" data-testid="st-profile">{% for p in ck_profiles %}<option value="{{ p.name }}"{% if p.current %} selected{% endif %}>{{ p.label }}</option>{% endfor %}</select></span>
+    </form>
+  </div>
+  {% if ck_log %}<pre class="st-log" data-testid="st-log">{{ ck_log|join('\n') }}</pre>{% endif %}
+  <span id="st-rec-local" hx-swap-oob="true" class="k-pill k-pill--info st-rec" {% if recommended_online %}hidden{% endif %}>Recommended</span>
+  <span id="st-rec-online" hx-swap-oob="true" class="k-pill k-pill--info st-rec" {% if not recommended_online %}hidden{% endif %}>Recommended</span>
+</section>

@@ -1,0 +1,38 @@
+{# "This run only" (D-UI-103): one run on Local or Online, your saved settings unchanged. Online
+   asks first: exactly what is sent (the text acknowledged in Hosted mode), what is not, and the
+   cost. Nothing is queued until Start; the server checks the confirmation again. static: a click
+   outside does not close it, because it asks before something goes online. #}
+{% from "ui/macros.html" import modal %}
+{% set start_attrs = {'id': 'rn-start', 'data-testid': 'rn-start', 'hx-post': '/runs/start', 'hx-include': '#rn-choose', 'hx-swap': 'none', 'data-busy-text': 'Starting the run…'} %}
+{% call modal('rn-choose-dialog', 'Run once, this time only', [
+  {'label': 'Cancel', 'close': True},
+  {'label': 'Start this run', 'kind': 'primary', 'close': True, 'attrs': start_attrs}
+], static=True) %}
+  <form id="rn-choose" onsubmit="return false">
+    <input type="hidden" name="online_approval" value='{{ approval_json }}'>
+    <input type="hidden" name="both_online_approval" value='{{ both_approval_json }}'>
+    <fieldset class="rn-pick">
+      <legend class="k-sr-only">Where the AI runs</legend>
+      <label class="rn-opt"><input type="radio" name="mode" value="local" checked data-testid="rn-mode-local"><span><b>Local</b><span class="k-muted">On this computer. Free.{% if usual == 'Local' %} Your saved choice.{% endif %}</span></span></label>
+      <label class="rn-opt"><input type="radio" name="mode" value="both"{% if hosted_problem %} disabled{% endif %} data-testid="rn-mode-both"><span><b>Both</b><span class="k-muted">{% if hosted_problem %}Not available: {{ hosted_problem }}{% else %}Quick screen on this computer, rating online.{% endif %}</span></span></label>
+      <label class="rn-opt"><input type="radio" name="mode" value="hosted"{% if hosted_problem %} disabled{% endif %} data-testid="rn-mode-online"><span><b>Online</b><span class="k-muted">{% if hosted_problem %}Not available: {{ hosted_problem }}{% else %}Uses your own key and credit.{% if usual == 'Online' %} Your saved choice.{% endif %}{% endif %}</span></span></label>
+    </fieldset>
+    <div class="rn-ask" id="rn-ask" hidden data-testid="rn-ask">
+      <b>What will be sent</b>
+      <div data-sends="hosted">
+        {% for route in routes %}<p>{{ route.provider }} · {{ route.model }} ({{ route.tier }})</p>{% endfor %}
+        <ul>{% for line in sends %}<li data-testid="rn-sends">{{ line }}.</li>{% endfor %}</ul>
+      </div>
+      <div data-sends="both" hidden>
+        {% for route in both_routes %}<p>{{ route.provider }} · {{ route.model }} ({{ route.tier }})</p>{% endfor %}
+        <ul>{% for line in sends_both %}<li data-testid="rn-sends-both">{{ line }}.</li>{% endfor %}{% if 'tier1' not in both_routes|map(attribute='tier')|list %}<li>The quick screen runs on this computer, so nothing is sent for it.</li>{% endif %}</ul>
+      </div>
+      {% if employer == 'hidden' %}<p data-testid="rn-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+      {% elif employer == 'held' %}<p data-testid="rn-employer-held"><b>Online sends will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send anything. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
+      <p><b>Not sent:</b> your name, contact details and your resume file.</p>
+      <p><b>Cost:</b> you pay your provider for what is sent, from your own credit.{% if credit %} {{ credit }}.{% endif %} The number of roles decides the total.</p>
+      <label class="rn-ok"><input type="checkbox" name="confirmed" value="1" id="rn-ok" data-testid="rn-ok"{% if employer == 'held' %} disabled{% endif %}><span>I understand what is sent and approve this one run.</span></label>
+    </div>
+    <p class="k-muted rn-small">Your settings do not change. Later runs use {{ usual }}, your saved choice.</p>
+  </form>
+{% endcall %}

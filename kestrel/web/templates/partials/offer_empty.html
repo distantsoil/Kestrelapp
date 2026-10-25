@@ -1,0 +1,31 @@
+{# Before an offer arrives (D-UI-122): what roles like yours pay, against the operator's own floor
+   and target with the sample size in words, and a short preparation list. #}
+{% from "ui/macros.html" import icon %}
+<section class="k-card of-hello" data-testid="of-empty">
+  <span class="k-badge">{{ icon('offers') }}</span>
+  <div class="k-grow"><b>No offers yet</b><p class="k-muted">Use this time to prepare. When an offer arrives, record it and Kestrel compares it for you.</p></div>
+  <button type="button" class="k-btn k-btn--primary" data-testid="of-record-empty" hx-get="/offers/new" hx-target="#of-dialog" hx-swap="innerHTML">+ Record an offer</button>
+</section>
+<div class="of-two">
+  <section class="k-card" data-testid="of-market">
+    <header class="k-sec-head"><span class="k-badge k-badge--good">{{ icon('analytics') }}</span><div class="k-grow"><h3>What roles like yours pay</h3><p>From the roles you are pursuing</p></div></header>
+    {%- for g in groups %}
+    <div class="of-grp" data-testid="of-group"><div class="of-gh"><b title="{{ g.title }}">{{ g.title }}</b><span>{{ g.span }}</span></div>
+      <div class="of-rb"><span class="tr"></span>{% if g.ok %}<span class="rg" style="left:{{ g.left }}%;width:{{ g.width }}%"></span><span class="md" style="left:{{ g.mid }}%"></span>{% endif %}{% if g.floor is not none %}<span class="fl" style="left:{{ g.floor }}%"></span>{% endif %}{% if g.target is not none %}<span class="tg" style="left:{{ g.target }}%"></span>{% endif %}</div>
+      <div class="of-nums">{{ g.nums }}</div></div>
+    {%- else %}
+    <p class="k-muted">Once you are pursuing roles, what similar roles pay appears here.</p>
+    {%- endfor %}
+    <div class="of-lg"><span><i class="rg"></i>Range</span><span><i class="md"></i>Middle</span>{% if floor %}<span><i class="fl"></i>Your floor {{ floor }}</span>{% endif %}{% if target %}<span><i class="tg"></i>Your target {{ target }}</span>{% endif %}</div>
+    <a class="k-link of-more" href="/profile">Set your floor and target in Profile {{ icon('arrow', 'k-ic--sm') }}</a>
+  </section>
+  <section class="k-card">
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ icon('alert') }}</span><div class="k-grow"><h3>Before an offer arrives</h3></div></header>
+    <ul class="of-prep">
+      <li><span class="k-badge">{{ icon('help') }}</span><span><b>Know your walk-away number</b>The lowest {{ 'day rate' if con else 'base' }} you would accept. You set it before any draft.</span></li>
+      <li><span class="k-badge">{{ icon('profile') }}</span><span><b>List what else matters</b>Remote days, time off, start date, level. Rank them so a trade is easy.</span></li>
+      <li><span class="k-badge">{{ icon('pipeline') }}</span><span><b>Read the pay range in the posting</b>It is the best clue to what they can offer. Kestrel shows it beside your target.</span></li>
+      <li><span class="k-badge">{{ icon('prep') }}</span><span><b>Kestrel drafts, you send</b>It writes replies you edit and copy into your own email. It never sends anything.</span></li>
+    </ul>
+  </section>
+</div>

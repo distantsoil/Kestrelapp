@@ -1,234 +1,198 @@
+{# Help (D-UI-124, SPEC-INTERFACES 2.1 /help). Built on the shared design system. All 21 articles
+   are rendered here, hidden, so Help works offline; static/js/help.js filters the topic cards and
+   copies one article into the reader slide-over. Article bodies are fixed text from
+   kestrel/web/help_articles.py, never user input. #}
 {% extends "base.html" %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
 {% block title %}Help · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/pages/help.css">
+<script src="/static/js/help.js" defer></script>
+{% endblock %}
 {% block content %}
-<h1>Help</h1>
-
-<div class="panel">
-  <h2>What Kestrel does</h2>
-  <p>Kestrel is a free job search app for any job seeker. It runs on your own computer
-  (Windows, macOS or Linux) and you are not the product. It finds openings from public job
-  boards and company hiring pages, checks each one against what you want, and shows the ones
-  worth a look with the reasons. It tailors your own resume text to each role, tracks every
-  application to its outcome, and helps you prepare for interviews and offers. It learns from
-  the decisions you record. If you do consulting or contract work, there is an optional second
-  track for that, off by default.</p>
-  <p>The AI runs on your computer by default. You can instead use an online model with your own
-  key (OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible service), and Kestrel
-  asks before anything goes online. It never applies, emails or messages anyone for you.</p>
-  {# D-UI-64: the site and Ko-fi as link buttons inside the main card, not a loose line. #}
-  <p class="site-links" data-testid="site-links"><a class="btn" href="https://kestrelapp.co" target="_blank" rel="noopener">kestrelapp.co</a> <a class="btn pri" href="https://ko-fi.com/distantsoil" target="_blank" rel="noopener">Support Kestrel on Ko-fi</a></p>
-</div>
-
-<div class="panel" data-testid="help-guides">
-  <h2>Page guides</h2>
-  <p>Each main page opens with a one-line guide. Hide it with Got it; it stays gone until you
-  bring the guides back.</p>
-  <button class="btn" type="button" hx-post="/guides/restore" hx-target="#guides-result"
-          hx-swap="outerHTML">Show the guides again</button>
-  <span id="guides-result"></span>
-</div>
-
-<div class="panel">
-  <h2 id="tiers">The pipeline</h2>
-  <table class="data">
-    <thead><tr><th>Step</th><th>What runs</th><th>What it decides</th><th>Cost</th></tr></thead>
-    <tbody>
-      {% for t in tiers %}
-      <tr><td><b>{{ t.tier }}</b><br><span class="muted mono" title="The name this step has in Settings">{{ t.tech }}</span></td><td>{{ t.what }}</td><td>{{ t.decides }}</td>
-          <td class="muted">{{ t.cost }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted">Uncertainty escalates, it never rejects: when the quick screen is unsure about a role,
-  it goes on to a full read instead of being set aside, and a posting the model could not score goes to Failed scoring and stays in your pipeline, never dropped.</p>
-  <h3 id="tier-names">The model names on Settings</h3>
-  <p class="muted" style="margin-top:0">Settings &gt; Models and Settings &gt; Hosted assign a
-  model to each of these. An online assignment is used only in Hosted mode; the online deeper read
-  sends data only when you confirm it.</p>
-  <table class="data">
-    <thead><tr><th>Name</th><th>What it is</th></tr></thead>
-    <tbody>
-      {% for n in tier_names %}
-      <tr><td>{{ n.label }}<br><span class="mono muted">{{ n.name }}</span></td><td>{{ n.what }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-<div class="panel">
-  <h2>Where opportunities come from</h2>
-  <p>Every kind Kestrel can scan, read from the adapter registries. Add one on
-  <a href="/sources">Sources</a>: name, track, kind, cadence, and a JSON config with the keys
-  below. The same check the scan uses runs before anything is saved.</p>
-  <div style="overflow-x:auto">
-  <table class="data">
-    <thead>
-      <tr><th>Kind</th><th>What it scans</th><th>What you provide</th><th>Region</th>
-          <th>Rate limit</th></tr>
-    </thead>
-    <tbody>
-      {% for k in catalog %}
-      <tr>
-        <td>
-          <strong>{{ k.name }}</strong><br>
-          <span class="mono muted">{{ k.kind }}</span><br>
-          <span class="pill">{{ k.category }}</span>
-          {% if not k.documented %}<span class="pill gap">undocumented</span>{% endif %}
-          {% if not k.scheduled %}<span class="pill">not scanned</span>{% endif %}
-          {% if not k.can_add_on_sources_page %}<span class="pill gap">not on Sources page</span>{% endif %}
-        </td>
-        <td>{{ k.fetches }}</td>
-        <td>{{ k.provide }}
-          {% if k.config_example %}<div class="mono muted" style="font-size:.78rem; margin-top:.3rem">{{ k.config_example }}</div>{% endif %}
-        </td>
-        <td>{{ k.region }}</td>
-        <td>{{ k.rate_limit }}<div class="muted" style="font-size:.78rem; margin-top:.3rem">{{ k.user_agent }}</div></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <h3>LinkedIn</h3>
-  <p>Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a
-  LinkedIn posting by hand.</p>
-  <h3 id="remoterocketship" data-testid="help-remoterocketship">RemoteRocketship (optional, paid)</h3>
-  <p><strong>What it is.</strong> An optional source for people who already pay for RemoteRocketship
-  with API access. Kestrel stays free; this source needs your own RemoteRocketship subscription and
-  is off until you add it.</p>
-  <p><strong>How to turn it on.</strong> Open <a href="/sources">Sources</a> and find the
-  RemoteRocketship card. Paste your key, choose Save key, then Turn on. Run now checks right away.
-  The key is kept in Kestrel's private key file on this computer, never in the source and never
-  shown again (only its last four characters). Turn off pauses the source.</p>
-  <p><strong>What Kestrel keeps.</strong> Only the link to each employer's own posting. The posting is
-  then read from the employer's site, or from the company's job board when it is one Kestrel
-  knows. Nothing from RemoteRocketship is stored: no titles, descriptions or company details, and
-  not the reply itself, which fits their terms limit of 24 hours.</p>
-  <p><strong>Daily limits.</strong> RemoteRocketship allows 500 requests or 3,000 jobs per UTC day.
-  Kestrel uses a few requests per scan (two by default, 50 jobs each). A link that cannot be read
-  from the employer is skipped and counted in the run.</p>
-  <p><strong>If something goes wrong.</strong> "Did not receive an API key" or "did not accept the API
-  key": paste the key again in the RemoteRocketship card. "Needs an active paid
-  subscription": your plan does not include API access. "Daily limit was reached": wait until 00:00
-  UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits
-  after the first page, the links from the earlier pages are still used; if it hits on the first
-  page, the run finds nothing and the next scan tries again.</p>
-  <p><strong>Filters.</strong> With no filters set on the source, Kestrel asks for your target titles
-  and onsite metros from your profile. Filters you write on the source replace them.</p>
-  <h3>Region</h3>
-  <p>{{ region_note }}</p>
-  <h3>Need a board that is not listed?</h3>
-  <p>{{ request_new_provider }}</p>
-</div>
-
-<div class="split">
-  <div class="panel">
-    <h2>What never happens</h2>
-    <p>Kestrel never submits an application, never sends an email or a message, never clicks apply,
-    never fills in or submits an ATS form, and never automates any social platform. It
-    drafts, recommends, and hands over. Every send is yours. This boundary is deliberate and it is
-    not configurable.</p>
-    <p>It reads only public pages and public filings, respects robots.txt, identifies itself with a
-    descriptive User-Agent, rate-limits every source, and never logs in anywhere.</p>
-  </div>
-  <div class="panel">
-    <h2>What leaves this machine</h2>
-    <p>Nothing, by default. The AI runs on your own computer. Two opt-in paths send data out,
-    both with your own key and both stated in full before you confirm: a deeper read you request
-    for one role, and Hosted mode, which sends your scoring to an online model you choose
-    (OpenRouter, OpenModel, Anthropic, OpenAI or any OpenAI-compatible service). Both are on
-    <a href="/settings">Settings</a>, Hosted (BYOK) tab.</p>
-    <p>The source scans themselves make ordinary public requests to job boards and filings; the
-    only thing they carry is the search you configured.</p>
-  </div>
-</div>
-
-<div class="split">
-  <div class="panel">
-    <h2>Backups and reinstalls</h2>
-    <p>The <a href="/backup">Backup</a> page downloads one zip with the database, the YAML config
-    and the generated PDFs, exports or imports your profile on its own, and explains what is never
-    included (every key you saved). Restore is on
-    <a href="/settings">Settings</a>, LAN &amp; backup tab.</p>
-    <p>After a reinstall: install, open Setup in the app to rebuild the models, restore the
-    backup, and re-enter any keys in Settings. The LAN shared secret is not in the backup either,
-    so on a different computer, set up LAN pairing again.</p>
-  </div>
-
-  <div class="panel">
-    <h2 id="lan">Kestrel from another device</h2>
-    <p>Optional, and off by default. Kestrel is a web page served by the desktop app, so it can
-    also be opened from a phone, tablet or laptop on the same home network: read Today, review the
-    pipeline, check an application or your interview prep away from the desk. Nothing moves: the models, the
-    database and the documents stay on this machine, which has to be running (in the window or
-    the tray).</p>
-    <p>Turning it on is a switch on <a href="/settings">Settings</a>, LAN &amp; backup tab. You
-    generate one shared secret, tick that you read what it does and does not protect, and turn the
-    switch on; it takes effect after you quit and reopen Kestrel. Then you share the secret with
-    each device. If you only use Kestrel at this computer, leave it off.</p>
-  </div>
-
-  <div class="panel">
-    <h2>This install</h2>
-    <div class="formgrid">
-      <label>Version</label><div class="mono">{{ version }}</div>
-      <label>License</label><div>{{ license }}</div>
-      <label title="Hardware profile">Your computer</label>
-      <div>
-        {% if hardware_profile %}
-          <span class="mono" title="Hardware profile">{{ hardware_profile.profile }}</span>
-          <span class="muted">{{ hardware_profile.reason }}</span>
-        {% else %}
-          <span class="muted">not checked yet; open Setup</span>
-        {% endif %}
+{% set tone_badge = {'i': '', 'v': 'tier', 'g': 'good', 'w': 'warn'} %}
+<div class="hp-wrap"><div class="hp-page">
+  {% call ui.scene_band('Help', sub='Short answers. Nothing here needs a command line.') %}{% endcall %}
+  <div class="k-layout">
+    <div class="k-layout__main">
+      <div class="hp-search">
+        <svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="hp-q" type="search" autocomplete="off" placeholder="Search help, for example: online, resume, slow" aria-label="Search help" data-testid="hp-search">
+        <kbd class="hp-kbd" aria-hidden="true">/</kbd>
       </div>
-      <label>API port</label>
-      <div>
-        <code class="mono">{{ api_port }}</code>
-        <span class="muted">the browser extension finds this by itself; you only need it to pin
-        a port by hand</span>
+      <div class="k-chips" id="hp-chips" role="group" aria-label="Topics">
+        {{ ui.chip('All topics', on=True, attrs={'data-topic': 'all'}) }}
+        {% for t in topics %}{{ ui.chip(t.title, attrs={'data-topic': t.key}) }}{% endfor %}
       </div>
-      <label>Data folder</label>
-      <div>
-        <code class="mono">{{ data_dir }}</code>
-        <button type="button" class="btn ghost" data-path="{{ data_dir }}"
-                @click="navigator.clipboard.writeText($el.dataset.path)"
-                title="Copy path">Copy</button>
-      </div>
-      <label>Log folder</label>
-      <div>
-        <code class="mono">{{ logs_dir }}</code>
-        <button type="button" class="btn ghost" data-path="{{ logs_dir }}"
-                @click="navigator.clipboard.writeText($el.dataset.path)"
-                title="Copy path">Copy</button>
-      </div>
-    </div>
-    <h3 style="margin-top:1rem">Dependencies</h3>
-    <table class="data">
-      <thead><tr><th>Package</th><th>Version</th></tr></thead>
-      <tbody>
-        {% for dep in dependencies %}
-        <tr><td>{{ dep.name }}</td><td class="mono">{{ dep.version }}</td></tr>
-        {% else %}
-        <tr><td colspan="2" class="muted">No dependency metadata available.</td></tr>
+
+      <div id="hp-steps-card">
+      {% call ui.section_card('The four steps every role goes through', 'pipeline', 'tier', sub='Click a step to read about it.') %}
+      <div id="tiers" class="hp-steps" data-testid="hp-steps">
+        {% for s in steps %}
+        <button type="button" class="hp-step{% if s.optional %} is-optional{% endif %}" data-help-article="score:steps">
+          <span class="hp-step__n">{{ loop.index0 }}</span>
+          <b>{{ s.name }}</b>
+          <span class="hp-step__t">{{ s.what }}</span>
+          <span class="hp-step__cost">{{ ui.icon('clock', 'k-ic--sm') }}{{ s.cost }}</span>
+        </button>
         {% endfor %}
-      </tbody>
-    </table>
+      </div>
+      {# The names Settings uses for each step, for anyone who meets "docsel" or "frontier" there. #}
+      <details id="tier-names" class="hp-details">
+        <summary>Show details: the model names on Settings</summary>
+        <p class="k-muted">Settings assigns a model to each of these. An online assignment is used only in Hosted mode; the online deeper read sends data only when you confirm it.</p>
+        <table class="hp-names">
+          <thead><tr><th>Name</th><th>What it is</th></tr></thead>
+          <tbody>
+            {% for n in tier_names %}
+            <tr><td>{{ n.label }}<br><span class="mono muted">{{ n.name }}</span></td><td>{{ n.what }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+      {% endcall %}
+      </div>
+
+      <div class="hp-topics" id="hp-topics">
+        {% for t in topics %}
+        <div class="hp-topic" data-topic="{{ t.key }}">
+          {% call ui.section_card(t.title, t.icon, tone_badge[t.tone]) %}
+          <ul class="hp-tl">
+            {% for a in t.articles %}
+            <li><button type="button" class="hp-art" data-help-article="{{ t.key }}:{{ a.key }}"><span class="hp-art__t">{{ a.title }}</span>{{ ui.icon('arrow', 'k-ic--sm') }}</button></li>
+            {% endfor %}
+          </ul>
+          {% endcall %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="k-card hp-empty" id="hp-none" hidden data-testid="hp-none">
+        <b>No articles match.</b><br>Try “online”, “resume” or “slow”.
+      </div>
+      {# Sources links here (/help#sources, /help#remoterocketship), so the reference it points at
+         stays one toggle away rather than becoming a dead anchor. Generated from the catalog,
+         so it cannot disagree with the registries. #}
+      <details id="sources" class="k-card hp-lan" data-testid="hp-sources">
+        <summary>Show details: Where opportunities come from</summary>
+        <p>Every kind Kestrel can scan, read from the adapter registries. Add one on <a class="k-link" href="/sources">Sources</a>: name, track, kind, cadence, and a JSON config with the keys below. The same check the scan uses runs before anything is saved.</p>
+        <div class="hp-scroll">
+        <table class="hp-names hp-src">
+          <thead><tr><th>Kind</th><th>What it scans</th><th>What you provide</th><th>Region</th><th>Rate limit</th></tr></thead>
+          <tbody>
+            {% for k in catalog %}
+            <tr>
+              <td><strong>{{ k.name }}</strong><br><span class="mono muted">{{ k.kind }}</span><br>
+                <span class="k-pill">{{ k.category }}</span>
+                {% if not k.documented %}<span class="k-pill k-pill--warn">undocumented</span>{% endif %}
+                {% if not k.scheduled %}<span class="k-pill">not scanned</span>{% endif %}
+                {% if not k.can_add_on_sources_page %}<span class="k-pill k-pill--warn">not on Sources page</span>{% endif %}
+              </td>
+              <td>{{ k.fetches }}</td>
+              <td>{{ k.provide }}{% if k.config_example %}<div class="mono muted hp-eg">{{ k.config_example }}</div>{% endif %}</td>
+              <td>{{ k.region }}</td>
+              <td>{{ k.rate_limit }}<div class="k-muted hp-eg">{{ k.user_agent }}</div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        <h3>LinkedIn</h3>
+        <p>Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a LinkedIn posting by hand.</p>
+        <h3 id="remoterocketship" data-testid="help-remoterocketship">RemoteRocketship (optional, paid)</h3>
+        <p><strong>What it is.</strong> An optional source for people who already pay for RemoteRocketship with API access. Kestrel stays free; this source needs your own RemoteRocketship subscription and is off until you add it.</p>
+        <p><strong>How to turn it on.</strong> Open <a class="k-link" href="/sources">Sources</a> and find the RemoteRocketship card. Paste your key, choose Save key, then Turn on. Run now checks right away. The key is kept in Kestrel’s private key file on this computer, never in the source and never shown again (only its last four characters). Turn off pauses the source.</p>
+        <p><strong>What Kestrel keeps.</strong> Only the link to each employer’s own posting. The posting is then read from the employer’s site, or from the company’s job board when it is one Kestrel knows. Nothing from RemoteRocketship is stored: no titles, descriptions or company details, and not the reply itself, which fits their terms limit of 24 hours.</p>
+        <p><strong>Daily limits.</strong> RemoteRocketship allows 500 requests or 3,000 jobs per UTC day. Kestrel uses a few requests per scan (two by default, 50 jobs each). A link that cannot be read from the employer is skipped and counted in the run.</p>
+        <p><strong>If something goes wrong.</strong> “Did not receive an API key” or “did not accept the API key”: paste the key again in the RemoteRocketship card. “Needs an active paid subscription”: your plan does not include API access. “Daily limit was reached”: wait until 00:00 UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits after the first page, the links from the earlier pages are still used; if it hits on the first page, the run finds nothing and the next scan tries again.</p>
+        <p><strong>Filters.</strong> With no filters set on the source, Kestrel asks for your target titles and onsite metros from your profile. Filters you write on the source replace them.</p>
+        <h3>Region</h3>
+        <p>{{ region_note }}</p>
+        <h3>Need a board that is not listed?</h3>
+        <p>{{ request_new_provider }}</p>
+      </details>
+      {# Settings links here (/help#lan) from its LAN switch, so the explanation stays one toggle
+         away rather than becoming a dead anchor. #}
+      <details id="lan" class="k-card hp-lan" data-testid="hp-lan">
+        <summary>Show details: Kestrel from another device</summary>
+        <p>Optional, and off by default. Kestrel is a web page served by the desktop app, so it can also be opened from a phone, tablet or laptop on the same home network: read Today, review the pipeline, check an application or your interview prep away from the desk. Nothing moves: the models, the database and the documents stay on this machine, which has to be running (in the window or the tray).</p>
+        <p>Turning it on is a switch on <a class="k-link" href="/settings">Settings</a>, LAN &amp; backup tab. You generate one shared secret, tick that you read what it does and does not protect, and turn the switch on; it takes effect after you quit and reopen Kestrel. Then you share the secret with each device. If you only use Kestrel at this computer, leave it off.</p>
+      </details>
+    </div>
+
+    {% call ui.help_column() %}
+      {% for h in helpers %}
+      <article class="k-hcard k-hcard--{{ h.accent }}" data-testid="hp-helper-{{ h.key }}">
+        <div class="k-hcard__head">
+          <span class="k-badge{% if h.accent == 'warn' %} k-badge--warn{% elif h.accent == 'good' %} k-badge--good{% endif %}">{{ ui.icon(h.icon) }}</span>
+          <h3 title="{{ h.title }}">{{ h.title }}</h3>
+        </div>
+        {% if h.key == 'keys' %}
+        <div class="hp-sc"><span>Search this page</span><kbd class="hp-kbd">/</kbd></div>
+        <div class="hp-sc"><span>Search or jump anywhere</span><kbd class="hp-kbd">Ctrl K</kbd></div>
+        <div class="hp-sc"><span>Close a panel or clear search</span><kbd class="hp-kbd">Esc</kbd></div>
+        {% else %}
+        <ul class="k-hcard__list">{% for l in h.lines %}<li>{{ l }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if h.key == 'wrong' %}
+        <div class="hp-acts">
+          <a class="k-btn k-btn--sm" href="/models">Open Models</a>
+          <a class="k-btn k-btn--sm" href="/about#files">Open logs folder</a>
+        </div>
+        {% elif h.key == 'promises' %}
+        <div class="hp-acts"><a class="k-btn k-btn--sm" href="/about#promises">All promises on About</a></div>
+        {% elif h.key == 'more' %}
+        <div class="hp-acts" data-testid="hp-more-actions">
+          <a class="k-btn k-btn--sm" href="/onboarding" data-testid="hp-walkthrough">Replay the walkthrough</a>
+          <a class="k-btn k-btn--sm" href="https://kestrelapp.co" target="_blank" rel="noopener">kestrelapp.co</a>
+        </div>
+        {% endif %}
+        {{ ui.flyout_trigger('hp-fly-' ~ h.key) }}
+      </article>
+      {% endfor %}
+    {% endcall %}
   </div>
-</div>
 
-<div class="panel">
-  <h2>Check for updates</h2>
-  <p class="muted">
-    Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent. Kestrel
-    never downloads or installs anything; you choose if and when to update. You can turn the daily
-    check off under Settings.
-  </p>
-  <button class="btn" hx-post="/updates/check" hx-target="#update-result"
-          hx-swap="innerHTML">Check for updates</button>
-  <span id="update-last-checked" class="muted"></span>
-  <div id="update-result" style="margin-top:.6rem"></div>
-</div>
+  {# Every article, hidden: the reader slide-over copies one in. Searching reads these too. #}
+  <div id="hp-articles" hidden>
+    {% for t in topics %}{% for a in t.articles %}
+    <article id="hp-a-{{ t.key }}-{{ a.key }}" data-topic-title="{{ t.title }}" data-title="{{ a.title }}">{{ a.body|safe }}</article>
+    {% endfor %}{% endfor %}
+  </div>
+  {% call ui.slide_over('hp-reader', 'Article', eyebrow='Help') %}
+    <div id="hp-reader-body" class="hp-body" data-testid="hp-reader-body"></div>
+  {% endcall %}
 
-<p class="muted">The version, the source repository, how to support the project, and the
-diagnostics download for reporting a problem are on <a href="/about">About</a>.</p>
+  {% call ui.flyout('hp-fly-wrong', 'Something not working?', eyebrow='Help') %}
+    <h6>Try this order</h6>
+    <ul><li>Check my models first. Most odd results come from a model that cuts postings short.</li><li>Open the role and choose Score again.</li><li>If it still looks wrong, save diagnostics on About and attach the zip to a GitHub issue.</li></ul>
+    <h6>What the check does not do</h6>
+    <p>It never changes your ratings or your documents. It only tests the models.</p>
+    <p><button type="button" class="k-btn k-btn--sm k-btn--primary" data-help-article="fix:problem">Open the full article</button></p>
+  {% endcall %}
+  {% call ui.flyout('hp-fly-promises', 'What Kestrel promises', eyebrow='Help') %}
+    <h6>Where you can see it</h6>
+    <ul><li>Every online step shows what will be sent and the cost, then waits for your OK.</li><li>Kestrel drafts and recommends. You press Apply on the employer’s site yourself.</li><li>Your data stays in one folder on this computer.</li></ul>
+    <h6>One exception to know about</h6>
+    <p>A posting from LinkedIn can only be pasted in by hand. Kestrel does not search it.</p>
+    <p><button type="button" class="k-btn k-btn--sm k-btn--primary" data-help-article="privacy:where">Open the full article</button></p>
+  {% endcall %}
+  {% call ui.flyout('hp-fly-keys', 'Shortcuts', eyebrow='Help') %}
+    <h6>On a Mac</h6>
+    <p>Use Cmd in place of Ctrl.</p>
+    <h6>Search or jump</h6>
+    <p>Type a company, a role or a page name. It finds roles you have already seen, pages and settings.</p>
+    <h6>Keyboard only</h6>
+    <p>Tab moves between buttons and Enter opens them. Every panel closes with Esc.</p>
+  {% endcall %}
+  {% call ui.flyout('hp-fly-more', 'More help', eyebrow='Help') %}
+    <h6>A good bug report has</h6>
+    <ul><li>What you did, and what you expected.</li><li>What happened instead.</li><li>Your version from About, and the diagnostics zip.</li></ul>
+    <h6>Page help</h6>
+    <p>Each page has a How it works button that explains it in a few steps.</p>
+    <p><button type="button" class="k-btn k-btn--sm k-btn--primary" data-help-article="fix:diag">Open the full article</button></p>
+  {% endcall %}
+</div></div>
 {% endblock %}

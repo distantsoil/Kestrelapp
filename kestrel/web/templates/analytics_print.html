@@ -1,0 +1,14 @@
+<!doctype html>
+{# The PDF export (Export > Summary and charts). Standalone: the stylesheets are inlined because the
+   page is rendered from a string with no address to load them from. No organization names appear
+   in metadata (the render path scrubs it), and the oldest role is redacted in confidential mode. #}
+<html lang="en"><head><meta charset="utf-8"><title></title>
+<style>{{ css|safe }}</style>
+<style>@page { size: A4; margin: 14mm; } body { background: none; } .an-page { padding: 0; }
+.an-card, .an-kpi { break-inside: avoid; } .an-g2, .an-g2b { grid-template-columns: 1fr; }</style>
+</head><body>
+<div class="an-wrap"><div class="an-page">
+<h1>Analytics</h1>
+{% include "partials/analytics_body.html" %}
+</div></div>
+</body></html>

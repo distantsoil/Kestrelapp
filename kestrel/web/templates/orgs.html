@@ -1,10 +1,19 @@
+{# Company page (D-UI-123). Built on the shared design system; page styles in
+   static/css/pages/company.css, no legacy page styles. #}
 {% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
 {% block title %}{{ title }} · Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/pages/company.css">
+<script src="/static/js/company.js" defer></script>
+{% endblock %}
 {% block content %}
+<div class="co-wrap">
 {% if not found %}
-  <h1>Organization</h1>
-  <div class="warnbox">Organization {{ org_id }} not found.</div>
+  {{ ui.empty_state('Company not found', 'Organization ' ~ org_id ~ ' is not in Kestrel. It may have been removed, or the link is old.', 'info', 'Back to Pipeline', '/opportunities') }}
 {% else %}
   {% include "partials/org_detail.html" %}
 {% endif %}
+</div>
 {% endblock %}

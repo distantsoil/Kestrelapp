@@ -1,26 +1,61 @@
-{# The local-model checks inside the onboarding model step (D-UI-30): Ollama, the hardware
-   profile, download, build and verify, with live progress. Buttons only; the terminal commands
-   are under Show details (release round R1). While work runs this box polls itself; the poll
+{# The local-model checks inside the onboarding model step (D-UI-30): Ollama (the local AI
+   helper), the hardware profile, download, build and verify, with live progress. Buttons only;
+   the terminal commands are under Show details. While work runs this box polls itself; the poll
    that finds it finished answers with HX-Trigger ob-refresh, which reloads the whole step so its
-   status and the progress indicator move too. #}
-{% from "partials/setup_step_macros.html" import step_details, model_progress, step_actions %}
-<div id="ob-local" class="steps" data-testid="ob-local"
+   status and the progress row move too. Models keep downloading if the operator moves on. #}
+{% import "ui/macros.html" as ui %}
+<div id="ob-local" class="ob-localbox" data-testid="ob-local"
      {% if running %}hx-get="/onboarding/models/local?poll=1" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-  {% if local_message %}<div class="warnbox" role="status">{{ local_message }}</div>{% endif %}
+  {% if local_message %}<div class="ob-note ob-note--warn" role="status">{{ ui.icon('info') }}<div>{{ local_message }}</div></div>{% endif %}
   {% for s in local_steps %}
-  <div class="step" data-step="{{ s.key }}" data-status="{{ s.status }}">
-    <span class="ic {% if s.status == 'ok' %}ok{% elif s.status == 'now' %}now{% elif s.status == 'warn' %}warn{% else %}todo{% endif %}">{% if s.status == 'ok' %}&#10003;{% elif s.status == 'warn' %}!{% else %}{{ loop.index }}{% endif %}</span>
-    <div>
-      <div><b>{{ s.title }}</b>{% if s.detail %} <span class="quiet">{{ s.detail }}</span>{% endif %}</div>
-      <div class="d">{{ s.explanation }}</div>
-      {{ model_progress(models, s.key) }}
+  <div class="ob-rw" data-step="{{ s.key }}" data-status="{{ s.status }}">
+    <span class="ob-ok{% if s.status == 'ok' %} ob-ok--good{% elif s.status == 'warn' %} ob-ok--warn{% elif s.status == 'now' %} ob-ok--spin{% endif %}">{% if s.status == 'ok' %}{{ ui.icon('check') }}{% elif s.status == 'warn' %}{{ ui.icon('alert') }}{% elif s.status == 'now' %}{% else %}{{ loop.index }}{% endif %}</span>
+    <div class="k-grow">
+      <b>{{ s.title }}</b>{% if s.detail %} <span class="ob-dsm">{{ s.detail }}</span>{% endif %}
+      <span class="ob-dsm">{{ s.explanation }}</span>
+      {% if models and models.kind == s.key and models["items"] %}
+      <ul class="ob-prog-list" data-testid="setup-progress-{{ s.key }}" data-live="{{ 'true' if models.live else 'false' }}">
+        {% for i in models["items"] %}
+        <li data-task-status="{{ i.status }}">
+          <span class="ob-mono-text">{{ i.target }}</span>
+          <span class="ob-dsm">{{ i.step }}{% if i.percent is not none and i.status == 'leased' %} <b data-testid="setup-percent">{{ i.percent }}%</b>{% endif %}</span>
+          {% if i.status in ('leased', 'done') %}<progress class="ob-bar" max="100"{% if i.percent is not none %} value="{{ i.percent }}"{% endif %}>{{ i.percent or 0 }}%</progress>{% endif %}
+          {% if i.error %}<span class="ob-err">{{ i.error }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       {% if action and action.step == s.key and action.lines %}
-      <pre class="log" data-action="{{ action.name }}" data-action-status="{{ action.status }}">{% for line in action.lines %}{{ line }}
+      <pre class="ob-log" data-action="{{ action.name }}" data-action-status="{{ action.status }}">{% for line in action.lines %}{{ line }}
 {% endfor %}</pre>
       {% endif %}
-      {{ step_details(s) }}
+      {% if s.commands %}
+      <details class="ob-details" data-testid="setup-details-{{ s.key }}">
+        <summary>Show details</summary>
+        <p class="ob-dsm">The same step from a terminal, if you prefer one:</p>
+        {% for c in s.commands %}<code class="ob-cmd">{{ c }}</code>{% endfor %}
+      </details>
+      {% endif %}
     </div>
-    <span class="act">{{ step_actions(s, running, action, models, '/onboarding/models/action', '#ob-local') }}</span>
+    <span class="ob-acts">
+      {% if s.pill %}<span class="k-pill{% if s.pill_class == 'apply' %} k-pill--good{% elif s.pill_class == 'review' %} k-pill--warn{% endif %}">{{ s.pill }}</span>{% endif %}
+      {% if s.link and s.link_external %}<a class="k-btn k-btn--sm{% if s.status in ('now', 'warn') %} k-btn--primary{% endif %}" href="{{ s.link }}" target="_blank" rel="noopener" data-testid="download-ollama">{{ s.link_label }}</a>{% endif %}
+      {% if s.action %}
+        {% if models and models.stopping and models.kind == s.action %}
+          <span class="k-pill k-pill--warn" data-testid="setup-stopping-{{ s.action }}">Stopping…</span>
+        {% elif models and models.live and models.kind == s.action %}
+          <button class="k-btn k-btn--sm" type="button" hx-post="/onboarding/models/action/cancel" hx-target="#ob-local" hx-swap="outerHTML" data-testid="setup-cancel-{{ s.action }}">Cancel</button>
+        {% elif running and s.action != 'check' %}
+          {% if action and action.name == s.action and action.status == 'running' %}<span class="k-pill k-pill--warn">running</span>
+          {% else %}<button class="k-btn k-btn--sm" type="button" disabled>{{ s.action_label }}</button>{% endif %}
+        {% else %}
+          <button class="k-btn k-btn--sm{% if s.status == 'now' %} k-btn--primary{% endif %}" type="button"
+                  hx-post="/onboarding/models/action/{{ s.action }}" hx-target="#ob-local" hx-swap="outerHTML"
+                  data-testid="setup-action-{{ s.action }}"{% if not s.action_enabled %} disabled{% endif %}>{% if models and models.failed and models.kind == s.action and s.action_enabled %}Try again{% else %}{{ s.action_label }}{% endif %}</button>
+        {% endif %}
+      {% endif %}
+      {% if s.link and not s.link_external %}<a class="k-btn k-btn--sm{% if s.status == 'now' and not s.action %} k-btn--primary{% endif %}" href="{{ s.link }}">{{ s.link_label }}</a>{% endif %}
+    </span>
   </div>
   {% endfor %}
 </div>

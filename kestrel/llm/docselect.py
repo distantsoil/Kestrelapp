@@ -109,3 +109,23 @@ def validate_doc_selection(
             errors.append(f"missing required slot: {slot['key']!r}")
 
     return errors
+
+
+def slot_problems(selection: dict, *, slots: list[dict]) -> dict[str, str | None]:
+    """The slots whose pick failed the catalog check: slot key -> the key the model named (None
+    when it named nothing for a required slot). A slot key the catalog does not have is not a line
+    of the operator's document, so it is not listed. Used to keep a model's valid picks and mark
+    only the failed ones (the Tailor page's "Needs your pick"); nothing here ever fills a slot."""
+    chosen = selection.get("slots") or {}
+    out: dict[str, str | None] = {}
+    for slot in slots:
+        key = slot["key"]
+        valid = {v["key"] for v in slot.get("variants", [])}
+        if slot.get("optional"):
+            valid.add("hide")
+        if key not in chosen:
+            if not slot.get("optional"):
+                out[key] = None
+        elif chosen[key] not in valid:
+            out[key] = chosen[key]
+    return out

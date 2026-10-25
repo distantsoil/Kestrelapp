@@ -34,6 +34,7 @@ from kestrel.db.models import (
 )
 from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
+from kestrel.services.online_consent import online_run_refusal
 from kestrel.services.setting_overrides import (
     load_settings_with_db,
     peek_run_mode,
@@ -77,14 +78,28 @@ def _model_display_name(model_name: str) -> str:
 router = APIRouter()
 
 
+async def _confirmed(request: Request) -> str:
+    """`confirmed` from the query string or a form body, whichever the caller used."""
+    if request.query_params.get("confirmed"):
+        return request.query_params["confirmed"]
+    try:
+        return str((await request.form()).get("confirmed") or "")
+    except (ValueError, RuntimeError):  # not a form body
+        return ""
+
+
 @router.post("/api/run/now")
-async def run_now(mode: str | None = None):
+async def run_now(request: Request, mode: str | None = None):
     """Queue the next worker cycle in `mode` ("local" or "hosted"; default the stored
     `llm.mode`). One-shot: the serve loop consumes the request on its next cycle and later cycles
     return to the stored mode. "hosted" is refused (400, with the reason) until the disclosure is
     acknowledged and tier1 and tier2 have hosted assignments. Queues only; never calls a model
     here, never acts externally."""
     credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
+    try:
+        request_form = await request.form()
+    except (ValueError, RuntimeError):
+        request_form = {}
     async with sessionmaker()() as s:
         chosen = mode or (await load_settings_with_db(s)).llm.mode
         if chosen not in MODES:
@@ -92,8 +107,28 @@ async def run_now(mode: str | None = None):
                 {"queued": False, "reason": f"unknown mode {chosen!r}; use local or hosted"},
                 status_code=400,
             )
+        if chosen in ("hosted", "both") and await _confirmed(request) != "1":
+            return JSONResponse(
+                {
+                    "queued": False,
+                    "reason": "Nothing was sent. Please confirm the online send first.",
+                },
+                status_code=400,
+            )
+        # A run on an online model sends data: resolve the requested mode before checking the
+        # approval, so an explicit hosted request cannot be judged against stored local tiers.
         try:
-            await queue_run_mode(s, chosen)
+            settings = await load_settings_with_db(s, mode=chosen)
+        except HostedModeError as exc:
+            return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
+        refusal = await online_run_refusal(
+            s, settings, mode=chosen, confirmed=await _confirmed(request),
+            approval=request_form.get("online_approval")
+        )
+        if refusal is not None:
+            return JSONResponse({"queued": False, "reason": refusal[0]}, status_code=refusal[1])
+        try:
+            await queue_run_mode(s, chosen, online_approval=request_form.get("online_approval"))
             await s.commit()
         except HostedModeError as exc:
             return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
@@ -204,6 +239,10 @@ SCAN_OUTCOMES: dict[str, str] = {
     "no_pick": "Not started: pick a model, or choose My usual models.",
     "bad_model": "Not started: that model is not available right now. Pick another.",
     "none": "No searches are on. Turn one on under Sources.",
+    "not_confirmed": "Not started: nothing was sent. Confirm the online send first.",
+    "held": "Not started: nothing was sent. Confidential mode is on and no current employer is "
+            "chosen. Choose it in Settings, then try again.",
+    "hosted_off": "Not started: nothing was sent. Online models need Hosted mode, which is off.",
 }
 
 
@@ -220,17 +259,31 @@ async def scan_choose(request: Request):
 
     from kestrel.analytics.progress import tier2_label
     from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.services.tracks import load_enabled
     from kestrel.web.pages import rescore as rs
 
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
+        consent = await rs._consent(s, settings)
+        tracks = await load_enabled(s)
+        searches = (
+            await s.execute(
+                select(Source).where(Source.enabled.is_(True), Source.track.in_(tracks))
+                .order_by(Source.name)
+            )
+        ).scalars().all()
     local, local_note = await asyncio.to_thread(rs._local_models, settings)
     label, _name, _raw, hosted, reasons, hosted_note = await rs._hosted_models(settings)
+    bases = await rs._bases()
     page = request.query_params.get("page") == "1" and not request.headers.get("HX-Request")
     ctx = {
+        **rs.usual_model_ctx(settings, bases),
+        "searches": [{"id": x.id, "name": x.name} for x in searches],
+        "consent": consent,
+        "local_labels": {m: rs.friendly_name(m, bases) for m in local},
         "form_action": "/scan/start",
         "form_target": "#scan-btn",
-        "heading": "Scan all searches now",
+        "heading": "Run a search now",
         "cancel_href": "/",
         "scope_note": "Applies to the full review of the roles this scan finds, and only to "
                       "this scan. The quick screen always uses your usual model. Your settings "
@@ -264,7 +317,10 @@ async def scan_start(request: Request):
     from fastapi.responses import RedirectResponse
 
     from kestrel.ingest.scheduler import enqueue_all_scrapes
+    from kestrel.pipeline._shared import settings_with_override
     from kestrel.queue.queue import TaskQueue
+    from kestrel.services.online_consent import approval_problem
+    from kestrel.services.setting_overrides import load_settings_with_db
     from kestrel.web.pages.sources import _run_choice
 
     form = await request.form()
@@ -273,6 +329,19 @@ async def scan_start(request: Request):
     sm = sessionmaker()
     async with sm() as s:
         override, label, refused = await _run_choice(s, None, form)
+        if refused is None:
+            settings = await load_settings_with_db(s)
+            effective = settings
+            if override is not None:
+                effective = settings_with_override(settings, "tier2", override)
+            problem = await approval_problem(
+                s, effective, ("tier1", "tier2", "trigger"), form
+            )
+            if problem:
+                refused = (
+                    "not_confirmed",
+                    "Not started: nothing was sent. Confirm the online send first.",
+                )
     if refused is not None:
         code, text = refused
         text = SCAN_OUTCOMES.get(code, text.replace("Not run:", "Not started:"))
@@ -283,7 +352,8 @@ async def scan_start(request: Request):
         return _scan_button(request, state, text)
     async with sm() as s:
         queued = await enqueue_all_scrapes(
-            s, TaskQueue(sm), model_override=override, model_label=label
+            s, TaskQueue(sm), model_override=override, model_label=label,
+            online_approval=form.get("online_approval"), reconfirm_held=True,
         )
     async with sm() as s:
         state = await scan_state(s)
@@ -389,7 +459,9 @@ def _ago(value: str | None, now: datetime | None = None) -> str | None:
 
 def _hhmm_local(value: str | None) -> str | None:
     dt = _parse_iso(value)
-    return dt.astimezone().strftime("%H:%M") if dt else None
+    from kestrel.date_display import format_display
+
+    return format_display(dt, kind="time", time_style="24h", local=True) if dt else None
 
 
 async def _worker_row(

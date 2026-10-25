@@ -1,226 +1,270 @@
-{# The swappable half of the pipeline page: the search box and the Newest / Best fit toggle, the
-   chips, the rows in their fit groups (Worth a look, Maybe, Applied, Being scored, Scoring failed;
-   D-UI-45, D-UI-51, D-UI-56), then Not a fit as its own section outside the paging (D-UI-62). Scored rows are tinted in their fit tone with the score in that tone;
-   unscored rows are grey with a dashed stripe and a pill that says where they are in the queue
-   (scoring…, queued, background, held, not queued, failed, stuck; D-UI-81), never a dash. Every group with rows anywhere shows its header and its total count; a group whose
-   rows are on another page links there, the pager. Every verdict word on a row comes from kestrel.web.fit (row.fit). HTMX replaces this whole block on every chip click, keystroke, sort change, and page
-   turn, so the hidden inputs below always reflect the current filters and a chip only has to
-   override its own parameter (hx-vals wins over the included form). #}
-{% macro money(v, cur) -%}
-  {%- set sym = {'USD': '$', 'GBP': '£', 'EUR': '€', 'CAD': 'CA$', 'AUD': 'A$'}.get(cur or 'USD') -%}
-  {%- if sym is none %}{{ cur }} {% else %}{{ sym }}{% endif -%}
-  {%- if v >= 10000 %}{{ (v / 1000)|round(0)|int }}k{% else %}{{ '{:,.0f}'.format(v) }}{% endif -%}
+{# The swappable half of the Pipeline page (D-UI-96): the search box, the saved-view button, the
+   chips with their counts, the sort control and More filters, then the rows in their fit groups
+   (Worth a look, Maybe, Applied, Being scored, Scoring failed; D-UI-45, D-UI-51, D-UI-56; 25 rows
+   a group with Show 25 more), then Not a fit as its own section outside the groups (D-UI-62).
+   Consulting adds two tabs (Opportunities, Signals) around this block; Signals swaps the groups
+   for trigger events.
+
+   HTMX replaces this whole block on every chip click, keystroke, sort change and Show more, so
+   the hidden inputs below always reflect the current filters and a chip only has to override its
+   own parameter (hx-vals wins over the included form). The panel, the bulk bar and the scene band
+   live outside it and are not touched by a swap. #}
+{% import "ui/macros.html" as ui %}
+{% from "partials/pl_row.html" import row, signal_row with context %}
+
+{# Not a fit's rows with their own paging (D-UI-62): twelve at a time, Load more appends. #}
+{% macro notfit_rows(nf, append=False) -%}
+  {% if not append %}<div id="not-fit-rows" data-testid="not-fit-rows"><div class="pl-nf__rows" id="not-fit-box" role="list">{% endif %}
+    {% for r in nf.rows %}{{ row(r, nf=True) }}{% endfor %}
+  {% if not append %}</div>{% endif %}
+  <div id="not-fit-more" class="pl-nf__foot" {% if append %}hx-swap-oob="true"{% endif %}>
+    <span>Showing {{ ((nf.page - 1) * nf.page_size + nf.rows|length) }} of {{ nf.total }}</span>
+    {% if nf.page < nf.pages %} · <button type="button" class="k-link" data-testid="not-fit-more"
+      hx-get="/opportunities/not-fit?{{ dict(query, nf_page=nf.page+1)|urlencode }}" hx-target="#not-fit-box" hx-swap="beforeend">Load more</button>{% endif %}
+  </div>
+  {% if not append %}</div>{% endif %}
 {%- endmacro %}
-{% macro comp(o) -%}
-  {%- if o.comp_min or o.comp_max -%}
-    {%- if o.comp_min and o.comp_max and o.comp_min != o.comp_max -%}
-      {{ money(o.comp_min, o.comp_currency) }} to {{ money(o.comp_max, o.comp_currency) }}
-    {%- else -%}
-      {{ money(o.comp_max or o.comp_min, o.comp_currency) }}
-    {%- endif -%}
-    {%- if o.comp_interval == 'day' %} a day{% elif o.comp_interval == 'hour' %} an hour{% endif -%}
+
+{# The counts under the title, and the tab counts, swapped out of band so a chip never leaves
+   them stale. #}
+{% macro counts_line() -%}
+  {%- if signals_tab -%}{{ signals|length }} signals · {{ signals|selectattr('view.this_week')|list|length }} this week
+  {%- else -%}
+  {{ total_open }} open{% if f.hidden_only %} · showing hidden{% endif %}
+  {%- if being_scored %} · {{ being_scored }} still being scored{% endif %}
+  {%- if scoring_failed %} · <a href="/quarantine" data-testid="failed-link">{{ scoring_failed }} failed scoring</a>{% endif %}
   {%- endif -%}
 {%- endmacro %}
-{% macro place(o) -%}
-  {%- set loc = o.location_raw or ([o.city, o.state]|select|join(', ')) -%}
-  {%- if loc %}{{ loc }}{% if o.remote_type in ('remote', 'hybrid') and o.remote_type not in loc|lower %}, {{ o.remote_type }}{% endif %}
-  {%- elif o.remote_type == 'remote' %}remote
-  {%- elif o.remote_type == 'hybrid' %}hybrid{% endif -%}
-{%- endmacro %}
-  {% macro row(r) -%}
-    {% set ft = r.fit %}
-    {% set org = r.org_name or r.opp.org_name %}
-    {% set unscored = ft.word == 'new' %}
-    <div class="it stripe {{ 'wait' if unscored else ft.tone ~ ' tinted' }}" role="listitem" tabindex="0" data-id="{{ r.opp.id }}"
-         data-group="{{ ft.group }}"
-         id="row-{{ r.opp.id }}" :class="{ on: sel === {{ r.opp.id }} }" @click="select({{ r.opp.id }})"
-         @focus="sel = {{ r.opp.id }}"
-         hx-get="/opportunities/{{ r.opp.id }}/drawer" hx-target="#drawer" hx-swap="innerHTML">
-      <div>
-        <div class="t">
-          <span>{{ r.opp.title or '(untitled)' }}</span>
-          {% if unscored %}
-            {% set st = r.scoring or 'not_queued' %}
-            <span class="pill wait" title="{{ {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A company-board role the smart filter did not keep. It scores in the background when Kestrel is idle.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.'}.get(st, '') }}" data-fit="new" data-scoring="{{ st }}">{{ {'running': 'scoring…', 'queued': 'queued', 'background': 'background', 'held': 'held', 'not_queued': 'not queued', 'failed': 'failed', 'stuck': 'stuck'}.get(st, 'queued') }}</span>
-          {% else %}
-            <span class="pill {{ ft.tone }}" data-fit="{{ ft.word }}">{{ ft.word }}</span>
-          {% endif %}
-          {% if r.mine and r.mine != ft.word %}<span class="pill grey" data-mine="{{ r.mine }}" title="The word you picked">you said {{ r.mine }}</span>{% endif %}
-          {% if r.pursuit_id and r.pursuit_status and ft.group == 'applied' %}<span class="pill ok" title="Where this application stands" data-testid="pursuit-status">{{ r.pursuit_status|replace('_', ' ') }}</span>
-          {% elif r.pursuit_id %}<span class="pill grey" data-testid="on-shortlist">{{ words(r.opp.track).on_list }}</span>{% endif %}
-          {% if r.opp.archived_at %}<span class="pill grey" data-reason="{{ r.opp.archive_reason or '' }}">hidden{% if r.opp.archive_reason %}: {{ archive_reasons.get(r.opp.archive_reason, r.opp.archive_reason)|lower }}{% endif %}{% if r.opp.stage_reason and r.opp.stage_reason.startswith('Re-post') %} ({{ r.opp.stage_reason|lower }}){% endif %}</span>{% endif %}
-          {% if r.ev and r.ev.legitimacy and r.ev.legitimacy.status == 'suspect' %}<span class="pill bad">check the posting</span>
-          {% elif r.ev and r.ev.legitimacy and r.ev.legitimacy.status == 'reject' %}<span class="pill bad">may not be a real opening</span>{% endif %}
-          {% if r.opp.ghost_score >= 0.6 %}<span class="pill ghost" title="ghost score {{ '%.2f'|format(r.opp.ghost_score) }}">ghost</span>{% endif %}
-        </div>
-        {# The why clause: an unscored row says why it stopped (D-UI-56): the quarantine reason in
-           plain words for Scoring failed, "scoring stopped" for a stuck orphan. #}
-        {% set why = (r.failed_reason or ft.why) if r.scoring == 'failed' else ('scoring stopped' if r.scoring == 'stuck' else ft.why) %}
-        {% set parts = [org, r.opp.track if r.opp.track == 'consulting' else '', place(r.opp)|trim, comp(r.opp)|trim, ('seen ' ~ r.opp.seen_count ~ '×') if r.opp.seen_count and r.opp.seen_count > 1 else '', why] %}
-        <div class="s">{{ parts|select|join(' · ') }}</div>
-        <div class="sum">{{ r.summary or '' }}</div>
-        {% if unscored and r.scoring in ('failed', 'stuck') %}
-          {# Its own Score again; clicks stay here instead of opening the drawer. #}
-          <span class="row-score-again" data-testid="row-score-again" @click.stop="" @keydown.stop="">
-            {%- with opp_ids = [r.opp.id], label = 'Score again', select_from = none %}{% include "partials/score_again.html" %}{% endwith -%}
-          </span>
-        {% endif %}
-      </div>
-      <span class="score {{ 'wait' if unscored else ft.tone }}" data-fit-score>{{ '%.1f'|format(ft.score) if ft.score is not none else '' }}</span>
-      <span class="btn quiet" aria-hidden="true">›</span>
-    </div>
-  {%- endmacro %}
 
-{# Not a fit's rows with their own paging (D-UI-62). The section's Show button loads them from
-   /opportunities/not-fit; Previous and Next swap only these rows. #}
-{% macro notfit_rows(nf) -%}
-  <div id="not-fit-rows" data-testid="not-fit-rows">
-    <div class="list card" role="list">{% for r in nf.rows %}{{ row(r) }}{% endfor %}</div>
-    {% if nf.pages > 1 %}
-    <div class="pager">
-      {% if nf.page > 1 %}<button class="btn" hx-get="/opportunities/not-fit?{{ dict(query, nf_page=nf.page-1)|urlencode }}" hx-target="#not-fit-rows" hx-swap="outerHTML">Previous</button>{% endif %}
-      <span class="muted">Not a fit, page {{ nf.page }} of {{ nf.pages }}</span>
-      {% if nf.page < nf.pages %}<button class="btn" hx-get="/opportunities/not-fit?{{ dict(query, nf_page=nf.page+1)|urlencode }}" hx-target="#not-fit-rows" hx-swap="outerHTML">Next</button>{% endif %}
-    </div>
-    {% endif %}
-  </div>
-{%- endmacro %}
-{% if notfit_only %}{{ notfit_rows(nf) }}{% else %}
+{% if notfit_only %}{{ notfit_rows(nf, append) }}{% else %}
 {% set swap = 'hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true"' %}
-<div id="pipeline-list"
+{# Parameters that have a visible input in More filters ride in the form as inputs; the rest are
+   carried as hidden fields so an older bookmarked URL keeps filtering. #}
+{% set visible_inputs = ['score_min', 'pay', 'work', 'posted', 'org', 'source', 'warn', 'live', 'legit'] %}
+<div id="pipeline-list" class="pl-list" data-signals="{{ '1' if signals_tab else '0' }}"
      hx-get="/opportunities?{{ query|urlencode }}"
-     hx-trigger="pipelineRefresh from:body{% if polling %}, every 10s [(!document.activeElement || document.activeElement.id !== 'pipeline-q') && !(document.querySelector('[data-testid=not-fit-show]') && document.getElementById('not-fit-rows') && document.getElementById('not-fit-rows').childElementCount)]{% endif %}"
+     hx-trigger="pipelineRefresh from:body{% if polling %}, every 10s [(!document.activeElement || document.activeElement.id !== 'pipeline-q') && !(document.getElementById('not-fit-show') && document.getElementById('not-fit-rows') && document.getElementById('not-fit-rows').childElementCount)]{% endif %}"
      hx-target="this" hx-swap="outerHTML">
 
-  <form id="pipeline-form" role="search" method="get" action="/opportunities"
+  {# Out of band: the line under the title and the tab counts. Only on a swap; the full page
+     renders them in place. #}
+  {% if request.headers.get('HX-Request') %}
+    <span id="pl-counts" class="pl-counts" hx-swap-oob="true">{{ counts_line() }}</span>
+    {% if track == 'consulting' %}
+    <b id="pl-tabcount-opp" hx-swap-oob="true">{{ counts.all }}</b>
+    <b id="pl-tabcount-sig" hx-swap-oob="true">{{ n_signals }}</b>
+    {% endif %}
+  {% endif %}
+
+  <form id="pipeline-form" class="pl-form" role="search" method="get" action="/opportunities"
         hx-get="/opportunities" {{ swap|safe }}
-        hx-trigger="submit, change, keyup changed delay:400ms from:#pipeline-q">
+        hx-trigger="submit, change[target.name != 'view_name'], keyup changed delay:400ms from:#pipeline-q">
     <input type="hidden" name="track" value="{{ f.track or '' }}">
     <input type="hidden" name="stage" value="{{ f.stage or '' }}">
     <input type="hidden" name="needs_review" value="{{ '1' if f.needs_review else '' }}">
     <input type="hidden" name="shortlisted" value="{{ '1' if f.shortlisted else '' }}">
     <input type="hidden" name="new_today" value="{{ '1' if f.new_today else '' }}">
+    <input type="hidden" name="saved" value="{{ '1' if f.saved else '' }}">
     <input type="hidden" name="hidden" value="{{ '1' if f.hidden_only else '' }}">
     <input type="hidden" name="sort" value="{{ f.sort }}">
-    {% for k, v in carried.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
-    <input id="pipeline-q" type="search" name="q" value="{{ f.q or '' }}"
-           placeholder="Search titles and orgs" aria-label="Search titles and orgs" autocomplete="off">
-    {# Sort inside each group: Newest by default, Best fit one click away. #}
-    <span class="seg" role="group" aria-label="Sort">
-      {% for key, label in sorts %}
-        <button type="button" class="{{ 'on' if f.sort == key else '' }}" data-sort="{{ key }}"
-                hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
-                hx-vals='{"sort": "{{ key }}", "page": "1"}'
-                aria-pressed="{{ 'true' if f.sort == key else 'false' }}">{{ label }}</button>
-      {% endfor %}
-    </span>
+    <input type="hidden" name="type" value="{{ query.get('type', '') }}">
+    {% if track == 'consulting' %}<input type="hidden" name="tab" value="{{ 'signals' if signals_tab else '' }}">{% endif %}
+    {% for k, v in carried.items() if k not in visible_inputs and k not in ('tab', 'type') %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+
+    <div class="pl-bar">
+      <label class="pl-search"><svg class="k-ic k-ic--sm" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="pipeline-q" type="search" name="q" value="{{ f.q or '' }}" autocomplete="off"
+               placeholder="Search titles and companies..." aria-label="Search titles and companies"></label>
+      <span class="pl-viewwrap">
+        <button type="button" class="k-chip" id="pl-view-btn" aria-haspopup="true" aria-expanded="false"
+                hx-get="/pipeline/views?track={{ f.track or '' }}" hx-target="#pl-view-slot" hx-swap="innerHTML"
+                data-testid="view-button">View: {{ active_view.name if active_view else 'My default' }} {{ ui.icon('chev', 'k-ic--sm pl-down') }}</button>
+        <span id="pl-view-slot" class="pl-slot"></span>
+      </span>
+    </div>
+
+    {# Each chip toggles exactly one parameter; the rest ride along from the form. #}
+    {% macro chip(label, name, value, on, count=none, testid=none) -%}
+      <button type="button" class="k-chip{% if on %} is-on{% endif %}"
+              hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
+              hx-vals='{"{{ name }}": "{{ '' if on else value }}", "page": "1", "lim_worth": "", "lim_maybe": "", "lim_applied": "", "lim_new": "", "lim_failed": ""}'
+              aria-pressed="{{ 'true' if on else 'false' }}"
+              data-chip="{{ testid or name }}">{{ label }}{% if count is not none %}<span class="k-chip__n">{{ count }}</span>{% endif %}</button>
+    {%- endmacro %}
+    {% set no_chip = not (f.shortlisted or f.needs_review or f.stage == 't2_done' or f.new_today or f.saved or f.hidden_only) %}
+    <div class="pl-bar pl-bar--chips">
+      <div class="pl-chips" role="group" aria-label="Filters">
+        {% if signals_tab %}
+          {% set sig_types = [('', 'All'), ('week', 'This week'), ('leadership', 'Leadership change'), ('acquisition', 'Acquisition'), ('expansion', 'Expansion'), ('funding', 'Funding')] %}
+          {% for key, label in sig_types %}
+            {% set on = (query.get('type', '') == key) %}
+            <button type="button" class="k-chip{% if on %} is-on{% endif %}" hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
+                    hx-vals='{"type": "{{ key }}", "hidden": ""}' aria-pressed="{{ 'true' if on and not f.hidden_only else 'false' }}" data-chip="type-{{ key or 'all' }}">{{ label }}</button>
+          {% endfor %}
+          <button type="button" class="k-chip{% if f.hidden_only %} is-on{% endif %}" hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
+                  hx-vals='{"hidden": "{{ '' if f.hidden_only else '1' }}", "type": ""}' aria-pressed="{{ 'true' if f.hidden_only else 'false' }}" data-chip="hidden">Not relevant</button>
+        {% else %}
+          <button type="button" class="k-chip{% if no_chip %} is-on{% endif %}" hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
+                  hx-vals='{"shortlisted": "", "needs_review": "", "stage": "", "new_today": "", "saved": "", "hidden": "", "page": "1"}'
+                  aria-pressed="{{ 'true' if no_chip else 'false' }}" data-chip="all">All<span class="k-chip__n">{{ counts.all }}</span></button>
+          {{ chip('My leads' if track == 'consulting' else 'My shortlist', 'shortlisted', '1', f.shortlisted, counts.shortlist) }}
+          {{ chip('Your call', 'needs_review', '1', f.needs_review, counts.your_call) }}
+          {{ chip('Scored', 'stage', 't2_done', f.stage == 't2_done', counts.scored, testid='evaluated') }}
+          {{ chip('New today', 'new_today', '1', f.new_today, counts.new_today) }}
+          {{ chip('Saved', 'saved', '1', f.saved, counts.saved) }}
+          {# Failed scoring opens Needs another try: the same roles, the same count. #}
+          <a class="k-chip" href="/quarantine" data-chip="failed" data-testid="chip-failed">Failed scoring<span class="k-chip__n">{{ counts.failed }}</span></a>
+          {{ chip('Hidden', 'hidden', '1', f.hidden_only, testid='hidden') }}
+        {% endif %}
+        {% set more_on = f.score_min is not none or f.pay or f.work_type or f.posted_days or f.org or f.source or f.warnings or f.liveness or f.legitimacy %}
+        <button type="button" class="k-chip{% if more_on %} is-on{% endif %}"
+                id="pl-mf-btn" aria-controls="pl-mf" aria-expanded="false" data-testid="more-filters">{{ ui.icon('tune', 'k-ic--sm') }}More filters</button>
+        {% if filters_active %}<a class="k-chip" href="/opportunities?track={{ f.track or '' }}&view=none{% if signals_tab %}&tab=signals{% endif %}" data-chip="clear"
+             hx-get="/opportunities?track={{ f.track or '' }}&view=none{% if signals_tab %}&tab=signals{% endif %}" {{ swap|safe }}>Clear</a>{% endif %}
+      </div>
+      <div class="pl-sortg">
+        <span class="pl-sortg__l">Sort</span>
+        <div class="k-seg" role="group" aria-label="Sort">
+          {% for key, label in sorts %}
+            <button type="button" class="{{ 'is-on' if f.sort == key else '' }}" data-sort="{{ key }}"
+                    hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
+                    hx-vals='{"sort": "{{ key }}", "page": "1"}' aria-pressed="{{ 'true' if f.sort == key else 'false' }}">{{ label }}</button>
+          {% endfor %}
+          <button type="button" class="pl-sort-more" id="pl-sort-more" aria-label="More sorts" aria-haspopup="true" aria-expanded="false">{{ ui.icon('chev', 'k-ic--sm pl-down') }}</button>
+        </div>
+        <div class="pl-drop" id="pl-sort-menu" role="menu" hidden>
+          {% for key, label in sort_menu %}
+            <button type="button" role="menuitem" class="{{ 'is-on' if f.sort == key else '' }}" hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
+                    hx-vals='{"sort": "{{ key }}", "page": "1"}'>{{ label }}</button>
+          {% endfor %}
+          <div class="pl-drop__hint">Best fit and Newest stay one click away.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pl-mf" id="pl-mf" hidden>
+      <div class="pl-mf__in">
+        <label>Fit score<select name="score_min" class="k-input">
+          <option value="">Any</option>
+          <option value="3.5"{% if f.score_min == 3.5 %} selected{% endif %}>3.5 and up</option>
+          <option value="4.0"{% if f.score_min == 4.0 %} selected{% endif %}>4.0 and up</option></select></label>
+        <label>{{ 'Day rate' if track == 'consulting' else 'Pay' }}<select name="pay" class="k-input">
+          <option value="">Any</option>
+          <option value="floor"{% if f.pay == 'floor' %} selected{% endif %}>At or above my minimum</option>
+          <option value="target"{% if f.pay == 'target' %} selected{% endif %}>At or above my target</option></select></label>
+        <label>Work type<select name="work" class="k-input">
+          <option value="">Any</option>
+          {% for key, label in [('remote', 'Remote'), ('hybrid', 'Hybrid'), ('onsite', 'On-site')] %}<option value="{{ key }}"{% if f.work_type == key %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <label>Posted<select name="posted" class="k-input">
+          <option value="">Any time</option>
+          <option value="3"{% if f.posted_days == 3 %} selected{% endif %}>Last 3 days</option>
+          <option value="7"{% if f.posted_days == 7 %} selected{% endif %}>Last week</option>
+          <option value="30"{% if f.posted_days == 30 %} selected{% endif %}>Last month</option></select></label>
+        <label>Company<input class="k-input" name="org" value="{{ f.org or '' }}" placeholder="Any company"></label>
+        <label>Source<select name="source" class="k-input">
+          <option value="">All sources</option>
+          {% for k in source_kinds %}<option value="{{ k }}"{% if f.source == k %} selected{% endif %}>{{ k|replace('_', ' ')|capitalize }}</option>{% endfor %}</select></label>
+        <label>Warnings<select name="warn" class="k-input">
+          <option value="">Show all</option>
+          <option value="no_ghost"{% if f.warnings == 'no_ghost' %} selected{% endif %}>Hide possible ghost postings</option>
+          <option value="review"{% if f.warnings == 'review' %} selected{% endif %}>Only roles needing review</option></select></label>
+        <label>Posting<select name="live" class="k-input">
+          <option value="">Any</option>
+          <option value="live"{% if f.liveness == 'live' %} selected{% endif %}>Still live</option>
+          <option value="closed"{% if f.liveness == 'closed' %} selected{% endif %}>Closed</option></select></label>
+        <label>Real opening?<select name="legit" class="k-input">
+          <option value="">Any</option>
+          <option value="clean"{% if f.legitimacy == 'clean' %} selected{% endif %}>Looks real</option>
+          <option value="suspect"{% if f.legitimacy == 'suspect' %} selected{% endif %}>Check the posting</option>
+          <option value="reject"{% if f.legitimacy == 'reject' %} selected{% endif %}>May not be real</option></select></label>
+        <label class="pl-mf__save">Save as a view
+          <span class="pl-mf__row"><input class="k-input" name="view_name" placeholder="Name this view" maxlength="60" aria-label="View name">
+            <button type="button" class="k-btn k-btn--sm" hx-post="/pipeline/views" hx-include="#pipeline-form" hx-swap="none" data-testid="save-view">Save</button></span></label>
+      </div>
+    </div>
   </form>
 
-  {# Each chip toggles exactly one parameter; the rest ride along from the form above. #}
-  {% macro chip(label, name, value, on, count=none, testid=none) -%}
-    <button type="button" class="chip{% if on %} on{% endif %}"
-            hx-get="/opportunities" hx-include="#pipeline-form"
-            hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true"
-            hx-vals='{"{{ name }}": "{{ '' if on else value }}", "page": "1"}'
-            aria-pressed="{{ 'true' if on else 'false' }}"
-            {% if count is not none %}data-count="{{ count }}"{% endif %}
-            data-chip="{{ testid or name }}">{{ label }}</button>
-  {%- endmacro %}
-  <div class="chips" role="group" aria-label="Filters">
-    {{ chip('My shortlist', 'shortlisted', '1', f.shortlisted) }}
-    {{ chip('Your call', 'needs_review', '1', f.needs_review) }}
-    {{ chip('Scored', 'stage', 't2_done', f.stage == 't2_done', testid='evaluated') }}
-    {{ chip('New today', 'new_today', '1', f.new_today) }}
-    {{ chip("Couldn't score", 'stage', 'quarantined', f.stage == 'quarantined', count=quarantined, testid='quarantined') }}
-    {{ chip('Hidden', 'hidden', '1', f.hidden_only, testid='hidden') }}
-    {# Score again (D-UI-50) applies to the rows the current chips and search show on this
-       page, so a chip (Failed scoring, Your call) is the selection. Swapped with the list. #}
-    {% if page_ids %}
-      <span id="pipeline-score-again" data-testid="pipeline-score-again">
-        {%- with opp_ids = page_ids, label = none %}{% include "partials/score_again.html" %}{% endwith -%}
-      </span>
-    {% endif %}
-    {% if filters_active %}
-      <a class="chip" href="/opportunities?track={{ f.track or '' }}" data-chip="clear"
-         hx-get="/opportunities?track={{ f.track or '' }}" {{ swap|safe }}>Clear</a>
-    {% endif %}
-  </div>
+  {# ----------------------------------------------------------------------- Consulting signals #}
+  {% if signals_tab %}
+    <div class="pl-rows pl-signals" role="list">
+      {% set week = signals|selectattr('view.this_week')|list %}
+      {% set earlier = signals|rejectattr('view.this_week')|list %}
+      {% if query.get('type') == 'week' %}{% set earlier = [] %}
+      {% elif query.get('type') in ('leadership', 'acquisition', 'expansion', 'funding') %}
+        {% set week = week|selectattr('type_key', 'equalto', query.get('type'))|list %}
+        {% set earlier = earlier|selectattr('type_key', 'equalto', query.get('type'))|list %}
+      {% endif %}
+      {% if week %}<div class="pl-gh"><span>This week · {{ week|length }}</span><span>{{ sort_note }}</span></div>{% for x in week %}{{ signal_row(x) }}{% endfor %}{% endif %}
+      {% if earlier %}<div class="pl-gh"><span>Earlier · {{ earlier|length }}</span><span></span></div>{% for x in earlier %}{{ signal_row(x) }}{% endfor %}{% endif %}
+      {% if not week and not earlier %}
+        <div class="pl-empty" data-empty><b>No signals match.</b>{% if filters_active %}<br><a href="/opportunities?track=consulting&view=none&tab=signals">Clear the filters</a>{% endif %}</div>
+      {% endif %}
+    </div>
+    <p class="pl-foot-note">Signals are public events, such as filings and company news, that suggest a company may soon need outside help. There is no posting to answer yet.</p>
+  {% else %}
 
-
-
-  {% macro elsewhere(g) -%}
-    {% set link = '/opportunities?' ~ (dict(query, page=g.first_page)|urlencode) %}
-    <div class="list card"><p class="muted" data-elsewhere="{{ g.key }}">
-      {%- if g.first_page < page.page %}On earlier pages, from <a href="{{ link }}" hx-get="{{ link }}" {{ swap|safe }}>page {{ g.first_page }}</a>.
-      {%- else %}Starts on <a href="{{ link }}" hx-get="{{ link }}" {{ swap|safe }}>page {{ g.first_page }}</a>.{% endif -%}
-    </p></div>
-  {%- endmacro %}
   {% for g in groups %}
-      <section class="fitgroup" data-group="{{ g.key }}"{% if g.key == 'failed' %} id="scoring-failed"{% endif %}>
-        <div class="fitgroup-head"><span>{{ g.label }} · {{ g.count }}{% if g.key == 'new' and running %} <span class="ring" title="A run is active" data-testid="being-scored-ring"></span>{% endif %}</span><span class="quiet">{{ 'best fit first' if f.sort == 'score' else 'newest first' }}</span></div>
-        {% if g.key == 'new' and background %}
-          {# Why some of these have not started (#34): the background lane's roles. #}
-          <div class="fitgroup-explain" data-testid="background-note">
-            <span class="muted">
-            {%- if background_hosted -%}
-              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'is' if background == 1 else 'are' }} waiting. Scoring is on an online model: choose Score everything now on <a href="/sources">Sources</a>.
-            {%- else -%}
-              {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'scores' if background == 1 else 'score' }} when Kestrel is idle. <a href="/sources">Score {{ 'it' if background == 1 else 'them' }} now</a>
-            {%- endif -%}
-            </span>
-          </div>
-        {% endif %}
-        {% if g.key == 'failed' %}
-          {# Scoring failed (D-UI-56): what happened, and one Score again for the whole group. #}
-          <div class="fitgroup-explain" data-testid="failed-explain">
-            <span class="muted">{{ g.explain }}</span>
-            {%- with opp_ids = g.ids, label = 'Score again', select_from = none %}{% include "partials/score_again.html" %}{% endwith -%}
-          </div>
-        {% endif %}
-        {% if g.rows %}<div class="list card" role="list">{% for r in g.rows %}{{ row(r) }}{% endfor %}</div>{% else %}{{ elsewhere(g) }}{% endif %}
-      </section>
+    <section class="pl-group" data-group="{{ g.key }}"{% if g.key == 'failed' %} id="scoring-failed"{% endif %}>
+      <div class="pl-gh"><span>{{ g.label }} · {{ g.count }}{% if g.key == 'new' and running %} <span class="k-dot k-dot--live" title="A run is active" data-testid="being-scored-ring"></span>{% endif %}</span><span>{{ sort_note }}</span></div>
+      {% if g.key == 'new' and background %}
+        {# Why some of these have not started (#34): the background lane's roles. #}
+        <div class="pl-explain" data-testid="background-note">
+          <span>
+          {%- if background_hosted -%}
+            {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'is' if background == 1 else 'are' }} waiting. Scoring is on an online model: choose Score everything now on <a href="/sources">Sources</a>.
+          {%- else -%}
+            {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'scores' if background == 1 else 'score' }} when Kestrel is idle. <a href="/sources">Score {{ 'it' if background == 1 else 'them' }} now</a>
+          {%- endif -%}
+          </span>
+        </div>
+      {% endif %}
+      {% if g.key == 'failed' %}
+        {# Scoring failed (D-UI-56): what happened, and the way to Needs another try, where each
+           role can be tried again, with a different model, or removed. #}
+        <div class="pl-explain" data-testid="failed-explain">
+          <span>{{ g.explain }}</span>
+          <a class="k-btn k-btn--sm" href="/quarantine" data-testid="failed-open">Open Needs another try</a>
+        </div>
+      {% endif %}
+      <div class="pl-rows" role="list">{% for r in g.rows %}{{ row(r) }}{% endfor %}</div>
+      {% if g.more %}
+        <div class="pl-more25"><button type="button" class="k-btn k-btn--sm" data-testid="show-more-{{ g.key }}"
+          hx-get="/opportunities?{{ dict(query, **{g.limit_param: g.next_limit})|urlencode }}" {{ swap|safe }}>Show {{ g.more }} more</button></div>
+      {% endif %}
+    </section>
   {% else %}
     {% if not not_fit.count %}
-    <div class="list card" role="list">
-      <div data-empty>
-        {% if not has_any %}
-          <p><b>No opportunities yet.</b></p>
-          <p>Add a board or an ATS under <a href="/sources">Sources</a>, or finish <a href="/setup">Setup</a>; the next run fills this list.</p>
-        {% else %}
-          <p>No opportunities match these chips.</p>
-          <p><a href="/opportunities?track={{ f.track or '' }}">Clear the chips and search</a></p>
-        {% endif %}
-      </div>
+    <div class="pl-empty" data-empty>
+      {% if not has_any %}
+        <p><b>No opportunities yet.</b></p>
+        <p>Add a board or an ATS under <a href="/sources">Sources</a>, or finish <a href="/setup">Setup</a>; the next run fills this list.</p>
+        <p class="pl-hint">Select a role to see why it fits. <kbd class="pl-kbd">j</kbd> and <kbd class="pl-kbd">k</kbd> move, <kbd class="pl-kbd">Enter</kbd> opens the full role.</p>
+      {% elif f.hidden_only %}
+        <p><b>Nothing is hidden.</b></p>
+        <p>Roles you mark Not for me wait here, and you can put any of them back.</p>
+      {% else %}
+        <p><b>Nothing matches these filters.</b></p>
+        <p class="pl-hint">Select a role to see why it fits. <kbd class="pl-kbd">j</kbd> and <kbd class="pl-kbd">k</kbd> move, <kbd class="pl-kbd">Enter</kbd> opens the full role.</p>
+        <p><a href="/opportunities?track={{ f.track or '' }}&view=none" hx-get="/opportunities?track={{ f.track or '' }}&view=none" {{ swap|safe }} data-testid="clear-filters">Clear filters</a></p>
+      {% endif %}
     </div>
     {% endif %}
   {% endfor %}
 
-  {% if page.pages > 1 %}
-  <div class="pager">
-    {% if page.page > 1 %}
-      <button class="btn" hx-get="/opportunities?{{ dict(query, page=page.page-1)|urlencode }}"
-              {{ swap|safe }}>Previous</button>
-    {% endif %}
-    <span class="muted">Page {{ page.page }} of {{ page.pages }}</span>
-    {% if page.page < page.pages %}
-      <button class="btn" hx-get="/opportunities?{{ dict(query, page=page.page+1)|urlencode }}"
-              {{ swap|safe }}>Next</button>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  {# Not a fit (D-UI-62): its own section below the paged groups, never inside their paging.
-     The count and the note cover the whole filter set; Show loads its rows with their own
-     paging. When nothing else matches, its first page is already open. #}
+  {# Not a fit (D-UI-62): its own section below the groups, never inside their paging. The count
+     and the note cover the whole filter set; Show loads its rows with their own paging. When
+     nothing else matches, its first page is already open. #}
   {% if not_fit.count %}
-  <section class="notfit-section fitgroup" data-group="not_fit" id="not-fit" data-testid="not-fit-section">
-    <div class="fitgroup-head"><span>Not a fit · {{ not_fit.count }}</span><span class="sp"></span>
-      {% if not not_fit.page %}<button class="btn small" type="button" data-testid="not-fit-show"
-        hx-get="/opportunities/not-fit?{{ query|urlencode }}" hx-target="#not-fit-rows" hx-swap="outerHTML">Show {{ not_fit.count }}</button>{% endif %}
+  <section class="pl-nf" data-group="not_fit" id="not-fit" data-testid="not-fit-section">
+    <div class="pl-nf__head">
+      <div class="pl-nf__txt"><b>Not a fit · {{ not_fit.count }}</b>
+        <div class="pl-nf__note" data-testid="not-fit-note">{{ not_fit.note }} Not counted in the groups above. <a href="/profile">Review your rules</a></div></div>
+      {% if not not_fit.page %}<button class="k-btn k-btn--sm" type="button" id="not-fit-show" data-testid="not-fit-show"
+        hx-get="/opportunities/not-fit?{{ query|urlencode }}" hx-target="#not-fit-rows" hx-swap="outerHTML">Show</button>{% endif %}
     </div>
-    <p class="notfit-note" data-testid="not-fit-note">{{ not_fit.note }} Not counted in the paging above.</p>
     {% if not_fit.page %}{{ notfit_rows(not_fit.page) }}{% else %}<div id="not-fit-rows"></div>{% endif %}
   </section>
+  {% endif %}
   {% endif %}
 </div>
 {% endif %}
