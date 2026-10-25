@@ -458,8 +458,11 @@ def test_everyday_options_save_and_undo():
         assert not c.post("/settings/computer/option", json={"key": "bogus"}).json()["ok"]
 
 
-def test_autostart_writes_and_removes_the_entry_for_this_platform(tmp_path):
+def test_autostart_writes_and_removes_the_entry_for_this_platform(tmp_path, monkeypatch):
     from kestrel.services import autostart
+
+    # Linux honors XDG_CONFIG_HOME, which CI runners set; keep the entry under this test's home.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
     assert autostart.set_enabled(True, home=tmp_path, parts=["/opt/k k/Kestrel", "--tray"]) is None
     if autostart.platform_name() != "windows":
