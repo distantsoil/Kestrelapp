@@ -160,7 +160,9 @@
   display: flex; align-items: flex-end;
 }
 .k-scene__art {
-  position: absolute; right: 0; bottom: 0; width: 620px; height: 118px;
+  position: absolute; right: 0; bottom: 0;
+  /* Scales with the band: about 45% of it, clamped 380 to 620, keeping the 620:118 ratio. */
+  width: clamp(380px, 45%, 620px); height: auto; aspect-ratio: 620 / 118;
   overflow: visible; pointer-events: none;
 }
 .k-scene__stack { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; }
@@ -188,8 +190,6 @@
 .k-grid-2 > .k-card { display: flex; flex-direction: column; }
 
 @container (max-width: 1300px) {
-  /* The art steps down so the title and its actions never sit on it (the mockups' 380x96). */
-  .k-scene__art { width: 380px; height: 96px; }
   .k-layout { grid-template-columns: minmax(0, 1fr); }
   .k-help-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .k-grid-2--wide { grid-template-columns: minmax(0, 1fr); }

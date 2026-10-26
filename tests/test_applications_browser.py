@@ -111,6 +111,63 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, theme, width):
         ctx.close()
 
 
+@pytest.mark.parametrize("width", [1440, 1000, 800])
+def test_every_stage_is_reachable_and_the_board_scrolls_inside_itself(live, width):
+    ctx, page, errors = _page(live, "light", width)
+    try:
+        info = page.evaluate("""() => {
+            const g = document.querySelector('[data-testid="apps-board-grid"]');
+            const v = g.getBoundingClientRect();
+            const cols = Array.from(g.querySelectorAll('[data-testid="apps-col"]'))
+              .map(c => c.getBoundingClientRect());
+            const last = cols[cols.length - 1];
+            const hint = document.querySelector('[data-testid="board-scrollhint"]');
+            return {vr: v.right, vl: v.left, lastR: last.right, n: cols.length,
+                    scrolls: g.scrollWidth > g.clientWidth + 1,
+                    hint: !!hint && getComputedStyle(hint).display !== 'none',
+                    page: document.documentElement.scrollWidth <= innerWidth}; }""")
+        assert info["n"] == 4 and info["page"], info
+        if not info["scrolls"]:
+            assert width >= 1000, info
+            # Nothing is clipped: the last column ends inside the board's visible area.
+            assert info["lastR"] <= info["vr"] + 1, info
+        else:
+            # Space ran out: the board scrolls inside its own box and says so.
+            assert width < 1000 and info["hint"], info
+            page.evaluate("document.querySelector('[data-testid=\"apps-board-grid\"]')"
+                          ".scrollLeft = 99999")
+            last_r = page.evaluate("""() => {
+                const c = document.querySelectorAll('[data-testid="apps-col"]');
+                const g = document.querySelector('[data-testid="apps-board-grid"]');
+                return [c[c.length - 1].getBoundingClientRect().right,
+                        g.getBoundingClientRect().right]; }""")
+            assert last_r[0] <= last_r[1] + 1, last_r
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [1000, 1280, 1440, 1680])
+def test_the_scene_art_scales_with_the_header_and_clears_the_title(live, width):
+    ctx, page, errors = _page(live, "light", width)
+    try:
+        art = page.evaluate("""() => {
+            const a = document.querySelector('.k-scene__art');
+            const s = document.querySelector('.k-scene');
+            const t = document.querySelector('.k-scene__title');
+            if (!a) return null;
+            const r = a.getBoundingClientRect(), sb = s.getBoundingClientRect();
+            return {w: r.width, h: r.height, sw: sb.width, l: r.left,
+                    tr: t.getBoundingClientRect().right}; }""")
+        if art:
+            assert 379 <= art["w"] <= 621, art
+            assert abs(art["h"] / art["w"] - 118 / 620) < 0.01, art
+            assert art["tr"] <= art["l"] + 80, art
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_the_panel_slides_over_the_board_centered_and_never_pushes_it(live):
     ctx, page, errors = _page(live, "light", 1280)
     try:

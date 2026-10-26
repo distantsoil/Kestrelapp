@@ -263,7 +263,7 @@
     <div>{{ r.text }}<small>{{ r.note or ('Covered' if r.status == 'm' else 'Partly covered' if r.status == 'p' else 'Not in your documents') }}{% if r.slot %} · hover to see the line{% endif %}</small></div>
   </div>
   {% endfor %}
-  {% if not ctx.reqs %}<p class="k-muted tl-mini">{% if ctx.has_eval %}The score did not list anything this role asks for.{% else %}This role has not been scored yet, so there is nothing to compare. Score it from Pipeline.{% endif %}</p>{% endif %}
+  {% if not ctx.reqs %}<p class="k-muted tl-mini">{% if ctx.has_eval %}The score did not list anything this role asks for.{% elif ctx.fit is not none %}This role has a score but no list of what it asks for, so there is nothing to compare. Score it again from Pipeline to get one.{% else %}This role has not been scored yet, so there is nothing to compare. Score it from Pipeline.{% endif %}</p>{% endif %}
 </section>
 {% endmacro %}
 
@@ -273,7 +273,7 @@
   <div class="tl-chips">
     {% for k in ctx.kw %}<span class="tl-kw {{ 'is-y' if k.held else 'is-n' }}" data-testid="tl-kw">{% if k.held %}{{ ui.icon('check', 'k-ic--sm') }}{% endif %}{{ k.term }}</span>{% endfor %}
   </div>
-  {% if not ctx.kw %}<p class="k-muted tl-mini">No posting text is saved for this role.</p>{% endif %}
+  {% if not ctx.kw %}<p class="k-muted tl-mini">{% if ctx.has_posting %}None of your skills or tags appear in this posting's text.{% else %}No posting text is saved for this role.{% endif %}</p>{% endif %}
   <p class="tl-mini tl-top">Green words are already in your text. Kestrel will not add a word you did not write. To use one, add it to a line in <a class="k-link" href="/documents{% if ctx.master %}?master_id={{ ctx.master.id }}{% endif %}">Profile › Documents</a>.</p>
 </section>
 {% endmacro %}

@@ -333,6 +333,7 @@ async def _build_ctx(
         "fit": None,
         "reqs": [],
         "kw": [],
+        "has_posting": False,
         "posting": None,
         "has_eval": False,
         "changes": [],
@@ -504,6 +505,7 @@ async def _build_ctx(
     ctx["reqs"] = reqs
     ctx["has_eval"] = blocks is not None
     gaps = [g.get("requirement", "") for g in ((blocks or {}).get("b_fit") or {}).get("gaps") or []]
+    ctx["has_posting"] = bool(opp and (opp.description_md or "").strip())
     ctx["kw"] = tv.posting_words(
         opp.description_md if opp else None, vocabulary=vocab,
         shown_text="\n".join(shown_text), gap_phrases=gaps,

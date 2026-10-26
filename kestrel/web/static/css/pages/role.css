@@ -319,7 +319,6 @@
   .rl-trio .rl-box--lead { grid-column: 1 / -1; }
   .rl-duo { grid-template-columns: minmax(0, 1fr); }
   .rl-wheelrow { grid-template-columns: minmax(0, 1fr); }
-  .rl-page .k-scene__art { width: 380px; }
 }
 @container (max-width: 700px) {
   .rl-trio { grid-template-columns: minmax(0, 1fr); }

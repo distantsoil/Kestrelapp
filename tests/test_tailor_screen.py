@@ -21,7 +21,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from kestrel import paths
 from kestrel.db.engine import make_async_engine
-from kestrel.db.models import DocMaster, DocRender, Pursuit, SelectionOverride, Setting
+from kestrel.db.models import (
+    DocMaster,
+    DocRender,
+    Evaluation,
+    Opportunity,
+    Pursuit,
+    SelectionOverride,
+    Setting,
+)
 from kestrel.web import tailor_view as tv
 from kestrel.web.pages import renders as page_mod
 from tests import tailor_seed
@@ -194,6 +202,26 @@ async def test_other_wordings_are_radio_rows_and_only_an_optional_line_can_be_le
     assert "Only one wording." in _words_of(one) and "Profile" in _words_of(one)
     # No free editing and no keyword chip that adds text.
     assert not soup.select("textarea:not(#tl-src)") and "Edit wording" not in soup.get_text()
+
+
+async def test_a_scored_role_with_a_saved_posting_is_never_called_unscored_or_empty():
+    """The score ring and the Role page read the newest top-tier evaluation's score; the
+    requirement list needs its b_fit block. A score without that block, and a saved posting
+    none of the operator's terms appear in, must not read as "not scored" or "no posting"."""
+    ids = await tailor_seed.seed_async()
+    async with _sm()() as s:
+        ev = (await s.execute(select(Evaluation))).scalars().first()
+        ev.blocks = {"reason": "Strong scope match."}
+        opp = await s.get(Opportunity, ids["opp"])
+        opp.description_md = "We run freight across the region. Apply today."
+        await s.commit()
+    with _client() as c:
+        text = _soup(c.get(f"/renders/{ids['render']}").text).get_text(" ", strip=True)
+    assert "4.6" in text
+    assert "has not been scored yet" not in text
+    assert "has a score but no list of what it asks for" in text
+    assert "No posting text is saved" not in text
+    assert "appear in this posting" in text
 
 
 async def test_a_missing_render_says_so_and_a_page_without_a_role_has_no_posting():
