@@ -1,324 +1,159 @@
 # Kestrel user guide
 
-[Back to README](../README.md)
+Kestrel helps you find roles, decide which are worth your time, prepare your own materials, and track what happens. It never applies or contacts anyone for you. The screenshots use invented people, companies, roles, and offers.
 
-Everything here can be done from the app. Commands appear only for those who prefer a terminal.
+## First run: set up your search
 
-## System requirements
+Open Kestrel and follow the six steps. [See the first screen](images/walk/onboarding-welcome-light.png). **Welcome** explains the boundary: Kestrel drafts and hands over; you decide what to send. **Thinking** asks where the AI should run. **You** collects the name Kestrel uses to greet you and the contact details for your resume. **Resume** lets you inspect imported text before accepting it. **Wants** sets your target titles, pay, work mode, and places. **Searches** previews the public searches. Nothing searches until you press **Start searching**. Use **Back**, **Next**, or **Skip for now** where offered. The wizard saves its place if you close the app.
 
-Kestrel runs on Windows 10 and 11, macOS 13 or later on Apple silicon, and 64-bit Linux. The
-table is for running the AI models on your own computer.
+![The six-step setup wizard](images/walk/onboarding-searches-light.png)
 
-| | Minimum | Recommended | Best |
-|---|---|---|---|
-| Windows and Linux | 8 GB RAM, CPU only (slow) | NVIDIA GPU with 12 GB VRAM and 16 GB RAM | NVIDIA GPU with 16 to 24 GB VRAM and 32 GB RAM |
-| Mac (Apple silicon) | 16 GB | 32 GB | 64 GB or more |
+**On this computer** runs the model locally. Kestrel may need to download models first. **Online model** uses a key you provide and your own service account; you must connect that key to continue with this choice. **Both** can use local and online models for different steps. The setup screen explains what each choice sends. You can stay local without a key, change the choice later in **Settings > This computer**, and see the active models on **Models**. Never enter a key in a screenshot or support request.
 
-Disk space: about 8 GB for the smallest set of models up to about 22 GB for the largest, plus
-about 1 GB for the app and its data. A computer with no supported GPU still works, either on the
-CPU or with an online model under your own key (setup recommends the online route there; see [No GPU? Run everything hosted](DEVELOPERS.md#no-gpu-run-everything-hosted)).
+The walkthrough after setup points to Today, Pipeline, Calibrate, and Applications. **Replay the walkthrough** is in Help. To restart setup later, open **Settings > Your data**. [See the empty first run](images/walk/first-run-empty-light.png).
 
-## First run
+## Today: decide what needs attention
 
-Kestrel opens to a "Finish setup" banner. Follow it: pick local AI on this computer or an online
-model with your own key, let Kestrel check your computer, download the models (a one-time
-download of a few GB for local AI), and build your profile. Each step has a button, and commands
-only appear behind a "Show details" toggle for anyone who wants them. The Setup page is always in
-the sidebar if you want to change your mind later.
+Start here for a daily pass. The status strip shows the last or next run, new roles, and the model in use. **Run now** starts a scan. **Top matches today** holds new roles: **Save for later** bookmarks one, **Shortlist** puts it in Applications, and **Review role** opens its reasons. **Decisions waiting** lists roles you still need to decide on. **Applications needing action** calls out follow-ups and interviews. If scoring failed, **Review** opens Needs another try.
 
-Your data stays on your computer:
+![Today with invented roles](images/walk/today-main-light.png)
 
-- Windows: `%LOCALAPPDATA%\Kestrel`
-- macOS: `~/Library/Application Support/Kestrel`
-- Linux: `~/.local/share/kestrel`
+Many decisions show a toast with **Undo**. Use it promptly if you clicked the wrong action. Undo is tied to that action, so it can refuse if later changes would be overwritten. [See the Undo toast](images/walk/today-undo-toast-light.png).
 
-## Unsigned beta
+## Pipeline: narrow and review roles
 
-This beta is not code-signed yet, so Windows and macOS show a warning the first time you open it.
-The installer is the same file you would trust either way; signing comes later. Here is how to
-get past the warning once:
+Use **Search titles and companies...** to find a posting. The chips **All**, **My shortlist**, **Your call**, **Scored**, **New today**, **Saved**, **Failed scoring**, and **Hidden** narrow the list. **More filters** opens pay, fit, work type, date, company, source, and warning controls. **Save as a view** keeps a set of filters; the **View: My default** menu recalls a view. **Best fit**, **Newest**, and the adjacent sort menu change order. Hidden and failed roles remain recoverable.
 
-- **Windows (SmartScreen):** when "Windows protected your PC" appears, click **More info**, then
-  **Run anyway**.
-- **macOS (Gatekeeper):** right-click (or Control-click) Kestrel in Applications, choose **Open**,
-  then click **Open** again in the dialog. After that it opens normally.
+![Pipeline role groups](images/walk/pipeline-main-light.png)
 
-Signing is planned for a later release; [RELEASING.md](RELEASING.md) says how it will be added.
+Select a row for the side panel, where you can inspect fit, pay, gaps, and the reason given before choosing **Shortlist**, **Not for me**, or **Open full role**. **Not for me** asks why. The **Not a fit** section contains roles set aside by rules or by a low score; **Show** expands it. A role Kestrel could not score stays under **Scoring failed**. [See the panel](images/walk/pipeline-role-panel-light.png) and [filters](images/walk/pipeline-filters-light.png).
 
-## Linux
+## Role: check the evidence
 
-Linux shows its own window when the GTK WebKit bindings are installed, and otherwise opens
-Kestrel in your default browser. The tray icon needs a desktop with AppIndicator support. The full
-instructions are in [docs/LINUX.md](LINUX.md).
+The **Evaluation** tab shows the score, pay, level, evidence, gaps, and **Your view**. Press **Yes** if the score fits your judgment, or **Adjust** to give your own rating. **Posting** preserves the posting text, **Organization** shows sourced company facts, **Documents** links related resume work, and **History** shows what happened to the role. **Open original posting** hands you to the system browser. Kestrel does not click Apply.
 
+![Role evaluation](images/walk/role-evaluation-light.png)
 
-## Configuring sources
+**More > Deeper read** opens an ask-first dialog. Read the service, model, text preview, and cost before choosing whether to send. If the online key is absent, the dialog says **Preview only**. Closing it sends nothing. [See the dialog before Send](images/walk/role-online-ask-light.png). The same principle applies to online resume import, scoring, research, prep, and negotiation: an online step names what leaves this computer and needs your confirmation.
 
-Two tracks, each with its own sources:
+## Applications: keep the next action visible
 
-**Employment track:**
-- Job boards via `python-jobspy`: Indeed and Glassdoor (public). Google Jobs and ZipRecruiter are not searched by default because they return nothing through JobSpy. LinkedIn is not searched.
-- ATS platforms: Lever, Greenhouse, Workday, SmartRecruiters, Ashby (via public JSON endpoints)
-- SEC EDGAR trigger: new C-suite filings matching your geographic and industry preferences
+The **Board** groups pursuits by stage. Use a card's stage button to update it, its next-step button to record progress, and its three-dot menu for actions such as **Mark high priority**. The **Table** view makes scanning and sorting easier. Search, **More filters**, recent-activity choices, and the Closed-column control reduce clutter. A quiet application can offer **Mark as ghosted?**. The status history stays with the pursuit.
 
-**Consulting track:**
-- Consulting-finder platforms and fractional and interim leadership boards (public sources)
-- Email trigger sources: set an email address in your profile, and forward interesting opportunities to trigger ingestion and scoring
+![Applications board](images/walk/applications-main-light.png)
 
-Both tracks support manual paste: copy a job posting as plain text or HTML and Kestrel deduplicates it against existing opportunities.
+Adding a role to Applications records your decision; it never submits an application. Keep the next action and due date current. [See the list](images/walk/applications-list-light.png) and [card menu](images/walk/applications-card-menu-light.png).
 
-Configure sources and profiles in the Settings page (gear icon) or via the command-line `doc` / profile commands.
+## Profile: tell Kestrel what to look for
 
-## Where the opportunities come from
+**About you** holds contact details. **Employment** sets target titles, pay, and other criteria; suggested titles are only added when you press **Accept**. **Consulting** appears when that track is on. **Location** matches named places and your aliases, plus remote work; it does not calculate mileage. **Stories** holds examples in your own words. The **Documents** tab opens your resume material. The edit tabs have an explicit save; document edits save as you go.
 
-Every source has a kind, fixed in code: five ATS boards (Greenhouse, Lever, Ashby, Workday,
-SmartRecruiters), the JobSpy aggregator (Indeed and Glassdoor), and four consulting signal sources (SEC EDGAR 8-K filings, SAM.gov procurement notices,
-RSS/Atom feeds, PE portfolio pages), plus manual capture by paste. The Help
-page in the app lists each kind with what it scans, what you must provide, its rate limit and its
-region, generated from the adapter registries. The same table, with the steps for adding a new
-adapter, is in [`SOURCES.md`](SOURCES.md).
+![Profile Employment tab](images/walk/profile-employment-light.png)
 
-The shipped configuration is US-centric (JobSpy defaults to the USA, SEC EDGAR and SAM.gov are US
-federal). The boards themselves work worldwide: change the search
-location and your profile's `geo_rules` and the pipeline runs unchanged.
+## Documents: keep the source text accurate
 
-### RemoteRocketship (optional, paid)
+Import a Word, PDF, plain text, or pasted resume. Check **What Kestrel read** against the source and resolve any flagged line before accepting the proposed sections. In Documents, edit sections, slots, and alternate bullets. The text you accept is the only text Tailor can place in a resume.
 
-An optional source for people who already pay for RemoteRocketship with API access; Kestrel stays
-free and this needs your own subscription. Add the key to `.env` as `REMOTEROCKETSHIP_API_KEY`, then
-add a `remoterocketship` source on the Sources page and switch it on. Kestrel keeps only the link to
-each employer's own posting and reads the posting from the employer (or from its job board, when
-Kestrel knows the platform). Nothing from RemoteRocketship is stored, in line with their terms. Their
-limits are 500 requests or 3,000 jobs per UTC day; Kestrel uses a few requests per scan. A link that
-cannot be read from the employer is skipped and counted in the run. A missing or rejected key, a
-plan without API access, or a reached daily limit each show a short message on the source. See
-[`SOURCES.md`](SOURCES.md) and the Help page.
+![Documents editor](images/walk/documents-main-light.png)
 
-### Company boards Kestrel finds for you
+## Tailor: choose lines for one role
 
-Greenhouse, Lever, Ashby, Workday and SmartRecruiters cannot be searched across companies; each
-company has its own board. When a job from your searches links to one, Kestrel starts reading that
-company's board directly, once a day, up to 40 companies. The Sources page lists them as "found in
-your searches", and you can turn any company off. It stays off.
+Open Tailor from a role or application. It selects among your saved bullets and cannot write a new claim into the PDF. On the review page, open **Other wordings** to select another of your own variants, inspect **Preview**, then use **Download PDF** or **Use for this application**. **Pick for this role** asks the configured model to choose from your saved text.
 
-A company board brings in every opening at the company, not only yours. So Kestrel scores the ones
-that look like your field and level first, and the rest wait in the background. They are scored
-when Kestrel is otherwise idle, up to 200 a day, and nothing is thrown away. "Score everything
-now" on the Sources page scores the waiting ones at once. It can take hours of computer time, and
-on an online model each role costs money, so it asks first.
+![Tailored resume review](images/walk/tailor-review-light.png)
 
-**Teach it what you go for: import your past applications.** Kestrel learns your field from the
-titles of roles you have shortlisted and applied for. On a new install it only knows your target
-titles, and those miss a lot: tested on one person's real history, titles alone would have held
-back about a third of the roles they actually applied for, and their history brought that down to
-a few in a hundred. Import your applied history ("Import past applications" on the Applications page) and the
-first company boards are sorted with that knowledge from day one.
+## Interview prep: prepare your examples
 
-If you change your profile (the seniority floor, excluded titles, pay floor or locations), Kestrel
-re-checks the roles its rules set aside under the old settings, and brings back the ones that now
-pass. The save message says how many it is checking.
+Open **Interview prep** from an applied role. **Prep pack** gathers the role, likely questions, your stories, and questions to ask. **Practice** lets you rehearse; **Story bank** links reusable examples you wrote. **Download PDF** is available after a pack exists.
 
-## Importing your resume and capability statement
+![Prep pack](images/walk/prep-prep-pack-light.png)
 
-Kestrel does not write your resume. It takes the one you have, decomposes it into sections, slots
-and variants, and later selects among your own bullets per opportunity. Import accepts **PDF, Word
-(.docx and .doc), Markdown and plain text**, up to 10 MB, on the Documents page (drop the file or
-choose it) or from a terminal with `kestrel doc import <file>`. Legacy `.doc` files are converted
-through LibreOffice when it is installed; otherwise save as .docx or .pdf first. Scanned PDFs with
-no text layer are refused rather than guessed at.
+## Story bank: keep your own examples
 
-The page shows the text Kestrel read beside the proposed structure, so a flattened table or a
-lost heading is visible before you accept anything. Every proposed variant is checked against your
-file word for word; a bullet the model reworded is flagged and cannot be accepted until you make
-it your own words again.
+Write short accounts of what happened, what you did, and what changed. Reuse them in prep and practice. Kestrel can suggest a relevant story, but the saved account remains yours to edit.
 
-### Setup
+![Story bank](images/walk/stories-main-light.png)
 
-1. Prepare a markdown file with your resume or capability statement (roles, projects, achievements, skills). Plain markdown; no special formatting required.
-2. Run:
+## Mock interview: practice in private
 
-```bash
-kestrel doc import path/to/resume.md --track employment --doc-kind resume
-```
+Open **Mock interview** from a role or prep pack to rehearse likely questions and review your answers. This is a practice session inside Kestrel; it does not contact an interviewer.
 
-This proposes a decomposition into structured roles, projects, and achievements. Review any flags (non-verbatim variants, too many derived sections) and resolve them in your source if needed.
+![Mock interview entrance](images/walk/mock-main-light.png)
 
-3. Once clean, accept the import:
+## Offers: compare terms you received
 
-```bash
-kestrel doc import path/to/resume.md --track employment --doc-kind resume --accept
-```
+Use **+ Record an offer** to enter the terms you received. **Compare** lays out first-year and longer-term money and your own ratings of scope, reporting, location, risk, and direction. Under five similar roles, the comparison says **Too few** instead of presenting a shaky market range. **Negotiate** helps draft language above the walk-away amount you set; you copy it into your own message. Kestrel never sends it. **History** keeps prior offers.
 
-This creates a `doc_master` (your canonical resume) that the system tailors per opportunity.
+![Offer comparison](images/walk/offers-compare-light.png)
 
-### Document selection (P3)
+## Company: research a known organization
 
-When rendering a PDF for an opportunity, Kestrel runs P3 model-driven selection: it reads the opportunity details and your role variants, and selects which roles and achievements to emphasize. The model always chooses from your existing text; it never generates new content. Every slot defaults to your full text if selection fails or confidence is low.
+Open a company from a role. The page keeps public facts, source links, research, and contacts together. **Research company** asks Kestrel to collect public information; unknown facts stay blank. Treat a summary marked **too few sources** as a lead to verify, not a confirmed profile.
 
+![Fictional company research](images/walk/company-main-light.png)
 
-## Which model is doing the work, and how well
-
-The **Models** page (also `/models`) is the history and comparison view for every model that has
-evaluated anything, local or hosted: evaluations per tier and model, agreement with your own
-verdicts where you have labeled outcomes, mean absolute score error, latency, tokens, and cost for
-hosted sends. Every rate carries its n, and anything under five labeled outcomes reads
-"insufficient (n=...)" rather than a number. Use it with `kestrel bench` (the gold-set harness)
-when you are choosing between a local profile and a hosted model: bench says which model agrees
-with the reference answers; the Models page says which one agrees with you.
-Bench uses your own labels once you have run `kestrel goldset regen` (the file
-`goldset.<track>.regenerated.jsonl` in the evals folder); before that it uses the shipped example
-answers, which are invented, and it says which of the two it used.
+## Sources: control where roles come from
 
-## The learning loop
-
-As you review opportunities, Kestrel captures your labels and feeds them back into scoring.
+Review enabled searches and company boards, their last results, and errors here. **Score everything now** handles roles waiting in the background and may take considerable time. When its configured model is online, Kestrel shows the destination and asks before sending. You can paste a posting yourself. Kestrel does not automatically search LinkedIn; paste a public posting if you want it considered.
 
-### How it works
-
-1. **Label as you review:** From the opportunity detail page or the pipeline list, one-click actions let you agree with the score, adjust it, or override it entirely. Your label is recorded immediately.
-2. **Calibration:** As labels accumulate (starts at five), run `kestrel calibrate` to recompute dimension weights from your feedback. A proposal shows the new weights and cross-validation error (old vs. new); review and accept in the UI/API to apply.
-3. **Reranker:** Once you have fifty+ labeled examples, `kestrel train` builds a learned reranker on top of the tier 2 score. It compares both algorithms on held-out data and only promotes the reranker if all four criteria pass (lower error, better AUC, good coverage, no drift). Nothing is applied without your approval.
-4. **Few-shot injection:** High-confidence labels from your gold set are injected as examples into Tier 1 and Tier 2 prompts, teaching the model what you care about.
-
-The loop is slow to warm (week one shows random swings; by month three, you'll see clear signal), so be patient with early scores.
-
-### Where it lives, and how to see or reset it
-
-Every decision is a row in the local database (`data/kestrel.db`: the `label` table for the Calibrate queue, `verdict_override` for Agree, Adjust and Override), accepted calibrations are `calibration` rows plus `scoring.weights.*` rows in the `setting` table, and a trained reranker is an `ml_model` row with its two pickle files under `data/ml/`. The model's own weights are never changed and nothing leaves the machine. Settings > Learning shows all of it: counts and agreement per track (with the n, and labeled insufficient under five), the three floors as "n of N" with active or inactive, current versus shipped weights, the files in the ML folder, and the decisions themselves with a per-row delete. Download all decisions as JSON from the same tab (the export is not redacted; it is your own data), and Reset, with the typed word RESET, removes any combination of decisions, the reranker and its files, and the accepted calibrations, while leaving opportunities, evaluations, pursuits and documents untouched.
-
-
-## Reaching Kestrel from your phone (optional, off by default)
-
-Kestrel listens on this machine only until you turn on LAN access. Under **Settings > LAN &
-backup**, generate a shared secret, tick the box that says you read the warning, and turn it on;
-then restart Kestrel. Scan the QR code from a phone on the same network. (Advanced: the switch
-writes `server.bind_all` in `settings.yml`, and `KESTREL_SERVER__BIND_ALL` overrides it.)
-
-Read this before you turn it on. That secret is **one shared password for the whole application**.
-There are no accounts, no per-device access, and no record of who did what. Traffic is plain HTTP
-and is not encrypted. Use it on a home network or a VPN you control; do not use it on shared,
-public or office Wi-Fi, do not forward the port through a router, and do not put a local proxy in
-front of Kestrel, which would make every request look local and switch the secret off entirely.
-
-## Bringing your own hosted model (BYOK, optional, off by default)
-
-Everything Kestrel does runs on your machine. The one exception is **Tier 3 escalation**: when you
-open an opportunity and press Escalate, you see exactly what would be sent, and only after you
-confirm does that payload go to a hosted model. That model is yours: you bring a key from a
-provider you pay directly, Kestrel ships no key and no proxy.
-
-Four providers are known by name, and any OpenAI-compatible chat-completions server can be added
-as `provider: generic` in `settings.yml`:
-
-| Provider | What Kestrel speaks to it | Key |
-|---|---|---|
-| **OpenRouter** (`frontier` backend) | chat completions, with privacy routing: providers that store prompts are excluded by default, Zero Data Retention is a checkbox, and the request is refused rather than routed to an endpoint that ignores the JSON schema. The one provider with free models | `OPENROUTER_API_KEY` |
-| **OpenModel** (`openmodel` backend) | the Messages or Responses protocol, per model, which are the two openmodel.ai serves | `OPENMODEL_API_KEY` |
-| **Anthropic** (`anthropic` backend) | the Claude API directly: the Messages protocol with the API's own structured output, so a Claude model answers with the JSON object and nothing else. No sampling parameters are sent, because current Claude models reject them; a safety refusal quarantines the item with its category instead of failing the run | `ANTHROPIC_API_KEY` |
-| **OpenAI** (`openai` backend) | the OpenAI API directly: chat completions with a strict JSON schema. Reasoning models (gpt-5, o-series) take no temperature; the model list is trimmed to chat models because OpenAI lists every family in one place. A refusal quarantines with the model's own words | `OPENAI_API_KEY` |
+![Sources](images/walk/sources-main-light.png)
 
-Every hosted provider is gated the same way: the same per-opportunity Tier 3 confirmation, the same
-Hosted mode disclosure, the same redaction of your current employer in confidential mode. A direct
-key sends exactly what an OpenRouter key sends, so it gets no shortcut. The OpenRouter privacy
-options (data collection, Zero Data Retention) exist only there; with a direct key the vendor's own
-retention terms apply, linked from the Settings page. Reasoning effort is a row per provider on the
-same tab, each list holding only the words that provider accepts; lower is cheaper and faster, and
-"model default" leaves the provider's own setting in place.
-
-Set it up under **Settings > Hosted (BYOK)** in three steps: paste the key (it is written to `.env`
-in the data folder, never shown again, never logged, never included in a backup), press **Test**
-(two authenticated metadata requests, the key check and the model list, that send nothing about
-you or any opportunity, and show the models that can honor a JSON schema with their context and
-price), then pick the model and press **Use for
-Tier 3**. No restart. The same three steps from a terminal:
-
-```bash
-kestrel provider set-key frontier          # prompts for the key, writes .env
-kestrel provider test                      # verifies the key, lists schema-capable models
-kestrel provider use frontier anthropic/claude-sonnet-4.6
-kestrel provider status
-```
-
-![The Settings page on the Hosted (BYOK) tab, showing the external backends, the key form, the test button, and the model and privacy options that apply only to Tier 3.](images/settings-hosted-dark.png)
-
-**Local or hosted, as a switch.** The top of the Hosted tab is a two-way choice, **Run Kestrel
-on: Local models / Hosted models**. Local is the default and shows the active hardware profile
-and its tier models; Hosted shows the provider and the per-tier hosted models you assigned in the
-**Hosted assignments** table below it (Tier 1, Tier 2, document selection; the frontier tier is
-hosted in either mode). Hosted cannot be chosen until you have read and acknowledged the
-disclosure and assigned a hosted model to Tier 1 and Tier 2; the button says what is missing.
-Switching never touches the local models, so switching back costs nothing. `kestrel setup
---hosted` fills the table and sets the switch to hosted for you.
-
-**Local or hosted, for one run.** The standing choice governs every run and the serve loop; one
-run can differ. The **Runs** page has a **Run now** form with a Local / Hosted choice that queues
-the next worker cycle on that set and then returns to the Settings choice. From a terminal,
-`kestrel run --hosted` or `kestrel run --local` does the same (`kestrel scan` takes the flags too,
-because filing and feed classification run through a model; job boards and ATS scans never do).
-Every run in the Runs list carries a `local` or `hosted` badge, the status strip says which set
-is running, and each evaluation records the model that answered.
-
-What is enforced, not merely promised: an external backend is reached only through a confirmed
-Tier 3 escalation or on a hosted run after the acknowledged opt-in, and the worker has no code
-path that opts in on its own; `kestrel doctor` reports the hosted routing and warns when it
-cannot be used; every Tier 3 send is recorded with the provider's own token counts and, where
-reported, its cost; a confirmation token that has already been used, even for a send that
-failed, is refused and you must open a fresh preview.
-
-## Running Kestrel as a web app
-
-Kestrel is a desktop application because the work happens on your GPU: local models, Playwright
-with Edge for PDFs, and a scraper that needs a residential connection. A full port to Cloudflare
-Pages or Workers is **not feasible** on the free plan, or on any plan, without rewriting the data
-layer and giving up local inference; [WEBAPP.md](WEBAPP.md) records the evaluation.
-
-What is feasible, and free, is to keep Kestrel running on your PC and publish it through a
-**Cloudflare Tunnel** behind **Cloudflare Access** (one-time PIN to your email, up to 50 users on the
-free plan). You get a password-protected `https://kestrel.yourdomain.com` on your phone with no port
-forwarded and no shared secret in a QR code. The steps, what changes in `settings.yml`, and the
-gotchas (HTMX behind an expired Access session, the 100-second response limit on long Tier 2
-runs, the MCP port) are in [WEBAPP.md](WEBAPP.md).
-
-## Privacy
-
-- Your search and profile are confidential. The data directory (`%LOCALAPPDATA%\Kestrel`) is never committed to version control.
-- Generated PDFs contain no metadata tags, headers, footers, or generator strings that identify organizations.
-- Confidential mode redacts your current employer everywhere in generated output and list views if enabled.
-- All inference is local unless you explicitly opt in to a hosted Tier 3 backend for a specific opportunity.
-- Backups never include `.env` secrets; they contain only the database and YAML config.
-- The LAN shared secret is removed from the database copy in a backup, and a restore keeps the secret the computer already has. On a different computer, set up LAN pairing again.
-- The Backup page in the app downloads that same archive and exports or imports `profile.yml` on its own; nothing in it ever carries an API key.
-
-## Support and diagnostics
-
-Kestrel is free. Source code, issues and feature requests live at
-https://github.com/distantsoil/Kestrelapp; if it earned you an interview, you can support its
-development at https://ko-fi.com/distantsoil. Both links, the version, and a **Download
-diagnostics** button are on the app's About page. The diagnostics zip holds the version and build
-facts, hardware, the preflight report, redacted settings, the log tails, row counts and the last
-quarantine rows; it never holds `.env` or any key, `profile.yml`, your document text, posting
-descriptions, contacts or the database, so it is safe to attach to an issue.
-
-
-## Troubleshooting
-
-**"context window silently truncates" errors in scores?**  
-Run `kestrel models build` to create derived models with explicit `num_ctx` per tier. Then run `kestrel doctor` to verify.
-
-**Ollama not reachable?**  
-Check that Ollama is running and accessible at the URL in Settings (default: `http://127.0.0.1:11434`). The preflight wizard can open the download page if you need to install Ollama.
-
-**PDF render fails or is over the page limit?**  
-Reduce the number of roles or achievements in your document, or hide optional slots. The CLI will suggest which slots to hide.
-
-**High token usage despite reasoning being disabled?**  
-Verify `reasoning_effort: "none"` is set for your backend. Use `kestrel doctor --quick` to skip the slow probes and get a quick report.
-
-**Database locked or corrupted?**  
-SQLite uses WAL mode with a 5-second busy timeout. If the database is stuck, kill Kestrel, then:
-```bash
-rm %LOCALAPPDATA%\Kestrel\kestrel.db-wal
-rm %LOCALAPPDATA%\Kestrel\kestrel.db-shm
-```
-Then restart. Queued tasks are resumable; only in-flight tasks are lost.
+## Runs: check what finished
 
+**Runs** shows current work and scan history. Open a run to see counts and source errors. A board rate limit makes a run partial rather than hiding its other results. If a model answer cannot be read, its role remains in Pipeline and appears in Needs another try.
+
+![Run history](images/walk/runs-main-light.png)
+
+## Needs another try: recover failed scoring
+
+This page lists roles kept after a model answer failed validation. Read the error, choose **Score again** when the model is ready, or inspect the role yourself. An online retry asks first. Nothing here silently rejects a role.
+
+![A quarantined role](images/walk/needs-another-try-main-light.png)
+
+## Calibrate: teach Kestrel your judgment
+
+Rate roles that need your call. Your rating and optional note become examples for later scoring. A few labels cannot establish a reliable pattern; Kestrel says when there are too few. You control whether proposed scoring changes are applied.
+
+![Calibration queue](images/walk/calibrate-main-light.png)
+
+## Analytics: see whether the search works
+
+Choose **Last 30 days**, **Last 90 days**, or **All time** for the whole page. **Summary** gives a short written account; check it against the numbers. The charts show application stages, the narrowing funnel, replies by fit score, sources, timing, and pace. **Table view** exposes the same data without charts. **Export** offers **Summary and charts (PDF)**, **All numbers on this page (CSV)**, and **Every application and its history (CSV)**. Exports save locally and send nothing to a service.
+
+![Analytics summary and charts](images/walk/analytics-main-light.png)
+
+![Local export choices](images/walk/analytics-export-menu-light.png)
+
+## Models: know what reads your data
+
+**Models** shows which model handles each scoring step, whether it runs locally or online, local model downloads, health checks, and quality and cost. **Run check** tests the local setup. **Change model** lets you select a model for a step; an online choice names what it can read and asks for confirmation.
+
+![Models](images/walk/models-main-light.png)
+
+## Model check: compare alternatives against your ratings
+
+**Check my models** opens Model check from Models. It compares models against your own ratings when there are enough examples. The check runs in the background and can resume after a restart. Review the recommendation and the numbers before choosing a change.
+
+![Model check](images/walk/model-check-main-light.png)
+
+## Settings: adjust the app and protect your data
+
+**This computer** controls how models run. **Which roles you see** holds rules and score cutoffs. **Scoring and learning** contains rating controls and exports. **Privacy and access** contains **Confidential mode** and access settings. **Your data** has backup, restore, clear-data, and restart-setup controls. **Preferences** holds the track switches, **Theme**, **Color scheme**, region, text size, and notifications. Changes save as you go, often with **Undo**.
+
+![Settings sections at 1000 pixels wide](images/walk/settings-roles-narrow.png)
+
+Turn on **Confidential mode** to hide the current employer you marked in Documents. Check **Hide ... as ...** and its preview. The editor retains your real source text, while list views and generated documents use the replacement. If no employer is selected, Kestrel warns that nothing is being hidden and refuses online sends until you choose one. [See confidential mode](images/walk/settings-confidential-on-light.png).
+
+In **Your data**, press **Download a backup** before a move or restore. A backup includes your local working data, so store it privately. **Restore from a file** asks you to confirm before replacing the active data and keeps a dated copy of what it replaced. Online keys are stored on this computer and are excluded from backups. [See the data section](images/walk/settings-data-light.png).
+
+## Help: find an answer offline
+
+**Help** works offline. Search an article, choose a topic, or press **How it works** on a page. **Replay the walkthrough** is here if you want to revisit the tour.
+
+![Offline Help](images/walk/help-main-light.png)
+
+## About: check the version or report a problem
+
+**About** shows the version, update check, release notes, data and log locations, license, credits, and component versions for a bug report. Kestrel checks for updates but does not install one on its own.
+
+![About](images/walk/about-main-light.png)
