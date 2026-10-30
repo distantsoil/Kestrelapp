@@ -7,11 +7,14 @@
 {% import "partials/pp_icons.html" as i %}
 {% block title %}{{ page_title }} · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/prep.css">
-<script src="/static/js/prep.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/prep.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): prep.js defines the page "prep" (the Stories page renders this
+   template too); base.html mounts it. #}
+{% block page_name %}prep{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/prep.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="pp-wrap"><div class="pp-page">
   {% set crumb %}<nav class="pp-crumb" aria-label="Breadcrumb"><a href="/pursuits">{{ 'Leads' if con else 'Applications' }}</a> › <span>{{ page_title }}</span></nav>{% endset %}

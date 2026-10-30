@@ -110,6 +110,9 @@ class SmartRecruitersAdapter:
             title=_str(item.get("name")),  # NOT `title` — the SmartRecruiters gotcha
             org_name=_org_name(item.get("company"), company),
             location_raw=_location(item.get("location")),
+            # The location object's own remote flags, when the posting carries them, so a remote
+            # role is never read as on-site at its city (D-RULES-9 review).
+            remote_hint=_remote_hint(item.get("location")),
             description_html=_assemble_description(detail),
             employment_type=_employment_type(item.get("typeOfEmployment")),
             date_posted=_str(item.get("releasedDate")),
@@ -129,6 +132,13 @@ def _assemble_description(detail: dict) -> str | None:
             if isinstance(text, str) and text.strip():
                 parts.append(text)
     return "\n".join(parts) or None
+
+
+def _remote_hint(location: Any) -> str | None:
+    if isinstance(location, dict) and (location.get("remote") is True
+                                       or location.get("fullyRemote") is True):
+        return "Remote"
+    return None
 
 
 def _location(location: Any) -> str | None:

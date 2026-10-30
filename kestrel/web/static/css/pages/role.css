@@ -26,7 +26,7 @@
 .rl-page .k-scene__title h1 { white-space: normal; min-width: 0; }
 .rl-postbtn { flex: none; text-decoration: none; }
 .rl-postbtn.is-off { opacity: .55; cursor: not-allowed; }
-.rl-facts { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--ink); font-size: var(--fs-md); margin-top: 2px; }
+.rl-facts { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--ink); font-size: 14px; margin-top: 6px; }
 .rl-facts > span { display: inline-flex; gap: 6px; align-items: center; }
 .rl-facts .k-ic { width: 16px; height: 16px; color: var(--muted); }
 .rl-live { color: var(--muted); }
@@ -48,7 +48,8 @@
 .rl-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .rl-side { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .rl-card .k-sec-head { align-items: center; }
-.rl-card .k-sec-head .k-badge { width: 32px; height: 32px; border-radius: 9px; }
+.rl-card .k-sec-head .k-badge { width: 38px; height: 38px; border-radius: 11px; }
+.rl-card .k-sec-head .k-badge .k-ic { width: 20px; height: 20px; }
 .rl-card .k-sec-head h3 { font-size: 16.5px; }
 .rl-card--good { border-left: 4px solid var(--good); }
 .rl-card--warn { border-left: 4px solid var(--warn); }
@@ -73,6 +74,7 @@
 .rl-tag { font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px;
   color: var(--muted); font-weight: 500; }
 .rl-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; font-size: 13.5px; }
+.rl-btns + .rl-h4, .rl-card .rl-h4 { margin-top: 18px; }
 .rl-h4 { margin: 14px 0 4px; font-size: 14px; }
 .rl-warn { color: var(--warn-ink); font-weight: 700; }
 .rl-pre { white-space: pre-wrap; overflow: auto; max-height: 22rem; font-size: 12px; background: var(--bg);
@@ -106,7 +108,7 @@
 .rl-read { background: var(--paper); border: 1px solid var(--line); border-left: 3px solid var(--good); border-radius: var(--r-md);
   padding: 14px 16px; min-width: 0; }
 .rl-read h4 { margin: 0 0 6px; font-size: 14px; display: flex; gap: 8px; align-items: center; color: var(--good-ink); }
-.rl-read h4 .rl-hb { width: 26px; height: 26px; }
+.rl-read h4 .rl-hb { width: 30px; height: 30px; }
 .rl-read p { margin: 0; font-size: 14px; line-height: 1.55; }
 
 /* --------------------------------------------------------------- pay, level, lead with */
@@ -207,7 +209,9 @@
 .rl-hint { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
 .rl-adj { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .45s var(--ease); }
 .rl-adj.is-on { grid-template-rows: 1fr; }
-.rl-adj__clip { overflow: hidden; min-height: 0; }
+.rl-adj__clip { overflow: hidden; min-height: 0; visibility: hidden;
+  transition: visibility 0s .45s; }
+.rl-adj.is-on > .rl-adj__clip { visibility: visible; transition-delay: 0s; }
 .rl-adjin { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding-top: 14px; }
 .rl-pick { display: flex; gap: 6px; flex-wrap: wrap; }
 .rl-pick button { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 5px 10px; font: inherit;
@@ -233,6 +237,11 @@
 .rl-lbl { font-size: 11px; font-weight: 800; letter-spacing: .07em; color: var(--muted); margin-top: 14px; margin-bottom: 6px; }
 .rl-row2 { display: flex; gap: 8px; }
 .rl-row2 > .k-btn { flex: 1; min-width: 0; }
+/* "On my shortlist · Offer" is longer than its half: it takes the room it needs on ONE line (the
+   column name is cut to its first word, "Offer / Closed" reads "Offer"), and only then an ellipsis. */
+.rl-row2 > .k-btn--done { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: center; }
+.rl-row2 > .k-btn--done + .k-btn { flex: 0 0 auto; }
 .rl-row2.is-stack { flex-direction: column; }
 .rl-side .k-btn { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .rl-lock { opacity: .55; cursor: not-allowed; position: relative; }
@@ -310,7 +319,7 @@
 .rl-enter { animation: rl-in .3s var(--ease) both; }
 
 /* ---------------------------------------------------------------- the mockup's 1300px rules */
-@container (max-width: 1300px) {
+@container kwin (max-width: 1300px) {
   .rl-grid { grid-template-columns: minmax(0, 1fr); }
   .rl-side { position: static; }
   .rl-score { grid-template-columns: auto minmax(0, 1fr); }

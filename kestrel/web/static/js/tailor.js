@@ -3,8 +3,11 @@
    line changes (no frame reload, no flash); hover links between a printed line, its card, what
    the role asks for and the posting, done by toggling attributes in place; the page-count guard;
    the confirm for a line that still needs a pick; and the toasts with Undo. Everything is
-   delegated on the document, so it keeps working after a part is swapped. User-facing strings
-   here are the guard's two sentences, the confirm's wording and the Undo answers. */
+   delegated on the document, so it keeps working after a part is swapped. The page runs on the
+   lifecycle (KUI.page, D-UI-210): this file only defines it, and mount starts every listener,
+   timer and observer through its context, so leaving stops all of them and coming back starts
+   one set. User-facing strings here are the guard's two sentences, the confirm's wording and the
+   Undo answers. */
 (function (root) {
   'use strict';
   function reduced() {
@@ -12,15 +15,18 @@
   }
   function smooth() { return reduced() ? 'auto' : 'smooth'; }
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
 
   var PAGE_W = 816;   // a Letter page at 96 dpi: the width the document is laid out at
   var PAGE_H = 1056;
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
   var zoom = 0;       // steps away from "Fit"
   var tab = 'prev';
   var openCards = {}; // cards the operator opened, kept across a swap
   var hlId = null;
   var gate = null;    // what the confirm is for: { kind: 'download' | 'use', href, n }
+  var cx = null;
+  var bound = { d: null, offs: [] };  // the preview frame's document and the listeners it holds
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -116,22 +122,24 @@
     hlId = id;
     if (hlId) applyHl(hlId, true);
   }
-  doc.addEventListener('mouseover', function (e) {
+  function onOver(e) {
     var t = e.target.closest ? e.target.closest('.tl-slot[data-slot], .tl-req[data-req], .tl-pq[data-req]') : null;
     setHl(t ? (t.getAttribute('data-slot') || t.getAttribute('data-req')) : null);
-  });
-  doc.addEventListener('mouseleave', function () { setHl(null); });
+  }
+  function onLeave() { setHl(null); }
 
-  /* A line in the preview links back to its card and to what it answers. */
+  /* A line in the preview links back to its card and to what it answers. The frame's document is
+     a new one whenever the preview is rebuilt, so the listeners on the one it had are released
+     as the new one is bound. */
+  function onFrameOver(e) {
+    var t = e.target.closest ? e.target.closest('[data-slot]') : null;
+    setHl(t ? t.getAttribute('data-slot') : null);
+  }
   function bindFrame(frame) {
     var d = frameDoc(frame);
-    if (!d || d.__tlBound) return;
-    d.__tlBound = true;
-    d.addEventListener('mouseover', function (e) {
-      var t = e.target.closest ? e.target.closest('[data-slot]') : null;
-      setHl(t ? t.getAttribute('data-slot') : null);
-    });
-    d.addEventListener('mouseleave', function () { setHl(null); });
+    if (!d || bound.d === d) return;
+    bound.offs.forEach(function (off) { off(); });
+    bound = { d: d, offs: [cx.on(d, 'mouseover', onFrameOver), cx.on(d, 'mouseleave', onLeave)] };
   }
 
   /* ------------------------------------------------- the frame patched without a reload */
@@ -200,7 +208,7 @@
     el.scrollIntoView({ behavior: smooth(), block: 'center' });
     if (el.animate && !reduced()) el.animate([{ transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'none' }], { duration: 350, delay: 300 });
     var f = $('input[type="radio"]', el);
-    if (f) root.setTimeout(function () { f.focus({ preventScroll: true }); }, 450);
+    if (f) cx.after(450, function () { f.focus({ preventScroll: true }); });
   }
 
   /* ----------------------------------------------------------- the confirm for open picks */
@@ -225,7 +233,7 @@
     $('[data-tl-anyway]', m).textContent = t.anyway;
     if (root.KUI) root.KUI.openModal(m);
     var c = $('[data-tl-choose]', m);
-    if (c) root.setTimeout(function () { c.focus(); }, 60);
+    if (c) cx.after(60, function () { c.focus(); });
   }
   /* The PDF is fetched, so an error (no browser to make it, a missing file) is a message on this
      page and never replaces the app with an error line or saves it as a resume. */
@@ -243,11 +251,13 @@
         a.download = name || 'resume.pdf';
         doc.body.appendChild(a);
         a.click();
+        // The download's own cleanup: it runs even if the page was left meanwhile, so it is not
+        // the page's timer.
         root.setTimeout(function () { root.URL.revokeObjectURL(a.href); a.parentNode.removeChild(a); }, 1000);
       });
     }).catch(function () { toast('Could not make the PDF.'); });
   }
-  doc.addEventListener('click', function (e) {
+  function onGateClick(e) {
     var dl = e.target.closest ? e.target.closest('[data-tl-gate="download"]') : null;
     if (dl && !(parseInt(dl.getAttribute('data-needs'), 10) > 0)) {
       e.preventDefault();
@@ -259,7 +269,7 @@
     e.preventDefault();
     e.stopPropagation();
     openGate(b, b.getAttribute('data-tl-gate'));
-  }, true);
+  }
 
   function currentRender() { var p = pageEl(); return p ? p.getAttribute('data-render') : ''; }
   function goAnyway() {
@@ -276,7 +286,7 @@
   }
   function chooseNow() {
     gate = null;
-    root.setTimeout(showMe, 200);
+    cx.after(200, showMe);
   }
 
   /* ----------------------------------------------------------------------- enlarge */
@@ -304,11 +314,11 @@
     body.appendChild(page);
     if (root.KUI) root.KUI.openModal('#tl-zoom');
     root.requestAnimationFrame(function () { fit(page); });
-    root.setTimeout(function () { fit(page); }, 400);
+    cx.after(400, function () { fit(page); });
   }
 
   /* ------------------------------------------------------------------- click delegation */
-  doc.addEventListener('click', function (e) {
+  function onClick(e) {
     var t = e.target;
     if (!t.closest) return;
     var n;
@@ -348,64 +358,67 @@
     }
     if (t.closest('[data-tl-anyway]')) { goAnyway(); return; }
     if (t.closest('[data-tl-choose]')) { chooseNow(); return; }
-  });
+  }
 
   /* ------------------------------------------------------------------ toasts and Undo */
   function refresh() {
     if (!root.htmx || !$('#tl-body')) return;
     root.htmx.ajax('GET', root.location.pathname + root.location.search, { target: '#tl-body', swap: 'innerHTML' });
   }
-  doc.addEventListener('tl-toast', function (e) {
+  function onToast(e) {
     var d = e.detail || {};
     var msg = d.message || d.value || '';
     var url = d.undoUrl;
     var opts = {};
     if (url) {
+      // The Undo outlives the page (a toast does), so its request is not tied to the page's
+      // signal. It reloads the body only while the person is still on the page that raised it.
+      var at = root.location.pathname + root.location.search;
       opts.undo = function () {
         if (!root.fetch) return;
         root.fetch(url, { method: 'POST', credentials: 'same-origin' })
           .then(function (r) { return r.text(); })
           .then(function (txt) {
             if (/data-ok="0"/.test(txt)) toast('This can no longer be undone.');
-            refresh();
+            if (root.location.pathname + root.location.search === at) refresh();
           })
           .catch(function () { toast('This can no longer be undone.'); });
       };
     }
     toast(msg, opts);
-  });
+  }
 
   /* ------------------------------------------------------------------ htmx hooks */
-  doc.addEventListener('htmx:oobAfterSwap', function (e) {
+  function onOobSwap(e) {
     var t = e.detail && e.detail.target;
     if (t && t.id === 'tl-src') applySrc();
-  });
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  }
+  function onAfterSwap(e) {
     var t = e.target;
     if (t && t.id === 'tl-dialog') {
       var dlg = $('.k-modal', t);
       if (dlg && root.KUI) root.KUI.openModal(dlg);
     }
-  });
-  doc.addEventListener('htmx:afterRequest', function (e) {
+  }
+  function onAfterRequest(e) {
     var el = e.detail && e.detail.elt;
     if (el && el.hasAttribute && el.hasAttribute('data-tl-pickform') && root.KUI) root.KUI.closeModal();
-  });
-  doc.addEventListener('htmx:afterSettle', function () {
+  }
+  function onAfterSettle() {
     applyTab();
     restoreCards();
     var frame = $('#tl-frame');
     if (frame) bindFrame(frame);
     fitAll();
     updateGuard();
-  });
-  doc.addEventListener('htmx:responseError', function (e) {
+  }
+  function onResponseError(e) {
     var xhr = e.detail && e.detail.xhr;
     var path = String((e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath) || '');
     if (path.indexOf('/renders/') !== 0 || !xhr) return;
     var text = plain(xhr.responseText, xhr.getResponseHeader('Content-Type'));
     if (text && text.length < 240) toast(text);
-  });
+  }
 
   function onFrameLoad(e) {
     var f = e.target;
@@ -414,7 +427,6 @@
     fitAll();
     updateGuard();
   }
-  doc.addEventListener('load', onFrameLoad, true);
 
   function init() {
     applyTab();
@@ -424,11 +436,30 @@
       if (frameDoc(frame) && frameDoc(frame).readyState === 'complete') { fitAll(); updateGuard(); }
     }
     fitAll();
-    root.addEventListener('resize', fitAll);
+    cx.on(root, 'resize', fitAll);
     if (root.ResizeObserver) {
       var wrap = $('.tl-wrap');
-      if (wrap) new root.ResizeObserver(fitAll).observe(wrap);
+      if (wrap) cx.observe(new root.ResizeObserver(fitAll)).observe(wrap);
     }
   }
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
+
+  root.KUI.page.define('tailor', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      zoom = 0; tab = 'prev'; openCards = {}; hlId = null; gate = null;
+      bound = { d: null, offs: [] };
+      ctx.on(doc, 'mouseover', onOver);
+      ctx.on(doc, 'mouseleave', onLeave);
+      ctx.on(doc, 'click', onGateClick, true);
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'tl-toast', onToast);
+      ctx.on(doc, 'htmx:oobAfterSwap', onOobSwap);
+      ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
+      ctx.on(doc, 'htmx:afterRequest', onAfterRequest);
+      ctx.on(doc, 'htmx:afterSettle', onAfterSettle);
+      ctx.on(doc, 'htmx:responseError', onResponseError);
+      ctx.on(doc, 'load', onFrameLoad, true);
+      init();
+    }
+  });
 })(window);

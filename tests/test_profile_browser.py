@@ -16,7 +16,14 @@ from pathlib import Path
 import pytest
 
 from tests import profile_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    G4_LISTENER_PROBE_JS,
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -59,12 +66,14 @@ def _url(base: str, tab: str, master_id: int) -> str:
     return f"{base}/profile?tab={tab}&track={track}"
 
 
-def _open(live, tab: str, theme: str, width: int):
+def _open(live, tab: str, theme: str, width: int, probe: bool = False):
     base, browser, master_id = live
     ctx = browser.new_context(viewport={"width": width, "height": 1300}, color_scheme=theme)
     page = ctx.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    if probe:
+        page.add_init_script(TIMER_PROBE_JS)
     page.goto(_url(base, tab, master_id))
     page.wait_for_selector(".pf-tabs")
     if tab == "documents":
@@ -102,7 +111,8 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, tab, theme, width):
                 if not group.is_visible():
                     continue
                 kids = page.evaluate(
-                    """el => Array.from(el.children).filter(e => e.offsetParent !== null)
+                    """el => Array.from(el.children).filter(e => e.offsetParent !== null
+                        && !e.classList.contains('k-tabink'))
                       .map(e => { const b = e.getBoundingClientRect();
                         return {t: (e.textContent || '').trim().slice(0, 30), l: b.left,
                                 r: b.right, tp: b.top, bt: b.bottom}; })""", group)
@@ -254,8 +264,9 @@ def test_background_title_suggestions_appear_without_reloading_edits(live):
 
     ctx, page, errors = _open(live, "employment", "light", 1680)
     try:
+        # The box starts closed (D-UI-199); a suggestion that arrives opens it.
         expect(page.locator(
-            '#title-suggestions [data-testid="title-suggest-again"]')).to_be_visible()
+            '#title-suggestions [data-testid="title-suggest-again"]')).to_be_attached()
         page.fill("#pe-ctarget", "175000")
         _seed_title_suggestion("Background title")
         expect(page.locator('[data-testid="title-suggestion"]')
@@ -281,13 +292,14 @@ def test_hosted_title_refresh_preserves_explicit_consent_fields(live, monkeypatc
     }))
     ctx, page, errors = _open(live, "employment", "light", 1680)
     try:
+        page.click('[data-testid="title-suggest-toggle"]')  # the box opens from the card (D-UI-199)
         form = page.locator('[data-testid="title-suggest-online"]')
-        form.get_by_role("button", name="Suggest again").click()
+        form.get_by_role("button", name="Suggest", exact=True).click()
         expect(page.locator('[data-testid="title-suggestions-note"]')).not_to_contain_text(
             "Queued.")
         form.locator('[name="confirmed"]').check()
         with page.expect_request("**/title-suggestions/refresh") as sent:
-            form.get_by_role("button", name="Suggest again").click()
+            form.get_by_role("button", name="Suggest", exact=True).click()
         assert parse_qs(sent.value.post_data or "") == {
             "confirmed": ["1"], "model": ["test-model"], "dest": ["test-destination"],
         }
@@ -298,18 +310,18 @@ def test_hosted_title_refresh_preserves_explicit_consent_fields(live, monkeypatc
         ctx.close()
 
 
-def test_near_floor_margin_has_the_five_stops_and_defaults_to_five(live):
+def test_near_floor_switch_off_saves_exact_and_on_defaults_to_five(live):
     ctx, page, errors = _open(live, "employment", "light", 1680)
     try:
         seg = page.locator(".pf-margin .k-seg").first
         labels = [t.strip() for t in seg.locator("button").all_inner_texts()]
-        assert labels == ["Exact", "2%", "5%", "10%", "15%"], labels
+        assert labels == ["2%", "5%", "10%", "15%"], labels
         assert seg.locator("button.is-on").inner_text().strip() == "5%"
-        seg.locator("button", has_text="Exact").click()
+        page.locator(".pf-margin__sw").first.click()
         page.click("[data-pf-savebar] button[type=submit]")
         page.wait_for_selector('[data-testid="profile-saved"]')
-        assert page.locator(".pf-margin .k-seg button.is-on").first.inner_text().strip() \
-            == "Exact"
+        assert not page.locator(".pf-margin [data-pf-margin-on]").first.is_checked()
+        assert page.locator(".pf-margin [data-pf-margin-value]").first.input_value() == "0"
         assert "set aside" in page.locator('[data-testid="near-floor-hint"]').first.inner_text()
         assert not errors, errors
     finally:
@@ -355,6 +367,324 @@ def test_the_preview_is_a_scaled_true_page_and_enlarge_matches_it(live):
 
         assert lines("#preview [data-pf-page]") == lines("#pf-enlarge-body [data-pf-page]")
         _shot(page, "profile-documents-enlarged")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+# --------------------------------------------------------------------- O17: US Letter pages
+def _grow_resume(master_id: int, bullets: int = 46) -> None:
+    """Many long bullets on the seeded role, so the document runs past one Letter page. Written
+    straight to the database file: the running server owns the event loop."""
+    import json
+    import sqlite3
+
+    from kestrel import paths
+
+    conn = sqlite3.connect(str(paths.db_path()))
+    try:
+        sec = conn.execute("SELECT id FROM doc_section WHERE doc_master_id=?",
+                           (master_id,)).fetchone()[0]
+        for i in range(3, bullets + 3):
+            cur = conn.execute(
+                "INSERT INTO doc_slot (doc_section_id, key, sort_order, optional,"
+                " default_variant_key) VALUES (?,?,?,0,'original')", (sec, f"r1_b{i}", i))
+            conn.execute(
+                "INSERT INTO doc_variant (doc_slot_id, key, text, tags, derived)"
+                " VALUES (?,?,?,?,0)",
+                (cur.lastrowid, "original",
+                 f"Bullet {i}: ran the weekly operations review across four sites and "
+                 "tracked every open action to closure with the site managers.",
+                 json.dumps(["operations"])))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_long_resume_preview_is_paginated_into_letter_pages(live):
+    base, browser, master_id = live
+    _grow_resume(master_id)
+    ctx, page, errors = _open(live, "documents", "light", 1680)
+    try:
+        card = page.locator("#preview [data-pf-page]")
+        page.wait_for_function(
+            "() => +document.querySelector('#preview [data-pf-page]')"
+            ".getAttribute('data-pf-pages') > 1")
+        pages = int(card.get_attribute("data-pf-pages"))
+        assert pages >= 2
+        assert card.locator("iframe").evaluate("f => f.offsetHeight") == pages * 1056
+        assert card.locator(".pf-page__gap").count() == pages - 1
+        # Every line of text sits inside one sheet's margins: nothing is cut by a page break.
+        bad = card.locator("iframe").evaluate(
+            """f => { const d = f.contentDocument, m = parseFloat(
+                getComputedStyle(d.body).paddingTop), bad = [];
+              d.querySelectorAll('ul.bullets > li, h2.section-heading, .role .row').forEach(e => {
+                const r = e.getBoundingClientRect();
+                const pg = Math.floor(r.top / 1056);
+                if (r.bottom > (pg + 1) * 1056 - m + 0.5) bad.push(e.textContent.trim()
+                    .slice(0, 30));
+                if (r.top < pg * 1056 + m - 0.5 && pg > 0) bad.push('top ' + e.textContent);
+              });
+              return bad; }""")
+        assert bad == [], bad
+        # The heading is never left alone at the foot of a sheet.
+        orphan = card.locator("iframe").evaluate(
+            """f => { const d = f.contentDocument;
+              return Array.from(d.querySelectorAll('h2.section-heading')).filter(h => {
+                const nx = d.elementFromPoint(40, h.getBoundingClientRect().bottom + 4);
+                return nx && Math.floor(h.getBoundingClientRect().top / 1056)
+                  !== Math.floor((h.getBoundingClientRect().bottom + 4) / 1056); }).length; }""")
+        assert orphan == 0
+        # The resume text itself is untouched by the paging.
+        text = card.locator("iframe").evaluate("f => f.contentDocument.body.innerText")
+        assert "Bullet 3: ran the weekly operations review" in text
+        _shot(page, "profile-documents-preview-pages")
+        # Enlarge shows the same pages.
+        page.click("[data-pf-enlarge]")
+        page.wait_for_selector("#pf-enlarge.is-open")
+        wait_for_layout(page)
+        page.wait_for_function(
+            "() => document.querySelector('#pf-enlarge-body [data-pf-page]')"
+            ".getAttribute('data-pf-pages')")
+        big = page.locator("#pf-enlarge-body [data-pf-page]")
+        assert int(big.get_attribute("data-pf-pages")) == pages
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_a_short_resume_preview_is_one_page_with_no_break(live):
+    ctx, page, errors = _open(live, "documents", "light", 1680)
+    try:
+        card = page.locator("#preview [data-pf-page]")
+        page.wait_for_function(
+            "() => document.querySelector('#preview [data-pf-page]')"
+            ".getAttribute('data-pf-pages')")
+        assert card.get_attribute("data-pf-pages") == "1"
+        assert card.locator(".pf-page__gap").count() == 0
+    finally:
+        ctx.close()
+
+
+# ----------------------------------------------------------------- O18: the avatar in place
+def test_uploading_a_photo_updates_both_avatars_without_leaving_the_page(live, tmp_path):
+    from tests.test_profile_review_fixes import _png
+
+    base, browser, master_id = live
+    ctx, page, errors = _open(live, "about", "light", 1280)
+    try:
+        page.evaluate("window.__stay = 1")
+        assert page.locator("#k-topavatar img").count() == 0
+        shot = tmp_path / "me.png"
+        shot.write_bytes(_png())
+        page.set_input_files("#pf-photo-file", str(shot))
+        page.wait_for_selector("#pf-photo .pf-avatar img")
+        page.wait_for_selector("#k-topavatar img")
+        assert page.evaluate("window.__stay") == 1  # no navigation, no reload
+        assert page.locator("#k-topavatar").get_attribute("data-avatar") == "photo"
+        assert page.locator("#k-topavatar img").get_attribute("src").startswith(
+            "/profile/photo?v=")
+        page.click("[data-pf-photo-remove]")
+        page.wait_for_function("() => !document.querySelector('#k-topavatar img')")
+        assert page.locator("#k-topavatar").get_attribute("data-avatar") == "initial"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_choosing_a_picture_in_settings_updates_the_top_bar_at_once(live):
+    base, browser, _master = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 1000})
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/settings#preferences")
+        page.wait_for_selector('[data-testid="st-av-star"]')
+        page.evaluate("window.__stay = 1")
+        page.click('[data-testid="st-av-star"]')
+        page.wait_for_function(
+            "() => document.querySelector('#k-topavatar').dataset.avatar === 'star'")
+        assert page.locator("#k-topavatar svg").count() == 1
+        assert page.evaluate("window.__stay") == 1
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_work_mode_and_location_agree_both_ways(live):
+    """D-UI-214: Hybrid in Work mode ticks the metro rule on Location (and Remote ticks Remote);
+    unticking Remote on Location drops it from Work mode. The two never contradict."""
+    ctx, page, errors = _open(live, "employment", "light", 1680)
+    try:
+        def modes() -> dict:
+            return page.evaluate(
+                """() => Object.fromEntries(Array.from(document.querySelectorAll(
+                  '[data-testid=work-mode] input')).map(i => [i.name, i.checked]))""")
+
+        def geo() -> dict:
+            return page.evaluate(
+                """() => Object.fromEntries(['remote_ok', 'hybrid_requires_metro'].map(
+                  n => [n, document.querySelector('[name=' + n + ']').checked]))""")
+
+        def save() -> None:
+            page.click("[data-pf-savebar] button[type=submit]")
+            page.wait_for_selector('[data-testid="profile-saved"]')
+
+        # Start from On-site only, saved.
+        for key in ("remote", "hybrid"):
+            if modes()[f"mode_{key}"]:
+                page.click(f'[data-testid=work-mode] label:has(input[name=mode_{key}])')
+        if not modes()["mode_onsite"]:
+            page.click('[data-testid=work-mode] label:has(input[name=mode_onsite])')
+        save()
+        page.click('.pf-tabs a[data-tab="location"]')
+        page.wait_for_selector('[data-testid="profile-location"]')
+        assert geo() == {"remote_ok": False, "hybrid_requires_metro": False}
+
+        # Choose Remote and Hybrid in Work mode: Location shows both ticked.
+        page.click('.pf-tabs a[data-tab="employment"]')
+        page.wait_for_selector('[data-testid="work-mode"]')
+        for key in ("remote", "hybrid"):
+            page.click(f'[data-testid=work-mode] label:has(input[name=mode_{key}])')
+        save()
+        page.click('.pf-tabs a[data-tab="location"]')
+        page.wait_for_selector('[data-testid="profile-location"]')
+        assert geo() == {"remote_ok": True, "hybrid_requires_metro": True}
+
+        # Untick Remote on Location: Work mode loses Remote, keeps Hybrid and On-site.
+        page.click("label[for=pl-remote]")
+        save()
+        page.click('.pf-tabs a[data-tab="employment"]')
+        page.wait_for_selector('[data-testid="work-mode"]')
+        assert modes() == {"mode_remote": False, "mode_hybrid": True, "mode_onsite": True}
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("tab", ["about", "employment", "documents"])
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live, tab):
+    """The page lifecycle (D-UI-210): Profile unmounted and mounted again in place starts exactly
+    what it started on the document load (the chips, the Save bar, the preview's observers and
+    frames) and leaves nothing running in between."""
+    ctx, page, errors = _open(live, tab, "light", 1680, probe=True)
+    try:
+        first = assert_page_remounts_clean(page, "profile", "profile.js", settle_ms=800)
+        assert first["observers"] == 1  # the preview fit
+        if tab == "documents":
+            # After the second mount a refreshed preview's new frame is heard and paginated.
+            page.evaluate("document.querySelector('#preview [data-pf-page]').dataset.old = '1';"
+                          "htmx.trigger('#preview', 'pf-refresh')")
+            page.wait_for_selector("#preview [data-pf-page][data-pf-pages]:not([data-old])")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_leave_guard_holds_after_a_remount_and_is_released_at_unmount(live):
+    """window.kLeaveGuard is the page's while it is mounted: after an unmount and a mount again it
+    still holds a link with unsaved changes (one nudge, the page stays); after an unmount it is
+    gone, and the same link leaves."""
+    ctx, page, errors = _open(live, "about", "light", 1680)
+    try:
+        page.evaluate("KUI.page.unmount()")
+        assert page.evaluate("typeof window.kLeaveGuard") == "undefined"
+        assert page.evaluate("KUI.page.mount()") is True
+        assert page.evaluate("typeof window.kLeaveGuard") == "function"
+        page.fill("#pa-head", "Operations lead")
+        bar = page.locator("[data-pf-savebar]")
+        assert bar.is_visible() and "Unsaved changes" in bar.inner_text()
+        assert page.evaluate("window.kLeaveGuard()") is False
+        page.click('#sidebar a[href="/opportunities"]')
+        page.wait_for_timeout(400)
+        assert "/profile" in page.url
+        assert "before you leave this page" in bar.inner_text()
+        page.evaluate("KUI.page.unmount()")
+        assert page.evaluate("typeof window.kLeaveGuard") == "undefined"
+        page.click('#sidebar a[href="/opportunities"]')
+        page.wait_for_url("**/opportunities**")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_documents_scripts_run_again_without_doubling_their_listeners(live):
+    """D-UI-210: the Documents tab brings two inline scripts with its markup (the test render's
+    link following the Look, and the import status). When a swap runs them again over the same
+    markup, each control and the import section hold one set, nothing sits on the document, and
+    one import request starts one seconds counter, which stops when its line leaves the page."""
+    base, browser, master_id = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 1300}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(G4_LISTENER_PROBE_JS)
+    page.add_init_script("""(() => {  // the one-second timers running now
+      const live = new Set(), set = window.setInterval, clear = window.clearInterval;
+      window.setInterval = function (fn, ms, ...args) {
+        const id = set.call(window, fn, ms, ...args);
+        if (ms === 1000) live.add(id);
+        return id;
+      };
+      window.clearInterval = function (id) { live.delete(id); return clear.call(window, id); };
+      window.__seconds = () => live.size;
+    })();""")
+    try:
+        page.goto(_url(base, "documents", master_id))
+        page.wait_for_selector("#pf-import")
+        wait_for_layout(page)
+        look = "#layout, #font, #header_align, #accent, #accent_custom"
+        live_look = "sel => window.__g4Listeners.live(sel)"
+        before = page.evaluate(live_look, look)
+        assert before == 10, before  # change and input on each of the five controls
+        assert page.evaluate("sel => window.__g4Listeners.live(sel, 'htmx:beforeRequest')",
+                             "#pf-import") == 1
+
+        def run_scripts_again() -> None:
+            page.evaluate("""() => {
+              for (const old of document.querySelectorAll('.pf-tb script, #pf-import + script')) {
+                const again = document.createElement('script');
+                again.textContent = old.textContent;
+                old.after(again);
+                old.remove();
+              }
+            }""")
+
+        run_scripts_again()
+        run_scripts_again()
+        assert page.evaluate(live_look, look) == before
+        assert page.evaluate("sel => window.__g4Listeners.live(sel, 'htmx:beforeRequest')",
+                             "#pf-import") == 1
+        assert page.evaluate("sel => window.__g4Listeners.live(sel, 'htmx:afterRequest')",
+                             "#pf-import") == 1
+        # The link still follows the Look once.
+        page.evaluate("""() => { const f = document.getElementById('font');
+          f.value = f.options[f.options.length - 1].value;
+          f.dispatchEvent(new Event('change', { bubbles: true })); }""")
+        href = page.get_attribute("#test-render", "href")
+        assert href.count("&font=") == 1, href
+        # One import request, one seconds counter; the answer ends it.
+        fire = """([type, make]) => {
+          let el = document.querySelector('.import-processing');
+          if (make) {
+            const box = document.getElementById('import-proposal');
+            box.innerHTML = '<form class="import-processing"><span class="import-elapsed"></span>'
+              + '</form>';
+            el = box.firstElementChild;
+          }
+          el.dispatchEvent(new CustomEvent(type, { bubbles: true, detail: { elt: el } }));
+        }"""
+        assert page.evaluate("window.__seconds()") == 0
+        page.evaluate(fire, ["htmx:beforeRequest", True])
+        assert page.evaluate("window.__seconds()") == 1
+        page.evaluate(fire, ["htmx:afterRequest", False])
+        assert page.evaluate("window.__seconds()") == 0
+        # A counter whose line left the page stops by itself on its next beat.
+        page.evaluate(fire, ["htmx:beforeRequest", True])
+        assert page.evaluate("window.__seconds()") == 1
+        page.evaluate("document.getElementById('import-proposal').innerHTML = ''")
+        page.wait_for_function("window.__seconds() === 0", timeout=3000)
         assert not errors, errors
     finally:
         ctx.close()

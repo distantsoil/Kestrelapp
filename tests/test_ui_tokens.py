@@ -64,7 +64,9 @@ def _matches(sel: str, media: str, theme: str | None, os_dark: bool, scheme: str
 
 def _sheet_order() -> list[str]:
     """The stylesheets base.html loads, in load order."""
-    return re.findall(r"/static/css/([\w.-]+\.css)", _BASE_HTML.read_text(encoding="utf-8"))
+    # static_url('css/x.css') in the template (D-UI-209); a bare /static/ path before that.
+    return re.findall(r"(?:/static/|static_url\(')css/([\w.-]+\.css)",
+                      _BASE_HTML.read_text(encoding="utf-8"))
 
 
 def _effective(theme: str | None, scheme: str | None, os_dark: bool = False) -> dict[str, str]:
@@ -243,10 +245,11 @@ def test_components_css_covers_the_shared_components():
                 ".k-hcard", ".k-morelink", ".k-flyout", ".k-slideover", ".k-modal", ".k-scrim",
                 ".k-toast", ".k-toasts", ".k-switch", ".k-seg", ".k-stepper", ".k-input",
                 ".k-select", ".k-steps", ".k-table", ".k-dz", ".k-scene", ".k-empty", ".k-win",
-                ".k-side", ".k-layout", ".sc-night", ".sc-day", ":focus-visible",
+                ".side", ".k-layout", ".sc-night", ".sc-day", ":focus-visible",
                 "prefers-reduced-motion", "scrollbar-width", "::-webkit-scrollbar"):
         assert sel in css, sel
-    assert "@container (max-width: 1300px)" in css and "@container (max-width: 1000px)" in css
+    assert "@container kwin (max-width: 1300px)" in css
+    assert "@container kwin (max-width: 1000px)" in css
 
 
 # ------------------------------------------------------------------------------------ scenes

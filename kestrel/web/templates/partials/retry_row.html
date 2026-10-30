@@ -27,7 +27,7 @@
     {% else %}
     <div class="rt-acts">
       <button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="retry"
-              hx-post="/quarantine/{{ row.id }}/retry" hx-target="#{{ row.dom_id }}" hx-swap="outerHTML">{{ icon('scan', 'k-ic--sm') }}Try again</button>
+              hx-post="/quarantine/{{ row.id }}/retry" hx-target="#{{ row.dom_id }}" hx-swap="outerHTML">{{ icon('retry', 'k-ic--sm') }}Try again</button>
       {% if row.can_act %}
       <span class="rt-menu-wrap">
         <button type="button" class="k-btn k-btn--sm" data-testid="rt-model" aria-haspopup="menu" aria-expanded="false"

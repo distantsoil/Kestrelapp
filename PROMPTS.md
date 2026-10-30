@@ -6,6 +6,13 @@
 > **Prompt version strings are stored on every `evaluation` row.** When you change a prompt,
 > bump the version. This is what makes results comparable across time and lets the benchmark
 > harness detect a regression.
+>
+> **Version history.** `triage/v2`, `triage_consulting/v2`, `evaluate/v2` and
+> `evaluate_consulting/v2` (2026-10-26, O20): P2 and P2C gain the `unverified` match strength,
+> the proof rule and the plain-sentence rule (P2C also gains `b_thesis.matches`), and
+> `PROFILE_COMPACT` renders yes or no instead of `True`/`False`, which changes the input of all
+> four. An evaluation stored under a `/v1` version shows "Scored with older scoring
+> instructions. Score again to refresh it."
 
 | ID | Prompt | Track | Tier |
 |---|---|---|---|
@@ -94,7 +101,7 @@ Targets: {target_titles joined}
 Hard no: {anti_titles joined}
 Comp floor: ${comp_floor_usd:,} base. Target: ${comp_target_usd:,}.
 Work modes wanted: {work_modes joined}   (line omitted when none is chosen)
-Location: {geo summary}. Remote OK: {remote_ok}. Relocation: {relocation_acceptable}.
+Location: {geo summary}. Open to remote work: {remote_ok}. Open to relocating: {relocation_acceptable}.
 Work authorization: {work_auth}
 Must have: {must_have, top 4}
 Must avoid: {must_avoid, top 4}
@@ -111,11 +118,15 @@ Target orgs: size {target_org_size joined}; sectors {target_sectors joined}
 Excluded sectors: {excluded_sectors joined}
 Day rate floor: ${day_rate_floor:,}/day. Target: ${day_rate_target:,}/day.
 Work modes wanted: {work_modes joined}   (line omitted when none is chosen)
-Location: {geo summary}. Remote OK: {remote_ok}. Relocation: {relocation_acceptable}.
+Location: {geo summary}. Open to remote work: {remote_ok}. Open to relocating: {relocation_acceptable}.
 Work authorization: {work_auth}
 Must have: {must_have, top 4}
 Must avoid: {must_avoid, top 4}
 ```
+
+The two yes-or-no settings render as `yes` or `no` (`unspecified` when unset), never as a
+program value such as `True`, so the model has no machine field to echo into text the
+candidate reads.
 
 ### `PROFILE_FULL` (used by Tier 2 and 3)
 
@@ -178,7 +189,7 @@ SLOTS
 
 ## P1 — Tier 1 Triage
 
-**Version:** `triage/v1`
+**Version:** `triage/v2`
 **Model tier:** `tier1`
 **Temperature:** 0.0
 **Max tokens:** 300
@@ -267,7 +278,7 @@ limits are per tier (D-LLM-1); on the reasoning-off retry the error names
 
 ## P2 — Tier 2 Six-Block Evaluation
 
-**Version:** `evaluate/v1`
+**Version:** `evaluate/v2`
 **Model tier:** `tier2`
 **Temperature:** 0.2
 **Max tokens:** 4000
@@ -306,6 +317,20 @@ Operating rules:
 
 5. State risk proportionately. Name a real concern once, clearly, without catastrophizing and
    without softening it into meaninglessness.
+
+6. A match needs proof. Mark a requirement "strong" only when a proof point, the narrative or
+   the stated terms plainly show it, and "partial" or "adjacent" when they show part of it or
+   something close. When the posting asks for something the profile neither shows nor rules
+   out, list it under matches with strength "unverified" and say in evidence what the profile
+   does not show. Never mark a requirement "strong" that you cannot point at. Something the
+   profile shows the candidate lacks is a gap, not a match.
+
+7. Write for the candidate. Every evidence, mitigation, why, scope_read, lead_with and
+   headline_reason is a plain sentence the candidate reads as written, addressed to them as
+   "you". Use the posting's own words, quoted or paraphrased. Never copy input labels, field
+   names or true/false values into them: write "you are open to remote work", never a field
+   name and its value. Never cite by position ("bullet 1"); the candidate never sees those
+   labels.
 
 Scoring dimensions, each 1.0 to 5.0:
 - role_fit: does the actual scope and responsibility match what the candidate is targeting
@@ -386,7 +411,7 @@ URL: {job.url}
                 "properties": {
                   "requirement": { "type": "string", "maxLength": 200 },
                   "evidence": { "type": "string", "maxLength": 300 },
-                  "strength": { "type": "string", "enum": ["strong", "partial", "adjacent"] }
+                  "strength": { "type": "string", "enum": ["strong", "partial", "adjacent", "unverified"] }
                 }
               }
             },
@@ -554,6 +579,12 @@ URL: {job.url}
 7. Recompute `verdict` from the score thresholds in SPEC §6.3 and **compare to the model's own
    verdict**. Disagreement is logged. The system's threshold-derived verdict wins for
    filtering; the model's is shown for context.
+8. A match with strength `unverified` is shown as **Partly met**, never Met, and is listed under
+   Gaps on the Role page and the Pipeline side panel with "Your profile does not show this yet"
+   (hard rule 4: uncertainty escalates, it never rejects, and it is never counted in the
+   candidate's favor). Its evidence is not shown as proof and never feeds the "why it fits"
+   sentence, the Evidence card or a source link. `partial` and `adjacent` are Partly met too;
+   only `strong` is Met.
 
 ### Failure handling
 
@@ -637,6 +668,11 @@ AVAILABLE SKILL GROUPS
 AVAILABLE LAYOUTS
 {for each: "- {key}: {description}"}
 ```
+
+`Key matched requirements` lists only `strong`, `partial` and `adjacent` matches. An
+`unverified` match (P2 rule 6) is left out of both lines: it is not a match to lead with, and
+naming it as a gap would tell the model to steer away from something the candidate may have
+done (P2 post-processing rule 8, O20).
 
 ### Schema
 
@@ -1009,7 +1045,7 @@ never add a claim. [...] Return at most two variants.
 
 ## P1C — Tier 1 Triage, consulting track
 
-**Version:** `triage_consulting/v1` · **Tier:** `tier1` · **Temp:** 0.0 · **Max tokens:** 350
+**Version:** `triage_consulting/v2` · **Tier:** `tier1` · **Temp:** 0.0 · **Max tokens:** 350
 
 Same asymmetry rule as P1: uncertainty escalates, it never rejects. But the shape of the
 judgment differs. A consulting item may have no posting at all, only a trigger event, and the
@@ -1111,7 +1147,7 @@ DESCRIPTION (first {n} tokens)
 
 ## P2C — Tier 2 Evaluation, consulting track
 
-**Version:** `evaluate_consulting/v1` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 4000
+**Version:** `evaluate_consulting/v2` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 4000
 
 ### System
 
@@ -1149,6 +1185,21 @@ Operating rules:
    departure of a senior leader in the practitioner's area creates a 30-to-60-day window before
    a search firm is engaged. Say where in the
    window this sits and what that means for urgency.
+
+7. A match needs proof. For each thing the engagement needs, add an entry to
+   b_thesis.matches. Mark it "strong" only when a proof point, a proof engagement or the
+   stated terms plainly show it, and "partial" or "adjacent" when they show part of it or
+   something close. When the profile neither shows nor rules it out, use strength
+   "unverified" and say in evidence what the profile does not show. Never mark a need
+   "strong" that you cannot point at. Something the profile shows the practitioner lacks is a
+   delivery gap, not a match.
+
+8. Write for the practitioner. Every evidence, stated, inferred, speculative, timing_read,
+   engagement, access_path, basis, opening_move, why_now_line, effort_shape and why is a plain
+   sentence the practitioner reads as written, addressed to them as "you". Use the source's own
+   words, quoted or paraphrased. Never copy input labels, field names or true/false values into
+   them: write "you are open to remote work", never a field name and its value. Never cite by
+   position ("bullet 1"); the practitioner never sees those labels.
 
 Scoring dimensions, each 1.0 to 5.0:
 - engagement_fit: does the implied need match the practitioner's stated service lines
@@ -1215,10 +1266,22 @@ COMPENSATION CONTEXT (from the practitioner's own observed corpus)
         },
         "b_thesis": {
           "type": "object",
-          "required": ["engagement", "service_lines", "phases", "estimated_days", "estimated_weeks"],
+          "required": ["engagement", "service_lines", "matches", "phases", "estimated_days", "estimated_weeks"],
           "properties": {
             "engagement":    { "type": "string" },
             "service_lines": { "type": "array", "items": { "type": "string" } },
+            "matches": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["requirement", "evidence", "strength"],
+                "properties": {
+                  "requirement": { "type": "string" },
+                  "evidence":    { "type": "string" },
+                  "strength":    { "type": "string", "enum": ["strong", "partial", "adjacent", "unverified"] }
+                }
+              }
+            },
             "phases": {
               "type": "array",
               "items": {
@@ -1362,6 +1425,13 @@ act on the top-level object.
 
 Additionally: write every `a_situation.stated` fact and every identified buyer back to the `org`
 record as accumulated signals, so the next opportunity at the same organization starts warmer.
+
+`b_thesis.matches` follows P2 post-processing rule 8: only `strong` is Met; `partial`,
+`adjacent` and `unverified` are Partly met, and an `unverified` need is listed under Gaps with
+"Your profile does not show this yet, so Kestrel can't tell", never as proof. A stored read from
+before `matches` existed shows its `service_lines` as Partly met under Gaps ("The earlier read
+named this without saying what shows it. Score again to check it."), because it carries no
+evidence to count as Met (hard rule 4, O20).
 
 ---
 

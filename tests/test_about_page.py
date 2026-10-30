@@ -50,7 +50,7 @@ _BEARER = "Bearer eyJhbGciOiJIUzI1NiJ9.leaked-token-value"
 _POSTING = "Confidential VP of Infrastructure search for a logistics group"
 _EXPECTED_MEMBERS = {
     "README.txt", "summary.json", "doctor.json", "settings.redacted.yml",
-    "logs/kestrel.log", "quarantine.json", "packages.txt",
+    "logs/kestrel.log", "quarantine.json", "packages.txt", "roles.json",
 }
 
 
@@ -72,10 +72,11 @@ async def _seed(*, confidential: bool) -> None:
         src = Source(track="employment", kind="jobspy", name="boards", enabled=True)
         s.add(src)
         await s.flush()
-        s.add(ScrapeRun(source_id=src.id, status="partial", counts={"found": 3},
+        s.add(ScrapeRun(source_id=src.id, status="partial", counts={
+            "found": 3, "dropped_outside_area": 30, "dropped_unrelated_title": 12},
                         error=f"429 from board; {_BEARER}; last org {_EMPLOYER}"))
         s.add(Run(name="nightly", status="done", mode="local", counts={"scanned": 3}))
-        s.add(Opportunity(track="employment", opp_type="job", title=_POSTING,
+        s.add(Opportunity(track="employment", opp_type="job", title="VP of Infrastructure",
                           org_name=_EMPLOYER, description_md=_POSTING, stage="tier2"))
         s.add(Quarantine(tier=2, model="kestrel-tier2", error="schema: verdict missing",
                          raw_response=(f"{_POSTING} at {_EMPLOYER}. " * 60)))
@@ -296,6 +297,10 @@ def test_diagnostics_zip_has_the_members_and_no_secret_or_posting_text(monkeypat
         if name != "quarantine.json":
             assert _POSTING.encode() not in data, name
     assert not any(".env" in n or n.endswith(".db") or "profile" in n for n in members)
+    # roles.json: role IDs with what the filters and each scoring pass decided, never the text.
+    roles = yaml.safe_load(members["roles.json"])
+    assert isinstance(roles["rows"], list)
+    assert all("description" not in row for row in roles["rows"])
 
     summary = yaml.safe_load(members["summary.json"])
     assert summary["version"] == kestrel.__version__
@@ -306,6 +311,10 @@ def test_diagnostics_zip_has_the_members_and_no_secret_or_posting_text(monkeypat
     assert summary["counts"]["scrape_runs_by_status"] == {"partial": 1}
     assert summary["runs"][0]["name"] == "nightly" and summary["runs"][0]["mode"] == "local"
     assert summary["scrape_runs"][0]["source_kind"] == "jobspy"
+    assert summary["scrape_runs"][0]["dropped_outside_area"] == 30
+    assert summary["scrape_runs"][0]["dropped_unrelated_title"] == 12
+    assert summary["scrape_runs"][0]["counts"]["dropped_outside_area"] == 30
+    assert summary["scrape_runs"][0]["counts"]["dropped_unrelated_title"] == 12
     assert "<redacted>" in summary["scrape_runs"][0]["error"]
     assert summary["hosted_mode"]["backends"]["frontier"]["api_key_env"] == "OPENROUTER_API_KEY"
     assert summary["hosted_mode"]["backends"]["frontier"]["key_present"] is True
@@ -530,6 +539,32 @@ def test_discard_only_removes_a_staging_directory_it_made(tmp_path):
     diagnostics.discard_bundle(stray)
     assert not stray.exists()
     assert keep.exists()
+
+
+@pytest.mark.parametrize("recorded", [None, {}])
+def test_diagnostics_exports_zero_skips_for_older_scrape_runs(recorded):
+    import sqlite3
+
+    asyncio.run(_seed(confidential=False))
+
+    async def update() -> None:
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine)() as session:
+                from sqlalchemy import select
+
+                row = (await session.execute(select(ScrapeRun))).scalar_one()
+                row.counts = recorded
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(update())
+    with sqlite3.connect(paths.db_path()) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = diagnostics.recent_scrape_runs(conn, diagnostics.make_scrubber(None))
+    assert rows[0]["dropped_outside_area"] == 0
+    assert rows[0]["dropped_unrelated_title"] == 0
 
 
 def test_diagnostics_counts_tier0_set_asides_by_rule_name_only():

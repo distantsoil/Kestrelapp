@@ -110,11 +110,11 @@ NAV_GROUPS: tuple[tuple[str, tuple[NavItem, ...]], ...] = (
                 "pipeline", "unrated",
             ),
             NavItem(
-                "Applications", "/pursuits", ("/pursuits",), "pursuits",
+                "Applications", "/pursuits", ("/pursuits",), "apps", "followups",
                 consulting_label="Leads",
             ),
-            NavItem("Profile", "/profile", ("/profile", "/documents", "/renders"), "documents"),
-            NavItem("Interview prep", "/stories", ("/stories", "/prep", "/mock"), "interview"),
+            NavItem("Profile", "/profile", ("/profile", "/documents", "/renders"), "profile"),
+            NavItem("Interview prep", "/stories", ("/stories", "/prep", "/mock"), "prep"),
             NavItem("Offers", "/offers", ("/offers",), "offers"),
         ),
     ),
@@ -256,6 +256,7 @@ def ui_scheme() -> str:
 _UI_KEYS = (
     "ui.scene", "ui.scene_daily", "ui.scene_rotation", "ui.scene_animate", "ui.touches_enabled",
     "ui.touches_off", "ui.touch_groups_off", "ui.avatar", "ui.text_size", "ui.reduce_motion",
+    "ui.classic_nav",
 )
 _ui_layer_cache: dict[str, object] = {"value": None, "at": 0.0, "db": ""}
 
@@ -330,6 +331,7 @@ def ui_prefs() -> dict[str, object]:
 
     text_size = get("text_size", u.text_size, "default")
     reduce_motion = bool(get("reduce_motion", u.flag, False))
+    classic_nav = bool(get("classic_nav", u.flag, False))  # D-UI-220
     scene = get("scene", u.scene, u.DEFAULT_SCENE)
     daily = bool(get("scene_daily", u.flag, True))
     rotation = list(get(
@@ -369,7 +371,8 @@ def ui_prefs() -> dict[str, object]:
                 initial = first[:1].upper()
                 break
     return {
-        "text_size": text_size, "reduce_motion": reduce_motion, "avatar": avatar,
+        "text_size": text_size, "reduce_motion": reduce_motion, "classic_nav": classic_nav,
+        "avatar": avatar,
         "photo": photo, "initial": initial, "scene": shown_scene, "animate": animate,
         "touch": TOUCH_JS.get(touch_id or "", ""),
     }
@@ -399,11 +402,44 @@ def _effective_track(track: str | None) -> str:
     return "consulting" if tuple(enabled_tracks_cached()) == ("consulting",) else "employment"
 
 
+_static_token: str | None = None
+
+
+def static_token() -> str:
+    """A fingerprint of the shipped static files (paths, sizes, modified times), computed once.
+    Static URLs carry it, so the window caches each file for good within one build and a new
+    build or edited file gets a new URL. Without it, a fresh install's new file dates made the
+    browser re-check every stylesheet and script with the server on every page change."""
+    global _static_token
+    if _static_token is None:
+        import hashlib
+        from pathlib import Path
+
+        root = Path(paths.web_static_dir())
+        h = hashlib.sha256()
+        for f in sorted(root.rglob("*")):
+            try:
+                if not f.is_file():
+                    continue
+                st = f.stat()
+            except OSError:  # removed during the scan (a dev edit): the rest still fingerprint
+                continue
+            h.update(f"{f.relative_to(root).as_posix()}:{st.st_size}:{st.st_mtime_ns};".encode())
+        _static_token = h.hexdigest()[:12]
+    return _static_token
+
+
+def static_url(path: str) -> str:
+    """The URL of a file under /static/, versioned with static_token()."""
+    return f"/static/{path.lstrip('/')}?v={static_token()}"
+
+
 def templates() -> Jinja2Templates:
     global _templates
     if _templates is None:
         t = Jinja2Templates(directory=paths.web_templates_dir())
         t.env.globals["verdict_class"] = _verdict_class
+        t.env.globals["static_url"] = static_url
         t.env.globals["nav_groups"] = NAV_GROUPS
         t.env.globals["bottom_bar"] = BOTTOM_BAR
         t.env.globals["nav_active"] = nav_active
@@ -429,9 +465,11 @@ def templates() -> Jinja2Templates:
 
         t.env.globals["enabled_tracks"] = enabled_tracks_cached
         t.env.globals["active_track"] = active_track
-        from kestrel.web.desktop_bridge import can_quit
+        from kestrel.web.desktop_bridge import can_quit, desktop_window, has_window_frame
 
         t.env.globals["desktop_can_quit"] = can_quit
+        t.env.globals["desktop_has_frame"] = has_window_frame
+        t.env.globals["desktop_window"] = desktop_window
         t.env.globals["consulting_enabled"] = consulting_enabled
         t.env.globals["ui_schemes"] = UI_SCHEMES
         from kestrel.services import run_model as _run_model

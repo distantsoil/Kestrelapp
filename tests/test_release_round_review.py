@@ -557,7 +557,7 @@ def test_11_consulting_copy_and_prompts_assume_no_field():
     from kestrel.web.pages.onboarding import CONSULTING_PLAIN
 
     assert "CIO" not in CONSULTING_PLAIN and "CTO" not in CONSULTING_PLAIN
-    for name in ("triage_consulting.v1.md", "evaluate_consulting.v1.md",
+    for name in ("triage_consulting.v2.md", "evaluate_consulting.v2.md",
                  "engagement_outline.v1.md"):
         text = (PKG / "llm/prompts" / name).read_text("utf-8")
         assert not re.search(r"\bCIO\b|\bCTO\b", text), name

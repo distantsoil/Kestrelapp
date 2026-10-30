@@ -23,7 +23,7 @@
       {% for job in research_jobs %}
       <div class="rl-research-job" data-testid="research-job" data-state="{{ job.status }}">
         <div><h4 class="rl-h4">{{ job.label }}</h4>
-          <p class="rl-dsm">{% if job.status == 'cancelled' %}Cancelled.{% elif job.status in ('dead', 'failed') %}Could not finish. Start again to try another pass.{% elif job.status == 'pending' %}Waiting for the worker.{% else %}{{ job.progress }}{% endif %}</p>
+          <p class="rl-dsm">{% if job.status == 'cancelled' %}Canceled.{% elif job.status in ('dead', 'failed') %}Could not finish. Start again to try another pass.{% elif job.status == 'pending' %}Waiting for the worker.{% else %}{{ job.progress }}{% endif %}</p>
           {% if job.live %}<p class="rl-dsm">Runs in the background and resumes after a restart.</p>{% endif %}
         </div>
         {% if job.live %}<button type="button" class="k-btn k-btn--sm"

@@ -600,7 +600,9 @@ def test_the_page_stylesheet_uses_theme_tokens_only():
     css = re.sub(r"/\*.*?\*/", "", _CSS.read_text(encoding="utf-8"), flags=re.S)
     assert not re.search(r"#[0-9A-Fa-f]{3,8}\b", css), "hex color in analytics.css"
     assert not re.search(r"\b(?:rgb|rgba|hsl|hsla|oklch|oklab)\(", css)
-    assert "@container (max-width: 1100px)" in css and "@container (max-width: 880px)" in css
+    # The mockup's steps, measured on the window.
+    assert "@container kwin (max-width: 1300px)" in css
+    assert "@container kwin (max-width: 1100px)" in css
 
 
 def test_every_status_segment_has_a_label_a_count_and_a_table_row(web):
@@ -780,20 +782,28 @@ def _oklab_pair(a: str, b: str) -> float:
     return min(float(np.linalg.norm(lab(a, s) - lab(b, s))) * 100 for s in sims)
 
 
-def test_interviewing_and_no_reply_after_14_days_stay_apart_for_every_kind_of_vision():
+def test_status_colors_are_the_mockups_fixed_hues_and_neighbours_stay_apart():
+    """analytics-mockup-locked.html fixes six status hues (D-UI-187); the page reads them from the
+    --st-* tokens. The segments that sit side by side in the bar must stay apart under protan,
+    deutan and tritan simulation, and no two segments may share a hue."""
     import re
 
     css = (Path(rpt.__file__).parents[1] / "web/static/css/tokens.css").read_text("utf-8")
     page = (Path(rpt.__file__).parents[1] / "web/static/css/pages/analytics.css").read_text("utf-8")
-    assert "--an-ghost: var(--muted)" in page and "--an-iv: var(--brand)" in page
+    for name in ("offer", "iv", "wait", "rej", "ghost", "wd"):
+        assert f"--an-{name}: var(--st-{name})" in page
 
     def token(block: str, name: str) -> str:
-        return re.search(rf"--{name}:\s*(#[0-9A-Fa-f]{{6}})", block).group(1)
+        return re.search(rf"--st-{name}:\s*(#[0-9A-Fa-f]{{6}})", block).group(1)
 
     root = css.split("@media (prefers-color-scheme: dark)")[0]
     dark = css.split(':root:root:root[data-theme="dark"] {')[1].split("}")[0]
+    order = ["offer", "iv", "wait", "rej", "ghost", "wd"]  # the bar's own segment order
     for block in (root, dark):
-        assert _oklab_pair(token(block, "brand"), token(block, "muted")) >= 8
+        colors = [token(block, n) for n in order]
+        assert len(set(colors)) == 6
+        for a, b in zip(colors, colors[1:], strict=False):
+            assert _oklab_pair(a, b) >= 4  # the legend and hover tips carry the meaning too
 
 
 def _write_setting(key, value):
@@ -833,3 +843,17 @@ def test_every_export_is_refused_in_confidential_mode_with_no_employer_set(web, 
     _write_setting("confidential_mode", True)
     r = web.get(f"/analytics/export/{path}?track=employment&range=90")
     assert r.status_code == 409 and "no employer is set" in r.text
+
+
+def test_the_summary_stamp_reads_updated_today_earlier_or_nothing():
+    """D-UI-218: "Updated today, 8:02 AM" when the summary was written today, a date when it was
+    not, and nothing when the time is unknown or unreadable."""
+    from datetime import UTC, datetime, timedelta
+
+    from kestrel.web.pages.analytics import _updated
+
+    now = datetime.now(UTC)
+    assert _updated(now.isoformat()).startswith("Updated today, ")
+    older = _updated((now - timedelta(days=9)).isoformat())
+    assert older.startswith("Updated ") and "today" not in older
+    assert _updated(None) == "" and _updated("not a time") == ""

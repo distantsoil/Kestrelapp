@@ -2,9 +2,9 @@
    colors only (tests/test_sources_page_v2.py), every class prefixed src-. The look follows
    the locked design mockup (kept privately), including its @container steps. */
 
-/* The wrapper is the container the shared @container rules measure (the main column, padding
-   included); .src-page adds the rest of the page inset. */
-.src-wrap { container-type: inline-size; min-width: 0; }
+/* The wrapper measures the main column for page-only steps; the mockup steps use kwin (the window,
+   components.css), as the mockup does. .src-page adds the page inset. */
+.src-wrap { min-width: 0; }
 .src-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px;
   min-width: 0; }
 .src-page, .src-page * { box-sizing: border-box; }
@@ -59,7 +59,14 @@
 .src-sq:focus-within { border-color: var(--brand); }
 .src-tools .k-select select { height: 34px; padding-top: 0; padding-bottom: 0; }
 .src-tools .k-btn { white-space: nowrap; flex: none; }
-.src-tools .src-sq { flex: 1 1 160px; min-width: 120px; }
+.src-tools .src-sq { flex: 1 1 220px; min-width: 220px; }
+.src-tools .src-sq input { width: 100%; min-width: 0; }
+/* The filters give way before the search box does, as drawn (sources-mockup-locked.html .stools
+   select: flex 0 1 auto, max 170px); the extra "Suggest a board" link had squeezed the search
+   box until its placeholder was cut. A narrow window wraps the row instead (the mockup does too). */
+.src-tools .k-select { flex: 0 1 auto; min-width: 0; max-width: 170px; }
+.src-tools .k-select select { width: 100%; min-width: 0; }
+@container kwin (max-width: 1100px) { .src-tools { flex-wrap: wrap; } }
 .src-tools .k-select { flex: 0 1 auto; min-width: 0; max-width: 170px; }
 .src-tools .k-select select { max-width: 100%; }
 
@@ -230,6 +237,10 @@
 .src-bd:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 2px; }
 .src-bd small { display: block; font-weight: 500; color: var(--muted); font-size: 11px; }
 .src-bd.is-no { opacity: .55; cursor: not-allowed; text-decoration: line-through; }
+.src-keypanel { display: flex; flex-direction: column; gap: 10px; padding: 12px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--soft); }
+.src-keypanel[hidden] { display: none; }
+.src-keypanel .src-intro { font-size: 13.5px; }
 .src-indeed { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .src-indeed[hidden] { display: none; }
 .src-indeed label { display: flex; gap: 8px; align-items: center; font-size: 13.5px;
@@ -293,16 +304,56 @@
 .src-page .ke-combo-empty { padding: .5rem .7rem; color: var(--muted); font-size: var(--fs-sm); }
 
 /* --------------------------------------------------------------- the mockup's container steps */
-@container (max-width: 1300px) {
+@container kwin (max-width: 1300px) {
   .src-health { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .src-ring { width: 40px; height: 40px; }
   .src-n { font-size: 22px; }
   .src-row { grid-template-columns: 32px minmax(0, 1fr) 40px 118px 112px 98px 86px; }
   .src-rl { display: none; }
 }
-@container (max-width: 1000px) {
+@container kwin (max-width: 1000px) {
   .src-health { grid-template-columns: minmax(0, 1fr); }
   .src-types { grid-template-columns: minmax(0, 1fr); }
   .src-row { grid-template-columns: 32px minmax(0, 1fr) 40px 118px 86px; }
   .src-rc, .src-spark { display: none; }
+}
+
+/* ---------------------------------------------------- the Add sheet, as sources-mockup-locked.html */
+.src-sheet { width: min(620px, calc(100vw - 32px)); border-radius: 18px; }
+.src-sheet .k-modal__head { padding: 18px 20px 10px; }
+.src-sheet .k-modal__head h2, .src-sheet__head h2 { font-size: 19px; }
+.src-sheet .k-modal__body { padding: 4px 20px 18px; }
+.src-sheet .k-modal__foot { padding: 12px 20px; border-top: 1px solid var(--line); }
+.src-boards { flex-direction: column; flex-wrap: nowrap; gap: 8px; }
+.src-bdg { margin-top: 2px; }
+.src-bdgl { font-size: 11.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 5px; }
+.src-bdrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.src-bd.is-limited { border-style: dashed; }
+.src-bd.is-no { border-style: dashed; }
+.src-plat { transition: background .2s, color .2s, border-color .2s; }
+.src-plat.is-hit { background: var(--good-bg); color: var(--good-ink); border-color: transparent; }
+.src-plat--more { border-style: dashed; color: var(--muted); }
+.src-line--text { display: block; }
+
+/* Good to know: a plus and a minus instead of the browser's triangle (mockup .gtk summary). */
+.src-gtk summary { list-style: none; position: relative; padding-right: 18px; cursor: pointer; }
+.src-gtk summary::-webkit-details-marker { display: none; }
+.src-gtk summary::after { content: "+"; position: absolute; right: 2px; top: 0; font-weight: 800;
+  color: var(--muted); }
+.src-gtk details[open] > summary::after { content: "\2212"; }
+
+/* The help column drops under the list below a 1400px window (mockup .srcg), not 1300. Between
+   1401 and 1520 the list is too narrow for the Checked column: a name would clip, so it waits
+   for room (the mockup's own steps resume below). */
+@container kwin (max-width: 1400px) {
+  .src-page .k-layout { grid-template-columns: minmax(0, 1fr); }
+  .src-page .k-help-col { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container kwin (min-width: 1401px) and (max-width: 1520px) {
+  .src-row { grid-template-columns: 32px minmax(0, 1fr) 40px 118px 112px 98px 86px; }
+  .src-rl { display: none; }
+}
+@container kwin (max-width: 1000px) {
+  .src-page .k-help-col { grid-template-columns: minmax(0, 1fr); }
 }

@@ -143,6 +143,8 @@ class WorkdayAdapter:
             title=_str(item.get("title")),
             org_name=org_name or company,
             location_raw=_str(item.get("locationsText")),
+            # A tenant's remote type ("Remote", "Hybrid", "Flexible"), when it publishes one.
+            remote_hint=_str(info.get("remoteType")) or _str(item.get("remoteType")),
             description_html=_str(info.get("jobDescription")),
             employment_type=_str(info.get("timeType")),
             # `postedOn` is a human string ("Posted Today"); the real date is the detail startDate.

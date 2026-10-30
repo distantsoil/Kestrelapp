@@ -12,11 +12,15 @@
 .pf-wrap .k-scene { margin: 0; padding: 4px 0 10px; }
 
 /* ------------------------------------------------------------------------------------ tabs */
-.pf-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.pf-tabs a { padding: 10px 14px; color: var(--muted); font-weight: 700; text-decoration: none;
-  border-bottom: 3px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.pf-tabs { position: relative; display: flex; gap: 22px; border-bottom: 1px solid var(--line);
+  flex-wrap: wrap; margin-top: -4px; }
+.pf-tabs a { padding: 8px 2px 10px; color: var(--muted); font-weight: 700; font-size: 14.5px;
+  text-decoration: none; position: relative; white-space: nowrap; transition: color var(--dur-1); }
 .pf-tabs a:hover { color: var(--ink); }
-.pf-tabs a.active { color: var(--link-ink); border-bottom-color: var(--brand); }
+.pf-tabs a.active { color: var(--ink); }
+/* The sliding ink under the active tab (KUI.ink draws .k-tabink; profile.js starts it under the
+   tab the person came from, so it slides rather than jumps). */
+.pf-tabs .k-tabink { z-index: 1; }
 .pf-tabs a:focus-visible, .pf-track a:focus-visible, .pf-doccard:focus-visible {
   outline: 2px solid var(--brand); outline-offset: 2px; border-radius: var(--r-xs); }
 .pf-track { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -62,24 +66,50 @@
 .pf-margin { display: flex; flex-direction: column; gap: 6px; margin-top: 16px;
   padding-top: 14px; border-top: 1px solid var(--line); }
 .pf-margin__title { font-weight: 800; }
+.pf-margin__row { display: flex; gap: 12px; align-items: flex-start; }
+.pf-margin__row .pf-hint { display: block; margin-top: 2px; }
+.pf-margin__sw { flex: none; margin-top: 1px; }
+/* The stops fold open under the switch (grid 0fr to 1fr). */
+.pf-margin__fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease; }
+.pf-margin__fold > div { overflow: hidden; min-height: 0; }
+.pf-margin__fold.is-open { grid-template-rows: 1fr; }
+.pf-margin__fold .k-seg { margin: 8px 0 0 52px; }
 .pf-margin .k-seg { align-self: flex-start; max-width: 100%; }
 .pf-margin .k-seg button { white-space: nowrap; padding: 6px 14px; }
 
 /* The Save bar: hidden until a field changes (profile.js sets data-dirty on the form). It stays
    to say Saved or why a save was refused, and pulses when a tab switch is blocked. */
-.pf-savebar { display: none; align-items: center; gap: 10px; position: sticky; bottom: 12px;
-  z-index: 5; padding: 10px 14px; background: var(--paper); border: 1px solid var(--line);
-  border-radius: var(--r-lg); box-shadow: var(--shadow); }
-.pf-form[data-dirty] .pf-savebar, .pf-savebar[data-shown] { display: flex; }
-.pf-savebar__msg { flex: 1; min-width: 0; font-weight: 700; }
+/* The bar sits at the bottom of the window, centred on the page column, as in the mockup, where
+   the column is the whole page. Here the form ends above the page's later cards, so a bar sticky
+   to the form parked mid-page over them (owner report 2026-10-26). At phone width the bottom
+   bar owns the window's foot, so the bar stays sticky to the form there. */
+.pf-savebar { position: fixed; left: var(--side-w); right: 0; margin: 0 auto; width: max-content;
+  max-width: calc(100% - var(--side-w) - 32px); }
+@media (max-width: 1100px) {
+  .pf-savebar { left: var(--side-w-narrow); max-width: calc(100% - var(--side-w-narrow) - 32px); }
+}
+@media (max-width: 700px) {
+  .pf-savebar { position: sticky; left: auto; right: auto; margin: 0; width: auto; max-width: none; }
+}
+.pf-savebar { bottom: 14px; z-index: 30; align-self: center; display: flex;
+  align-items: center; gap: 10px; padding: 9px 10px 9px 16px; background: var(--ink);
+  color: var(--paper); border-radius: 14px; box-shadow: var(--shadow);
+  transform: translateY(140%); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: transform .35s cubic-bezier(.22, .8, .3, 1), opacity .25s, visibility 0s .35s; }
+.pf-form[data-dirty] .pf-savebar, .pf-savebar[data-shown] { transform: none; opacity: 1;
+  visibility: visible; pointer-events: auto; transition: transform .35s cubic-bezier(.22, .8, .3, 1),
+  opacity .25s, visibility 0s; }
+.pf-savebar__msg { flex: 1; min-width: 0; font-weight: 700; padding-right: 8px; }
+.pf-savebar .k-btn { background: transparent; color: var(--paper); border-color: var(--line); }
+.pf-savebar .k-btn:hover { background: transparent; border-color: var(--paper); }
+.pf-savebar .k-btn--primary { background: var(--brand); border-color: var(--brand);
+  color: var(--brand-ink); }
 .pf-saved { color: var(--good-ink); font-weight: 700; }
 .pf-problem { color: var(--bad); font-weight: 700; }
-.pf-savebar.is-nudge { border-color: var(--brand); outline: 2px solid var(--brand); }
+.pf-savebar .pf-saved, .pf-savebar .pf-problem { color: inherit; }
+.pf-savebar.is-nudge { animation: pf-nudge .4s ease; }
 .pf-wizard-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-@media (prefers-reduced-motion: no-preference) {
-  .pf-savebar.is-nudge { animation: pf-nudge .5s ease; }
-}
-@keyframes pf-nudge { 20% { transform: translateX(-4px); } 60% { transform: translateX(4px); } }
+@keyframes pf-nudge { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
 
 /* ------------------------------------------------------------------------------ documents */
 .pf-drow { display: flex; gap: 16px; align-items: center; justify-content: space-between;
@@ -112,18 +142,26 @@
 .pf-preview { min-width: 0; }
 .pf-page { position: relative; width: 100%; overflow: hidden; border: 1px solid var(--line);
   border-radius: var(--r-md); background: var(--soft); padding: 0; }
-.pf-page__scale { width: 816px; transform-origin: top left; box-shadow: var(--shadow); }
+.pf-page__scale { position: relative; width: 816px; transform-origin: top left; box-shadow: var(--shadow); }
 .pf-page .preview-doc { display: block; width: 816px; height: 1056px; border: 0; }
+/* The break between two printed pages: a gap of the viewer's own ground, so the preview reads as
+   the sheets the PDF will have. Positioned by profile.js at each multiple of 1056 px. */
+.pf-page__gap { position: absolute; left: 0; width: 816px; height: 20px; margin-top: -10px;
+  background: var(--soft); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  pointer-events: none; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--muted); }
 #pf-enlarge { --modal-w: 960px; }
 #pf-enlarge .k-modal__body { background: var(--soft); }
 
-/* The mockup stacks these at 1400px and 1300px of content measured from the window edge; this
-   wrapper is about 48px narrower than that measure, so the same windows stack here. */
-@container (max-width: 1350px) {
+/* The mockup's own steps measure the window (.win), so they use the named kwin container:
+   the Documents grid stacks at 1400 and the two-column forms at 1300. */
+/* The mockup stacks at 1400, but beside the 320px help column that leaves the editor about 280px
+   wide at 1440 (roles wrap to three lines), so it stacks at 1600 here. */
+@container kwin (max-width: 1600px) {
   .pf-dgrid { grid-template-columns: minmax(0, 1fr); }
   .pf-dprev { position: static; }
 }
-@container (max-width: 1250px) {
+@container kwin (max-width: 1300px) {
   .pf-cols { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -133,6 +171,31 @@
 .pf-list__row { display: flex; align-items: center; gap: 8px; }
 .pf-list__row b { flex: 1; min-width: 0; }
 #title-suggestions details { margin-top: 4px; }
+
+/* The Suggest titles box (locked mockup, Employment): a button under the title chips that opens
+   the suggestions inside the same card. The row height animates 0fr to 1fr; the panel is
+   hidden from tab order and readers while shut. Reduced motion turns the motion off. */
+.pf-sugg { margin-top: 10px; }
+.pf-sugg > .k-btn { display: inline-flex; align-items: center; gap: 7px; }
+.pf-sugg > .k-btn[aria-expanded="true"] { background: var(--soft); }
+.pf-sugg__panel { display: grid; grid-template-rows: 0fr; visibility: hidden; opacity: 0;
+  transition: grid-template-rows var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease),
+    visibility 0s linear var(--dur-2); }
+.pf-sugg.is-open .pf-sugg__panel { grid-template-rows: 1fr; visibility: visible; opacity: 1;
+  transition-delay: 0s; }
+.pf-sugg__clip { min-height: 0; overflow: hidden; }
+.pf-sugg__box.k-card { margin-top: 10px; background: var(--soft); box-shadow: none;
+  padding: 12px; }
+.pf-sugg__box .k-badge { display: none; }
+.pf-sugg__box .k-sec-head h3 { font-size: 15px; }
+.pf-sugg__box .k-card { background: var(--paper); box-shadow: none; }
+.pf-var { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.pf-var .pf-chips { display: contents; }
+.pf-var__lead { margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .pf-sugg__panel { transition: none; }
+}
+html[data-reduce-motion="1"] .pf-sugg__panel { transition: none; }
 #title-suggestions details > summary { cursor: pointer; }
 .pf-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .pf-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 12px;
@@ -290,16 +353,22 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
 
 /* ----------------------------------------------------------------------- the Look card */
 .pf-look__head { cursor: pointer; }
-.pf-look__head .pf-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
+.pf-look__head .pf-hint { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
 .pf-look__chev { display: inline-flex; color: var(--muted); transition: transform .2s; }
 .pf-look[open] .pf-look__chev { transform: rotate(90deg); }
 .pf-look__body { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .pf-lookrow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
 .pf-lookrow > .pf-f { margin-top: 0; }
 .pf-seg { flex-wrap: nowrap; max-width: 100%; align-self: flex-start; overflow-x: auto; }
-.pf-level { flex-wrap: wrap; max-width: 100%; align-self: flex-start; }
-.pf-level button { white-space: normal; text-align: left; }
+/* Level: the mockup's picker (soft tray, three to a row, the choice raised on paper) over the
+   filter's full ladder, which the owner kept (D-UI-200). */
+.pf-level { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px;
+  padding: 3px; border: 0; border-radius: 11px; background: var(--soft); max-width: 100%; }
+.pf-level button, .pf-level button + button { border: 0; border-radius: 9px; padding: 6px 8px;
+  text-align: center; white-space: normal; line-height: 1.25; color: var(--muted);
+  transition: background .2s, color .2s, box-shadow .2s; }
+.pf-level button:hover { background: color-mix(in srgb, var(--paper) 50%, transparent); }
+.pf-level button.is-on { background: var(--paper); color: var(--brand); box-shadow: var(--shadow-soft); }
 .pf-swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .pf-swatch { position: relative; display: inline-block; width: 28px; height: 28px; padding: 0;
   border-radius: 50%; border: 2px solid var(--paper); box-shadow: 0 0 0 1px var(--line);
@@ -314,17 +383,20 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
 .pf-swatch--custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0;
   cursor: pointer; border: 0; padding: 0; }
 .pf-look__status { min-height: 1.2em; font-size: var(--fs-sm); }
-@container (max-width: 1400px) { .pf-lookrow { grid-template-columns: minmax(0, 1fr); } }
+@container kwin (max-width: 1400px) { .pf-lookrow { grid-template-columns: minmax(0, 1fr); } }
 
 
 /* ------------------------------------------------------------------------- the tabs count */
-.pf-tabs__n { margin-left: 6px; padding: 0 7px; border-radius: 999px; font-size: var(--fs-xs);
-  background: var(--chip-i-bg); color: var(--chip-i-ink); }
+.pf-tabs__n { margin-left: 5px; padding: 1px 7px; border-radius: 9px; font-size: 11px;
+  background: var(--soft); color: var(--brand); }
 
 /* ------------------------------------------------------------ photo and the privacy card */
 .pf-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pf-avwrap { display: flex; align-items: center; gap: 18px; margin: 14px 0 6px; flex-wrap: wrap; }
 .pf-avwrap__side { gap: 8px; min-width: 0; }
+#pf-photo { transition: opacity .25s ease; }
+#pf-photo.htmx-added { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { #pf-photo { transition: none; } }
 .pf-avatar { width: 92px; height: 92px; flex: none; border-radius: 50%; overflow: hidden;
   display: grid; place-items: center; font-size: 34px; font-weight: 800; letter-spacing: .02em;
   background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--brand-ink); }
@@ -341,7 +413,17 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
 .pf-chip--skip { background: var(--bad-bg); border-color: var(--bad-bg); color: var(--bad-ink); }
 .pf-chipadd { flex: 1 1 160px; min-width: 140px; }
 .pf-chipadd input { width: 100%; padding: 5px 12px; border-radius: 999px; }
-.pf-checks--modes { margin-top: 2px; }
+.pf-checks--modes { margin-top: 2px; display: inline-flex; flex-wrap: nowrap; gap: 2px; padding: 3px;
+  background: var(--soft); border-radius: 10px; max-width: 100%; }
+.pf-checks--modes .pf-check { position: relative; margin: 0; padding: 6px 12px; border-radius: 8px;
+  align-items: center; font-weight: 700; white-space: nowrap; color: var(--muted);
+  transition: background .15s, color .15s; }
+.pf-checks--modes .pf-check input { position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; opacity: 0; cursor: pointer; }
+.pf-checks--modes .pf-check:has(input:checked) { background: var(--paper); color: var(--link-ink);
+  box-shadow: var(--shadow-soft); }
+.pf-checks--modes .pf-check:has(input:focus-visible) { outline: 2px solid var(--brand);
+  outline-offset: 2px; }
 
 /* ----------------------------------------------------------------------------- stories */
 .pf-stories { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
@@ -358,3 +440,19 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
 .pf-sp { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .pf-sp i { display: block; font-style: normal; font-size: var(--fs-xs); font-weight: 800;
   letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* ----------------------------------------------------------------------- pay: floor and target */
+.pf-payviz { position: relative; height: 54px; margin: 10px 4px 0; }
+.pf-payviz__bar { position: absolute; left: 0; right: 0; top: 16px; height: 10px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--z1), var(--z2) 45%, var(--z3) 75%); }
+.pf-payviz__tk { position: absolute; top: 8px; width: 3px; height: 26px; border-radius: 2px;
+  background: var(--ink); transform: translateX(-50%); left: 2%;
+  transition: left .4s cubic-bezier(.22, .8, .3, 1); }
+.pf-payviz__lbl { position: absolute; top: 36px; font-size: 11.5px; font-weight: 700;
+  color: var(--muted); transform: translateX(-50%); white-space: nowrap; left: 2%;
+  transition: left .4s cubic-bezier(.22, .8, .3, 1), transform .4s cubic-bezier(.22, .8, .3, 1); }
+.pf-payviz[hidden] { display: none; }
+
+/* After a save the bar says so, without its buttons, then folds away (profile.js); a refused
+   save keeps the bar and its buttons until the person acts (owner round 16). */
+.pf-savebar.is-saved .k-btn { display: none; }

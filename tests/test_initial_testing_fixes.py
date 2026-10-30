@@ -423,4 +423,5 @@ def test_paid_id_outranks_its_free_twin_when_both_are_listed():
 def test_busy_cursor_skips_polled_partials(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     page = _fresh_app().get("/runs").text
-    assert "indexOf('every')" in page and 'hx-trigger="every 5s' in page
+    # Polled and self-loading partials (every, load, revealed, intersect) never show it (D-UI-203).
+    assert "(every|load|revealed|intersect)" in page and 'hx-trigger="every 5s' in page

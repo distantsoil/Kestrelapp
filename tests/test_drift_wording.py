@@ -149,12 +149,12 @@ def test_a9_mock_interview_link_with_a_prep_pack():
 
 
 # -------------------------------------------------------------------------------------- A13
-def test_a13_parked_scoring_chip_reads_failed_scoring_and_opens_needs_another_try():
+def test_a13_parked_scoring_chip_reads_needs_another_try_and_opens_needs_another_try():
     asyncio.run(_pipeline_seed())
     with _pipeline_client() as c:
         page = _pipeline_get(c, "/opportunities")
     chip = re.search(r'<a[^>]*data-chip="failed"[^>]*>.*?</a>', page, re.S)
     assert chip is not None
     label = htmllib.unescape(_visible_text(chip.group(0)))
-    assert "Failed scoring" in label and 'href="/quarantine"' in chip.group(0)
+    assert "Needs another try" in label and 'href="/quarantine"' in chip.group(0)
     assert "Couldn't score" not in page and "Failed scoring (parked)" not in page

@@ -41,7 +41,7 @@ def _stops(form: BeautifulSoup) -> tuple[list[str], str]:
 # ------------------------------------------------------------------------------- the page
 def test_the_page_is_on_the_design_system_with_a_help_column_and_no_legacy_sheet(client):
     html = client.get("/profile?tab=about").text
-    assert '/static/css/kestrel.css"' not in html
+    assert '/static/css/kestrel.css' not in html
     assert "/static/css/pages/profile.css" in html and "/static/js/profile.js" in html
     soup = _soup(html)
     assert soup.select_one(".k-scene h1").get_text(strip=True) == "Profile"
@@ -113,14 +113,16 @@ def test_a_save_without_a_first_name_is_refused_and_a_one_word_name_is_kept(clie
 
 
 # ------------------------------------------------------------------------ near-floor margin
-def test_employment_and_consulting_offer_the_five_stops_defaulting_to_five(client):
+def test_employment_and_consulting_offer_the_switch_and_four_stops_defaulting_to_five(client):
+    """The mockup's switch (D-UI-200): off is Exact, on shows 2, 5, 10 and 15 percent."""
     for tab, field in (("employment", "comp_floor_margin_pct"),
                        ("consulting", "day_rate_floor_margin_pct")):
         form = _soup(client.get(f"/profile?tab={tab}&track={tab}").text).select_one(
             f'[data-testid="profile-{tab}"]')
         labels, value = _stops(form)
-        assert labels == ["Exact", "2%", "5%", "10%", "15%"], tab
+        assert labels == ["2%", "5%", "10%", "15%"], tab
         assert value == "5", tab
+        assert form.select_one(".pf-margin [data-pf-margin-on]").has_attr("checked"), tab
         assert form.select_one(f'.pf-margin input[name="{field}"]') is not None
         assert "% below" in form.select_one('[data-testid="near-floor-hint"]').get_text()
         assert "always kept" in form.select_one('[data-testid="near-floor-hint"]').get_text()
@@ -141,7 +143,7 @@ def test_each_stop_is_stored_and_read_back_on_both_tabs(client, stop, stored):
     assert saved["consulting"]["consulting_terms"]["day_rate_floor_margin_pct"] == stored
     exact = _soup(client.get("/profile?tab=employment&track=employment").text)
     hint = exact.select_one('[data-testid="near-floor-hint"]').get_text(" ", strip=True)
-    assert ("Exact" in hint) == (stored == 0)
+    assert ("Off:" in hint) == (stored == 0)  # the switch is off at Exact (D-UI-200)
 
 
 def test_a_stop_that_is_not_offered_is_refused_and_nothing_is_written(client):

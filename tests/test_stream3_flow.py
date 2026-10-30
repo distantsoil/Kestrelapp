@@ -68,10 +68,11 @@ def test_board_drag_script_binds_once_and_clears_on_dragend():
     with c:
         html = c.get("/pursuits").text
     js = (Path(paths.web_static_dir()) / "js" / "applications.js").read_text(encoding="utf-8")
-    # The script is one external file bound once on the document (a board swap adds nothing).
+    # The script is one external file, bound once on the document by the page's mount through its
+    # lifecycle context (D-UI-210), so a board swap adds nothing and leaving removes it.
     assert html.count("/static/js/applications.js") == 1
-    assert js.count("doc.addEventListener('dragstart'") == 1
-    assert "doc.addEventListener('dragend'" in js
+    assert js.count("ctx.on(doc, 'dragstart'") == 1
+    assert "ctx.on(doc, 'dragend'" in js
     assert "drag.id = drag.col = drag.el = null" in js  # dragend clears the card
     assert "drag.id === null" in js  # a drop with no card in hand is ignored
     card = html.split('data-testid="pcard"')[1].split("</article>")[0]

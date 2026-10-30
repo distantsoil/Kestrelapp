@@ -10,6 +10,7 @@ The frozen-app stdout/stderr repair still lives in the desktop entry point."""
 from __future__ import annotations
 
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 
 import structlog
@@ -17,6 +18,23 @@ import structlog
 from kestrel import paths
 
 _configured = False
+
+# httpx logs every request line at INFO with its full URL. A board that takes its key in the query
+# string (Adzuna's app_id and app_key) would write the key into kestrel.log, so any credential-like
+# query parameter is masked on its way to the file.
+_QUERY_SECRET = re.compile(
+    r"([?&](?:app_id|app_key|api_key|apikey|key|token|access_token)=)[^&\s\"']+", re.IGNORECASE
+)
+
+
+class _MaskQuerySecrets(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "=" in message:
+            masked = _QUERY_SECRET.sub(r"\1***", message)
+            if masked != message:
+                record.msg, record.args = masked, None
+        return True
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -29,6 +47,7 @@ def configure_logging(level: str = "INFO") -> None:
     )
     # The same line prefix the desktop log always had, so stdlib lines keep their time and thread
     # and a structlog event (a JSON object, with its own UTC timestamp) reads in the same stream.
+    handler.addFilter(_MaskQuerySecrets())
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(threadName)s %(message)s"))
     root = logging.getLogger()
     root.setLevel(level.upper())

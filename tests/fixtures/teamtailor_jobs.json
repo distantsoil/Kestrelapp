@@ -1,0 +1,119 @@
+{
+ "version": "https://jsonfeed.org/version/1.1",
+ "title": "Northwind",
+ "home_page_url": "https://careers.northwind.example/jobs",
+ "feed_url": "https://careers.northwind.example/jobs.json",
+ "items": [
+  {
+   "id": "90555eb4-c67c-488b-978d-3efc4c53d2e2",
+   "title": "Strategic Partnerships Manager - Chicago",
+   "url": "https://careers.northwind.example/jobs/8632755-strategic-partnerships-manager-chicago",
+   "date_published": "2026-10-28T18:26:40+01:00",
+   "content_html": "<h4><strong>Join us to shape the future!</strong></h4><p>Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 200,000 users, and available in 90 countries worldwide. 🌍</p>",
+   "_jobposting": {
+    "@context": "http://schema.org/",
+    "@type": "JobPosting",
+    "title": "Strategic Partnerships Manager - Chicago",
+    "description": "<h4><strong>Join us to shape the future!</strong></h4><p>Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 200,000 users, and available in 90 countries worldwide. 🌍</p>",
+    "identifier": {
+     "@type": "PropertyValue",
+     "name": "Northwind",
+     "value": 8632755
+    },
+    "datePosted": "2026-10-28T18:26:40+01:00",
+    "hiringOrganization": {
+     "@type": "Organization",
+     "name": "Northwind",
+     "sameAs": "https://careers.northwind.example"
+    },
+    "jobLocation": [
+     {
+      "@type": "Place",
+      "address": {
+       "@type": "PostalAddress",
+       "streetAddress": "1 Example Street",
+       "addressLocality": "Chicago",
+       "postalCode": "60603",
+       "addressCountry": "US",
+       "addressRegion": "North America"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "10331f7b-0619-462d-a571-d84b19e6da45",
+   "title": "Account Executive - Bogota",
+   "url": "https://careers.northwind.example/jobs/8626868-account-executive-bogota",
+   "date_published": "2026-10-27T19:09:21+01:00",
+   "content_html": "<h4><strong>Join us to shape the future!</strong></h4><p>Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 250,000 users, and available in 90 countries worldwide. 🌍</p><p>Working at <a target=\"_blank\" href=\"https://www.northwind.com/en/\">Northwind</a> means being part of a dynamic, fast-paced tech company that values impact and responsibility. Our workplace fosters an environment where everyone can contribute meaningfully to the growth of the company. 🎉🥳</p>",
+   "_jobposting": {
+    "@context": "http://schema.org/",
+    "@type": "JobPosting",
+    "title": "Account Executive - Bogota",
+    "description": "<h4><strong>Join us to shape the future!</strong></h4><p>Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 250,000 users, and available in 90 countries worldwide. 🌍</p><p>Working at <a target=\"_blank\" href=\"https://www.northwind.com/en/\">Northwind</a> means being part of a dynamic, fast-paced tech company that values impact and responsibility. Our workplace fosters an environment where everyone can contribute meaningfully to the growth of the company. 🎉🥳</p>",
+    "identifier": {
+     "@type": "PropertyValue",
+     "name": "Northwind",
+     "value": 8626868
+    },
+    "datePosted": "2026-10-27T19:09:21+01:00",
+    "hiringOrganization": {
+     "@type": "Organization",
+     "name": "Northwind",
+     "sameAs": "https://careers.northwind.example"
+    },
+    "jobLocation": [
+     {
+      "@type": "Place",
+      "address": {
+       "@type": "PostalAddress",
+       "streetAddress": "1 Example Street",
+       "addressLocality": "Bogotá",
+       "postalCode": "110221",
+       "addressCountry": "CO",
+       "addressRegion": "Latam"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "d093f095-043c-4d36-8f7b-13de98b3eab0",
+   "title": "Senior Revenue Systems Administrator",
+   "url": "https://careers.northwind.example/jobs/8546174-senior-revenue-systems-administrator",
+   "date_published": "2026-10-14T14:53:31+02:00",
+   "content_html": "<h4><strong>Join us to shape the future!</strong></h4><p>Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 250,000 users, and available in 90 countries worldwide. 🌍</p><p>Working at <a target=\"_blank\" href=\"https://www.northwind.com/en/\">Northwind</a> means being part of a dynamic, fast-paced tech company that values impact and responsibility. Our workplace fosters an environment where everyone can contribute meaningfully to the growth of the company. 🎉🥳</p><p></p>",
+   "_jobposting": {
+    "@context": "http://schema.org/",
+    "@type": "JobPosting",
+    "title": "Senior Revenue Systems Administrator",
+    "description": "<h4><strong>Join us to shape the future!</strong></h4><p>Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 250,000 users, and available in 90 countries worldwide. 🌍</p><p>Working at <a target=\"_blank\" href=\"https://www.northwind.com/en/\">Northwind</a> means being part of a dynamic, fast-paced tech company that values impact and responsibility. Our workplace fosters an environment where everyone can contribute meaningfully to the growth of the company. 🎉🥳</p><p></p>",
+    "identifier": {
+     "@type": "PropertyValue",
+     "name": "Northwind",
+     "value": 8546174
+    },
+    "datePosted": "2026-10-14T14:53:31+02:00",
+    "hiringOrganization": {
+     "@type": "Organization",
+     "name": "Northwind",
+     "sameAs": "https://careers.northwind.example"
+    },
+    "jobLocation": [
+     {
+      "@type": "Place",
+      "address": {
+       "@type": "PostalAddress",
+       "streetAddress": "1 Example Street",
+       "addressLocality": "Stockholm",
+       "postalCode": "116 21",
+       "addressCountry": "SE",
+       "addressRegion": "Sweden"
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

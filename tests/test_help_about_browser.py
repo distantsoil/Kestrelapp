@@ -13,7 +13,13 @@ import os
 import pytest
 from playwright.sync_api import expect
 
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -92,11 +98,14 @@ def _check_layout(page, theme, width, *, single_line, groups, main_sel):
     else:
         assert help_col["tp"] >= main["bt"] - 1, (help_col, main)
     scene = page.evaluate(_BOXES, ".k-scene")[0]
-    assert scene["r"] <= max(help_col["r"], main["r"]) + 1 and scene["l"] >= main["l"] - 1
+    # The band runs to the window's right edge (the shell, as the mockups draw it).
+    assert scene["r"] <= page.evaluate("innerWidth") + 1 and scene["l"] >= main["l"] - 1
     title = page.evaluate(_BOXES, ".k-scene__title")[0]
     art = page.evaluate(_BOXES, ".k-scene__art")
     if art:
-        assert title["r"] <= art[0]["l"] + 80, (title, art[0])
+        # The art is decorative and sits behind the band (the shell, as drawn); About's longer
+        # subtitle may run a little under it at 1280.
+        assert title["r"] <= art[0]["l"] + 130, (title, art[0])
     assert not page.query_selector("#announcement-slot")
     assert page.evaluate("[...document.querySelectorAll('link[rel=stylesheet]')]"
                          ".every(l => !l.href.endsWith('/css/kestrel.css'))") is True
@@ -217,11 +226,32 @@ def test_a_link_to_help_lan_opens_the_block_it_names(live):
     ctx = browser.new_context(viewport={"width": 1680, "height": 900})
     page = ctx.new_page()
     try:
+        # The reference blocks are reader articles now; their anchors open them in the flyout.
         page.goto(f"{base}/help#remoterocketship")
-        page.wait_for_selector("#sources[open]")
-        assert page.query_selector("#remoterocketship").is_visible()
+        page.wait_for_selector("#hp-reader.is-open")
+        assert page.inner_text("#hp-reader-t") == "Where opportunities come from"
+        spot = '#hp-reader-body [data-hp-anchor="remoterocketship"]'
+        assert page.query_selector(spot).is_visible()
+        # The reader's copy repeats no id from the article it shows.
+        dupes = page.evaluate(
+            "() => { const seen = {}; const out = [];"
+            " document.querySelectorAll('[id]').forEach(n => {"
+            " if (seen[n.id]) out.push(n.id); seen[n.id] = 1; }); return out; }"
+        )
+        assert dupes == []
+        # Nor does it repeat a data-testid (D-UI-218): the hooks move to data-hp-testid.
+        tdupes = page.evaluate(
+            "() => { const seen = {}; const out = [];"
+            " document.querySelectorAll('[data-testid]').forEach(n => {"
+            " const t = n.getAttribute('data-testid');"
+            " if (seen[t]) out.push(t); seen[t] = 1; }); return out; }"
+        )
+        assert tdupes == []
+        assert page.query_selector('#hp-reader-body [data-hp-testid="hp-sources"]')
+        assert page.query_selector("#hp-reader-body [data-testid]") is None
         page.goto(f"{base}/help#lan")
-        page.wait_for_selector("#lan[open]")
+        page.wait_for_selector("#hp-reader.is-open")
+        assert page.inner_text("#hp-reader-t") == "Kestrel from another device"
         page.goto(f"{base}/help#fix:problem")
         page.wait_for_selector("#hp-reader.is-open")
     finally:
@@ -278,8 +308,118 @@ def test_a_link_to_about_diagnostics_opens_the_toggle_it_names(live):
     ctx = browser.new_context(viewport={"width": 1680, "height": 900})
     page = ctx.new_page()
     try:
+        # Diagnostics live in the Something wrong? flyout; the anchor opens it.
         page.goto(f"{base}/about#diagnostics")
-        page.wait_for_selector("#diagnostics[open]")
+        page.wait_for_selector("#ab-fly-wrong.is-open")
         assert page.query_selector("#diagnostics a, #diagnostics button").is_visible()
+    finally:
+        ctx.close()
+
+
+# Counts the calls a page makes into the shared overlay and toast helpers, so a doubled listener
+# (two sets of handlers answering one click) shows as 2 where one set shows 1.
+_COUNT_CALLS_JS = """names => { window.__calls = {};
+  for (const n of names) { window.__calls[n] = 0; const o = KUI[n];
+    KUI[n] = function () { window.__calls[n]++; return o.apply(this, arguments); }; } }"""
+
+
+def test_help_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
+    """The page lifecycle (D-UI-210): Help unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves nothing behind; afterwards one click opens
+    one article (a doubled listener opens it twice), search and the hash still work, and
+    unmounting with an article open closes the reader."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/help")
+        page.wait_for_selector("h1")
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "help", "help.js", settle_ms=400, quiet_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0
+        page.evaluate(_COUNT_CALLS_JS, ["openFlyout"])
+        page.click('[data-help-article="models:grey"]')
+        page.wait_for_selector("#hp-reader.is-open")
+        assert page.evaluate("window.__calls.openFlyout") == 1
+        page.keyboard.press("Escape")
+        page.wait_for_function("!document.querySelector('#hp-reader').classList.contains('is-open')")
+        # The search and the topic chips run off the second mount's state, not the first's.
+        page.fill("#hp-q", "zzzz-no-such-thing")
+        page.wait_for_selector("#hp-none", state="visible")
+        page.fill("#hp-q", "")
+        page.click('#hp-chips [data-topic="privacy"]')
+        assert len([e for e in page.query_selector_all(".hp-topic") if e.is_visible()]) == 1
+        page.click('#hp-chips [data-topic="all"]')
+        # A hash change opens its article once, and only while the page is mounted.
+        page.evaluate("window.__calls.openFlyout = 0")
+        page.evaluate("location.hash = '#lan'")
+        page.wait_for_selector("#hp-reader.is-open")
+        assert page.inner_text("#hp-reader-t") == "Kestrel from another device"
+        assert page.evaluate("window.__calls.openFlyout") == 1
+        # Leaving with the reader open closes it, and nothing the page started answers afterwards.
+        page.evaluate("KUI.page.unmount()")
+        assert not page.query_selector("#hp-reader.is-open")
+        page.evaluate("window.__calls.openFlyout = 0")
+        page.evaluate("location.hash = '#sources'")
+        page.click('[data-help-article="models:grey"]')
+        page.wait_for_timeout(300)
+        assert page.evaluate("window.__calls.openFlyout") == 0
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_about_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
+    """The page lifecycle (D-UI-210): About unmounted and mounted again in place leaves no
+    listener, timer or fetch behind; afterwards three taps on the mark do not release the kestrel
+    (a doubled listener counts each tap twice and does), five do, with one toast. A tap timer
+    pending at unmount is cleared, and a notices fetch cut off by it is finished on the next
+    mount."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/about")
+        page.wait_for_selector("h1")
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "about", "about.js", settle_ms=400, quiet_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0
+        page.evaluate(_COUNT_CALLS_JS, ["toast"])
+        for _ in range(3):
+            page.click("#ab-mark")
+        assert not page.query_selector("#ab-glider.is-go")
+        assert page.evaluate("window.__calls.toast") == 0
+        # The pending tap timer (the count resets after 1.5 s) goes with the page.
+        assert page.evaluate("KUI.page._stats().timers") == 1
+        page.evaluate("KUI.page.unmount()")
+        assert page.evaluate("window.__kTimers.pending('/static/js/about.js')") == 0
+        page.click("#ab-mark")  # unmounted: nothing answers
+        assert page.evaluate("KUI.page._stats()")["listeners"] == 0
+        assert page.evaluate("KUI.page.mount()") is True
+        for _ in range(5):
+            page.click("#ab-mark")
+        page.wait_for_selector("#ab-glider.is-go", state="attached")
+        assert page.evaluate("window.__calls.toast") == 1
+        # Leaving while the notices load drops the answer; the next mount loads them.
+        page.evaluate("""async () => {
+          const d = document.getElementById('ab-notices');
+          const toggled = new Promise(r => d.addEventListener('toggle', r, { once: true }));
+          d.open = true;
+          await toggled;
+          KUI.page.unmount();
+        }""")
+        page.wait_for_timeout(400)
+        assert page.inner_text("#ab-notes-text") == "Loading…"
+        assert page.get_attribute("#ab-notices", "data-loaded") is None
+        assert page.evaluate("KUI.page.mount()") is True
+        page.wait_for_function("document.querySelector('#ab-notes-text').textContent.length > 200")
+        assert page.get_attribute("#ab-notices", "data-loaded") == "1"
+        assert not errors, errors
     finally:
         ctx.close()

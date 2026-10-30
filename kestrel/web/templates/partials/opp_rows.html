@@ -32,11 +32,29 @@
   {%- else -%}
   {{ total_open }} open{% if f.hidden_only %} · showing hidden{% endif %}
   {%- if being_scored %} · {{ being_scored }} still being scored{% endif %}
-  {%- if scoring_failed %} · <a href="/quarantine" data-testid="failed-link">{{ scoring_failed }} failed scoring</a>{% endif %}
+  {%- if scoring_failed %} · <a href="/quarantine" data-testid="failed-link">{{ scoring_failed }} {{ 'needs' if scoring_failed == 1 else 'need' }} another try</a>{% endif %}
   {%- endif -%}
 {%- endmacro %}
 
+{% macro nf_section() -%}
+  {# Not a fit (D-UI-62): its own section below the groups, never inside their paging. The count
+     and the note cover the whole filter set; Show loads its rows with their own paging. When
+     nothing else matches, its first page is already open. #}
+  {% if not_fit.count %}
+  <section class="pl-nf" data-group="not_fit" id="not-fit" data-testid="not-fit-section">
+    <div class="pl-nf__head">
+      <div class="pl-nf__txt"><b>Not a fit · {{ not_fit.count }}</b>
+        <div class="pl-nf__note" data-testid="not-fit-note">{{ not_fit.note }} Not counted in the groups. <a href="/profile">Review your rules</a></div></div>
+      {% if not not_fit.page %}<button class="k-btn k-btn--sm" type="button" id="not-fit-show" data-testid="not-fit-show"
+        hx-get="/opportunities/not-fit?{{ query|urlencode }}" hx-target="#not-fit-rows" hx-swap="outerHTML">Show</button>{% endif %}
+    </div>
+    {% if not_fit.page %}{{ notfit_rows(not_fit.page) }}{% else %}<div id="not-fit-rows"></div>{% endif %}
+  </section>
+  {% endif %}
+{%- endmacro %}
+
 {% if notfit_only %}{{ notfit_rows(nf, append) }}{% else %}
+{% set nfs = namespace(done=false) %}
 {% set swap = 'hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true"' %}
 {# Parameters that have a visible input in More filters ride in the form as inputs; the rest are
    carried as hidden fields so an older bookmarked URL keeps filtering. #}
@@ -113,7 +131,7 @@
           {{ chip('New today', 'new_today', '1', f.new_today, counts.new_today) }}
           {{ chip('Saved', 'saved', '1', f.saved, counts.saved) }}
           {# Failed scoring opens Needs another try: the same roles, the same count. #}
-          <a class="k-chip" href="/quarantine" data-chip="failed" data-testid="chip-failed">Failed scoring<span class="k-chip__n">{{ counts.failed }}</span></a>
+          <a class="k-chip" href="/quarantine" data-chip="failed" data-testid="chip-failed">Needs another try<span class="k-chip__n">{{ counts.failed }}</span></a>
           {{ chip('Hidden', 'hidden', '1', f.hidden_only, testid='hidden') }}
         {% endif %}
         {% set more_on = f.score_min is not none or f.pay or f.work_type or f.posted_days or f.org or f.source or f.warnings or f.liveness or f.legitimacy %}
@@ -204,6 +222,7 @@
   {% else %}
 
   {% for g in groups %}
+    {% if g.key in ('new', 'failed') and not nfs.done %}{{ nf_section() }}{% set nfs.done = true %}{% endif %}
     <section class="pl-group" data-group="{{ g.key }}"{% if g.key == 'failed' %} id="scoring-failed"{% endif %}>
       <div class="pl-gh"><span>{{ g.label }} · {{ g.count }}{% if g.key == 'new' and running %} <span class="k-dot k-dot--live" title="A run is active" data-testid="being-scored-ring"></span>{% endif %}</span><span>{{ sort_note }}</span></div>
       {% if g.key == 'new' and background %}
@@ -211,9 +230,9 @@
         <div class="pl-explain" data-testid="background-note">
           <span>
           {%- if background_hosted -%}
-            {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'is' if background == 1 else 'are' }} waiting. Scoring is on an online model: choose Score everything now on <a href="/sources">Sources</a>.
+            {{ background }} {{ 'role' if background == 1 else 'roles' }} from earlier runs {{ 'is' if background == 1 else 'are' }} waiting. These roles use local models only. Review the backlog on <a href="/sources">Sources</a>.
           {%- else -%}
-            {{ background }} {{ 'role' if background == 1 else 'roles' }} from company boards {{ 'scores' if background == 1 else 'score' }} when Kestrel is idle. <a href="/sources">Score {{ 'it' if background == 1 else 'them' }} now</a>
+            {{ background }} {{ 'role' if background == 1 else 'roles' }} from earlier runs will be rechecked before local scoring when Kestrel is idle. <a href="/sources">Review waiting roles</a>
           {%- endif -%}
           </span>
         </div>
@@ -251,20 +270,7 @@
     {% endif %}
   {% endfor %}
 
-  {# Not a fit (D-UI-62): its own section below the groups, never inside their paging. The count
-     and the note cover the whole filter set; Show loads its rows with their own paging. When
-     nothing else matches, its first page is already open. #}
-  {% if not_fit.count %}
-  <section class="pl-nf" data-group="not_fit" id="not-fit" data-testid="not-fit-section">
-    <div class="pl-nf__head">
-      <div class="pl-nf__txt"><b>Not a fit · {{ not_fit.count }}</b>
-        <div class="pl-nf__note" data-testid="not-fit-note">{{ not_fit.note }} Not counted in the groups above. <a href="/profile">Review your rules</a></div></div>
-      {% if not not_fit.page %}<button class="k-btn k-btn--sm" type="button" id="not-fit-show" data-testid="not-fit-show"
-        hx-get="/opportunities/not-fit?{{ query|urlencode }}" hx-target="#not-fit-rows" hx-swap="outerHTML">Show</button>{% endif %}
-    </div>
-    {% if not_fit.page %}{{ notfit_rows(not_fit.page) }}{% else %}<div id="not-fit-rows"></div>{% endif %}
-  </section>
-  {% endif %}
+  {% if not nfs.done %}{{ nf_section() }}{% endif %}
   {% endif %}
 </div>
 {% endif %}

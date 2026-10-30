@@ -53,7 +53,7 @@ DEFAULT_MARGIN = 5
 
 # The help column on every step (what this is, why it matters, what happens next): each card is
 # (title, accent, icon, short lines, flyout paragraphs). Plain words, from the locked mockup.
-_CARD_META = (("What this is", "info", "info"), ("Why it matters", "warn", "compass"),
+_CARD_META = (("What this is", "info", "info"), ("Why it matters", "warn", "target"),
               ("What happens next", "good", "arrow"))
 _HELP_RAW: dict[str, list[tuple[list[str], list[tuple[str, str]]]]] = {
     "welcome": [
@@ -862,7 +862,8 @@ async def onboarding_save_wants(request: Request):
     pstate = pe.load_state()
     titles = _chip_lines(form, "target_titles")
     places = _chip_lines(form, "onsite_metros")
-    remote = _on(form, "remote_ok")
+    # Choosing Remote as a work style implies remote roles are included.
+    remote = _on(form, "remote_ok") or _on(form, "mode_remote")
     problem: str | None = None
     if "employment" in tracks and not titles:
         problem = "Add a job title first."
@@ -935,6 +936,10 @@ def _save_wants(
     for track in tracks:
         existing = _terms(pstate, track, "geo_rules")
         posted = {"onsite_metros": "\n".join(places)}
+        # Hybrid as a work style implies hybrid roles must be in a listed metro. The wizard has
+        # no control to untick it, so nothing here overrides an explicit choice.
+        if _on(form, "mode_hybrid") and "hybrid_requires_metro" not in form:
+            posted["hybrid_requires_metro"] = "on"
         if remote:
             posted["remote_ok"] = "on"
             if not existing.get("remote_country_allowlist"):
@@ -993,10 +998,13 @@ async def onboarding_connect(request: Request):
             allow_training="on" in form.getlist("allow_training"),
             profile=_active_profile_name(),
         )
+    # A refused Connect redraws the step with what was ticked still ticked, so the operator
+    # fixes the one thing named instead of meeting a form that looks untouched.
+    ticked = {k: "on" in form.getlist(k) for k in ("ack", "free_only", "allow_training")}
     return _render_step(
         request,
         await _ctx(request, "models", connect_result=out, connect_ok=out.ok,
-                   connect_provider=provider),
+                   connect_provider=provider, connect_form=ticked),
     )
 
 

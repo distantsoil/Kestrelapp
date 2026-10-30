@@ -589,7 +589,7 @@ def test_quarantine_is_stated_apart_from_pending_work():
                                   error="finish_reason: length")]))
     now = _now()
     assert now["state"] == "scoring" and now["quarantined"] == 2
-    assert now["quarantine"] == ("2 postings failed scoring. The model ran out of room. "
+    assert now["quarantine"] == ("2 postings need another try. The model ran out of room. "
                                  "Retry them, or pick another model on Models.")
     with _client() as c:
         page = c.get("/").text
@@ -710,6 +710,9 @@ def test_toast_markup_is_a_link_with_a_warning_tone_and_stays_announced():
     assert '<a data-toast-text data-testid="toast-link"></a>' in html
     assert "'/opportunities?new_today=1'" in html and "sticky: true" in html
     style = html.split("<style>")[1].split("</style>")[0]
-    assert '#kestrel-toast[data-tone="warn"] { border-left-color: var(--warn); }' in style
+    # The mockup's toast look (a filled chip at the bottom); the warning tone fills amber.
+    warn = ('#kestrel-toast[data-tone="warn"] '
+            '{ background: var(--warn-bg); color: var(--warn-ink); }')
+    assert warn in style
     # Marked seen only when shown, as before.
     assert html.index("setSeen(ev);\n        var n") > html.index("Marked seen only when shown")

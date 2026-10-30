@@ -1,7 +1,7 @@
 {# The Settings answer to Check now (D-UPD-3, restyled D-UI-152). Kestrel only says a version
    exists and where to get it; there is no self-update. #}
 {% if outcome == 'available' %}
-<div class="sf-notice" role="status" data-testid="update-result"><link rel="stylesheet" href="/static/css/pages/surfaces.css"><span class="sf-msg">Kestrel {{ version }} is available. <a class="sf-a" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co</a>
+<div class="sf-notice" role="status" data-testid="update-result"><link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}"><span class="sf-msg">Kestrel {{ version }} is available. <a class="sf-a" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co</a>
   <a class="sf-a" href="#" hx-get="/updates/details" hx-target="#update-modal"
           hx-swap="innerHTML">What's new</a></span></div>
 {% elif outcome == 'current' %}

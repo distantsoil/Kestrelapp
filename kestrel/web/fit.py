@@ -79,6 +79,24 @@ def failure_words(error: str | None) -> str:
 # The scoring thresholds are apply at 4.0 and consider at 3.0 (kestrel/pipeline/scoring.py), so
 # "good fit" is an apply at the threshold and "strong fit" is well above it.
 STRONG_FLOOR = 4.5
+# The consider and apply thresholds (Settings > Scoring; config.Thresholds). A disagreement that
+# stays on one side of both is not a call the operator has to make. load_settings_with_db keeps
+# these in step with the operator's settings; the shipped defaults stand until then.
+LINES = {"consider": 3.0, "apply": 4.0}
+
+
+def set_lines(consider: float, apply: float) -> None:
+    LINES["consider"], LINES["apply"] = float(consider), float(apply)
+
+
+def score_pair(evaluation: Any) -> tuple[float, float] | None:
+    """(model score, weighted score), one standing in for the other when it is missing (the
+    lists' SQL does the same), or None when neither exists."""
+    model, weighted = _get(evaluation, "score"), _get(evaluation, "weighted_score")
+    if model is None and weighted is None:
+        return None
+    return (model if model is not None else weighted,
+            weighted if weighted is not None else model)
 
 # What an operator's fit word means to the learning loop: the stored verdict and the score the
 # reranker trains on. `pursue` is the consulting-track spelling of `apply`.
@@ -259,6 +277,18 @@ def fit_for(
         return Fit(NOT_FIT, GROUP_NOT_FIT, _TONE[NOT_FIT], None, "quick screen")
     if verdict in ("apply", "pursue", "consider", "pass") and tier != 1:
         if needs_review:
+            # "Your call" only when the two scores land on different sides of a line that matters
+            # (owner round 14: a 1.0 against a 1.8 read as a maybe). Both below the consider line
+            # is not a fit; both at the apply line or above is a good or strong fit.
+            # A verdict forced to pass (a blocker, a likely fake posting) never reads as a fit,
+            # whatever the scores (round 14 review).
+            pair = score_pair(evaluation)
+            if pair is not None and max(pair) < LINES["consider"]:
+                return Fit(NOT_FIT, GROUP_NOT_FIT, _TONE[NOT_FIT], score, "")
+            if (pair is not None and min(pair) >= LINES["apply"]
+                    and verdict in ("apply", "pursue")):
+                word = STRONG if min(pair) >= STRONG_FLOOR else GOOD
+                return Fit(word, GROUP_WORTH, _TONE[word], score, "")
             return Fit(YOUR_CALL, GROUP_WORTH, _TONE[YOUR_CALL], score, "model and score disagree")
         if verdict in ("apply", "pursue"):
             word = STRONG if (score is not None and score >= STRONG_FLOOR) else GOOD

@@ -65,6 +65,8 @@ def message_for(key: str, value: Any) -> str:
         return f"Text size set to {_TEXT_SIZE.get(value, value)}."
     if key == "ui.reduce_motion":
         return "Motion reduced." if value else "Motion back on."
+    if key == "ui.classic_nav":
+        return "Pages now load the classic way." if value else "Pages now change in place."
     if key == "notify.sound":
         return "Sounds are on." if value else "Sounds are off."
     if key == "notify.sound_name":

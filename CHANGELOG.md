@@ -4,8 +4,36 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- USAJobs, a free source of US government jobs: tick it when adding a job board search, paste your own free USAJobs key and email, and Kestrel searches the official listings. It sends USAJobs only your search words, place, key and email.
+- Adzuna, a job search board with your own free keys, and two remote job boards that need none: Himalayas and We Work Remotely. Tick them when adding a job board search. Adzuna sends only the start of each description, so those roles say so. Ticking two boards at once and pressing Undo now removes both.
+- Any careers page, not only the named systems. Paste a link and Kestrel reads the job data the page publishes for search engines (schema.org JobPosting), including pages that only link to their job pages (up to 25 a run). A page that builds its list with JavaScript is told plainly instead of showing zero. A link to a hiring system Kestrel already reads still uses that reader.
+- More company job boards: Recruitee, Teamtailor, Personio and Breezy HR. Kestrel follows it from your searches like the others, and a careers page on the company's own domain is recognized too. A Teamtailor site that has switched its job feed off is reported plainly instead of failing. Personio roles with no description in its feed get theirs from the job page, within a per-run cap, as Breezy HR roles do from their posting pages.
+
+## [0.7.0] - 2026-10-26
+
+The redesign: every screen now matches the locked mockups (D-UI-187).
+
+### Added
+
+- A frameless window with minimize, maximize and close in the sidebar (macOS keeps its own
+  buttons), a thin themed frame you can resize from, double-click to maximize, and a window that
+  reopens at the size and place you left it.
+- A loading screen at start, "Updating your data" after an update, a clear "Kestrel couldn't
+  start" card with Try again, and a "Closing Kestrel" screen when you quit.
+- A command palette (Ctrl K, or Cmd K on a Mac) for roles, companies, settings and actions.
+- Gentle motion on page changes, tabs, folds, saves and presses; your system's reduce-motion
+  setting turns it off.
+
 ### Changed
 
+- The sidebar, the top row (which now scrolls with the page), the scene art and the background
+  follow the mockups in light and dark, and layouts fit the window instead of stacking early.
+- A requirement your profile does not show is "Partly met" and listed under Gaps, never counted
+  in your favor; reasons are plain sentences.
+- Pipeline lists scored roles first; one role found on several boards shows once.
+- Messages point at the current Settings sections (Privacy and access, Your data).
 - The About page and README credit MiniMax M3 (formerly listed under its stealth name, Space Bunny) and add Kimi K2.7 and MiMo: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, MiniMax M3, LongCat, Kimi K2.7 and MiMo.
 
 ## [0.6.5] - 2026-10-23

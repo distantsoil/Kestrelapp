@@ -107,7 +107,7 @@ def test_a_failed_role_says_why_and_a_removed_one_says_it_was_removed():
     assert "removed from Needs another try" in e
     assert 'href="/quarantine" data-testid="removed-undo">Undo in Needs another try</a>' in e
     assert "Scoring failed ·" not in html and "Being scored · 2" in html
-    assert "Failed scoring" in html and 'data-testid="failed-open"' not in html
+    assert "Needs another try" in html and 'data-testid="failed-open"' not in html
     assert quiet == 200 and "You removed this role from Needs another try" in panel
     assert 'href="/quarantine"' in panel and "Scoring failed" not in panel
 
@@ -806,8 +806,8 @@ def test_the_pipeline_sheet_and_templates_obey_the_rules():
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", css)
     assert "@media (prefers-reduced-motion" in css and "@container" in css
     page = (root / "templates/opportunities.html").read_text(encoding="utf-8")
-    assert "/static/css/pages/pipeline.css" in page and "/static/js/pipeline.js" in page
-    assert "static/css/shell.css" in page and "kestrel.css" not in page  # no legacy sheet
+    assert "static_url('css/pages/pipeline.css')" in page and "static_url('js/pipeline.js')" in page
+    assert "css/shell.css" in page and "kestrel.css" not in page  # no legacy sheet
     for name in ("opportunities.html", "partials/opp_rows.html", "partials/pl_row.html",
                  "partials/pl_panel.html", "partials/pl_views.html"):
         text = (root / "templates" / name).read_text(encoding="utf-8")
@@ -821,9 +821,9 @@ def test_the_old_panel_markup_is_gone_from_the_page_and_the_new_one_is_wired():
     with T._client() as c:
         html = c.get("/opportunities").text
     assert 'id="drawer"' not in html and 'x-data="pipeline()"' not in html
-    assert 'id="pl-panel"' in html and 'src="/static/js/pipeline.js"' in html
-    assert 'href="/static/css/pages/pipeline.css"' in html
-    assert 'href="/static/css/kestrel.css"' not in html
+    assert 'id="pl-panel"' in html and 'src="/static/js/pipeline.js?v=' in html
+    assert 'href="/static/css/pages/pipeline.css?v=' in html
+    assert '/static/css/kestrel.css' not in html
     assert c.get("/static/css/pages/pipeline.css").status_code == 200
 
 

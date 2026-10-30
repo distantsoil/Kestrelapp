@@ -14,7 +14,13 @@ from pathlib import Path
 import pytest
 
 from tests import prep_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -160,6 +166,9 @@ def test_the_sheet_the_swap_menu_and_the_preview_open_centered(live):
     page.keyboard.press("Escape")
     page.click('[data-testid="pp-have-story"]')
     page.wait_for_selector("#pp-story-sheet.is-open")
+    # Measured once its opening motion is over. wait_for_layout flushes style first, so a
+    # transition that has not started yet (a loaded machine) is not mistaken for a finished one.
+    wait_for_layout(page)
     box = page.eval_on_selector("#pp-story-sheet", "e => e.getBoundingClientRect().toJSON()")
     assert abs((box["top"] + box["bottom"]) / 2 - 450) < 12  # vertically centered
     _shot(page, "sheet")
@@ -185,3 +194,61 @@ def test_the_practice_tab_keeps_its_place_when_a_mode_is_picked(live):
     page.click('[data-testid="pp-mode-technical_leadership"]')
     assert page.input_value("#pp-mode") == "technical_leadership"
     page.close()
+
+
+def test_a_sheet_opened_during_the_page_arrival_opens_in_the_window(live):
+    """2026-10-29: a section still playing its staggered arrival (a transform) became the
+    containing block of the fixed sheet inside it, which opened below the window. Opening an
+    overlay now finishes those arrivals first."""
+    base, browser, ids = live
+    opp = ids["Larkspur Logistics"]["opp"]
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(f"{base}/prep/{opp}")
+    page.wait_for_selector("#pp-layout")
+    page.click('[data-testid="pp-have-story"]')  # straight away, during the arrival
+    page.wait_for_selector("#pp-story-sheet.is-open")
+    top = page.eval_on_selector("#pp-story-sheet", "e => e.getBoundingClientRect().top")
+    assert 0 <= top < 900, top
+    page.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live):
+    """The page lifecycle (D-UI-210): Prep unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves no timer running in between. After it, one
+    click on a story chip opens the story and leaves it open (a doubled listener opens and shuts
+    it in the same click), a sheet's scale timers run and stop with the page, and an unmounted
+    page no longer answers the chip."""
+    base, browser, ids = live
+    opp = ids["Larkspur Logistics"]["opp"]
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/prep/{opp}")
+        page.wait_for_selector("#pp-layout")
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "prep", "prep.js", settle_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0, first
+        page.click("[data-pp-open]")
+        assert page.is_visible(".pp-star")
+        page.click("[data-pp-open]")
+        assert page.is_hidden(".pp-star")
+        page.click('[data-testid="pp-swap"]')
+        assert page.is_visible(".pp-menuwrap .pp-menu")
+        page.keyboard.press("Escape")
+        assert page.is_hidden(".pp-menuwrap .pp-menu")
+        # A sheet opens through the swap handler, whose scale timers belong to the page.
+        page.click('[data-testid="pp-have-story"]')
+        page.wait_for_selector("#pp-story-sheet.is-open")
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#pp-story-sheet", state="hidden")
+        page.wait_for_timeout(600)
+        assert page.evaluate("KUI.page._stats().timers") == 0
+        page.evaluate("KUI.page.unmount()")
+        page.click("[data-pp-open]")
+        assert page.is_hidden(".pp-star")
+        assert errors == []
+    finally:
+        ctx.close()

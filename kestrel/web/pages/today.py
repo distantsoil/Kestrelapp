@@ -111,7 +111,7 @@ def found_line(matches: dict, consulting: bool, panel: dict) -> str:
     found = int(matches["found"])
     noun = ("opportunity" if found == 1 else "opportunities") if consulting else (
         "role" if found == 1 else "roles")
-    if matches["cards"]:
+    if matches["cards"] or matches.get("pending", 0):
         return f"{found} new {noun} found today"
     if found:
         return "All caught up"
@@ -309,7 +309,7 @@ async def today_matches(request: Request):
 
 
 @router.get("/today/matches/new")
-async def today_matches_new(request: Request, have: str = ""):
+async def today_matches_new(request: Request, have: str = "", pending: str = ""):
     """Cards the page does not have yet (a role finished rating during a scan), each with the
     card it sits before, as rendered HTML. The page opens a gap at that position, so the view
     does not jump (live updates, D-UI-156)."""
@@ -317,9 +317,10 @@ async def today_matches_new(request: Request, have: str = ""):
 
     track = _track_param(request)
     ids = {int(x) for x in have.split(",") if x.strip().isdigit()}
+    waiting = {int(x) for x in pending.split(",") if x.strip().isdigit()}
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
-        data = await tv.cards_after(s, track, ids, settings)
+        data = await tv.cards_after(s, track, ids, settings, pending=waiting)
         panel = await run_panel(s, track, settings)
         matches = await tv.top_matches(s, track, settings=settings)
     tpl = templates().get_template("partials/td_card.html")
@@ -332,7 +333,12 @@ async def today_matches_new(request: Request, have: str = ""):
                  "html": tpl.module.card(n["card"], track == "consulting")}
                 for n in data["new"]
             ],
+            "done": [
+                {"id": c["id"], "html": tpl.module.card(c, track == "consulting")}
+                for c in data["done"]
+            ],
             "ids": data["ids"],
+            "pending": matches["pending"],
             "found_line": found_line(matches, track == "consulting", panel),
         }
     )

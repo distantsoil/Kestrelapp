@@ -772,17 +772,26 @@ def test_a_removed_role_leaves_pipelines_scoring_failed_count(seeded):
     before = client.get("/opportunities").text
     # The header and the Failed scoring chip carry the number Needs another try shows (7 roles
     # waiting); the Scoring failed group lists the four that are parked with no score.
-    assert "7 failed scoring" in before and "Scoring failed · 4" in before
-    assert re.search(r'data-chip="failed"[^>]*>Failed scoring<span class="k-chip__n">7<', before)
+    assert "7 need another try" in before and "Scoring failed · 4" in before
+    assert re.search(r'data-chip="failed"[^>]*>Needs another try<span class="k-chip__n">7<', before)
     assert "7 roles waiting" in client.get("/quarantine").text
     qid = ids["Operations Analyst"]["q"]
     removed = client.post(f"/quarantine/{qid}/remove")
     after = client.get("/opportunities").text
-    assert "6 failed scoring" in after and "Scoring failed · 3" in after
-    assert re.search(r'data-chip="failed"[^>]*>Failed scoring<span class="k-chip__n">6<', after)
+    assert "6 need another try" in after and "Scoring failed · 3" in after
+    assert re.search(r'data-chip="failed"[^>]*>Needs another try<span class="k-chip__n">6<', after)
     assert "6 roles waiting" in client.get("/quarantine").text
     client.post(_events(removed)["k-toast"]["undoUrl"])
-    assert "7 failed scoring" in client.get("/opportunities").text
+    assert "7 need another try" in client.get("/opportunities").text
+
+
+def test_the_total_reads_need_another_try_beside_the_stage_group_scoring_failed(seeded):
+    """D-UI-70: the header total (every open failure) says "need another try"; the Pipeline
+    group is the stage-based subset and keeps "Scoring failed". Both are right, side by side."""
+    client, _ids = seeded
+    html = client.get("/opportunities").text
+    assert "7 need another try" in html and "Scoring failed · 4" in html
+    assert "failed scoring</a>" not in html
 
 
 def test_today_rows_show_the_time_of_day_and_older_ones_the_day():

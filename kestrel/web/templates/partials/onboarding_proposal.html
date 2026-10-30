@@ -87,7 +87,7 @@
     <div class="ob-ck" data-testid="import-current-employer" x-data="{ current: false }">
       <label class="ob-check"><input type="checkbox" name="current_employer" value="on" x-model="current">
         <span><b>Mark {{ current_offer.company }} as my current employer</b>
-        <span class="ob-dsm">Confidential mode (Settings, Core) shows this in its place. You can change it later under Edit role details.</span></span></label>
+        <span class="ob-dsm">Confidential mode (Settings > Privacy and access) shows this in its place. You can change it later under Edit role details.</span></span></label>
       <label class="ob-f" x-show="current">Shown as
         <input class="k-input" type="text" name="current_employer_as" value="{{ current_offer.hint }}" maxlength="200" aria-label="Show your current employer as"></label>
     </div>

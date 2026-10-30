@@ -83,13 +83,13 @@ def fit_with_you(rows: list[ModelRow], tier: int | None, model: str, better: boo
     mine = [r for r in rows if r.tier == tier and r.model == model]
     n = max((r.n_labeled for r in mine), default=0)
     if n < MIN_N:
-        return Fit(f"Too few ratings yet ({n})", "muted", n)
+        return Fit(f"Too few ratings ({n})", "muted", n)
     best = max((r for r in mine if r.agreement_rate is not None),
                key=lambda r: r.agreement_rate or 0, default=None)
     if better:
         return Fit(f"Better match available ({n})", "info", n)
     if best is None or best.agreement_rate is None:
-        return Fit(f"Too few ratings yet ({n})", "muted", n)
+        return Fit(f"Too few ratings ({n})", "muted", n)
     pct = round(best.agreement_rate * 100)
     return Fit(f"{'Good' if pct >= 70 else 'Fair'} match, {pct}% of {n}",
                "good" if pct >= 70 else "warn", n)

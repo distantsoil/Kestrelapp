@@ -2,9 +2,15 @@
    A tab swaps this whole body; the cards inside it change on their own (pp_parts.html). #}
 {% import "ui/macros.html" as ui %}
 {% import "partials/pp_icons.html" as i %}
+<div class="pp-shell">
+{#- The tabs and the four readiness tiles span the full width; the help column starts level with
+    the first content cards below them (prep-mockup-locked.html, .ready outside .pgrid). #}
+{#- The tabs always stay, with or without a role (owner, 2026-10-30, D-UI-221): a tab with no
+    role to show says so under them, and the way back to the story bank is never gone. #}
+{%- include "partials/pp_tabs.html" %}
+{%- if tab == 'pack' and opp is not none and has_pack %}{% include "partials/pp_ready.html" %}{% endif %}
 <div class="k-layout" id="pp-layout" data-tab="{{ tab }}" data-opp="{{ opp_id or '' }}" data-testid="pp-layout">
   <div class="k-layout__main">
-    {%- if opp is not none or tab == 'bank' %}{% include "partials/pp_tabs.html" %}{% endif %}
     <div class="pp-pane" id="pp-pane" data-tab="{{ tab }}">
       {%- if opp is none and tab != 'bank' %}
         {%- if opp_id is none and not roles %}
@@ -40,6 +46,7 @@
     {%- endif %}
   {% endcall %}
   {%- endif %}
+</div>
 </div>
 {# The flyouts belong to the body, so a tab brings its own. #}
 {% call ui.flyout('pp-how-fly', 'How ' ~ page_title ~ ' works', help_href='/help') %}

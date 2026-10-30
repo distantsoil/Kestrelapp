@@ -6,11 +6,13 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}Analytics · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/analytics.css">
-<script src="/static/js/analytics.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/analytics.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): analytics.js defines the page "analytics"; base.html mounts it. #}
+{% block page_name %}analytics{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/analytics.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="an-wrap"><div class="an-page">
   {% call ui.scene_band('Analytics', sub=('Is your search working?' if track == 'employment' else 'Is consulting outreach working?')) %}{% endcall %}

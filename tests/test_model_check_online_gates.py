@@ -404,19 +404,19 @@ def test_the_card_holds_the_advanced_section_and_has_no_inline_styles():
 def test_the_instructions_choice_reads_not_recorded_and_a_previous_pick_is_refused():
     client = _approved_app()
     page = client.get("/bench").text
-    assert 'name="instructions"' in page and "The version before it (Not recorded)" in page
+    assert 'name="instructions"' in page and "The version before it (not available yet)" in page
     r = client.post("/bench/run", data={"tier": "tier2", "model": "gemma3:12b",
                                         "instructions": "previous"})
     assert "no earlier version of its instructions" in r.text and _tasks() == []
 
 
-def test_scoring_quality_says_not_recorded_for_the_two_counters_without_data():
+def test_scoring_quality_says_not_recorded_for_the_counter_without_data():
     client = _fresh_app()
     page = client.get("/models").text
-    assert "Fixed after one retry" in page and "Interview questions predicted" in page
+    assert "Fixed after one retry" in page
     card = page.split('<section class="k-card mo-card" id="mo-quality"')[1]
     quality = card.split("</section>")[0]
-    assert quality.count("Not recorded") == 2
+    assert quality.count("Not recorded") == 1  # the mockup drops the interview-questions row
 
 
 def test_the_apply_box_uses_the_disclosure_words():

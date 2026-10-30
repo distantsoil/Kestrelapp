@@ -5,11 +5,13 @@
 {% import "partials/pursuit_icons.html" as ic %}
 {% block title %}{{ page_label }} · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/applications.css">
-<script src="/static/js/applications.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/applications.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): applications.js defines the page "applications"; base.html mounts it. #}
+{% block page_name %}applications{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/applications.js') }}" defer></script>{% endblock %}
 {% block content %}
 {% set wide = track == 'consulting' %}
 <div class="ap-page" id="apps-page" data-testid="pursuit-filter-scope" data-track="{{ track }}"

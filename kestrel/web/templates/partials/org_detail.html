@@ -22,7 +22,7 @@
     <div class="k-layout__main co-body" id="co-body">
 
       {# ------------------------------------------------------------------ open roles #}
-      <section class="k-card" id="co-roles" data-testid="co-roles">
+      <section class="k-card co-edge" id="co-roles" data-testid="co-roles">
         <header class="k-sec-head"><span class="k-badge">{{ ui.icon('apps') }}</span>
           <div class="k-grow"><h3>Roles here <span class="co-count">{{ roles|length }}</span></h3><p>Your open roles from this company</p></div></header>
         {% for r in roles %}
@@ -79,6 +79,7 @@
           <div><div class="co-dl">Middle half of roles</div><b>{{ pay.middle }}</b></div>
           <div><div class="co-dl">Lowest to highest</div><b>{{ pay.spread }}</b></div>
         </div>
+        <div class="co-pt" aria-hidden="true" style="left:{{ [[pay.bar.typical, 12]|max, 88]|min }}%">Typical {{ pay.typical }}</div>
         <div class="co-bar" role="img" aria-label="Typical pay {{ pay.typical }}, middle half {{ pay.middle }}">
           <i class="co-bar__w" style="left:{{ pay.bar.lo }}%;width:{{ pay.bar.spanw }}%"></i>
           <i class="co-bar__m" style="left:{{ pay.bar.q1 }}%;width:{{ pay.bar.q3w }}%"></i>

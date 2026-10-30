@@ -30,6 +30,7 @@ OWNED_KEYS: dict[str, Callable[[Any], Any]] = {
     "ui.avatar": u.avatar,
     "ui.text_size": u.text_size,
     "ui.reduce_motion": u.flag,
+    "ui.classic_nav": u.flag,
     "notify.sound": u.flag,
     "notify.sound_name": u.sound_name,
     "notify.sound_volume": u.sound_volume,

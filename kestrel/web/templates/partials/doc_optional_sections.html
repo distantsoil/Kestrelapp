@@ -8,7 +8,7 @@
   {% if optional_note %}<p class="tree-note" role="status">{{ optional_note }}</p>{% endif %}
   {% if optional_error %}<div class="warnbox" role="alert">{{ optional_error }}</div>{% endif %}
   {% for k in optional_kinds %}
-  <details class="section optional-kind" data-kind="{{ k.kind }}" {% if optional_open == k.kind %}open{% endif %}>
+  <details data-k-fold class="section optional-kind" data-kind="{{ k.kind }}" {% if optional_open == k.kind %}open{% endif %}>
     <summary class="role-head">
       <span class="role-name">{{ k.heading }}</span>
       <span class="muted role-count">{% if k.entries %}{{ k.entries | length }} entr{{ "y" if k.entries | length == 1 else "ies" }}{% else %}empty, not shown{% endif %}</span>

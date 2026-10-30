@@ -428,7 +428,7 @@ class Server(BaseModel):
 
 class Ingest(BaseModel):
     # Descriptive User-Agent with a contact address (mandatory for SEC EDGAR; polite everywhere).
-    user_agent: str = "Kestrel/1.0 (+https://github.com/kestrel-app; contact: operator@example.com)"
+    user_agent: str = "Kestrel/1.0 (+https://kestrelapp.co)"
     default_rate_per_sec: float = 2.0
     workday_rate_per_sec: float = 1.0
     sec_rate_per_sec: float = 10.0
@@ -500,6 +500,11 @@ class UI(BaseModel):
         str, BeforeValidator(ui_settings.lenient(ui_settings.text_size, "default"))
     ] = "default"
     reduce_motion: Annotated[
+        bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, False))
+    ] = False
+    # Classic page loads (D-UI-220): a new document for every page change instead of the
+    # in-place swap. A fallback, off by default.
+    classic_nav: Annotated[
         bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, False))
     ] = False
 
@@ -580,9 +585,6 @@ class Settings(BaseSettings):
     # writes it (its sibling is nested as `settings.consulting.max_trigger_age_days`).
     max_posting_age_days: int = 45
     confidential_mode: bool = False
-    # Ignored: superseded by updates.feed_url. Old feeds were a different format, so this value
-    # is deliberately not migrated.
-    update_check_url: str | None = None
     log_level: str = "INFO"
 
     @classmethod

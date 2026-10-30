@@ -42,7 +42,7 @@
   <div class="rn-feedrow">
     <div class="rn-feedwrap"><div class="rn-eyebrow">Latest</div>
       <ul class="rn-feed" data-feed data-testid="run-events">
-        {% for e in events %}<li class="is-{{ e.tone }}" data-k="{{ e.key }}"><span class="rn-feed__at">{{ e.hhmm or '' }}</span><span>{{ e.text }}</span></li>{% else %}<li class="is-idle" data-k="none"><span class="rn-feed__at"></span><span>Nothing has happened yet.</span></li>{% endfor %}
+        {% for e in events[:6] %}<li class="is-{{ e.tone }}" data-k="{{ e.key }}"><span class="rn-feed__at">{{ e.hhmm or '' }}</span><span>{{ e.text }}</span></li>{% else %}<li class="is-idle" data-k="none"><span class="rn-feed__at"></span><span>Nothing has happened yet.</span></li>{% endfor %}
       </ul></div>
     <div class="rn-alive{{ ' is-stale' if v.stalled }}" data-live="alive" data-testid="{{ 'run-stall' if v.stalled else 'run-activity' }}">
       {% if state == 'paused' %}Paused by you
@@ -61,10 +61,10 @@
     {% if v.run_id %}<button type="button" class="k-btn k-btn--sm" data-k-slideover="#rn-drawer" hx-get="/runs/{{ v.run_id }}/drawer" hx-target="#rn-drawer-body" hx-swap="innerHTML" data-testid="rn-view-run">View run details</button>{% endif %}
   </div>
   <div class="rn-tiles">
-    <div class="rn-tile"><span class="k-badge">{{ ui.icon('scan') }}</span><div><b>{{ v.found_new }}</b><span>found</span></div></div>
+    <div class="rn-tile"><span class="k-badge">{{ ui.icon('search') }}</span><div><b>{{ v.found_new }}</b><span>found</span></div></div>
     <div class="rn-tile"><span class="k-badge k-badge--good">{{ ui.icon('star') }}</span><div><b>{{ v.rated }}</b><span>rated</span></div></div>
     <div class="rn-tile"><span class="k-badge {{ 'k-badge--bad' if v.failed else 'k-badge--muted' }}">{{ ui.icon('alert') }}</span><div><b>{{ v.failed }}</b><span>failed</span></div></div>
-    <div class="rn-tile"><span class="k-badge {{ 'k-badge--warn' if waiting_total else 'k-badge--muted' }}">{{ ui.icon('clock') }}</span><div><b>{{ waiting_total }}</b><span>needs another try</span></div></div>
+    <div class="rn-tile"><span class="k-badge {{ 'k-badge--warn' if waiting_total else 'k-badge--muted' }}">{{ ui.icon('clock') }}</span><div><b>{{ waiting_total }}</b><span>waiting for another try</span></div></div>
   </div>
   <div class="rn-minis{{ ' rn-minis--4' if model.online }}">
     <div class="rn-mini"><span class="k-badge">{{ ui.icon('clock') }}</span><div><span class="rn-mini__k">Duration</span><b>{{ row.duration if row and row.duration else 'n/a' }}</b></div></div>

@@ -14,9 +14,11 @@
   {% endfor %}
 </ol>
 {% if history.more %}
-<div class="rn-tlfoot"><button type="button" class="k-btn k-btn--sm" hx-get="/runs/history?all=1" hx-target="#runs-tl" hx-swap="innerHTML" data-testid="rn-more">Show {{ history.more }} more</button><span class="k-muted">Every run is in the Analytics export.</span></div>
+<div class="rn-tlfoot"><button type="button" class="k-btn k-btn--sm" hx-get="/runs/history?all=1" hx-target="#runs-tl" hx-swap="innerHTML" data-testid="rn-more">Show {{ history.more }} more</button><span class="k-muted">Every past run is included when you export from Analytics.</span></div>
 {% elif history.all and history.total > 10 %}
-<div class="rn-tlfoot"><button type="button" class="k-btn k-btn--sm" hx-get="/runs/history" hx-target="#runs-tl" hx-swap="innerHTML">Show fewer</button></div>
+<div class="rn-tlfoot"><button type="button" class="k-btn k-btn--sm" hx-get="/runs/history" hx-target="#runs-tl" hx-swap="innerHTML">Show fewer</button><span class="k-muted">Every past run is included when you export from Analytics.</span></div>
+{% elif history.rows %}
+<div class="rn-tlfoot"><span class="k-muted">Every past run is included when you export from Analytics.</span></div>
 {% endif %}
 {% else %}
 <p class="k-muted rn-empty">No runs yet. The first one appears here when it finishes.</p>

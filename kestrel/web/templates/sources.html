@@ -6,11 +6,13 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}Sources · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/sources.css">
-<script src="/static/js/sources.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/sources.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): sources.js defines the page "sources"; base.html mounts it. #}
+{% block page_name %}sources{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/sources.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="src-wrap"><div class="src-page" data-track="{{ track }}">
   {% call ui.scene_band('Sources') %}
@@ -22,23 +24,23 @@
       {% include "partials/sources_panel.html" %}
     </div>
     {% call ui.help_column() %}
-      {{ ui.help_card('How sources work', ['Kestrel checks each source on a schedule and adds what it finds to Pipeline.', 'It reads public pages only and never signs in.', 'It goes slowly so sites stay happy.'], 'info', 'sources', 'src-how-fly') }}
-      <article class="k-hcard k-hcard--good" data-testid="origin-card">
-        <div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('restore') }}</span><h3>Where sources come from</h3></div>
+      {{ ui.help_card('How sources work', ['Kestrel checks each source on a schedule and adds what it finds to Pipeline.', 'It reads public pages only and never signs in.', 'It goes slowly so sites stay happy.'], 'info', 'sources', 'src-how-fly', plain=True) }}
+      <article class="k-hcard k-hcard--good k-hcard--plain" data-testid="origin-card">
+        <div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('scan') }}</span><h3>Where sources come from</h3></div>
         <div class="src-orig">
           {%- for k, o in origins.items() %}<div><span class="src-tag src-tag--{{ k }}">{{ o[0] }}</span><span>{{ o[1] }}</span></div>{% endfor -%}
         </div>
         {{ ui.flyout_trigger('src-origin-fly') }}
       </article>
-      {{ ui.help_card('What to add', (['Companies you would like to work with: watch their filings and news.', 'One search per kind of work beats one big search.'] if track == 'consulting' else ['Companies you would like to work for: paste their careers page link, or add them by name.', 'One search per job title works better than one big search.']) + ['LinkedIn is not searched. Paste a LinkedIn posting into ' ~ ('Leads' if track == 'consulting' else 'Applications') ~ ' instead.'], 'warn', 'help', 'src-add-fly') }}
-      <article class="k-hcard k-hcard--info" data-testid="good-to-know">
+      {{ ui.help_card('What to add', (['Companies you would like to work with: watch their filings and news.', 'One search per kind of work beats one big search.'] if track == 'consulting' else ['Companies you would like to work for: paste their careers page link, or add them by name.', 'One search per job title works better than one big search.']) + ['LinkedIn is not searched. Paste a LinkedIn posting into ' ~ ('Leads' if track == 'consulting' else 'Applications') ~ ' instead.'], 'warn', 'help', 'src-add-fly', plain=True) }}
+      <article class="k-hcard k-hcard--info k-hcard--plain" data-testid="good-to-know">
         <div class="k-hcard__head"><span class="k-badge k-badge--muted">{{ ui.icon('alert') }}</span><h3>Good to know</h3></div>
         <div class="src-gtk">
           <details><summary>Why some sources can’t be added</summary><ul><li>LinkedIn does not allow automated access, so Kestrel does not search it.</li><li>Sites that need you to sign in.</li><li>Pages that build their job list in the browser.</li></ul></details>
-          <details><summary>Why some come back empty</summary><ul><li>ZipRecruiter blocks automated searches.</li><li>Google Jobs returns nothing right now.</li><li>Dice has no public feed Kestrel can read yet.</li><li>Boards stop near 1,000 results. Split a broad search by place or title.</li><li>{{ us_note }}</li></ul></details>
+          <details><summary>Why some come back empty</summary><ul><li>ZipRecruiter blocks automated searches.</li><li>Google Jobs returns nothing right now.</li><li>Boards stop near 1,000 results. Split a broad search by place or title.</li></ul></details>
           <details><summary>What the colors mean</summary><div class="src-legend">
             <div><span class="k-pill k-pill--good"><span class="k-dot"></span>Healthy</span><span>Working normally.</span></div>
-            <div><span class="k-pill k-pill--warn"><span class="k-dot k-dot--warn"></span>Slowed down</span><span>The site asked Kestrel to wait. It retries next check.</span></div>
+            <div><span class="k-pill k-pill--warn"><span class="k-dot k-dot--warn"></span>Slowed down</span><span>The site asked Kestrel to wait. It retries next run.</span></div>
             <div><span class="k-pill k-pill--bad"><span class="k-dot k-dot--bad"></span>Needs you</span><span>The address moved or was removed.</span></div>
             <div><span class="k-pill"><span class="k-dot k-dot--idle"></span>Paused</span><span>Off by your choice. Nothing is deleted.</span></div>
           </div></details>
@@ -65,7 +67,7 @@
   {% call ui.flyout('src-origin-fly', 'Where sources come from', help_href='/help#sources') %}
     <h4>From your profile</h4>
     <p>Kestrel rebuilds these every time you save your profile, from your target titles and places, and also searches close variants of each title. Edit one and it becomes your own: it stops following your profile.</p>
-    <h4>Found by Kestrel</h4>
+    <h4>Found in results</h4>
     <p>When a search result links to a company’s own job board, on a hiring system Kestrel can read, Kestrel adds that board and checks it daily. At most {{ found_cap }} per track. Turn one off and it stays off: Kestrel never adds it again.</p>
     <h4>Suggested</h4>
     <p>Suggestions come from companies where you shortlisted or applied. Dismiss one and Kestrel stops suggesting it. Add one and it is marked Suggested.</p>

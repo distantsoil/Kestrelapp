@@ -11,7 +11,7 @@
       <button type="button" class="k-link" hx-get="/calibrate/card" hx-vals='{{ {"since": since, "skip": skip}|tojson }}' hx-target="#cal-card" hx-swap="outerHTML" data-testid="cal-revisit-cancel">Cancel</button></div>
     {% endif %}
     <header class="cal-qhead">
-      <span class="cal-mono" aria-hidden="true">{{ ((card.org or opp.title or '?')[:1])|upper }}</span>
+      <span class="cal-mono cal-mono--{{ ((card.org or '')|length) % 4 }}" aria-hidden="true">{{ ((card.org or opp.title or '?')[:1])|upper }}</span>
       <div class="cal-qtitle">
         <h2>{{ opp.title or '(untitled)' }}</h2>
         <div class="cal-sm cal-dsm">{{ card.org }}{% if card.org %} · {% endif %}{{ card.place }} · {{ card.pay }}</div>
@@ -36,7 +36,7 @@
         </div>
       </div>
     </div>
-    <form id="cal-form" class="cal-act" hx-post="/calibrate/rate" hx-target="#cal-card" hx-swap="outerHTML" hx-disabled-elt="#cal-save, #cal-skip" data-previous="{{ card.previous or '' }}">
+    <form id="cal-form" class="cal-act" hx-post="/calibrate/rate" hx-target="#cal-card" hx-swap="outerHTML swap:300ms" hx-disabled-elt="#cal-save, #cal-skip" data-previous="{{ card.previous or '' }}">
       <input type="hidden" name="opportunity_id" value="{{ opp.id }}">
       <input type="hidden" name="score" value="{{ card.previous or '' }}">
       <input type="hidden" name="since" value="{{ since }}">
@@ -51,10 +51,10 @@
       </div>
       <button type="button" class="k-btn k-btn--sm" id="cal-whybtn" aria-expanded="false" aria-controls="cal-why-panel" data-testid="cal-tell"{% if not card.previous %} hidden{% endif %}>Tell Kestrel why <kbd class="cal-kbd">O</kbd></button>
       <span class="cal-grow"></span>
-      {% if not revisit %}<button type="button" class="k-btn k-btn--sm" id="cal-skip" hx-post="/calibrate/skip" hx-target="#cal-card" hx-swap="outerHTML" data-testid="cal-skip">Skip <kbd class="cal-kbd">S</kbd></button>{% endif %}
-      <button type="submit" class="k-btn k-btn--primary k-btn--sm" id="cal-save" data-testid="cal-save"{% if not card.previous %} disabled{% endif %}><span id="cal-savel">Save</span> <kbd class="cal-kbd cal-kbd--on">Enter</kbd></button>
-      <div class="cal-whypanel" id="cal-why-panel" hidden>
-        <div id="cal-why-body" class="cal-whybody">{% if card.previous %}{% include "partials/calibrate_why_body.html" %}{% endif %}</div>
+      {% if not revisit %}<button type="button" class="k-btn k-btn--sm" id="cal-skip" hx-post="/calibrate/skip" hx-target="#cal-card" hx-swap="outerHTML swap:300ms" data-testid="cal-skip">Skip <kbd class="cal-kbd">S</kbd></button>{% endif %}
+      <button type="submit" class="k-btn k-btn--primary k-btn--sm" id="cal-save" data-testid="cal-save"{% if not card.previous %} disabled{% endif %}><span id="cal-savel">Save, nothing to add</span> <kbd class="cal-kbd cal-kbd--on">Enter</kbd></button>
+      <div class="cal-whypanel" id="cal-why-panel" aria-hidden="true">
+        <div><div id="cal-why-body" class="cal-whybody">{% if card.previous %}{% include "partials/calibrate_why_body.html" %}{% endif %}</div></div>
       </div>
     </form>
   </section>

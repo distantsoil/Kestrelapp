@@ -7,7 +7,7 @@
     {% set is_role = node.section.section_kind == "role" %}
     {# Roles render collapsed (operator feedback): company · title · dates and the bullet count.
        The role just added to or edited (open_section) stays open. #}
-    <details class="section" id="role-{{ node.section.id }}" {% if open_section and open_section == node.section.id %}open{% endif %}
+    <details data-k-fold class="section" id="role-{{ node.section.id }}" {% if open_section and open_section == node.section.id %}open{% endif %}
              data-section-kind="{{ node.section.section_kind }}" data-section-id="{{ node.section.id }}">
       <summary class="role-head">
         {%- set head = [] -%}
@@ -73,7 +73,7 @@
   {% if not tree %}<p class="muted">This document has no roles yet. Add one below.</p>{% endif %}
 
   {% if selected %}
-  <details class="add-role panel" data-testid="add-role">
+  <details data-k-fold class="add-role panel" data-testid="add-role">
     <summary><b>Add a role</b></summary>
     <form hx-post="/documents/{{ selected.id }}/roles" hx-target="#tree" hx-swap="innerHTML"
           class="formgrid section-form">

@@ -2,7 +2,7 @@
    time the new version opens. Release notes are escaped HTML. "Got it" dismisses it for good.
    Styles: static/css/pages/surfaces.css. #}
 {% from "ui/macros.html" import icon %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <dialog class="sf-dialog" data-testid="whats-new-card" aria-labelledby="whats-new-title">
   <div class="sf-form">
     <div class="sf-head">

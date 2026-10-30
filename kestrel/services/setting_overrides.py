@@ -137,7 +137,12 @@ async def load_settings_with_db(
     """Full precedence: setting-table row > env > YAML > default. `mode` ("local" or "hosted")
     overrides the stored `llm.mode` for the returned object; an explicit "hosted" that cannot run
     raises config.HostedModeError with the reason."""
-    return config_mod.load_settings(db_overrides=await db_override_dict(session), mode=mode)
+    settings = config_mod.load_settings(db_overrides=await db_override_dict(session), mode=mode)
+    # The fit words' Your call lines follow the operator's thresholds (round 14 review).
+    from kestrel.web.fit import set_lines
+
+    set_lines(settings.thresholds.consider, settings.thresholds.apply)
+    return settings
 
 
 async def queue_run_mode(

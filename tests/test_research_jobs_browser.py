@@ -49,7 +49,7 @@ def test_queue_progress_cancel_and_reload_fit(live, theme, width):
         page.wait_for_function(
             "document.querySelectorAll('[data-testid=research-cancel]').length === 1"
         )
-        assert "Cancelled." in page.get_by_test_id("research-jobs").inner_text()
+        assert "Canceled." in page.get_by_test_id("research-jobs").inner_text()
         page.get_by_test_id("research-cancel").click()
         page.wait_for_function(
             "document.querySelectorAll('[data-testid=research-cancel]').length === 0"

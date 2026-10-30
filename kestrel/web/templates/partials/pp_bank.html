@@ -10,8 +10,8 @@
       <button type="button" class="k-btn k-btn--primary k-btn--sm" hx-get="/stories/sheet?from=bank{% if opp_id %}&opp={{ opp_id }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="add-story">+ Add a story</button>
       <form hx-post="/stories/build" hx-swap="none">
       {{ online_ask.ask(build_route, 'build', 'build drafts') }}
-      <button type="submit" class="k-btn k-btn--sm" {% if building %}disabled{% endif %} data-testid="build-stories"><b>Build stories</b>
-        <span class="pp-btnsub" data-testid="build-reads">Builds drafts from your notes on {{ notes_count }} {{ 'role' if notes_count == 1 else 'roles' }} and the interview questions Kestrel drafted when it scored each role.</span></button>
+      <button type="submit" class="k-btn k-btn--sm" {% if building %}disabled{% endif %} data-testid="build-stories"><b>Build stories</b></button>
+      <span class="pp-btnsub" data-testid="build-reads">Builds drafts from your notes on {{ notes_count }} {{ 'role' if notes_count == 1 else 'roles' }} and the interview questions Kestrel drafted when it scored each role.</span>
       </form>
     </div>
     <p class="k-muted pp-status" data-testid="build-status">

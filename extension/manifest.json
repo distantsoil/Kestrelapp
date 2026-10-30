@@ -15,7 +15,7 @@
       "matches": [
         "*://*.greenhouse.io/*", "*://boards.greenhouse.io/*", "*://*.lever.co/*",
         "*://*.ashbyhq.com/*", "*://*.myworkdayjobs.com/*", "*://*.smartrecruiters.com/*",
-        "*://*.linkedin.com/jobs/*", "*://*.indeed.com/*"
+        "*://*.indeed.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

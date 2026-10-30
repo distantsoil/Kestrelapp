@@ -3,11 +3,13 @@
 {% extends "base.html" %}
 {% import "ui/macros.html" as ui %}
 {% block title %}{{ title }} · Kestrel{% endblock %}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/company.css">
-<script src="/static/js/company.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/company.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): company.js defines the page "company"; base.html mounts it. #}
+{% block page_name %}company{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/company.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="co-wrap">
 {% if not found %}

@@ -126,11 +126,25 @@ def test_entry_point_with_no_arguments_opens_the_desktop(monkeypatch):
     monkeypatch.setattr("kestrel.cli.app", lambda **kw: calls.append("cli"))
     monkeypatch.setattr("kestrel.desktop.shell.run_desktop", lambda: calls.append("desktop") or 0)
 
+    def _end(code: int) -> None:  # the real one ends the process at once (os._exit)
+        raise SystemExit(code)
+
+    monkeypatch.setattr(entry, "end_process", _end)
     monkeypatch.setattr(sys, "argv", ["Kestrel"])
     with pytest.raises(SystemExit) as exc:
         entry.main()
     assert exc.value.code == 0
     assert calls == ["desktop"]
+
+
+def test_end_process_flushes_logs_then_exits_at_once(monkeypatch):
+    from kestrel.desktop import __main__ as entry
+
+    seen: list = []
+    monkeypatch.setattr("logging.shutdown", lambda: seen.append("logs"))
+    monkeypatch.setattr("os._exit", lambda code: seen.append(("exit", code)))
+    entry.end_process(3)
+    assert seen == ["logs", ("exit", 3)]
 
 
 def test_entry_point_ignores_the_finder_process_serial_number():
@@ -791,3 +805,45 @@ def test_every_app_shortcut_carries_the_desktop_app_identity():
     assert len(lines) == 3
     for ln in lines:
         assert f'AppUserModelID: "{APP_USER_MODEL_ID}"' in ln, ln
+
+
+def test_iss_refreshes_shortcuts_and_the_notification_identity():
+    """Round 4: a toast showed the pre-upgrade orange mark. Every install and upgrade deletes and
+    rewrites the shortcuts with the AUMID and the exe's icon, writes the notification identity
+    key (removed on uninstall), and tells Explorer that icons changed."""
+    from kestrel.desktop import shell
+
+    iss = ISS.read_text(encoding="utf-8")
+    shortcuts = [
+        line for line in iss.splitlines() if line.startswith("Name:") and "Kestrel.exe" in line
+    ]
+    assert len(shortcuts) == 3
+    for line in shortcuts:
+        assert f'AppUserModelID: "{shell.APP_USER_MODEL_ID}"' in line
+        assert 'IconFilename: "{app}\\Kestrel.exe"' in line
+    deletes = iss[iss.index("[InstallDelete]") : iss.index("[Icons]")]
+    for where in ("{group}", "{autodesktop}", "{userstartup}"):
+        assert f'Name: "{where}\\Kestrel.lnk"' in deletes
+    registry = iss[iss.index("[Registry]") : iss.index("[Run]")]
+    key = f'Subkey: "{shell.AUMID_KEY}"'
+    values = [line for line in registry.splitlines() if line.startswith("Root:")]
+    assert len(values) == 2
+    for line in values:
+        assert "Root: HKCU" in line and key in line and "uninsdeletekey" in line
+    assert 'ValueName: "DisplayName"; ValueData: "Kestrel"' in registry
+    # The installed .ico is the shipped package-data copy, at its one-folder path.
+    assert "{app}\\_internal\\kestrel\\resources\\icons\\kestrel.ico" in registry
+    code = iss[iss.index("[Code]") :]
+    assert "SHChangeNotify@shell32.dll stdcall" in code
+    assert "SHCNE_ASSOCCHANGED = $08000000" in code
+    assert "ssPostInstall" in code
+    assert code.count("SHChangeNotify(SHCNE_ASSOCCHANGED") == 2  # install and uninstall
+
+
+def test_the_shipped_app_icon_is_the_installer_icon():
+    """The notification IconUri points at package data; it must be the same indigo mark as the
+    installer and exe icon (scripts/make_icons.py writes both)."""
+    from kestrel import paths
+
+    with paths.resource_path(paths.packaged_app_icon()) as shipped:
+        assert shipped.read_bytes() == (PACKAGING / "kestrel.ico").read_bytes()

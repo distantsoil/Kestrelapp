@@ -46,10 +46,15 @@ PLATFORMS = {
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby", "workday": "Workday",
     "smartrecruiters": "SmartRecruiters", "rippling": "Rippling", "adp": "ADP",
     "paylocity": "Paylocity", "workable": "Workable",
+    "teamtailor": "Teamtailor",
+    "personio": "Personio",
+    "breezy": "Breezy HR",
+    "recruitee": "Recruitee",
 }
 _SIGNAL_TYPE = {
     "sec_edgar": "SEC filings", "sam_gov": "SAM.gov", "pe_portfolio": "PE portfolio page",
-    "remoterocketship": "RemoteRocketship",
+    "remoterocketship": "RemoteRocketship", "usajobs": "USAJobs", "adzuna": "Adzuna",
+    "himalayas": "Himalayas", "weworkremotely": "We Work Remotely",
 }
 
 # Where a source came from (Source.origin). `suggested` is a company the operator added from
@@ -57,7 +62,7 @@ _SIGNAL_TYPE = {
 ORIGINS: dict[str, tuple[str, str]] = {
     "built": ("Built in", "Comes with Kestrel."),
     "profile": ("From your profile", "Searches built from your titles and places."),
-    "found": ("Found by Kestrel", "Company job boards linked from search results."),
+    "found": ("Found in results", "Company job boards linked from search results."),
     "sug": ("Suggested", "Companies you chose to add from suggestions."),
     "you": ("Added by you", "Anything you add, by link or by name."),
 }
@@ -79,10 +84,25 @@ def is_removed(src: Source) -> bool:
     return bool((src.config or {}).get(REMOVED_KEY))
 
 
+BOARD_KINDS = ("jobspy", "remoterocketship", "usajobs", "adzuna", "himalayas", "weworkremotely")
+KEYED_BOARDS = ("usajobs", "adzuna")  # boards that need a key of the user's own
+
+
+def _key_problem(kind: str, error: str) -> bool:
+    """True when a keyed board's run error is its missing-key or rejected-key sentence."""
+    if kind == "adzuna":
+        from kestrel.ingest.adapters.adzuna import is_key_problem
+    else:
+        from kestrel.ingest.adapters.usajobs import is_key_problem
+    return is_key_problem(error)
+
+
 def group_of(src: Source) -> str:
-    if src.kind in PLATFORMS or src.kind in ("page", "import", "manual"):
+    if src.kind in PLATFORMS or src.kind in (
+        "page", "careers_page", "import", "manual"
+    ):
         return ATS
-    if src.kind in ("jobspy", "remoterocketship"):
+    if src.kind in BOARD_KINDS:
         return BOARDS
     if src.kind == "sam_gov":
         return GOV
@@ -109,7 +129,8 @@ def type_label(src: Source) -> str:
         return "Company news" if src.track == "consulting" else "Feed"
     if src.kind in PLATFORMS:
         return PLATFORMS[src.kind]
-    return _SIGNAL_TYPE.get(src.kind, "Careers page" if src.kind == "page" else src.kind)
+    own = "Careers page" if src.kind in ("page", "careers_page") else src.kind
+    return _SIGNAL_TYPE.get(src.kind, own)
 
 
 def run_char(run: ScrapeRun) -> str:
@@ -173,6 +194,9 @@ def _health(src: Source, runs: list[ScrapeRun], sites: list[dict] | None) -> tup
     if latest is None and not src.consecutive_failures:
         return "n", "", ""
     err = (latest.error if latest is not None else "") or ""
+    if src.kind in KEYED_BOARDS and latest is not None and latest.status != "ok":
+        if _key_problem(src.kind, err):  # no key yet, or the board refused it: say so, plainly
+            return "b", err.split(": ", 1)[-1].rstrip(".") + ".", err
     if latest is not None and latest.status != "ok" and _RATE.search(err):
         return "w", SLOWED_REASON, err
     if src.consecutive_failures or (latest is not None and latest.status == "failed"):
@@ -210,6 +234,8 @@ def build_view(
     detail = summary or ""
     if not detail and src.kind == "jobspy":
         detail = str((src.config or {}).get("search_term") or "").strip('"')
+    if not detail and src.kind in ("usajobs", "adzuna", "himalayas"):
+        detail = str((src.config or {}).get("keyword") or "").strip('"')
     if src.kind in PLATFORMS and src.name:
         detail = ""
     chars = [run_char(r) for r in reversed(done[:10])]

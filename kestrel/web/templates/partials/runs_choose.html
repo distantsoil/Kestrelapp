@@ -13,9 +13,9 @@
     <input type="hidden" name="both_online_approval" value='{{ both_approval_json }}'>
     <fieldset class="rn-pick">
       <legend class="k-sr-only">Where the AI runs</legend>
-      <label class="rn-opt"><input type="radio" name="mode" value="local" checked data-testid="rn-mode-local"><span><b>Local</b><span class="k-muted">On this computer. Free.{% if usual == 'Local' %} Your saved choice.{% endif %}</span></span></label>
+      <label class="rn-opt"><input type="radio" name="mode" value="local"{% if usual != 'Online' or hosted_problem %} checked{% endif %} data-testid="rn-mode-local"><span><b>Local</b><span class="k-muted">On this computer. Free.{% if usual == 'Local' %} Your saved choice.{% endif %}</span></span></label>
       <label class="rn-opt"><input type="radio" name="mode" value="both"{% if hosted_problem %} disabled{% endif %} data-testid="rn-mode-both"><span><b>Both</b><span class="k-muted">{% if hosted_problem %}Not available: {{ hosted_problem }}{% else %}Quick screen on this computer, rating online.{% endif %}</span></span></label>
-      <label class="rn-opt"><input type="radio" name="mode" value="hosted"{% if hosted_problem %} disabled{% endif %} data-testid="rn-mode-online"><span><b>Online</b><span class="k-muted">{% if hosted_problem %}Not available: {{ hosted_problem }}{% else %}Uses your own key and credit.{% if usual == 'Online' %} Your saved choice.{% endif %}{% endif %}</span></span></label>
+      <label class="rn-opt"><input type="radio" name="mode" value="hosted"{% if hosted_problem %} disabled{% elif usual == 'Online' %} checked{% endif %} data-testid="rn-mode-online"><span><b>Online</b><span class="k-muted">{% if hosted_problem %}Not available: {{ hosted_problem }}{% else %}Uses your own key and credit.{% if usual == 'Online' %} Your saved choice.{% endif %}{% endif %}</span></span></label>
     </fieldset>
     <div class="rn-ask" id="rn-ask" hidden data-testid="rn-ask">
       <b>What will be sent</b>

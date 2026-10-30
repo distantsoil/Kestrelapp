@@ -10,11 +10,13 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}Today · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/today.css">
-<script src="/static/js/today.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/today.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): today.js defines the page "today"; base.html mounts it. #}
+{% block page_name %}today{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/today.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="td-wrap"><div class="td-page" id="today" data-track="{{ track }}" data-tour="{{ 1 if tour else 0 }}"
      data-first-run="{{ 1 if first_run else 0 }}">

@@ -16,7 +16,13 @@ from pathlib import Path
 import pytest
 
 from tests import offers_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -253,7 +259,10 @@ def test_menu_outcome_undo_stars_and_weights(live):
         page.wait_for_function(
             "document.querySelectorAll('[data-row=\"level_scope\"] .of-stars button.is-on').length "
             ">= 4")
-        # A weight moves its word and the summary.
+        # A weight moves its word and the summary. The stars' swap settles first: under load
+        # the slider read before it settled was an element htmx had not processed yet.
+        page.wait_for_function("() => !document.querySelector("
+                               "'.htmx-request, .htmx-swapping, .htmx-settling, .htmx-added')")
         slider = page.query_selector('[data-row="total_first_year"] .of-w')
         with page.expect_response(lambda response: response.url.endswith("/offers/weights")
                                   and response.request.method == "POST"):
@@ -332,6 +341,46 @@ def test_negotiate_lock_ask_and_draft(live):
         _shot(page, "negotiate-drafted")
         page.click('[data-testid="of-edit"]')
         assert page.get_attribute('[data-testid="of-dbody"]', "contenteditable") == "true"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live):
+    """The page lifecycle (D-UI-210): Offers unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves nothing running in between. After it, one
+    click on a card's menu button opens the menu (a doubled listener opens it and closes it again
+    in the same click), Escape closes it, and a page that is unmounted no longer answers."""
+    base, browser, _ids = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/offers")
+        page.wait_for_selector('[data-testid="of-card"]')
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "offers", "offers.js", settle_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0, first
+        btn = page.locator('[data-testid="of-menu-btn"]').first
+        menu = "#" + btn.get_attribute("data-of-menu")
+        btn.click()
+        assert page.is_visible(menu)
+        assert btn.get_attribute("aria-expanded") == "true"
+        page.keyboard.press("Escape")
+        assert page.is_hidden(menu)
+        # A weight still moves its word once the page is mounted again.
+        slider = page.query_selector('[data-row="total_first_year"] .of-w')
+        with page.expect_response(lambda r: r.url.endswith("/offers/weights")
+                                  and r.request.method == "POST"):
+            slider.evaluate("el => { el.value = 0; el.dispatchEvent(new Event('input', "
+                            "{bubbles: true})); }")
+        assert page.inner_text('[data-row="total_first_year"] em') == "Ignore"
+        # Unmounted, the menu button does nothing: its listener went with the page.
+        page.evaluate("KUI.page.unmount()")
+        btn.click()
+        assert page.is_hidden(menu)
         assert errors == []
     finally:
         ctx.close()

@@ -342,7 +342,7 @@ def test_closing_verbs_and_outcome_capture():
         p, _ = _pursuit(pid)
         assert p.status == "rejected" and p.closed_at
         html = c.get("/pursuits").text
-        assert "Closed (1)" in _column(html, "Offer / Closed")
+        assert "Closed · 1" in _column(html, "Offer / Closed")
         form = c.get(f"/pursuits/{pid}/panel?form=outcome").text
         assert 'name="final_status"' in form and 'name="furthest_stage"' in form
         r = c.post(f"/pursuits/{pid}/outcome", data={

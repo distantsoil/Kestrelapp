@@ -2,7 +2,7 @@
    (tests/test_ui_tokens.py), every class prefixed hp-. The look follows
    the locked design mockup (kept privately) */
 
-/* The wrapper is the container the shared and local @container rules measure. */
+/* The mockup steps measure the window (@container kwin); the wrapper measures page-only steps. */
 .hp-wrap { container-type: inline-size; min-width: 0; }
 .hp-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px;
   min-width: 0; }
@@ -23,7 +23,7 @@
 
 /* ------------------------------------------------------------------------ the four steps */
 .hp-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); }
-@container (max-width: 900px) { .hp-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container kwin (max-width: 900px) { .hp-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .hp-step { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px;
   background: var(--paper); cursor: pointer; text-align: left; font: inherit; color: var(--ink);
   display: flex; flex-direction: column; gap: 4px;
@@ -41,9 +41,7 @@
   font-weight: 700; color: var(--ink); margin-top: 4px; white-space: nowrap; }
 .hp-step__cost .k-ic { color: var(--muted); }
 
-/* Model names behind Show details. */
-.hp-details { margin-top: var(--sp-3); font-size: 13.5px; }
-.hp-details summary { cursor: pointer; font-weight: 700; color: var(--brand); }
+/* Reference tables inside the reader. */
 .hp-names { width: 100%; border-collapse: collapse; font-size: 13px; }
 .hp-names th, .hp-names td { text-align: left; padding: 7px 8px; border-top: 1px solid var(--line);
   vertical-align: top; }
@@ -52,7 +50,7 @@
 /* ------------------------------------------------------------------------ topic cards */
 .hp-topics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
   align-items: stretch; }
-@container (max-width: 900px) { .hp-topics { grid-template-columns: minmax(0, 1fr); } }
+@container kwin (max-width: 900px) { .hp-topics { grid-template-columns: minmax(0, 1fr); } }
 .hp-topic { display: flex; min-width: 0; }
 .hp-topic > .k-card { flex: 1; min-width: 0; }
 .hp-topic[hidden] { display: none; }
@@ -89,12 +87,8 @@
 .hp-body ul, .hp-body ol, .k-flyout__body ul { margin: 0 0 10px; padding-left: 20px; }
 .hp-body li, .k-flyout__body li { margin-bottom: 3px; }
 
-/* ------------------------------------------------------- the LAN note behind Show details */
-.hp-lan { font-size: 13.5px; }
-.hp-lan[hidden] { display: none; }
-.hp-lan summary { cursor: pointer; font-weight: 700; color: var(--brand); }
-.hp-lan p { margin: 10px 0 0; line-height: 1.55; }
-.hp-lan h3 { margin: 16px 0 4px; font-size: var(--fs-lg); }
+/* ------------------------------------------------- the reference articles in the reader */
+.hp-body h3 { margin: 16px 0 4px; font-size: var(--fs-lg); }
 .hp-scroll { overflow-x: auto; margin: 10px 0; }
 .hp-src th, .hp-src td { min-width: 120px; }
 .hp-eg { font-size: var(--fs-sm); margin-top: 4px; }
@@ -103,3 +97,27 @@
   .hp-page .k-card h3 { white-space: normal; }
   .hp-page .hp-names { display: table; }
 }
+
+/* "More about this" has a chevron, as the mockup's .hp-more (help-mockup-locked.html :589). */
+
+/* Entrance: the search, the chips, the steps and the topic cards fade up with a stagger, and the
+   helper cards follow (mockup .reveal rv .45s; delays .05s, .08s, then .1s + i * .04s). */
+@keyframes hp-rv { from { opacity: 0; transform: translateY(8px); } }
+.hp-search { animation: hp-rv .45s cubic-bezier(.22, .8, .3, 1) backwards; }
+.hp-page .k-chips { animation: hp-rv .45s .05s cubic-bezier(.22, .8, .3, 1) backwards; }
+#hp-steps-card { animation: hp-rv .45s .08s cubic-bezier(.22, .8, .3, 1) backwards; }
+.hp-topic { animation: hp-rv .45s cubic-bezier(.22, .8, .3, 1) backwards;
+  animation-delay: calc(.1s + var(--hp-i, 0) * .04s); }
+.hp-topic:nth-child(1) { --hp-i: 0; } .hp-topic:nth-child(2) { --hp-i: 1; }
+.hp-topic:nth-child(3) { --hp-i: 2; } .hp-topic:nth-child(4) { --hp-i: 3; }
+.hp-topic:nth-child(5) { --hp-i: 4; }
+.hp-page .k-hcard { animation: hp-rv .45s cubic-bezier(.22, .8, .3, 1) backwards;
+  animation-delay: calc(.1s + var(--hp-h, 0) * .04s); }
+.hp-page .k-hcard:nth-child(2) { --hp-h: 1; } .hp-page .k-hcard:nth-child(3) { --hp-h: 2; }
+.hp-page .k-hcard:nth-child(4) { --hp-h: 3; }
+@media (prefers-reduced-motion: reduce) {
+  .hp-search, .hp-page .k-chips, #hp-steps-card, .hp-topic, .hp-page .k-hcard { animation: none; }
+}
+/* The side column is 380 px as drawn (help-mockup-locked.html .hp-lay); the shared 330 wrapped its
+   lines. */
+.hp-page { --help-w: 380px; }

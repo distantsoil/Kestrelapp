@@ -14,19 +14,21 @@
 .ap-v { color: var(--muted); font-size: var(--fs-sm); }
 .ap-linkbtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer;
   text-align: left; }
+/* Keep the link color in both themes (a bare button would take the browser's button text color). */
+.k-link.ap-linkbtn { color: var(--link-ink); font-weight: 700; font-size: 13px; }
 .ap-notice { border-radius: var(--r-sm); padding: 9px 12px; margin: 0; font-size: var(--fs-md);
   background: var(--tint-warn); border: 1px solid var(--tint-warn-line); color: var(--ink); }
 
 /* ------------------------------------------------------------------------ search and chips */
 .ap-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .ap-sbox { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line);
-  background: var(--paper); border-radius: var(--r-md); padding: 7px 12px; color: var(--muted);
-  min-width: 260px; }
-.ap-sbox input { border: 0; outline: 0; background: none; font: inherit; color: var(--ink);
-  width: 100%; }
+  background: var(--paper); border-radius: var(--r-md); padding: 0 12px; color: var(--muted);
+  box-sizing: border-box; height: 36px; width: 260px; min-width: 0; max-width: 100%; flex: none; }
+.ap-sbox input { border: 0; outline: 0; background: none; font: inherit; font-size: 13.5px;
+  color: var(--ink); width: 100%; min-width: 0; height: 100%; padding: 0; }
 .ap-sbox:focus-within { outline: 2px solid var(--brand); outline-offset: 1px; }
 .ap-view { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-md);
-  overflow: hidden; background: var(--paper); }
+  overflow: hidden; background: var(--paper); height: 36px; box-sizing: border-box; }
 .ap-view button { border: 0; background: none; padding: 6px 12px; font: inherit; font-weight: 700;
   font-size: 13px; color: var(--muted); cursor: pointer; display: inline-flex; gap: 6px;
   align-items: center; }
@@ -53,20 +55,22 @@
 .ap-split { container-type: inline-size; min-width: 0; position: relative; }
 .ap-appgrid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--sp-4);
   align-items: start; }
-@container (max-width: 1040px) {
+/* The mockup drops the rail under the board at 1040; its four 228px columns plus the 300px rail
+   need about 1270, so the rail drops there instead of clipping the last column. */
+@container (max-width: 1270px) {
   .ap-appgrid { grid-template-columns: minmax(0, 1fr); }
   .ap-rail { grid-template-columns: 1fr 1fr; }
 }
 @container (max-width: 640px) { .ap-rail { grid-template-columns: 1fr; } }
 .ap-boardwrap { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
-.ap-board { display: grid; grid-template-columns: repeat(var(--n), minmax(190px, 1fr)); gap: 12px;
+.ap-board { display: grid; grid-template-columns: repeat(var(--n), minmax(228px, 1fr)); gap: 12px;
   overflow-x: auto; padding-bottom: 6px; align-items: start; scrollbar-width: thin;
   scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
 .ap-board > .ap-col { scroll-snap-align: start; }
 /* Shown only when the stages no longer fit: the board then scrolls inside its own box. */
 .ap-scrollhint { display: none; font-size: var(--fs-sm); color: var(--muted); margin: 0;
   text-align: right; }
-@container (max-width: 830px) { .ap-scrollhint { display: block; } }
+@container (max-width: 950px) { .ap-scrollhint { display: block; } }
 .ap-board[style*="--n:1"] { grid-template-columns: minmax(228px, 560px); }
 .ap-col { background: color-mix(in srgb, var(--paper) 55%, transparent);
   border: 1px solid var(--line); border-top: 3px solid var(--cc); border-radius: var(--r-lg);
@@ -114,7 +118,7 @@
 .ap-mono[data-slot="4"] { background: var(--bad); }
 .ap-mono[data-slot="5"] { background: var(--tg2i); }
 .ap-mono[data-slot="6"] { background: var(--muted); }
-.ap-t { font-weight: 700; font-size: 13.5px; line-height: 1.3; overflow-wrap: anywhere; }
+.ap-t { font-weight: 700; font-size: 13.5px; line-height: 1.3; overflow-wrap: break-word; hyphens: none; }
 .ap-o { font-size: 12.5px; color: var(--muted); }
 .ap-kb { border: 0; background: none; color: var(--muted); width: 26px; height: 26px;
   border-radius: 7px; display: grid; place-items: center; flex: none; margin: -3px -4px 0 0;
@@ -130,7 +134,8 @@
 .ap-next .k-ic { width: 13px; height: 13px; flex: none; margin-top: 2px; color: var(--muted); }
 .ap-ghost { align-items: center; flex-wrap: wrap; color: var(--warn-ink); }
 .ap-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px;
-  margin-top: 2px; flex-wrap: wrap; }
+  margin-top: 2px; flex-wrap: wrap; min-width: 0; }
+.ap-foot > * { min-width: 0; }
 .ap-stg { border: 1px solid var(--line); background: var(--bg); border-radius: var(--r-pill);
   padding: 2px 6px 2px 9px; font: inherit; font-size: 11.5px; font-weight: 700; color: var(--muted);
   display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; cursor: pointer; }
@@ -176,7 +181,13 @@
 .ap-tt b, .ap-tt small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ap-tt small { color: var(--muted); }
 .ap-late { color: var(--warn-ink); font-weight: 700; }
-.ap-stagepill { background: var(--soft); color: var(--brand); }
+.ap-stagepill { --cc: var(--brand); background: color-mix(in srgb, var(--cc) 14%, var(--paper));
+  color: var(--cc); }
+/* A stage takes its column's color: the table pill and the panel eyebrow (mockup .pill, .kind). */
+[data-col="to_apply"], [data-col="to_contact"] { --cc: var(--ap-c1); }
+[data-col="applied"], [data-col="conversation"] { --cc: var(--ap-c2); }
+[data-col="interviewing"], [data-col="proposal"] { --cc: var(--ap-c3); }
+.ap-stagepill[data-col="closed"], .ap-kind[data-col="closed"] { --cc: var(--ap-c4); }
 
 /* ------------------------------------------------------------------------------ the rail */
 .ap-rail { display: grid; gap: 12px; min-width: 0; }
@@ -212,14 +223,15 @@
 .ap-remf:not(.is-open) .ap-remi { visibility: hidden; }
 
 /* ------------------------------------------------------------------------------ the panel */
-.ap-panel { width: min(520px, 92vw); }
+.ap-panel { width: min(460px, 92vw); }
 .ap-panel-in, .ap-panel-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .ap-panel .k-flyout__body { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex;
   flex-direction: column; gap: 14px; padding: 16px 18px; }
-.ap-panel .k-flyout__foot { justify-content: space-between; }
+.ap-panel .k-flyout__foot { justify-content: space-between; gap: 8px; }
+.ap-panel .k-flyout__foot > * { flex: 1; }
 .ap-panel .k-flyout__head h2 { font-size: 17px; }
 .ap-kind { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--brand); }
+  color: var(--cc, var(--brand)); }
 .ap-pmeta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .ap-lead { background: var(--tint-info); border: 1px solid var(--tint-info-line);
   border-radius: var(--r-md); padding: 10px 12px; }
@@ -293,3 +305,14 @@
 @container (max-width: 900px) {
   .ap-mf.is-open > .ap-mfi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* The rail's head badge is the mockup's 30px (.hb), not the 38px default. */
+.ap-rc .k-badge { width: 30px; height: 30px; }
+.ap-rc .k-badge .k-ic { width: 16px; height: 16px; }
+/* A view switch or a re-render fades the board in with a short rise (mockup viewswap). */
+@keyframes ap-viewin { from { opacity: 0; transform: translateY(6px); } }
+#apps-board.is-viewin { animation: ap-viewin .26s var(--ease) backwards; }
+/* The panel's content slides in when another card is picked. */
+@keyframes ap-panelin { from { opacity: 0; transform: translateX(28px); } }
+#ap-panel-in > .ap-panel-body { animation: ap-panelin .28s var(--ease) backwards; }
+@media (prefers-reduced-motion: reduce) { #apps-board.is-viewin, #ap-panel-in > .ap-panel-body { animation: none !important; } }

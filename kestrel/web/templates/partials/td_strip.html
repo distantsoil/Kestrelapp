@@ -13,7 +13,7 @@
 {% from "ui/macros.html" import icon %}
 {% set st = strip %}{% set r = st.run %}{% set w = words(track) %}
 {% set tq = '&tour=1' if tour else '' %}
-<div id="td-top" class="td-top" data-testid="td-top" data-state="{{ st.state }}"
+<div id="td-top" class="td-top" data-testid="td-top" data-k-morph data-state="{{ st.state }}"
      hx-get="/today/strip?track={{ track }}{{ tq }}"
      hx-trigger="every {{ '5s' if st.busy else '30s' }} [!document.querySelector('#td-top dialog:modal')], run-refresh[!document.querySelector('#td-top dialog:modal')] from:body, td-refresh[!document.querySelector('#td-top dialog:modal')] from:body"
      hx-swap="outerHTML" data-no-busy>
@@ -40,7 +40,7 @@
           </span>
         {% else %}
           <span class="td-face" id="td-face-last">
-            <span class="td-k" data-testid="run-headline">Last run: {{ st.when or 'time not recorded' }}
+            <span class="td-k td-k--row" data-testid="run-headline"><span class="td-kt">Last run: {{ st.when or 'time not recorded' }}</span>
               {% if st.problem %}<span class="k-pill k-pill--bad" data-testid="run-status">{{ st.n_problems }} {{ 'problem' if st.n_problems == 1 else 'problems' }}</span>
               {% elif r.status == 'interrupted' or r.searches_cut_off %}<span class="k-pill k-pill--warn" data-testid="run-status">Stopped early</span>
               {% elif r.status == 'failed' %}<span class="k-pill k-pill--bad" data-testid="run-status">Did not finish</span>
@@ -48,7 +48,7 @@
               {% else %}<span class="k-pill k-pill--good" data-testid="run-status">{{ icon('check') }}Finished</span>{% endif %}
             </span>
             <span class="td-v" data-testid="run-detail">
-              {%- if st.failed -%}<span class="td-bad">{{ st.failed }} {{ 'role' if st.failed == 1 else 'roles' }} failed scoring</span>
+              {%- if st.failed -%}<span class="td-bad">{{ st.failed }} {{ 'role needs' if st.failed == 1 else 'roles need' }} another try</span>
               {%- elif st.problem -%}<span class="td-bad">{{ r.problem_note or 'A source had a problem. It is tried again next run.' }}</span>
               {%- else -%}All sources checked{%- endif -%}
             </span>

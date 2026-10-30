@@ -1,17 +1,19 @@
-{# Help (D-UI-124, SPEC-INTERFACES 2.1 /help). Built on the shared design system. All 21 articles
-   are rendered here, hidden, so Help works offline; static/js/help.js filters the topic cards and
-   copies one article into the reader slide-over. Article bodies are fixed text from
+{# Help (D-UI-124, SPEC-INTERFACES 2.1 /help). Built on the shared design system. All articles
+   (21 written, 3 reference) are rendered here, hidden, so Help works offline; static/js/help.js
+   filters the topic cards and copies one article into the reader flyout. Article bodies are fixed text from
    kestrel/web/help_articles.py, never user input. #}
 {% extends "base.html" %}
 {# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
 {% import "ui/macros.html" as ui %}
 {% block title %}Help · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/help.css">
-<script src="/static/js/help.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/help.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): help.js defines the page "help"; base.html mounts it. #}
+{% block page_name %}help{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/help.js') }}" defer></script>{% endblock %}
 {% block content %}
 {% set tone_badge = {'i': '', 'v': 'tier', 'g': 'good', 'w': 'warn'} %}
 <div class="hp-wrap"><div class="hp-page">
@@ -40,19 +42,6 @@
         </button>
         {% endfor %}
       </div>
-      {# The names Settings uses for each step, for anyone who meets "docsel" or "frontier" there. #}
-      <details id="tier-names" class="hp-details">
-        <summary>Show details: the model names on Settings</summary>
-        <p class="k-muted">Settings assigns a model to each of these. An online assignment is used only in Hosted mode; the online deeper read sends data only when you confirm it.</p>
-        <table class="hp-names">
-          <thead><tr><th>Name</th><th>What it is</th></tr></thead>
-          <tbody>
-            {% for n in tier_names %}
-            <tr><td>{{ n.label }}<br><span class="mono muted">{{ n.name }}</span></td><td>{{ n.what }}</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </details>
       {% endcall %}
       </div>
 
@@ -72,54 +61,6 @@
       <div class="k-card hp-empty" id="hp-none" hidden data-testid="hp-none">
         <b>No articles match.</b><br>Try “online”, “resume” or “slow”.
       </div>
-      {# Sources links here (/help#sources, /help#remoterocketship), so the reference it points at
-         stays one toggle away rather than becoming a dead anchor. Generated from the catalog,
-         so it cannot disagree with the registries. #}
-      <details id="sources" class="k-card hp-lan" data-testid="hp-sources">
-        <summary>Show details: Where opportunities come from</summary>
-        <p>Every kind Kestrel can scan, read from the adapter registries. Add one on <a class="k-link" href="/sources">Sources</a>: name, track, kind, cadence, and a JSON config with the keys below. The same check the scan uses runs before anything is saved.</p>
-        <div class="hp-scroll">
-        <table class="hp-names hp-src">
-          <thead><tr><th>Kind</th><th>What it scans</th><th>What you provide</th><th>Region</th><th>Rate limit</th></tr></thead>
-          <tbody>
-            {% for k in catalog %}
-            <tr>
-              <td><strong>{{ k.name }}</strong><br><span class="mono muted">{{ k.kind }}</span><br>
-                <span class="k-pill">{{ k.category }}</span>
-                {% if not k.documented %}<span class="k-pill k-pill--warn">undocumented</span>{% endif %}
-                {% if not k.scheduled %}<span class="k-pill">not scanned</span>{% endif %}
-                {% if not k.can_add_on_sources_page %}<span class="k-pill k-pill--warn">not on Sources page</span>{% endif %}
-              </td>
-              <td>{{ k.fetches }}</td>
-              <td>{{ k.provide }}{% if k.config_example %}<div class="mono muted hp-eg">{{ k.config_example }}</div>{% endif %}</td>
-              <td>{{ k.region }}</td>
-              <td>{{ k.rate_limit }}<div class="k-muted hp-eg">{{ k.user_agent }}</div></td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        </div>
-        <h3>LinkedIn</h3>
-        <p>Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a LinkedIn posting by hand.</p>
-        <h3 id="remoterocketship" data-testid="help-remoterocketship">RemoteRocketship (optional, paid)</h3>
-        <p><strong>What it is.</strong> An optional source for people who already pay for RemoteRocketship with API access. Kestrel stays free; this source needs your own RemoteRocketship subscription and is off until you add it.</p>
-        <p><strong>How to turn it on.</strong> Open <a class="k-link" href="/sources">Sources</a> and find the RemoteRocketship card. Paste your key, choose Save key, then Turn on. Run now checks right away. The key is kept in Kestrel’s private key file on this computer, never in the source and never shown again (only its last four characters). Turn off pauses the source.</p>
-        <p><strong>What Kestrel keeps.</strong> Only the link to each employer’s own posting. The posting is then read from the employer’s site, or from the company’s job board when it is one Kestrel knows. Nothing from RemoteRocketship is stored: no titles, descriptions or company details, and not the reply itself, which fits their terms limit of 24 hours.</p>
-        <p><strong>Daily limits.</strong> RemoteRocketship allows 500 requests or 3,000 jobs per UTC day. Kestrel uses a few requests per scan (two by default, 50 jobs each). A link that cannot be read from the employer is skipped and counted in the run.</p>
-        <p><strong>If something goes wrong.</strong> “Did not receive an API key” or “did not accept the API key”: paste the key again in the RemoteRocketship card. “Needs an active paid subscription”: your plan does not include API access. “Daily limit was reached”: wait until 00:00 UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits after the first page, the links from the earlier pages are still used; if it hits on the first page, the run finds nothing and the next scan tries again.</p>
-        <p><strong>Filters.</strong> With no filters set on the source, Kestrel asks for your target titles and onsite metros from your profile. Filters you write on the source replace them.</p>
-        <h3>Region</h3>
-        <p>{{ region_note }}</p>
-        <h3>Need a board that is not listed?</h3>
-        <p>{{ request_new_provider }}</p>
-      </details>
-      {# Settings links here (/help#lan) from its LAN switch, so the explanation stays one toggle
-         away rather than becoming a dead anchor. #}
-      <details id="lan" class="k-card hp-lan" data-testid="hp-lan">
-        <summary>Show details: Kestrel from another device</summary>
-        <p>Optional, and off by default. Kestrel is a web page served by the desktop app, so it can also be opened from a phone, tablet or laptop on the same home network: read Today, review the pipeline, check an application or your interview prep away from the desk. Nothing moves: the models, the database and the documents stay on this machine, which has to be running (in the window or the tray).</p>
-        <p>Turning it on is a switch on <a class="k-link" href="/settings">Settings</a>, LAN &amp; backup tab. You generate one shared secret, tick that you read what it does and does not protect, and turn the switch on; it takes effect after you quit and reopen Kestrel. Then you share the secret with each device. If you only use Kestrel at this computer, leave it off.</p>
-      </details>
     </div>
 
     {% call ui.help_column() %}
@@ -155,13 +96,14 @@
     {% endcall %}
   </div>
 
-  {# Every article, hidden: the reader slide-over copies one in. Searching reads these too. #}
+  {# Every article, hidden: the reader flyout copies one in. Searching reads these too. #}
   <div id="hp-articles" hidden>
     {% for t in topics %}{% for a in t.articles %}
-    <article id="hp-a-{{ t.key }}-{{ a.key }}" data-topic-title="{{ t.title }}" data-title="{{ a.title }}">{{ a.body|safe }}</article>
+    <article id="hp-a-{{ t.key }}-{{ a.key }}" data-topic-title="{{ t.title }}" data-title="{{ a.title }}">{% if a.body %}{{ a.body|safe }}{% else %}{% include "partials/help_ref_" ~ a.key ~ ".html" %}{% endif %}</article>
     {% endfor %}{% endfor %}
   </div>
-  {% call ui.slide_over('hp-reader', 'Article', eyebrow='Help') %}
+  {# The reader is a flyout, as drawn: non-modal, the page stays usable beside it. #}
+  {% call ui.flyout('hp-reader', 'Article', eyebrow='Help') %}
     <div id="hp-reader-body" class="hp-body" data-testid="hp-reader-body"></div>
   {% endcall %}
 

@@ -4,15 +4,19 @@
 {% extends "base.html" %}
 {% import "ui/macros.html" as ui %}
 {% block title %}Model check · Kestrel{% endblock %}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
-{% block head_extra %}<link rel="stylesheet" href="/static/css/models.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ static_url('css/models.css') }}">{% endblock %}
+{# The page lifecycle (D-UI-210): bench.js defines the page "bench"; base.html mounts it. The picker
+   script is shared (the macro also emits it beside each picker) and safe to load more than once;
+   loading it here means it is there when the page mounts, however the page arrived. #}
+{% block page_name %}bench{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/model_combo.js') }}" defer></script><script src="{{ static_url('js/bench.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="mo-wrap"><div class="mo-page">
   {% set crumb %}<nav class="mo-crumb" aria-label="Breadcrumb"><a href="/models">Models</a> › <span>Model check</span></nav>{% endset %}
   {% call ui.scene_band('Model check', crumb=crumb) %}
     <button type="button" class="k-btn k-btn--sm" data-k-flyout="#ck-how-fly" aria-controls="ck-how-fly" aria-expanded="false" data-testid="ck-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
   {% endcall %}
-  <p class="k-muted mo-purpose" data-testid="page-purpose">Model check compares models on your own ratings so you can choose which model runs each step. It does not review your resume; that lives on <a class="k-link" href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
 
   <div class="k-layout">
     <div class="k-layout__main mo-main">
@@ -20,15 +24,19 @@
       {% include "partials/bench_result.html" %}
     </div>
     {% call ui.help_column() %}
-      {{ ui.help_card('Why this exists', ['AI models change. New ones arrive, and your ratings grow. A check tells you if another model now matches your judgment better.'], 'good', 'help', 'ck-why-fly') }}
-      {{ ui.help_card('What it measures', ['Mostly one thing: how often a model reaches the same verdict as the answer key, which is your own ratings once you use them.'], 'info', 'analytics', 'ck-measure-fly') }}
-      {{ ui.help_card('How long it takes', ['About ' ~ ck_minutes ~ ' minutes on this computer. It runs in the background.'], 'warn', 'clock', 'ck-time-fly') }}
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('help') }}</span><h3>Why this exists</h3></div>
+        <p class="k-hcard__p">AI models change. New ones arrive, and your ratings grow. A check tells you if another model now matches your judgment better.</p>{{ ui.flyout_trigger('ck-why-fly') }}</article>
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge">{{ ui.icon('analytics') }}</span><h3>What it measures</h3></div>
+        <p class="k-hcard__p">Mostly one thing: how often a model reaches the same verdict as the answer key, which is your own ratings once you use them.</p>{{ ui.flyout_trigger('ck-measure-fly') }}</article>
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge k-badge--warn">{{ ui.icon('clock') }}</span><h3>How long it takes</h3></div>
+        <p class="k-hcard__p">About {{ ck_minutes }} minutes on this computer. It runs in the background.</p>{{ ui.flyout_trigger('ck-time-fly') }}</article>
     {% endcall %}
   </div>
 
   {% call ui.flyout('ck-how-fly', 'How Model check works', help_href='/help') %}
     <h4>One button</h4><p>Check my models tests Quick screen and Rating against other models that fit this computer, scoring them against an answer key: your own rated roles once you press Use my ratings as the answer key, otherwise a shipped set of example roles. Deeper read is optional.</p>
     <h4>In the background</h4><p>The check keeps running if you leave this page, and picks up where it stopped after a restart. Cancel stops it.</p>
+    <h4>What it is not</h4><p>Model check compares models on your own ratings so you can choose which model runs each step. It does not review your resume; that lives on <a class="k-link" href="/profile?tab=documents">Profile &gt; Documents</a>.</p>
     <h4>What it recommends</h4><p>A change only when a model is clearly better for you. Kestrel prefers a model on this computer unless an online one is at least 5 points better, and always asks before anything goes online.</p>
   {% endcall %}
   {% call ui.flyout('ck-why-fly', 'Why this exists', help_href='/help') %}

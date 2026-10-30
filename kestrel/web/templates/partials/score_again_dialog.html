@@ -11,7 +11,7 @@
 {% from "partials/model_picker.html" import model_select with context %}
 {% from "ui/macros.html" import icon as kicon %}
 {% set roles = '1 role' if n == 1 else n ~ ' roles' %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 {# D-UI-71: `preselect` (a pick value) checks "A different model" with that model chosen, so a
    Retry from Failed scoring opens on the model that failed; `page` renders it open as a plain
    form (no script needed) that posts to /rescore and returns to `next`. #}
@@ -136,6 +136,13 @@
   (function () {
     const dlg = document.currentScript.previousElementSibling;
     if (!dlg || dlg.tagName !== 'DIALOG') return;
+    // Every listener below belongs to this dialog and is tied to one controller kept on it
+    // (D-UI-210): running this again on the same dialog replaces the set instead of doubling it,
+    // and closing the dialog ends the set.
+    if (dlg.kBound) dlg.kBound.abort();
+    const ac = new AbortController();
+    dlg.kBound = ac;
+    const sig = { signal: ac.signal };
     const wrap = dlg.closest('.score-again');
     const opener = wrap ? wrap.querySelector('.score-again-btn') : null;
     const form = dlg.querySelector('form');
@@ -152,6 +159,7 @@
     function close() {
       if (dlg.open) dlg.close();
       dlg.remove();
+      ac.abort();
       if (opener && opener.focus) opener.focus();
     }
     const combo = dlg.querySelector('.ke-combo');
@@ -164,9 +172,9 @@
       setPickDisabled(!(other && other.checked));
     }
     syncPick();
-    [same, other].forEach((r) => r && r.addEventListener('change', syncPick));
-    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } });
-    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close));
+    [same, other].forEach((r) => r && r.addEventListener('change', syncPick, sig));
+    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } }, sig);
+    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close, sig));
     const mainStep = dlg.querySelector('[data-sf-main]');
     const confirmStep = dlg.querySelector('[data-sf-confirm]');
     const footMain = dlg.querySelector('[data-sf-foot-main]');
@@ -188,9 +196,9 @@
       if (confirmed) confirmed.disabled = true;
     }
     const sendBtn = dlg.querySelector('[data-sf-send]');
-    if (sendBtn) sendBtn.addEventListener('click', () => { if (confirmed) confirmed.disabled = false; });
+    if (sendBtn) sendBtn.addEventListener('click', () => { if (confirmed) confirmed.disabled = false; }, sig);
     const backBtn = dlg.querySelector('[data-sf-back]');
-    if (backBtn) backBtn.addEventListener('click', () => showConfirm(false));
+    if (backBtn) backBtn.addEventListener('click', () => showConfirm(false), sig);
     if (form) {
       // "A different model" needs a pick; "Same model" sends model=same (a disabled select sends
       // nothing, so the hidden fallback below carries it). An online pick asks first: the first
@@ -201,14 +209,14 @@
         } else if (online() && confirmed && confirmed.disabled) {
           e.preventDefault(); e.stopImmediatePropagation(); showConfirm(true);
         }
-      }, true);
+      }, { capture: true, signal: ac.signal });
       form.addEventListener('htmx:configRequest', (e) => {
         if (!(other && other.checked)) e.detail.parameters['model'] = 'same';
-      });
-      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); });
-      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); });
+      }, sig);
+      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); }, sig);
+      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); ac.abort(); }, sig);
     }
-    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); }, sig);
     dlg.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); close(); return; }
       if (e.key === 'Tab') {
@@ -218,8 +226,8 @@
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
-    });
-    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    }, sig);
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); }, sig);
     if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
     const first = dlg.querySelector('input[name="model_choice"]:checked') || focusables()[0];
     if (first) first.focus();

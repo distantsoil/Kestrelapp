@@ -38,7 +38,7 @@
     {% set accent_name = namespace(v='Layout default') %}
     {% for name, hex in accent_presets.items() %}{% if accent_saved == hex %}{% set accent_name.v = name %}{% endif %}{% endfor %}
     {% if accent_is_custom %}{% set accent_name.v = accent_saved %}{% endif %}
-    <details class="k-card pf-look" id="pf-look" data-testid="doc-look-card">
+    <details data-k-fold class="k-card pf-look" id="pf-look" data-testid="doc-look-card">
       <summary class="pf-look__head"><span class="k-badge k-badge--warn">{{ ui.icon('wand') }}</span>
         <b>Look</b>
         <span class="pf-hint k-grow">{{ (layout_choices | selectattr(0, 'equalto', layout_saved) | map(attribute=1) | first) or 'Layout default' }} · {{ font_saved or 'Font default' }} · {{ accent_name.v }}</span>
@@ -144,7 +144,8 @@
       {% endif %}
       <script>
         // The test render uses the layout, font and alignment chosen here, so the review
-        // matches the preview.
+        // matches the preview. Each control holds one set of listeners (D-UI-210): if this runs
+        // again for the same control, the earlier set ends first, so a swap never doubles them.
         (function () {
           var a = document.getElementById('test-render');
           var ids = ['layout', 'font', 'header_align', 'accent', 'accent_custom'];
@@ -160,7 +161,11 @@
           }
           ids.forEach(function (id) {
             var el = document.getElementById(id);
-            if (el) { el.addEventListener('change', sync); el.addEventListener('input', sync); }
+            if (!el) return;
+            if (el.kSync) el.kSync.abort();
+            var ac = el.kSync = new AbortController();
+            el.addEventListener('change', sync, { signal: ac.signal });
+            el.addEventListener('input', sync, { signal: ac.signal });
           });
           sync();
         })();
@@ -209,39 +214,49 @@ out by position, so check the extracted text before accepting.</p>
 <script>
   // Import status (D-IMPORT-2). Step one reports Uploading with a percentage, then Reading once
   // the bytes are sent; step two (partials/import_processing.html) counts the seconds it has run.
+  // The listeners sit on this section, not on the document (D-UI-210): a request from inside it
+  // bubbles up through it, and a swap that brings a new section leaves nothing of the old one
+  // listening. Running this again for the same section replaces its set. The seconds counter
+  // stops by itself once its line has left the page.
   (function () {
     var form = document.getElementById('import-form');
+    var host = form.closest('#pf-import') || form;
     var stage = form.querySelector('.import-stage');
+    if (host.kImport) host.kImport.abort();
+    var ac = host.kImport = new AbortController();
+    var sig = { signal: ac.signal };
     form.addEventListener('htmx:beforeRequest', function () {
       var f = form.querySelector('input[type=file]');
       stage.textContent = (f && f.files && f.files.length) ? 'Uploading…' : 'Reading…';
-    });
+    }, sig);
     form.addEventListener('htmx:xhr:progress', function (evt) {
       var d = evt.detail;
       if (!d || !d.lengthComputable || !d.total) return;
       stage.textContent = d.loaded < d.total
         ? 'Uploading… ' + Math.floor(100 * d.loaded / d.total) + '%'
         : 'Reading the file and extracting its text…';
-    });
+    }, sig);
     var timers = new WeakMap();
-    document.addEventListener('htmx:beforeRequest', function (evt) {
+    host.addEventListener('htmx:beforeRequest', function (evt) {
       var el = evt.detail && evt.detail.elt;
       if (!el || !el.classList || !el.classList.contains('import-processing')) return;
       // One import at a time: a second click would orphan a billed call still running.
       var btn = form.querySelector('button[type=submit]');
       if (btn) btn.disabled = true;
       var out = el.querySelector('.import-elapsed'), t0 = Date.now();
-      timers.set(el, setInterval(function () {
+      var tick = setInterval(function () {
+        if (!el.isConnected) { clearInterval(tick); timers.delete(el); return; }
         if (out) out.textContent = Math.round((Date.now() - t0) / 1000) + ' s elapsed.';
-      }, 1000));
-    });
-    document.addEventListener('htmx:afterRequest', function (evt) {
+      }, 1000);
+      timers.set(el, tick);
+    }, sig);
+    host.addEventListener('htmx:afterRequest', function (evt) {
       var el = evt.detail && evt.detail.elt;
       if (el && timers.has(el)) {
         clearInterval(timers.get(el)); timers.delete(el);
         var btn = form.querySelector('button[type=submit]');
         if (btn) btn.disabled = false;
       }
-    });
+    }, sig);
   })();
 </script>

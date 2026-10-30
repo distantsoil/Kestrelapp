@@ -36,7 +36,7 @@
 .pl-bar--chips { flex-wrap: nowrap; justify-content: space-between; }
 .pl-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line);
   background: var(--paper); border-radius: var(--r-md); padding: 7px 12px; color: var(--muted); min-width: 260px; }
-.pl-search input { border: 0; background: none; outline: 0; font: inherit; color: var(--ink); flex: 1; min-width: 0; }
+.pl-search input { padding: 0; border: 0; background: none; outline: 0; font: inherit; color: var(--ink); flex: 1; min-width: 0; }
 .pl-search:focus-within { border-color: var(--brand); outline: 2px solid var(--brand); outline-offset: 1px; }
 .pl-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex: 1; min-width: 0; }
 .pl-chips .k-chip { text-decoration: none; white-space: nowrap; }
@@ -100,10 +100,13 @@
   background: linear-gradient(90deg, var(--tint-info), var(--paper) 60%); }
 .pl-row.is-picked { background: var(--soft); }
 .pl-row.is-fresh-in { animation: k-arrive .55s var(--ease) both, k-glow 2.2s ease .4s both; }
-.pl-row--nf { grid-template-columns: 22px 36px minmax(0, 1fr) auto; opacity: .9; --rc: var(--line); }
-.pl-ck-gap { display: block; }
-.pl-ck { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--line); padding: 0;
-  display: grid; place-items: center; opacity: 0; transition: opacity .15s, background .15s, border-color .15s;
+.pl-row--nf { opacity: .9; --rc: var(--line); }
+.pl-ck-gap { display: block; width: 22px; }
+/* The mockup's 22px pick-box gutter (pipeline-mockup-locked.html :472-479). The box is drawn in
+   it at rest, faintly, so the gutter is never an empty indent (owner item O16); it comes fully
+   up on hover, focus or while picking. */
+.pl-ck { position: static; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--line); padding: 0;
+  display: grid; place-items: center; opacity: .55; transition: opacity .15s, background .15s, border-color .15s;
   color: transparent; background: var(--paper); cursor: pointer; }
 .pl-ck .k-ic { width: 13px; height: 13px; stroke-width: 3; }
 .pl-row:hover .pl-ck, .pl-row:focus-within .pl-ck, .pl-rows.is-selecting .pl-ck, .pl-ck:focus-visible { opacity: 1; }
@@ -299,7 +302,29 @@
   .pl-search { min-width: 0; flex: 1; }
   .pl-dim { grid-template-columns: 96px 1fr 28px; }
 }
+/* Arriving from Today (pipeline.js adds .pl-arrive for a moment). */
+@keyframes pl-in-up { from { opacity: 0; transform: translateY(10px); } }
+.pl-arrive > :not(.k-scene) { animation: pl-in-up .45s ease both; }
+.pl-arrive > .pl-bar { animation-delay: .3s; }
+.pl-arrive > .pl-stage { animation-delay: .38s; }
+
+/* Scroll cues (the locked mockup's .cue): round arrows at the top or bottom centre of a scrolling
+   box that has more to see. pipeline.js adds them. */
+.pl-nf { position: relative; }
+.pl-cue { position: absolute; z-index: 25; width: 34px; height: 34px; margin-left: -17px; padding: 0;
+  border-radius: 50%; background: var(--paper); border: 1px solid var(--line); box-shadow: var(--shadow);
+  display: grid; place-items: center; color: var(--brand); opacity: 0; pointer-events: none;
+  transition: opacity .25s; cursor: pointer; }
+.pl-cue.is-show { opacity: .95; pointer-events: auto; }
+.pl-cue svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round; }
+.pl-cue--down.is-show svg { animation: pl-cue-d 1.6s ease-in-out infinite; }
+.pl-cue--up.is-show svg { animation: pl-cue-u 1.6s ease-in-out infinite; }
+@keyframes pl-cue-d { 50% { transform: translateY(3px); } }
+@keyframes pl-cue-u { 50% { transform: translateY(-3px); } }
+
 @media (prefers-reduced-motion: reduce) {
+  .pl-cue svg, .pl-arrive > * { animation: none !important; }
   .pl-panel, .pl-panel__in > *, .pl-bulk, .pl-foot, .pl-foot__a, .pl-fr, .pl-fl, .pl-mf, .pl-row, .pl-ring, .pl-dim u,
   .pl-list .pl-rows, .pl-drop, .pl-more__menu { animation: none !important; transition: none !important; }
 }

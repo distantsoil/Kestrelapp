@@ -2,12 +2,23 @@
    underline, the slide of a tab or of Previous and Next, the match-map focus, the Add a story
    sheet, Your view's Adjust panel, the Not for me reasons, the More menu, the dialogs the actions
    load, the scaled document preview, and what Undo reloads. Everything is delegated on the
-   document, so it keeps working after a swap. User-facing strings here are the copied-link toast
-   and the focus line under the match map. */
+   document, so it keeps working after a swap. The page runs on the lifecycle (KUI.page,
+   D-UI-210): this file only defines it, and mount starts every listener, timer and observer
+   through its context, so leaving stops all of them and coming back starts one set. The history
+   a tab, Previous or Next writes is htmx's own (hx-push-url on the links); nothing here writes
+   history. User-facing strings here are the copied-link toast and the focus line under the match
+   map. */
 (function (root) {
   'use strict';
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
+
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
+  var cx = null;
+  var pendingDir = 0;    // set by the click, used by the next swap that follows it
+  var pendingKind = '';  // 'pane' | 'body'
+  var focusKey = null;   // the match map's focus
+  var dialogWatch = null;  // the observer on the dialog host
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -28,17 +39,14 @@
     ink.style.width = on.offsetWidth + 'px';
     if (instant) { void ink.offsetWidth; ink.style.transition = ''; }
   }
-  root.addEventListener('resize', function () { placeInk(true); });
-  if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(function () { placeInk(true); });
+  function onInkResize() { placeInk(true); }
 
   /* ------------------------------------------------------------- sliding: tabs, Previous, Next */
-  var pendingDir = 0;    // set by the click, used by the next swap that follows it
-  var pendingKind = '';  // 'pane' | 'body'
   function tabOrder(name) {
     var names = $$('#rl-tabs a').map(function (a) { return a.getAttribute('data-tab'); });
     return names.indexOf(name);
   }
-  doc.addEventListener('click', function (e) {
+  function onTabClick(e) {
     var t = e.target.closest && e.target.closest('#rl-tabs a[data-tab], a[data-tab][hx-target="#rl-pane"]');
     if (t) {
       var name = t.getAttribute('data-tab'), b = body();
@@ -57,12 +65,16 @@
     }
     var nav = e.target.closest && e.target.closest('[data-rl-dir]');
     if (nav) { pendingDir = parseInt(nav.getAttribute('data-rl-dir'), 10) || 1; pendingKind = 'body'; }
-  }, true);
+  }
 
-  function slideIn(el) {
+  // A tab change fades the new pane in (the locked mockup's inFade .3s); moving to another role
+  // slides the whole body in from the side it came from.
+  function slideIn(el, fadeOnly) {
     if (!el || reduced() || !el.animate || !pendingDir) { pendingDir = 0; return; }
     el.animate(
-      [{ opacity: 0, transform: 'translateX(' + (50 * pendingDir) + 'px)' }, { opacity: 1, transform: 'none' }],
+      fadeOnly
+        ? [{ opacity: 0 }, { opacity: 1 }]
+        : [{ opacity: 0, transform: 'translateX(' + (50 * pendingDir) + 'px)' }, { opacity: 1, transform: 'none' }],
       { duration: 300, easing: 'cubic-bezier(.22,.8,.3,1)' }
     );
     pendingDir = 0;
@@ -70,10 +82,22 @@
   function setTitle(el) { doc.title = (el.getAttribute('data-title') || 'Role') + ' · Kestrel'; }
   // The tab title follows the role in the same task as the swap that brings the new heading in.
   // htmx:load waits for the settle delay, so a title set only there lagged the heading by a beat.
-  doc.addEventListener('htmx:afterSwap', function (e) {
-    if (e.target && e.target.id === 'rl-body') setTitle(e.target);
-  });
-  doc.addEventListener('htmx:load', function (e) {
+  // The fade and the slide start here too, in the swap's own task, before the browser paints the
+  // new content: started on htmx:load (after the settle delay) the new pane was drawn at full
+  // strength for a frame or two, then dropped to nothing and faded in (owner, 2026-10-30: "flash
+  // and flicker" on a tab change).
+  function onBodySwap(e) {
+    var t = e.target;
+    if (!t) return;
+    if (t.id === 'rl-body') {
+      setTitle(t);
+      if (pendingKind === 'body') { slideIn(t); pendingKind = 'body-done'; }
+    } else if (t.id === 'rl-pane' && pendingKind === 'pane') {
+      slideIn(t, true);
+      pendingKind = '';
+    }
+  }
+  function onLoad(e) {
     var el = e.target;
     if (!el || !el.id && !el.parentNode) return;
     if (el.id === 'rl-body') {
@@ -81,19 +105,15 @@
       var dlg = $('#rl-dialog'); if (dlg) dlg.innerHTML = '';
       if (root.KUI) root.KUI.closeAll();
       placeInk(true);
-      if (pendingKind === 'body') slideIn(el);
+      if (pendingKind === 'body') slideIn(el);  // only if the swap itself did not start it
       pendingKind = '';
       var main = $('.k-main, main'); if (main && main.scrollTo) main.scrollTo(0, 0);
     } else if (el.parentNode && el.parentNode.id === 'rl-pane') {
-      if (pendingKind === 'pane') slideIn(el);
-      pendingKind = '';
-      placeInk(true);
+      placeInk(true);  // the fade started at the swap (onBodySwap)
     }
-  });
-  placeInk(true);
+  }
 
   /* ------------------------------------------------------------------ match map and its focus */
-  var focusKey = null;
   function clearFocus() {
     focusKey = null;
     var main = $('.rl-main');
@@ -133,16 +153,16 @@
       f.classList.toggle('is-on', hits.length > 0);
     }
   }
-  doc.addEventListener('click', function (e) {
+  function onFocusClick(e) {
     var chip = e.target.closest && e.target.closest('.rl-wchip');
     if (chip) { e.stopPropagation(); focusOn('f', chip.getAttribute('data-f')); return; }
     var seg = e.target.closest && e.target.closest('.rl-wseg');
     if (seg) { e.stopPropagation(); focusOn('k', seg.getAttribute('data-k')); return; }
     if (focusKey && !(e.target.closest && e.target.closest('.rl-wfocus'))) clearFocus();
-  });
+  }
 
   /* --------------------------------------------------------------------- Add a story sheet */
-  doc.addEventListener('click', function (e) {
+  function onStoryClick(e) {
     var st = e.target.closest && e.target.closest('[data-rl-story]');
     if (st) {
       e.preventDefault();
@@ -163,11 +183,11 @@
       vals.rescore = save.getAttribute('data-rl-story-save');
       root.htmx.ajax('POST', '/opportunities/' + oppId() + '/role/story', { values: vals, swap: 'none', source: form });
     }
-  });
-  doc.addEventListener('rl-story-saved', function () {
+  }
+  function onStorySaved() {
     if (root.KUI) root.KUI.closeModal();
     $$('#rl-story-form textarea').forEach(function (t) { t.value = ''; });
-  });
+  }
 
   /* ------------------------------------------------------------------------- Your view */
   function syncAdj() {
@@ -176,7 +196,7 @@
     var save = $('#rl-adjsave'); if (save) save.disabled = !picked;
     var score = $('#rl-score'); if (score) score.value = picked ? picked.getAttribute('data-n') : '';
   }
-  doc.addEventListener('click', function (e) {
+  function onAdjustClick(e) {
     var t = e.target;
     var ad = t.closest && t.closest('[data-rl-adjust]');
     if (ad) {
@@ -210,10 +230,10 @@
       var bar = row.querySelector('u'); if (bar) bar.style.setProperty('--w', (v / 5 * 100) + '%');
       row.classList.add('is-changed');
     }
-  });
+  }
 
   /* ------------------------------------------------- Not for me, the More menu, Why?, Copy link */
-  doc.addEventListener('click', function (e) {
+  function onMenuClick(e) {
     var t = e.target;
     var nfm = t.closest && t.closest('[data-rl-nfm]');
     if (nfm) {
@@ -245,21 +265,23 @@
     var why = t.closest && t.closest('[data-rl-open]');
     if (why) { e.preventDefault(); openModal($('#' + why.getAttribute('data-rl-open'))); return; }
     var href = t.closest && t.closest('[data-rl-help]');
-    if (href) { root.location.assign('/help'); return; }
+    if (href) { if (root.KUI && root.KUI.go) root.KUI.go('/help'); else root.location.assign('/help'); return; }
     if (t.closest && t.closest('[data-rl-copy]')) {
       var url = root.location.origin + '/opportunities/' + oppId();
-      var done = function () { toast('Link copied.'); };
+      var mine = cx;  // an answer that comes after the page was left says nothing
+      var done = function () { if (mine && !mine.signal.aborted) toast('Link copied.'); };
+      var show = function () { if (mine && !mine.signal.aborted) toast(url); };
       if (root.navigator.clipboard && root.navigator.clipboard.writeText) {
-        root.navigator.clipboard.writeText(url).then(done, function () { toast(url); });
+        root.navigator.clipboard.writeText(url).then(done, show);
       } else { toast(url); }
     }
-  });
-  doc.addEventListener('keydown', function (e) {
+  }
+  function onEscape(e) {
     if (e.key === 'Escape') {
       $$('.rl-menu').forEach(function (m) { m.hidden = true; });
       if (focusKey) clearFocus();
     }
-  });
+  }
 
   /* ------------------------------------------------------ dialogs the actions load, previews */
   function fitPreview(modal) {
@@ -284,20 +306,25 @@
       }
     }
   }
-  if (root.MutationObserver) {
-    var watchDialog = function () {
-      var host = $('#rl-dialog'); if (!host) return;
-      new root.MutationObserver(function () { setTimeout(openLoaded, 0); }).observe(host, { childList: true });
-    };
-    if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', watchDialog); else watchDialog();
+  // A dialog an action loaded lands in #rl-dialog; the observer opens it. It goes with the page.
+  // Back and Forward make htmx put the saved body back, a new #rl-dialog: watch that one instead.
+  function watchDialog() {
+    var host = $('#rl-dialog'), mine = cx;
+    if (dialogWatch) dialogWatch.disconnect();
+    dialogWatch = null;
+    if (!host || !root.MutationObserver) return;
+    dialogWatch = mine.observe(new root.MutationObserver(function () { mine.after(0, openLoaded); }));
+    dialogWatch.observe(host, { childList: true });
   }
-  root.addEventListener('resize', function () {
+  function onPreviewResize() {
     var m = $('#rl-dialog .rl-preview.is-open'); if (m) fitPreview(m);
-  });
-  doc.addEventListener('k-closed', function (e) {
+  }
+  function onClosed(e) {
     var el = e.target;
-    if (el && el.closest && el.closest('#rl-dialog')) { setTimeout(function () { var h = $('#rl-dialog'); if (h && el.parentNode === h) h.innerHTML = ''; }, 350); }
-  });
+    if (el && el.closest && el.closest('#rl-dialog')) {
+      cx.after(350, function () { var h = $('#rl-dialog'); if (h && el.parentNode === h) h.innerHTML = ''; });
+    }
+  }
 
   /* --------------------------------------------------- a reload after an action, and after Undo */
   function reload(items) {
@@ -306,13 +333,43 @@
       if (it && it.url && it.target) root.htmx.ajax('GET', it.url, { target: it.target, swap: it.swap || 'outerHTML' });
     });
   }
-  doc.addEventListener('kestrel:undone', function (e) {
+  function onUndone(e) {
     var d = e.detail || {};
     reload(d.refresh);
-  });
-  doc.addEventListener('rl-refresh', function () {
+  }
+  function onRefresh() {
     var b = body(); if (!b || !root.htmx) return;
     root.htmx.ajax('GET', '/opportunities/' + oppId() + '/tab/' + (b.getAttribute('data-tab') || 'evaluation'),
       { target: '#rl-pane', swap: 'innerHTML' });
+  }
+
+  /* ------------------------------------------------------------------------------ the page */
+  root.KUI.page.define('role', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      pendingDir = 0; pendingKind = ''; focusKey = null; dialogWatch = null;
+      // The order the file added them in: the capture-phase tab click stays ahead of the rest.
+      ctx.on(root, 'resize', onInkResize);
+      if (doc.fonts && doc.fonts.ready) {
+        doc.fonts.ready.then(function () { if (!ctx.signal.aborted) placeInk(true); });
+      }
+      ctx.on(doc, 'click', onTabClick, true);
+      ctx.on(doc, 'htmx:afterSwap', onBodySwap);
+      ctx.on(doc, 'htmx:load', onLoad);
+      placeInk(true);
+      ctx.on(doc, 'click', onFocusClick);
+      ctx.on(doc, 'click', onStoryClick);
+      ctx.on(doc, 'rl-story-saved', onStorySaved);
+      ctx.on(doc, 'click', onAdjustClick);
+      ctx.on(doc, 'click', onMenuClick);
+      ctx.on(doc, 'keydown', onEscape);
+      watchDialog();
+      ctx.on(doc, 'htmx:historyRestore', watchDialog);
+      ctx.on(root, 'resize', onPreviewResize);
+      ctx.on(doc, 'k-closed', onClosed);
+      ctx.on(doc, 'kestrel:undone', onUndone);
+      ctx.on(doc, 'rl-refresh', onRefresh);
+      ctx.onUnmount(function () { if (cx === ctx) cx = null; });
+    }
   });
 })(typeof window !== 'undefined' ? window : globalThis);

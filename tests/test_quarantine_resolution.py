@@ -183,7 +183,7 @@ async def test_every_surface_agrees_across_kinds_of_failure(sm, monkeypatch):
         asks = await system_asks(s, get_settings(), None)
     assert (summary.scoring, summary.rescore, summary.other) == (2, 1, 2)
     ask = next(a for a in asks if a["key"] == "quarantine")
-    assert ask["title"] == "4 postings failed scoring; score again failed for 1"
+    assert ask["title"] == "4 postings need another try; score again failed for 1"
     assert "Its earlier score stands." in ask["line"] and "—" not in ask["line"]
     del errored
 

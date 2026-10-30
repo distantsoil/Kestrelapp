@@ -175,7 +175,10 @@ async def _whole_list(s, **kw):
     f = OppFilters(grouped=True, sort="first_seen", page_size=200, **kw)
     main = await list_opportunities(s, f)
     nf = await list_opportunities(s, _replace(f, section="not_fit"))
-    main.rows = main.rows + nf.rows
+    # D-UI-198: Not a fit sits between Applied and Being scored.
+    scoring = [r for r in main.rows if r.fit.group in ("new", "failed")]
+    scored = [r for r in main.rows if r.fit.group not in ("new", "failed")]
+    main.rows = scored + nf.rows + scoring
     return main
 
 
@@ -256,7 +259,7 @@ def test_list_groups_rows_by_fit_with_one_word_and_one_number_per_row():
     assert 'data-scoring="failed">failed</span>' in _row(html, ids["e"])
     # The header counts every open role, Not a fit's included. Score again is the bulk bar's
     # (and Needs another try's): the old toolbar button is gone (D-UI-96).
-    assert "5 open · 1 still being scored" in html and "1 failed scoring</a>" in html
+    assert "5 open · 1 still being scored" in html and "1 needs another try</a>" in html
     assert 'data-testid="pipeline-score-again"' not in html
     assert 'data-bulk="score-again"' in html
     # Every row is a keyboard target; clicking one opens its panel (pipeline.js).
@@ -302,8 +305,8 @@ def test_the_sql_grouping_agrees_with_fit_for_row_for_row():
             want = fit.GROUP_APPLIED
         assert row.fit.word == model.word and row.fit.group == want
     groups = [row.fit.group for row in pg.rows]
-    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NEW,
-             fit.GROUP_FAILED, fit.GROUP_NOT_FIT]
+    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NOT_FIT,
+             fit.GROUP_NEW, fit.GROUP_FAILED]
     assert groups == sorted(groups, key=order.index)  # rows arrive in group order
     assert by_id[m_id].fit.word == fit.MAYBE and by_id[t1_id].fit.word == fit.NEW
     assert by_id[r_id].fit.why == "title rule" and by_id[p_id].fit.why == "pay rule"
@@ -318,7 +321,7 @@ def test_the_sql_grouping_agrees_with_fit_for_row_for_row():
     assert "Maybe · 1" in html
     note = html.split('data-testid="not-fit-note">')[1].split("</div>")[0]
     assert note.startswith("2 set aside by your rules before any model ran (pay 1, title 1); 1 "
-                           "scored low by the model. Not counted in the groups above.")
+                           "scored low by the model. Not counted in the groups.")
     # Only rule rejects: the section opens with its first page, no Show button needed.
     assert "Not a fit · 2<" in rules_only and 'data-testid="not-fit-show"' not in rules_only
     assert 'data-testid="not-fit-rows"' in rules_only
@@ -428,11 +431,11 @@ def test_each_chip_maps_to_its_query_parameter():
                      "failed", "hidden"):
             assert f'data-chip="{name}"' in base, name
         # Failed scoring opens Needs another try and carries that page's count.
-        assert re.search(r'href="/quarantine"[^>]*data-chip="failed"[^>]*>Failed scoring'
+        assert re.search(r'href="/quarantine"[^>]*data-chip="failed"[^>]*>Needs another try'
                          r'<span class="k-chip__n">1</span>', base)
         assert 'data-chip="clear"' not in base  # nothing active: nothing to clear
         for label in ("My shortlist", "Your call", "Scored", "New today", "Saved",
-                      "Failed scoring", "Hidden", "More filters"):
+                      "Needs another try", "Hidden", "More filters"):
             assert label in base, label
         # The counts: all open roles outside Not a fit, my shortlist, your call, scored, new.
         assert re.search(r'data-chip="all">All<span class="k-chip__n">4</span>', base)
@@ -559,9 +562,9 @@ def test_panel_has_the_ring_the_boxes_the_summary_and_three_buttons():
     assert "Disagree with the fit?" not in html and 'type="range"' not in html
     assert "Deeper read" not in html and "Research the company" not in html
     assert not _OLD_WORDS.search(html) and not _OLD_WORDS.search(a)
-    # A shortlisted role shows where it stands and cannot be hidden from here.
+    # A shortlisted role shows where it stands; the locked mockup keeps Not for me beside it.
     assert 'data-testid="panel-on-list"' in a and "On my shortlist" in a
-    assert 'data-testid="panel-not-for-me"' not in a and 'data-testid="panel-open"' in a
+    assert 'data-testid="panel-not-for-me"' in a and 'data-testid="panel-open"' in a
 
     with _client() as c:
         no_ev = c.get(f"/opportunities/{ids['d']}/panel").text
@@ -589,6 +592,8 @@ def test_watch_names_the_legitimacy_flags_in_plain_words():
     async def flag(s):
         b = await s.get(Opportunity, ids["b"])
         b.ghost_score = 0.7
+        # Nothing known about place or pay, so the "nothing named" sign stands (D-UI-205).
+        b.location_raw, b.comp_min, b.comp_max = None, None, None
         s.add(_ev(b, needs_review=True, verdict="consider", verdict_model="apply", score=3.8,
                   legitimacy={"status": "suspect", "signals": [
                       "no_comp_no_location_no_team", "staffing_agency_unnamed_client"]}))
@@ -1187,8 +1192,8 @@ def test_operator_decisions_outrank_the_model_in_sql_and_in_row_fit_alike():
     # SQL and row_fit agree: rows arrive in group order and the counts match the rows.
     order = list(fit.GROUP_LABELS)
     groups = [r.fit.group for r in pg.rows]
-    assert groups == sorted(groups, key=[fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_NEW,
-                                         fit.GROUP_FAILED, fit.GROUP_NOT_FIT].index)
+    assert groups == sorted(groups, key=[fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_NOT_FIT,
+                                         fit.GROUP_NEW, fit.GROUP_FAILED].index)
     for g in order:
         assert pg.group_counts[g] == sum(1 for r in pg.rows if r.fit.group == g), g
     for r in pg.rows:
@@ -1308,9 +1313,9 @@ def test_scoring_failed_is_its_own_group_with_the_reason_and_score_again():
     with _client() as c:
         html = _get(c, "/opportunities")
     assert "Being scored · 2" in html and "Scoring failed · 2" in html
-    # Scoring failed comes right after Being scored and before Not a fit.
-    assert html.index('data-group="new"') < html.index('data-group="failed"') < html.index(
-        'data-group="not_fit"'
+    # Not a fit comes before Being scored, then Scoring failed (D-UI-198).
+    assert html.index('data-group="not_fit"') < html.index('data-group="new"') < html.index(
+        'data-group="failed"'
     )
     assert 'id="scoring-failed"' in html
     explain = html.split('data-testid="failed-explain"')[1].split("</div>")[0]
@@ -1413,7 +1418,7 @@ def test_applied_roles_leave_worth_a_look_for_their_own_group_with_a_status_pill
     assert f'id="row-{new["ap"]}"' not in worth and f'id="row-{new["iv"]}"' not in worth
     assert f'id="row-{new["ap"]}"' in applied and f'id="row-{new["iv"]}"' in applied
     assert "Applied · 2" in html and "Worth a look · 2" in html
-    # Order: Worth a look, Maybe, Applied, Being scored, Scoring failed, Not a fit.
+    # Order (D-UI-198): Worth a look, Maybe, Applied, Not a fit, Being scored, Scoring failed.
     sec = '<section class="pl-group" data-group="'
     assert html.index(sec + 'worth') < html.index(sec + 'applied') < html.index(
         sec + 'new') < html.index(sec + 'failed')
@@ -1455,8 +1460,8 @@ def test_sql_and_python_grouping_agree_for_applied_statuses():
         ), r.opp.id
     for g in fit.GROUP_LABELS:
         assert pg.group_counts[g] == sum(1 for r in pg.rows if r.fit.group == g), g
-    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NEW,
-             fit.GROUP_FAILED, fit.GROUP_NOT_FIT]
+    order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NOT_FIT,
+             fit.GROUP_NEW, fit.GROUP_FAILED]
     groups = [r.fit.group for r in pg.rows]
     assert groups == sorted(groups, key=order.index)
 
@@ -1584,12 +1589,12 @@ def test_being_scored_header_explains_the_background_roles(monkeypatch):
     with _client() as c:
         html = _get(c, "/opportunities")
         note = html.split('data-testid="background-note"')[1].split("</div>")[0]
-        assert "3 roles from company boards" in note and "when Kestrel is idle" in note
+        assert "3 roles from earlier runs" in note and "when Kestrel is idle" in note
         assert "Score everything now" not in note
         monkeypatch.setattr(lane, "scores_on_hosted", lambda settings: True)
         hosted = c.get("/opportunities").text
     note = hosted.split('data-testid="background-note"')[1].split("</div>")[0]
-    assert "online model" in note and "Score everything now" in note and 'href="/sources"' in note
+    assert "local models only" in note and 'href="/sources"' in note
     assert "—" not in note
     assert ids["d"]  # the base fixture still renders
 
@@ -1655,3 +1660,28 @@ def test_the_list_refreshes_while_any_task_is_live_and_pauses_on_open_not_a_fit(
     with _client() as c:
         busy = trigger(_get(c, "/opportunities"))
     assert "every 10s" in busy and "not-fit-rows" in busy
+
+
+def test_pipeline_group_order_puts_not_a_fit_before_being_scored():
+    """D-UI-198: one role per group renders Worth a look, Maybe, Applied, Not a fit, Being
+    scored, Scoring failed, in that order."""
+    ids = asyncio.run(_seed())
+    asyncio.run(_seed_applied(ids))
+    with _client() as c:
+        html = _get(c, "/opportunities")
+    marks = [
+        '<section class="pl-group" data-group="worth"',
+        '<section class="pl-group" data-group="maybe"',
+        '<section class="pl-group" data-group="applied"',
+        '<section class="pl-nf" data-group="not_fit"',
+        '<section class="pl-group" data-group="new"',
+        '<section class="pl-group" data-group="failed"',
+    ]
+    assert all(m in html for m in marks)
+    pos = [html.index(m) for m in marks]
+    assert pos == sorted(pos)
+    from kestrel.web import fit
+    from kestrel.web.queries import GROUP_ORDER
+
+    assert GROUP_ORDER == (fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED,
+                           fit.GROUP_NOT_FIT, fit.GROUP_NEW, fit.GROUP_FAILED)

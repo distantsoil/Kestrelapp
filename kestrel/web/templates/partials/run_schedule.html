@@ -15,8 +15,9 @@
     <noscript><button class="k-btn k-btn--sm" type="submit">Save schedule</button></noscript>
   </form>
   <div class="rn-next" data-testid="schedule-status">
-    <b>{% if schedule.kind == 'off' %}Scheduled runs are off{% elif schedule_next %}Next run: {{ schedule_next }}{% else %}Scheduled{% endif %}</b>
-    <span>{% if schedule_saved %}Saved: {{ schedule.describe() }}. {% elif schedule.kind != 'off' %}{% set d = schedule.describe() %}{{ d[:1]|upper }}{{ d[1:] }}{% if schedule_last %} (last fired {{ schedule_last }}){% endif %}. {% endif %}Runs only while Kestrel is open, in the window or the tray.</span>
+    {{ ui.icon('clock') }}
+    <div class="rn-next__t"><b>{% if schedule.kind == 'off' %}Scheduled runs are off{% elif schedule_next %}Next run: {{ schedule_next }}{% else %}Scheduled{% endif %}</b>
+    <span>{% if schedule_saved %}Saved: {{ schedule.describe() }}. {% elif schedule.kind != 'off' %}{% set d = schedule.describe() %}{{ d[:1]|upper }}{{ d[1:] }}{% if schedule_last %} (last fired {{ schedule_last }}){% endif %}. {% endif %}Runs only while Kestrel is open, in the window or the tray.</span></div>
   </div>
   <details class="rn-details"><summary>Show details</summary>
     <p>One scan of every enabled source, on this machine's clock ({{ local_tz }}), once per day or week. A time missed while Kestrel was closed fires at the next start that same day or week. Changing the schedule after it has fired waits for the next period. Per-source cadences on Sources keep running as before.</p>

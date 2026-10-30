@@ -237,6 +237,194 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "1 request/second (list and detail alike); robots.txt respected.",
         "region": _WORLDWIDE,
     },
+    "recruitee": {
+        "name": "Recruitee",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public offers JSON for one company: {slug}.recruitee.com/api/offers/. One request "
+            "per scan; every offer carries its full description, so there are no detail requests. "
+            "A company on its own careers domain still has its {slug}.recruitee.com address."
+        ),
+        "provide": (
+            "The company's Recruitee name, the first part of {slug}.recruitee.com (a careers page "
+            "on its own domain usually shows it in the page's source). Optionally company_name."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second; one request per scan; robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
+    "careers_page": {
+        "name": "Careers page",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "One company's careers page, read for the job data the page publishes for search "
+            "engines (schema.org JobPosting, in the page's JSON-LD). A list page that only links "
+            "to its job pages is followed one level, at most 25 job pages a run. A page that "
+            "builds its list with JavaScript has no such data in it and is reported as one Kestrel "
+            "cannot read yet. A link to a hiring system Kestrel already has a reader for is read "
+            "by that reader instead."
+        ),
+        "provide": "The careers page address (https://...). Optionally company_name.",
+        "config_example": {"url": "https://careers.example.com/jobs"},
+        "rate_limit": "1 request/second; robots.txt respected; public addresses only.",
+        "region": _WORLDWIDE,
+    },
+    "teamtailor": {
+        "name": "Teamtailor",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The career site's public job feed: {domain}/jobs.json (JSON Feed), or "
+            "{domain}/jobs.rss when there is no JSON feed. One request per scan; every role "
+            "carries its full description. Some sites switch the feeds off; the run then says so "
+            "plainly and is partial, not failed. Only public addresses are read."
+        ),
+        "provide": (
+            "The career site's address, without https://: example.teamtailor.com, or the "
+            "employer's own career domain (career.example.org). Optionally company_name."
+        ),
+        "config_example": {"domain": "career.example.org"},
+        "rate_limit": "1 request/second; one or two requests per scan; robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
+    "personio": {
+        "name": "Personio",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public XML job feed: {slug}.jobs.personio.de/xml (or .jobs.personio.com). One "
+            "request for the list. The feed often has no description, so a role without one gets "
+            "its job page read, up to max_results pages a run (default 100); roles past that are "
+            "kept without a description and the run says so. Personio rate-limits hard, so "
+            "requests are 2 seconds apart and a 429 makes the run partial."
+        ),
+        "provide": (
+            "The company's Personio name from its careers address ({slug}.jobs.personio.de). "
+            "Optionally tld (\"com\" for a .jobs.personio.com address), company_name and "
+            "max_results."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request every 2 seconds (list and job pages alike); robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
+    "breezy": {
+        "name": "Breezy HR",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public job list: {slug}.breezy.hr/json, one request. The list has no "
+            "descriptions, so each role's posting page ({slug}.breezy.hr/p/{id}) is read for "
+            "one, up to max_results pages a run (default 100); roles past that are kept without "
+            "a description and the run says so."
+        ),
+        "provide": (
+            "The company's Breezy name, the first part of its careers address "
+            "({slug}.breezy.hr). Optionally company_name and max_results."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second (list and posting pages alike); robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
+    "usajobs": {
+        "name": "USAJobs (US federal jobs)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "US federal government job announcements from the official USAJobs search API, "
+            "data.usajobs.gov/api/search: one search per keyword (your target titles when none "
+            "is set), up to max_pages pages of results_per_page announcements each, posted in "
+            "the last date_posted_days days. Public announcements only. Each role links to the "
+            "official announcement on USAJobs, where you apply yourself. Kestrel is not run or "
+            "endorsed by the Office of Personnel Management."
+        ),
+        "provide": (
+            "Your own free USAJobs API key and the email address you requested it with, saved "
+            "from the Add a job board search sheet or the USAJobs card on the Sources page (the "
+            "key is stored as USAJOBS_API_KEY in Kestrel's .env file, never in the source). The "
+            "source holds keyword, location, remote_only and the email as contact_email. "
+            "Optional max_pages, results_per_page, date_posted_days."
+        ),
+        "config_example": {
+            "keyword": "Program Analyst", "location": "Columbus, Ohio",
+            "contact_email": "you@example.com",
+        },
+        "rate_limit": (
+            "2 requests/second at most and 12 requests a run, far under any limit; robots.txt "
+            "respected; a 429 or 5xx makes the run partial. The User-Agent is your email address, "
+            "which USAJobs requires."
+        ),
+        "user_agent": "Your email address, as USAJobs requires.",
+        "region": "US federal jobs, including overseas postings (screened by your Region).",
+    },
+    "adzuna": {
+        "name": "Adzuna (job search board)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Job ads from the Adzuna search API, api.adzuna.com/v1/api/jobs/us/search: one "
+            "search per keyword (your target titles when none is set), up to max_pages pages of "
+            "results_per_page ads each (50 at most), posted in the last date_posted_days days. "
+            "Adzuna sends only the start of each description, so Kestrel marks the text as "
+            "partial; each role links to Adzuna, which forwards you to the original posting, "
+            "where you apply yourself. A salary Adzuna only estimated is not shown as posted pay."
+        ),
+        "provide": (
+            "Your own free Adzuna app ID and app key (developer.adzuna.com), saved from the Add a "
+            "job board search sheet or the Adzuna card on the Sources page (stored as "
+            "ADZUNA_APP_ID_KEY and ADZUNA_APP_KEY in Kestrel's .env file, never in the source). "
+            "The source holds keyword and location. Optional max_pages, results_per_page, "
+            "date_posted_days."
+        ),
+        "config_example": {"keyword": "Program Analyst", "location": "Columbus, Ohio"},
+        "rate_limit": (
+            "1 request/second and at most 8 requests a run (the free key allows about 250 calls "
+            "a day); the API call skips robots.txt because api.adzuna.com is the published API "
+            "used with your own key; a 429 or 5xx makes the run partial."
+        ),
+        "region": "US only.",
+    },
+    "himalayas": {
+        "name": "Himalayas (remote jobs)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Remote job listings from the Himalayas jobs API, himalayas.app/jobs/api/search: one "
+            "search per keyword (your target titles when none is set), up to max_pages pages of "
+            "20, only roles open to applicants in the US (worldwide roles included). Each role "
+            "links to Himalayas, which is where you apply, and is credited to Himalayas. Roles "
+            "past their expiry date are skipped."
+        ),
+        "provide": "Nothing: no key or account. Optional keyword and max_pages.",
+        "config_example": {"keyword": "Program Analyst"},
+        "rate_limit": (
+            "1 request/second and at most 12 requests a run; robots.txt respected; the data "
+            "refreshes daily, so a daily check is plenty; a 429 or 5xx makes the run partial."
+        ),
+        "region": "Remote roles open to the US.",
+    },
+    "weworkremotely": {
+        "name": "We Work Remotely (remote jobs feed)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "The public We Work Remotely RSS feed of recent remote jobs, "
+            "weworkremotely.com/remote-jobs.rss (or one category feed). One request a check. "
+            "Roles the board limits to another region (for example Europe only) are skipped. "
+            "Each role links to its page on We Work Remotely, where you apply yourself, and is "
+            "credited to it."
+        ),
+        "provide": (
+            "Nothing: no key or account. Optional category, such as remote-programming-jobs."
+        ),
+        "config_example": {"category": "remote-programming-jobs"},
+        "rate_limit": (
+            "One request a check at 1 request/second; robots.txt respected; a 403, 429 or 5xx "
+            "makes the run partial."
+        ),
+        "region": "Remote roles open to the US.",
+    },
     "remoterocketship": {
         "name": "RemoteRocketship (paid API, finds links only)",
         "category": CATEGORY_AGGREGATOR,
@@ -268,8 +456,8 @@ _DESCRIPTIONS: dict[str, dict] = {
         "category": CATEGORY_AGGREGATOR,
         "track": "either",
         "fetches": (
-            "Public search results from Indeed and Glassdoor, plus ZipRecruiter, Google Jobs and "
-            "Dice when they answer (ZipRecruiter and Google Jobs currently return nothing), "
+            "Public search results from Indeed and Glassdoor, plus ZipRecruiter and Google Jobs "
+            "when they answer (both currently return nothing), "
             "through the python-jobspy library, run off the event loop. Nothing is fetched "
             "behind a login."
         ),
@@ -446,6 +634,20 @@ _EASY_ADD = {
     "lever": _LOOKUP,
     "ashby": _LOOKUP,
     "smartrecruiters": _LOOKUP,
+    "usajobs": (
+        "Easiest: Sources > Add a source > Job board search, tick USAJobs, and paste your key and "
+        "email. By hand: "
+    ),
+    "adzuna": (
+        "Easiest: Sources > Add a source > Job board search, tick Adzuna, and paste your app ID "
+        "and app key. By hand: "
+    ),
+    "himalayas": (
+        "Easiest: Sources > Add a source > Job board search, tick Himalayas. By hand: "
+    ),
+    "weworkremotely": (
+        "Easiest: Sources > Add a source > Job board search, tick We Work Remotely. By hand: "
+    ),
     "jobspy": (
         "Usually nothing to do: your searches are built from Profile > Employment and Location "
         "and listed under Sources > Your searches. For an extra search of your own: "
@@ -470,7 +672,9 @@ def _ordered_kinds() -> list[str]:
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
-        "paylocity", "workable", "jobspy", "remoterocketship",
+        "paylocity", "workable", "recruitee", "teamtailor", "personio", "breezy", "careers_page",
+        "jobspy",
+        "usajobs", "adzuna", "himalayas", "weworkremotely", "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())
@@ -526,3 +730,9 @@ def source_catalog() -> list[SourceKindInfo]:
 def described_kinds() -> frozenset[str]:
     """The kinds this module has prose for; tests compare it against the registries."""
     return frozenset(_DESCRIPTIONS)
+
+
+def is_company_board(kind: str | None) -> bool:
+    """A company's own job board (an ATS: Greenhouse, Lever, Workday and the rest), which lists
+    every opening at that company rather than the ones a search asked for (D-SRC-12)."""
+    return bool(kind) and _DESCRIPTIONS.get(str(kind), {}).get("category") == CATEGORY_ATS

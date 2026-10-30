@@ -6,11 +6,13 @@
 {% extends "base.html" %}
 {% block title %}{{ title_display }} · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/role.css">
-<script src="/static/js/role.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/role.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): role.js defines the page "role"; base.html mounts it. #}
+{% block page_name %}role{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/role.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="rl-wrap"><div class="rl-page" id="role" data-opp="{{ opp.id }}">
   {% include "partials/role_body.html" %}

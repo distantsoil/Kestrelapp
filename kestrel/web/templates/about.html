@@ -1,7 +1,8 @@
 {# About (D-UI-6, D-UI-125, SPEC-INTERFACES 2.1 /about). Built on the shared design system. Every
    version shown comes from the page context (kestrel.__version__ and installed package
    metadata), never from this file. The promises and helper cards open flyouts; component
-   versions, diagnostics and the third-party notices sit behind native toggles. #}
+   versions and the third-party notices sit behind animated toggles; the diagnostics save lives in
+   the Something wrong? flyout (the mockup has no diagnostics block). #}
 {% extends "base.html" %}
 {# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
 {% import "ui/macros.html" as ui %}
@@ -11,6 +12,9 @@
   'gift': '<path d="M20 12v9H4v-9M2 7h20v5H2zM12 21V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z"/>',
   'eye': '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   'hand': '<path d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10V6a2 2 0 0 0-4 0v8l-1.5-1.5a2 2 0 0 0-3 2.6L6 20a5 5 0 0 0 4 2h3a6 6 0 0 0 6-6v-5a2 2 0 0 0-4 0"/>',
+  'code': '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>',
+  'scale': '<path d="M12 3v18M7 21h10M5 7h14M5 7l-3 7a3.5 3.5 0 0 0 6 0zM19 7l-3 7a3.5 3.5 0 0 0 6 0z"/>',
+  'spark': '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>',
   'ext': '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'
 } %}
 {% macro glyph(name, cls='') -%}
@@ -18,11 +22,13 @@
 {%- endmacro %}
 {% block title %}About · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/about.css">
-<script src="/static/js/about.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/about.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): about.js defines the page "about"; base.html mounts it. #}
+{% block page_name %}about{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/about.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="ab-wrap"><div class="ab-page">
   {% call ui.scene_band('About', sub='Who made Kestrel, what it promises, and where your files are.') %}{% endcall %}
@@ -30,7 +36,7 @@
     <div class="k-layout__main">
 
       <section class="k-card ab-id" data-testid="about-id">
-        <button type="button" class="ab-mark" id="ab-mark" aria-label="Kestrel"><img src="/static/icon.svg" alt="" width="84" height="84"></button>
+        <button type="button" class="ab-mark" id="ab-mark" aria-label="Kestrel"><img src="{{ static_url('icon.svg') }}" alt="" width="84" height="84"></button>
         <div class="ab-id__who k-grow">
           <h2>Kestrel</h2>
           <div class="ab-vline">
@@ -41,7 +47,8 @@
           <div class="ab-copy k-muted">Copyright 2026 M Crowle-Groves · PolyForm Noncommercial License 1.0.0</div>
         </div>
         <div class="ab-upd">
-          <button type="button" class="k-btn k-btn--sm" hx-post="/updates/check" hx-vals='{"surface": "about"}' hx-target="#update-result" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="check-updates">Check for updates</button>
+          <button type="button" class="k-btn k-btn--sm" hx-post="/updates/check" hx-vals='{"surface": "about"}' hx-target="#update-result" hx-swap="innerHTML" hx-disabled-elt="this" hx-indicator="#ab-checking" data-testid="check-updates">Check for updates</button>
+          <span id="ab-checking" class="ab-checking htmx-indicator" role="status"><span class="ab-spin" aria-hidden="true"></span>Checking</span>
           <div id="update-result" class="ab-result" aria-live="polite"></div>
           <span id="update-last-checked" class="ab-last">Last checked: {{ update_last_checked }}</span>
         </div>
@@ -67,8 +74,8 @@
         <div class="ab-mk" data-testid="built-with">{% for m in built_with %}<span>{{ m }}</span>{% endfor %}</div>
         <p class="k-muted ab-credits" data-testid="credits">Built on {% for c in built_on %}<a class="k-link" href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}. Ideas from {% for c in inspired_by %}<a class="k-link" href="{{ c.url }}" target="_blank" rel="noopener">{{ c.name }}</a>{% if loop.revindex == 2 %} and {% elif not loop.last %}, {% endif %}{% endfor %}; no code or text was taken from them.</p>
 
-        <details class="ab-tog" id="ab-versions" data-testid="component-versions">
-          <summary>Component versions</summary>
+        <details class="ab-tog" id="ab-versions" data-k-fold data-testid="component-versions">
+          <summary>{{ ui.icon('arrow', 'k-ic--sm') }}Component versions</summary>
           <table class="ab-comp" id="ab-comp">
             <tbody>
               {% for label, value in components %}<tr><td>{{ label }}</td><td>{{ value }}</td></tr>{% endfor %}
@@ -78,26 +85,8 @@
           <div class="ab-acts"><button type="button" class="k-btn k-btn--sm" data-copy-versions data-testid="copy-versions">Copy versions for a bug report</button></div>
         </details>
 
-        <details class="ab-tog" id="diagnostics" data-testid="diagnostics-panel">
-          <summary>Diagnostics for a bug report</summary>
-          {% if desktop %}
-          <p>When something goes wrong, save one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click, saved to your Downloads folder, and is never sent anywhere by Kestrel.</p>
-          {# Desktop app: saved straight to Downloads, no browser download flyout (D-UI-41). #}
-          <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="diagnostics-save" hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
-          <div id="diagnostics-result"></div>
-          {% else %}
-          <p>When something goes wrong, download one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click and is never sent anywhere by Kestrel.</p>
-          <a class="k-btn k-btn--sm k-btn--primary" href="/about/diagnostics" data-testid="diagnostics-download">Download diagnostics</a>
-          {% endif %}
-          <h4>What it contains</h4>
-          <ul>{% for name, what in bundle_contents %}<li><span class="mono">{{ name }}</span>: {{ what }}.</li>{% endfor %}</ul>
-          <h4>What it never contains</h4>
-          <ul>{% for item in bundle_excluded %}<li>{{ item }}.</li>{% endfor %}</ul>
-          <p class="k-muted">Open the zip before you send it if you want to check; every file in it is plain text.</p>
-        </details>
-
-        <details class="ab-tog" id="ab-notices" data-testid="notices">
-          <summary>Third-party notices</summary>
+        <details class="ab-tog" id="ab-notices" data-k-fold data-testid="notices">
+          <summary>{{ ui.icon('arrow', 'k-ic--sm') }}Third-party notices</summary>
           <p class="k-muted">Each library inside Kestrel keeps its own license. <a class="k-link" href="/about/notices" target="_blank" rel="noopener">Open the notices as a page</a>.</p>
           <pre class="ab-notes" id="ab-notes-text" tabindex="0">Loading…</pre>
         </details>
@@ -121,14 +110,18 @@
       </article>
 
       <article class="k-hcard k-hcard--info" data-testid="about-support">
-        <div class="k-hcard__head"><span class="k-badge">{{ ui.icon('plug') }}</span><h3>Source and support</h3></div>
+        <div class="k-hcard__head"><span class="k-badge">{{ glyph('code') }}</span><h3>Source and support</h3></div>
         <div class="ab-lnk"><div class="k-grow"><b>Source code and issues</b><span class="k-muted">Read it, report a bug, ask for a feature.</span></div><a class="k-btn k-btn--sm" href="{{ github_url }}" target="_blank" rel="noopener">GitHub {{ glyph('ext', 'k-ic--sm') }}</a></div>
         <div class="ab-lnk"><div class="k-grow"><b>Support the project</b><span class="k-muted">Optional. Kestrel stays free.</span></div><a class="k-btn k-btn--sm k-btn--primary" href="{{ kofi_url }}" target="_blank" rel="noopener">Ko-fi {{ glyph('ext', 'k-ic--sm') }}</a></div>
         <div class="ab-lnk"><div class="k-grow"><b>kestrelapp.co</b><span class="k-muted">Guides and release notes.</span></div><a class="k-btn k-btn--sm" href="{{ site_url }}" target="_blank" rel="noopener">Visit {{ glyph('ext', 'k-ic--sm') }}</a></div>
         {{ ui.flyout_trigger('ab-fly-support') }}
       </article>
 
-      {{ ui.help_card('The license in plain words', ['Free to use, read and change, if it is not for profit.', 'Selling it or using it in a business needs permission.', 'Your own data and documents are always yours.'], 'good', 'text', 'ab-fly-license') }}
+      <article class="k-hcard k-hcard--good" data-testid="about-license">
+        <div class="k-hcard__head"><span class="k-badge k-badge--good">{{ glyph('scale') }}</span><h3>The license in plain words</h3></div>
+        <ul class="k-hcard__list"><li>Free to use, read and change, if it is not for profit.</li><li>Selling it or using it in a business needs permission.</li><li>Your own data and documents are always yours.</li></ul>
+        {{ ui.flyout_trigger('ab-fly-license') }}
+      </article>
 
       <article class="k-hcard k-hcard--warn" data-testid="about-wrong">
         <div class="k-hcard__head"><span class="k-badge k-badge--warn">{{ ui.icon('diag') }}</span><h3>Something wrong?</h3></div>
@@ -167,6 +160,23 @@
     <p>Only the version and component list shown on this page. No personal data.</p>
     <h6>Before you report</h6>
     <p>Help, under Troubleshooting, covers slow scoring, failed roles and odd scores. Most are fixed by Check my models.</p>
+    <section id="diagnostics" data-testid="diagnostics-panel">
+    <h6>Diagnostics for a bug report</h6>
+    {% if desktop %}
+    <p>When something goes wrong, save one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click, saved to your Downloads folder, and is never sent anywhere by Kestrel.</p>
+    {# Desktop app: saved straight to Downloads, no browser download flyout (D-UI-41). #}
+    <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="diagnostics-save" hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
+    <div id="diagnostics-result"></div>
+    {% else %}
+    <p>When something goes wrong, download one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click and is never sent anywhere by Kestrel.</p>
+    <a class="k-btn k-btn--sm k-btn--primary" href="/about/diagnostics" download data-testid="diagnostics-download">Download diagnostics</a>
+    {% endif %}
+    <h4>What it contains</h4>
+    <ul>{% for name, what in bundle_contents %}<li><span class="mono">{{ name }}</span>: {{ what }}.</li>{% endfor %}</ul>
+    <h4>What it never contains</h4>
+    <ul>{% for item in bundle_excluded %}<li>{{ item }}.</li>{% endfor %}</ul>
+    <p class="k-muted">Open the zip before you send it if you want to check; every file in it is plain text.</p>
+    </section>
   {% endcall %}
   <div class="ab-glider" id="ab-glider" aria-hidden="true"><svg viewBox="0 0 54 28"><g class="ab-glider__w"><path d="M2 14 Q14 2 27 12 Q40 2 52 14 Q40 9 27 16 Q14 9 2 14z" fill="currentColor"/></g></svg></div>
 </div></div>

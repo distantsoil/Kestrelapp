@@ -14,7 +14,13 @@ from types import SimpleNamespace
 import pytest
 
 from tests import role_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -330,6 +336,83 @@ def test_more_menu_and_deeper_read_ask_first(live):
         assert "Show exactly what is sent" in dlg.inner_text()
         dlg.get_by_role("button", name="Cancel").click()
         dlg.wait_for(state="hidden")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live):
+    """The page lifecycle (D-UI-210): the Role page unmounted and mounted again in place starts
+    exactly what it started on the document load (the dialog observer included) and leaves no
+    timer or observer behind. After it, one click on a match-map chip focuses its group and stays
+    focused (a doubled listener toggles it on and off in the same click), and the tab and
+    Previous/Next history htmx writes still work: a tab pushes its URL and Back returns."""
+    base, browser, ids = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 1000}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/opportunities/{ids['strong']}")
+        page.wait_for_selector("#rl-body")
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "role", "role.js", settle_ms=600)
+        assert first["observers"] == 1 and first["timers"] == 0, first
+        page.locator(".rl-wchip[data-f='gap']").click()
+        page.locator(".rl-main.is-focus").wait_for()
+        assert page.locator(".rl-fl.is-hit").count() == 2
+        page.keyboard.press("Escape")
+        page.locator(".rl-main:not(.is-focus)").wait_for()
+        # The history a tab writes is htmx's, and the page's own listeners leave it alone.
+        before = page.evaluate("history.length")
+        page.get_by_test_id("tab-history").click()
+        page.locator("#rl-histtab").wait_for()
+        assert page.url.endswith("/history")
+        assert page.evaluate("history.length") == before + 1
+        page.go_back()
+        page.wait_for_function("() => !location.pathname.endsWith('/history')")
+        # Back put htmx's saved body in place, a new dialog host: the page watches that one, and
+        # still holds the one observer it started with.
+        page.wait_for_function("KUI.page._stats().observers === 1")
+        assert page.evaluate("KUI.page._stats().listeners") == first["listeners"]
+        # A dialog an action loads is opened by the observer, once.
+        page.get_by_test_id("more").click()
+        page.get_by_test_id("escalate").click()
+        page.locator("#rl-deeper").wait_for(state="visible")
+        # Unmounted, the observer is gone: a dialog dropped into the host stays closed.
+        page.evaluate("KUI.page.unmount()")
+        page.evaluate("document.querySelector('#rl-dialog').innerHTML = "
+                      "'<div class=\"k-modal\" id=\"g2-late\" hidden></div>'")
+        page.wait_for_timeout(300)
+        assert page.evaluate("document.querySelector('#g2-late').classList.contains('is-open')") \
+            is False
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_tab_change_fades_the_new_pane_in_without_a_flash(live):
+    """Owner, 2026-10-30: a "flash and flicker" on a tab change. The fade started after htmx's
+    settle delay, so the new pane was drawn at full strength for a frame or two, dropped to
+    nothing, then faded in. Sampled every frame: the new content starts faint and only rises."""
+    ctx, page, errors = _page(live, "light", 1400)
+    try:
+        for tab in ("posting", "organization", "evaluation"):
+            page.evaluate("""() => { window.__f = [];
+              const pane = document.getElementById('rl-pane');
+              const first = pane.firstElementChild; let n = 0;
+              const tick = () => { const c = pane.firstElementChild;
+                if (c !== first) window.__f.push(+getComputedStyle(c).opacity
+                                                 * +getComputedStyle(pane).opacity);
+                if (++n < 90) requestAnimationFrame(tick); };
+              requestAnimationFrame(tick); }""")
+            page.click(f'#rl-tabs a[data-tab="{tab}"]')
+            page.wait_for_timeout(1700)
+            seen = page.evaluate("window.__f")
+            assert seen and seen[0] < 0.5, (tab, seen[:6])
+            rising = all(b >= a - 0.01 for a, b in zip(seen, seen[1:], strict=False))
+            assert rising, (tab, seen[:12])
         assert not errors, errors
     finally:
         ctx.close()

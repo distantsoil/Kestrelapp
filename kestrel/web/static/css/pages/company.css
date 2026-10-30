@@ -203,3 +203,21 @@
   .co-kn, .co-person { grid-template-columns: 36px minmax(0, 1fr) auto; }
   .co-how, .co-seen { display: none; }
 }
+
+/* Card headers: the title at the left, its sub-line right-aligned on the same row (mockup .co-h3r). */
+.co-body .k-sec-head > .k-grow { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; align-self: center; min-width: 0; }
+.co-body .k-sec-head > .k-grow > p { margin: 0; text-align: right; min-width: 0; font-size: 13px; }
+.co-edge { border-left: 4px solid var(--brand); }
+/* The pay card's "Typical $X" label floats above the range bar at the typical mark. */
+.co-pt { position: relative; height: 16px; font-size: 11.5px; font-weight: 700; color: var(--ink);
+  white-space: nowrap; transform: translateX(-50%); width: max-content; margin-top: 6px; }
+/* Sections rise in, one after the other, when the page opens (mockup co-sec-in). */
+.co-body > section:not(#co-sum) { animation: k-inUp .4s var(--ease) backwards; }
+.co-body > section:nth-child(2) { animation-delay: .06s; }
+.co-body > section:nth-child(3) { animation-delay: .12s; }
+.co-body > section:nth-child(4) { animation-delay: .18s; }
+.co-body > section:nth-child(n+5) { animation-delay: .24s; }
+@media (prefers-reduced-motion: reduce) { .co-body > section:not(#co-sum) { animation: none; } }
+
+/* "More about this" reads with a chevron (mockup help links). */

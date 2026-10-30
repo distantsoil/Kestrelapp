@@ -3,7 +3,9 @@
    the sheets the server returns, the paper preview scaled to fit, the PDF download, and reading an
    Undo that can no longer be done. Everything is delegated on the document, so it keeps working
    after the body is swapped. Nothing here sends anything: the server decides and checks every
-   send. */
+   send. The page runs on the lifecycle (KUI.page, D-UI-210): this file only defines it, and
+   mount starts every listener and timer through its context, so leaving stops all of them and
+   coming back starts one set. The Stories page renders the same template and uses this page. */
 (function (root) {
   'use strict';
   function reduced() {
@@ -11,7 +13,11 @@
   }
   function smooth() { return reduced() ? 'auto' : 'smooth'; }
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
+
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
+  var cx = null;
+  var inkFrom = null;  // where the tab ink was before a tab change
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -25,7 +31,7 @@
       if (m !== except) b.setAttribute('aria-expanded', 'false');
     });
   }
-  doc.addEventListener('click', function (e) {
+  function onClick(e) {
     var t = e.target;
     var btn = t.closest && t.closest('[data-pp-menu]');
     if (btn) {
@@ -85,9 +91,9 @@
         block.scrollIntoView({ block: 'nearest', behavior: smooth() });
       }
     }
-  });
-  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(null); });
-  doc.addEventListener('input', function (e) {
+  }
+  function onEscape(e) { if (e.key === 'Escape') closeMenus(null); }
+  function onInput(e) {
     if (e.target && e.target.id === 'pp-ans') {
       var v = e.target.value.trim();
       var wc = $('#pp-wc');
@@ -96,11 +102,11 @@
         wc.textContent = n + (n === 1 ? ' word' : ' words');
       }
     }
-  });
+  }
 
   /* A send to an online model the server has not been told to allow yet: ask first. The server
      refuses without the confirmation too; this only saves the trip. */
-  doc.addEventListener('submit', function (e) {
+  function onSubmit(e) {
     var route = $('#pp-route');
     var form = e.target;
     if (!route || !route.hasAttribute('data-needs-confirm') || !form.getAttribute) return;
@@ -111,7 +117,7 @@
     var layout = $('#pp-layout');
     var opp = layout ? layout.getAttribute('data-opp') : '';
     if (root.htmx && opp) root.htmx.ajax('GET', '/mock/' + opp + '/online', { target: '#pp-dialog', swap: 'innerHTML' });
-  }, true);
+  }
 
   /* ------------------------------------------------------------- sheets and the preview */
   function scalePages() {
@@ -136,7 +142,7 @@
     });
     out.textContent = String(n);
   }
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  function onSheetSwap(e) {
     var t = e.target;
     if (t && t.id === 'pp-dialog' && root.KUI) {
       var modal = $('.k-modal', t);
@@ -145,22 +151,21 @@
         var ta = $('textarea', modal);
         if (ta) ta.focus();
         scalePages();
-        setTimeout(scalePages, 60);
-        setTimeout(scalePages, 420);
+        cx.after(60, scalePages);
+        cx.after(420, scalePages);
       }
     }
-    if (t && t.id === 'pp-saved') setTimeout(function () {
+    if (t && t.id === 'pp-saved') cx.after(1600, function () {
       var s = $('#pp-saved'); if (s) s.classList.remove('is-on');
-    }, 1600);
-  });
-  doc.addEventListener('scroll', function (e) {
+    });
+  }
+  function onPagesScroll(e) {
     if (e.target && e.target.id === 'pp-pages') pageNumber();
-  }, true);
-  root.addEventListener('resize', scalePages);
+  }
   // The server answers a saved sheet with this event: close it; the cards were swapped already.
-  doc.addEventListener('pp-close-sheet', function () { if (root.KUI) root.KUI.closeModal(); });
+  function onCloseSheet() { if (root.KUI) root.KUI.closeModal(); }
   // The PDF is made: hand the file to the browser, which asks where to save it.
-  doc.addEventListener('pp-download', function (e) {
+  function onDownload(e) {
     var d = e.detail || {};
     if (!d.url) return;
     var a = doc.createElement('a');
@@ -170,10 +175,10 @@
     a.click();
     a.remove();
     if (root.KUI) root.KUI.closeModal();
-  });
+  }
 
   /* ------------------------------------------------------------ after the answer comes back */
-  doc.addEventListener('htmx:oobAfterSwap', function (e) {
+  function onChatSwap(e) {
     var t = e.target;
     if (t && t.id === 'pp-chat') {
       var crits = $$('.pp-crit', t);
@@ -182,20 +187,70 @@
       if (last && !ask) last.scrollIntoView({ block: 'nearest', behavior: smooth() });
       else if (ask && !crits.length) ask.focus({ preventScroll: true });
     }
-  });
+  }
 
   /* -------------------------------------------------------------------------- Undo */
   // Undo reloads what is on screen, tab and all, from the server.
-  doc.addEventListener('kestrel:undone', function () {
+  function onUndone() {
     var layout = $('#pp-layout');
     if (!layout || !root.htmx) return;
     var tab = layout.getAttribute('data-tab') || 'pack';
     var opp = layout.getAttribute('data-opp');
     var url = (opp ? '/prep/' + opp : '/prep') + '?tab=' + encodeURIComponent(tab);
     root.htmx.ajax('GET', url, { target: '#pp-body', swap: 'innerHTML' });
-  });
-  doc.addEventListener('htmx:responseError', function (e) {
+  }
+  function onResponseError(e) {
     var xhr = e.detail && e.detail.xhr;
     if (xhr && xhr.status === 404) say('That is no longer here. Reload the page to see what changed.', 'warn');
+  }
+
+  /* ----------------------------------------------------------------------- tab ink and rise */
+  function placeInk(from) {
+    var tabs = $('.pp-tabs');
+    if (tabs && root.KUI) root.KUI.ink(tabs, from);
+  }
+  function onTabRequest(e) {
+    var elt = e.detail && e.detail.elt;
+    if (elt && elt.classList && elt.classList.contains('pp-tab') && root.KUI) {
+      inkFrom = root.KUI.inkPos($('.pp-tabs'));
+    }
+  }
+  function onInkSwap(e) {
+    var elt = e.detail && e.detail.requestConfig && e.detail.requestConfig.elt;
+    if (!elt || !elt.classList || !elt.classList.contains('pp-tab')) { placeInk(null); return; }
+    placeInk(inkFrom);
+    inkFrom = null;
+    if (root.KUI) root.KUI.paneIn($('#pp-pane'));
+  }
+  function onTabsSwap(e) {
+    if (e.target && e.target.id === 'pp-tabs') placeInk(null);
+  }
+  function onInkResize() { placeInk(null); }
+
+  /* ------------------------------------------------------------------------------ the page */
+  root.KUI.page.define('prep', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      inkFrom = null;
+      // The order the file added them in.
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'keydown', onEscape);
+      ctx.on(doc, 'input', onInput);
+      ctx.on(doc, 'submit', onSubmit, true);
+      ctx.on(doc, 'htmx:afterSwap', onSheetSwap);
+      ctx.on(doc, 'scroll', onPagesScroll, true);
+      ctx.on(root, 'resize', scalePages);
+      ctx.on(doc, 'pp-close-sheet', onCloseSheet);
+      ctx.on(doc, 'pp-download', onDownload);
+      ctx.on(doc, 'htmx:oobAfterSwap', onChatSwap);
+      ctx.on(doc, 'kestrel:undone', onUndone);
+      ctx.on(doc, 'htmx:responseError', onResponseError);
+      ctx.on(doc, 'htmx:beforeRequest', onTabRequest);
+      ctx.on(doc, 'htmx:afterSwap', onInkSwap);
+      ctx.on(doc, 'htmx:oobAfterSwap', onTabsSwap);
+      placeInk(null);
+      ctx.on(root, 'resize', onInkResize);
+      ctx.onUnmount(function () { if (cx === ctx) cx = null; });
+    }
   });
 })(typeof window !== 'undefined' ? window : globalThis);

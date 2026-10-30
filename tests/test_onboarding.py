@@ -475,7 +475,9 @@ def test_resume_can_be_skipped_with_a_clear_note():
     assert 'data-testid="ob-resume-skip-note"' in body
     assert "No tailored resumes until you add one" in body
     assert 'hx-post="/api/documents/import/read"' in body and 'id="import-proposal"' in body
-    assert 'data-testid="ob-next"' not in body  # the proposal carries the primary
+    # The footer always shows the primary, disabled until a resume exists (onboarding-mockup-locked
+    # NEXTL[4], paintFoot), beside the quiet Skip for now.
+    assert re.search(r'data-testid="ob-next" disabled', body) and 'data-testid="ob-skip"' in body
     for label in ("Choose a file", "Paste text", "Read my resume"):
         assert label in body, label
     r = c.post("/onboarding/next", data={"step": "resume"}, headers=HX)
@@ -491,7 +493,7 @@ def test_an_imported_resume_shows_continue_and_ticks_the_step():
     _jump("resume", visited=["welcome", "models", "about"])
     body = c.get("/onboarding").text
     assert 'data-testid="ob-masters"' in body and "Imported resume" in body
-    assert ">Continue</button>" in body and 'data-testid="ob-skip"' not in body
+    assert ">Save resume and continue</button>" in body and 'data-testid="ob-skip"' not in body
     assert _progress(body)["resume"] == "ok"
     r = c.post("/onboarding/next", data={"step": "resume"}, headers=HX)
     assert _step(r.text) == "wants"
@@ -969,3 +971,22 @@ def test_hosted_choice_never_probes_ollama(monkeypatch):
     assert st.choice == "hosted" and st.ollama_version is None
     with pytest.raises(AssertionError, match="Ollama probed"):
         ss.assess(get_settings(), {ss.CHOICE_KEY: "local"})
+
+
+def test_a_refused_connect_keeps_what_was_ticked(monkeypatch):
+    # Free-only without the training opt-in is refused. The redraw keeps the consent, the free
+    # tick and an open "More options", so the form never looks as if the click did nothing.
+    monkeypatch.setenv("KESTREL_USE_SYSTEM_KEYS", "")
+    c = _app()
+    _jump("models", visited=["welcome"])
+    c.post("/onboarding/models/mode", data={"mode": "hosted"}, headers=HX)
+    r = c.post("/onboarding/models/connect",
+               data={"provider": "openrouter", "api_key": "sk-or-test-key", "ack": "on",
+                     "free_only": "on"}, headers=HX)
+    body = r.text
+    assert 'data-connect-ok="false"' in body and "Allow providers that may train" in body
+    assert re.search(r'id="ob-ack"[^>]*\bchecked', body)
+    assert re.search(r'name="free_only"[^>]*\bchecked', body)
+    assert not re.search(r'name="allow_training"[^>]*\bchecked', body)
+    assert re.search(r'<details class="ob-details" data-ob-more open', body)
+    assert not paths.dotenv_path().exists()

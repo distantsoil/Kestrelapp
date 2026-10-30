@@ -570,9 +570,10 @@ async def new_render(request: Request):
             "query": dict(request.query_params),
             "back": back_target(request.query_params),
             "render": None,
-            "new_render_error": "master_id is required to create a render.",
         }
-        return templates().TemplateResponse(request, "renders.html", ctx, status_code=400)
+        # A bare visit (a typed address, an old bookmark) shows the page's calm empty state
+        # (how to make a version), never an error page.
+        return templates().TemplateResponse(request, "renders.html", ctx)
     try:
         master_id = int(master_id_raw)
         opportunity_id = int(opportunity_id_raw) if opportunity_id_raw else None

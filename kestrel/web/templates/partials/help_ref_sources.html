@@ -1,0 +1,39 @@
+{# Reference article: every kind Kestrel can scan, from the adapter registries. /help#sources and
+   /help#remoterocketship open it in the reader (static/js/help.js). #}
+<div id="sources" data-testid="hp-sources">
+<p>Every kind Kestrel can scan, read from the adapter registries. Add one on <a class="k-link" href="/sources">Sources</a>: name, track, kind, cadence, and a JSON config with the keys below. The same check the scan uses runs before anything is saved.</p>
+        <div class="hp-scroll">
+        <table class="hp-names hp-src">
+          <thead><tr><th>Kind</th><th>What it scans</th><th>What you provide</th><th>Region</th><th>Rate limit</th></tr></thead>
+          <tbody>
+            {% for k in catalog %}
+            <tr>
+              <td><strong>{{ k.name }}</strong><br><span class="mono muted">{{ k.kind }}</span><br>
+                <span class="k-pill">{{ k.category }}</span>
+                {% if not k.documented %}<span class="k-pill k-pill--warn">undocumented</span>{% endif %}
+                {% if not k.scheduled %}<span class="k-pill">not scanned</span>{% endif %}
+                {% if not k.can_add_on_sources_page %}<span class="k-pill k-pill--warn">not on Sources page</span>{% endif %}
+              </td>
+              <td>{{ k.fetches }}</td>
+              <td>{{ k.provide }}{% if k.config_example %}<div class="mono muted hp-eg">{{ k.config_example }}</div>{% endif %}</td>
+              <td>{{ k.region }}</td>
+              <td>{{ k.rate_limit }}<div class="k-muted hp-eg">{{ k.user_agent }}</div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        <h3>LinkedIn</h3>
+        <p>Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a LinkedIn posting by hand.</p>
+        <h3 id="remoterocketship" data-testid="help-remoterocketship">RemoteRocketship (optional, paid)</h3>
+        <p><strong>What it is.</strong> An optional source for people who already pay for RemoteRocketship with API access. Kestrel stays free; this source needs your own RemoteRocketship subscription and is off until you add it.</p>
+        <p><strong>How to turn it on.</strong> Open <a class="k-link" href="/sources">Sources</a> and find the RemoteRocketship card. Paste your key, choose Save key, then Turn on. Run now checks right away. The key is kept in Kestrel’s private key file on this computer, never in the source and never shown again (only its last four characters). Turn off pauses the source.</p>
+        <p><strong>What Kestrel keeps.</strong> Only the link to each employer’s own posting. The posting is then read from the employer’s site, or from the company’s job board when it is one Kestrel knows. Nothing from RemoteRocketship is stored: no titles, descriptions or company details, and not the reply itself, which fits their terms limit of 24 hours.</p>
+        <p><strong>Daily limits.</strong> RemoteRocketship allows 500 requests or 3,000 jobs per UTC day. Kestrel uses a few requests per scan (two by default, 50 jobs each). A link that cannot be read from the employer is skipped and counted in the run.</p>
+        <p><strong>If something goes wrong.</strong> “Did not receive an API key” or “did not accept the API key”: paste the key again in the RemoteRocketship card. “Needs an active paid subscription”: your plan does not include API access. “Daily limit was reached”: wait until 00:00 UTC. The run is marked partial, and it does not count as a failure of the source. If the limit hits after the first page, the links from the earlier pages are still used; if it hits on the first page, the run finds nothing and the next scan tries again.</p>
+        <p><strong>Filters.</strong> With no filters set on the source, Kestrel asks for your target titles and onsite metros from your profile. Filters you write on the source replace them.</p>
+        <h3>Region</h3>
+        <p>{{ region_note }}</p>
+        <h3>Need a board that is not listed?</h3>
+        <p>{{ request_new_provider }}</p>
+</div>

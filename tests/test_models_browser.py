@@ -13,7 +13,13 @@ import os
 
 import pytest
 
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 from tests.model_check_seed import seed_check, seed_labels
 
 pytestmark = pytest.mark.skipif(
@@ -116,7 +122,8 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, path, theme, width):
         if width >= 1680:
             assert help_col["l"] >= max(c["r"] for c in main_cards) - 1
         scene = page.evaluate(_BOXES, ".k-scene")[0]
-        assert scene["r"] <= max(help_col["r"], *(c["r"] for c in main_cards)) + 1
+        # The shell's scene band runs to the window edge (the page padding sits inside it).
+        assert scene["r"] <= width + 1
         assert not page.query_selector("#announcement-slot")
         assert not errors, errors
     finally:
@@ -200,6 +207,102 @@ def test_model_check_runs_in_place_with_progress_and_cancel(live):
         page.get_by_test_id("ck-cancel").click()
         page.wait_for_selector("[data-testid='ck-run']")
         assert "cancelled" in page.get_by_test_id("ck-notice").inner_text()
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_models_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
+    """The page lifecycle (D-UI-210): Models unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves nothing behind. Afterwards one click opens a
+    row's more menu and it stays open (a doubled listener opens and closes it in one click),
+    one click on a column header sorts it once, and an unmounted page closes the menu and answers
+    no click."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/models")
+        page.wait_for_selector(".mo-page")
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(
+            page, "models", "models.js", settle_ms=400, quiet_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0
+        more = page.query_selector("[data-mo-more]")
+        menu = more.evaluate_handle("b => b.parentNode.querySelector('.mo-menu')")
+        more.click()
+        assert menu.as_element().is_visible()
+        assert more.get_attribute("aria-expanded") == "true"
+        page.keyboard.press("Escape")
+        assert not menu.as_element().is_visible()
+        more.click()
+        assert menu.as_element().is_visible()
+        # The comparison sorts once per click: ascending first.
+        page.evaluate("document.querySelector('#mo-history').open = true")
+        th = page.query_selector('#model-compare th[data-sort="num"]')
+        th.click()
+        assert th.get_attribute("data-dir") == "asc"
+        th.click()
+        assert th.get_attribute("data-dir") == "desc"
+        # Unmounting closes the open menu; unmounted, nothing opens it or sorts.
+        page.evaluate("KUI.page.unmount()")
+        assert not menu.as_element().is_visible()
+        assert more.get_attribute("aria-expanded") == "false"
+        more.click()
+        th.click()
+        page.wait_for_timeout(200)
+        assert not menu.as_element().is_visible()
+        assert th.get_attribute("data-dir") == "desc"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_model_check_mounts_unmounts_and_mounts_again_and_its_pickers_bind_once(live):
+    """The page lifecycle (D-UI-210): Model check has no listeners of its own, so mounting it holds
+    nothing and unmounting leaves nothing. Its pickers (the shared model_combo.js) are upgraded
+    once per element: scanning again, or mounting the page again, never doubles a picker's
+    listeners (a doubled toggle opens the list and shuts it in one click), and a picker copied
+    from saved markup, with the old ready flag on it, is still upgraded."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/bench")
+        page.wait_for_selector(".mo-page")
+        wait_for_layout(page)
+        page.click("#ck-advanced > summary")
+        page.wait_for_selector('[data-testid="bench-run-model"][data-ready]')
+        assert page.evaluate("KUI.page.current()") == "bench"
+        assert page.evaluate("KUI.page._stats()") == {
+            "name": "bench", "listeners": 0, "timers": 0, "observers": 0}
+        assert page.evaluate("document.querySelectorAll('[data-combo][data-ready]').length") == 2
+        assert page.evaluate("KUI.page.unmount()") is True
+        assert page.evaluate("KUI.page.current()") is None
+        assert page.evaluate("window.__kTimers.pending('/static/js/bench.js')") == 0
+        assert page.evaluate("KUI.page.mount()") is True
+        assert page.evaluate("KUI.page.current()") == "bench"
+        page.evaluate("keCombo.scan(); keCombo.scan(document.body); KUI.page.mount()")
+        toggle = '[data-testid="bench-run-model"] [data-combo-toggle]'
+        listbox = '[data-testid="bench-run-model"] [role=listbox]'
+        page.click(toggle)
+        assert page.is_visible(listbox)  # one click opens it and it stays open
+        page.keyboard.press("Escape")
+        assert not page.is_visible(listbox)
+        # A picker copied with its ready flag (saved markup) is upgraded when scanned.
+        page.evaluate("""() => {
+          const src = document.querySelector('[data-testid="bench-run-model"]');
+          const copy = src.cloneNode(true);
+          copy.setAttribute('data-testid', 'copied-combo');
+          src.parentNode.appendChild(copy); keCombo.scan(copy.parentNode); }""")
+        page.click('[data-testid="copied-combo"] [data-combo-toggle]')
+        assert page.is_visible('[data-testid="copied-combo"] [role=listbox]')
         assert not errors, errors
     finally:
         ctx.close()

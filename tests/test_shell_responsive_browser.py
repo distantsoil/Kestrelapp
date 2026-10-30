@@ -75,7 +75,7 @@ def _controls_fit(page, selector: str, *, single_line: bool = True) -> None:
 
 def _no_sideways_scroll(page) -> None:
     wide = page.evaluate("""() => document.documentElement.scrollWidth <= innerWidth ? [] :
-      [...document.querySelectorAll('.shell *')].filter(e => !e.closest('svg,[hidden],.k-flyout,'
+      [...document.querySelectorAll('.k-win *')].filter(e => !e.closest('svg,[hidden],.k-flyout,'
         + '.k-slideover,.k-modal') && e.getBoundingClientRect().right > innerWidth + 1)
         .map(e => e.tagName + '.' + e.className + ' ' + Math.round(e.getBoundingClientRect().right))
         .slice(0, 6)""")
@@ -90,17 +90,21 @@ def test_below_1100_the_sidebar_is_an_icon_rail_and_every_page_is_reachable(live
         _no_sideways_scroll(page)
         side = page.locator("#sidebar").bounding_box()
         assert side and 40 <= side["width"] <= 80, side  # a rail, not the 232 px sidebar
-        assert page.locator(".side .brand .word").is_hidden()
-        assert page.locator(".side .navgroup .lbl").first.is_hidden()
+        assert page.locator(".side .k-brand__word").is_hidden()
+        assert page.locator(".side .k-sec").first.is_hidden()
+        assert page.locator(".side .track-switch").count() == 0 or \
+            page.locator(".side .track-switch").is_hidden()
         links = page.locator("nav.mainnav a")
         shown = [a for a in links.all() if a.is_visible()]
         assert len(shown) >= 10, len(shown)  # every page still has its icon
         for a in shown:
             box = a.bounding_box()
             assert box and box["width"] > 20 and box["x"] >= 0 and box["x"] + box["width"] <= 80
-        # The search label folds away so the top bar fits; the field stays a button.
-        assert page.locator(".search .search-text").is_hidden()
-        assert page.locator(".search").is_visible()
+        # Below 1100 only the sidebar collapses: the search keeps its box and its text
+        # (today-mockup-locked.html :37-42).
+        assert page.locator(".k-search .k-search__text").is_visible()
+        box = page.locator(".k-search").bounding_box()
+        assert box and box["width"] >= 300, box
         assert page.locator(".bottombar").is_hidden()
         # An icon is a real link: it goes where the page list says.
         target = page.locator('nav.mainnav a[href="/settings"]').first
@@ -173,16 +177,21 @@ def test_help_steps_and_expanded_tables_fit(live, width, theme):
     try:
         _no_sideways_scroll(page)
         _controls_fit(page, ".hp-step b, .hp-step__cost")
-        for details in ("tier-names", "sources", "lan"):
-            page.locator(f"#{details} > summary").click()
-            expect(page.locator(f"#{details}")).to_have_attribute("open", "")
+        # The long references are articles now (help_ref_*.html), opened by their own link, not
+        # folds: each still fits with no sideways scroll.
+        for article in ("tier-names", "sources", "lan"):
+            page.goto(page.url.split("#")[0] + "#" + article)
+            expect(page.locator(f"#{article}").first).to_be_attached()
             _no_sideways_scroll(page)
-        scroller = page.locator(".hp-scroll")
+        # The sources table, as the reader shows it: at phone width it scrolls inside itself.
+        page.goto(page.url.split("#")[0] + "#sources")
+        reader = page.get_by_test_id("hp-reader-body")
+        scroller = reader.locator(".hp-scroll").first
         if width == 400:
             assert scroller.evaluate("el => el.scrollWidth > el.clientWidth")
             scroller.evaluate("el => { el.scrollLeft = el.scrollWidth; }")
             assert scroller.evaluate("el => el.scrollLeft > 0")
-            last_cell = page.locator(".hp-src tbody tr").last.locator("td").last
+            last_cell = reader.locator(".hp-src tbody tr").last.locator("td").last
             bounds = last_cell.bounding_box()
             assert bounds and bounds["x"] + bounds["width"] <= width + 1
             assert page.evaluate("scrollX") == 0
@@ -195,7 +204,7 @@ def test_help_steps_and_expanded_tables_fit(live, width, theme):
 def test_at_1200_the_full_sidebar_is_still_there(live):
     ctx, page, _ = _open(live, "/", 1200)
     try:
-        assert page.locator(".side .brand .word").is_visible()
+        assert page.locator(".side .k-brand__word").is_visible()
         assert page.locator("#sidebar").bounding_box()["width"] > 200
     finally:
         ctx.close()

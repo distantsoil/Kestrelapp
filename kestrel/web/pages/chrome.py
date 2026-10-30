@@ -8,18 +8,19 @@ answers with the panel again, so only the list changes, and with the bell count 
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Notification, Opportunity, Pursuit
+from kestrel.db.models import Evaluation, Notification, Opportunity, Org, Pursuit
 from kestrel.services.tracks import enabled_tracks_cached
 from kestrel.web import notifications_view as nv
-from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.deps import sessionmaker, static_token, static_url, templates
 from kestrel.web.words import words
 
 log = structlog.get_logger()
@@ -134,6 +135,25 @@ async def notifications_list(request: Request, tab: str = "all"):
 _ACTIONS = ("read", "unread")
 
 
+@router.post("/notifications/read-all", response_class=HTMLResponse)
+async def notifications_read_all(request: Request):
+    """Mark as read every notification not yet read (the panel header's Mark all as read). The
+    answer is the panel again on the tab it was on (sent as a form field), with the bell count
+    out of band, so the badge clears even when the panel body had not loaded yet."""
+    from sqlalchemy import update
+
+    form = await request.form()
+    tab = str(form.get("tab") or request.query_params.get("tab") or "all")
+
+    async with sessionmaker()() as s:
+        await s.execute(
+            update(Notification).where(Notification.read_at.is_(None)).values(read_at=utcnow_iso())
+        )
+        await s.commit()
+        ctx = await _panel_ctx(s, _tab(tab))
+    return _panel(request, ctx)
+
+
 @router.post("/notifications/{note_id}/{action}", response_class=HTMLResponse)
 async def notification_action(request: Request, note_id: int, action: str, tab: str = "all"):
     """Mark as read or unread. The answer is the panel again. An unknown id or action changes
@@ -150,10 +170,76 @@ async def notification_action(request: Request, note_id: int, action: str, tab: 
     return _panel(request, ctx)
 
 
+# ------------------------------------------------------------------------- command palette
+_PALETTE_LIMIT = 5
+
+
+@router.get("/palette/search")
+async def palette_search(q: str = ""):
+    """Roles and companies for the command palette (D-UI-91; surfaces-mockup-locked.html): up to
+    five of each whose title or name holds the query, the canonical copy of a role only, never a
+    hidden company, with the current employer redacted under confidential mode. Read only; the
+    palette navigates, it never sends anything."""
+    from kestrel.services.hidden_orgs import opp_visible_clause
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web.redact import redact_name, redact_text, redaction_map
+
+    term = " ".join(q.split())[:80]
+    if len(term) < 2:
+        return {"roles": [], "companies": []}
+    like = f"%{term}%"
+    async with sessionmaker()() as s:
+        conf = bool((await load_settings_with_db(s)).confidential_mode)
+        mapping = await redaction_map(s) if conf else None
+        best = (
+            select(Evaluation.opportunity_id, func.max(Evaluation.score).label("score"))
+            .group_by(Evaluation.opportunity_id)
+            .subquery()
+        )
+        rows = (
+            await s.execute(
+                select(Opportunity.id, Opportunity.title, Opportunity.org_name, best.c.score)
+                .outerjoin(best, best.c.opportunity_id == Opportunity.id)
+                .where(Opportunity.title.ilike(like), Opportunity.is_canonical.is_(True),
+                       opp_visible_clause())
+                .order_by(best.c.score.desc().nulls_last(), Opportunity.id.desc())
+                .limit(_PALETTE_LIMIT)
+            )
+        ).all()
+        roles = []
+        for oid, title, org, score in rows:
+            org = redact_name(org, mapping, enabled=conf) if conf else org
+            title = redact_text(title, mapping, enabled=conf) if conf else title
+            sub = " · ".join(x for x in (org, f"Fit {score:.1f}" if score is not None else "") if x)
+            roles.append({"t": title or "Untitled role", "s": sub, "href": f"/opportunities/{oid}"})
+        # A company's count is its canonical roles (one row per role across boards, as the
+        # Pipeline counts them); hidden companies are filtered before the limit.
+        n_roles = func.count(Opportunity.id)
+        orgs = (
+            await s.execute(
+                select(Org.id, Org.name, n_roles)
+                .outerjoin(
+                    Opportunity,
+                    and_(Opportunity.org_id == Org.id, Opportunity.is_canonical.is_(True)),
+                )
+                .where(Org.name.ilike(like), Org.hidden_at.is_(None))
+                .group_by(Org.id)
+                .order_by(n_roles.desc(), Org.name)
+                .limit(_PALETTE_LIMIT)
+            )
+        ).all()
+        companies = []
+        for org_id, name, n in orgs:
+            shown = redact_name(name, mapping, enabled=conf) if conf else name
+            noun = "role" if n == 1 else "roles"
+            companies.append({"t": shown, "s": f"{n} {noun} in your Pipeline",
+                              "href": f"/orgs/{org_id}"})
+    return {"roles": roles, "companies": companies}
+
+
 _SW = """
-const CACHE = 'kestrel-v1';
-const ASSETS = ['/static/css/kestrel.css', '/static/js/htmx.min.js',
-  '/static/js/alpine.min.js', '/static/icon.svg', '/static/manifest.webmanifest'];
+const CACHE = 'kestrel-__TOKEN__';
+const ASSETS = __ASSETS__;
 self.addEventListener('install', e =>
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(
@@ -162,13 +248,27 @@ self.addEventListener('activate', e => e.waitUntil(
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
   if (u.pathname.startsWith('/static/')) {
-    e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+    e.respondWith(caches.match(e.request).then(r => r || fetch(e.request).then(res => {
+      if (res.status === 200) {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy));
+      }
+      return res;
+    })));
   }
 });
 """.strip()
+
+# The cache is named for this build's static files, so an upgrade replaces the old copies (a fixed
+# name kept a LAN browser on the previous build's CSS and scripts), and the files are cached under
+# the same versioned URLs the pages ask for.
+_SW_ASSETS = ("css/kestrel.css", "js/htmx.min.js", "js/alpine.min.js", "icon.svg",
+              "manifest.webmanifest")
 
 
 @router.get("/sw.js")
 async def service_worker():
     # Served from the root so its scope covers the whole app (a /static/ path scopes too narrow).
-    return Response(content=_SW, media_type="application/javascript")
+    body = _SW.replace("__TOKEN__", static_token()).replace(
+        "__ASSETS__", json.dumps([static_url(p) for p in _SW_ASSETS]))
+    return Response(content=body, media_type="application/javascript")

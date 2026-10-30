@@ -145,7 +145,7 @@
       {% else %}
         {% if on_list %}<button type="button" class="k-btn k-btn--done" disabled data-testid="panel-on-list">{{ ui.icon('check') }}{{ 'In my leads' if consulting else 'On my shortlist' }}</button>
         {% else %}<button type="button" class="k-btn" hx-post="/opportunities/{{ opp.id }}/decide/shortlist" hx-target="#pl-panel" hx-swap="innerHTML" data-testid="panel-shortlist">{{ 'Add to leads' if consulting else 'Shortlist' }}</button>{% endif %}
-        {% if not on_list %}<button type="button" class="k-btn" data-pl-ask data-testid="panel-not-for-me">Not for me</button>{% endif %}
+        <button type="button" class="k-btn" data-pl-ask data-testid="panel-not-for-me">Not for me</button>
       {% endif %}
       <a class="k-btn k-btn--primary" href="{{ open_href }}" data-testid="panel-open">Open full role &rarr;</a>
     </div>

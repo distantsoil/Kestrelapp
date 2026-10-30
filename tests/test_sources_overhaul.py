@@ -246,7 +246,7 @@ def test_health_tiles_count_sources_that_are_on_and_the_toolbar_holds_the_button
     assert 'data-testid="check-all"' in tools and 'data-testid="add-source"' in tools
     for label in ("All types", "All origins", "All health"):
         assert label in tools
-    for tag in ("Built in", "From your profile", "Found by Kestrel", "Suggested", "Added by you"):
+    for tag in ("Built in", "From your profile", "Found in results", "Suggested", "Added by you"):
         assert tag in tools  # the origin filter lists every tag
 
 
@@ -568,14 +568,132 @@ def test_a_lever_404_is_caught_when_adding_not_silently_later():
     assert 'name="pick"' not in r.text  # Add stays off
 
 
-def test_an_unknown_hiring_system_is_said_plainly_and_points_at_paste_by_hand():
-    with _client() as c:
-        r = c.post("/sources/check/link", data={"url": "https://example.com/careers"})
-        junk = c.post("/sources/check/link", data={"url": "not a link"})
-    assert "does not read that kind of page yet" in r.text
-    assert "Greenhouse, Lever, Ashby, Workday" in r.text and "One posting" in r.text
+@pytest.fixture
+def _public_dns(monkeypatch):
+    """A careers page on another domain is read once; its address must look public (no DNS)."""
+    from kestrel.ingest import http as ingest_http
+
+    async def _resolve(host, port):
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(ingest_http, "_resolve", _resolve)
+
+
+def test_a_page_with_no_job_data_is_said_plainly_and_points_at_paste_by_hand(_public_dns):
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("https://example.com/careers").mock(
+            return_value=httpx.Response(200, text="<html>Join us</html>"))
+        mock.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404))
+        with _client() as c:
+            r = c.post("/sources/check/link", data={"url": "https://example.com/careers"})
+            junk = c.post("/sources/check/link", data={"url": "not a link"})
+    assert "lists its jobs with JavaScript, which Kestrel cannot read yet" in r.text
+    assert "One posting" in r.text
     assert 'name="pick"' not in r.text
     assert "Nothing found at that link" in junk.text
+
+
+CAREERS = FIXTURES / "careers"
+
+
+def _careers(name: str) -> str:
+    return (CAREERS / name).read_text(encoding="utf-8")
+
+
+def test_a_careers_page_with_job_data_is_counted_named_by_its_employer_and_offered_for_add(
+        _public_dns):
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(url__regex=r"https://[^/]+/robots\.txt").mock(return_value=httpx.Response(404))
+        mock.get("https://jobs.fabrikam.example/").mock(
+            return_value=httpx.Response(200, text=_careers("graph.html")))
+        with _client() as c:
+            r = c.post("/sources/check/link", data={"url": "https://jobs.fabrikam.example/"})
+    assert 'data-testid="check-good"' in r.text and "Careers page. 3 open roles." in r.text
+    pick = unescape(re.search(r'name="pick" value="([^"]+)"', r.text).group(1))
+    kind, cfg, name = pick[5:].split("|", 2)
+    assert kind == "careers_page" and json.loads(cfg)["url"] == "https://jobs.fabrikam.example/"
+    assert json.loads(cfg)["company_name"] == name == "Harbor Point Analytics"
+
+
+def test_a_checked_careers_page_is_added_once_as_a_company_page_source(_public_dns):
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(url__regex=r"https://[^/]+/robots\.txt").mock(return_value=httpx.Response(404))
+        mock.get("https://jobs.fabrikam.example/").mock(
+            return_value=httpx.Response(200, text=_careers("graph.html")))
+        with _client() as c:
+            check = c.post("/sources/check/link",
+                           data={"url": "https://jobs.fabrikam.example/"}).text
+            pick = unescape(re.search(r'name="pick" value="([^"]+)"', check).group(1))
+            c.post("/sources/add/ats", headers=HX, data={"pick": pick})
+            dupe = c.post("/sources/add/ats", headers=HX, data={"pick": pick})
+            page = c.get("/sources")
+    row = rows()["Harbor Point Analytics"]
+    assert row.kind == "careers_page" and row.enabled and row.config["url"].startswith("https://")
+    assert "already one of your sources" in dupe.text
+    assert page.status_code == 200 and "Harbor Point Analytics" in page.text
+    assert sv.group_of(row) == sv.ATS and sv.type_label(row) == "Careers page"
+
+
+def test_a_careers_page_that_uses_javascript_or_disallows_robots_or_is_gone_is_said(_public_dns):
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("https://closed.example/robots.txt").mock(
+            return_value=httpx.Response(200, text="User-agent: *\nDisallow: /\n"))
+        mock.get(url__regex=r"https://(talent|gone)\.[a-z.]+/robots\.txt").mock(
+            return_value=httpx.Response(404))
+        mock.get("https://talent.contoso.example/").mock(
+            return_value=httpx.Response(200, text=_careers("js_only.html")))
+        mock.get("https://gone.example/careers").mock(return_value=httpx.Response(404))
+        with _client() as c:
+            js = c.post("/sources/check/link", data={"url": "https://talent.contoso.example/"})
+            closed = c.post("/sources/check/link", data={"url": "https://closed.example/careers"})
+            gone = c.post("/sources/check/link", data={"url": "https://gone.example/careers"})
+    assert 'data-testid="check-warn"' in js.text and "lists its jobs with JavaScript" in js.text
+    assert 'data-testid="check-bad"' in closed.text and "robots.txt" in closed.text
+    assert 'data-testid="check-bad"' in gone.text and "not found" in gone.text
+    assert 'name="pick"' not in js.text + closed.text + gone.text
+
+
+def test_a_recruitee_link_is_checked_and_a_custom_domain_page_is_read_for_its_board(_public_dns):
+    board = json.loads((FIXTURES / "recruitee_offers.json").read_text(encoding="utf-8"))
+    page = '<script>fetch("https://northwind.recruitee.com/api/offers/")</script>'
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("https://northwind.recruitee.com/robots.txt").mock(return_value=httpx.Response(404))
+        mock.get("https://northwind.recruitee.com/api/offers/").mock(
+            return_value=httpx.Response(200, json=board))
+        mock.get("https://careers.northwind.example/").mock(
+            return_value=httpx.Response(200, text=page))
+        mock.get("https://careers.northwind.example/robots.txt").mock(
+            return_value=httpx.Response(404))
+        with _client() as c:
+            direct = c.post("/sources/check/link", data={"url": "https://northwind.recruitee.com/"})
+            custom = c.post("/sources/check/link",
+                            data={"url": "https://careers.northwind.example/"})
+    for r in (direct, custom):
+        assert 'data-testid="check-good"' in r.text and "Recruitee job board" in r.text
+        assert "3 open roles" in r.text
+        assert 'name="pick" value="pick:recruitee|' in r.text
+
+
+def test_a_teamtailor_link_is_checked_named_by_its_employer_and_a_dead_feed_is_said(_public_dns):
+    feed = json.loads((FIXTURES / "teamtailor_jobs.json").read_text(encoding="utf-8"))
+    script = '<script src="//assets-aws.teamtailor-cdn.com/assets/careersite-1.js"></script>'
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(url__regex=r"https://[^/]+/robots\.txt").mock(return_value=httpx.Response(404))
+        mock.get("https://careers.northwind.example/jobs.json").mock(
+            return_value=httpx.Response(200, json=feed))
+        mock.get("https://careers.northwind.example/").mock(
+            return_value=httpx.Response(200, text=script))
+        mock.get("https://quiet.teamtailor.com/jobs.json").mock(return_value=httpx.Response(404))
+        mock.get("https://quiet.teamtailor.com/jobs.rss").mock(return_value=httpx.Response(404))
+        with _client() as c:
+            custom = c.post("/sources/check/link",
+                            data={"url": "https://careers.northwind.example/"})
+            off = c.post("/sources/check/link", data={"url": "https://quiet.teamtailor.com/jobs"})
+    assert 'data-testid="check-good"' in custom.text and "Teamtailor job board" in custom.text
+    assert "3 open roles" in custom.text and 'value="Northwind"' in custom.text
+    assert 'name="pick" value="pick:teamtailor|' in custom.text
+    assert 'data-testid="check-warn"' in off.text and "turned off" in off.text
+    assert 'name="pick"' not in off.text  # nothing to add until the feed is on
 
 
 def test_a_link_source_is_added_only_from_a_checked_pick():
@@ -793,8 +911,10 @@ def test_nothing_on_the_page_sends_anything_for_the_operator():
 def test_page_css_uses_tokens_only_and_the_mockups_container_steps():
     css = Path("kestrel/web/static/css/sources.css").read_text(encoding="utf-8")
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", css)
-    assert not re.search(r"\.k-(layout|help-col)\s*\{", css)  # shared stacking is kept
-    assert "@container (max-width: 1300px)" in css and "@container (max-width: 1000px)" in css
+    assert not re.search(r"^\.k-(layout|help-col)\s*\{", css, re.M)  # shared stacking is kept
+    # The mockup's steps measure the window (the kwin container), not the page wrapper.
+    assert "@container kwin (max-width: 1300px)" in css
+    assert "@container kwin (max-width: 1000px)" in css
     assert "grid-template-columns: 32px minmax(0, 1fr) 40px 118px 132px 112px 98px 86px" in css
     assert ".src-rl { display: none; }" in css  # the mockup's 1300px step
     assert "prefers-reduced-motion" in css
@@ -876,9 +996,9 @@ def test_scoring_everything_on_an_online_model_names_it_and_is_checked_on_the_se
     monkeypatch.setattr("kestrel.web.pages.sources._lane_model", lambda settings: "vendor/model-x")
     released = []
 
-    async def _release(sm):
-        released.append(1)
-        return 2
+    async def _release(sm, *, hosted=False):
+        assert hosted
+        return 0
 
     monkeypatch.setattr(lane, "release_all", _release)
     with _client() as c:

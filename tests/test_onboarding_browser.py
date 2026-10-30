@@ -16,7 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -155,12 +161,14 @@ _WIDE = """body => { const r = body.getBoundingClientRect(); const out = [];
   return [body.scrollWidth, body.clientWidth, ...out.slice(0, 8)]; }"""
 
 
-def _open(live, theme: str, width: int, step: str):
+def _open(live, theme: str, width: int, step: str, probe: bool = False):
     base, browser = live
     _in_thread(_jump, step)
     ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
     page = ctx.new_page()
     page.add_init_script("window.__errs=[];addEventListener('error',e=>__errs.push(e.message))")
+    if probe:
+        page.add_init_script(TIMER_PROBE_JS)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(f"{base}/onboarding")
@@ -272,6 +280,38 @@ def test_models_cards_fold_open_and_the_online_card_gates_connect(live, theme):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
+def test_free_only_needs_the_training_tick_and_a_refusal_scrolls_into_view(live, theme):
+    ctx, page, errors = _open(live, theme, 1280, "models")
+    try:
+        page.check('input[name="provider"][value="openrouter"]', force=True)
+        page.fill("#ob-key", "sk-or-test-key")
+        page.check("#ob-ack")
+        page.evaluate("document.querySelector('[data-ob-more]').open = true")
+        page.check('input[name="free_only"]')
+        # Free-only without the training tick is refused by the server: say so before the click.
+        assert page.query_selector("#ob-connect-btn").is_disabled()
+        assert "Allow providers that may train" in page.inner_text("[data-ob-connect-hint]")
+        page.check('input[name="allow_training"]')
+        assert page.query_selector("#ob-connect-btn").is_enabled()
+        # Force the refused pair past the hint: the result is brought into view, and what was
+        # ticked stays ticked, so the redraw never looks like nothing happened.
+        page.uncheck('input[name="allow_training"]')
+        page.evaluate("document.querySelector('[data-ob-connect]').requestSubmit()")
+        page.wait_for_selector('[data-testid="ob-connect-message"][data-connect-ok="false"]')
+        wait_for_layout(page)
+        in_view = page.evaluate("""() => {
+          const m = document.querySelector('[data-testid="ob-connect-message"]');
+          const r = m.getBoundingClientRect();
+          return r.top >= 0 && r.bottom <= innerHeight;
+        }""")
+        assert in_view
+        assert page.is_checked("#ob-ack") and page.is_checked('input[name="free_only"]')
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_about_you_gate_tracks_summary_and_the_more_details_fold(live, theme):
     ctx, page, errors = _open(live, theme, 1280, "about")
     try:
@@ -351,5 +391,111 @@ def test_searches_lists_the_plain_lines_and_start_is_the_only_primary(live, them
         page.wait_for_selector('#ob-step[data-step="wants"]')
         assert "Save and go back to searches" in page.inner_text('[data-testid="ob-next"]')
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("step", ["about", "resume", "wants"])
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live, step):
+    """The page lifecycle (D-UI-210): onboarding mounts Profile's form behavior and its own as one
+    page. Unmounted and mounted again in place it starts exactly what it started on the document
+    load (chip observers, the drop zone, the leave guard) and leaves nothing running in between.
+    After it a fold opens with one press (a doubled listener would open and close it) and the
+    leave guard is the page's again."""
+    ctx, page, errors = _open(live, "light", 1280, step, probe=True)
+    try:
+        first = assert_page_remounts_clean(page, "onboarding", "onboarding.js", settle_ms=800)
+        assert first["observers"] >= 2  # Profile's preview fit and the chip pop at least
+        assert page.evaluate("typeof window.kLeaveGuard") == "function"
+        fold = {"about": "ob-more-about", "resume": "ob-paste", "wants": "ob-more-jobs"}[step]
+        page.click(f'[data-ob-fold="{fold}"]')
+        page.wait_for_selector(f"#{fold}.on")
+        assert page.get_attribute(f'[data-ob-fold="{fold}"]', "aria-expanded") == "true"
+        page.evaluate("KUI.page.unmount()")
+        assert page.evaluate("typeof window.kLeaveGuard") == "undefined"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+# Every animation frame from the press until the new step has settled: the most visible step
+# pane's opacity, how many panes are in the frame, the arriving pane's own opacity, and how many
+# animations run inside the leaving copy (its own slide only).
+_PANE_FRAMES = """() => { window.__f = []; let n = 0;
+  const seen = p => { let o = 1;
+    for (let e = p; e && e !== document.body; e = e.parentElement)
+      o *= +getComputedStyle(e).opacity;
+    return o; };
+  const tick = () => {
+    const panes = [...document.querySelectorAll('#ob-step .ob-pane')];
+    const fresh = document.querySelector('#ob-step .ob-pane:not(.ob-leaving)');
+    const copy = document.querySelector('#ob-step .ob-leaving');
+    window.__f.push([panes.length ? Math.max(...panes.map(seen)) : 0, panes.length,
+                     fresh ? seen(fresh) : 0,
+                     copy ? copy.getAnimations({subtree: true}).length : 0]);
+    if (++n < 75) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick); }"""
+
+
+def test_a_step_change_never_leaves_the_wizard_blank(live):
+    """Owner, 2026-10-30 (videos on macOS and Windows): between steps the content area went blank.
+    The old pane faded fully out (htmx "swap:360ms") before the new one faded in from nothing.
+    The mockup (go(), obOutF/obInF) runs both at once: the old pane leaves on top while the new
+    one arrives. Sampled every frame, Next and then Back: some pane is always well visible, both
+    are on screen together for most of the slide, the new one really fades in, nothing inside
+    the leaving copy animates again (a chip's pop), and once the slide ends one pane is left."""
+    ctx, page, errors = _open(live, "light", 1400, "welcome")
+    try:
+        for button, step in (("ob-next", "models"), ("ob-back", "welcome")):
+            # An animated chip in the old pane: in the leaving copy it must stay still.
+            page.evaluate("""() => { const c = document.createElement('span');
+              c.className = 'chip ob-pop'; c.textContent = 'x';
+              document.querySelector('#ob-step .ob-main').appendChild(c); }""")
+            page.evaluate(_PANE_FRAMES)
+            page.click(f'[data-testid="{button}"]')
+            page.wait_for_selector(f'#ob-step[data-step="{step}"]')
+            page.wait_for_timeout(1400)
+            frames = page.evaluate("window.__f")
+            assert len(frames) >= 30, frames
+            dimmest = min(f[0] for f in frames)
+            assert dimmest >= 0.5, (button, [round(f[0], 2) for f in frames[:40]])
+            together = sum(1 for f in frames if f[1] == 2)
+            assert together >= 10, (button, [f[1] for f in frames[:40]])
+            assert min(f[2] for f in frames if f[1] == 2) < 0.6, (button, frames[:20])
+            assert max(f[3] for f in frames) <= 1, (button, [f[3] for f in frames[:40]])
+            assert frames[-1][1] == 1, (button, frames[-6:])
+            assert page.evaluate("document.querySelectorAll('[id=\"ob-step\"]').length") == 1
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_an_edit_link_from_searches_slides_back(live):
+    """The mockup's Edit on the Searches step goes back to that step (goto: go(g, -1))."""
+    ctx, page, errors = _open(live, "light", 1400, "searches")
+    try:
+        edit = page.locator('form[action^="/onboarding/edit/"] button').first
+        edit.click()
+        page.wait_for_function(
+            "document.querySelector('#ob-step').getAttribute('data-step') !== 'searches'")
+        assert page.get_attribute("#ob-step", "data-ob-dir") == "b"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_with_reduced_motion_a_step_change_is_instant_and_leaves_one_pane(live):
+    """Reduced motion stops every animation, so the leaving pane must not linger over the new
+    one."""
+    base, browser = live
+    _in_thread(_jump, "welcome")
+    ctx = browser.new_context(viewport={"width": 1400, "height": 900}, reduced_motion="reduce")
+    try:
+        page = ctx.new_page()
+        page.goto(f"{base}/onboarding")
+        page.wait_for_selector('#ob-step[data-step="welcome"]')
+        page.click('[data-testid="ob-next"]')
+        page.wait_for_selector('#ob-step[data-step="models"]')
+        assert page.evaluate("document.querySelectorAll('#ob-step .ob-pane').length") == 1
     finally:
         ctx.close()

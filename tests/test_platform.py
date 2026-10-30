@@ -1179,7 +1179,9 @@ def test_windows_only_packages_are_never_imported_at_module_level():
 # ------------------------------------------------------------------ the desktop shell downloads
 def test_desktop_window_allows_downloads(shell, monkeypatch):
     """ "Download diagnostics" flashed a window and closed it: pywebview cancels every download
-    until ALLOW_DOWNLOADS is on. The shell turns it on before the window is created."""
+    until ALLOW_DOWNLOADS is on. The shell turns it on before the window is created. The window
+    is frameless with the JS API for its controls (D-UI-88) and opens on the loading page before
+    the server exists (D-UI-89); the app replaces it once the start finishes."""
 
     class _Handler:
         fn = None
@@ -1190,9 +1192,26 @@ def test_desktop_window_allows_downloads(shell, monkeypatch):
 
     class _Events:
         closing = _Handler()
+        maximized = _Handler()
+        minimized = _Handler()
+        restored = _Handler()
+        shown = _Handler()
+        moved = _Handler()
+        resized = _Handler()
+
+    loaded: list[str] = []
+    said: list[str] = []
 
     class _Window:
         events = _Events()
+
+        def load_url(self, url: str) -> None:
+            loaded.append(url)
+
+        def evaluate_js(self, js: str) -> None:
+            said.append(js)
+
+    created: dict = {}
 
     class _FakeWebview:
         settings = {"ALLOW_DOWNLOADS": False}
@@ -1204,11 +1223,12 @@ def test_desktop_window_allows_downloads(shell, monkeypatch):
         @staticmethod
         def create_window(*a, **k) -> _Window:
             assert _FakeWebview.settings["ALLOW_DOWNLOADS"] is True, "set before the window"
+            created.update(k)
             return _Window()
 
         @staticmethod
-        def start() -> None:
-            pass
+        def start(func=None, args=()) -> None:
+            func(*args)  # the startup steps, behind the loading page
 
     class _FakeThread:
         def is_alive(self) -> bool:
@@ -1222,17 +1242,96 @@ def test_desktop_window_allows_downloads(shell, monkeypatch):
         return 8765
 
     monkeypatch.setattr(shell, "IS_WINDOWS", False)
+    monkeypatch.setattr(shell, "IS_MACOS", False)
     monkeypatch.setattr(shell, "_configure_logging", lambda: None)
     monkeypatch.setattr(shell, "acquire_single_instance", lambda: True)
     monkeypatch.setattr(shell, "start_server", _start_server)
     monkeypatch.setattr(shell, "run_preflight", lambda: None)
     monkeypatch.setattr(shell, "start_tray", lambda **_k: False)
+    monkeypatch.setattr(shell.time, "sleep", lambda _s: None)
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: True)
     monkeypatch.setitem(sys.modules, "webview", _FakeWebview)
 
     assert shell.run_desktop() == 0
     assert _FakeWebview.settings["ALLOW_DOWNLOADS"] is True
+    assert created["frameless"] is True and created["js_api"] is not None
+    assert "window.KSplash" in created["html"] and "/*K-TOKENS*/" not in created["html"]
+    assert created["width"] == 1440 or created["width"] >= 960
+    assert any("Opening your data" in js for js in said) and any("ready" in js for js in said)
+    assert loaded == ["http://127.0.0.1:8765/#k-intro"]
+
+
+def test_a_failed_start_shows_the_problem_card_and_keeps_the_window(shell, monkeypatch):
+    """D-UI-89: a start that never gets healthy shows "Kestrel couldn't start" in the same window
+    with a plain reason, never exits silently; closing it then releases the lock, exit code 1."""
+    said: list[str] = []
+    released = {"n": 0}
+
+    class _Handler:
+        def __iadd__(self, fn):
+            return self
+
+    class _Events:
+        closing = maximized = minimized = restored = shown = moved = resized = _Handler()
+
+    class _Window:
+        events = _Events()
+
+        def evaluate_js(self, js: str) -> None:
+            said.append(js)
+
+        def load_url(self, url: str) -> None:
+            raise AssertionError("the app must not load after a failed start")
+
+    class _FakeWebview:
+        settings: dict = {}
+
+        @staticmethod
+        def initialize() -> None:
+            pass
+
+        @staticmethod
+        def create_window(*a, **k) -> _Window:
+            return _Window()
+
+        @staticmethod
+        def start(func=None, args=()) -> None:
+            func(*args)
+
+    class _FakeServer:
+        should_exit = False
+
+    class _FakeThread:
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout=None) -> None:
+            pass
+
+    fake_server = _FakeServer()
+
+    def _start_server() -> int:
+        shell.server, shell.server_thread = fake_server, _FakeThread()
+        return 8765
+
+    monkeypatch.setattr(shell, "IS_WINDOWS", False)
+    monkeypatch.setattr(shell, "IS_MACOS", False)
+    monkeypatch.setattr(shell, "_configure_logging", lambda: None)
+    monkeypatch.setattr(shell, "acquire_single_instance", lambda: True)
+    monkeypatch.setattr(shell, "release_single_instance",
+                        lambda: released.__setitem__("n", released["n"] + 1))
+    monkeypatch.setattr(shell, "start_server", _start_server)
+    monkeypatch.setattr(shell, "start_tray", lambda **_k: False)
+    monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
+    monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
+    monkeypatch.setattr(shell, "HEALTH_WAIT_S", 0.3)
+    monkeypatch.setitem(sys.modules, "webview", _FakeWebview)
+
+    assert shell.run_desktop() == 1
+    fail = [js for js in said if "KSplash.fail(" in js]
+    assert fail and "did not answer in time" in fail[0] and "Traceback" not in fail[0]
+    assert fake_server.should_exit is True and released["n"] == 1
 
 
 def test_the_installed_windows_app_declares_its_identity(shell, monkeypatch):
@@ -1247,8 +1346,63 @@ def test_the_installed_windows_app_declares_its_identity(shell, monkeypatch):
     monkeypatch.setattr(shell, "IS_WINDOWS", True)
     monkeypatch.setattr(shell.paths, "is_frozen", lambda: True)
     monkeypatch.setattr("ctypes.windll", types.SimpleNamespace(shell32=shell32), raising=False)
+    registered = []
+    monkeypatch.setattr(shell, "register_notification_icon", lambda: registered.append(1))
     assert shell.set_app_identity() is True
     assert calls == [shell.APP_USER_MODEL_ID]
+    assert registered == [1]  # the notification name and icon are written with the identity
+
+
+class _FakeKey:
+    def __init__(self, store, path):
+        self.store, self.path = store, path
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeWinreg:
+    """Just the winreg surface register_notification_icon uses, recording what it writes."""
+
+    HKEY_CURRENT_USER = "HKCU"
+    KEY_SET_VALUE = 2
+    REG_SZ = 1
+
+    def __init__(self, fail=False):
+        self.values, self.fail = {}, fail
+
+    def CreateKeyEx(self, root, path, reserved, access):  # noqa: N802
+        if self.fail:
+            raise PermissionError("denied")
+        assert (root, reserved, access) == ("HKCU", 0, self.KEY_SET_VALUE)
+        return _FakeKey(self.values.setdefault(path, {}), path)
+
+    def SetValueEx(self, key, name, reserved, kind, value):  # noqa: N802
+        assert kind == self.REG_SZ and reserved == 0
+        key.store[name] = value
+
+
+def test_the_notification_identity_names_kestrel_with_the_shipped_indigo_icon(shell):
+    # Round 4: the "keeps running" toast showed the old orange mark from a stale shortcut cache.
+    reg = _FakeWinreg()
+    assert shell.register_notification_icon(winreg_mod=reg) is True
+    assert list(reg.values) == [r"Software\Classes\AppUserModelId\Kestrel.Desktop"]
+    written = reg.values[shell.AUMID_KEY]
+    assert written["DisplayName"] == "Kestrel"
+    icon = Path(written["IconUri"])
+    assert icon.is_absolute() and icon.name == "kestrel.ico" and icon.exists()
+    assert icon.read_bytes()[:4] == b"\x00\x00\x01\x00"  # an .ico, not a PNG renamed
+
+
+def test_the_notification_identity_is_best_effort(shell, tmp_path):
+    # A refused key or a missing icon is logged and skipped; startup goes on.
+    assert shell.register_notification_icon(winreg_mod=_FakeWinreg(fail=True)) is False
+    reg = _FakeWinreg()
+    assert shell.register_notification_icon(winreg_mod=reg, icon=tmp_path / "gone.ico") is False
+    assert reg.values == {}
 
 
 def test_from_source_or_off_windows_no_identity_is_declared(shell, monkeypatch):

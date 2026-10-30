@@ -2,12 +2,18 @@
    #system, #hosted, ... links), saving each control as it changes with a message and Undo, the
    online key entry, backup download and restore, the dialogs the actions load, the scene and
    seasonal-touch managers, the alert sound, and the search entries. Everything is delegated on
-   the document, so it keeps working after a section or a card is swapped. The words the person
-   reads come from the server's replies; the few strings here are the interface's own labels. */
+   the document, so it keeps working after a section or a card is swapped. The page runs on the
+   lifecycle (KUI.page, D-UI-210): this file only defines it, and mount starts every listener and
+   timer through its context, so leaving stops all of them and coming back starts one set. The
+   words the person reads come from the server's replies; the few strings here are the
+   interface's own labels. */
 (function (root) {
   'use strict';
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
+
+  // cx is the mounted page's context (KUI.page); mount sets it, and the per-visit state below, afresh.
+  var cx = null;
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -32,6 +38,7 @@
 
   /* The pane that holds the control, so an Undo can load that section again in place. */
   var current = 'computer';
+  var shown = false;
 
   function refreshPane(pane, then) {
     var el = $('#st-pane-' + pane);
@@ -79,12 +86,12 @@
 
   /* HX-Trigger messages from the cards that swap themselves arrive as a k-toast event. Take the
      ones that carry an Undo and show them through say(), so a refused Undo is explained. */
-  doc.addEventListener('k-toast', function (e) {
+  function onToastUndo(e) {
     var d = e.detail || {};
     if (!d.undoUrl || !d.message) return;
     e.stopImmediatePropagation();
     say(d.message, d.undoUrl, d.refresh ? { refresh: d.refresh, target: d.target } : null);
-  }, true);
+  }
 
   /* ---------------------------------------------------------------------------- the section */
   var SECTIONS = ['computer', 'roles', 'scoring', 'privacy', 'data', 'preferences'];
@@ -118,13 +125,53 @@
     target.classList.remove('st-glow');
     void target.offsetWidth;
     target.classList.add('st-glow');
-    root.setTimeout(function () { target.classList.remove('st-glow'); }, 1900);
+    cx.after(1900, function () { target.classList.remove('st-glow'); });
   }
   function reducedMotion() {
     return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
+  /* Entry motion (the mockup's applyState): the controls of a section that was just shown or
+     swapped are drawn in their default state, the browser commits that, and one frame later they
+     take their saved state, so switches slide, run-mode cards and tiles fade to selected, bars
+     grow and folds open. Nothing about the saved values changes; only when they are drawn.
+     Reduced motion skips all of it. */
+  var SETTLE_CLASS = '.st-mc.is-on, .st-tile.is-on, .st-fold.is-on, .st-hr.is-shown, .st-cs.is-done';
+  var SETTLE_BAR = '.st-prog > i, .st-progbar > i, .st-fill';
+  function settle(scope) {
+    if (!scope || reducedMotion() || !scope.querySelectorAll) return;
+    var back = [];
+    $$('.k-switch input[type="checkbox"]:checked, input.st-check:checked', scope).forEach(function (el) {
+      el.checked = false;
+      back.push(function () { el.checked = true; });
+    });
+    $$(SETTLE_CLASS, scope).forEach(function (el) {
+      var on = el.classList.contains('is-shown') ? 'is-shown'
+        : el.classList.contains('is-done') ? 'is-done' : 'is-on';
+      el.classList.remove(on);
+      back.push(function () { el.classList.add(on); });
+    });
+    $$(SETTLE_BAR, scope).forEach(function (el) {
+      var w = el.style.width;
+      if (!w) return;
+      el.style.width = '0';
+      back.push(function () { el.style.width = w; });
+    });
+    if (!back.length) return;
+    void scope.offsetWidth;                       // commit the default state
+    root.requestAnimationFrame(function () {
+      root.requestAnimationFrame(function () { back.forEach(function (f) { f(); }); });
+    });
+  }
+  function onSettleLoad(e) {
+    var t = e.target;
+    if (!t || t === doc.body || t === doc || !t.closest || !t.closest('[data-st-sec]')) return;
+    settle(t);
+  }
+
   function show(sec, find) {
+    var changed = current !== sec || !shown;
+    shown = true;
     current = sec;
     $$('[data-st-sec]').forEach(function (s) { s.hidden = s.getAttribute('data-st-sec') !== sec; });
     $$('[data-st-help]').forEach(function (h) { h.hidden = h.getAttribute('data-st-help') !== sec; });
@@ -134,6 +181,7 @@
       if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     var host = $('#st-sec-' + sec);
+    if (changed && host && (!host.getAttribute('data-st-lazy') || host.getAttribute('data-st-loaded'))) settle(host);
     var land = function () {
       if (find) glow(doc.getElementById(find));
       else {
@@ -143,8 +191,8 @@
     };
     var lazy = host && host.getAttribute('data-st-lazy');
     if (lazy && !host.getAttribute('data-st-loaded') && !root.htmx) {
-      // htmx loads after this script: try again once everything is in.
-      root.addEventListener('load', function () { show(sec, find); }, { once: true });
+      // htmx is not in yet: try again once everything is.
+      cx.on(root, 'load', function () { show(sec, find); }, { once: true });
       return;
     }
     if (lazy && !host.getAttribute('data-st-loaded') && root.htmx) {
@@ -154,6 +202,16 @@
       return;
     }
     land();
+  }
+  /* The two heavy sections load quietly once the page is up, so opening them shows the section
+     (and its entry motion) at once instead of a Loading line. */
+  function prefetch() {
+    if (!root.htmx) return;
+    $$('[data-st-lazy]').forEach(function (h) {
+      if (h.getAttribute('data-st-loaded')) return;
+      h.setAttribute('data-st-loaded', '1');
+      root.htmx.ajax('GET', h.getAttribute('data-st-lazy'), { target: '#' + h.id, swap: 'innerHTML' });
+    });
   }
   function onHash() { var r = route(); show(r.sec, r.find); }
 
@@ -171,7 +229,17 @@
     return { url: url, body: { key: key, on: el.checked } };
   }
 
-  doc.addEventListener('change', function (e) {
+  function onChange(e) {
+    var fsw = e.target && e.target.closest && e.target.closest('#st-free-sw');
+    if (fsw) {
+      var fold = $('#st-free-fold');
+      if (fold) {
+        fold.classList.toggle('is-on', fsw.checked);
+        fold.setAttribute('aria-hidden', fsw.checked ? 'false' : 'true');
+        if (fsw.checked) fold.removeAttribute('inert'); else fold.setAttribute('inert', '');
+      }
+      return;
+    }
     var el = e.target;
     if (!el || !el.matches) return;
     if (el.matches('input[type="checkbox"][data-st-key]')) {
@@ -181,7 +249,7 @@
       if (tracks && !req.body.employment && !req.body.consulting) {
         el.checked = true;
         var note = $('#st-trk-note');
-        if (note) { note.textContent = 'Keep at least one on.'; root.setTimeout(function () { note.textContent = ''; }, 3000); }
+        if (note) { note.textContent = 'Keep at least one on.'; cx.after(3000, function () { note.textContent = ''; }); }
         return;
       }
       post(req.url, req.body).then(function (res) {
@@ -231,7 +299,7 @@
         pill.className = 'k-pill' + (no ? '' : ' k-pill--warn');
       }
     }
-  });
+  }
 
   /* What a saved control changes on this page right away. */
   function applyKey(key, on) {
@@ -239,17 +307,22 @@
       doc.documentElement.classList.toggle('st-rm', !!on);
       doc.documentElement.setAttribute('data-reduce-motion', on ? '1' : '0');
     }
+    if (key === 'ui.classic_nav') doc.documentElement.setAttribute('data-k-nav', on ? '0' : '1');
     if (key === 'ui.scene_animate') { S.anim = !!on; paintBand(); }
     if (key === 'ui.touches_enabled') { S.season = !!on; syncSummary(); }
     if (key === 'notify.sound') {
       S.sound = !!on;
       var f = $('#st-snd-fold');
-      if (f) { f.hidden = !on; f.classList.toggle('is-on', !!on); }
+      if (f) {
+        f.classList.toggle('is-on', !!on);
+        if (on) { f.removeAttribute('inert'); f.removeAttribute('aria-hidden'); }
+        else { f.setAttribute('inert', ''); f.setAttribute('aria-hidden', 'true'); }
+      }
     }
   }
 
   /* Segmented controls and tiles that save as they are pressed. */
-  doc.addEventListener('click', function (e) {
+  function onClick(e) {
     var t = e.target;
     if (!t || !t.closest) return;
     var seg = t.closest('[data-st-ui-seg]');
@@ -288,13 +361,15 @@
       post('/settings/ui', { key: 'ui.avatar', value: v }).then(function (res) {
         if (!res.ok) { toast(res.message); return; }
         paintAvatar(v);
+        refreshTopAvatar();
         say(res.message, res.undoUrl);
       });
       return;
     }
     if (t.closest('#st-photo-remove')) {
       post('/settings/prefs/avatar/photo/remove', {}).then(function (res) {
-        toast(res.message); if (res.ok) refreshPane('preferences', initPrefs);
+        toast(res.message);
+        if (res.ok) { refreshPane('preferences', initPrefs); refreshTopAvatar(); }
       });
       return;
     }
@@ -306,6 +381,8 @@
       });
       var hint = $('#st-svc-hint');
       if (hint) hint.hidden = svc !== 'other';
+      var freeBox = $('#st-free');
+      if (freeBox) freeBox.hidden = svc !== 'openrouter';
       var inp = $('#st-provider');
       if (inp) inp.value = svc;
       var fields = $('#st-other-fields');
@@ -339,17 +416,17 @@
     if (t.closest('#st-forget-open')) { fillForget(); return; }
     var open = t.closest('[data-st-open]');
     if (open) { mgOpen(open.getAttribute('data-st-open')); return; }
-  });
+  }
 
-  doc.addEventListener('input', function (e) {
+  function onInput(e) {
     var el = e.target;
     if (!el || !el.id) return;
     if (el.id === 'st-vol') { var o = $('#st-vol-t'); if (o) o.textContent = el.value + '%'; }
     if (el.id === 'st-clear-reset') { var g = $('#st-clear-go'); if (g) g.disabled = el.value !== 'RESET'; }
     if (el.id === 'st-forget-reset') { var f = $('#st-forget-go'); if (f) f.disabled = el.value !== 'RESET'; }
     if (el.id === 'st-access-ack') { var a = $('#st-access-go'); if (a) a.disabled = !el.checked; }
-  });
-  doc.addEventListener('change', function (e) {
+  }
+  function onAccessChange(e) {
     if (e.target && e.target.id === 'st-access-ack') { var a = $('#st-access-go'); if (a) a.disabled = !e.target.checked; }
     if (e.target && e.target.matches && e.target.matches('[data-st-access]')) {
       var sw = e.target;
@@ -363,7 +440,7 @@
           target: '#st-access', swap: 'outerHTML', values: { on: '0' } });
       }
     }
-  });
+  }
 
   function copy(text) {
     try {
@@ -411,7 +488,7 @@
     if (name === 'soft_click') { tone(1800, 0, 0.05, 'triangle', 0.6); tone(900, 0.012, 0.06, 'sine', 0.4); }
     else if (name === 'bell') { [[880, 1], [1760, 0.35], [2640, 0.18], [1318.5, 0.25]].forEach(function (p) { tone(p[0], 0, 1.6, 'sine', p[1] * 0.7); }); }
     else { tone(1046.5, 0, 0.5, 'sine', 0.6); tone(1568, 0.13, 0.7, 'sine', 0.5); }
-    if (btn) { btn.disabled = true; root.setTimeout(function () { btn.disabled = false; }, 1100); }
+    if (btn) { btn.disabled = true; cx.after(1100, function () { btn.disabled = false; }); }
   }
 
   /* ---------------------------------------------------------------------- the picture */
@@ -427,6 +504,12 @@
       b.classList.toggle('is-on', on); b.setAttribute('aria-checked', on ? 'true' : 'false');
     });
   }
+  // The top bar shows the same picture: ask for it again and swap it in place (it fades in).
+  function refreshTopAvatar() {
+    if (root.htmx && $('#k-topavatar')) {
+      root.htmx.ajax('GET', '/ui/avatar', { target: '#k-topavatar', swap: 'outerHTML' });
+    }
+  }
   function uploadPhoto(input) {
     var fd = new root.FormData();
     fd.append('photo', input.files[0]);
@@ -438,6 +521,7 @@
         if (!res.ok) { toast(res.message); return; }
         say(res.message, res.undoUrl);
         refreshPane('preferences', initPrefs);
+        refreshTopAvatar();
       });
   }
 
@@ -457,6 +541,8 @@
       a.download = f.name;
       doc.body.appendChild(a);
       a.click();
+      // The download's own cleanup: it runs even if the page was left meanwhile, so it is not the
+      // page's timer.
       root.setTimeout(function () { root.URL.revokeObjectURL(a.href); a.remove(); }, 4000);
       var last = $('#st-lastbk'); if (last) last.textContent = 'Last backup: just now';
       toast('Backup saved: ' + f.name);
@@ -481,17 +567,17 @@
     var inp = $('#st-forget-reset'); if (inp) inp.value = '';
     var go = $('#st-forget-go'); if (go) go.disabled = true;
   }
-  doc.addEventListener('change', function (e) {
+  function onForgetChange(e) {
     if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-st-forget')) {
       var open = $('#st-forget-open');
       var any = $$('[data-st-forget]').some(function (c) { return c.checked; });
       if (open) open.disabled = !any;
     }
-  });
+  }
 
   /* ------------------------------------------------------------------- htmx lifecycle hooks */
   var lastFocus = '';
-  doc.addEventListener('htmx:beforeRequest', function (e) {
+  function onBeforeRequest(e) {
     var a = doc.activeElement;
     lastFocus = a && a.id ? a.id : (a && a.getAttribute ? (a.getAttribute('data-testid') || '') : '');
     var btn = e.detail && e.detail.elt;
@@ -502,8 +588,8 @@
     }
     if (btn && btn.id === 'st-keyform') root.__stKeyOp = e.detail.requestConfig && e.detail.requestConfig.triggeringEvent
       && e.detail.requestConfig.triggeringEvent.submitter && e.detail.requestConfig.triggeringEvent.submitter.value;
-  });
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  }
+  function onAfterSwap(e) {
     var t = e.detail && e.detail.target;
     if (!t) return;
     if (t.id === 'st-dialog') {
@@ -514,8 +600,8 @@
       var again = doc.getElementById(lastFocus) || $('[data-testid="' + lastFocus + '"]');
       if (again && again.focus && !t.contains(doc.activeElement)) { try { again.focus({ preventScroll: true }); } catch (err) { /* gone */ } }
     }
-  });
-  doc.addEventListener('htmx:afterRequest', function (e) {
+  }
+  function onAfterRequest(e) {
     var el = e.detail && e.detail.elt;
     if (el && el.getAttribute && el.getAttribute('data-label') && el.tagName === 'BUTTON') {
       el.innerHTML = el.getAttribute('data-label'); el.disabled = false; el.removeAttribute('data-label');
@@ -523,8 +609,8 @@
     if (el && el.id === 'st-keyform' && e.detail.successful && root.__stKeyOp === 'save') {
       var k = $('#st-key'); if (k && /saved/i.test(($('#st-keyres') || {}).textContent || '')) k.value = '';
     }
-  });
-  doc.addEventListener('htmx:load', function () { initPrefs(); initFlyouts(); });
+  }
+  function onPrefsLoad() { initPrefs(); initFlyouts(); }
 
   /* The one-time messages that survive a reload (a track switch reloads so the sidebar follows). */
   function replayToast() {
@@ -628,7 +714,7 @@
     }
   }
 
-  var mg = { kind: null, tab: 'nature', sel: null, msg: '', msgT: 0 };
+  var mg = { kind: null, tab: 'nature', sel: null, msg: '', msgT: 0 };  // reset by mount
   function mgOpen(kind) {
     mg.kind = kind;
     mg.tab = 'nature';
@@ -694,8 +780,8 @@
     if (band && root.KSceneBand) root.KSceneBand.render(band);
   }
   function mgMsg(text) {
-    mg.msg = text; root.clearTimeout(mg.msgT);
-    mg.msgT = root.setTimeout(function () { mg.msg = ''; if (mg.kind) mgDraw(); }, 2600);
+    mg.msg = text; cx.clear(mg.msgT);
+    mg.msgT = cx.after(2600, function () { mg.msg = ''; if (mg.kind) mgDraw(); });
     mgDraw();
   }
   function saveUi(key, value, quiet) {
@@ -707,7 +793,7 @@
   }
   function offServer() { return S.off.map(function (id) { return JS_TOUCH[id]; }).filter(Boolean); }
 
-  doc.addEventListener('click', function (e) {
+  function onMgClick(e) {
     var t = e.target;
     if (!mg.kind || !t || !t.closest || !t.closest('.st-mgbody')) return;
     var tab = t.closest('[data-mgtab]');
@@ -730,8 +816,8 @@
       }
       return;
     }
-  });
-  doc.addEventListener('change', function (e) {
+  }
+  function onMgChange(e) {
     var t = e.target;
     if (!mg.kind || !t || !t.closest || !t.closest('.st-mgbody')) return;
     if (t.hasAttribute('data-mgmaster')) {
@@ -754,16 +840,16 @@
         saveUi('ui.touches_off', offServer(), true).then(function () { syncSummary(); mgDraw(); });
       }
     }
-  });
+  }
   function useScene(id) {
     S.scene = id;
     saveUi('ui.scene', id).then(function () { syncSummary(); mgDraw(); });
   }
-  doc.addEventListener('k-closed', function (e) {
+  function onClosed(e) {
     if (e.target && e.target.id && /^st-mg-/.test(e.target.id)) mg.kind = null;
-  });
+  }
   // Re-drawn after an Undo reloads the section: the managers read the fresh data.
-  doc.addEventListener('htmx:afterSettle', function () { if (mg.kind) { initPrefs(); mgDraw(); } });
+  function onAfterSettle() { if (mg.kind) { initPrefs(); mgDraw(); } }
 
   /* ------------------------------------------------------------------------ search entries */
   // The palette (Ctrl K) lists these under "Settings: ...", each with plain synonyms, so a person
@@ -795,6 +881,7 @@
     ['Your picture (avatar, photo)', 'preferences', 'st-picture'],
     ['Scene and seasonal touches (holiday, artwork)', 'preferences', 'st-appearance'],
     ['Text size and reduce motion (font, animation)', 'preferences', 'st-appearance'],
+    ['Classic page loads (page changes, reload)', 'preferences', 'st-appearance'],
     ['Region (date format, time, currency)', 'preferences', 'st-region'],
     ['Notifications (alerts, sound, quiet hours)', 'preferences', 'st-notify']
   ];
@@ -803,7 +890,8 @@
     var host = doc.documentElement;
     var data = null;
     try { data = A && A.$data ? A.$data(host) : null; } catch (e) { data = null; }
-    if (!data || !data.pages || data.__stIndexed) return false;
+    if (!data || !data.pages) return false;
+    if (data.__stIndexed) return true;   // an earlier visit added them: the root outlives the page
     INDEX.forEach(function (r) { data.pages.push({ label: 'Settings: ' + r[0], href: '/settings#' + r[1] + '/' + r[2] }); });
     data.__stIndexed = true;
     return true;
@@ -811,16 +899,52 @@
 
   function initFlyouts() { /* the shared script wires the flyouts; nothing to do here */ }
 
-  /* --------------------------------------------------------------------------------- start */
+  /* --------------------------------------------------------------------------------- mount */
   function start() {
     initPrefs();
     onHash();
     replayToast();
     if (!registerSearch()) {
-      doc.addEventListener('alpine:initialized', registerSearch, { once: true });
-      root.setTimeout(registerSearch, 600);
+      cx.on(doc, 'alpine:initialized', registerSearch, { once: true });
+      cx.after(600, registerSearch);
     }
   }
-  root.addEventListener('hashchange', onHash);
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start); else start();
+
+  root.KUI.page.define('settings', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      current = 'computer'; shown = false; lastFocus = '';
+      S = { scene: 'mountains', daily: true, rot: [], anim: true, season: true, off: [], order: [],
+            sound: true };
+      D = null; SXDATE = {};
+      mg = { kind: null, tab: 'nature', sel: null, msg: '', msgT: 0 };
+      ctx.on(doc, 'k-toast', onToastUndo, true);
+      ctx.on(doc, 'htmx:load', onSettleLoad);
+      ctx.on(doc, 'change', onChange);
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'input', onInput);
+      ctx.on(doc, 'change', onAccessChange);
+      ctx.on(doc, 'change', onForgetChange);
+      ctx.on(doc, 'htmx:beforeRequest', onBeforeRequest);
+      ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
+      ctx.on(doc, 'htmx:afterRequest', onAfterRequest);
+      ctx.on(doc, 'htmx:load', onPrefsLoad);
+      ctx.on(doc, 'click', onMgClick);
+      ctx.on(doc, 'change', onMgChange);
+      ctx.on(doc, 'k-closed', onClosed);
+      ctx.on(doc, 'htmx:afterSettle', onAfterSettle);
+      ctx.on(root, 'hashchange', onHash);
+      // The two heavy sections load quietly once the page is up (the window's load, which a page
+      // arrived at in place has long had): 600 ms after it.
+      if (doc.readyState === 'complete') ctx.after(600, prefetch);
+      else ctx.on(root, 'load', function () { ctx.after(600, prefetch); }, { once: true });
+      start();
+      ctx.onUnmount(function () {
+        // The key form's marker and the alert sound's audio context belong to this visit.
+        delete root.__stKeyOp;
+        if (AC && AC.close) { try { AC.close(); } catch (err) { /* already closed */ } }
+        AC = null;
+      });
+    }
+  });
 })(typeof window !== 'undefined' ? window : globalThis);

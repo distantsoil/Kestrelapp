@@ -99,8 +99,8 @@ def make_quarantine_hook(
 # ------------------------------------------------------------------------------- hosted mode
 HOSTED_REFUSAL = (
     "hosted send refused: confidential mode is on but no redaction map is configured (choose "
-    "your current employer under Settings, Core); refusing to send the employer unredacted to a "
-    "hosted model"
+    "your current employer under Settings > Privacy and access); refusing to send the "
+    "employer unredacted to a hosted model"
 )
 
 

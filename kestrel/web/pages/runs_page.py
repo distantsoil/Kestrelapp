@@ -26,6 +26,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from kestrel.analytics import run_summary as rsum
@@ -474,6 +475,9 @@ async def card_context(session) -> dict[str, Any]:
     settings = await load_settings_with_db(session)
     label = tier2_label(settings)
     return {
+        # Run now on a saved online choice opens the ask-first sheet (it posts confirmed=1);
+        # a bare POST would be refused (owner report 2026-10-26).
+        "runs_online": settings.llm.mode in ("hosted", "both"),
         "runs_use": ("Online" if settings.llm.mode == "hosted" else "Local")
         + (f", {label}" if label else ""),
         "credit_notices": credit.notices(),
@@ -581,6 +585,15 @@ def throughput(run: Run) -> list[dict[str, Any]]:
     ]
 
 
+async def skipped_in(session: AsyncSession, run: Run) -> dict[str, int]:
+    counts = {"dropped_outside_area": 0, "dropped_unrelated_title": 0}
+    stmt = _scrapes_stmt(select(ScrapeRun.counts), run, await run_window(session, run))
+    for recorded in (await session.execute(stmt)).scalars():
+        for key in counts:
+            counts[key] += int((recorded or {}).get(key, 0) or 0)
+    return counts
+
+
 async def sources_in(session, run: Run) -> list[dict[str, Any]]:
     """Per-source results for the run's own window (`run_window`, strict; ScrapeRun has no run
     id). The plain words come from `problem_words`; the raw error stays behind Show details."""
@@ -634,6 +647,7 @@ async def drawer(request: Request, run_id: int):
         if run is None:
             return HTMLResponse("No such run.", status_code=404)
         sources = await sources_in(s, run)
+        skipped = await skipped_in(s, run)
         settings = await load_settings_with_db(s)
         row = history_row(run, None, await run_facts(s, run, _price_map(settings)))
     ctx = {
@@ -641,6 +655,7 @@ async def drawer(request: Request, run_id: int):
         "row": row,
         "chart": throughput(run),
         "sources": sources,
+        "skipped": skipped,
         "counts_json": run.counts or {},
     }
     return templates().TemplateResponse(request, "partials/runs_drawer.html", ctx)

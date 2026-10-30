@@ -104,7 +104,7 @@ def write_runtime(port: int, pid: int) -> None:
     paths.runtime_json().write_text(json.dumps({"port": port, "pid": pid}), encoding="utf-8")
 
 
-GRACEFUL_REQUEST_S = 5  # open web requests get this long at quit, then they are cancelled
+GRACEFUL_REQUEST_S = 1  # open web requests get this long at quit, then they are cancelled (D-UI-90)
 
 
 def _make_server(app, *, log_level: str) -> uvicorn.Server:

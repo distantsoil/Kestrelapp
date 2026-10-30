@@ -542,8 +542,8 @@ def online_problem(settings: Settings) -> str | None:
     """An online model is only used once the operator accepted the current disclosure (Settings);
     the client refuses a send without it, so Models and Model check say so up front."""
     if not settings.llm.hosted_mode.acknowledgement_current:
-        return ("Online models need your approval first. Turn on online use under Settings, "
-                "then try again.")
+        return ("Online models need your approval first. Tick I understand what gets sent "
+                "on the Models page, then try again.")
     return None
 
 

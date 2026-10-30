@@ -199,7 +199,7 @@ def test_boards_found_in_searches_are_marked_and_counted_and_switch_off_alone():
         page = c.get("/sources").text
         assert 'data-testid="found-boards">1 company board' in page
         assert "found in your searches." in page
-        assert "Found by Kestrel" in page.split('data-testid="group-ats"')[1]
+        assert "Found in results" in page.split('data-testid="group-ats"')[1]
         sid = _run(_rows())["Northwind jobs (Greenhouse)"].id
         assert c.post(f"/sources/{sid}/toggle").status_code == 200
     row = _run(_rows())["Northwind jobs (Greenhouse)"]

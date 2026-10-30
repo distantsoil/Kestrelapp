@@ -96,6 +96,7 @@ async def _run_context(request: Request, session: AsyncSession, run: Run) -> dic
     return {
         "row": rp.history_row(run), "chart": rp.throughput(run),
         "sources": await rp.sources_in(session, run), "counts_json": run.counts or {},
+        "skipped": await rp.skipped_in(session, run),
         "on_page": True,
         "title": f"Run {run.id}",
         "query": dict(request.query_params),

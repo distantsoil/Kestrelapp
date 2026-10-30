@@ -29,6 +29,8 @@
   'check': '<path d="M5 12l5 5 9-10"/>',
   'alert': '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/>',
   'clock': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  'spark': '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
+  'target': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
   'scan': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   'gpu': '<rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="8" cy="12" r="2.2"/><circle cx="15" cy="12" r="2.2"/><path d="M5 17v3M19 17v3"/>',
   'cpu': '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
@@ -36,6 +38,8 @@
   'dl': '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
   'up': '<path d="M12 21V9M7 14l5-5 5 5M5 3h14"/>',
   'x': '<path d="M6 6l12 12M18 6L6 18"/>',
+  'search': '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  'more': '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
   'key': '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/>',
   'shield': '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
   'cloud': '<path d="M7 18a5 5 0 1 1 .9-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8z"/>',
@@ -53,6 +57,7 @@
   'play': '<path d="M7 4l13 8-13 8z"/>',
   'motion': '<path d="M4 12h4l3-7 4 14 3-7h2"/>',
   'wand': '<path d="M15 4V2M15 10V8M11 6h2M17 6h2M4 20l10-10"/>',
+  'ext': '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   'arrow': '<path d="M5 12h14M13 6l6 6-6 6"/>',
   'tune': '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   'lock': '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -66,10 +71,26 @@
   'compass': '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
   'vol': '<path d="M4 9v6h4l5 4V5L8 9zM16 9a4 4 0 0 1 0 6"/>',
   'chev': '<path d="M9 6l6 6-6 6"/>',
+  'chevd': '<path d="M6 9l6 6 6-6"/>',
+  'retry': '<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/>',
   'plus': '<path d="M12 5v14M5 12h14"/>',
   'minus': '<path d="M5 12h14"/>',
   'info': '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
-  'undo': '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'
+  'undo': '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  'target': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>',
+  'pen': '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  'ban': '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+  'user': '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  'file': '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  'bolt': '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  'dash': '<path d="M6 12h12"/>',
+  'book': '<path d="M2 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H2zM22 4h-7a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h8z"/>',
+  'life': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="M5.6 5.6l3.9 3.9M14.5 14.5l3.9 3.9M18.4 5.6l-3.9 3.9M9.5 14.5l-3.9 3.9"/>',
+  'start': '<path d="M5 3v18M5 4h12l-2 4 2 4H5"/>',
+  'gauge': '<path d="M12 14l4-4"/><path d="M3.3 17a10 10 0 1 1 17.4 0"/>',
+  'wrench': '<path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8z"/>',
+  'plus-square': '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12h8M12 8v8"/>',
+  'gap': '<circle cx="12" cy="12" r="9" stroke-dasharray="4 3.2"/><path d="M8.5 12h7"/>'
 } %}
 
 {# One inline SVG from the shared icon set (the mockups' ic() set). Decorative by default. #}
@@ -113,8 +134,8 @@
 
 {# Help card: a short title, two or three lines, its own accent and icon, and a flyout link.
    accent: info | warn | good | tier. lines is a list of plain strings. #}
-{% macro help_card(title, lines, accent='info', icon_name='help', more_id='') -%}
-<article class="k-hcard k-hcard--{{ accent }}">
+{% macro help_card(title, lines, accent='info', icon_name='help', more_id='', plain=False) -%}
+<article class="k-hcard k-hcard--{{ accent }}{{ ' k-hcard--plain' if plain }}">
   <div class="k-hcard__head">
     <span class="k-badge{% if accent == 'warn' %} k-badge--warn{% elif accent == 'good' %} k-badge--good{% elif accent == 'tier' %} k-badge--tier{% endif %}">{{ icon(icon_name) }}</span>
     <h3 title="{{ title }}">{{ title }}</h3>

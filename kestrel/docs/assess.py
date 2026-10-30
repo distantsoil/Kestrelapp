@@ -206,8 +206,8 @@ async def assess_master(
         if res.quarantined and res.error and res.error.startswith("hosted send refused"):
             out.error = ("Not sent: confidential mode is on and tier 2 runs on a hosted model, "
                          "but no current employer is chosen, so your employer's name would "
-                         "leave this machine. Choose it under Settings, Core, run tier 2 on a "
-                         "local model, or turn off confidential mode.")
+                         "leave this machine. Choose it under Settings > Privacy and access, "
+                         "run tier 2 on a local model, or turn off confidential mode.")
         elif res.quarantined:
             out.error = ("The model's answer could not be used, even after one retry, so no "
                          "assessment is shown. It was kept for review on the Quarantine page. "

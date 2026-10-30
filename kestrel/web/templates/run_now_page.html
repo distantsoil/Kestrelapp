@@ -2,6 +2,8 @@
 {# D-UI-72: the Run now dialog as a page, for a press without script. The form posts to
    /sources/<id>/run-now, which runs and returns to /sources with what happened. #}
 {% block title %}Run now · Kestrel{% endblock %}
+{# No script of its own (the page form runs without one); named for the page lifecycle (D-UI-210). #}
+{% block page_name %}run-now{% endblock %}
 {% block content %}
 {% include "partials/run_now_dialog.html" %}
 {% endblock %}

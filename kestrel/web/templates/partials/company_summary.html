@@ -7,7 +7,7 @@
 <section class="k-card co-sum" id="co-sum" data-testid="co-summary" data-state="{{ sm.state }}"{% if busy %} hx-get="/orgs/{{ org.id }}/summary" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
   <header class="k-sec-head">
     <span class="k-badge">{{ ci('news') }}</span>
-    <div class="k-grow"><h3>About this company</h3>
+    <div class="k-grow"><h3>About {{ about_name or 'this company' }}</h3>
       <p data-testid="co-sum-label">{{ sm.label }}. It can be wrong, so check the sources.</p></div>
   </header>
 

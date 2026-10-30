@@ -4,13 +4,16 @@
    and new events are prepended while the oldest fold out, so nothing re-mounts. A region whose
    signature changed (the run started, paused or finished) swaps its inside with a short fade, and
    the live card glows when a run finishes. Everything else is delegated on the document, so it
-   survives a swap. User-facing strings here: none. */
+   survives a swap. The page runs on the lifecycle (KUI.page, D-UI-210): this file only defines
+   it, and mount starts every listener and timer through its context, so leaving stops all of
+   them and coming back starts one set. User-facing strings here: none. */
 (function (root) {
   'use strict';
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
 
-  var EVENTS_SHOWN = 10;
+  var EVENTS_SHOWN = 6;
+  var cx = null;  // the mounted page's context (KUI.page), set in mount
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
   function reduced() {
@@ -41,7 +44,7 @@
       if (reduced()) { gone(); return; }
       old.classList.add('is-out');
       old.addEventListener('animationend', gone, { once: true });
-      setTimeout(gone, 600);
+      cx.after(600, gone);
     });
   }
 
@@ -75,18 +78,30 @@
     var fade = !reduced();
     var inner = region.firstElementChild;
     var apply = function () {
+      // The card eases to its new height instead of jumping, so the cards below it glide rather
+      // than snap down on every refresh (owner round 11, D-UI-201).
+      var from = region.offsetHeight;
       region.innerHTML = fresh.innerHTML;
       region.setAttribute('data-sig', fresh.getAttribute('data-sig'));
       if (root.htmx) root.htmx.process(region);
+      if (fade && region.animate) {
+        var to = region.offsetHeight;
+        if (Math.abs(to - from) > 2) {
+          region.animate([{ height: from + 'px', overflow: 'hidden' }, { height: to + 'px', overflow: 'hidden' }],
+                         { duration: 260, easing: 'cubic-bezier(.22,.8,.3,1)' });
+        }
+      }
       if (finished) {
         region.classList.remove('k-arrive');
         void region.offsetWidth;
         region.classList.add('k-arrive');
       }
     };
-    if (!fade || !inner) { apply(); return; }
+    // A live refresh swaps in place (a fade on every refresh read as the page reloading); only a
+    // run that just ended fades over to its result.
+    if (!fade || !inner || !finished) { apply(); return; }
     inner.classList.add('is-fading');
-    setTimeout(apply, 160);
+    cx.after(160, apply);
   }
 
   function apply(html) {
@@ -107,13 +122,13 @@
     });
   }
 
-  doc.addEventListener('htmx:afterRequest', function (e) {
+  function onPollDone(e) {
     var el = e.detail && e.detail.elt;
     if (!el || el.id !== 'runs-poll') return;
     var xhr = e.detail.xhr;
     if (!xhr || xhr.status !== 200 || !xhr.responseText) return;
     try { apply(xhr.responseText); } catch (err) { /* a bad fragment never breaks the page */ }
-  });
+  }
 
   /* -------------------------------------------------------------------------- the controls */
   function closeMenu() {
@@ -122,7 +137,7 @@
     var b = $('[data-testid="rn-run-menu"]');
     if (b) b.setAttribute('aria-expanded', 'false');
   }
-  doc.addEventListener('click', function (e) {
+  function onClick(e) {
     var t = e.target;
     var caret = t.closest && t.closest('[data-testid="rn-run-menu"]');
     if (caret) {
@@ -130,6 +145,14 @@
       if (m) {
         m.hidden = !m.hidden;
         caret.setAttribute('aria-expanded', m.hidden ? 'false' : 'true');
+        // The header band clips what hangs below it (it keeps the scene art inside), so the open
+        // menu is placed against the window under the split button (owner report 2026-10-26).
+        if (!m.hidden) {
+          var r = caret.closest('.rn-split').getBoundingClientRect();
+          m.style.position = 'fixed';
+          m.style.left = r.left + 'px';
+          m.style.top = (r.bottom + 6) + 'px';
+        }
         if (!m.hidden) { var first = $('button', m); if (first) first.focus(); }
       }
       return;
@@ -145,18 +168,18 @@
       $('.rn-acts__ask', acts).hidden = !stop;
       if (stop) { var no = $('[data-rn-keep]', acts); if (no) no.focus(); }
     }
-  });
-  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+  }
+  function onKeyDown(e) { if (e.key === 'Escape') closeMenu(); }
 
   /* ------------------------------------------------------------------------ the schedule */
-  doc.addEventListener('k-seg-change', function (e) {
+  function onSegChange(e) {
     var seg = e.target;
     var form = seg.closest && seg.closest('.rn-sched__form');
     if (!form) return;
     var kind = $('input[name="kind"]', form);
     var wk = $('.rn-weekday', form);
     if (kind && wk) wk.hidden = kind.value !== 'weekly';
-  });
+  }
 
   /* ------------------------------------------------------- the "this run only" sheet */
   function syncChoose() {
@@ -172,10 +195,10 @@
     if (ok) ok.disabled = !isOnline || ok.hasAttribute('data-held');
     if (go) go.disabled = isOnline && !(ok && ok.checked);
   }
-  doc.addEventListener('change', function (e) {
+  function onChange(e) {
     if (e.target && e.target.closest && e.target.closest('#rn-choose-dialog')) syncChoose();
-  });
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  }
+  function onAfterSwap(e) {
     var t = e.target;
     if (t && t.id === 'rn-dialog') {
       var dlg = $('.k-modal', t);
@@ -184,29 +207,48 @@
       if (ok && ok.disabled) ok.setAttribute('data-held', '');
       syncChoose();
     }
-  });
+  }
   // A Needs another try row folds out as soon as Try again is pressed; the poll then redraws.
-  doc.addEventListener('htmx:beforeRequest', function (e) {
+  function onBeforeRequest(e) {
     var el = e.detail && e.detail.elt;
     if (el && el.matches && el.matches('[data-testid="rn-retry"]')) {
       var li = el.closest('li');
       if (li) li.classList.add('is-going');
     }
-  });
-  doc.addEventListener('htmx:afterRequest', function (e) {
+  }
+  function onRetryDone(e) {
     var el = e.detail && e.detail.elt;
     if (!el || !el.matches || !el.matches('[data-testid="rn-retry"]')) return;
     // The role may still be listed (queued but not yet scored): bring it back after a moment.
-    setTimeout(function () {
+    cx.after(7000, function () {
       var li = el.closest && el.closest('li');
       if (li && li.classList.contains('is-going') && doc.contains(li)) li.classList.remove('is-going');
-    }, 7000);
-  });
-  doc.addEventListener('htmx:responseError', function (e) {
+    });
+  }
+  function onResponseError(e) {
     var el = e.detail && e.detail.elt;
     if (el && el.matches && el.matches('[data-testid="rn-retry"]')) {
       var li = el.closest('li');
       if (li) li.classList.remove('is-going');
     }
+  }
+
+  root.KUI.page.define('runs', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      ctx.on(doc, 'htmx:afterRequest', onPollDone);
+      ctx.on(root, 'scroll', closeMenu, true);
+      ctx.on(root, 'resize', closeMenu);
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'keydown', onKeyDown);
+      ctx.on(doc, 'k-seg-change', onSegChange);
+      ctx.on(doc, 'change', onChange);
+      ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
+      ctx.on(doc, 'htmx:beforeRequest', onBeforeRequest);
+      ctx.on(doc, 'htmx:afterRequest', onRetryDone);
+      ctx.on(doc, 'htmx:responseError', onResponseError);
+    },
+    // Runs before the listeners are dropped: the split button's menu closes with the page.
+    unmount: closeMenu
   });
 })(window);

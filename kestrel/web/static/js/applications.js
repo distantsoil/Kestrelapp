@@ -2,17 +2,23 @@
    of the board, the rail or the panel never needs re-binding. The server does every write (HTMX
    posts) and answers with the board plus, out of band, the rail, the count line and the open
    panel. This file only filters what is on screen, places menus, opens the panel, drags cards and
-   animates the move. Nothing here sends anything anywhere. */
+   animates the move. Nothing here sends anything anywhere.
+   The page runs on the lifecycle (KUI.page, D-UI-210): this file only defines it. mount starts
+   every listener, timer and frame callback through its context and unmount ends them, so leaving
+   stops all of it and coming back starts one set. */
 (function (root) {
   'use strict';
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
 
-  var st = {
-    q: '', chip: 'all', fit: '', pri: '', work: '', company: '', added: '', due: '',
-    range: '0', cap: '0', open: false, expanded: {}, panel: null, menuFor: null, before: null,
-    inited: false
-  };
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
+  var st = freshState(), cx = null, pending = false, panelScroll = 0;
+  function freshState() {
+    return {
+      q: '', chip: 'all', fit: '', pri: '', work: '', company: '', added: '', due: '',
+      range: '0', cap: '0', open: false, expanded: {}, panel: null, menuFor: null, before: null
+    };
+  }
 
   function $(sel, ctx) { return (ctx || doc).querySelector(sel); }
   function $$(sel, ctx) { return Array.prototype.slice.call((ctx || doc).querySelectorAll(sel)); }
@@ -142,7 +148,7 @@
         if (btn) {
           btn.setAttribute('aria-expanded', foldedOpen ? 'true' : 'false');
           var label = $('span', btn);
-          if (label) label.textContent = 'Closed (' + (colFolded[key] || 0) + ')';
+          if (label) label.textContent = 'Closed \u00b7 ' + (colFolded[key] || 0);
         }
       }
     });
@@ -190,7 +196,16 @@
     var b = board();
     set('view', b && b.getAttribute('data-view') === 'table' ? 'table' : '');
     var s = q.toString();
-    try { root.history.replaceState(null, '', root.location.pathname + (s ? '?' + s : '')); }
+    // The page's own state lives in the `apps` field of the entry's state; anything else on the
+    // entry (the navigation controller's, D-UI-210) is carried over, never wiped.
+    var cur = root.history.state;
+    var next = {};
+    if (cur && typeof cur === 'object') Object.keys(cur).forEach(function (k) { next[k] = cur[k]; });
+    next.apps = {
+      q: st.q.trim(), stage: st.chip, fit: st.fit, pri: st.pri, work: st.work, company: st.company,
+      added: st.added, due: st.due, range: st.range, cap: st.cap, open: st.open
+    };
+    try { root.history.replaceState(next, '', root.location.pathname + (s ? '?' + s : '')); }
     catch (e) { /* a sandboxed frame */ }
   }
 
@@ -207,6 +222,8 @@
     apply();
   }
 
+  // A saved choice outlives the page on purpose: it is not tied to the page's signal, so leaving
+  // right after changing a filter never drops the write.
   function savePref(k, v) {
     var body = new root.URLSearchParams();
     body.set(k, v);
@@ -316,7 +333,9 @@
     var panel = $('#ap-panel');
     if (!panel || !root.htmx) return;
     if (String(st.panel) !== String(id)) panelScroll = 0;
+    var sig = cx.signal;
     root.htmx.ajax('GET', url, { target: '#ap-panel-in', swap: 'innerHTML' }).then(function () {
+      if (sig.aborted) return;  // the page was left while the panel was on its way
       st.panel = id;
       markSelected();
       // The menus count as the opener, so picking from one is not an outside click.
@@ -354,15 +373,27 @@
     });
   }
 
-  var pending = false, panelScroll = 0;
+  /* A Board / Table switch fades the new view in with a short rise; other swaps stay still. */
+  function onViewSwap(e) {
+    var elt = e.detail && e.detail.requestConfig && e.detail.requestConfig.elt;
+    if (!elt || !elt.closest || !elt.closest('[data-testid="view-board"], [data-testid="view-table"]')) return;
+    var b = board();
+    if (!b) return;
+    b.classList.add('is-viewin');
+    cx.after(400, function () { b.classList.remove('is-viewin'); });
+  }
+
   function afterSwap() {
     if (pending) return;
     pending = true;
+    var sig = cx.signal;  // a frame still due when the page is left does nothing to what follows
     root.requestAnimationFrame(function () {
+      if (sig.aborted) return;
       pending = false;
       $$('.ap-closedg').forEach(function (g) { g.classList.add('is-still'); });
       apply();
       root.requestAnimationFrame(function () {
+        if (sig.aborted) return;
         $$('.ap-closedg').forEach(function (g) { g.classList.remove('is-still'); });
       });
       markSelected();
@@ -438,6 +469,8 @@
       if (again) again.hidden = false;
       return;
     }
+    var cp = t.closest('[data-copy-path]');
+    if (cp) { copyLink(cp.getAttribute('data-copy-path')); return; }
     var open = t.closest('[data-open]');
     if (open) { openPanel(open.getAttribute('data-open')); return; }
     if (t.closest('[data-quiet-link]')) {
@@ -493,7 +526,7 @@
   }
 
   /* ----------------------------------------------------------------------- drag and drop */
-  var drag = { id: null, col: null, el: null };
+  var drag = { id: null, col: null, el: null };  // per visit, reset in mount
   function colOf(e) { return e.target && e.target.closest ? e.target.closest('.ap-col') : null; }
   function clearOver() { $$('.ap-col.is-over').forEach(function (c) { c.classList.remove('is-over'); }); }
   function onDragStart(e) {
@@ -535,7 +568,7 @@
     var xhr = e.detail && e.detail.xhr;
     var err = $('#ap-add-err');
     var hadToast = xhr && /k-toast/.test(xhr.getResponseHeader('HX-Trigger') || '');
-    root.setTimeout(function () {
+    cx.after(30, function () {
       var note = $('#apps-board [data-testid="board-notice"]');
       if (hadToast) {
         if (err) err.textContent = '';
@@ -549,89 +582,109 @@
         form.reset();
         if (root.KUI) root.KUI.closeModal();
       }
-    }, 30);
+    });
   }
 
-  function init() {
-    if (!page() || st.inited) return;
-    st.inited = true;
-    readState();
-    apply();
-    function openDraft(id) {
-      root.htmx.ajax('GET', '/pursuits/' + id + '/follow-up', { target: '#ap-follow-up-body', swap: 'innerHTML' });
-      root.KUI.openModal('#ap-follow-up');
+  /* ------------------------------------------------------------- the rest of the listeners */
+  function openDraft(id) {
+    root.htmx.ajax('GET', '/pursuits/' + id + '/follow-up', { target: '#ap-follow-up-body', swap: 'innerHTML' });
+    root.KUI.openModal('#ap-follow-up');
+  }
+  function onFollowUpClick(event) {
+    var button = event.target.closest('[data-follow-up]');
+    if (button) openDraft(button.getAttribute('data-follow-up'));
+    if (event.target.closest('[data-follow-up-copy]')) {
+      var text = $('#ap-draft-subject').value + '\n\n' + $('#ap-draft-text').value;
+      var status = $('#ap-copy-status');
+      if (!root.navigator.clipboard) {
+        status.textContent = 'Select the draft and copy it with your keyboard.';
+        return;
+      }
+      root.navigator.clipboard.writeText(text).then(function () {
+        status.textContent = 'Copied. Review it before you use it.';
+      }).catch(function () {
+        status.textContent = 'Select the draft and copy it with your keyboard.';
+      });
     }
-    doc.addEventListener('click', function (event) {
-      var button = event.target.closest('[data-follow-up]');
-      if (button) openDraft(button.getAttribute('data-follow-up'));
-      if (event.target.closest('[data-follow-up-copy]')) {
-        var text = $('#ap-draft-subject').value + '\n\n' + $('#ap-draft-text').value;
-        var status = $('#ap-copy-status');
-        if (!root.navigator.clipboard) {
-          status.textContent = 'Select the draft and copy it with your keyboard.';
-          return;
-        }
-        root.navigator.clipboard.writeText(text).then(function () {
-          status.textContent = 'Copied. Review it before you use it.';
-        }).catch(function () {
-          status.textContent = 'Select the draft and copy it with your keyboard.';
-        });
-      }
-    });
-    var autoDraft = $('[data-auto-draft]');
-    if (autoDraft) openDraft(autoDraft.getAttribute('data-auto-draft'));
-    doc.addEventListener('click', onClick);
-    doc.addEventListener('keydown', onKey, true);  // before the overlay's own Escape
-    doc.addEventListener('input', onInput);
-    doc.addEventListener('change', onInput);
-    doc.addEventListener('dragstart', onDragStart);
-    doc.addEventListener('dragend', onDragEnd);
-    doc.addEventListener('dragover', onDragOver);
-    doc.addEventListener('dragleave', onDragLeave);
-    doc.addEventListener('drop', onDrop);
-    doc.addEventListener('htmx:beforeSwap', function (e) {
-      var tgt = e.detail && e.detail.target;
-      if (tgt && tgt.id === 'apps-board') {
-        snapRects();
-        var body = $('#ap-panel .k-flyout__body');
-        if (body && st.panel !== null) panelScroll = body.scrollTop;
-      }
-    });
-    doc.addEventListener('htmx:load', afterSwap);
-    doc.addEventListener('htmx:configRequest', function (e) {
-      if (st.panel === null || !e.detail) return;
-      var path = String(e.detail.path || '');
-      if (path.indexOf('/pursuits') !== 0 || /\/panel(\?|$)/.test(path)) return;
-      e.detail.parameters.panel = st.panel;
-    });
-    doc.addEventListener('htmx:afterRequest', onAddDone);
-    doc.addEventListener('k-closed', function (e) {
-      if (e.target && e.target.id === 'ap-panel') { st.panel = null; markSelected(); }
-    });
-    doc.addEventListener('apps-close-panel', closePanel);
-    // A card that is gone (removed elsewhere): say so and show the board as it is.
-    doc.addEventListener('htmx:responseError', function (e) {
-      var path = String((e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath) || '');
-      if (path.indexOf('/pursuits') !== 0) return;
-      toast('That card is no longer on the board.');
-      closePanel();
-      var b = board();
-      var view = b && b.getAttribute('data-view') === 'table' ? 'table' : 'kanban';
-      root.htmx.ajax('GET', '/pursuits?view=' + view + '&track=' + track(), { target: '#apps-board', swap: 'outerHTML' });
-    });
-    // Undo from a toast: ask for the board again, and the panel when one is open.
-    doc.addEventListener('kestrel:undone', function () {
-      root.htmx.ajax('GET', '/status/counts', { swap: 'none' });
-      var b = board();
-      var view = b && b.getAttribute('data-view') === 'table' ? 'table' : 'kanban';
-      root.htmx.ajax('GET', '/pursuits?view=' + view + '&track=' + track(), { target: '#apps-board', swap: 'outerHTML' });
-      if (st.panel !== null) {
-        root.htmx.ajax('GET', '/pursuits/' + st.panel + '/panel', { target: '#ap-panel-in', swap: 'innerHTML' });
-      }
-    });
-    root.addEventListener('scroll', closeMenus, true);
-    root.addEventListener('resize', closeMenus);
+  }
+  function onBeforeSwap(e) {
+    var tgt = e.detail && e.detail.target;
+    if (tgt && tgt.id === 'apps-board') {
+      snapRects();
+      var body = $('#ap-panel .k-flyout__body');
+      if (body && st.panel !== null) panelScroll = body.scrollTop;
+    }
+  }
+  function onConfigRequest(e) {
+    if (st.panel === null || !e.detail) return;
+    var path = String(e.detail.path || '');
+    if (path.indexOf('/pursuits') !== 0 || /\/panel(\?|$)/.test(path)) return;
+    e.detail.parameters.panel = st.panel;
+  }
+  function onPanelClosed(e) {
+    if (e.target && e.target.id === 'ap-panel') { st.panel = null; markSelected(); }
+  }
+  // A card that is gone (removed elsewhere): say so and show the board as it is.
+  function onResponseError(e) {
+    var path = String((e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath) || '');
+    if (path.indexOf('/pursuits') !== 0) return;
+    toast('That card is no longer on the board.');
+    closePanel();
+    var b = board();
+    var view = b && b.getAttribute('data-view') === 'table' ? 'table' : 'kanban';
+    root.htmx.ajax('GET', '/pursuits?view=' + view + '&track=' + track(), { target: '#apps-board', swap: 'outerHTML' });
+  }
+  // Undo from a toast: ask for the board again, and the panel when one is open. The listener goes
+  // with the page, so an Undo pressed after leaving asks for nothing of this page.
+  function onUndone() {
+    root.htmx.ajax('GET', '/status/counts', { swap: 'none' });
+    var b = board();
+    var view = b && b.getAttribute('data-view') === 'table' ? 'table' : 'kanban';
+    root.htmx.ajax('GET', '/pursuits?view=' + view + '&track=' + track(), { target: '#apps-board', swap: 'outerHTML' });
+    if (st.panel !== null) {
+      root.htmx.ajax('GET', '/pursuits/' + st.panel + '/panel', { target: '#ap-panel-in', swap: 'innerHTML' });
+    }
   }
 
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
+  root.KUI.page.define('applications', {
+    mount: function (main, ctx) {
+      if (!page()) return;
+      cx = ctx;
+      st = freshState();
+      pending = false;
+      panelScroll = 0;
+      drag = { id: null, col: null, el: null };
+      readState();
+      apply();
+      ctx.on(doc, 'htmx:afterSwap', onViewSwap);
+      ctx.on(doc, 'click', onFollowUpClick);
+      var autoDraft = $('[data-auto-draft]');
+      if (autoDraft) openDraft(autoDraft.getAttribute('data-auto-draft'));
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'keydown', onKey, true);  // before the overlay's own Escape
+      ctx.on(doc, 'input', onInput);
+      ctx.on(doc, 'change', onInput);
+      ctx.on(doc, 'dragstart', onDragStart);
+      ctx.on(doc, 'dragend', onDragEnd);
+      ctx.on(doc, 'dragover', onDragOver);
+      ctx.on(doc, 'dragleave', onDragLeave);
+      ctx.on(doc, 'drop', onDrop);
+      ctx.on(doc, 'htmx:beforeSwap', onBeforeSwap);
+      ctx.on(doc, 'htmx:load', afterSwap);
+      ctx.on(doc, 'htmx:configRequest', onConfigRequest);
+      ctx.on(doc, 'htmx:afterRequest', onAddDone);
+      ctx.on(doc, 'k-closed', onPanelClosed);
+      ctx.on(doc, 'apps-close-panel', closePanel);
+      ctx.on(doc, 'htmx:responseError', onResponseError);
+      ctx.on(doc, 'kestrel:undone', onUndone);
+      ctx.on(root, 'scroll', closeMenus, true);
+      ctx.on(root, 'resize', closeMenus);
+    },
+    // Runs before the listeners are dropped: the panel and menus close, so the flyout's own
+    // state does not outlive the page and a mount in the same document starts from a clean board.
+    unmount: function () {
+      closeMenus();
+      closePanel();
+    }
+  });
 })(typeof window !== 'undefined' ? window : globalThis);

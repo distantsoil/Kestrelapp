@@ -35,7 +35,9 @@
   .entry .detail, .entry .extra { margin: 1pt 0 0; }
   .entry .extra { color: #444; font-size: 9.5pt; }
   ul.bullets { margin: 2pt 0 0; padding-left: 16pt; list-style: none; }
-  ul.bullets > li { position: relative; margin: 1.5pt 0; }
+  ul.bullets > li { position: relative; margin: 1.5pt 0; break-inside: avoid; }
+  h2.section-heading, .role .row { break-after: avoid; }
+  .entry { break-inside: avoid; }
   ul.bullets > li::before { content: "\2022"; position: absolute; left: -12pt;
     color: var(--accent); }
   .summary { margin: 0; }

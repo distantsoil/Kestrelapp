@@ -6,15 +6,16 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}{{ 'Engagement offers' if con else 'Offers' }} · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/offers.css">
-<script src="/static/js/offers.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/offers.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): offers.js defines the page "offers"; base.html mounts it. #}
+{% block page_name %}offers{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/offers.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="of-wrap"><div class="of-page">
-  {% set lede %}<p class="of-lede">Kestrel lays out the trade-offs. It never advises and never sends anything.</p>{% endset %}
-  {% call ui.scene_band('Engagement offers' if con else 'Offers', lede=lede) %}
+  {% call ui.scene_band('Engagement offers' if con else 'Offers') %}
     {% include "partials/offer_count.html" %}
     <button type="button" class="k-btn k-btn--sm" data-k-flyout="#of-how-fly" aria-controls="of-how-fly" aria-expanded="false" data-testid="of-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
     {% include "partials/offer_rec.html" %}

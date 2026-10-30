@@ -21,6 +21,7 @@
       <div class="pf-f">
         <label for="pa-head">Headline</label>
         <input class="k-input" id="pa-head" type="text" name="headline" value="{{ block.headline or '' }}" placeholder="One line, as on your resume">
+        {% if not block.headline %}<small class="pf-hint" data-testid="headline-hint">Type it here once. A resume import does not fill this in; it prints under your name on every document.</small>{% endif %}
       </div>
       <div class="pf-f">
         <label for="pa-email">Email</label>

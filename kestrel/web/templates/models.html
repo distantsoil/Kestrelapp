@@ -4,11 +4,13 @@
 {% extends "base.html" %}
 {% import "ui/macros.html" as ui %}
 {% block title %}Models · Kestrel{% endblock %}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/models.css">
-<script src="/static/js/models.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/models.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): models.js defines the page "models"; base.html mounts it. #}
+{% block page_name %}models{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/models.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="mo-wrap"><div class="mo-page">
   {% call ui.scene_band('Models') %}
@@ -23,8 +25,6 @@
   <p class="mo-uses" data-testid="mo-uses"><span class="k-muted">Kestrel uses</span>
     <span class="k-pill {{ 'k-pill--good' if choice == 'local' else ('k-pill--warn' if choice == 'hosted' else 'k-pill--info') }}">{{ ui.icon('laptop' if choice == 'local' else 'cloud') }}{{ choice_label }}</span>
     <a class="k-link" href="/settings#system" data-testid="mo-change-mode">Change in Settings</a></p>
-
-  <p data-testid="speed-note" class="k-muted md-speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
 
   <div class="k-layout">
     <div class="k-layout__main mo-main">
@@ -67,8 +67,8 @@
     </div>
     {% call ui.help_column() %}
       {{ ui.help_card('What each step does', ['Rules and Quick screen: fast filters.', 'Rating: reads the whole posting.', 'Deeper read: only when you ask.'], 'info', 'cpu', 'mo-steps-fly') }}
-      {{ ui.help_card('On this computer or online', ['This computer: private and free.', 'Online: faster, paid per use.', 'Kestrel asks before anything goes online.'], 'warn', 'cloud', 'mo-where-fly') }}
-      {{ ui.help_card('Checks and fixes', ['Model check: after a new model or 30 ratings.', 'Room to read: pages a model takes in at once.', 'The health check tests it with a hidden word.'], 'good', 'shield', 'mo-checks-fly') }}
+      {{ ui.help_card('On this computer or online', ['This computer: private and free.', 'Online: faster than this computer, paid per use.', 'Kestrel asks before anything goes online.'], 'warn', 'cloud', 'mo-where-fly') }}
+      {{ ui.help_card('Checks and fixes', ['Model check: after a new model or 30 ratings.', 'Can read: pages a model takes in at once.', 'Health check tests it with a hidden word.'], 'good', 'shield', 'mo-checks-fly') }}
     {% endcall %}
   </div>
 
@@ -82,6 +82,8 @@
     <p>Every role goes through up to five steps. Each step has a model, on this computer or online. The table shows which, and how well it matches your own ratings.</p>
     <h4>Changing one</h4>
     <p>Press Change on a row. Kestrel lists models that fit this computer first. A model that is not downloaded starts downloading when you pick it.</p>
+    <h4>Speed</h4>
+    <p>Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
     <h4>Is another model better for you?</h4>
     <p>Press Check my models. Kestrel tests the alternatives against an answer key, your own ratings once you use them, and tells you plainly whether to switch.</p>
   {% endcall %}

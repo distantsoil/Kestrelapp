@@ -1,6 +1,6 @@
 {# The one-time disclosure of the daily update check (D-UPD-1, restyled D-UI-152). #}
 {% from "ui/macros.html" import icon %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <div class="sf-bn" role="status" data-testid="update-disclosure">
   <span class="sf-ic" aria-hidden="true">{{ icon('shield') }}</span>
   <span class="sf-msg">Kestrel checks kestrelapp.co once a day for a newer version. Nothing about you is sent. Kestrel never downloads or installs anything; you choose if and when to update.</span>

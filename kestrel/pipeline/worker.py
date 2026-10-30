@@ -19,13 +19,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, func, not_, or_, select
+from sqlalchemy import and_, exists, func, not_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import ScrapeRun, Setting, Source, Task
+from kestrel.db.models import Opportunity, ScrapeRun, Setting, Source, Task
 from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
 from kestrel.pipeline import lane, recheck, runlog
@@ -335,6 +335,49 @@ class Worker:
             failed send both go back to the queue (the page shows the reason and Try again) and the
             worker keeps draining."""
             opp_id = payload.get("opportunity_id")
+            local_only = bool(payload.get(lane.LOCAL_ONLY) or "lane" in payload)
+            if task_type in ("t1", "t2"):
+                async with self._sm() as session:
+                    opp = await session.get(Opportunity, opp_id) if opp_id else None
+                    local_only = local_only or bool(
+                        opp and lane.LANE_REASON in (opp.stage_reason or "")
+                    )
+                    if opp_id:
+                        prior_lane = await session.scalar(
+                            select(exists().where(
+                                Task.type.in_(("t1", "t2")),
+                                func.json_extract(Task.payload, "$.opportunity_id") == opp_id,
+                                or_(
+                                    func.json_type(Task.payload, "$.lane").is_not(None),
+                                    func.json_extract(
+                                        Task.payload, f"$.{lane.LOCAL_ONLY}"
+                                    ) == 1,
+                                ),
+                            ))
+                        )
+                        local_only = local_only or bool(prior_lane)
+                    if local_only and opp and await lane.reject_mismatch(session, opp):
+                        stored = await session.get(Task, task.id)
+                        if stored and stored.status == "leased" and stored.worker_id == wid:
+                            stored.status = "done"
+                            stored.worker_id = None
+                            stored.lease_until = None
+                            stored.updated_at = utcnow_iso()
+                        await session.commit()
+                        return
+                    if local_only:
+                        payload = {**payload, lane.LOCAL_ONLY: True}
+                        stored = await session.get(Task, task.id)
+                        if stored and stored.status == "leased" and stored.worker_id == wid:
+                            stored.payload = payload
+                            await session.commit()
+                if local_only:
+                    if lane.scores_on_hosted(self._settings):
+                        held_ids.add(task.id)
+                        await self._queue.defer(
+                            task.id, "held: background roles use local models only", worker_id=wid
+                        )
+                        return
             if self._online_approval is not None and "online_approval" not in payload:
                 payload = {**payload, "online_approval": self._online_approval}
                 async with self._sm() as session:
@@ -347,6 +390,14 @@ class Worker:
 
             tier = "tier1" if task_type == "t1" else "tier2"
             client_settings = getattr(client, "settings", settings)
+            if local_only and (
+                lane.scores_on_hosted(settings) or lane.scores_on_hosted(client_settings)
+            ):
+                held_ids.add(task.id)
+                await self._queue.defer(
+                    task.id, "held: background roles use local models only", worker_id=wid
+                )
+                return
             if held_for_approval(settings, (tier,), payload) or held_for_approval(
                 client_settings, (tier,), payload
             ):
@@ -365,6 +416,8 @@ class Worker:
                     kwargs["requested_at"] = payload.get("requested_at")
                     kwargs["task_id"] = task.id
             if task_type == "t1":
+                if local_only:
+                    kwargs["lane_local_only"] = True
                 if "online_approval" in payload:
                     kwargs["online_approval"] = payload["online_approval"]
                 if payload.get("rescore"):
@@ -433,7 +486,7 @@ class Worker:
             await self._gather_workers(one_worker, concurrency, task_type, stats)
         else:
             while not self._halted():
-                groups = await self._model_groups(task_type)
+                groups = await self._model_groups(task_type, exclude_ids=held_ids)
                 if not groups:
                     break
                 group[0] = groups[0]
@@ -490,7 +543,9 @@ class Worker:
                 tier_stats.errors += len(crashed)
         return len(crashed)
 
-    async def _model_groups(self, task_type: str) -> list[Any]:
+    async def _model_groups(
+        self, task_type: str, *, exclude_ids: set[int] | None = None
+    ) -> list[Any]:
         """Lease filters for the tier's claimable tasks, one per model they will run on, in
         drain order: the configured model first, then by task count (largest first), then by
         name, so the order is stable. An override naming the configured model joins its group."""
@@ -503,7 +558,10 @@ class Worker:
             rows = (
                 await s.execute(
                     select(backend, model, func.count())
-                    .where(Task.type == task_type, claimable(utcnow_iso()))
+                    .where(
+                        Task.type == task_type, claimable(utcnow_iso()),
+                        Task.id.not_in(exclude_ids or ()),
+                    )
                     .group_by(backend, model)
                 )
             ).all()

@@ -351,7 +351,7 @@ def test_system_asks_contents_and_order(monkeypatch):
     consulting = next(a for a in asks if a["key"] == "labels:consulting")
     assert "(0 of 15)" in consulting["line"]
     quarantine = next(a for a in asks if a["key"] == "quarantine")
-    assert quarantine["title"] == "1 posting failed scoring"
+    assert quarantine["title"] == "1 posting needs another try"
     assert "Retry them, or pick another model on Models" in quarantine["line"]
     for a in asks:
         assert a["title"] and a["line"] and a["href"] and a["button"]
@@ -587,7 +587,8 @@ def test_the_asks_are_off_the_page_but_the_failed_role_note_stays_in_the_retry_n
         body = c.get("/").text
     assert 'data-testid="today-asks"' not in body and 'data-testid="today-setup-rule"' not in body
     asks = asyncio.run(_with_session(lambda s: system_asks(s, _settings(), None)))
-    assert any(a["key"] == "quarantine" and a["title"] == "1 posting failed scoring" for a in asks)
+    assert any(a["key"] == "quarantine" and a["title"] == "1 posting needs another try"
+               for a in asks)
     retry = body.split('data-testid="td-retry"')[1].split("</div>")[0]
     assert "1 role needs another try." in retry and 'href="/quarantine"' in retry
 
@@ -647,7 +648,7 @@ def test_status_rail_says_scoring_and_how_the_run_ended(monkeypatch):
 def test_open_failures_show_on_today_and_the_rail_whatever_the_last_run_said(monkeypatch):
     """D-UI-56: the latest small run read "1 scored, 0 failed" while 8 earlier failures still
     waited. open_failed is independent of the run: Today's run panel and the rail say "N roles
-    failed scoring" with a link to the Scoring failed group whenever it is above zero."""
+    need another try" with a link to the Scoring failed group whenever it is above zero."""
     from kestrel.analytics.progress import EMPTY
     from kestrel.web.pages import today as today_page
 
@@ -670,8 +671,8 @@ def test_open_failures_show_on_today_and_the_rail_whatever_the_last_run_said(mon
     note = body.split('data-testid="td-retry"')[1].split("</div>")[0]
     assert 'href="/quarantine"' in note and "8 roles need another try." in note
     line = panel.split('data-testid="open-failed"')[1].split("</p>")[0]
-    assert 'href="/quarantine"' in line and "8 roles failed scoring" in line
-    assert 'data-rail="failed"' in rail and "8 roles failed scoring" in rail
+    assert 'href="/quarantine"' in line and "8 roles need another try" in line
+    assert 'data-rail="failed"' in rail and "8 roles need another try" in rail
     assert 'href="/quarantine"' in rail
     assert "—" not in body
 
@@ -828,7 +829,7 @@ def test_quarantine_copy_follows_the_stored_error():
     # The seed's one parked row failed on its schema, so Today never says "ran out of room".
     asyncio.run(_seed())
     asks = " ".join(f"{a['title']} {a['line']}" for a in _asks())
-    assert "1 posting failed scoring" in asks and "ran out of room" not in asks
+    assert "1 posting needs another try" in asks and "ran out of room" not in asks
     assert "not in the required format" in asks
 
 

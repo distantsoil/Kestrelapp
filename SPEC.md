@@ -390,7 +390,7 @@ work with no restart. Only keys declared in the typed settings model are overrid
 | Not for me and its reason | The existing hidden state of the role, plus a `label` (`source` `manual`, `dimensions` for role fit, comp and logistics, or career direction, `rationale` the chosen reason); the role stays recoverable under Hidden |
 | Company hidden | `org.hidden_at` (nullable ts); roles of a hidden org are left out of Pipeline and Today, never deleted |
 | Scene, touches, avatar | `setting` rows `ui.scene`, `ui.scene_daily` (default true), `ui.scene_rotation`, `ui.scene_animate`, `ui.touches_enabled`, `ui.touches_off` (single touches), `ui.touch_groups_off` (a whole group: `seasons`, `civic` or `lights`), `ui.avatar` (`initial`, six marks or `photo`; the photo file lives in the data folder). Values are validated in `kestrel/ui_settings.py`; a stored value that no longer validates reads as its default |
-| Appearance and window | `ui.theme`, `ui.scheme`, `ui.text_size`, `ui.reduce_motion`, `ui.close_to_tray` |
+| Appearance and window | `ui.theme`, `ui.scheme`, `ui.text_size`, `ui.reduce_motion`, `ui.classic_nav`, `ui.close_to_tray` |
 | Region | `region.date_format` (`MM/DD/YYYY` default, `MM/DD/YY`, `DD/MM/YYYY`, `DD/MM/YY`, `YYYY-MM-DD`, `Mon D, YYYY`), `region.time_format` (`12h` default, `24h`) (country and currency are fixed: US, USD) |
 | Notification sound | `notify.sound` (default on), `notify.sound_name` (`chime` default, `soft_click`, `bell`), `notify.sound_volume` (0 to 1, clamped), `notify.quiet_hours` (`{enabled, start, end}`, `HH:MM`, default 21:00 to 07:00, off) |
 | Score cutoffs | `thresholds.apply`, `thresholds.consider` |
@@ -467,6 +467,11 @@ Guardrails, all of which must be enforced rather than discovered:
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
 | **Paylocity Recruiting** | `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` (JSON in `window.pageData`) | 200, HTML (verified 2026-10-21) |
 | **Workable** | `POST https://apply.workable.com/api/v3/accounts/{slug}/jobs` body `{}` | 200, `{results, total}` (verified 2026-10-21 from the maintainer's network) |
+| **Recruitee** | `GET https://{slug}.recruitee.com/api/offers/` | 200, `{offers}` with full descriptions (verified 2026-10-29) |
+| **Careers page** (generic) | `GET {the pasted careers page}`, then at most 25 job pages | 200 HTML with schema.org `JobPosting` JSON-LD (job page shape verified 2026-10-29 on one public page; list, `@graph` and stub shapes from schema.org's documentation) |
+| **Teamtailor** | `GET https://{domain}/jobs.json` (JSON Feed; fallback `/jobs.rss`) | 200, `application/feed+json`, full descriptions (verified 2026-10-29) |
+| **Personio** | `GET https://{slug}.jobs.personio.de/xml` (also `.jobs.personio.com`) | 200, `text/xml`, `<workzag-jobs>` (verified 2026-10-29) |
+| **Breezy HR** | `GET https://{slug}.breezy.hr/json` (list) and `GET https://{slug}.breezy.hr/p/{friendly_id}` (description) | 200 (verified 2026-10-29) |
 | **ADP Workforce Now** | `GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&$top=20&$skip=1` | 200, no auth (verified 2026-10-21) |
 | **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
@@ -485,16 +490,105 @@ use APIs the adapters do not call. A board already among the sources, in any sta
 added again, so one the operator turned off stays off. At most 40 found boards per track. A
 discovery failure is logged and never changes the run's status.
 Greenhouse short links (`grnh.se`) are followed with one request each, redirects off, at most 20
-per run. A role from a found board is scored at once when its level is unknown or at or above the
-floor and its title shares a field word with the target titles or with the titles of at least two
-of the operator's pursuits (D-SRC-8). Any other role from a found board waits in a background
-lane: stored, never rejected, and scored only when no other work is waiting, up to
-`pipeline.lane_daily_cap` (200) a day. "Score everything now" frees the whole lane once, after a
-confirmation that states the count, the time and, on an online model, the cost (D-SRC-9).
-Precision is measured, not assumed (D-SRC-13): `python -m kestrel.evals.smart_filter_report`
+per run. All fetched roles, from searches and company boards alike, pass the existing smart
+filter before storage (D-SRC-13, superseding D-SRC-8 and D-SRC-12): a rejected title is skipped
+and counted as `dropped_unrelated_title` on its scrape run. The matching rule is unchanged.
+Hand-pasted roles bypass this filter. The background lane remains only for previously stored
+rows. Before release and scoring, those rows are rechecked against the current country rule and
+smart filter; clear mismatches become `t0_reject` with an explanation, without a model call.
+Survivors score only on local tiers, when idle up to `pipeline.lane_daily_cap` (200) a day, or
+through "Score everything now" after confirmation. Hosted mode or an external scoring tier
+holds the surviving backlog, even after confirmation; model overrides cannot bypass this.
+Historical precision is measured, not assumed: `python -m kestrel.evals.smart_filter_report`
 reads the database (SELECT only) and reports per lane the roles, scored, fits and not-fits, the
 fast lane's precision (fits over scored roles) and the lane miss rate (fits that sat in the
 background lane over all fits). A figure from fewer than five observations prints as insufficient.
+
+**USAJobs (US federal jobs; D-SRC-15).** A search board with its own adapter (`usajobs`), added from
+the job-board sheet (group "Official public access") or the USAJobs card on the Sources page. It
+asks `GET https://data.usajobs.gov/api/search` with the user's own free key (`Authorization-Key`)
+and the email they requested it with (`User-Agent`, which USAJobs requires). The key is saved in the
+app and stored in `.env` as `USAJOBS_API_KEY` exactly as an online-model key is; the email is an
+ordinary setting (`sources.usajobs_email`) copied into each USAJobs source as `contact_email`. Neither
+the key nor any secret is in a config row, the database, a log or diagnostics. Search terms are the
+source's `keyword`, else the employment profile's target titles (up to 5, one search each) with an
+optional `location`; a place of "Remote" asks for remote roles only. Each search reads up to
+`max_pages` pages (default 3) of `results_per_page` (default 100, at most 500) posted in the last
+`date_posted_days` (default 7); a run makes at most 12 requests at 2 a second, robots.txt checked.
+Mapping: title, agency as organization, the apply link (`ApplyURI`, else the announcement), one
+place or the display text ("Multiple Locations"), pay with its interval (`PA` year, `PH` hour,
+`PM` month, `PW` week, `PD` day; unpaid or fee-basis roles carry none), the posting date, the
+closing date (in the description and the raw record), and the summary, duties, qualifications,
+requirements, education and benefits. `RemoteIndicator` true is remote, `TeleworkEligible` true is
+hybrid, both explicitly false is on-site, anything else stays unknown. A missing key or email is a
+`partial` run with the sentence "USAJobs needs your API key and email" (no request is made, no
+failure counted); a 429 or 5xx is `partial` and keeps the pages already read; a 401 or 403 is a
+failed attempt that says the key was not accepted. Every role goes through the same ingest path as
+any other source, so the D-SRC-13 area and title drop applies. Kestrel never applies: the role links
+to the official announcement, and it is described as not run or endorsed by OPM.
+
+**Adzuna (US job ads; D-SRC-15).** A search board with its own adapter (`adzuna`), added from the
+job-board sheet (group "Official public access") or the Adzuna card on the Sources page. It asks
+`GET https://api.adzuna.com/v1/api/jobs/us/search/{page}` (country fixed to `us`) with the user's own
+free `app_id` and `app_key` as query parameters. Both are saved in the app and stored in `.env` as
+`ADZUNA_APP_ID_KEY` and `ADZUNA_APP_KEY`, as an online-model key is; neither is in a config row, the
+database, a log or diagnostics (the log file masks credential-like query values). Search terms are
+the source's `keyword`, else the employment profile's target titles (up to 5, one search each) with
+an optional `location` (a place of "Remote" adds the word to the search; Adzuna has no remote
+filter). Budget: the free key allows about 250 calls a day, so a check reads at most `max_pages`
+pages (default 2, at most 5) of 50 ads posted in the last `date_posted_days` (default 7), and at
+most 8 requests in all, at 1 a second, never retried on a 429; the card says so. The robots check is
+skipped for this API call (D-SRC-15). Mapping: title, company, `location.display_name` (else the
+area as "City, State"), the redirect URL as the posting link, `created`, contract time and type, and
+`salary_min`/`salary_max` as annual USD pay only when `salary_is_predicted` is 0 (a predicted salary
+stays in the raw record). Adzuna sends a description snippet only, so the body ends with the
+sentence "Adzuna supplies only the start of this posting. Open the original posting for the full
+text." and `raw.description_partial` is true. A missing key is a `partial` run with the sentence
+"Adzuna needs your app ID and app key"; a 429 or 5xx is `partial` and keeps the pages already read;
+a 401 or 403 is a failed attempt that says the keys were not accepted. Every role goes through the
+same ingest path, so the D-SRC-13 drop applies. Credit: the source is named "<search> on Adzuna" and
+the Posting tab links to the Adzuna page, where the user applies.
+
+**Remote boards: Himalayas and We Work Remotely (D-SRC-15).** Two keyless job-feed adapters
+(`himalayas`, `weworkremotely`), added from the job-board sheet (group "Remote jobs"). The existing
+`rss` kind is a consulting signal source and is not reused. Himalayas asks
+`GET https://himalayas.app/jobs/api/search?q=<keyword>&country=US&sort=recent&page=N` (20 a page; the
+source's `keyword`, else the profile's target titles; `max_pages` default 3; at most 12 requests, 1
+a second, robots.txt checked); its terms require that Apply uses the API's `applicationLink`
+(`apply_url`) and that Himalayas is credited with a link, and that expired jobs are dropped
+(`expiryDate`). We Work Remotely reads its public feed `https://weworkremotely.com/remote-jobs.rss`
+once a check (or one category feed, `category` such as `remote-programming-jobs`); a role the
+board limits to another region ("Europe Only") is not passed on, anything unclear is kept, an
+expired role is dropped, and each role links to its page on the board. Both mark roles remote, map
+the place as "United States", "Remote (worldwide)" or the board's own words, and run through the
+D-SRC-13 drop. A 429, 5xx or (for We Work Remotely) its 403 bot check is a `partial` run that keeps
+what was read. Credit: the source is named after the board and the Posting tab links to it. Remotive
+is not built (D-SRC-15: its robots.txt disallows its API path and its terms could not be read).
+
+**Careers page (`careers_page`; B4, D-SRC-15, D-UI-102).** The operator pastes any employer's careers
+page link on the Sources sheet. Many employers (and sites on iCIMS, Taleo, Paycor, UKG or a custom
+build) embed each opening as schema.org `JobPosting` JSON-LD for search engines, and Kestrel reads
+only that, with `html.parser` and `json` (never a regular expression over the page): a single
+object, a list, an `@graph` container, or items inside an `ItemList`; a block that is not valid
+JSON is skipped. Mapped: title, hiringOrganization (name, `sameAs`), jobLocation (locality, region,
+country), `jobLocationType` `TELECOMMUTE` (remote; the place falls back to
+`applicantLocationRequirements`), baseSalary (`minValue`/`maxValue`/`value`, currency and
+`unitText` hour, day, month, year; a weekly figure is stated per year), datePosted, description
+(HTML), employmentType, identifier and url. A role whose `validThrough` date has passed is skipped.
+The run, through the shared client (descriptive User-Agent, 1 request a second, robots.txt checked,
+public addresses only, 2 MB a page, the same guarded fetch as the link check): (1) a link that is a
+hiring system Kestrel already reads (`board_discovery.board_from_url`, or markup that
+`board_from_markup` recognizes) is read by that system's adapter instead; (2) otherwise every
+JobPosting on the page is mapped, and a posting that is only a stub (no description) with its own
+page on the same site is read from that page; (3) a page with no JobPosting but links to job pages
+(a path segment such as `/job/`, `/jobs/` or `/position/` with something after it, or a job id in
+the query) is followed one level, at most 25 job pages a run, and the run says when links were left
+for later; (4) a page that yields nothing is a `partial` run with "This page lists its jobs with
+JavaScript, which Kestrel cannot read yet.", never a silent zero. A 429 is partial, a 404 or a
+robots.txt refusal is a failed run with a plain sentence. Every role then goes through the D-SRC-13
+area and title drop like any other source. The company page is the most direct copy of a posting
+(dedup rank 0). A page that renders its list in the browser with no JobPosting in its HTML is not
+readable; the card says so.
 
 **RemoteRocketship (optional, paid, discovery only; D-SRC-14).** For people who already pay for
 RemoteRocketship API access, a `remoterocketship` source asks its jobs API for postings and keeps
@@ -502,7 +596,7 @@ RemoteRocketship API access, a `remoterocketship` source asks its jobs API for p
 or copy of the reply, and holds the reply in memory for the run only (their terms limit caching to
 24 hours and forbid archiving). Each link goes the way a JobSpy posting link goes (D-SRC-7): a
 recognized company board (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP,
-Paylocity, Workable) becomes a found board read by its own adapter; any other link is read from the
+Paylocity, Workable, Recruitee, Teamtailor, Personio, Breezy HR) becomes a found board read by its own adapter; any other link is read from the
 employer's public page (schema.org `JobPosting` data, robots.txt checked, one polite request, at
 most 20 pages a run). A link nothing can read is dropped and counted in the run ("N links could
 not be read from the employer"). Off by default; the key is `REMOTEROCKETSHIP_API_KEY` (or the
@@ -715,6 +809,15 @@ Microseconds. Target: eliminate 60-80% of raw ingest. Rules live in
 `kestrel/resources/config/filters.yml`, keyed by track, so they are tunable without a code
 change. Every rejection records the rule that fired.
 
+**Ingest skip accounting (D-SRC-13).** Each scrape run records `dropped_outside_area`
+and `dropped_unrelated_title` in its counts. The Runs history drawer and full run detail
+sum those counts across the searches in the run's existing time window and, when either
+is positive, show one muted summary: "Skipped 42: 30 outside your area, 12 unrelated titles".
+Zero or missing counts show no summary. The summary uses all matching searches, including
+those beyond the source list's display limit. Diagnostics exports both counts on each
+scrape-run row, with missing counts exported as zero. This accounting does not change
+location or title filtering, including the rule that genuine ambiguity is kept.
+
 A rejection is not final when the inputs change. A profile save that changes what the rules read
 (target or excluded titles, seniority floor, pay floor, pay margin, geography, sponsorship) queues one
 resumable, rules-only `t0_recheck` task per track. It re-runs the rules on roles set aside by
@@ -813,6 +916,29 @@ rule 4 applied to pay: a small gap is uncertainty, and uncertainty escalates.
 
 `geo_rules` on the profile:
 
+**Country screening at ingest (D-SRC-13).** Before storing a fetched role, parse its location.
+When its country is known and outside the source track's profile `remote_country_allowlist`,
+drop it with reason `outside_area` and increment `dropped_outside_area` in the scrape run's
+counts. Store no opportunity or related rows for a dropped posting. An absent or empty country
+list applies no country restriction. Unknown, blank, vague and counted locations such as
+"Remote" and "2 Locations" are kept (hard rule 4), as are countries in the list. This screening
+does not decide work mode: "New York - Remote" is kept for a US search, with remote or hybrid
+fit left to scoring. Hand-pasted roles bypass this screening because the operator chose them.
+Existing stored roles are not removed by this ingest screen; a fetched posting it drops does
+not update an existing row either.
+
+**Title screening at ingest (D-SRC-13).** Build `smart_filter.build_context` once per source run
+and track from the profile's target titles, their phrasings, seniority floor and words learned
+from at least two pursuits. If the unchanged `smart_filter.keep(title, context)` returns false,
+skip the posting before storage and increment `dropped_unrelated_title` on the scrape run.
+The country check runs first, so a posting skipped for both reasons is counted outside the area
+only. Every fetched source uses this screen; manual paste bypasses it. Titles the filter cannot
+judge keep its existing treatment: blank titles, no field words and nothing to compare against
+are retained, and unknown seniority never fails the floor test. Tier 0 creates no new lane tasks.
+Existing lane rows are rechecked before release and before scoring, rejected with an
+`outside_area` or `unrelated_title` stage reason on a clear mismatch, and otherwise remain
+local-only through Tier 2. Normal Tier 0 rules and explicit operator overrides remain available.
+
 ```yaml
 geo_rules:
   remote_ok: true
@@ -826,6 +952,13 @@ geo_rules:
   relocation_acceptable: false
   travel_days_per_month_max: 6         # consulting track
 ```
+
+Location parsing recognizes all ISO 3166-1 countries from a vendored package table of alpha-2,
+alpha-3 and three-digit numeric codes, English short names and common alternative names. A country
+can stand alone or end a comma-separated location; US remote phrases also resolve to US. For a
+two-letter code shared with a US state, uppercase `City, XX` means the state; `City, Region, XX`
+or a lowercase code means the country. Full US state names retain their existing meaning.
+Foreign locations keep the first part as the city and leave state empty (D-SRC-13, step 1).
 
 **`geo_allows` uses name matching, not distance.** A radius in miles would require geocoding,
 and no geocoder, no offline place dataset, and no network dependency belongs in this stack. The
@@ -842,9 +975,16 @@ alias list is explicit and the operator edits it. Logic, in order:
 3. Parsed `city` matches any alias in any `onsite_metros` entry, case-insensitive → allow.
 4. `location_raw` contains any alias as a substring → allow. This catches the many postings whose
    location string never parses cleanly.
-5. `remote_type == "unknown"` and nothing matched → **allow**, and record `geo_uncertain`. Tier 0
-   biases toward false positives; an unparseable location is not evidence of a bad location.
-6. Otherwise → deny.
+5. `remote_type == "unknown"`, nothing matched, the posting **names a specific place** (a parsed
+   state, or a city that is not a vague phrase such as "Multiple locations" or "United States"),
+   and its title, location and description never mention remote or hybrid work → **deny**: a
+   posting that names one place and never offers remote work is on-site there (owner ruling
+   D-RULES-9, 2026-10-27). The role stays findable under the rules' set-aside list with the reason
+   and one click to restore, so a rare remote role that names only a home state is not lost.
+6. `remote_type == "unknown"` and nothing matched otherwise → **allow**, and record
+   `geo_uncertain`. Tier 0 biases toward false positives; an unparseable location is not evidence
+   of a bad location.
+7. Otherwise → deny.
 
 **Expression evaluation.** `simpleeval`, never `eval()`. The evaluator is constructed once.
 
@@ -1766,6 +1906,114 @@ The public posting page is `https://apply.workable.com/{slug}/j/{shortcode}/`; t
 has no description, so each posting needs a detail request. The body is `description`,
 `requirements` and `benefits` joined in that order (blank sections skipped). The location text is
 built from `city`, `region` and `country`, dropping empty parts.
+
+### Recruitee
+
+`GET https://{slug}.recruitee.com/api/offers/` → `200` `{"offers": [...]}`, no auth, no pagination, and every offer carries its full HTML `description` and `requirements`, so a board is one request. Verified 2026-10-29 against one public board (24 offers, about 700 KB). An unknown `{slug}` answers `404` `{"error": "Not Found"}`. `{slug}.recruitee.com/robots.txt` redirects to the company's own careers domain, whose file allows everything; the shared client follows it.
+
+Per offer: `id` (integer), `guid`, `slug`, `title`, `status` (`published`), `description` and `requirements` (HTML), `location` (one display string, "Amsterdam, Noord-Holland, Netherlands"), `locations[]` (`city`, `state`, `country`, `country_code`), `city`, `country`, `remote`, `hybrid`, `on_site` (booleans), `employment_type_code` (`fulltime_permanent`), `department`, `tags`, `published_at` and `created_at` (`2026-10-28 13:21:58 UTC`), `careers_url` and `careers_apply_url` (on the company's own domain when it has one), `salary` (`{min, max, period, currency}`, all null when not shown), `company_name`, `mailbox_email` (an employer mailbox, never stored by Kestrel), `open_questions` (the application form, not read).
+
+**Gotchas:** custom careers domains are common, but the API stays on `{slug}.recruitee.com`, so the slug is the only thing needed; a pasted link on `{slug}.recruitee.com` is recognized by its host, and a careers page on another domain by markup that names `{slug}.recruitee.com` (the API address, an `/o/` link or the widget). A role open in several places has several `locations[]` entries, joined with "; ". The `salary.period` values are mapped when they are `hour`, `day`, `month` or `year`; the salary shape is from Recruitee's public documentation and the live board showed no pay, so it is **documented, not verified live**.
+
+### Teamtailor
+
+`GET https://{domain}/jobs.json` → `200` `application/feed+json`, a JSON Feed 1.1 document `{"version", "title", "home_page_url", "feed_url", "items": [...]}`, no auth. `{domain}` is the career site's own host (`{name}.teamtailor.com` or the employer's own career domain); Teamtailor has no shared API host. Verified 2026-10-29 against one public site (15 roles, about 220 KB, one document, no `next_url`). `GET https://{domain}/jobs.rss` → `200` RSS 2.0 with the same roles. A site that has the feeds off answers `404` (an empty `application/json` body for `jobs.json`, an HTML page for `jobs.rss`); some sites behind a firewall answer `403`. `robots.txt` on the verified site disallows only `/app/`, `/messages/`, `/messenger/`, `/facebook/tab/` and `/jobs/internal/`.
+
+Per JSON item: `id` (a UUID), `title`, `url`, `date_published` (ISO with offset), `content_html` (the full description), and `_jobposting`, a schema.org `JobPosting` with `identifier.value` (the numeric job id), `hiringOrganization.name`, `datePosted` and `jobLocation[]` (`address.addressLocality`, `addressCountry` as an ISO code, `addressRegion` as a Teamtailor region such as "North America", `streetAddress`, `postalCode`). Per RSS item: `title`, `description` (HTML), `pubDate` (RFC 2822), `link`, `guid` (the same UUID), `remoteStatus` (`none`, `hybrid` or `remote`), and in the `https://teamtailor.com/locations` namespace `location` (`name`, `address`, `zip`, `city`, `country` as a name), `department`, `role`, `division`.
+
+**Gotchas:** the JSON feed has no remote flag (the RSS does), so remote stays unknown unless `jobLocationType` is `TELECOMMUTE`. `addressCountry` is an ISO code, and a bare `CA` would read as California, so Kestrel turns it into the country's name. A site with both feeds off is a `partial` run with a plain sentence, never a failure. The domain is operator-supplied, so every request is the guarded kind (public addresses only, robots.txt checked, 2 MB cap). A career site on the employer's own domain is recognized from the page loading Teamtailor's `assets-aws.teamtailor-cdn.com/assets/careersite-*.js`.
+
+### Personio
+
+`GET https://{slug}.jobs.personio.de/xml` → `200` `text/xml`, a `<workzag-jobs>` root with one `<position>` per role, no auth. Accounts on the other domain use `https://{slug}.jobs.personio.com/xml` (also `200`). Verified 2026-10-29 against Personio's own public demo board (4 positions) and one company board (2 positions). An unknown `{slug}` answers `404` with an HTML page. The `robots.txt` of the company board checked allows everything.
+
+Per `<position>`: `id`, `name`, `office` (a place name with no country, "München", "Remote", "Frankfurt am Main (hybrid)"), `subcompany` (optional), `department` (optional), `recruitingCategory`, `jobDescriptions/jobDescription[]` (`name`, `value` as HTML in CDATA), `employmentType` (`permanent`, `intern`), `seniority`, `schedule` (`full-time`, `part-time`, `full-or-part-time`), `yearsOfExperience`, `occupation`, `occupationCategory`, `createdAt` (ISO), and optionally `salaryInformation` (`min`, `max`, `currencyCode`, `currencySymbol`, `type` yearly). The documented `additionalOffices/office` list was not on any board seen. The feed names no employer.
+
+Detail: `GET https://{slug}.jobs.personio.de/job/{id}` → `200` HTML with one schema.org `JobPosting` in `<script type="application/ld+json">`: `title`, `description` (HTML), `hiringOrganization.name`, `jobLocation.address` (`addressLocality`, `addressRegion`, `addressCountry` as an ISO code), `datePosted` (a date), `employmentType`.
+
+**Gotchas:** descriptions are often empty in the feed (`<jobDescriptions/>` or blank values; the demo board has them, a real board often does not), so the job page is read for those roles, 2 seconds apart, up to `max_results` pages a run (default 100). Roles past the cap are kept without a description and the run is `partial` with a sentence saying how many. The page's place and country replace the feed's bare office name, because only the page has a country. Personio rate-limits hard: a 429 on the list stops the run, and on a page it stops reading pages and keeps the rest. Positions are read with ElementTree after any DOCTYPE or ENTITY declaration is refused.
+
+### Breezy HR
+
+`GET https://{slug}.breezy.hr/json` → `200` `application/json`, a bare array of positions, no auth, no pagination, **no description**. Verified 2026-10-29 against Breezy's own public trial board (3 positions, placeholder data). An unknown `{slug}` answers `404` with an HTML page; a board with no openings answers `[]` (`acme.breezy.hr` did). `breezy.breezy.hr/robots.txt` disallows only `/css`, `/fonts`, `/stylesheets` and `/javascripts` (and AhrefsBot).
+
+Per position: `id` (also the `friendly_id` prefix), `friendly_id` ("98323abf2296-employee-12"), `name` (the title), `url` (`https://{slug}.breezy.hr/p/{friendly_id}`), `published_date` (ISO), `type` (`{id, name}`: `fullTime`, `contract`, `other`), `location` (`{country: {name, id}, state: {id, name}, city, primary, is_remote, name}`; `name` is "Chaos, FL" with no country), `locations[]` (empty for a one-place role, else every place), `department`, `salary` (display text, "$1 – $5 / year"), `company` (`{name, logo_url, friendly_id, isMultipleLocationsEnabled}`).
+
+Detail: `GET https://{slug}.breezy.hr/p/{friendly_id}` → `200` HTML; the description is the page's `<div class="description">`. The verified page carried no `ld+json`; a schema.org JobPosting in one is read as the fallback.
+
+**Gotchas:** the description needs one page request per role, so Kestrel reads at most `max_results` pages a run (default 100), one a second; roles past the cap are kept without a description and the run is `partial` with a sentence saying how many. The page address is built from `friendly_id` on `{slug}.breezy.hr`, never taken from the payload. The place is built from city, state name and country name, because the payload's own `name` has no country. `is_remote` is an explicit boolean (`null` on most rows) and is the only thing that sets the remote flag. `salary` is display text and is not parsed into numbers.
+
+### USAJobs (search API; keyed)
+
+`GET https://data.usajobs.gov/api/search?Keyword=..&LocationName=..&RemoteIndicator=True&DatePosted=N
+&ResultsPerPage=<=500&Page=N&WhoMayApply=Public&Fields=Full` with headers `Authorization-Key: <key>`
+and `User-Agent: <the email the key was requested with>` (host is always `data.usajobs.gov`).
+Source: developer.usajobs.gov (Search API reference, authentication and rate-limiting guides).
+**Shape documented, not yet verified live** (no key in the build environment); the fixture
+`tests/fixtures/usajobs_search.json` is synthetic from the documented shape.
+
+`200` reply: `{"LanguageCode", "SearchParameters", "SearchResult": {"SearchResultCount",
+"SearchResultCountAll", "SearchResultItems": [...], "UserArea": {"NumberOfPages" (a string),
+"IsRadialSearch"}}}`. Per item: `MatchedObjectId` (a string), `RelevanceRank`, and
+`MatchedObjectDescriptor` with `PositionID`, `PositionTitle`, `PositionURI`, `ApplyURI` (a list),
+`PositionLocationDisplay`, `PositionLocation[]` (`LocationName`, `CountryCode`,
+`CountrySubDivisionCode`, `CityName`), `OrganizationName`, `DepartmentName`, `PositionSchedule[]`,
+`QualificationSummary`, `PositionRemuneration[]` (`MinimumRange` and `MaximumRange` as strings,
+`RateIntervalCode`, `Description`), `PositionStartDate`, `PositionEndDate`, `PublicationStartDate`,
+`ApplicationCloseDate`, and `UserArea.Details` (`JobSummary`, `MajorDuties`, `Requirements`,
+`Education`, `Benefits`, `HowToApply`, `RemoteIndicator`, `TeleworkEligible`, ...). Fields the
+reference lists with a different type than a sample shows (`MajorDuties` as text or a list) are
+read as either. Limits: 500 rows a page, 10,000 rows a query; the rate limit is not published.
+Terms (developer.usajobs.gov/guides/terms-of-service): public data may be stored and used, source
+attribution and a link to the official announcement are encouraged, an unofficial product should say
+it is not run or endorsed by OPM, credentials must not be shared, and applications follow the
+official announcement. `robots.txt` was not readable from the build environment (the edge answered
+403); the adapter checks it and fails open when none is served.
+
+### Adzuna (search API; keyed)
+
+`GET https://api.adzuna.com/v1/api/jobs/us/search/{page}?app_id=..&app_key=..&results_per_page=<=50
+&what=..&where=..&max_days_old=N&sort_by=date&content-type=application/json`. Source:
+developer.adzuna.com (Overview, Search ads, Terms of Service), read 2026-10-29. **Shape documented,
+not yet verified live** (no key in the build environment; an unkeyed request answers 401); the
+fixture `tests/fixtures/adzuna_search.json` is synthetic from the documented shape.
+
+`200` reply: `{"__CLASS__", "count", "mean", "results": [...]}`. Per ad: `id` (a string), `title`,
+`description` (a snippet: "we currently only provide a snipped of the job description"), `created`
+(ISO), `redirect_url`, `location` (`display_name`, `area` as country, state, county, city),
+`company.display_name`, `category` (`label`, `tag`), `salary_min`, `salary_max`,
+`salary_is_predicted` ("0" or "1", number or string), `contract_time` (`full_time`, `part_time`),
+`contract_type` (`permanent`, `contract`), `latitude`, `longitude`. Terms: "Personal job search" is
+a permitted use; each displayed advert is labeled "Adzuna" linked to Adzuna; do not contact content
+providers through Adzuna. `api.adzuna.com/robots.txt` is `Disallow: /`.
+
+### Himalayas (search API; no key)
+
+`GET https://himalayas.app/jobs/api/search?q=..&country=US&sort=recent&page=N` (20 a page; the browse
+feed `/jobs/api` pages by `nextCursor`). Source: himalayas.app/docs/remote-jobs-api and
+himalayas.app/terms (clauses 30A and 113). **Verified live 2026-10-29** from the build environment
+(200, no key; the fixture `tests/fixtures/himalayas_search.json` is a trimmed capture with three
+edited copies). Reply: `{comments, updatedAt, offset, limit, totalCount, jobs[]}` (`nextCursor` on
+the browse feed only). Per job: `title`, `excerpt`, `companyName`, `companySlug`, `companyLogo`,
+`employmentType`, `minSalary`, `maxSalary` (numbers or null), `salaryPeriod` (hourly, weekly,
+fortnightly, monthly, annual), `currency`, `seniority[]`, `locationRestrictions[]` (empty means
+worldwide), `timezoneRestrictions[]`, `categories[]`, `parentCategories[]`, `description` (HTML),
+`pubDate` and `expiryDate` (Unix seconds), `applicationLink`, `guid` (the job's Himalayas URL). Terms
+for API users: Apply must use `applicationLink`; name Himalayas with a visible link; show jobs only in
+your own app; cache and drop expired jobs; stay within request limits (an anonymous caller shares one
+public allowance; the data refreshes every 24 hours). Job pages are protected against automation:
+only the API is requested. `robots.txt` disallows only paging query strings on site pages.
+
+### We Work Remotely (RSS; no key)
+
+`GET https://weworkremotely.com/remote-jobs.rss` (about 100 recent jobs; category feeds at
+`/categories/remote-<name>-jobs.rss`). **Verified live 2026-10-29** (200 for the feed and
+`robots.txt`, which allows the feeds; every other page answers a 403 bot check, so the terms are
+unconfirmed). Fixture: `tests/fixtures/weworkremotely_feed.rss`, trimmed capture plus three edited
+items. RSS 2.0 items hold `title` ("Company: Job title"), `region` ("Anywhere in the World", "North
+America Only", ...), `country` and `state` (the employer's base, may carry a flag emoji), `skills`,
+`category`, `type` ("Full-Time", "Contract"), `description` (HTML, escaped), `pubDate`,
+`expires_at`, `guid` and `link`.
 
 ### RemoteRocketship (paid API; discovery only)
 

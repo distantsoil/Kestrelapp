@@ -661,7 +661,7 @@ async def suggest_slot_variants(request: Request, slot_id: int):
     if (ctx["error"] or "").startswith("hosted send refused"):
         ctx["error"] = ("Not sent: confidential mode is on and no current employer is chosen, "
                         "so your employer's name would leave this machine. Choose it under "
-                        "Settings, Core, then try again.")
+                        "Settings > Privacy and access, then try again.")
     return templates().TemplateResponse(request, "partials/variant_suggestions.html", ctx)
 
 

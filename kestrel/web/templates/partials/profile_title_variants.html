@@ -3,9 +3,9 @@
    tokens only (pages/profile.css). #}
 {% import "ui/macros.html" as ui %}
 <section id="title-variants" class="k-card" data-testid="title-variants"
-     hx-get="/profile/title-variants" hx-trigger="titleVariantsChanged from:body" hx-swap="outerHTML">
+     hx-get="/profile/title-variants" hx-trigger="titleVariantsChanged from:body" hx-target="this" hx-swap="outerHTML">
   <header class="k-sec-head">
-    <span class="k-badge">{{ ui.icon('restore') }}</span>
+    <span class="k-badge">{{ ui.icon('scan') }}</span>
     <div class="k-grow"><h3>Other ways your titles are searched</h3></div>
   </header>
   {% if not variants.employment_on %}
@@ -13,34 +13,31 @@
   {% elif not variants.used and not variants.removed and not variants.dropped %}
     <p class="pf-hint" data-testid="title-variants-none">No variants for your current target titles yet.</p>
   {% else %}
-    <p class="pf-hint">Kestrel also searches these common ways of writing your target titles, so a posting titled "IT Director" is found for "Director of IT". Each variant is searched on every board ({{ variants.boards }}), which adds to the searches each run, so remove any you do not want. Scoring counts near titles as matches either way.</p>
+    <p class="pf-hint pf-var__lead">Kestrel also searches close versions of your titles, on every board. Remove any that miss.</p>
+    <div class="pf-var" data-testid="title-variants-list">
     {% if variants.used %}
-    <ul class="pf-chips" data-testid="title-variants-used">
+    <ul class="pf-chips" data-testid="title-variants-used" aria-label="Searched">
       {% for v in variants.used %}
       <li class="pf-chip">
         <span>{{ v }}</span>
-        <form hx-post="/title-variants/remove" hx-target="#title-variants" hx-swap="outerHTML">
-          <input type="hidden" name="variant" value="{{ v }}">
-          <button class="pf-chip__x" type="submit" data-testid="title-variant-remove" aria-label="Remove {{ v }}" title="Remove">{{ ui.icon('x', 'k-ic--sm') }}</button>
-        </form></li>
+        <button class="pf-chip__x" type="button" hx-post="/title-variants/remove" hx-vals='{{ {"variant": v}|tojson }}' hx-params="variant"
+                hx-target="#title-variants" hx-swap="outerHTML" data-testid="title-variant-remove" aria-label="Remove {{ v }}" title="Remove">{{ ui.icon('x', 'k-ic--sm') }}</button></li>
       {% endfor %}
     </ul>
     {% endif %}
-    {% if variants.dropped %}
-    <p class="pf-hint" data-testid="title-variants-dropped">Left out to stay under the search limit: {{ variants.dropped | join(', ') }}.</p>
-    {% endif %}
     {% if variants.removed %}
-    <p class="pf-hint">You removed these, so they are not searched:</p>
-    <ul class="pf-chips" data-testid="title-variants-removed">
+    <ul class="pf-chips" data-testid="title-variants-removed" aria-label="Not searched">
       {% for v in variants.removed %}
       <li class="pf-chip is-off">
         <span>{{ v }}</span>
-        <form hx-post="/title-variants/restore" hx-target="#title-variants" hx-swap="outerHTML">
-          <input type="hidden" name="variant" value="{{ v }}">
-          <button class="pf-chip__x" type="submit" data-testid="title-variant-restore" aria-label="Search for {{ v }} again" title="Search again">{{ ui.icon('restore', 'k-ic--sm') }}</button>
-        </form></li>
+        <button class="pf-chip__x" type="button" hx-post="/title-variants/restore" hx-vals='{{ {"variant": v}|tojson }}' hx-params="variant"
+                hx-target="#title-variants" hx-swap="outerHTML" data-testid="title-variant-restore" aria-label="Search for {{ v }} again" title="Search again">{{ ui.icon('restore', 'k-ic--sm') }}</button></li>
       {% endfor %}
     </ul>
+    {% endif %}
+    </div>
+    {% if variants.dropped %}
+    <p class="pf-hint" data-testid="title-variants-dropped">Left out to stay under the search limit: {{ variants.dropped | join(', ') }}.</p>
     {% endif %}
   {% endif %}
 </section>

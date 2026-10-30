@@ -1,19 +1,17 @@
 {# The Needs another try card: the count and the first few roles, each with Try again, and a link
    to the full page (SPEC-INTERFACES 2.1 /quarantine). Failed roles also stay in Pipeline. #}
 {% import "ui/macros.html" as ui %}
-<header class="k-sec-head">
-  <span class="k-badge k-badge--warn">{{ ui.icon('restore') }}</span>
-  <div class="k-grow"><h3>Needs another try</h3><p data-live="nat-n">{% if waiting_total %}{{ waiting_total }} {{ 'role' if waiting_total == 1 else 'roles' }} waiting{% else %}All clear{% endif %}</p></div>
-  <a class="k-link rn-small" href="/quarantine" data-testid="rn-nat-link">{% if waiting_total %}See all{% else %}Open{% endif %}</a>
-</header>
+<h3 class="rn-nat__h"><span class="k-badge k-badge--warn">{{ ui.icon('retry') }}</span>Needs another try<a class="rn-qm" href="/help" title="Opens Help: When the AI's answer can't be read." aria-label="Help: when the AI's answer can't be read" data-testid="rn-nat-help">?</a></h3>
 {% if waiting_views %}
 <ul class="rn-q">
   {% for r in waiting_views %}
   <li data-testid="rn-q" data-q="{{ r.id }}">
     <span class="rn-mono" aria-hidden="true">{{ ((r.opp.org_name if r.opp and r.opp.org_name else (r.opp.title if r.opp else '?')) or '?')[:2]|upper }}</span>
-    <div class="rn-q__t"><b>{{ r.opp.title if r.opp and r.opp.title else 'A role' }}</b>
-      <span>{% if r.opp and r.opp.org_name %}{{ r.opp.org_name }} · {% endif %}stopped at {{ r.step_label }}</span>
-      <span>{{ r.reason }}</span></div>
+    {% set q_title = r.opp.title if r.opp and r.opp.title else 'A role' %}
+    {% set q_sub = (r.opp.org_name ~ ' · ' if r.opp and r.opp.org_name else '') ~ 'stopped at ' ~ r.step_label %}
+    <div class="rn-q__t"><b title="{{ q_title }}">{{ q_title }}</b>
+      <span title="{{ q_sub }}">{{ q_sub }}</span>
+      <span title="{{ r.reason }}">{{ r.reason }}</span></div>
     {% if r.can_act %}<button type="button" class="k-btn k-btn--sm" hx-post="/runs/quarantine/{{ r.id }}/retry" hx-swap="none" hx-disabled-elt="this" data-testid="rn-retry">Try again</button>{% endif %}
   </li>
   {% endfor %}
@@ -22,4 +20,5 @@
 {% else %}
 <p class="k-muted rn-small">Nothing is waiting. Roles the AI could not score land here, and nothing is dropped.</p>
 {% endif %}
+<p class="k-muted rn-small rn-nat__foot"><span data-live="nat-n">{% if waiting_total %}{{ waiting_total }} {{ 'role' if waiting_total == 1 else 'roles' }} waiting{% else %}All clear{% endif %}</span> · <a class="k-link" href="/quarantine" data-testid="rn-nat-link">{% if waiting_total %}See all{% else %}Open{% endif %}</a></p>
 <p class="k-muted rn-small">Roles here are never dropped. They also stay in Pipeline, just without a score.</p>

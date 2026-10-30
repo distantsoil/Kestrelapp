@@ -16,7 +16,7 @@ Show recent activity from the last 7, 14, 30, or 90 days, limit cards in a colum
 
 ## See why a role is waiting
 
-Pipeline now gives applied roles their own group. Roles still waiting for a score say whether they are queued, being scored, waiting in the background, held, or not queued. The **Sources** page has **Score everything now** if you want to handle the background queue at once.
+Pipeline now gives applied roles their own group. Roles still waiting for a score say whether they are queued, being scored, waiting in the background, held, or not queued. Unrelated fetched titles are skipped and counted on each run. The **Sources** page has **Score everything now** to recheck an older background queue and score remaining matches on local models only.
 
 ## Find more company postings
 

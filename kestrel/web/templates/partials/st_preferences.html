@@ -40,6 +40,9 @@
     <div class="k-seg" role="group" aria-label="Text size" data-k-seg data-st-ui-seg="ui.text_size">{% for v, label in pf.text_sizes %}<button type="button" value="{{ v }}" class="{% if pf.text_size == v %}is-on{% endif %}" aria-pressed="{{ 'true' if pf.text_size == v else 'false' }}" data-testid="st-size-{{ v }}">{{ label }}</button>{% endfor %}</div></div>
   <div class="st-row"><div class="st-row__t"><b>Reduce motion</b><span class="st-dsm">Fewer animations and slides.</span></div>
     {{ st.sw('ui.reduce_motion', 'Reduce motion', pf.reduce_motion, {'data-st-ui': ''}) }}</div>
+  {# D-UI-220: not in the locked mockup; the fallback the D-UI-210 plan asked for. #}
+  <div class="st-row"><div class="st-row__t"><b>Classic page loads</b><span class="st-dsm">Load each page fresh. Try this if a page misbehaves.</span></div>
+    {{ st.sw('ui.classic_nav', 'Classic page loads', pf.classic_nav, {'data-st-ui': ''}) }}</div>
 </section>
 
 <section class="k-card st-card" id="st-region" data-testid="st-region">
@@ -67,7 +70,7 @@
     {{ st.sw('desktop', 'Computer notifications', pf.toast, {'data-st-url': '/settings/prefs/notify'}) }}</div>
   <div class="st-row"><div class="st-row__t"><b>Play a sound</b><span class="st-dsm">A short sound with each alert.</span></div>
     {{ st.sw('notify.sound', 'Play a sound', pf.sound, {'data-st-ui': '', 'data-st-sound-toggle': ''}) }}</div>
-  <div class="st-fold st-flat{% if pf.sound %} is-on{% endif %}" id="st-snd-fold"{% if not pf.sound %} hidden{% endif %}>
+  <div class="st-fold st-flat{% if pf.sound %} is-on{% endif %}" id="st-snd-fold"{% if not pf.sound %} inert aria-hidden="true"{% endif %}>
     <div class="st-snd">
       <span class="k-select"><select aria-label="Sound" data-st-ui-sel="notify.sound_name" data-testid="st-sound-name">{% for v, label in pf.sounds %}<option value="{{ v }}"{% if pf.sound_name == v %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></span>
       <button type="button" class="k-btn k-btn--sm" id="st-play" data-testid="st-play">{{ st.sic('play', 'k-ic--sm') }}Play</button>

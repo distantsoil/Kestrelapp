@@ -53,6 +53,19 @@ class RawPosting:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+class PostingBatch(list):
+    """The postings one fetch collected (a plain list to every consumer) plus `partial_error`:
+    why the fetch stopped early or found nothing it could ask for (a key not saved yet, a 429, a
+    5xx). The runner records the run as `partial` with that sentence and keeps the postings
+    already collected; it does not count a failure of the source, so it cannot auto-disable it."""
+
+    partial_error: str | None
+
+    def __init__(self, items: Any = ()) -> None:
+        super().__init__(items)
+        self.partial_error = None
+
+
 @runtime_checkable
 class SourceAdapter(Protocol):
     """kind matches source.kind. validate_config is PURE (structural) and raises SourceConfigError.

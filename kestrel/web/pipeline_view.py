@@ -342,12 +342,21 @@ def level_box(opp, ev_json: dict | None) -> dict[str, Any]:
     }
 
 
+# A P2 match the profile neither shows nor rules out (PROMPTS.md P2 rule 6 and post-processing
+# rule 8): Partly met, listed with the gaps, never a reason the role fits (hard rule 4, O20).
+UNVERIFIED = "unverified"
+UNVERIFIED_HOW = "Your profile does not show this yet, so Kestrel can't tell."
+
+
 def fit_reasons(ev_json: dict | None) -> list[dict[str, str]]:
-    """Why it fits: the model's matches, each with how strong it is."""
+    """Why it fits: the model's matches, each with how strong it is. A match the profile does
+    not show ("unverified") is not a reason it fits; it is listed under gaps (O20)."""
     fit = _blocks(ev_json).get("b_fit") or {}
     out = []
     for m in (fit.get("matches") if isinstance(fit, dict) else None) or []:
         if not isinstance(m, dict) or not m.get("requirement"):
+            continue
+        if m.get("strength") == UNVERIFIED:
             continue
         tone, mark, word = _STRENGTH.get(m.get("strength"), ("b", "~", "Partial"))
         out.append({"tone": tone, "mark": mark, "word": word, "text": _s(m["requirement"]),
@@ -355,16 +364,43 @@ def fit_reasons(ev_json: dict | None) -> list[dict[str, str]]:
     return out[:5]
 
 
-def gap_rows(ev_json: dict | None) -> list[dict[str, str]]:
-    """Gaps to address, each with how to handle it. A fatal gap says so; noise is left out."""
+def all_gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
+    """Every gap to address, each with how to handle it: the model's gaps (a fatal gap says so;
+    noise is left out), then each match the profile does not show yet ("unverified"), which is
+    never counted in the role's favor (hard rule 4, O20)."""
     fit = _blocks(ev_json).get("b_fit") or {}
-    out = []
+    out: list[dict[str, Any]] = []
     for g in (fit.get("gaps") if isinstance(fit, dict) else None) or []:
         if not isinstance(g, dict) or not g.get("requirement") or g.get("severity") == "noise":
             continue
         out.append({"text": _s(g["requirement"]), "how": _s(g.get("mitigation")),
-                    "fatal": g.get("severity") == "fatal"})
-    return out[:4]
+                    "fatal": g.get("severity") == "fatal", "unverified": False})
+    for m in (fit.get("matches") if isinstance(fit, dict) else None) or []:
+        if isinstance(m, dict) and m.get("requirement") and m.get("strength") == UNVERIFIED:
+            out.append({"text": _s(m["requirement"]), "how": UNVERIFIED_HOW, "fatal": False,
+                        "unverified": True})
+    return out
+
+
+PANEL_GAPS = 4
+
+
+def gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
+    """The panel's gaps: at most four rows. When there are more, the fourth says how many more
+    and how many of those the profile does not show yet, so nothing is dropped silently (O20)."""
+    rows = all_gap_rows(ev_json)
+    if len(rows) <= PANEL_GAPS:
+        return rows
+    shown, rest = rows[: PANEL_GAPS - 1], rows[PANEL_GAPS - 1 :]
+    unknown = sum(1 for r in rest if r["unverified"])
+    how = "The Evaluation tab lists them all."
+    if unknown:
+        how = (
+            f"{unknown} of them {'is' if unknown == 1 else 'are'} not shown in your profile yet, "
+            "so Kestrel can't tell. " + how
+        )
+    more = {"text": f"{len(rest)} more", "how": how, "fatal": False, "unverified": bool(unknown)}
+    return [*shown, more]
 
 
 def lead_with(opp, ev_json: dict | None) -> dict[str, str]:

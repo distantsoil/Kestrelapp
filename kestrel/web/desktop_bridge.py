@@ -33,6 +33,36 @@ def can_quit() -> bool:
     return _quit_handler is not None
 
 
+_window_frame = False
+
+
+def set_window_frame(on: bool) -> None:
+    """The shell says the UI is in its own frameless window (D-UI-88). Then the window controls
+    in the sidebar close and quit, and the top row carries no Quit button (the locked mockups
+    have none: Quit is in the tray). In the browser fallback the Quit button stays, since a tab
+    has no window controls."""
+    global _window_frame
+    _window_frame = bool(on)
+
+
+def has_window_frame() -> bool:
+    return _window_frame
+
+
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def desktop_window(request) -> bool:
+    """Whether this page is for the desktop window: the shell's window is up and the request comes
+    from this computer. Decided on the server, so the page knows before pywebview is ready. A LAN
+    device is never "desktop"; a local browser tab beside the window may be, which only means it
+    skips the offline cache."""
+    if not _window_frame or request is None:
+        return False
+    client = getattr(request, "client", None)
+    return bool(client and client.host in _LOOPBACK)
+
+
 def request_quit() -> bool:
     """Run the shell's real quit on a short delay, so the HTTP answer reaches the window before
     the server starts its drain. Returns whether a handler exists."""

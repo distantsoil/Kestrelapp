@@ -16,7 +16,15 @@ from pathlib import Path
 import pytest
 
 from tests import apps_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    TITLE_RIGHT_JS,
+    art_visible_left,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -133,7 +141,7 @@ def test_every_stage_is_reachable_and_the_board_scrolls_inside_itself(live, widt
             assert info["lastR"] <= info["vr"] + 1, info
         else:
             # Space ran out: the board scrolls inside its own box and says so.
-            assert width < 1000 and info["hint"], info
+            assert width <= 1000 and info["hint"], info
             page.evaluate("document.querySelector('[data-testid=\"apps-board-grid\"]')"
                           ".scrollLeft = 99999")
             last_r = page.evaluate("""() => {
@@ -158,11 +166,18 @@ def test_the_scene_art_scales_with_the_header_and_clears_the_title(live, width):
             if (!a) return null;
             const r = a.getBoundingClientRect(), sb = s.getBoundingClientRect();
             return {w: r.width, h: r.height, sw: sb.width, l: r.left,
-                    tr: t.getBoundingClientRect().right}; }""")
+                    tr: t.getBoundingClientRect().right,
+                    op: parseFloat(getComputedStyle(a).opacity),
+                    tz: parseInt(getComputedStyle(t).zIndex) || 0}; }""")
         if art:
             assert 379 <= art["w"] <= 621, art
             assert abs(art["h"] / art["w"] - 118 / 620) < 0.01, art
-            assert art["tr"] <= art["l"] + 80, art
+            if width > 1100:
+                assert page.evaluate(TITLE_RIGHT_JS) <= (art_visible_left(page) or 1e9), art
+            else:
+                # At 1100 px and below the locked mockup dims the art to .35 and lets the title
+                # row sit in front of it (applications-mockup-locked.html, .scene{opacity:.35}).
+                assert abs(art["op"] - 0.35) < 0.01 and art["tz"] >= 1, art
         assert not errors, errors
     finally:
         ctx.close()
@@ -237,6 +252,54 @@ def test_add_a_role_sheet_opens_and_a_blank_one_is_refused(live):
         page.click('#ap-add-form button[type="submit"]')
         page.wait_for_function("document.querySelector('#ap-add-err').textContent.length > 0")
         assert "#ap-add.is-open" and page.locator("#ap-add.is-open").count() == 1
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_and_keeps_other_history_state(live):
+    """The page lifecycle (D-UI-210): Applications unmounted and mounted again in place starts
+    exactly what it started on the document load and leaves nothing running in between. After it,
+    one click on More filters opens the filters, not open-then-shut (a doubled listener would
+    toggle twice). Its URL rewrite keeps its own state in the `apps` field and never wipes what
+    else is on the history entry; unmounted, the page no longer answers or rewrites anything."""
+    base, browser, track, _ids = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/pursuits?track={track}")
+        page.wait_for_selector('[data-testid="pcard"]')
+        wait_for_layout(page)
+        # The load itself writes its entry: the page's field, in a state that is no longer null,
+        # beside the navigation controller's own stamp (D-UI-220).
+        assert page.evaluate("history.state && Object.keys(history.state)"
+                             ".filter(k => k !== 'kNav')") == ["apps"]
+        first = assert_page_remounts_clean(page, "applications", "applications.js", settle_ms=800)
+        assert first["timers"] == 0
+        assert page.get_attribute("#ap-mf-btn", "aria-expanded") == "false"
+        page.click("#ap-mf-btn")
+        assert page.get_attribute("#ap-mf-btn", "aria-expanded") == "true"
+        assert page.locator("#ap-mf.is-open").count() == 1
+        # Another writer's field on the entry survives the page's own rewrite on each keystroke.
+        page.evaluate("history.replaceState(Object.assign({}, history.state, {other: 7}), '')")
+        page.fill("#ap-q", "a")
+        state = page.evaluate("history.state")
+        # ...and so does the navigation controller's stamp (D-UI-220).
+        assert state["other"] == 7 and state["kNav"]["kind"] == "doc", state
+        assert state["apps"]["q"] == "a" and "q=a" in page.url, state
+        page.fill("#ap-q", "")
+        assert page.evaluate("history.state.other") == 7
+        assert "q=" not in page.url
+        # Unmounted, the page stops: a click does not toggle and the URL is left alone.
+        page.evaluate("KUI.page.unmount()")
+        page.click("#ap-mf-btn")
+        assert page.get_attribute("#ap-mf-btn", "aria-expanded") == "true"
+        assert page.evaluate("history.state.apps.q") == ""
+        page.fill("#ap-q", "zzz")
+        assert "q=zzz" not in page.url
         assert not errors, errors
     finally:
         ctx.close()

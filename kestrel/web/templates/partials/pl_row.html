@@ -7,7 +7,7 @@
    {% from "partials/pl_row.html" import row, signal_row with context %} #}
 {% import "ui/macros.html" as ui %}
 {% set scoring_pill = {'running': 'scoring…', 'queued': 'queued', 'background': 'background', 'held': 'held', 'not_queued': 'not queued', 'failed': 'failed', 'stuck': 'stuck', 'removed': 'not scored'} %}
-{% set scoring_tip = {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A company-board role the smart filter did not keep. It scores in the background when Kestrel is idle.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.', 'removed': 'You removed this role from Needs another try. It has no score.'} %}
+{% set scoring_tip = {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A role from an earlier run, waiting to be rechecked before local scoring.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.', 'removed': 'You removed this role from Needs another try. It has no score.'} %}
 
 {% macro check_box(label) -%}
   <button type="button" class="pl-ck" data-pl-pick aria-label="Select {{ label }}" aria-pressed="false">{{ ui.icon('check') }}</button>

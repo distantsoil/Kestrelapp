@@ -219,10 +219,29 @@ async def scan_state(s: AsyncSession, activity: dict | None = None) -> dict[str,
     }
 
 
-def _scan_button(request: Request, state: dict[str, Any], msg: str | None = None):
-    return templates().TemplateResponse(
+def _scan_button(
+    request: Request, state: dict[str, Any], msg: str | None = None, *, started: bool = False
+):
+    response = templates().TemplateResponse(
         request, "partials/scan_button.html", {"scan_state": state, "scan_msg": msg}
     )
+    if started:  # the status strip shows the queued scan now, not at its next poll
+        response.headers["HX-Trigger"] = "run-refresh"
+    return response
+
+
+def _refusal_code(problem: str) -> str:
+    """The outcome code for an approval_problem message, so the operator reads the real reason
+    (a changed destination, Hosted mode off, an employer hold), not one catch-all line."""
+    from kestrel.services import online_consent as oc
+
+    if problem == oc.HELD:
+        return "held"
+    if "Hosted mode" in problem:
+        return "hosted_off"
+    if problem == oc.CHANGED:
+        return "changed"
+    return "not_confirmed"
 
 
 @router.get("/scan/button", response_class=HTMLResponse)
@@ -243,6 +262,8 @@ SCAN_OUTCOMES: dict[str, str] = {
     "held": "Not started: nothing was sent. Confidential mode is on and no current employer is "
             "chosen. Choose it in Settings, then try again.",
     "hosted_off": "Not started: nothing was sent. Online models need Hosted mode, which is off.",
+    "changed": "Not started: nothing was sent. The online model or service changed since this "
+               "opened. Open it again to see where it goes.",
 }
 
 
@@ -256,8 +277,10 @@ async def scan_choose(request: Request):
     """The Scan now dialog (D-UI-72): the Run now dialog for every search at once. Without script
     (`page=1`, no HX-Request) it is a page that posts back to Today."""
     import asyncio
+    import json
 
     from kestrel.analytics.progress import tier2_label
+    from kestrel.services.online_consent import approval_for, merge_approvals
     from kestrel.services.setting_overrides import load_settings_with_db
     from kestrel.services.tracks import load_enabled
     from kestrel.web.pages import rescore as rs
@@ -265,6 +288,11 @@ async def scan_choose(request: Request):
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         consent = await rs._consent(s, settings)
+        # The scan's own destinations include the trigger tier (company filings): the snapshot the
+        # dialog posts back must cover every online tier /scan/start checks (R1, 2026-10-29).
+        consent["approval_json"] = json.dumps(merge_approvals(
+            json.loads(consent["approval_json"]), approval_for(settings, ("trigger",)),
+        ), separators=(",", ":"))
         tracks = await load_enabled(s)
         searches = (
             await s.execute(
@@ -338,10 +366,7 @@ async def scan_start(request: Request):
                 s, effective, ("tier1", "tier2", "trigger"), form
             )
             if problem:
-                refused = (
-                    "not_confirmed",
-                    "Not started: nothing was sent. Confirm the online send first.",
-                )
+                refused = (_refusal_code(problem), problem)
     if refused is not None:
         code, text = refused
         text = SCAN_OUTCOMES.get(code, text.replace("Not run:", "Not started:"))
@@ -362,7 +387,7 @@ async def scan_start(request: Request):
         msg = SCAN_OUTCOMES["none"]
     if not hx:
         return RedirectResponse("/" + ("?scan_outcome=none" if msg else ""), status_code=303)
-    return _scan_button(request, state, msg)
+    return _scan_button(request, state, msg, started=bool(queued))
 
 
 @router.post("/scan/cancel", response_class=HTMLResponse)
@@ -529,7 +554,8 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
         tier2 = settings.llm.hosted_tiers.get("tier2") or settings.llm.tiers.get("tier2")
         name = tier2.model if tier2 else "hosted"
         displayed = _model_display_name(name)
-        return {"state": "good", "label": f"Hosted mode · {displayed}", "loaded": [], "up": None}
+        return {"state": "good", "label": f"Hosted mode · {displayed}", "loaded": [], "up": None,
+                "display": displayed}
     if not ollama_needed(settings):  # no tier on Ollama: its absence is not a fault (D-SETUP-8)
         return {"state": "idle", "label": "Ollama not needed", "loaded": [], "up": None}
     ps = await _probe_ollama(settings.llm.ollama_native_url)
@@ -541,7 +567,7 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
         displayed = _model_display_name(shown)
         label = f"Ollama · {displayed}{extra} loaded"
         return {"state": "good", "label": label, "loaded": ps["loaded"],
-                "up": True}
+                "up": True, "display": f"{displayed}{extra}"}
     return {"state": "idle", "label": "Ollama up · no model loaded", "loaded": [], "up": True}
 
 
@@ -588,6 +614,92 @@ async def _scan_row(s: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _provider_name(key: str) -> str:
+    """The provider's own name for the readout ("OpenRouter key"), from the backend key."""
+    names = {"openrouter": "OpenRouter", "openmodel": "OpenModel", "anthropic": "Anthropic",
+             "openai": "OpenAI"}
+    return names.get(str(key).lower(), str(key).replace("_", " ").title() or "Online")
+
+
+async def _next_run(s: AsyncSession) -> str | None:
+    """When the schedule fires next, in the Today strip's words, or None with no schedule."""
+    from kestrel.date_display import format_display
+    from kestrel.services import run_schedule as rs
+
+    try:
+        sched, last = await rs.load(s)
+        nxt = rs.next_fire(sched, rs.local_now(), last)
+    except (ValueError, TypeError, OSError) as exc:  # the readout must render without it
+        log.warning("readout_next_run_failed", error_type=type(exc).__name__)
+        return None
+    return format_display(nxt, "weekday", kind="datetime") if nxt else None
+
+
+def readout(payload: dict[str, Any]) -> dict[str, Any]:
+    """The sidebar's two-line status readout (D-UI-91, SPEC-INTERFACES 2 "Status readout") from
+    the status payload. Line one is the activity: a problem first (failed scoring links to Needs
+    another try, failing searches to Sources), then Working with a live dot, Paused, or Idle with
+    the next scheduled run. Line two is the AI in use. Each line keeps a data-rail key so the
+    detail it came from stays addressable."""
+    worker = payload.get("worker") or {}
+    scan = payload.get("scan") or {}
+    model = payload.get("model")
+    hosted = payload.get("hosted") or {}
+    balance = payload.get("balance")
+    credit_notes = payload.get("credit") or []
+    failed = int(worker.get("open_failed") or 0)
+    problem = None
+    if failed:
+        # The total (failure_summary), not the Pipeline group's stage subset (D-UI-70).
+        problem = {"dot": "bad", "word": "Problem", "rail": "failed", "href": "/quarantine",
+                   "text": f"{failed} {'role needs' if failed == 1 else 'roles need'} another try",
+                   "title": "Roles the model could not finish: open Needs another try"}
+    elif scan.get("state") == "bad":
+        problem = {"dot": "bad", "word": "Problem", "rail": "scan", "href": "/sources",
+                   "text": scan.get("label") or "", "title": "A search is failing: open Sources"}
+    if worker.get("state") == "good":
+        # A live run reads Working; a standing problem rides along in the tooltip and takes the
+        # line again as soon as the run ends.
+        label = worker.get("label") or ""
+        state = {"dot": "live", "word": "Working", "rail": "worker", "href": None,
+                 "text": label, "title": label + (f" · {problem['text']}" if problem else "")}
+    elif worker.get("state") == "warn":
+        label = worker.get("label") or ""
+        state = {"dot": "warn", "word": "Paused", "rail": "worker", "href": None,
+                 "text": label, "title": label + (f" · {problem['text']}" if problem else "")}
+    elif problem:
+        state = problem
+    else:
+        nxt = payload.get("next_run")
+        label = worker.get("label") or ""
+        idle_default = label.startswith(PLAIN["worker_idle"])
+        text = f"next run {nxt}" if nxt else ("no run scheduled" if idle_default else label)
+        state = {"dot": "idle", "word": "Idle", "rail": "worker", "href": None,
+                 "text": text, "title": label}
+    mode = payload.get("settings_mode") or payload.get("mode")
+    if credit_notes:
+        engine = {"dot": "warn", "rail": "credit", "text": credit_notes[0],
+                  "href": "/settings#hosted", "title": "Your online model key is out of credit"}
+    elif mode == "hosted" or (model and model.get("label") == "Ollama not needed") or balance:
+        provider = hosted.get("provider") or "Online model"
+        text = f"{provider} key" if hosted.get("key_present") else "Online model, no key yet"
+        if mode != "hosted" and model and model.get("up"):
+            text = f"Local + {provider}"  # Both: the local engine with an online key beside it
+        low = bool(balance and balance.get("state") == "warn")
+        engine = {"dot": "warn" if low or not hosted.get("key_present") else "good",
+                  "rail": "engine", "text": text, "href": None, "balance": balance,
+                  "title": (balance or {}).get("note") or text}
+    elif model is None or model.get("up") is False:
+        engine = {"dot": "bad", "rail": "engine", "text": "Local AI not running",
+                  "href": "/models", "title": "The local AI engine is not running: open Models"}
+    else:
+        shown = model.get("display")
+        text = f"Local AI ready · {shown}" if shown else "Local AI ready · no model loaded"
+        engine = {"dot": "good" if shown else "idle", "rail": "engine", "text": text,
+                  "href": None, "title": model.get("label") or ""}
+    return {"state": state, "engine": engine}
+
+
 def _hosted_row(settings: Settings) -> dict[str, Any]:
     from kestrel.llm import providers as prov
 
@@ -598,7 +710,7 @@ def _hosted_row(settings: Settings) -> dict[str, Any]:
     ]
     if present:
         return {"state": "good", "label": f"Hosted key present · {present[0]}",
-                "key_present": True}
+                "key_present": True, "provider": _provider_name(present[0])}
     return {"state": "warn", "label": "Online deeper-read key: not set", "key_present": False}
 
 
@@ -661,7 +773,13 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
     calibrate = (await s.execute(pool)).scalar_one()
     # No needs_review count (review finding 12): no nav badge shows it, so its out-of-band span
     # had no target and its query was wasted on every 30 s poll.
-    out = {"shortlist": shortlist, "unrated": unrated, "calibrate": calibrate}
+    # Applications (Leads): the follow-ups due on the track, the board's own quiet rule
+    # (analytics.today.act_summary), as the locked mockup counts it beside the nav item.
+    from kestrel.analytics.today import act_summary
+
+    followups = int((await act_summary(s, track))["follow_up"])
+    out = {"shortlist": shortlist, "unrated": unrated, "calibrate": calibrate,
+           "followups": followups}
     out.update(await track_badges(s))
     return out
 
@@ -712,7 +830,10 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
     balance = await _balance_row(s, settings)
     counts = await _nav_counts(s)
     scanning = await scan_state(s, activity)
+    next_run = await _next_run(s)
     return {
+        "next_run": next_run,
+        "settings_mode": settings.llm.mode,
         "version": __version__,
         "paused": is_paused(),
         "activity": activity,
@@ -758,7 +879,9 @@ async def status_rail(request: Request):
     """The sidebar status rail: four rows with a state dot each, polled by HTMX every 10 s."""
     async with sessionmaker()() as s:
         payload = await _status_payload(s)
-    return templates().TemplateResponse(request, "partials/status_rail.html", payload)
+    return templates().TemplateResponse(
+        request, "partials/status_rail.html", {**payload, "readout": readout(payload)}
+    )
 
 
 @router.get("/status/counts", response_class=HTMLResponse)

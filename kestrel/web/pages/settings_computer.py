@@ -80,7 +80,8 @@ def _provider_rows(settings) -> list[dict]:
 
 
 async def mode_ctx(*, message: str = "", ok: bool = True, key_result: dict | None = None,
-                   selected: str = "") -> dict:
+                   selected: str = "", free_message: str = "", free_ok: bool = True,
+                   free_form: dict | None = None) -> dict:
     from kestrel.web.pages.setup import _rows
 
     async with sessionmaker()() as s:
@@ -99,6 +100,11 @@ async def mode_ctx(*, message: str = "", ok: bool = True, key_result: dict | Non
         "modes": MODES, "choice": choice, "explicit": explicit, "providers": providers,
         "selected": sel, "online_problem": problem, "steps": STEPS,
         "mode_message": message, "mode_ok": ok, "key_result": key_result,
+        # Free models only (OpenRouter): the saved choice, or the ticks of a refused save.
+        "free_on": (free_form["free_only"] if free_form
+                    else settings.llm.hosted_mode.free_only),
+        "free_train": bool(free_form and free_form["allow_training"]),
+        "free_message": free_message, "free_ok": free_ok,
         "any_key": any(p["saved"] for p in providers),
         "provider_names": [p["label"] for p in providers if p["saved"]],
         "other_url": settings.llm.backends["other"].base_url
@@ -202,6 +208,48 @@ async def key_save(request: Request):
         ctx["other_url"] = str(form.get("base_url") or "")
     headers = trigger(result["text"]) if op in ("save", "remove") and result["ok"] else None
     return _mode_card(request, ctx, headers)
+
+
+@router.post("/settings/computer/free", response_class=HTMLResponse)
+async def free_save(request: Request):
+    """Free models only (OpenRouter). On needs the training tick; without it nothing is written
+    and the card comes back with the ticks as they were. On with the tick goes through the one
+    connect path (the saved key, no new key, run mode untouched) so the tiers really use free
+    models. Off stores off and leaves the picks."""
+    from kestrel.services.hosted_connect import connect_provider
+    from kestrel.web.pages.settings import _active_profile_name
+
+    form = await request.form()
+    on = "on" in form.getlist("free_only")
+    train = "on" in form.getlist("allow_training")
+    ticks = {"free_only": on, "allow_training": train}
+
+    async def redraw(text: str, ok: bool, *, keep: bool = False):
+        ctx = await mode_ctx(selected="openrouter", free_message=text, free_ok=ok,
+                             free_form=ticks if keep else None)
+        return _mode_card(request, ctx)
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        if not on:
+            await io.write(s, "llm.hosted_mode.free_only", False)
+            await s.commit()
+            return await redraw("Free models only is off. Your current models stay; "
+                                "change them on Models.", True)
+        if not train:
+            return await redraw(
+                "Free models may train on what Kestrel sends. Tick the box to allow that, or "
+                "leave this off. Nothing was changed.", False, keep=True)
+        if not settings.llm.hosted_mode.acknowledgement_current:
+            return await redraw(
+                "Approve what is sent to an online model on Models first. Nothing was "
+                "changed.", False, keep=True)
+        out = await connect_provider(
+            s, settings, provider="openrouter", api_key="", acknowledged=True, free_only=True,
+            switch=False, profile=_active_profile_name(), allow_training=True)
+    if not out.ok:
+        return await redraw(out.message, False, keep=True)
+    return await redraw(out.headline, True)
 
 
 # ---------------------------------------------------------------------------- the checklist

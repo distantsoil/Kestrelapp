@@ -25,7 +25,7 @@ llm:
       thinking_control: none               # reasoning is controlled by hosted.reasoning_effort
       external: true                       # permitted to transmit off the machine (Tier 3 only)
       extra_headers:                       # OpenRouter attribution (SPEC 6.4)
-        HTTP-Referer: "https://github.com/kestrel/kestrel"
+        HTTP-Referer: "https://kestrelapp.co"
         X-Title: "Kestrel"
       hosted:
         require_parameters: true           # never route to an endpoint that ignores the schema
@@ -149,7 +149,7 @@ server:
 
 ingest:
   # Descriptive User-Agent with a contact address. Edit the contact before running SEC EDGAR.
-  user_agent: "Kestrel/1.0 (+https://github.com/kestrel-app; contact: operator@example.com)"
+  user_agent: "Kestrel/1.0 (+https://kestrelapp.co)"
   default_rate_per_sec: 2.0
   workday_rate_per_sec: 1.0
   sec_rate_per_sec: 10.0
@@ -161,5 +161,4 @@ pursuits:
   ghosting_days: 21
 
 confidential_mode: false
-update_check_url: null
 log_level: "INFO"

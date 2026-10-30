@@ -644,7 +644,7 @@ def test_page_uses_no_legacy_stylesheet_and_no_em_dash():
             "/settings/section/computer")]
     head = page.split("</head>")[0]
     assert "/static/css/shell.css" in head and "/static/css/kestrel.css" not in head
-    assert 'href="/static/css/pages/settings.css"' in page
+    assert 'href="/static/css/pages/settings.css?v=' in page
     assert all("—" not in x for x in parts)
 
 

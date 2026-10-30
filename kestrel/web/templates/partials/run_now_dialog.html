@@ -14,12 +14,14 @@
    form_target, heading, cancel_href, scope_note and `searches` instead. #}
 {% set _action = form_action or ('/sources/' ~ source.id ~ '/run-now') %}
 {% set _target = form_target or '#sources-panel' %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <dialog class="score-again-dialog sf-dialog" data-testid="run-now-dialog"{% if page %} open{% endif %}
         aria-labelledby="run-now-title" aria-describedby="run-now-desc">
   <form class="score-again-box sf-form" method="post" action="{{ _action }}"
         {%- if not page %} {% if form_action %}hx-post="{{ form_action }}"{% else %}hx-post="/sources/{{ source.id }}/run-now"{% endif %} hx-target="{{ _target }}" hx-swap="outerHTML" data-busy-text="{{ 'Starting the scan…' if form_action else 'Running this search…' }}"{% endif %}
-        autocomplete="off" data-score-again-form data-hosted-prefix="{{ hosted_prefix }}">
+        autocomplete="off" data-score-again-form data-hosted-prefix="{{ hosted_prefix }}"{% if current_online %} data-usual-online="1"{% endif %}>
+    {# The destinations this dialog discloses; the server refuses a send they do not cover. #}
+    <input type="hidden" name="online_approval" value="{{ (consent.approval_json if consent is defined and consent else '{}') }}">
     {% if page and form_action %}<input type="hidden" name="next" value="{{ cancel_href }}">{% endif %}
     <div class="sf-head">
       <span class="sf-ic" aria-hidden="true">{{ kicon('scan') }}</span>
@@ -68,17 +70,17 @@
           <p class="score-again-note sf-small sf-muted" data-testid="run-now-no-pick">This kind of search always uses your usual models.</p>
           {% endif %}
         </fieldset>
-        {% if page and can_pick and hosted_models %}
+        {% if page and ((can_pick and hosted_models) or current_online) %}
         <label class="sf-chk" data-testid="run-now-confirm-box">
           <input type="checkbox" name="confirmed" value="1">
-          <span><b>Allow sending to {{ hosted_label or 'the online service' }}</b><br><span class="sf-small sf-muted">Only needed if you picked an online model. {{ consent.sends }}. Not sent: your name, contact details and your resume file.</span></span>
+          <span><b>Allow sending to {{ hosted_label or 'the online service' }}</b><br><span class="sf-small sf-muted">{% if current_online %}Needed: your usual models are online.{% else %}Only needed if you picked an online model.{% endif %} {{ consent.sends }}. Not sent: your name, contact details and your resume file.</span></span>
         </label>
         {% endif %}
         <div class="sf-card sf-card--info sf-what" id="run-now-desc">
           <div class="sf-ln">{{ kicon('clock') }}<span>How long it takes depends on your computer and how many searches run.</span></div>
           <div class="sf-ln">{{ kicon('laptop') }}<span><b>Your computer stays usable.</b> Kestrel works quietly in the background.</span></div>
           {% if current_online %}
-          <div class="sf-ln">{{ kicon('cloud') }}<span data-testid="run-now-usual-online">Your usual models are online, so choosing them sends the full review to your online service without a second question, as any scan does. {{ consent.sends }}.</span></div>
+          <div class="sf-ln">{{ kicon('cloud') }}<span data-testid="run-now-usual-online">Your usual models are online, so this scan sends the full review to your online service. Kestrel shows what is sent and asks before it starts. {{ consent.sends }}.</span></div>
           {% else %}
           <div class="sf-ln">{{ kicon('shield') }}<span>If you score with an online model, Kestrel asks before anything is sent.</span></div>
           {% endif %}
@@ -127,6 +129,13 @@
   (function () {
     const dlg = document.currentScript.previousElementSibling;
     if (!dlg || dlg.tagName !== 'DIALOG') return;
+    // Every listener below belongs to this dialog and is tied to one controller kept on it
+    // (D-UI-210): running this again on the same dialog replaces the set instead of doubling it,
+    // and closing the dialog ends the set.
+    if (dlg.kBound) dlg.kBound.abort();
+    const ac = new AbortController();
+    dlg.kBound = ac;
+    const sig = { signal: ac.signal };
     const wrap = dlg.closest('.score-again');
     const opener = wrap ? wrap.querySelector('.score-again-btn') : null;
     const form = dlg.querySelector('form');
@@ -143,6 +152,7 @@
     function close() {
       if (dlg.open) dlg.close();
       dlg.remove();
+      ac.abort();
       if (opener && opener.focus) opener.focus();
     }
     const combo = dlg.querySelector('.ke-combo');
@@ -155,9 +165,9 @@
       setPickDisabled(!(other && other.checked));
     }
     syncPick();
-    [usual, other].forEach((r) => r && r.addEventListener('change', syncPick));
-    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } });
-    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close));
+    [usual, other].forEach((r) => r && r.addEventListener('change', syncPick, sig));
+    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } }, sig);
+    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close, sig));
     // "Pick which ones": the list is live only while that choice is on, and the footer counts it.
     const scopeAll = dlg.querySelector('input[name="scope"][value="all"]');
     const scopePick = dlg.querySelector('input[name="scope"][value="pick"]');
@@ -173,15 +183,19 @@
       const n = picking ? boxes.filter((b) => b.checked).length : Number(sum.dataset.total);
       sum.textContent = n + (n === 1 ? ' search' : ' searches');
     }
-    [scopeAll, scopePick].forEach((r) => r && r.addEventListener('change', syncScope));
-    if (list) list.addEventListener('change', syncScope);
+    [scopeAll, scopePick].forEach((r) => r && r.addEventListener('change', syncScope, sig));
+    if (list) list.addEventListener('change', syncScope, sig);
     const mainStep = dlg.querySelector('[data-sf-main]');
     const confirmStep = dlg.querySelector('[data-sf-confirm]');
     const footMain = dlg.querySelector('[data-sf-foot-main]');
     const footConfirm = dlg.querySelector('[data-sf-foot-confirm]');
     const confirmed = dlg.querySelector('[data-sf-confirmed]');
     const prefix = form ? (form.getAttribute('data-hosted-prefix') || 'hosted:') : 'hosted:';
-    function online() { return !!(other && other.checked && sel && sel.value.indexOf(prefix) === 0); }
+    const usualOnline = form && form.getAttribute('data-usual-online') === '1';
+    function online() {
+      if (usualOnline && usual && usual.checked) return true;  // usual models are online too
+      return !!(other && other.checked && sel && sel.value.indexOf(prefix) === 0);
+    }
     function showConfirm(on) {
       if (!confirmStep) return;
       confirmStep.hidden = !on; mainStep.hidden = on;
@@ -189,16 +203,19 @@
       if (on) {
         const label = dlg.querySelector('.ke-combo [role="combobox"]');
         const name = dlg.querySelector('[data-sf-model]');
-        if (name) name.textContent = (label && label.value) || sel.value;
+        if (name) {
+          name.textContent = (usual && usual.checked) ? {{ (current_name or 'your usual model')|tojson }}
+                                                       : ((label && label.value) || (sel && sel.value) || '');
+        }
         const send = dlg.querySelector('[data-sf-send]');
         if (send) send.focus();
       }
       if (confirmed) confirmed.disabled = true;
     }
     const sendBtn = dlg.querySelector('[data-sf-send]');
-    if (sendBtn) sendBtn.addEventListener('click', () => { if (confirmed) confirmed.disabled = false; });
+    if (sendBtn) sendBtn.addEventListener('click', () => { if (confirmed) confirmed.disabled = false; }, sig);
     const backBtn = dlg.querySelector('[data-sf-back]');
-    if (backBtn) backBtn.addEventListener('click', () => showConfirm(false));
+    if (backBtn) backBtn.addEventListener('click', () => showConfirm(false), sig);
     if (form) {
       // "A different model" needs a pick (the server refuses an empty one too). An online pick
       // asks first; only "Send and start" posts confirmed=1.
@@ -208,11 +225,11 @@
         } else if (online() && confirmed && confirmed.disabled) {
           e.preventDefault(); e.stopImmediatePropagation(); showConfirm(true);
         }
-      }, true);
-      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); });
-      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); });
+      }, { capture: true, signal: ac.signal });
+      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); }, sig);
+      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); ac.abort(); }, sig);
     }
-    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); }, sig);
     dlg.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); close(); return; }
       if (e.key === 'Tab') {
@@ -222,8 +239,8 @@
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
-    });
-    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    }, sig);
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); }, sig);
     if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
     const first = dlg.querySelector('input[name="model_choice"]:checked') || focusables()[0];
     if (first) first.focus();

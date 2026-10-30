@@ -101,16 +101,26 @@ def _lock_file_name() -> str:
 
 
 # --------------------------------------------------------------------------- mutex (trap 1)
-def focus_running_instance() -> None:
-    """A lock only DETECTS; focus is a POST to the running instance found via runtime.json."""
+_focused = False  # whether the running instance answered this launch's focus request
+
+
+def focus_running_instance() -> bool:
+    """A lock only DETECTS; focus is a POST to the running instance found via runtime.json.
+    True when it answered; False means the other copy is gone or still closing (D-UI-89)."""
+    global _focused
+    _focused = False
     try:
         info = json.loads(paths.runtime_json().read_text(encoding="utf-8"))
         import httpx
 
-        httpx.post(f"http://127.0.0.1:{info['port']}/api/focus", timeout=5.0)
-        log.info("focused_existing_instance", port=info["port"])
+        r = httpx.post(f"http://127.0.0.1:{info['port']}/api/focus", timeout=5.0)
+        # {"focused": false} means the server is up but its window handler is not registered
+        # yet (still loading); only a true answer is a focus.
+        _focused = r.status_code == 200 and bool(r.json().get("focused"))
+        log.info("focused_existing_instance", port=info["port"], ok=_focused)
     except Exception as exc:  # a second launch must never crash; it just reports
         log.warning("focus_request_failed", error=str(exc))
+    return _focused
 
 
 def _acquire_windows_mutex() -> bool:
@@ -147,9 +157,14 @@ def _acquire_lock_file() -> bool:
     return True
 
 
+_have_lock = False  # this process holds the single-instance lock
+
+
 def acquire_single_instance() -> bool:
     """True iff we are the first instance. Otherwise focus the running instance and return False."""
+    global _have_lock
     first = _acquire_windows_mutex() if IS_WINDOWS else _acquire_lock_file()
+    _have_lock = first
     if not first and "--tray" not in sys.argv[1:]:
         # A quiet start by the start-with-my-computer entry must not raise a window that is
         # already open (or one the person closed to the tray on purpose).
@@ -165,7 +180,8 @@ def release_single_instance() -> None:
     kept the process, and therefore the mutex, alive: every later launch decided Kestrel was
     already running, POSTed /api/focus at a server that never came up, and exited. Releasing here
     is what lets the next double-click start fresh."""
-    global _mutex_handle, _lock_file
+    global _mutex_handle, _lock_file, _have_lock
+    _have_lock = False
     if _mutex_handle is not None:
         try:
             import ctypes
@@ -204,14 +220,26 @@ def start_server() -> int:
 
 # ------------------------------------------------------------------------- window ops (trap 8)
 def hide_window() -> None:
+    global _hidden
+    _save_geometry()
     if window is not None:
         window.hide()
+        _hidden = True
     log.info("window_hidden_worker_continues")
 
 
+_hidden = False  # the window is hidden to the tray
+
+
+def window_visible() -> bool:
+    return window is not None and not _hidden
+
+
 def show_window() -> None:
+    global _hidden
     if window is not None:
         window.show()
+        _hidden = False
         try:
             window.restore()
         except Exception:  # not every backend implements restore(); hide/show is the contract
@@ -225,12 +253,22 @@ def on_closing():
     from, closing the window is a real quit: the same graceful path as the tray's Quit, minus the
     destroy(), since the OS close this handler allows does that."""
     global _toast_shown
+    _save_geometry()
     if _quitting:
+        return True
+    if not _started and _frame_api is not None:
+        # Closed on the loading page (or its problem card): there is nothing to keep running.
+        _begin_quit()
         return True
     from kestrel.web.deps import close_to_tray
 
     if icon is None or not close_to_tray():
         _begin_quit()
+        if window is not None and _started and window_visible():
+            # A real quit from the OS close: keep the window up with the closing screen while
+            # the server stops (D-UI-90), then close it from there.
+            threading.Thread(target=_close_with_overlay, name="closing", daemon=True).start()
+            return False
         return True
     if not _toast_shown:
         # Once per launch, not once ever (D-UI-16): a balloon is easy to miss, and the first
@@ -292,6 +330,7 @@ def _begin_quit() -> None:
     global _quitting
     _quitting = True
     log.info("quit_requested")
+    _mark_closing()
     if server is not None:
         # server.should_exit triggers uvicorn's shutdown, which runs the lifespan finally: it
         # signals the worker, waits up to 30s for in-flight tasks, and releases the leases (F8).
@@ -316,6 +355,26 @@ def do_quit() -> None:
     if _quitting:
         return
     _begin_quit()
+    if window is not None:
+        _close_with_overlay()
+
+
+CLOSING_MIN_S = 0.6  # the closing screen stays at least this long, so it reads as a step
+
+
+def _close_with_overlay() -> None:
+    """The closing screen (D-UI-90): shown over the app while the server stops (the worker is
+    stopped within a second and its leases released), then the window goes. The window never
+    vanishes before shutdown is done; QUIT_JOIN_S is only the hard ceiling."""
+    started = time.monotonic()
+    if window is not None and _started and window_visible():
+        with __import__("contextlib").suppress(Exception):
+            window.evaluate_js("window.KUI && KUI.frame.closing()")
+    if server_thread is not None:
+        server_thread.join(timeout=QUIT_JOIN_S)
+    rest = CLOSING_MIN_S - (time.monotonic() - started)
+    if rest > 0 and window_visible():
+        time.sleep(rest)
     if window is not None:
         window.destroy()  # the only destroy() in the program; unblocks webview.start()
 
@@ -500,20 +559,209 @@ def _tooltip_poller() -> None:
         time.sleep(4.0)
 
 
-def _initial_size(screen: tuple[int, int] | None = None) -> tuple[int, int]:
-    """Nine tenths of the primary screen, capped at 1600x1000 and never below the minimum.
-    pywebview reports screens in logical pixels, so this already accounts for scaling."""
+# D-UI-87 (SPEC-INTERFACES 1.7): one fixed design size, never a percentage of the screen.
+DESIGN_SIZE = (1680, 1000)
+MAX_SIZE = (1710, 1107)  # a 15-inch laptop's default scaled resolution: never larger
+MIN_SIZE = (960, 640)
+FALLBACK_SIZE = (1440, 900)  # when the screen size is unknown
+# Kept clear on every side of the work area (logical pixels): 40 px of desktop around the window.
+WORK_MARGIN = 40
+# When only the whole screen is known: the margin plus a typical taskbar or dock (48 px).
+SCREEN_MARGIN = (WORK_MARGIN, WORK_MARGIN + 48)
+
+
+def _work_area(first: Any) -> tuple[int, int] | None:
+    """The usable area of a pywebview screen in logical pixels (the screen less the taskbar or
+    dock), from the native screen object it carries; None when the backend does not say."""
+    frame_obj = getattr(first, "frame", None)
+    scale = float(getattr(first, "scale", 1.0) or 1.0)
+    try:
+        if IS_WINDOWS and frame_obj is not None:  # System.Windows.Forms.Screen, physical pixels
+            area = frame_obj.WorkingArea
+            return int(area.Width / scale), int(area.Height / scale)
+        if IS_MACOS and frame_obj is not None:  # NSScreen, points
+            vis = frame_obj.visibleFrame()
+            return int(vis.size.width), int(vis.size.height)
+    except Exception as exc:  # the screen size alone still gives a sensible size
+        log.debug("work_area_unknown", error=str(exc))
+    return None
+
+
+def _initial_size(
+    screen: tuple[int, int] | None = None, work: tuple[int, int] | None = None
+) -> tuple[int, int]:
+    """The window opens at 1680x1000 logical pixels, not maximized and not a share of the screen
+    (D-UI-87): an ultrawide gets the same window as a laptop. Each side is clamped on its own to
+    the usable area less WORK_MARGIN (the work area when known, else the screen less a typical
+    taskbar), so a short screen never narrows the window. The minimum stays 960x640; with no
+    screen size known, 1440x900. pywebview reports screens in logical pixels."""
     if screen is None:
         try:
             import webview
 
             first = webview.screens[0]
             screen = (int(first.width), int(first.height))
-        except Exception:  # no backend yet, or no screen: a sensible fixed size
-            screen = (1440, 900)
-    w = max(960, min(1600, int(screen[0] * 0.9)))
-    h = max(640, min(1000, int(screen[1] * 0.9) - 40))  # 40: the taskbar
+            work = work or _work_area(first)
+        except Exception:  # no backend yet, or no screen: the fallback size
+            return FALLBACK_SIZE
+    if work is not None:
+        usable_w, usable_h = work[0] - WORK_MARGIN, work[1] - WORK_MARGIN
+    else:
+        usable_w, usable_h = screen[0] - SCREEN_MARGIN[0], screen[1] - SCREEN_MARGIN[1]
+    w = max(MIN_SIZE[0], min(DESIGN_SIZE[0], MAX_SIZE[0], usable_w))
+    h = max(MIN_SIZE[1], min(DESIGN_SIZE[1], MAX_SIZE[1], usable_h))
     return w, h
+
+
+# ------------------------------------------------------- the first frame's color (D-UI-89)
+def _token(name: str, dark: bool) -> str | None:
+    """A color from tokens.css (light block, or the pinned dark block), so the window's first
+    frame uses the theme's own value rather than a second copy of it."""
+    import re
+
+    css = Path(paths.web_static_dir(), "css", "tokens.css").read_text(encoding="utf-8")
+    marker = ':root:root:root[data-theme="dark"] {' if dark else ":root:root:root {"
+    block = css.split(marker, 1)[1].split("}", 1)[0] if marker in css else ""
+    m = re.search(rf"--{re.escape(name)}:\s*(#[0-9A-Fa-f]{{6}})", block)
+    return m.group(1) if m else None
+
+
+def _os_dark() -> bool:
+    """The operating system's own light or dark setting, when it can be read."""
+    try:
+        if IS_WINDOWS:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            ) as key:
+                return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
+        if IS_MACOS:
+            out = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, text=True, timeout=2, check=False,
+            )
+            return out.stdout.strip().lower() == "dark"
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        log.debug("os_theme_unknown", error=str(exc))
+    return False
+
+
+def _saved_theme() -> str:
+    """'light', 'dark' or 'auto': the theme the app's window last chose (WindowApi records it)."""
+    try:
+        data = json.loads(paths.window_state_json().read_text(encoding="utf-8"))
+        theme = data.get("theme") if isinstance(data, dict) else None
+        return theme if theme in ("light", "dark", "auto") else "auto"
+    except (OSError, ValueError):
+        return "auto"
+
+
+def _window_state() -> dict[str, Any]:
+    try:
+        data = json.loads(paths.window_state_json().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _update_window_state(**values: Any) -> None:
+    """Merge into window.json (theme and geometry share it); local only, never sent anywhere."""
+    state = _window_state()
+    state.update(values)
+    try:
+        paths.ensure_dirs()
+        paths.window_state_json().write_text(json.dumps(state), encoding="utf-8")
+    except OSError as exc:
+        log.warning("window_state_save_failed", error=str(exc))
+
+
+def _remember_theme(theme: str) -> None:
+    if theme in ("light", "dark", "auto"):
+        _update_window_state(theme=theme)
+
+
+# ------------------------------------------------- the window's last place (D-UI-195)
+Rect = tuple[int, int, int, int]  # x, y, width, height (pywebview's logical pixels)
+
+
+def _fits(rect: Rect, area: Rect) -> bool:
+    x, y, w, h = rect
+    ax, ay, aw, ah = area
+    return ax <= x and ay <= y and x + w <= ax + aw and y + h <= ay + ah
+
+
+def _restore_geometry(saved: Any, areas: list[Rect]) -> tuple[Rect, bool] | None:
+    """The saved rectangle and maximized flag when that rectangle still lies wholly inside one
+    connected display's work area (and is no smaller than the minimum); None otherwise (first
+    launch, the display unplugged, a lower resolution), so the D-UI-87 default size is used."""
+    if not isinstance(saved, dict):
+        return None
+    try:
+        rect = tuple(int(saved[k]) for k in ("x", "y", "width", "height"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if rect[2] < MIN_SIZE[0] or rect[3] < MIN_SIZE[1]:
+        return None
+    if not any(_fits(rect, a) for a in areas):  # type: ignore[arg-type]
+        return None
+    return rect, bool(saved.get("maximized"))  # type: ignore[return-value]
+
+
+def _screen_areas() -> list[Rect]:
+    """Each connected display's work area (the screen when the backend gives no work area)."""
+    areas: list[Rect] = []
+    try:
+        import webview
+
+        for sc in webview.screens:
+            x, y = int(getattr(sc, "x", 0) or 0), int(getattr(sc, "y", 0) or 0)
+            work = _work_area(sc)
+            w, h = work or (int(sc.width), int(sc.height))
+            areas.append((x, y, w, h))
+    except Exception as exc:  # no screens known: never restore blind
+        log.debug("screens_unknown", error=str(exc))
+    return areas
+
+
+_geom_timer: threading.Timer | None = None
+GEOMETRY_DEBOUNCE_S = 1.0
+
+
+def _save_geometry() -> None:
+    """Record where the window is. While maximized only the flag changes, so the normal rectangle
+    a restore returns to is the one kept. Best effort."""
+    if window is None or not _started:
+        return
+    try:
+        maximized = _frame_api._is_maximized() if _frame_api is not None else False
+        geom = dict(_window_state().get("geometry") or {})
+        if not maximized and not _minimized:
+            geom.update(x=int(window.x), y=int(window.y),
+                        width=int(window.width), height=int(window.height))
+        if not _minimized:
+            geom["maximized"] = bool(maximized)
+        if {"x", "y", "width", "height"} <= geom.keys():
+            _update_window_state(geometry=geom)
+    except Exception as exc:  # the window keeps working; next launch uses the default
+        log.warning("window_geometry_save_failed", error=f"{type(exc).__name__}: {exc}")
+
+
+def _geometry_changed(*_args: Any) -> None:
+    """moved and resized events: save once the window has settled."""
+    global _geom_timer
+    if _geom_timer is not None:
+        _geom_timer.cancel()
+    _geom_timer = threading.Timer(GEOMETRY_DEBOUNCE_S, _save_geometry)
+    _geom_timer.daemon = True
+    _geom_timer.start()
+
+
+def _launch_theme() -> tuple[str, bool]:
+    """(the saved choice, whether the first frame is dark)."""
+    theme = _saved_theme()
+    return theme, (theme == "dark" or (theme == "auto" and _os_dark()))
 
 
 def start_tray(*, with_window: bool = True) -> bool:
@@ -662,16 +910,379 @@ def set_app_identity() -> bool:
     if hr != 0:
         log.warning("app_identity_failed", hresult=hr)
         return False
+    register_notification_icon()
     return True
+
+
+AUMID_KEY = rf"Software\Classes\AppUserModelId\{APP_USER_MODEL_ID}"
+
+
+def register_notification_icon(winreg_mod: Any = None, icon: Path | None = None) -> bool:
+    """Name and picture for Kestrel's notifications, per user (Windows): a toast is drawn with the
+    icon Windows has for the app's identity. Without this key Windows took it from the Start-menu
+    shortcut through Explorer's icon cache, which an upgrade did not refresh, so the "Kestrel
+    keeps running" toast showed the pre-upgrade orange mark (hardware check, round 4). Best
+    effort and logged; returns whether the key was written."""
+    try:
+        if winreg_mod is None:
+            import winreg as winreg_mod  # noqa: N813
+        if icon is None:
+            with paths.resource_path(paths.packaged_app_icon()) as p:
+                icon = Path(p)
+        if not icon.exists():
+            log.warning("notification_icon_missing", path=str(icon))
+            return False
+        with winreg_mod.CreateKeyEx(winreg_mod.HKEY_CURRENT_USER, AUMID_KEY, 0,
+                                    winreg_mod.KEY_SET_VALUE) as key:
+            winreg_mod.SetValueEx(key, "DisplayName", 0, winreg_mod.REG_SZ, "Kestrel")
+            winreg_mod.SetValueEx(key, "IconUri", 0, winreg_mod.REG_SZ, str(icon))
+        log.info("notification_identity_registered", icon=str(icon))
+        return True
+    except (OSError, ImportError) as exc:
+        log.warning("notification_identity_failed", error_type=type(exc).__name__, error=str(exc))
+        return False
+
+
+# ---------------------------------------------------------------- the loading window (D-UI-89)
+OPENING = "Opening your data"
+UPDATING = "Updating your data to the new version"
+UPDATING_NOTE = "This can take a minute after an update. Your data stays on this computer."
+STARTING = "Starting up"
+CHECKING = "Checking your setup"
+BUSY = "Finishing closing the last session"
+BUSY_NOTE = "Kestrel opens by itself in a moment. There is no need to click again."
+BUSY_WAIT_S = 60.0  # how long a relaunch waits for the closing copy before saying so
+
+
+class StartupError(Exception):
+    """A start that cannot finish: `code` for the log, `reason` (one plain sentence) and `details`
+    (the step and the cause, never a stack trace) for the loading window's problem card."""
+
+    def __init__(self, code: str, reason: str, details: str) -> None:
+        super().__init__(code)
+        self.code, self.reason, self.details = code, reason, details
+
+
+class _Splash:
+    """Drives the loading page (static/splash.html) through window.KSplash. With no window (the
+    browser fallback) every call is a no-op. Never raises: a status line is not worth a crash."""
+
+    def __init__(self, win: Any = None) -> None:
+        self.win = win
+
+    def _js(self, fn: str, *args: Any) -> None:
+        if self.win is None:
+            return
+        call = f"window.KSplash && window.KSplash.{fn}({', '.join(json.dumps(a) for a in args)})"
+        try:
+            self.win.evaluate_js(call)
+        except Exception as exc:
+            log.debug("splash_update_failed", fn=fn, error=str(exc))
+
+    def say(self, text: str, pct: int | None, later: str = "", after_ms: int = 0) -> None:
+        self._js("say", text, pct, later, after_ms)
+
+    def fail(self, reason: str, details: str) -> None:
+        self._js("fail", reason, details)
+
+    def ready(self) -> None:
+        self._js("ready")
+
+
+def splash_html(theme: str = "auto") -> str:
+    """The loading page, self-contained: tokens.css and the mark are inlined, since no server
+    exists yet when it shows (D-UI-89). A saved light or dark theme is pinned on it, so its first
+    paint matches the app's."""
+    import base64
+
+    static = Path(paths.web_static_dir())
+    page = (static / "splash.html").read_text(encoding="utf-8")
+    tokens = (static / "css" / "tokens.css").read_text(encoding="utf-8")
+    mark = base64.b64encode((static / "icon.svg").read_bytes()).decode("ascii")
+    page = page.replace("/*K-TOKENS*/", tokens).replace(
+        "/*K-MARK*/", f"data:image/svg+xml;base64,{mark}"
+    )
+    if theme in ("light", "dark"):
+        page = page.replace('<html lang="en">', f'<html lang="en" data-theme="{theme}">', 1)
+    return page
+
+
+def _updating() -> bool:
+    """True when this launch has migrations to run on an existing database (an update)."""
+    from kestrel.db import migrate
+
+    try:
+        current = migrate.current_revision()
+        return bool(current) and current != migrate.head_revision()
+    except Exception as exc:  # only the wording depends on it
+        log.debug("revision_check_failed", error=str(exc))
+        return False
+
+
+class _Cancelled(Exception):
+    """A quit arrived while the start was still running: stop where it stands."""
+
+
+def _check(stop: Callable[[], bool]) -> None:
+    if stop():
+        raise _Cancelled
+
+
+def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) -> int:
+    """Migrations, the server, its health, runtime.json and preflight, reporting each step to the
+    loading window. Raises StartupError with a plain reason when a step cannot finish, and
+    _Cancelled as soon as `stop()` turns true (a quit during loading): no server is started after
+    a quit, and one already started is stopped by the caller."""
+    from kestrel.db import migrate
+    from kestrel.web.serve import wait_for_health, write_runtime
+
+    _check(stop)
+    if _updating():
+        splash.say(UPDATING, None, UPDATING_NOTE, 3500)
+    else:
+        splash.say(OPENING, 30)
+    try:
+        migrate.run_migrations()
+    except Exception as exc:  # the operator sees a sentence; the log keeps the cause
+        log.error("startup_migrations_failed", error_type=type(exc).__name__, error=str(exc))
+        raise StartupError(
+            "migrations_failed",
+            "Kestrel could not open your data on this computer.",
+            f"Startup step: open your data\nCause: {type(exc).__name__}\n"
+            "Log file: kestrel.log (in the logs folder)",
+        ) from exc
+    _check(stop)
+    splash.say(STARTING, 60)
+    try:
+        port = start_server()
+    except OSError as exc:
+        log.error("startup_no_port", error=str(exc))
+        raise StartupError(
+            "no_port",
+            "Another app is using the connection Kestrel needs on this computer. Closing other "
+            "apps and trying again usually fixes it.",
+            "Startup step: start the local server\nPorts 8765 to 8774 were busy, and the system "
+            "could not assign another.\nLog file: kestrel.log (in the logs folder)",
+        ) from exc
+    _check(stop)
+    # Polled a second at a time so a quit during the wait is noticed at once.
+    deadline = time.monotonic() + HEALTH_WAIT_S
+    healthy = False
+    while not healthy and time.monotonic() < deadline:
+        _check(stop)
+        healthy = wait_for_health(port, timeout=1.0)
+    if not healthy:
+        raise StartupError(
+            "health_never_up",
+            "Kestrel's local server did not answer in time. Trying again usually fixes it.",
+            f"Startup step: start the local server\nThe server on port {port} did not answer "
+            f"within {int(HEALTH_WAIT_S)} seconds.\nLog file: kestrel.log (in the logs folder)",
+        )
+    _check(stop)
+    write_runtime(port, os.getpid())
+    splash.say(CHECKING, 85)
+    run_preflight()
+    _check(stop)
+    return port
+
+
+HEALTH_WAIT_S = 30.0
+
+
+# ------------------------------------------------- runtime.json as the lock owner's marker
+def _runtime_info() -> dict[str, Any]:
+    try:
+        data = json.loads(paths.runtime_json().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_marker(**extra: Any) -> None:
+    """runtime.json before the server exists: this process holds the lock and is starting, so a
+    second launch waits for it and focuses it instead of taking the "still closing" path."""
+    try:
+        paths.ensure_dirs()
+        paths.runtime_json().write_text(
+            json.dumps({"pid": os.getpid(), **extra}), encoding="utf-8"
+        )
+    except OSError as exc:
+        log.warning("runtime_marker_failed", error=str(exc))
+
+
+def _mark_closing() -> None:
+    """A quit has begun: say so in runtime.json, so a relaunch shows "Finishing closing the last
+    session" and waits, rather than trying to focus a window that is going away."""
+    info = _runtime_info()
+    if info.get("pid") == os.getpid():
+        _write_marker(**{k: v for k, v in info.items() if k != "pid"}, closing=True)
+
+
+def _pid_alive(pid: Any) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.OpenProcess.restype = wintypes.HANDLE
+            k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            code = wintypes.DWORD()
+            try:
+                ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+            finally:
+                k32.CloseHandle(h)
+            return bool(ok) and code.value == 259  # STILL_ACTIVE
+        except Exception:  # unknown: assume alive, the bounded wait still ends
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+SECOND_LAUNCH_WAIT_S = 60.0
+NO_MARKER_GRACE_S = 1.0  # a first copy writes its marker within milliseconds of the lock
+
+
+def _second_launch(wait_s: float = SECOND_LAUNCH_WAIT_S) -> str:
+    """Another process holds the lock. Returns 'focused' (its window came forward), 'running'
+    (it is alive and still loading past the wait; its own window shows it), or 'closing' (it is
+    quitting or gone: take the busy path and wait for the lock)."""
+    start = time.monotonic()
+    deadline = start + wait_s
+    while True:
+        if _focused:
+            return "focused"
+        info = _runtime_info()
+        # No marker, or one without a pid (the last copy removed it on its way out while still
+        # holding the lock for an instant, Mac hardware check 2026-10-27): it is closing, so take
+        # the busy path now instead of waiting the full minute.
+        if not info.get("pid") and time.monotonic() - start >= NO_MARKER_GRACE_S:
+            # The lock is held but no copy says it is starting or running: the last one has
+            # removed its marker on the way out. Show "Finishing closing" now, not in a minute.
+            return "closing"
+        pid = info.get("pid")
+        alive = _pid_alive(pid) if pid else False
+        if info.get("closing") or (pid and not alive):
+            return "closing"
+        if info.get("failed"):
+            return "running"  # its window shows Kestrel couldn't start, with Try again
+        if info.get("port") and not info.get("starting"):
+            focus_running_instance()
+            if _focused:
+                return "focused"
+            if not _server_answers(info["port"]):
+                return "closing"
+        if time.monotonic() >= deadline:
+            return "running" if alive else "closing"
+        time.sleep(0.5)
+
+
+def _server_answers(port: Any) -> bool:
+    try:
+        import httpx
+
+        return httpx.get(f"http://127.0.0.1:{port}/health", timeout=2.0).status_code == 200
+    except Exception:
+        return False
+
+
+def _stop_server() -> None:
+    """Stop a server a failed start left running (it also runs the lifespan shutdown)."""
+    global server, server_thread
+    if server is not None:
+        server.should_exit = True
+    if server_thread is not None:
+        server_thread.join(timeout=35.0)
+        if server_thread.is_alive():
+            log.warning("server_thread_still_alive_after_abort")
+    server, server_thread = None, None
+    with __import__("contextlib").suppress(OSError):
+        paths.runtime_json().unlink()
+
+
+def _wait_for_lock(timeout: float = BUSY_WAIT_S) -> bool:
+    """A relaunch while the previous copy is still closing: wait for its lock to free, then take
+    it. The Windows mutex lives while any handle is open, so this launch's own handle from the
+    failed first try is closed before each new try."""
+    global _mutex_handle, _have_lock
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not _quitting:
+        if IS_WINDOWS:
+            if _mutex_handle is not None:
+                with __import__("contextlib").suppress(Exception):
+                    import ctypes
+
+                    ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(_mutex_handle)
+                _mutex_handle = None
+            if _acquire_windows_mutex():
+                _have_lock = True
+                return True
+        elif _acquire_lock_file():
+            _have_lock = True
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _import_webview() -> Any:
+    """pywebview with a backend that can show a window, or None (the browser fallback). On
+    Windows a missing WebView2 is a real failure, as before, so the import error is raised."""
+    try:
+        import webview
+
+        if sys.platform == "linux":
+            # Say up front what a missing GTK WebKit means (release round R1); the browser
+            # fallback shows the same in a panel when the window then cannot open.
+            from kestrel.desktop import linux_check
+
+            gap = linux_check.detect()
+            if gap is not None:
+                log.warning("linux_webkit_probe", missing=gap.missing)
+        if not IS_WINDOWS:
+            # pywebview picks its backend lazily, inside webview.start(); a Linux box with no
+            # GTK/Qt bindings (or a mac without the Cocoa extras) would pass create_window and
+            # then raise out of start(). Probe now so the browser fallback runs instead.
+            webview.initialize()
+        return webview
+    except Exception as exc:
+        if IS_WINDOWS:
+            raise
+        log.warning("webview_unavailable_using_browser", error=f"{type(exc).__name__}: {exc}")
+        if sys.platform == "linux":
+            from kestrel.desktop import linux_check
+
+            linux_check.record_fallback(f"{type(exc).__name__}: {exc}")
+        return None
 
 
 def run_desktop() -> int:
     """The full startup sequence. Called from __main__ after freeze_support + stdout repair.
     Returns the process exit code: 0 for a clean run or a second-instance handoff, non-zero when
-    the server never became healthy."""
-    from kestrel.db import migrate
-    from kestrel.web.serve import wait_for_health, write_runtime
+    the server never became healthy.
 
+    Window first (D-UI-89): the frameless window opens at its final size on the loading page,
+    which names each step while migrations, the server and preflight run behind it, then the
+    app replaces it. A failed start shows its problem card in the same window (Try again, Open
+    logs folder, Quit). A relaunch while the previous copy is still closing shows "Finishing
+    closing the last session" and opens by itself once that copy has exited."""
     paths.ensure_dirs()
     _configure_logging()
     log.info(
@@ -681,106 +1292,299 @@ def run_desktop() -> int:
         frozen=getattr(__import__("sys"), "frozen", False),
     )
 
-    if not acquire_single_instance():
-        log.info("second_instance_exit")
-        return 0
+    busy = False
+    if acquire_single_instance():
+        _write_marker(starting=True)
+    else:
+        if "--tray" in sys.argv[1:]:
+            log.info("second_instance_exit", reason="quiet_start")
+            return 0
+        state = _second_launch()
+        if state != "closing":
+            # Focused, or alive and still loading in its own window (D-UI-89).
+            log.info("second_instance_exit", reason=state)
+            return 0
+        # The other copy holds the lock but is quitting: wait for it (D-UI-89).
+        busy = True
+        log.info("previous_instance_closing")
     set_app_identity()
 
-    migrate.run_migrations()
-    port = start_server()
-    if not wait_for_health(port):
-        return abort_start("health_never_up")
-    write_runtime(port, os.getpid())
-    run_preflight()
+    webview = _import_webview()
+    if webview is None:
+        if busy and not _wait_for_lock():
+            log.warning("second_instance_exit", reason="previous_never_closed")
+            return 0
+        if busy:
+            _write_marker(starting=True)
+        try:
+            port = _start_backend(_Splash())
+        except StartupError as exc:
+            return abort_start(exc.code)
+        return _run_in_browser(f"http://127.0.0.1:{port}/")
+    return _run_window(webview, busy=busy)
 
-    from kestrel.web.desktop_bridge import set_focus_handler
 
-    url = f"http://127.0.0.1:{port}/"
-    global window
+_started = False  # the app replaced the loading page
+_boot_failed = False  # the last start attempt ended on the problem card
+_frame_api: Any = None
+_quiet = False  # started by the start-with-my-computer entry (`--tray`)
+
+
+def _close_intent() -> str:
+    """What the window's close does right now: 'tray' (hide, keep working) or 'quit'."""
+    from kestrel.web.deps import close_to_tray
+
+    if not _started or icon is None or not close_to_tray():
+        return "quit"
+    return "tray"
+
+
+def _close_from_page() -> None:
+    """The sidebar's close button: exactly the OS close (on_closing), then the window goes when
+    that close is a real quit."""
+    if on_closing() and window is not None:
+        window.destroy()
+
+
+_boot_guard = threading.Lock()  # one start attempt at a time (first boot, Try again)
+_minimized = False
+
+
+def _retry_start() -> bool:
+    """Try again on the problem card. At most one start runs: the guard is taken here, atomically,
+    and released when that start ends. A failed wait for the previous session's lock is retried
+    as that wait (busy), never as a start without the lock. Returns whether a start began."""
+    if _started or _quitting:
+        return False
+    if not _boot_guard.acquire(blocking=False):
+        return False
+    threading.Thread(
+        target=_boot_held, kwargs={"busy": not _have_lock}, name="startup", daemon=True
+    ).start()
+    return True
+
+
+def _resize_to(win: Any, width: int, height: int) -> None:
     try:
-        import webview
+        win.resize(width, height)
+    except Exception as exc:  # the window still works at the size it has
+        log.warning("window_resize_failed", error=str(exc))
 
-        if sys.platform == "linux":
-            # Say up front what a missing GTK WebKit means (release round R1); the browser
-            # fallback below shows the same in a panel when the window then cannot open.
-            from kestrel.desktop import linux_check
 
-            gap = linux_check.detect()
-            if gap is not None:
-                log.warning("linux_webkit_probe", missing=gap.missing)
-        if not IS_WINDOWS:
-            # pywebview picks its backend lazily, inside webview.start(), AFTER create_window has
-            # returned; a Linux box with no GTK/Qt bindings (or a mac without the Cocoa extras)
-            # would therefore pass create_window and then raise out of start() with the tray
-            # already up. Probe now so that failure lands in the except below and the browser
-            # fallback runs instead. Windows is untouched: WebView2 is loaded by start() as before.
-            webview.initialize()
-        # pywebview cancels every download unless told otherwise (edgechromium's
-        # on_download_starting sets args.Cancel when ALLOW_DOWNLOADS is off): the diagnostics
-        # zip, a backup, a rendered PDF or the notices archive flashed a window and vanished.
-        # With it on, WebView2 shows the standard Save As dialog (D-UI-12).
-        webview.settings["ALLOW_DOWNLOADS"] = True
-        # Opens large but not maximized (D-UI-14, revised by the operator in 0.3.0: "full
-        # screen is fine but not preferred"): most of the primary screen, never past it, so the
-        # bottom of a page (the Hosted key and Next button) is never below the fold at 150%
-        # scaling. min_size keeps a resized window usable.
-        width, height = _initial_size()
-        window = webview.create_window(
-            f"Kestrel {__version__}",
-            url=url,
-            width=width,
-            height=height,
-            min_size=(960, 640),
-            # pywebview blocks text selection app-wide unless asked (#26): the LAN secret, a
-            # path or an error message could not be selected or copied. Draggable board cards
-            # opt out in CSS (.pcard) so a drag never starts a selection.
-            text_select=True,
-        )
-    except Exception as exc:
-        if IS_WINDOWS:  # the packaged product: a missing WebView2 is a real failure, as before
-            raise
-        # macOS without the Cocoa backend wired, Linux without GTK/Qt: not a reason to refuse to
-        # run. The server is already healthy, so hand the UI to the default browser instead.
-        log.warning("webview_unavailable_using_browser", error=f"{type(exc).__name__}: {exc}")
-        if sys.platform == "linux":
-            from kestrel.desktop import linux_check
+def _maximize_restored() -> None:
+    if _frame_api is not None and not _frame_api._is_maximized():
+        _frame_api.window_toggle_maximize()
 
-            linux_check.record_fallback(f"{type(exc).__name__}: {exc}")
-        window = None
-        return _run_in_browser(url)
 
-    window.events.closing += on_closing
-    # Register the window with the tray and /api/focus only AFTER it exists, so a second launch (or
-    # a tray Quit) during startup never finds `window is None`.
+def _on_maximized(value: bool) -> None:
+    if _frame_api is not None:
+        _frame_api._set_maximized(value)
+    if window is not None and _started:
+        with __import__("contextlib").suppress(Exception):
+            window.evaluate_js(f"window.KUI && KUI.frame.state({'true' if value else 'false'})")
+
+
+def _on_minimized() -> None:
+    global _minimized
+    _minimized = True
+
+
+def _on_restored() -> None:
+    """Back from a minimize the window returns to the size it had, maximized or not; only a
+    restore from maximized clears the maximized state."""
+    global _minimized
+    if _minimized:
+        _minimized = False
+        return
+    _on_maximized(False)
+
+
+def _boot(busy: bool = False) -> None:
+    """The startup steps behind the loading page (webview.start runs this on its own thread)."""
+    if not _boot_guard.acquire(blocking=False):
+        return
+    _boot_held(busy)
+
+
+def _boot_held(busy: bool) -> None:
+    try:
+        _boot_steps(busy)
+    finally:
+        _boot_guard.release()
+
+
+def _show_problem(splash: _Splash, reason: str, details: str) -> None:
+    global _boot_failed
+    _boot_failed = True
+    splash.fail(reason, details)
+    if _quiet:
+        show_window()  # a quiet start that fails must say so, never sit hidden with the lock
+
+
+def _boot_steps(busy: bool) -> None:
+    global _started, _boot_failed
+    splash = _Splash(window)
+    _boot_failed = False
+    if _quitting:
+        return
+    if busy:
+        splash.say(BUSY, None, BUSY_NOTE, 0)
+        if not _wait_for_lock():
+            if _quitting:
+                return
+            _show_problem(
+                splash,
+                "The last Kestrel session is still closing. Wait a moment, then try again.",
+                f"Startup step: wait for the previous session to close\nWaited "
+                f"{int(BUSY_WAIT_S)} seconds.\nLog file: kestrel.log (in the logs folder)",
+            )
+            return
+        _write_marker(starting=True)
+    try:
+        port = _start_backend(splash, stop=lambda: _quitting)
+    except _Cancelled:
+        log.info("startup_cancelled_by_quit")
+        _stop_server()
+        return
+    except StartupError as exc:
+        log.error("desktop_start_aborted", reason=exc.code)
+        _stop_server()
+        _write_marker(failed=True)  # the lock owner shows its problem card: a relaunch defers
+        _show_problem(splash, exc.reason, exc.details)
+        return
+    from kestrel.web.desktop_bridge import (
+        set_focus_handler,
+        set_folder_handler,
+        set_quit_handler,
+        set_reveal_handler,
+    )
+
+    # Registered only once the app is up, so a second launch (or a Quit) never finds it half
+    # started. Saved files go to Downloads and open in Explorer (D-UI-41).
     set_focus_handler(show_window)
-    from kestrel.web.desktop_bridge import set_quit_handler
-
-    set_quit_handler(do_quit)  # the in-app "Quit Kestrel" button (D-UI-27)
-    from kestrel.web.desktop_bridge import set_reveal_handler
-
-    # Saved files (the diagnostics zip) go to Downloads and open in Explorer, never through the
-    # WebView2 downloads flyout (D-UI-41).
+    set_quit_handler(do_quit)  # the in-app "Quit Kestrel" (D-UI-27)
     set_reveal_handler(reveal_file)
-    from kestrel.web.desktop_bridge import set_folder_handler
-
     set_folder_handler(_open_folder)  # About's Open buttons for the data and logs folders
-    start_tray()
-    log.info("webview_start")
-    # Started by the start-with-my-computer entry (`--tray`): leave the window hidden, in the
-    # tray, until the person opens it. Only with a tray icon to open it from.
-    quiet_start = "--tray" in sys.argv[1:] and icon is not None
-    if quiet_start:
-        webview.start(hide_window)  # blocks until window.destroy()
-    else:
-        webview.start()
+    if not IS_MACOS:
+        start_tray()  # macOS: already on the main thread before webview.start()
+    splash.ready()
+    time.sleep(0.45)  # the loading page fades out (launch-mockup-locked.html :41-60)
+    if _quitting:
+        _stop_server()
+        return
+    _started = True
+    log.info("webview_app_loading")
+    if window is not None:
+        # #k-intro asks the page for the one-time launch entrance (kestrel-ui.js).
+        window.load_url(f"http://127.0.0.1:{port}/#k-intro")
+        if _quiet and icon is None:
+            show_window()  # a quiet start with no tray to open it from must still show
 
+
+def _run_window(webview: Any, *, busy: bool) -> int:
+    global window, _frame_api, _quiet, _started
+    from kestrel.desktop import frame
+    from kestrel.web.desktop_bridge import set_focus_handler, set_quit_handler, set_window_frame
+
+    global _hidden, _minimized
+    _started = False
+    _minimized = False
+    _quiet = "--tray" in sys.argv[1:]
+    _hidden = _quiet
+    _frame_api = frame.WindowApi(
+        lambda: window,
+        close_intent=_close_intent,
+        close=_close_from_page,
+        retry=_retry_start,
+        open_logs=lambda: _open_folder(paths.logs_dir()),
+        quit_app=do_quit,
+        remember_theme=_remember_theme,
+    )
+    # pywebview cancels every download unless told otherwise (edgechromium's
+    # on_download_starting sets args.Cancel when ALLOW_DOWNLOADS is off): the diagnostics
+    # zip, a backup, a rendered PDF or the notices archive flashed a window and vanished.
+    # With it on, WebView2 shows the standard Save As dialog (D-UI-12).
+    webview.settings["ALLOW_DOWNLOADS"] = True
+    # The drag region is the EMPTY top of the sidebar and of the page's top row: a control inside
+    # it stays a control. Windows drags natively instead (frame.py), so pywebview's JavaScript
+    # drag must not also move the window there.
+    webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
+    if IS_WINDOWS:
+        webview.settings["DRAG_REGION_SELECTOR"] = ".k-no-pywebview-drag"
+    width, height = _initial_size()
+    place: dict[str, int] = {}
+    restored = _restore_geometry(_window_state().get("geometry"), _screen_areas())
+    maximize_on_show = False
+    if restored is not None:
+        (x, y, width, height), maximize_on_show = restored
+        place = {"x": x, "y": y}
+    theme, dark = _launch_theme()
+    # The window's own ground before any page paints: the loading page's top color in the theme
+    # it will show, so a dark launch never flashes white (hardware check, 2026-10-26).
+    background = _token("sky-top", dark) or ("#000000" if dark else "#FFFFFF")
+    window = webview.create_window(
+        f"Kestrel {__version__}",
+        html=splash_html(theme),
+        background_color=background,
+        width=width,
+        height=height,
+        **place,  # D-UI-195: the last place when it still fits a display, else centered
+        min_size=MIN_SIZE,
+        # pywebview blocks text selection app-wide unless asked (#26): the LAN secret, a
+        # path or an error message could not be selected or copied. Draggable board cards
+        # opt out in CSS (.pcard) so a drag never starts a selection.
+        text_select=True,
+        # D-UI-88: no OS title bar; the controls are drawn in the sidebar (macOS keeps its
+        # own traffic lights, see frame.show_traffic_lights).
+        frameless=True,
+        easy_drag=False,
+        js_api=_frame_api,
+        hidden=_quiet,
+    )
+    window.events.closing += on_closing
+    window.events.maximized += lambda: _on_maximized(True)
+    window.events.minimized += _on_minimized
+    window.events.restored += _on_restored
+    set_window_frame(True)
+    if IS_WINDOWS:
+        window.events.shown += lambda: frame.install_resizable_frame(window)
+        # WinForms keeps the client size when the border style turns to None, so the
+        # frameless window comes up short by the frame it no longer has (1664x961 for
+        # 1680x1000 on the hardware check): size it again once it is shown.
+        window.events.shown += lambda: _resize_to(window, width, height)
+    window.events.moved += _geometry_changed
+    window.events.resized += _geometry_changed
+    if maximize_on_show:
+        # The normal rectangle first (above), then maximized, so a restore returns to it.
+        window.events.shown += _maximize_restored
+    if IS_MACOS:
+        window.events.shown += lambda: frame.show_traffic_lights(window)
+        start_tray()  # the icon joins the window's Cocoa loop, built on the main thread
+    log.info("webview_start")
+    webview.start(_boot, (busy,))  # blocks until window.destroy()
+    set_window_frame(False)
+    _frame_api = None  # the window is gone: on_closing goes back to its plain rules
+    if not _started:
+        # The window closed before the app ever loaded (a failed start, or closed while
+        # loading). A start still running notices the quit at its next step and stops; wait for
+        # it, so no server thread is started behind us and none is left to hold the process.
+        if _boot_guard.acquire(timeout=HEALTH_WAIT_S + 10):
+            _boot_guard.release()
+        else:
+            log.warning("startup_thread_still_running_at_quit")
+        _stop_server()
+        release_single_instance()
+        set_focus_handler(None)
+        set_quit_handler(None)
+        return 1 if _boot_failed else 0
     # webview returned => a real quit is in progress. Let uvicorn's graceful shutdown (worker drain
     # + lease release) finish before the process exits; never truncate it.
     return _finish_quit()
 
 
-# Open requests (serve.GRACEFUL_REQUEST_S) plus the lifespan's 30 s worker drain, with headroom.
-QUIT_JOIN_S = 45.0
+# The hard ceiling on a quit: open requests (serve.GRACEFUL_REQUEST_S), the worker's stop
+# (app.WORKER_STOP_S) and lease release normally take one to two seconds (D-UI-90).
+QUIT_JOIN_S = 30.0
 
 
 def _finish_quit() -> int:

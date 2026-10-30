@@ -1,14 +1,16 @@
 {# Record an offer, or edit one (D-UI-122). A sheet in the middle of the window; the fields are
    grouped (the offer, pay, dates and terms; for consulting, the engagement, money, terms). It says
    once that unknown amounts stay blank and that zero means zero. Nothing is sent. #}
+{% from "ui/macros.html" import icon %}
 {% macro field(label, name, value='', hint='', placeholder='', kind='text', mode='') -%}
 <label class="of-fld">{{ label }}<input class="k-input" type="{{ kind }}" name="{{ name }}" value="{{ value if value is not none else '' }}" placeholder="{{ placeholder }}"{% if mode %} inputmode="{{ mode }}"{% endif %} autocomplete="off">{% if hint %}<span class="of-hint">{{ hint }}</span>{% endif %}</label>
 {%- endmacro %}
 {% set o = row %}
-<div class="k-modal of-sheet" id="of-sheet" role="dialog" aria-modal="true" aria-labelledby="of-sheet-t" aria-hidden="true" data-k-static data-testid="of-sheet">
+<div class="k-modal k-modal--sheet of-sheet" id="of-sheet" role="dialog" aria-modal="true" aria-labelledby="of-sheet-t" aria-hidden="true" data-k-static data-testid="of-sheet">
   <form id="of-form" hx-post="{{ ('/offers/' ~ track ~ '/' ~ o.id ~ '/edit') if o else '/offers' }}" hx-target="#of-body" hx-swap="innerHTML"
         hx-disabled-elt="find button[type=submit]" data-busy-text="Saving the offer.">
-    <div class="k-modal__head"><h2 id="of-sheet-t">{{ 'Edit offer' if o else 'Record an offer' }}</h2><p class="k-muted">Leave unknown amounts blank. Zero means zero.</p></div>
+    <div class="k-modal__head of-sheet__head"><div class="k-grow"><h2 id="of-sheet-t">{{ 'Edit offer' if o else 'Record an offer' }}</h2><p class="k-muted">Leave unknown amounts blank. Zero means zero.</p></div>
+      <button type="button" class="k-iconbtn" data-k-close aria-label="Close" data-testid="of-sheet-close">{{ icon('x') }}</button></div>
     <div class="k-modal__body of-sb">
       {%- if con %}
       <section class="of-g"><h4>The engagement</h4><div class="of-f2">

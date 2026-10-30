@@ -7,11 +7,13 @@
 {% import "partials/st_macros.html" as st with context %}
 {% block title %}Settings · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/settings.css">
-<script src="/static/js/settings.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/settings.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): settings.js defines the page "settings"; base.html mounts it. #}
+{% block page_name %}settings{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/settings.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="st-wrap"><div class="st-page" id="st-page">
   {% call ui.scene_band('Settings', scene=band_scene, animate=band_animate) %}

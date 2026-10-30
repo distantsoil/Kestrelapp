@@ -3,7 +3,7 @@
    the link opens the download page and the user installs it. Notes are escaped HTML from
    updater.render_notes_html. Styles: static/css/pages/surfaces.css. #}
 {% from "ui/macros.html" import icon %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <dialog class="sf-dialog" data-testid="update-dialog" aria-labelledby="upd-title">
   <div class="sf-form">
     <div class="sf-head">

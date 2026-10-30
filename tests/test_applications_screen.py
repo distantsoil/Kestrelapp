@@ -127,7 +127,7 @@ def test_closed_cards_fold_into_the_group_and_offers_stay_in_the_column():
     assert "Business Operations Manager" in open_part  # an offer is still being acted on
     for title in ("IT Systems Manager", "Customer Operations Lead", "Inventory Planning Manager"):
         assert title in folded and title not in open_part
-    assert "Closed (3)" in html
+    assert "Closed · 3" in html
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
     assert "8 open · 3 closed · " in text and "2 need a follow-up" in text
 

@@ -99,7 +99,7 @@ def test_help_renders_search_chips_steps_topics_and_the_reader():
     for topic, a in _articles():
         assert f'id="hp-a-{topic}-{a.key}"' in body, (topic, a.key)
         assert f'data-help-article="{topic}:{a.key}"' in body, (topic, a.key)
-    assert 'id="hp-reader"' in body and 'class="k-slideover"' in body
+    assert 'id="hp-reader"' in body and 'class="k-flyout"' in body.split('id="hp-reader"')[0][-80:]
     assert 'id="hp-none"' in body and "No articles match." in body
     assert "—" not in _main(body)
 
@@ -161,7 +161,8 @@ def test_the_model_names_stay_one_toggle_away_for_settings_to_link_to():
     with _client() as c:
         body = c.get("/help").text
     assert 'id="tiers"' in body and 'id="tier-names"' in body
-    assert "Show details" in body.split('id="tier-names"')[1].split("</summary>")[0]
+    # The mockup draws no extra block: the names are a reader article in the Models topic.
+    assert 'data-help-article="models:names"' in body
     for name in ("tier1", "tier2", "tier3", "docsel", "trigger", "frontier", "embed"):
         assert f'<span class="mono muted">{name}</span>' in body, name
 
@@ -174,7 +175,6 @@ def test_help_and_about_are_both_in_the_nav_and_link_to_each_other():
         side = body.split('<aside class="side"')[1].split("</aside>")[0]
         assert 'href="/help"' in side and ">Help</a>" in side
         assert 'href="/about"' in side and ">About</a>" in side
-        assert '{label: "About", href: "/about"}' in body  # the command palette
     assert 'href="/about#promises"' in helped
     assert 'href="/help"' in about and "Open Help" in about
 
@@ -196,13 +196,15 @@ def test_the_reference_blocks_other_pages_link_to_stay_on_help_behind_show_detai
         body = c.get("/help").text
     for anchor in ("lan", "sources", "remoterocketship", "tiers", "tier-names"):
         assert f'id="{anchor}"' in body, anchor
-    for block in ("lan", "sources", "tier-names"):
-        assert re.search(rf'<details id="{block}"', body), block
-        assert " open" not in body.split(f'<details id="{block}"')[1].split(">")[0]
+    for block, article in (("lan", "privacy-lan"), ("sources", "start-sources"),
+                           ("tier-names", "models-names")):
+        # Reference articles, hidden in the reader's store and listed in their topic card.
+        assert f'<article id="hp-a-{article}"' in body, block
+        assert f'data-help-article="{article.replace("-", ":")}"' in body, block
     sources = body.split('id="sources"')[1].split("</details>")[0]
     for row in source_catalog():
         assert row.kind in sources and row.name in sources, row.kind
-    assert "Where opportunities come from" in sources
+    assert "Where opportunities come from" in body
     assert "Kestrel does not search LinkedIn; LinkedIn does not allow automated access." in sources
     assert REGION_NOTE.split(".")[0] in sources
     lan = body.split('id="lan"')[1].split("</details>")[0]

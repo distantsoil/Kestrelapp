@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import String, and_, case, cast, func, literal, or_, select
+from sqlalchemy import String, and_, case, cast, func, literal, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -90,6 +90,10 @@ class OppFilters:
     # A hidden company's roles are out of Pipeline (D-UI-123 amended); only the Settings list of
     # hidden companies and a role page reached by its link ever need them.
     include_hidden_orgs: bool = False
+    # One role seen on several boards is one row (SPEC.md 5.5): ingestion groups the copies and
+    # marks one canonical; the others show on the role page as "also seen on". A copy the operator
+    # already acted on (shortlisted or saved) stays listed so nothing they chose disappears.
+    include_duplicates: bool = False
     # The triage chips (docs/UI_PROPOSAL.html Screen 2). Shortlisted is "has a pursuit row"; new
     # today is "first seen since 00:00 UTC". Both are additive to the older filters above.
     shortlisted: bool = False
@@ -252,12 +256,12 @@ _T2_VERDICTS = ("apply", "pursue", "consider", "pass")
 # Stages where scoring stopped without a score: Scoring failed, or Being scored again while a
 # scoring task is live; never a model verdict.
 _PARKED_STAGES = ("quarantined", "error")
-# Group order on the Pipeline page, as kestrel.web.fit names them. Being scored and Scoring
-# failed sit ahead of Not a fit (hard rule 4): a quarantined row or a Tier 1 keep awaiting Tier 2
-# must never be pages deep behind hundreds of Tier 0 rejects. Applied follows Worth a look and
+# Group order on the Pipeline page, as kestrel.web.fit names them (D-UI-198): scored roles first,
+# then Not a fit (its own section, paged apart so it never buries the groups below it), then Being
+# scored and Scoring failed. Applied follows Worth a look and
 # Maybe: roles the operator already acted on, off the review queue (D-UI-51 amended). The index is
 # the CASE value _group_expr returns.
-GROUP_ORDER = (GROUP_WORTH, GROUP_MAYBE, GROUP_APPLIED, GROUP_NEW, GROUP_FAILED, GROUP_NOT_FIT)
+GROUP_ORDER = (GROUP_WORTH, GROUP_MAYBE, GROUP_APPLIED, GROUP_NOT_FIT, GROUP_NEW, GROUP_FAILED)
 _G = {key: i for i, key in enumerate(GROUP_ORDER)}
 # Task types that score a role, and the stages a task can be in while it is live.
 _SCORING_TASKS = ("embed", "t1", "t2", "t3", "rescore")
@@ -434,11 +438,12 @@ async def failure_summary(session: AsyncSession, track: str | None = None) -> Fa
             kinds[key] = kind
 
     stmt = select(Quarantine.id, Quarantine.opportunity_id, Quarantine.tier, Quarantine.error)
-    stmt = stmt.where(quarantine_needs_you_clause())
+    stmt = stmt.join(Opportunity, Opportunity.id == Quarantine.opportunity_id, isouter=True)
+    # A duplicate copy's failure is not counted twice: it matches what the lists show.
+    stmt = stmt.where(quarantine_needs_you_clause(),
+                      or_(Quarantine.opportunity_id.is_(None), listed_clause()))
     if track in ("employment", "consulting"):
-        stmt = stmt.join(Opportunity, Opportunity.id == Quarantine.opportunity_id).where(
-            Opportunity.track == track
-        )
+        stmt = stmt.where(Opportunity.track == track)
     for qid, oid, tier, error in (await session.execute(stmt)).all():
         if oid is None:
             put(("q", int(qid)), "other")
@@ -476,13 +481,53 @@ async def open_quarantine_errors(session: AsyncSession) -> list[str | None]:
     )
 
 
+def _scores():
+    model = func.coalesce(Evaluation.score, Evaluation.weighted_score)
+    weighted = func.coalesce(Evaluation.weighted_score, Evaluation.score)
+    return model, weighted
+
+
+def _both_below():
+    """Both scores under the consider line: a disagreement that is not the operator's call
+    (kestrel.web.fit, owner round 14). NULL scores are never below."""
+    from kestrel.web.fit import LINES
+
+    model, weighted = _scores()
+    return and_(model.is_not(None), model < LINES["consider"], weighted < LINES["consider"])
+
+
+def your_call_clause():
+    """Your call (needs_review) only where the two scores land on different sides of a line
+    that matters, as the role's own fit word does (kestrel.web.fit.fit_for): not both under the
+    consider line, and not both at the apply line with an apply verdict. No score at all stays
+    Your call."""
+    from kestrel.web.fit import LINES
+
+    model, weighted = _scores()
+    both_high = and_(model.is_not(None), model >= LINES["apply"], weighted >= LINES["apply"],
+                     Evaluation.verdict.in_(("apply", "pursue")))
+    return and_(Evaluation.needs_review.is_(True), not_(_both_below()), not_(both_high))
+
+
+def listed_clause():
+    """The role is listed on its own: the canonical copy of its duplicate group, or a copy the
+    operator shortlisted or saved. Lists use it (OppFilters.include_duplicates), and every count
+    that sits beside a list must too, or a header reads 4 failed over a group of 2."""
+    pursued = (
+        select(Pursuit.id).where(Pursuit.opportunity_id == Opportunity.id)
+        .correlate_except(Pursuit).exists()
+    )
+    return or_(Opportunity.is_canonical.is_(True), pursued, saved_clause())
+
+
 async def scoring_failed_count(session: AsyncSession, track: str | None = None) -> int:
     """How many active (not hidden) roles sit in the Pipeline's Scoring failed group right now
     (its header count). Every "N need you" count is failure_summary, which includes these."""
     stmt = (
         select(func.count())
         .select_from(Opportunity)
-        .where(failed_scoring_clause(), Opportunity.archived_at.is_(None), opp_visible_clause())
+        .where(failed_scoring_clause(), Opportunity.archived_at.is_(None), opp_visible_clause(),
+               listed_clause())
     )
     if track in ("employment", "consulting"):
         stmt = stmt.where(Opportunity.track == track)
@@ -525,6 +570,7 @@ def _group_expr():
         (mine == "pass", _G[GROUP_NOT_FIT]),
         (Opportunity.stage == "t0_reject", _G[GROUP_NOT_FIT]),
         (or_(Evaluation.verdict == "kill", Opportunity.stage == "t1_reject"), _G[GROUP_NOT_FIT]),
+        (and_(scored, Evaluation.needs_review.is_(True), _both_below()), _G[GROUP_NOT_FIT]),
         (and_(scored, Evaluation.needs_review.is_(True)), _G[GROUP_WORTH]),
         (and_(scored, Evaluation.verdict.in_(("apply", "pursue"))), _G[GROUP_WORTH]),
         (and_(scored, Evaluation.verdict == "consider"), _G[GROUP_MAYBE]),
@@ -579,7 +625,7 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
     - "held": its track is switched off, so its task waits unclaimed (D-UI-68).
     - "background": its task sits in the background lane (a company-board role the smart filter
       did not keep, D-SRC-8) and is not claimed until the lane releases it; on an online model it
-      waits for Score everything now (D-SRC-8 amended).
+      waits for local scoring settings (D-SRC-13).
     - "queued": a task is pending and the worker will claim it.
     - "stuck": the startup orphan sweep already re-queued it once and nothing is queued
       (pipeline.orphans, D-UI-56).
@@ -666,6 +712,8 @@ def _apply_filters(stmt, f: OppFilters):
         stmt = stmt.where(Opportunity.archived_at.is_(None))
     if not f.include_hidden_orgs:
         stmt = stmt.where(not_hidden_org_clause())
+    if not f.include_duplicates:
+        stmt = stmt.where(listed_clause())
     if f.track in ("employment", "consulting"):
         stmt = stmt.where(Opportunity.track == f.track)
     if f.stage:
@@ -677,7 +725,7 @@ def _apply_filters(stmt, f: OppFilters):
     if f.score_max is not None:
         stmt = stmt.where(Evaluation.score <= f.score_max)
     if f.needs_review:
-        stmt = stmt.where(Evaluation.needs_review.is_(True))
+        stmt = stmt.where(your_call_clause())
         if f.grouped:
             # Your call is a role the operator has not decided (D-UI-96): their own word, from
             # the latest label that `_with_operator` joins, takes it off the chip.
@@ -731,7 +779,7 @@ def _apply_filters(stmt, f: OppFilters):
     if f.warnings == "no_ghost":
         stmt = stmt.where(Opportunity.ghost_score < GHOST_WARN)
     elif f.warnings == "review":
-        stmt = stmt.where(Evaluation.needs_review.is_(True))
+        stmt = stmt.where(your_call_clause())
         if f.grouped:  # the same meaning as the Your call chip: roles you have not decided
             stmt = stmt.where(VerdictOverride.operator_verdict.is_(None))
     if f.kind == "signals":

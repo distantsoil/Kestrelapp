@@ -23,7 +23,15 @@ from kestrel.db.base import iso
 from kestrel.db.engine import make_async_engine
 from kestrel.db.models import Run, ScrapeRun, Task
 from tests import runs_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    TITLE_RIGHT_JS,
+    art_visible_left,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -182,11 +190,42 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, theme, width):
             for tile in page.evaluate(_BOXES, ".rn-stg"):
                 assert tile["l"] >= card["l"] and tile["r"] <= card["r"] + 1, (tile, card)
         title = page.evaluate(_BOXES, ".k-scene__title")[0]
-        art = page.evaluate(_BOXES, ".k-scene__art")
-        if art:
-            assert title["r"] <= art[0]["l"] + 80, (title, art[0])
+        drawn = art_visible_left(page)
+        if drawn is not None:
+            assert page.evaluate(TITLE_RIGHT_JS) <= drawn, (title, drawn)
         assert not page.query_selector("#announcement-slot")
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1680), ("dark", 1680), ("light", 900)])
+def test_skipped_summary_fits_the_existing_drawer(running, theme, width, tmp_path):
+    base, browser = running
+
+    async def record(session):
+        rows = (await session.execute(select(ScrapeRun).order_by(ScrapeRun.id))).scalars().all()
+        rows[0].counts = {**rows[0].counts, "dropped_outside_area": 30}
+        rows[1].counts = {**rows[1].counts, "dropped_unrelated_title": 12}
+
+    _db(record)
+    ctx, page, errors = _page(base, browser, theme, width)
+    try:
+        page.get_by_test_id("rn-run").first.click()
+        summary = page.get_by_test_id("rn-skipped")
+        summary.wait_for()
+        wait_for_layout(page)
+        assert summary.inner_text() == "Skipped 42: 30 outside your area, 12 unrelated titles"
+        assert summary.evaluate(
+            "el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight"
+        )
+        assert page.evaluate(_LINES, summary.element_handle()) == 1
+        kids = page.locator('[data-testid="rn-drawer-run"]').evaluate(_KIDS)
+        for index, first in enumerate(kids):
+            for second in kids[index + 1 :]:
+                assert not _overlaps(first, second), (first, second)
+        assert not errors
+        page.screenshot(path=str(tmp_path / f"runs-skips-{theme}-{width}.png"))
     finally:
         ctx.close()
 
@@ -328,6 +367,8 @@ def test_this_run_only_asks_before_anything_goes_online(live):
         page.get_by_test_id("rn-this-run").click()
         dialog = page.locator("#rn-choose-dialog")
         dialog.wait_for(state="visible")
+        wait_for_layout(page)
+        page.wait_for_timeout(600)  # the sheet's entrance finishes before it is measured
         mb = dialog.bounding_box()
         assert abs((mb["y"] + mb["height"] / 2) - 450) < 60
         assert page.locator("#rn-ask").is_hidden()
@@ -352,3 +393,96 @@ def test_the_page_follows_the_theme_tokens(live, theme):
             assert bg == "rgb(255, 255, 255)"
     finally:
         ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_needs_another_try_rail_wraps_to_full_text(running, theme):
+    """D-UI-218: the rail's lines wrap as the runs mockup does; nothing is cut with an ellipsis."""
+    base, browser = running
+    ctx, page, errors = _page(base, browser, theme, 1280)
+    try:
+        rows = page.evaluate("""() => Array.from(document.querySelectorAll(
+            '[data-testid="rn-q"] .rn-q__t > *')).map(e => { const c = getComputedStyle(e);
+          return {ws: c.whiteSpace, to: c.textOverflow, clipped: e.scrollWidth > e.clientWidth + 1
+                  || e.scrollHeight > e.clientHeight + 1}; })""")
+        assert rows
+        for row in rows:
+            assert row["ws"] != "nowrap" and row["to"] != "ellipsis" and not row["clipped"], row
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners():
+    """The page lifecycle (D-UI-210): Runs unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves no timer behind. After it, one click on the
+    split button's caret opens the menu (a doubled listener would open and shut it) and Escape
+    closes it. Unmounted, the page stops answering."""
+    server, pw = _serve(False)
+    with server as base, pw as p:
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="light")
+        page = ctx.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.add_init_script(TIMER_PROBE_JS)
+        try:
+            page.goto(f"{base}/runs")
+            page.wait_for_selector('[data-testid="run-live"]')
+            wait_for_layout(page)
+            first = assert_page_remounts_clean(page, "runs", "runs.js", settle_ms=500)
+            assert first["timers"] == 0
+            caret = page.get_by_test_id("rn-run-menu")
+            caret.click()
+            assert page.locator("#rn-menu").is_visible()
+            assert caret.get_attribute("aria-expanded") == "true"
+            page.keyboard.press("Escape")
+            assert page.locator("#rn-menu").is_hidden()
+            assert caret.get_attribute("aria-expanded") == "false"
+            # The poll still lands after a remount and patches the page.
+            with page.expect_response(
+                lambda r: r.url.endswith("/runs") and r.request.method == "GET"
+            ):
+                page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+            page.evaluate("KUI.page.unmount()")
+            caret.click()
+            assert page.locator("#rn-menu").is_hidden()
+            assert not errors, errors
+        finally:
+            ctx.close()
+            browser.close()
+
+
+def test_the_run_detail_page_names_itself_and_starts_nothing():
+    """The page lifecycle (D-UI-210): one run's page has no script of its own (runs.js belongs to
+    the list), so it names itself on the content root, nothing is defined under that name and
+    nothing mounts, with no listener or timer of a page script running."""
+    ids = runs_seed.seed(active=False)
+    from kestrel.web.serve import running_server
+
+    run_id = ids["runs"][0]
+    from playwright.sync_api import sync_playwright
+
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="light")
+        page = ctx.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.add_init_script(TIMER_PROBE_JS)
+        try:
+            page.goto(f"{base}/runs/{run_id}")
+            page.wait_for_selector('[data-testid="rn-status"]')
+            wait_for_layout(page)
+            assert page.get_attribute("main.container", "data-k-page") == "run-detail"
+            assert page.evaluate("KUI.page.current()") is None
+            assert page.evaluate("KUI.page._stats()") == {
+                "name": None, "listeners": 0, "timers": 0, "observers": 0}
+            assert page.evaluate("KUI.page.mount()") is False  # nothing is defined under the name
+            assert page.query_selector('script[src*="/static/js/runs.js"]') is None
+            page.wait_for_timeout(600)
+            assert page.evaluate("window.__kTimers.pending('/static/js/runs.js')") == 0
+            assert not errors, errors
+        finally:
+            ctx.close()
+            browser.close()

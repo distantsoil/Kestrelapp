@@ -53,7 +53,7 @@ def test_rendered_sidebar_lists_the_new_items_in_order_and_loads_the_design_syst
                          "Settings", "Help", "About"]
         assert "Bench" not in side
         # The design system loads after the legacy sheet, scenes before the runtime.
-        order = [page.index(f'/static/{p}"') for p in (
+        order = [page.index(f'/static/{p}?v=') for p in (
             "css/kestrel.css", "css/tokens.css", "css/components.css",
             "js/scenes/scenes-base.js", "js/scenes/seasons-b.js", "js/scenes/scene-band.js",
             "js/kestrel-ui.js")]
@@ -62,10 +62,11 @@ def test_rendered_sidebar_lists_the_new_items_in_order_and_loads_the_design_syst
         # Top bar: search/jump with Ctrl K, bell slot, theme menu, avatar; palette lists settings.
         assert 'class="k-avatar k-avatar--' in page and "Search or jump to" in page
         assert "e.ctrlKey || e.metaKey" in page and 'hx-get="/notifications/bell"' in page
-        assert "label: 'Settings: Appearance'" in page and 'role="listbox"' in page
+        assert "/static/js/palette.js" in page and 'role="listbox"' in page
         # One source for appearance writes: the chrome watchers call KUI, not localStorage.
         assert "KUI.setTheme(v)" in page and "localStorage.setItem('kestrel-theme'" not in page
-        assert "label: 'Model check', href: '/bench'" in page  # the command palette lists it
+        # The command palette (static/js/palette.js) lists Model check among its settings.
+        assert "Model check" in c.get("/static/js/palette.js").text
         for src in re.findall(r'(?:href|src)="(/static/(?:css|js)/[^"]+)"', page):
             assert c.get(src).status_code == 200, src
 
@@ -167,16 +168,22 @@ def _rule(css: str, selector: str) -> str:
 def test_flyout_is_right_anchored_and_vertically_centered_in_css():
     css = (_STATIC / "css" / "components.css").read_text(encoding="utf-8")
     fly = _rule(css, ".k-flyout")
-    assert "position: fixed" in fly and "right: 12px" in fly and "top: 50%" in fly
+    # The offsets fall back to the window values; kestrel-ui.js anchor() sets them only when an
+    # ancestor is the overlay's containing block (D-UI-216).
+    assert "position: fixed" in fly and "right: calc(var(--k-ar, 0px) + 12px)" in fly
+    assert "top: var(--k-ay, 50%)" in fly
     assert "translate(30px, -50%)" in fly  # starts off to the right, already centered
     assert "translate(0, -50%)" in _rule(css, ".k-flyout.is-open")
     # Slide-over overlays content and is never in the page flow; modal is centered.
     so = _rule(css, ".k-slideover")
-    assert "position: fixed" in so and "right: 0" in so and "top: 50%" in so
+    assert "position: fixed" in so and "right: var(--k-ar, 0px)" in so
+    assert "top: var(--k-ay, 50%)" in so
     assert "--k-slideover-top" not in css  # never pinned to a fixed top
     assert "translate(0, -50%)" in _rule(css, ".k-slideover.is-open")
-    assert "left: 50%" in _rule(css, ".k-modal") and "top: 50%" in _rule(css, ".k-modal")
-    assert "scrollbar-gutter: stable" in _rule(css, ".k-main")
+    modal = _rule(css, ".k-modal")
+    assert "left: var(--k-ax, 50%)" in modal and "top: var(--k-ay, 50%)" in modal
+    # The page scrolls on the document with no visible bar; the scroll cues mark more (D-UI-203).
+    assert "scrollbar-width: none" in _rule(css, "html")
 
 
 def test_reduced_motion_rule_and_reflow_breakpoints_are_present():
@@ -184,9 +191,11 @@ def test_reduced_motion_rule_and_reflow_breakpoints_are_present():
     assert "@media (prefers-reduced-motion: reduce)" in css
     reduced = css.split("@media (prefers-reduced-motion: reduce)")[1]
     assert "animation: none !important" in reduced and "transition: none !important" in reduced
-    layout_1300 = css.split("@container (max-width: 1300px)")[1].split("}\n@container")[0]
+    # Window steps measure the named window container, as the mockups' .win does.
+    assert "container: kwin / inline-size" in css
+    layout_1300 = css.split("@container kwin (max-width: 1300px)")[1].split("}\n@container")[0]
     assert ".k-layout" in layout_1300 and ".k-help-col" in layout_1300
-    assert ".k-help-col" in css.split("@container (max-width: 1000px)")[1]
+    assert ".k-help-col" in css.split("@container kwin (max-width: 1000px)")[1]
 
 
 # ----------------------------------------------------------------------------- JS under node
@@ -219,6 +228,159 @@ def test_centering_math_matches_the_rule():
         K.centerTop(800, 800), K.centerTop(900, 301)]));
     """)
     assert json.loads(out) == [300, 12, 12, 300]  # centered; too tall pins to the margin
+
+
+# The page lifecycle (D-UI-210, docs/handoff/D-UI-210-plan.md "The page lifecycle contract"):
+# KUI.page and the context each mount gets, under node (an EventTarget stands in for the page).
+_PAGE_JS = """
+  global.window = global;
+  const K = require(%s);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const out = {};
+  const root = { getAttribute: () => 'demo' };
+  const target = new EventTarget();
+  const log = [];
+  let ctxSeen = null;
+  K.page.define('demo', {
+    mount(el, ctx) {
+      ctxSeen = ctx;
+      log.push('mount:' + (el === root));
+      const fn = () => log.push('click');
+      ctx.on(target, 'click', fn);
+      ctx.on(target, 'click', fn);              // the browser ignores this one: counted once
+      ctx.on(target, 'click', fn, true);        // capture is a registration of its own
+      ctx.on(target, 'ping', () => log.push('ping'), { once: true });
+      ctx.on(null, 'click', fn);                // no target: nothing
+      ctx.every(5, () => log.push('tick'));
+      ctx.after(1, () => log.push('after'));
+      ctx.after(60000, () => log.push('late'));
+      ctx.observe({ disconnect() { log.push('disconnect'); } });
+      ctx.onUnmount(() => log.push('cleanup1'));
+      ctx.onUnmount(() => log.push('cleanup2'));
+    },
+    unmount() { log.push('unmount'); },
+  });
+"""
+
+
+def _page_node(body: str) -> dict:
+    script = _PAGE_JS % json.dumps(str(_STATIC / "js" / "kestrel-ui.js"))
+    return json.loads(_node(script + "(async () => {" + body +
+                            "\nconsole.log(JSON.stringify(out)); })();"))
+
+
+def test_page_define_mount_and_unmount_own_everything_the_page_starts():
+    out = _page_node("""
+      out.before = [K.page.current(), K.page._stats()];
+      out.mounted = K.page.mount('demo', root);
+      out.first = K.page._stats();
+      out.gotRoot = log.includes('mount:true');
+      target.dispatchEvent(new Event('click'));
+      target.dispatchEvent(new Event('ping'));
+      target.dispatchEvent(new Event('ping'));   // once: the second never reaches the page
+      out.pings = log.filter(x => x === 'ping').length;
+      out.afterPing = K.page._stats().listeners;
+      await sleep(30);
+      out.timersRunning = K.page._stats().timers;  // the 1 ms one fired and was let go
+      out.ran = ['tick', 'after'].map(x => log.includes(x));
+      out.current = K.page.current();
+      const signal = ctxSeen.signal;
+      out.unmounted = K.page.unmount();
+      out.aborted = signal.aborted;
+      out.after = [K.page.current(), K.page._stats()];
+      const n = log.length;
+      target.dispatchEvent(new Event('click'));
+      await sleep(30);
+      out.quiet = log.slice(n);                  // no listener and no timer after unmount
+      out.order = log.filter(x => /unmount|cleanup|disconnect/.test(x));
+      out.unmountAgain = K.page.unmount();
+      out.remounted = K.page.mount(root);         // the name comes from the root
+      out.second = K.page._stats();
+      K.page.unmount();
+      out.clicks = log.filter(x => x === 'click').length;
+    """)
+    empty = {"name": None, "listeners": 0, "timers": 0, "observers": 0}
+    assert out["before"] == [None, empty]
+    assert out["mounted"] is True and out["gotRoot"] is True and out["current"] == "demo"
+    assert out["first"] == {"name": "demo", "listeners": 3, "timers": 3, "observers": 1}
+    assert out["pings"] == 1 and out["afterPing"] == 2  # the once listener ran and was let go
+    assert out["timersRunning"] == 2 and out["ran"] == [True, True]
+    assert out["unmounted"] is True and out["aborted"] is True
+    assert out["after"] == [None, empty]
+    assert out["quiet"] == []
+    # The page's own unmount first, then the observer, then the cleanups last to first.
+    assert out["order"] == ["unmount", "disconnect", "cleanup2", "cleanup1"]
+    assert out["unmountAgain"] is False
+    assert out["remounted"] is True and out["second"] == out["first"]
+    assert out["clicks"] == 2  # the one click before unmount, heard by bubble and capture
+
+
+def test_page_context_stops_early_and_does_nothing_once_unmounted():
+    out = _page_node("""
+      K.page.mount('demo', root);
+      const ctx = ctxSeen;
+      const id = ctx.every(5, () => log.push('stray'));
+      out.withExtra = K.page._stats().timers;
+      ctx.clear(id);
+      const t = ctx.after(5, () => log.push('stray'));
+      ctx.clear(t);
+      out.cleared = K.page._stats().timers;
+      const off = ctx.on(target, 'extra', () => log.push('stray'));
+      out.withListener = K.page._stats().listeners;
+      off();
+      off();
+      target.dispatchEvent(new Event('extra'));
+      out.listeners = K.page._stats().listeners;
+      let gone = 0;
+      const obs = ctx.observe({ disconnect() { gone += 1; } });
+      out.sameObserver = ctx.observe(obs) === obs && K.page._stats().observers === 2;
+      obs.disconnect();                            // done early: the context lets it go
+      out.observers = K.page._stats().observers;
+      K.page.unmount();
+      out.goneOnce = gone === 1;
+      await sleep(20);
+      out.stray = log.filter(x => x === 'stray').length;
+      // A context whose page was unmounted starts nothing more.
+      out.lateEvery = ctx.every(5, () => log.push('stray'));
+      out.lateAfter = ctx.after(5, () => log.push('stray'));
+      ctx.on(target, 'extra', () => log.push('stray'));
+      let lateDisconnect = 0;
+      ctx.observe({ disconnect() { lateDisconnect += 1; } });
+      let lateCleanup = 0;
+      ctx.onUnmount(() => { lateCleanup += 1; });
+      target.dispatchEvent(new Event('extra'));
+      await sleep(20);
+      out.late = [log.filter(x => x === 'stray').length, lateDisconnect, lateCleanup];
+      out.statsAfter = K.page._stats();
+    """)
+    assert out["withExtra"] == 4 and out["cleared"] == 3
+    assert out["withListener"] == 4 and out["listeners"] == 3
+    assert out["sameObserver"] is True and out["observers"] == 1
+    assert out["goneOnce"] is True and out["stray"] == 0
+    assert out["lateEvery"] == 0 and out["lateAfter"] == 0
+    assert out["late"] == [0, 1, 1]  # an observer or a cleanup handed over late ends at once
+    assert out["statsAfter"] == {"name": None, "listeners": 0, "timers": 0, "observers": 0}
+
+
+def test_page_mount_replaces_the_mounted_page_and_skips_an_unknown_one():
+    out = _page_node("""
+      const other = [];
+      K.page.define('other', { mount(el, ctx) { other.push('mount'); ctx.every(5, () => {}); },
+                               unmount() { other.push('unmount'); } });
+      K.page.mount('demo', root);
+      out.switched = K.page.mount('other', root);
+      out.current = K.page.current();
+      out.demoGone = log.includes('unmount') && log.includes('cleanup1');
+      out.unknown = K.page.mount('nowhere', root);  // nothing defined: nothing mounted
+      out.afterUnknown = [K.page.current(), other];
+      out.start = K.page.start();                   // no document here: nothing to mount
+      try { K.page.define('broken', {}); out.badDefine = 'accepted'; }
+      catch (e) { out.badDefine = e.name; }
+    """)
+    assert out["switched"] is True and out["current"] == "other" and out["demoGone"] is True
+    assert out["unknown"] is False and out["afterUnknown"] == [None, ["mount", "unmount"]]
+    assert out["start"] is False
+    assert out["badDefine"] == "TypeError"
 
 
 def test_every_scene_and_touch_draws_markup_with_prefixed_ids():

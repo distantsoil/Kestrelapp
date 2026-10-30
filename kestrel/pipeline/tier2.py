@@ -41,7 +41,7 @@ from kestrel.pipeline.context import (
 
 log = structlog.get_logger()
 
-_VERSION = {"employment": "evaluate/v1", "consulting": "evaluate_consulting/v1"}
+_VERSION = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
 
 
 async def _gather_few_shot(

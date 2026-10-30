@@ -1,8 +1,6 @@
-"""The background lane (D-SRC-8, D-SRC-9). A role from a found company board that the smart
-filter did not keep is stored and goes through Tier 0 like any other, but its first scoring
-task (t1) is created in the lane: payload `lane` = 1 and a very low priority. The queue never
-claims a lane task (queue.in_lane), so it cannot cause model swap thrash or delay normal work;
-nothing is rejected (hard rule 4).
+"""Drain the legacy background lane locally (D-SRC-13). No new roles enter this lane.
+Before release and scoring, current country and title filters reject clear mismatches with
+an explanation. Surviving tasks retain a local-only marker through Tier 2.
 
 `release_due` runs at the end of a worker cycle and only when Kestrel is idle (no scrape, embed
 or scoring task claimable and no role waiting for Tier 0). It frees up to the daily cap of lane
@@ -14,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from statistics import median
+from typing import Any
 
 import structlog
 from sqlalchemy import func, select
@@ -22,12 +21,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Evaluation, Opportunity, Task
+from kestrel.ingest import smart_filter
+from kestrel.ingest.location import parse_location
+from kestrel.pipeline.profile import load_profile
 from kestrel.queue.queue import claimable, requested_by_operator
+from kestrel.rules.helpers import value_in
 
 log = structlog.get_logger()
 
 LANE_PRIORITY = -1000  # below any normal priority (pre_score * 100 is never negative)
 LANE_REASON = "lane:company_board"  # marks Opportunity.stage_reason for the UI
+LOCAL_ONLY = "lane_local_only"
 DEFAULT_DAILY_CAP = 200
 _BUSY_TYPES = ("scrape", "embed", "t1", "t2", "t3", "rescore")
 # Seconds per role when no evaluation has been timed yet: a local model reads a posting in
@@ -126,6 +130,7 @@ def _free(
     payload = dict(task.payload or {})
     task.priority = int(payload.pop("lane_priority", 0) or 0)
     payload["lane"] = 0
+    payload[LOCAL_ONLY] = True
     if on:
         payload["lane_released_on"] = on
     if online_approval is not None:
@@ -149,6 +154,47 @@ async def _pending_lane_tasks(session: AsyncSession) -> list[Task]:
     )
 
 
+async def reject_mismatch(
+    session: AsyncSession,
+    opp: Opportunity,
+    *,
+    contexts: dict[str, tuple[Any, smart_filter.FilterContext]] | None = None,
+) -> bool:
+    """Recheck one legacy row using today's ingest rules, without a model or work-mode test."""
+    cache = contexts if contexts is not None else {}
+    if opp.track not in cache:
+        profile = load_profile(opp.track)
+        cache[opp.track] = (
+            profile, await smart_filter.build_context(session, opp.track, profile)
+        )
+    profile, ctx = cache[opp.track]
+    countries = getattr(getattr(profile, "geo_rules", None), "remote_country_allowlist", None)
+    country = parse_location(opp.location_raw)[0] or opp.country
+    reason = None
+    if country and countries and not value_in(country, countries):
+        reason = "outside_area: Outside your search countries."
+    elif not smart_filter.keep(opp.title, ctx):
+        reason = "unrelated_title: Title does not match your target titles."
+    if reason is None:
+        return False
+    opp.stage = "t0_reject"
+    opp.stage_reason = reason
+    return True
+
+
+async def _eligible_tasks(session: AsyncSession) -> list[Task]:
+    contexts: dict[str, tuple[Any, smart_filter.FilterContext]] = {}
+    eligible: list[Task] = []
+    for task in await _pending_lane_tasks(session):
+        opp = await session.get(Opportunity, task.payload["opportunity_id"])
+        if await reject_mismatch(session, opp, contexts=contexts):
+            task.status = "done"
+            task.updated_at = utcnow_iso()
+        else:
+            eligible.append(task)
+    return eligible
+
+
 async def release_due(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
@@ -156,19 +202,20 @@ async def release_due(
     hosted: bool = False,
     now: datetime | None = None,
 ) -> int:
-    """Free up to what is left of today's cap, only when idle. Returns how many were freed.
-    When scoring runs on an online model (`hosted`), nothing is freed here: those roles wait
-    for the operator's "Score everything now", which states the cost first."""
-    if hosted:
-        return 0
+    """Recheck the backlog, then free today's remaining share when idle and scoring is local.
+    Hosted settings hold survivors; mismatches are rejected without model calls regardless."""
     today = _today(now)
     async with sessionmaker() as s:
+        eligible = await _eligible_tasks(s)
+        await s.commit()  # rejection cleanup also runs while hosted, busy or capped
+        if hosted:
+            return 0
         if cap <= 0 or not await is_idle(s):
             return 0
         room = cap - await released_today(s, today)
         if room <= 0:
             return 0
-        tasks = (await _pending_lane_tasks(s))[:room]
+        tasks = eligible[:room]
         for t in tasks:
             _free(t, on=today)
         await s.commit()
@@ -181,11 +228,12 @@ async def release_all(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
     online_approval: dict[str, list[str]] | None = None,
+    hosted: bool = False,
 ) -> int:
-    """The operator's one-shot "Score everything now": every waiting lane task joins the normal
-    flow. Does not count against the daily cap and does not stay on."""
+    """Recheck and release surviving legacy tasks for local scoring only, outside the cap."""
     async with sessionmaker() as s:
-        tasks = await _pending_lane_tasks(s)
+        eligible = await _eligible_tasks(s)
+        tasks = [] if hosted else eligible
         for t in tasks:
             _free(t, on=None, online_approval=online_approval)
         await s.commit()

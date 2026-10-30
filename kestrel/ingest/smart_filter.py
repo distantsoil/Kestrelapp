@@ -1,10 +1,10 @@
-"""Which postings from a found company board are worth scoring now (D-SRC-8). A company board
+"""Which fetched postings are stored (D-SRC-13, replacing the D-SRC-8 background lane). A board
 brings in every opening at that company, so a title-only filter would skip many roles the
 operator would have applied for. A posting is KEPT when its level is unknown or at or above the
 operator's floor, AND its field words overlap the field words of their target titles (with
-their phrasings) or of at least MIN_PURSUITS of their own pursuits. Everything else is not
-rejected (hard rule 4): it goes to the background lane (kestrel.pipeline.lane) and is scored when
-Kestrel is idle. Only boards found in a search use this; hand-added boards and searches do not.
+their phrasings) or of at least MIN_PURSUITS of their own pursuits. A false result skips the
+posting before storage and is counted on its scrape run. Searches and all company boards use
+the same rule; manual paste bypasses it. The matching algorithm is unchanged.
 
 Pure decision in `keep`; `build_context` reads the learned words from the database once per
 run (never cached globally, so a profile edit or a new pursuit applies on the next run)."""

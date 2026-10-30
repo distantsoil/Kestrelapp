@@ -78,7 +78,7 @@ def test_fit_with_you_states_its_count_and_says_too_few_under_five():
                         mean_abs_score_error=None, insufficient=n_labeled < 5, hosted=False)
 
     few = mv.fit_with_you([row(4, 1.0)], 2, "m", better=False)
-    assert few.label == "Too few ratings yet (4)" and few.tone == "muted"
+    assert few.label == "Too few ratings (4)" and few.tone == "muted"
     good = mv.fit_with_you([row(8, 0.75)], 2, "m", better=False)
     assert good.label == "Good match, 75% of 8" and good.tone == "good"
     assert mv.fit_with_you([row(8, 0.75)], 2, "m", better=True).tone == "info"
@@ -114,7 +114,7 @@ def test_page_shows_the_five_steps_in_plain_words_with_no_raw_ids():
         assert f">{code}</span>" in body
     assert "No AI model" in body and "Asks you first" in body
     assert "kestrel-tier" not in body.split('data-testid="mo-steps"')[1].split("</section>")[0]
-    assert "Too few ratings yet (0)" in body
+    assert "Too few ratings (0)" in body
     assert "Whole posting" in body and "Start of posting" in body
     assert 'data-testid="mo-uses"' in body and "On this computer" in body
     assert 'data-testid="mo-check-btn"' in body and 'href="/bench"' in body

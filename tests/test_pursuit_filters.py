@@ -186,7 +186,7 @@ def test_the_closed_group_is_collapsed_by_default_and_each_column_can_show_all()
     with _client() as c:
         html = c.get("/pursuits").text
         opened = c.get("/pursuits?open=closed").text
-    assert 'data-testid="closed-toggle"' in html and "Closed (1)" in html
+    assert 'data-testid="closed-toggle"' in html and "Closed · 1" in html
     assert 'class="ap-closedg"' in html and 'data-open-closed="0"' in html
     assert 'class="ap-closedg is-open"' in opened and 'data-open-closed="1"' in opened
     assert html.count('data-testid="show-all"') == 4  # one per column

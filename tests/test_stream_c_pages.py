@@ -106,7 +106,8 @@ def test_renamed_pages_use_the_plain_names():
     assert "<h1>Interview prep</h1>" in stories and "My stories" not in stories
     assert "A draft is yours once you save it; nothing rewrites it after that." in stories
     prep = c.get("/prep/999").text
-    assert "<h1>Interview prep</h1>" in prep and "Prep pack" not in prep
+    # D-UI-221: the tabs stay even for a role that is gone; the page says so under them.
+    assert "<h1>Interview prep</h1>" in prep and 'data-testid="pp-tabs"' in prep
     quarantine = " ".join(c.get("/quarantine").text.split())
     assert "<h1>Needs another try</h1>" in quarantine
     assert "Some roles couldn’t be scored. Nothing was dropped; they wait here." in quarantine

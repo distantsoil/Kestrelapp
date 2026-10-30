@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from kestrel.web.pipeline_view import UNVERIFIED_HOW
+
 _WORD = re.compile(r"[a-z0-9][a-z0-9+#&.\-]*[a-z0-9+#]|[a-z0-9]", re.IGNORECASE)
 _STOP = frozenset(
     """a about across all also an and any are as at be been being but by can for from has have in
@@ -73,8 +75,13 @@ def requirements(
         req = str(m.get("requirement") or "").strip()
         if not req:
             continue
-        slot = link(req + " " + str(m.get("evidence") or ""), lines) or link(req, lines)
         strength = str(m.get("strength") or "")
+        if strength == "unverified":
+            # Never linked or read as covered: the profile does not show it (PROMPTS.md P2
+            # post-processing rule 8, O20).
+            out.append({"text": req, "status": "n", "slot": "", "note": UNVERIFIED_HOW})
+            continue
+        slot = link(req + " " + str(m.get("evidence") or ""), lines) or link(req, lines)
         if slot is None:
             out.append({"text": req, "status": "n", "slot": "", "note": "Left out of this version"})
         else:

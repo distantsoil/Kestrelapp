@@ -1066,7 +1066,7 @@ async def cancel_research(request: Request, opp_id: int, task_id: int):
     async with sessionmaker()() as s:
         stopped = await research_jobs.cancel(s, opp_id, task_id)
     return _answer(
-        {"k-toast": _toast("Cancelled." if stopped else "That task has already stopped.")},
+        {"k-toast": _toast("Canceled." if stopped else "That task has already stopped.")},
         await _cards_oob(request, opp_id, orgtab=True),
     )
 

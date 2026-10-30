@@ -6,10 +6,16 @@
    every width (310px at 1300px or less, as the mockup does) instead of stacking under it. */
 
 /* ------------------------------------------------------------------ no sidebar, no top bar */
-.shell { display: block; }
-.side, .topbar, .bottombar, .sheet, .sheet-backdrop { display: none !important; }
+.k-win { display: block; }
+.k-tools, .bottombar, .sheet, .sheet-backdrop { display: none !important; }
+/* The sidebar is gone; only its window controls stay, at the wizard's top left (the mockup's
+   #wctl: left 28px, top 14px), so the frameless window keeps minimize, maximize and close. */
+.side { position: fixed; left: 28px; top: 14px; z-index: 50; height: auto; width: auto;
+  padding: 0; border: 0; background: none; overflow: visible; display: block; }
+.side > :not(.k-wctl):not(.k-rsz) { display: none !important; }
+.side .k-wctl { margin: 0 0 0 -4px; }
 .container { padding: 0; max-width: none; }
-.main { min-height: 100vh; }
+.k-main { min-height: 100vh; background: none; }
 
 /* ----------------------------------------------------------------------------- the frame */
 .ob-wiz {
@@ -17,12 +23,17 @@
   height: 100vh; min-height: 480px; min-width: 0; overflow: hidden;
   background: linear-gradient(180deg, var(--sky-bot) 0, var(--bg) 230px);
 }
-.ob-top { position: relative; flex: none; padding: 26px 28px 0; height: 112px; }
-.ob-art {
+.ob-top { position: relative; flex: none; padding: 46px 28px 0; height: 112px; overflow: hidden; }
+/* The shell rule `.k-win .k-main .k-scene { position: static }` would let the art escape the
+   header and land over the stepper; the wizard's art is anchored inside .ob-top (bottom 0,
+   108px tall, as the mockup draws it) and clipped by it. */
+.k-win .k-main .ob-art, .ob-art {
   position: absolute; right: 0; bottom: 0; margin: 0; padding: 0; min-height: 0;
-  width: 540px; height: 108px; pointer-events: none;
+  width: 540px; height: 108px; pointer-events: none; z-index: 0; overflow: hidden;
 }
-.ob-art .k-scene__art { width: 100%; height: 100%; right: 0; }
+.k-win .k-main .ob-art .k-scene__art, .ob-art .k-scene__art {
+  width: 100%; height: 100%; right: 0; bottom: 0; aspect-ratio: auto;
+}
 .ob-brand { display: flex; align-items: center; gap: 12px; position: relative; z-index: 1; white-space: nowrap; }
 .ob-brand b { font-size: 19px; }
 .ob-mark { width: 32px; height: 32px; border-radius: 8px; display: block; }
@@ -72,13 +83,34 @@
 .ob-problem .k-ic { color: var(--warn-ink); flex: none; }
 .ob-pane {
   display: grid; grid-template-columns: minmax(0, 1fr) 360px; column-gap: 24px; row-gap: 16px;
-  padding: 20px 28px 28px; align-items: start; animation: ob-in .35s cubic-bezier(.22, .8, .3, 1) both;
+  padding: 20px 28px 28px; align-items: start; animation: ob-inf .42s cubic-bezier(.22, .8, .3, 1) backwards;
 }
+/* `backwards`, never `both`: a fill that outlives the slide keeps a transform on the pane, which
+   traps any dialog inside it under the page's scrim (owner round 12: setup's resume step dimmed
+   the screen and nothing could be clicked). */
+/* The step slide (mockup go(), obInF/obInB/obOutF/obOutB, 48px): Next goes in from the right, Back
+   from the left, and AT THE SAME TIME a copy of the old pane (.ob-leaving, onboarding.js) lies over
+   it and leaves the other way, so the content area is never blank (owner, 2026-10-30). */
+#ob-step[data-ob-dir="b"] .ob-pane { animation-name: ob-inb; }
+/* Held to the visible area (top from the script, bottom 0, clipped) so it never makes the body
+   scroll; what is inside it is a still image, so nothing in it animates again (a chip's pop, an
+   open fold) and no inner animationend can end it early. */
+#ob-step .ob-pane.ob-leaving {
+  position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden; pointer-events: none;
+  animation: ob-outf .36s ease both;
+}
+#ob-step[data-ob-dir="b"] .ob-pane.ob-leaving { animation-name: ob-outb; }
+#ob-step .ob-pane.ob-leaving * { animation: none !important; }
+/* An in-step re-render (data-ob-dir="s", onboarding.js) swaps in place without the slide. */
+#ob-step[data-ob-dir="s"] .ob-pane { animation: none; }
+@keyframes ob-inf { from { opacity: 0; transform: translateX(48px); } }
+@keyframes ob-inb { from { opacity: 0; transform: translateX(-48px); } }
+@keyframes ob-outf { to { opacity: 0; transform: translateX(-48px); } }
+@keyframes ob-outb { to { opacity: 0; transform: translateX(48px); } }
 @container (max-width: 1300px) {
   .ob-pane { grid-template-columns: minmax(0, 1fr) 310px; column-gap: 20px; }
   .ob-art { opacity: .9; }
 }
-@keyframes ob-in { from { opacity: 0; transform: translateX(24px); } }
 .ob-title { grid-column: 1 / -1; }
 .ob-title h1 { margin: 0; font-size: var(--fs-2xl); white-space: nowrap; letter-spacing: -.01em; }
 .ob-title p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
@@ -98,7 +130,7 @@
 .ob-dsm { color: var(--muted); font-size: 13px; }
 .ob-note .ob-dsm, .ob-rw .ob-dsm, .ob-rs .ob-dsm, .ob-check .ob-dsm, .ob-consent .ob-dsm, .ob-srch small { display: block; }
 .ob-sh { align-items: center; margin-bottom: 12px; }
-.ob-sh h3 { white-space: nowrap; }
+.ob-sh h3 { min-width: 0; overflow-wrap: anywhere; font-size: 16px; }
 .ob-acc { border-left: 4px solid var(--line); }
 .ob-acc--good { border-left-color: var(--good); }
 .ob-acc--info { border-left-color: var(--brand); }
@@ -269,8 +301,12 @@ p.ob-keylinks { padding-left: 0; margin-top: 12px; }
 }
 .ob-drop.over { border-color: var(--brand); background: var(--tint-info); }
 .ob-drop-b { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-.ob-readrow { margin-top: 12px; }
-.ob-skipnote { display: flex; gap: 6px; align-items: flex-start; margin: 12px 0 0; }
+.ob-wiz .ob-readrow { margin-top: 16px; align-items: flex-start; }
+.ob-readrow .ob-dsm { display: flex; gap: 6px; align-items: flex-start; padding-top: 2px; }
+.ob-readrow .ob-dsm .k-ic { flex: none; margin-top: 3px; }
+.ob-wiz .ob-readrow + .ob-note { margin-top: 16px; }
+.ob-wiz .ob-skipnote { display: flex; gap: 6px; align-items: flex-start; margin: 16px 0 0; }
+.ob-skipnote .k-ic { flex: none; margin-top: 3px; }
 .ob-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 @container (max-width: 1500px) { .ob-split { grid-template-columns: minmax(0, 1fr); } }
 .ob-read {
@@ -293,7 +329,12 @@ p.ob-keylinks { padding-left: 0; margin-top: 12px; }
 .ob-srch small { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 
 /* The starting overlay (Start searching): a status card over the dimmed wizard. */
-.ob-start { position: absolute; inset: 0; z-index: 30; background: var(--scrim); display: flex; align-items: center; justify-content: center; }
+.ob-start { position: absolute; inset: 0; z-index: 30; background: var(--scrim); display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity .3s; }
+.ob-start.on { opacity: 1; pointer-events: auto; }
+.ob-sbar { height: 6px; border-radius: 4px; background: var(--soft); overflow: hidden; margin-top: 8px; }
+.ob-sbar i { display: block; height: 100%; width: 0; background: var(--brand); border-radius: 4px;
+  transition: width 4s cubic-bezier(.22, .8, .3, 1); }
 .ob-start[hidden] { display: none; }
 .ob-start .k-card { width: min(420px, 90%); box-shadow: var(--shadow); }
 .ob-start h2 { margin: 0 0 10px; font-size: 19px; }
@@ -316,3 +357,14 @@ p.ob-keylinks { padding-left: 0; margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .ob-wiz *, .ob-wiz *::before, .ob-wiz *::after { animation: none !important; transition: none !important; }
 }
+
+/* A chip the person adds pops in (mockup .ob-pop, obPop .35s). */
+.ob-wiz .pf-chip.ob-pop { animation: ob-pop .35s ease; }
+@keyframes ob-pop { 0% { transform: scale(.7); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .ob-pane, #ob-step.htmx-swapping .ob-pane, .ob-wiz .pf-chip.ob-pop { animation: none !important; }
+}
+
+/* The chip field's Add button sits beside its input, as the mockup draws (.ob-add). */
+.ob-wiz .pf-chipadd { display: flex; align-items: center; gap: 8px; width: 100%; }
+.ob-wiz .pf-chipadd input { flex: 1; min-width: 0; width: auto; }

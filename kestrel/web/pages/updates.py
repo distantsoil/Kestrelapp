@@ -46,6 +46,26 @@ def format_last_checked(iso: str | None) -> str:
     return format_display(local, "short_year", kind="datetime", time_style="24h", separator=" at ")
 
 
+def relative_last_checked(iso: str | None, *, now: datetime | None = None) -> str:
+    """About's wording (about-mockup-locked.html doUpdate): "just now", "5 minutes ago",
+    "3 days ago", or "never". An unreadable stamp reads as never."""
+    if not iso:
+        return "never"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "never"
+    dt = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    secs = max(0, int(((now or datetime.now(UTC)) - dt).total_seconds()))
+    if secs < 60:
+        return "just now"
+    for size, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if secs >= size:
+            n = secs // size
+            return f"{n} {unit}{'' if n == 1 else 's'} ago"
+    return "just now"  # unreachable; keeps the function total
+
+
 def _download_page(state: updater.UpdateState) -> str:
     """Validated again at render time (defense in depth: old rows predate the check)."""
     return updater.safe_download_page(state.download_page) or updater.DOWNLOAD_PAGE
@@ -139,7 +159,9 @@ async def check(request: Request, surface: str = Form("")):
         async with sessionmaker()() as s:
             cfg = (await load_settings_with_db(s)).updates
             state = await updater.check_now(s, feed_url=cfg.feed_url, current=current)
-        last_checked = format_last_checked(state.last_checked_at)
+        last_checked = (relative_last_checked if surface == "about" else format_last_checked)(
+            state.last_checked_at
+        )
         download = _download_page(state)
         if state.last_check_ok:
             latest = state.latest_version

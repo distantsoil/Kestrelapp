@@ -63,6 +63,10 @@ SAM_ENV = "SAM_GOV_API_KEY"
 SAM_NAME = "SAM.gov federal IT contracts"
 RRS_ENV = "REMOTEROCKETSHIP_API_KEY"
 RRS_NAME = "RemoteRocketship"
+USAJOBS_ENV = "USAJOBS_API_KEY"
+ADZUNA_ID_ENV = "ADZUNA_APP_ID_KEY"
+ADZUNA_KEY_ENV = "ADZUNA_APP_KEY"
+USAJOBS_EMAIL_KEY = "sources.usajobs_email"  # the Setting row holding the email USAJobs requires
 SAM_NAICS = ["541512", "541611", "541519"]
 
 
@@ -273,6 +277,96 @@ async def _rrs_status(session: AsyncSession) -> dict:
     }
 
 
+async def usajobs_status(session: AsyncSession) -> dict:
+    """The USAJobs card and the Add sheet's key panel: whether a key is saved (only its last four
+    characters are ever shown) and the email, an ordinary setting."""
+    from kestrel.db.models import Setting
+    from kestrel.llm.providers import masked, secret_present, secret_value
+
+    present = secret_present(USAJOBS_ENV)
+    row = await session.get(Setting, USAJOBS_EMAIL_KEY)
+    email = str(row.value or "") if row is not None and isinstance(row.value, str) else ""
+    return {
+        "present": present, "masked": masked(secret_value(USAJOBS_ENV)) if present else "",
+        "email": email, "ready": bool(present and email),
+    }
+
+
+async def save_usajobs_credentials(
+    session: AsyncSession, *, key: str, email: str
+) -> str | None:
+    """Save what the user typed: the key through the helper the online-model keys use (data-home
+    .env only), the email as a setting copied into every USAJobs search so each run can send it.
+    An empty field keeps what is saved. Returns a plain sentence on refusal, else None."""
+    import re
+
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.models import Setting
+    from kestrel.llm import providers
+
+    email = email.strip()
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return "That does not look like an email address."
+    if key:
+        try:
+            providers.write_secret(USAJOBS_ENV, key)
+        except (ValueError, OSError) as exc:
+            log.warning("usajobs_key_not_saved", error_type=type(exc).__name__)
+            return plain_error(exc)
+    if email:
+        row = await session.get(Setting, USAJOBS_EMAIL_KEY)
+        if row is None:
+            session.add(Setting(key=USAJOBS_EMAIL_KEY, value=email))
+        else:
+            row.value = email
+            row.updated_at = utcnow_iso()
+        for src in (
+            await session.execute(select(Source).where(Source.kind == "usajobs"))
+        ).scalars():
+            src.config = {**(src.config or {}), "contact_email": email}
+            src.consecutive_failures = 0
+        await session.commit()
+    return None
+
+
+async def adzuna_status(session: AsyncSession) -> dict:
+    """The Adzuna card and the Add sheet's key panel: whether the app ID and app key are saved
+    (only the last four characters of the key are ever shown). Neither is read from the database;
+    both live in the data-home .env."""
+    from kestrel.llm.providers import masked, secret_present, secret_value
+
+    has_id, has_key = secret_present(ADZUNA_ID_ENV), secret_present(ADZUNA_KEY_ENV)
+    return {
+        "id_present": has_id, "key_present": has_key,
+        "masked": masked(secret_value(ADZUNA_KEY_ENV)) if has_key else "",
+        "ready": bool(has_id and has_key),
+    }
+
+
+async def save_adzuna_credentials(
+    session: AsyncSession, *, app_id: str, app_key: str
+) -> str | None:
+    """Save what the user typed through the helper the online-model keys use (data-home .env
+    only). An empty field keeps what is saved. Returns a plain sentence on refusal, else None."""
+    from kestrel.llm import providers
+
+    for env, value in ((ADZUNA_ID_ENV, app_id), (ADZUNA_KEY_ENV, app_key)):
+        if not value:
+            continue
+        try:
+            providers.write_secret(env, value)
+        except (ValueError, OSError) as exc:
+            log.warning("adzuna_key_not_saved", error_type=type(exc).__name__)
+            return plain_error(exc)
+    if app_id or app_key:
+        for src in (
+            await session.execute(select(Source).where(Source.kind == "adzuna"))
+        ).scalars():
+            src.consecutive_failures = 0
+        await session.commit()
+    return None
+
+
 async def _checking(session: AsyncSession, *, held: bool = False) -> int:
     """Checks someone asked for that have not finished: scrape tasks waiting or running."""
     from kestrel.services.online_consent import APPROVAL_HOLD
@@ -309,8 +403,7 @@ def _lane_approval(settings) -> dict[str, list[str]]:
 
 
 async def _lane_ctx(session: AsyncSession) -> dict:
-    """Roles from found company boards waiting to be scored when Kestrel is idle (D-SRC-8), and
-    what scoring them all now would cost (D-SRC-9), stated before the operator confirms."""
+    """The legacy backlog, its local scoring time and whether online settings hold it."""
     from kestrel.pipeline import lane
     from kestrel.services.setting_overrides import load_settings_with_db
 
@@ -434,6 +527,8 @@ async def _panel_ctx(
         "sec_titles_label": SEC_TITLES_LABEL,
         "sam": _sam_status(),
         "rrs": await _rrs_status(session),
+        "usajobs": await usajobs_status(session),
+        "adzuna": await adzuna_status(session),
         "create_error": create_error,
         "create_values": create_values or {},
         "edit_error": edit_error,
@@ -542,8 +637,7 @@ async def toggle_searches(request: Request):
 
 @router.post("/sources/score-everything", response_class=HTMLResponse)
 async def score_everything_now(request: Request):
-    """The one-shot "Score everything now" (D-SRC-9): every role waiting in the background lane
-    joins the normal flow. It does not stay on; the daily cap and the idle rule resume after."""
+    """Recheck the legacy backlog and release survivors for local scoring only."""
     from kestrel.pipeline import lane
 
     form = await request.form()
@@ -556,18 +650,13 @@ async def score_everything_now(request: Request):
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
     if lane.scores_on_hosted(settings):
-        # An online model would score these: the confirmation must name the configured model,
-        # checked here and not trusted from the page, and Hosted mode must be on.
-        from kestrel.services.online_consent import approval_covers
-        ok = settings.llm.hosted_mode.active and approval_covers(
-            _lane_approval(settings), form.get("online_approval")
-        )
-        if not ok:
-            async with sessionmaker()() as s:
-                ctx = await _panel_ctx(
-                    request, s, lane_message="Nothing was sent. Confirm the online scoring in "
-                    "the panel first, and check that Hosted mode is on.")
-            return _panel(request, ctx, 400)
+        await lane.release_all(sessionmaker(), hosted=True)
+        async with sessionmaker()() as s:
+            ctx = await _panel_ctx(
+                request, s, lane_message="Nothing was sent. Waiting background roles use local "
+                "models only. Choose local models for both scoring tiers first."
+            )
+        return _panel(request, ctx, 400)
     credit.clear()  # the operator asked to score now: let an online key try again (D-LLM-8)
     n = await lane.release_all(sessionmaker(), online_approval=form.get("online_approval"))
     async with sessionmaker()() as s:
@@ -775,6 +864,46 @@ async def toggle_rrs(request: Request):
         message = {"ok": False, "text": "Could not change that. Try again."}
     async with sessionmaker()() as s:
         ctx = await _panel_ctx(request, s, rrs_message=message)
+    return _panel(request, ctx)
+
+
+@router.post("/sources/usajobs/key", response_class=HTMLResponse)
+async def save_usajobs_key(request: Request):
+    """Save the user's USAJobs key and email from the card. The key is never echoed, logged or
+    stored in a source. Always 200 so the panel can show the message in plain words."""
+    form = await request.form()
+    key = str(form.get("api_key") or "").strip()
+    email = str(form.get("email") or "").strip()
+    async with sessionmaker()() as s:
+        if not key and not email:
+            message = {"ok": False, "text": "Paste your key or type your email first."}
+        else:
+            error = await save_usajobs_credentials(s, key=key, email=email)
+            message = (
+                {"ok": False, "text": error} if error
+                else {"ok": True, "text": "Saved on this computer."}
+            )
+        ctx = await _panel_ctx(request, s, usajobs_message=message)
+    return _panel(request, ctx)
+
+
+@router.post("/sources/adzuna/key", response_class=HTMLResponse)
+async def save_adzuna_key(request: Request):
+    """Save the user's Adzuna app ID and app key from the card. Neither is echoed, logged or
+    stored in a source. Always 200 so the panel can show the message in plain words."""
+    form = await request.form()
+    app_id = str(form.get("app_id") or "").strip()
+    app_key = str(form.get("app_key") or "").strip()
+    async with sessionmaker()() as s:
+        if not app_id and not app_key:
+            message = {"ok": False, "text": "Paste your app ID and app key first."}
+        else:
+            error = await save_adzuna_credentials(s, app_id=app_id, app_key=app_key)
+            message = (
+                {"ok": False, "text": error} if error
+                else {"ok": True, "text": "Saved on this computer."}
+            )
+        ctx = await _panel_ctx(request, s, adzuna_message=message)
     return _panel(request, ctx)
 
 

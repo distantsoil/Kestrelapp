@@ -106,8 +106,8 @@ async def test_no_such_role_and_no_roles_states():
     await prep_seed.seed_async()
     with _client() as c:
         gone = c.get("/prep/9999").text
-    assert "<h1>Interview prep</h1>" in gone and "Prep pack" not in gone
-    assert "No such role" in gone
+    assert "<h1>Interview prep</h1>" in gone and "No such role" in gone
+    assert 'data-testid="pp-tabs"' in gone
     await prep_seed.seed_async()
     async with _sm()() as s:
         for p in (await s.execute(select(Pursuit))).scalars().all():
@@ -118,6 +118,14 @@ async def test_no_such_role_and_no_roles_states():
         bank = c.get("/stories").text
     assert "No interview is booked yet" in home
     assert 'data-testid="pp-bank"' in bank  # the story bank is open without a role
+    # D-UI-221: the three tabs stay on every tab without a role, page and htmx swap alike, so
+    # Practice and Prep pack never strand the person away from the story bank.
+    with _client() as c:
+        swaps = [c.get(f"/prep?tab={t}", headers=HX).text for t in ("pack", "practice", "bank")]
+    for page_text in [home, bank] + swaps:
+        assert 'data-testid="pp-tabs"' in page_text
+        for t in ("pack", "practice", "bank"):
+            assert f'data-testid="pp-tab-{t}"' in page_text
 
 
 async def test_the_body_alone_comes_for_an_htmx_request_and_tabs_are_urls():

@@ -125,4 +125,4 @@ def test_history_is_newest_first_and_ends_with_where_it_was_found():
         "Passed the quick screen",
         "Found on Indeed and 1 other place",
     ]
-    assert tl[1]["sub"] == "m · prompt version evaluate/v7"
+    assert tl[1]["sub"] == "m · prompt version 7"

@@ -36,7 +36,7 @@
           {% if fresh %}
           <button type="button" class="k-btn k-btn--done" hx-post="{{ base }}/role/unshortlist" hx-target="#rl-side" hx-swap="outerHTML" data-testid="on-my-list" title="Click again to take it off {{ 'your leads' if consulting else 'your shortlist' }}">{{ ric('check') }}{{ w.on_list|capitalize }}</button>
           {% else %}
-          <a class="k-btn k-btn--done" href="/pursuits" data-testid="on-my-list">{{ ric('check') }}{{ w.on_list|capitalize }} · {{ pursuit_column or pursuit.status|replace('_', ' ') }}</a>
+          <a class="k-btn k-btn--done" href="/pursuits" data-testid="on-my-list">{{ ric('check') }}{{ w.on_list|capitalize }} · {{ ((pursuit_column or pursuit.status|replace('_', ' ')).split(' / ')[0]) }}</a>
           {% endif %}
           <button type="button" class="k-btn" disabled title="Take it off {{ 'your leads' if consulting else 'your shortlist' }} first." data-testid="not-for-me">Not for me</button>
         {% else %}

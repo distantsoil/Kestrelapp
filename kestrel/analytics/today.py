@@ -943,12 +943,12 @@ async def system_asks(
         failed = fails.scoring + fails.other
         again = fails.rescore
         if failed and again:
-            title = (f"{_plural(failed, 'posting', 'postings')} failed scoring; "
+            title = (f"{_plural(failed, 'posting', 'postings')} {_need(failed)} another try; "
                      f"score again failed for {again}")
         elif again:
             title = f"Score again failed for {_plural(again, 'posting', 'postings')}"
         else:
-            title = f"{_plural(failed, 'posting', 'postings')} failed scoring"
+            title = f"{_plural(failed, 'posting', 'postings')} {_need(failed)} another try"
         stands = (" Their earlier scores stand." if again > 1
                   else " Its earlier score stands." if again else "")
         asks.append(
@@ -1056,7 +1056,7 @@ def quarantine_line(n: int, kinds: Counter[str] | None = None) -> str:
     """Failed postings are separate from pending work: they never clear by waiting. The reason
     follows the stored errors (a budget overrun and a malformed answer need different fixes)."""
     return (
-        f"{_plural(n, 'posting', 'postings')} failed scoring. {quarantine_why(kinds)} "
+        f"{_plural(n, 'posting', 'postings')} {_need(n)} another try. {quarantine_why(kinds)} "
         "Retry them, or pick another model on Models."
     )
 
@@ -1110,6 +1110,11 @@ def _hhmm(value: str | None) -> str | None:
 
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
+
+
+def _need(n: int) -> str:
+    """"needs" for one, "need" for any other count (the totals read "need another try")."""
+    return "needs" if n == 1 else "need"
 
 
 async def happening_now(

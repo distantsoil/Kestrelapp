@@ -7,14 +7,18 @@
      ring and a NEW tag (the view stays anchored); the status strip fades Last run into Next run.
    - The walkthrough: a spotlight tour over THIS page and its real sidebar.
    Everything is delegated on the document or re-run on htmx:load, so it survives a swapped
-   section. User-facing strings here are the tour steps and a few labels. */
+   section. The page runs on the lifecycle (KUI.page, D-UI-210): this file only defines it, and
+   mount starts every listener and timer through its context, so leaving stops all of them and
+   coming back starts one set. User-facing strings here are the tour steps and a few labels. */
 (function (root) {
   'use strict';
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
 
   var GAP = 16, PEEK = 60, CARD = 270;
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
   var S = { idx: 0, perView: 4, cw: 0, fade: null, poll: null };
+  var cx = null;
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -23,7 +27,7 @@
   function cards() { return $$('#td-track > .td-card'); }
   function count() { return cards().length; }
   function maxIdx() { return Math.max(0, count() - S.perView); }
-  function later(fn, ms) { return setTimeout(fn, reduced() ? 0 : ms); }
+  function later(fn, ms) { return cx ? cx.after(reduced() ? 0 : ms, fn) : 0; }
 
   /* ----------------------------------------------------------------------------- carousel */
   // The title and the "why it fits" share a fixed budget of five lines (a title may take two), so
@@ -80,21 +84,21 @@
     });
     layout();
   }
-  doc.addEventListener('animationend', function (e) {
+  function onAnimationEnd(e) {
     var c = e.target && e.target.closest && e.target.closest('.td-card');
     if (!c || e.target !== c) return;
     if (e.animationName === 'td-in-up') c.classList.remove('is-in');
     if (e.animationName === 'k-glow') c.classList.remove('is-arrive');
-  });
+  }
 
   // Dragging with touch, pen or mouse; vertical page scroll still works on touch.
   var drag = { x0: null, y0: 0, base: 0, moved: false, pid: null };
-  doc.addEventListener('pointerdown', function (e) {
+  function onPointerDown(e) {
     var vp = e.target.closest && e.target.closest('#td-vp');
     if (!vp || e.button !== 0 || e.target.closest('button, a')) return;
     drag.x0 = e.clientX; drag.y0 = e.clientY; drag.base = offAt(S.idx); drag.moved = false; drag.pid = e.pointerId;
-  });
-  doc.addEventListener('pointermove', function (e) {
+  }
+  function onPointerMove(e) {
     if (drag.x0 === null || e.pointerId !== drag.pid) return;
     var vp = $('#td-vp'), tr = $('#td-track');
     if (!vp || !tr) return;
@@ -109,7 +113,7 @@
     if (off < 0) off *= 0.35;
     if (off > max) off = max + (off - max) * 0.35;
     tr.style.transform = 'translateX(' + (-off) + 'px)';
-  });
+  }
   function endDrag(e) {
     if (drag.x0 === null) return;
     var dx = (e.clientX !== undefined ? e.clientX : drag.x0) - drag.x0;
@@ -119,16 +123,14 @@
     if (vp) {
       vp.classList.remove('is-dragging');
       var kill = function (ev) { ev.stopPropagation(); ev.preventDefault(); };
-      vp.addEventListener('click', kill, { capture: true, once: true });
-      setTimeout(function () { vp.removeEventListener('click', kill, { capture: true }); }, 50);
+      var unkill = cx.on(vp, 'click', kill, { capture: true, once: true });
+      cx.after(50, unkill);
     }
     var step = Math.round(Math.abs(dx) / (S.cw + GAP)) || (Math.abs(dx) > 40 ? 1 : 0);
     go(dx < 0 ? S.idx + step : S.idx - step);
   }
-  doc.addEventListener('pointerup', endDrag);
-  doc.addEventListener('pointercancel', endDrag);
 
-  doc.addEventListener('keydown', function (e) {
+  function onKeyDown(e) {
     if (tour.on) {
       if (e.key === 'Escape') stopTour();
       else if (e.key === 'ArrowRight') toStep(tour.i + 1);
@@ -142,8 +144,8 @@
     if (!$('#td-vp')) return;
     if (e.key === 'ArrowRight') go(S.idx + 1);
     else if (e.key === 'ArrowLeft') go(S.idx - 1);
-  });
-  doc.addEventListener('click', function (e) {
+  }
+  function onClick(e) {
     var t = e.target;
     if (t.closest('#td-prev')) { go(S.idx - 1); return; }
     if (t.closest('#td-next')) { go(S.idx + 1); return; }
@@ -162,12 +164,12 @@
       var b = $('[data-testid="scan-now"]');
       if (b) b.click();
     }
-  });
-  doc.addEventListener('keydown', function (e) {
+  }
+  function onDotKey(e) {
     var dot = e.target.closest && e.target.closest('#td-dots i');
     if (dot && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go($$('#td-dots i').indexOf(dot)); }
-  });
-  root.addEventListener('resize', function () { layout(); if (tour.on) paintTour(false); });
+  }
+  function onResize() { layout(); if (tour.on) paintTour(false); }
 
   /* ------------------------------------------------------------------------ card actions */
   function collapse(c) {
@@ -209,9 +211,22 @@
     if (!c) return;
     var b = $('.td-sl', c);
     if (b) { b.classList.add('is-added'); b.textContent = '✓ Added'; }
+    enterNext = true;
     later(function () { removeCard(c); refreshPanels(); }, 550);
   }
-  doc.addEventListener('htmx:afterRequest', function (e) {
+  // The shortlisted role slides into the top of Decisions waiting (the mockup's .item.enter).
+  var enterNext = false;
+  function onAfterSwap(e) {
+    var t = e.target;
+    if (!enterNext || !t || t.id !== 'td-decisions') return;
+    enterNext = false;
+    var first = $('#td-decisions .td-item');
+    if (first && first.animate && !reduced()) {
+      first.animate([{ opacity: 0, transform: 'translateX(-24px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 450, easing: 'ease' });
+    }
+  }
+  function onAfterRequest(e) {
     var d = e.detail, el = d && d.elt;
     if (!el || !el.matches) return;
     var url = (d.pathInfo && d.pathInfo.requestPath) || '';
@@ -237,9 +252,9 @@
       var row = el.closest('.td-item');
       if (row) { row.classList.add('is-gone'); later(function () { row.remove(); refreshPanels(); }, 380); }
     }
-  });
-  // An Undo (any toast): the sections that show the change are asked again.
-  doc.addEventListener('kestrel:undone', function () {
+  }
+  // An Undo (any toast, kestrel:undone): the sections that show the change are asked again.
+  function onUndone() {
     var m = $('#td-matches');
     refreshPanels();
     if (m && root.htmx) {
@@ -247,44 +262,59 @@
       root.htmx.ajax('GET', '/today/matches?track=' + encodeURIComponent(track()),
         { target: '#td-matches', swap: 'outerHTML' });
     }
-  });
+  }
 
   /* -------------------------------------------------------------- the role summary (Review) */
   function openRole(id, trigger) {
     var dr = $('#td-drawer');
-    if (!dr || !root.fetch) return;
-    root.fetch('/today/roles/' + encodeURIComponent(id) + '/summary', { credentials: 'same-origin' })
+    if (!dr || !root.fetch || !cx) return;
+    var signal = cx.signal;  // leaving the page drops an answer still on its way
+    root.fetch('/today/roles/' + encodeURIComponent(id) + '/summary',
+      { credentials: 'same-origin', signal: signal })
       .then(function (r) { return r.text(); })
       .then(function (html) {
+        if (signal.aborted) return;
         dr.innerHTML = html;
         if (root.htmx) root.htmx.process(dr);
         if (root.KUI) root.KUI.openSlideOver('#td-drawer', { trigger: trigger });
-      });
+      })
+      .catch(function () { /* offline, or the page was left: the summary stays closed */ });
   }
 
   /* ------------------------------------------------------------------------ the status strip */
   function initStrip() {
-    clearInterval(S.fade);
+    cx.clear(S.fade);
+    S.fade = null;
     var f = $('#td-fader');
     if (!f || f.getAttribute('data-hold') === '1') return;
     var last = $('#td-face-last'), next = $('#td-face-next');
     if (!last || !next || reduced()) return;
     var a = $('.td-ico-a'), b = $('.td-ico-b');
-    var showLast = true;
-    S.fade = setInterval(function () {
+    var showLast = !last.classList.contains('is-hide');
+    S.fade = cx.every(4000, function () {
       showLast = !showLast;
       last.classList.toggle('is-hide', !showLast);
       next.classList.toggle('is-hide', showLast);
       last.setAttribute('aria-hidden', showLast ? 'false' : 'true');
       next.setAttribute('aria-hidden', showLast ? 'true' : 'false');
       if (a && b) { a.hidden = !showLast; b.hidden = showLast; }
-    }, 4000);
+    });
   }
 
   /* ------------------------------------------------------------------ live: a new match */
   function insertCard(item) {
     var tr = $('#td-track');
     if (!tr || cardOf(item.id)) return;
+    // Hold the carousel's height while the horizontal gap opens. The first reviewed card
+    // replaces an empty state, so glide to its height instead of jumping the lower panels.
+    var heldHeight = tr.getBoundingClientRect().height;
+    if (!tr._tdArrivals) {
+      tr._tdTarget = count() ? heldHeight : 0;
+      tr._tdAnchor = cards()[S.idx];
+      tr.style.height = heldHeight + 'px';
+      tr.getBoundingClientRect();
+    }
+    tr._tdArrivals = (tr._tdArrivals || 0) + 1;
     var done = $('.td-empty', tr);
     if (done) done.remove();
     var tmp = doc.createElement('div');
@@ -297,43 +327,109 @@
       root.KUI.toast('New strong match: ' + Number(item.score).toFixed(1) + ' \u00b7 ' + item.title);
     }
     var before = item.before ? cardOf(item.before) : null;
-    var ref = $('.td-card', tr);
-    var hh = ref ? ref.offsetHeight : 300;
     // Keep the view anchored: the viewport's first visible card stays where it is.
-    var anchor = cards()[S.idx];
     el.classList.add('is-grow');
-    el.style.width = '0px'; el.style.padding = '16px 0'; el.style.height = hh + 'px';
+    el.style.width = '0px'; el.style.padding = '16px 0';
     el.style.alignSelf = 'flex-start'; el.style.minWidth = '0';
     if (before) tr.insertBefore(el, before); else tr.appendChild(el);
     if (root.htmx) root.htmx.process(el);
-    var shift = anchor ? cards().indexOf(anchor) : S.idx;
     var held = S.idx;
     layout();
     S.idx = Math.min(held, maxIdx());
     go(S.idx);  // the new card is still closed: hold the view, then move it as the gap opens
-    el.style.width = S.cw + 'px'; balance(el); el.style.width = '0px';
+    // Measure at its real width, without interpolating the width transition from zero.
+    el.style.transition = 'none';
+    el.style.width = S.cw + 'px';
+    el.style.padding = '';
+    balance(el);
+    var targetHeight = Math.max(tr._tdTarget, el.getBoundingClientRect().height);
+    tr._tdTarget = targetHeight;
+    el.style.padding = '16px 0';
+    el.style.height = targetHeight + 'px';
+    el.style.width = '0px';
+    el.getBoundingClientRect();
+    el.style.transition = '';
+    tr.style.height = targetHeight + 'px';
     var open = function () { el.style.width = S.cw + 'px'; el.style.padding = ''; };
     if (reduced()) { open(); } else { requestAnimationFrame(function () { requestAnimationFrame(open); }); }
     later(function () {
       el.classList.remove('is-grow');
       el.style.height = ''; el.style.alignSelf = '';
+      tr._tdArrivals -= 1;
+      if (!tr._tdArrivals) tr.style.height = '';
       el.classList.add('is-arrive');
-      S.idx = Math.min(shift, maxIdx());
+      var shift = tr._tdAnchor ? cards().indexOf(tr._tdAnchor) : S.idx;
+      S.idx = Math.max(0, Math.min(shift, maxIdx()));
       go(S.idx);
     }, 460);
   }
+  // A card whose full review finished: its content changes in place (a short fade), then the
+  // cards slide into best-first order (owner round 13). No card jumps; reduced motion snaps.
+  function finishCard(item) {
+    var old = cardOf(item.id);
+    if (!old) return;
+    var tmp = doc.createElement('div');
+    tmp.innerHTML = item.html.trim();
+    var el = tmp.firstElementChild;
+    if (!el) return;
+    el.style.width = old.style.width;
+    old.replaceWith(el);
+    if (root.htmx) root.htmx.process(el);
+    if (!reduced() && el.animate) el.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 300 });
+  }
+  function reorder(ids) {
+    var tr = $('#td-track');
+    if (!tr || !ids.length) return;
+    var list = cards();
+    var before = {};
+    list.forEach(function (c) { before[c.getAttribute('data-id')] = c.getBoundingClientRect().left; });
+    var order = ids.map(String);
+    var sorted = list.slice().sort(function (a, b) {
+      var ia = order.indexOf(a.getAttribute('data-id')), ib = order.indexOf(b.getAttribute('data-id'));
+      return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib);
+    });
+    if (sorted.every(function (c, i) { return c === list[i]; })) return;
+    var tail = list[list.length - 1].nextSibling;
+    sorted.forEach(function (c) { tr.insertBefore(c, tail); });
+    layout();
+    go(Math.min(S.idx, maxIdx()));
+    if (reduced()) return;
+    sorted.forEach(function (c) {
+      var dx = before[c.getAttribute('data-id')] - c.getBoundingClientRect().left;
+      if (dx && c.animate) {
+        c.animate([{ transform: 'translateX(' + dx + 'px)' }, { transform: 'none' }],
+                  { duration: 420, easing: 'cubic-bezier(.22,.8,.3,1)' });
+      }
+    });
+  }
   function pollNew() {
     var tr = $('#td-track');
-    if (!tr || doc.hidden || !root.fetch) return;
+    if (!tr || doc.hidden || !root.fetch || !cx) return;
+    var signal = cx.signal;
     var have = cards().map(function (c) { return c.getAttribute('data-id'); }).join(',');
-    root.fetch('/today/matches/new?track=' + encodeURIComponent(track()) + '&have=' + have,
-      { credentials: 'same-origin' })
+    var pend = cards().filter(function (c) { return c.getAttribute('data-pending') === '1'; })
+      .map(function (c) { return c.getAttribute('data-id'); }).join(',');
+    root.fetch('/today/matches/new?track=' + encodeURIComponent(track()) + '&have=' + have +
+               '&pending=' + pend,
+      { credentials: 'same-origin', signal: signal })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
-        if (!d) return;
+        if (!d || signal.aborted) return;
         (d.new || []).forEach(insertCard);
+        (d.done || []).forEach(finishCard);
+        if ((d.done || []).length) reorder(d.ids || []);
+        var pending = $('#td-pending');
+        var line = d.pending > 0 ? d.pending + ' more being reviewed' : '';
+        if (pending && pending.textContent !== line) {
+          pending.textContent = line;
+          if (!reduced() && pending.animate) {
+            pending.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 300 });
+          }
+        }
         var sub = $('#td-sub');
-        if (sub && d.found_line && !$('.td-empty', tr)) sub.textContent = d.found_line;
+        if (sub && d.found_line && (d.pending > 0 || !$('.td-empty', tr))) {
+          sub.textContent = d.found_line;
+        }
       })
       .catch(function () { /* offline or restarting: the next poll tries again */ });
   }
@@ -344,9 +440,9 @@
     var busy = !!top && /active/.test(top.getAttribute('data-state') || '');
     var ms = busy ? 6000 : 30000;
     if (S.poll && S.pollMs === ms) return;
-    clearInterval(S.poll);
+    cx.clear(S.poll);
     S.pollMs = ms;
-    S.poll = setInterval(pollNew, ms);
+    S.poll = cx.every(ms, pollNew);
   }
 
   /* --------------------------------------------------------------------- the walkthrough */
@@ -389,17 +485,20 @@
     tc.appendChild(el('h4', '', st.h));
     tc.appendChild(el('p', '', st.p));
     var ft = el('div', 'td-tc__ft');
-    if (!last) ft.appendChild(el('span', 'td-tc__cnt', (tour.i + 1) + ' of 6'));
+    var meta = el('div', 'td-tc__meta');
+    if (!last) meta.appendChild(el('span', 'td-tc__cnt', (tour.i + 1) + ' of 6'));
     var dots = el('div', 'td-tdots');
     dots.setAttribute('aria-hidden', 'true');
     for (var k = 0; k < 6; k++) dots.appendChild(el('i', k === tour.i || (last && k === 5) ? 'is-on' : ''));
-    ft.appendChild(dots);
-    ft.appendChild(el('span', 'td-tc__sp'));
-    if (!last) ft.appendChild(button('Skip tour', 'k-btn k-btn--quiet k-btn--sm', 'skip'));
-    if (tour.i > 0) ft.appendChild(button('Back', 'k-btn k-btn--sm', 'back'));
-    ft.appendChild(button(last ? 'Close' : 'Next', 'k-btn k-btn--primary k-btn--sm', 'next'));
+    meta.appendChild(dots);
+    ft.appendChild(meta);
+    var acts = el('div', 'td-tc__act');
+    if (!last) acts.appendChild(button('Skip tour', 'k-btn k-btn--quiet k-btn--sm', 'skip'));
+    if (tour.i > 0) acts.appendChild(button('Back', 'k-btn k-btn--sm', 'back'));
+    acts.appendChild(button(last ? 'Close' : 'Next', 'k-btn k-btn--primary k-btn--sm', 'next'));
+    ft.appendChild(acts);
     tc.appendChild(ft);
-    var W = root.innerWidth, H = root.innerHeight, CW = 330, CH = tc.offsetHeight, x, y;
+    var W = root.innerWidth, H = root.innerHeight, CW = tc.offsetWidth || 330, CH = tc.offsetHeight, x, y;
     if (target) {
       var r = target.getBoundingClientRect(), pad = 6;
       spot.classList.remove('is-none');
@@ -444,35 +543,109 @@
     tour.i = Math.max(0, Math.min(STEPS.length - 1, i));
     paintTour(false);
   }
-  doc.addEventListener('click', function (e) {
+  function onTourClick(e) {
     var b = e.target.closest && e.target.closest('[data-td-tour]');
     if (!b) return;
     var act = b.getAttribute('data-td-tour');
     if (act === 'next') { if (tour.i === STEPS.length - 1) stopTour(); else toStep(tour.i + 1); }
     else if (act === 'back') toStep(tour.i - 1);
     else stopTour();
-  });
-  root.KTour = { start: startTour, stop: stopTour };
-  doc.addEventListener('click', function (e) {
+  }
+  function onTourStart(e) {
     if (e.target.closest && e.target.closest('[data-td-tour-start]')) startTour(0);
-  });
+  }
+
+  /* The strip refreshes in place (owner round 13: it vanished and came back on each poll). A
+     poll that brings the same strip changes nothing; one that brings new counts keeps the face
+     (Last run or Next run) that was showing, so only the numbers change. */
+  var stripFace = null;
+  function onBeforeSwap(e) {
+    var tgt = e.detail && e.detail.target;
+    if (!tgt || tgt.id !== 'td-top' || !e.detail.xhr) return;
+    var box = doc.createElement('div');
+    box.innerHTML = e.detail.xhr.responseText || '';
+    var fresh = box.querySelector('#td-top');
+    if (fresh && fresh.textContent.replace(/\s+/g, ' ') === tgt.textContent.replace(/\s+/g, ' ')) {
+      e.detail.shouldSwap = false;
+      return;
+    }
+    var last = $('#td-face-last');
+    stripFace = last && last.classList.contains('is-hide') ? 'next' : 'last';
+  }
+  function keepFace() {
+    if (stripFace !== 'next') return;
+    var last = $('#td-face-last'), next = $('#td-face-next'), f = $('#td-fader');
+    if (!last || !next || (f && f.getAttribute('data-hold') === '1')) return;
+    last.classList.add('is-hide'); next.classList.remove('is-hide');
+    last.setAttribute('aria-hidden', 'true'); next.setAttribute('aria-hidden', 'false');
+    var a = $('.td-ico-a'), b = $('.td-ico-b');
+    if (a && b) { a.hidden = true; b.hidden = false; }
+  }
+
+  // Updated in place (kestrel-ui.js data-k-morph): the face that was showing stays.
+  function onMorphed(e) {
+    if (e.target && e.target.id === 'td-top') { keepFace(); stripFace = null; }
+  }
 
   /* ---------------------------------------------------------------------------------- init */
-  doc.body.addEventListener('htmx:load', function (e) {
+  function onLoad(e) {
     var n = e.detail && e.detail.elt;
     if (!n || !n.id) return;
     if (n.id === 'td-matches') { initCarousel(); }
-    if (n.id === 'td-top') { initStrip(); startPoll(); }
-  });
+    if (n.id === 'td-top') { keepFace(); initStrip(); startPoll(); stripFace = null; }
+  }
   function boot() {
     if (!$('#today')) return;
     initCarousel();
     initStrip();
     startPoll();
     var host = $('#today');
+    // The launch entrance (locked mockup): the page staggers in once. The class only gates the CSS
+    // delays, so a panel refreshed later by htmx never replays it.
+    if (!reduced()) { host.classList.add('td-launch'); cx.after(2200, function () { host.classList.remove('td-launch'); }); }
     if (host.getAttribute('data-tour') === '1') later(function () { startTour(0); }, 600);
   }
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', boot); else boot();
-  if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(function () { if ($('#td-vp')) layout(); });
-  root.TodayPage = { layout: layout, go: go, insertCard: insertCard, pollNew: pollNew };
+
+  root.KUI.page.define('today', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      S = { idx: 0, perView: 4, cw: 0, fade: null, poll: null };
+      drag = { x0: null, y0: 0, base: 0, moved: false, pid: null };
+      tour = { on: false, i: 0, from: null };
+      enterNext = false;
+      stripFace = null;
+      ctx.on(doc, 'animationend', onAnimationEnd);
+      ctx.on(doc, 'pointerdown', onPointerDown);
+      ctx.on(doc, 'pointermove', onPointerMove);
+      ctx.on(doc, 'pointerup', endDrag);
+      ctx.on(doc, 'pointercancel', endDrag);
+      ctx.on(doc, 'keydown', onKeyDown);
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'keydown', onDotKey);
+      ctx.on(root, 'resize', onResize);
+      ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
+      ctx.on(doc, 'htmx:afterRequest', onAfterRequest);
+      ctx.on(doc, 'kestrel:undone', onUndone);
+      ctx.on(doc, 'click', onTourClick);
+      ctx.on(doc, 'click', onTourStart);
+      ctx.on(doc.body, 'htmx:beforeSwap', onBeforeSwap);
+      ctx.on(doc.body, 'k-morphed', onMorphed);
+      ctx.on(doc.body, 'htmx:load', onLoad);
+      boot();
+      if (doc.fonts && doc.fonts.ready) {
+        doc.fonts.ready.then(function () { if (!ctx.signal.aborted && $('#td-vp')) layout(); });
+      }
+      root.KTour = { start: startTour, stop: stopTour };
+      root.TodayPage = { layout: layout, go: go, insertCard: insertCard, pollNew: pollNew };
+      ctx.onUnmount(function () {
+        if (tour.on) stopTour();
+        var host = $('#today');
+        if (host) host.classList.remove('td-launch');
+        // The carousel's entrance plays on each arrival, as it did on each page load.
+        doc.body.removeAttribute('data-td-seen');
+        delete root.KTour;
+        delete root.TodayPage;
+      });
+    }
+  });
 })(typeof window !== 'undefined' ? window : this);

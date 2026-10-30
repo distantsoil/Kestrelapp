@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:tt="https://teamtailor.com/locations" version="2.0">
+  <channel>
+    <title>Northwind</title>
+    <description>Current job openings</description>
+    <link>https://careers.northwind.example/jobs</link>
+    <item>
+      <title>Strategic Partnerships Manager - Chicago</title>
+      <description>&lt;h4&gt;&lt;strong&gt;Join us to shape the future!&lt;/strong&gt;&lt;/h4&gt;&lt;p&gt;Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 200,000 users, and available in 90 countries worldwide. 🌍&lt;/p&gt;</description>
+      <pubDate>Wed, 28 Oct 2026 18:26:40 +0100</pubDate>
+      <link>https://careers.northwind.example/jobs/8632755-strategic-partnerships-manager-chicago</link>
+      <remoteStatus>hybrid</remoteStatus>
+      <guid>90555eb4-c67c-488b-978d-3efc4c53d2e2</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Chicago</tt:name>
+          <tt:address>1 Example Street</tt:address>
+          <tt:zip>60603</tt:zip>
+          <tt:city>Chicago</tt:city>
+          <tt:country>United States</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Partnerships</tt:department>
+      <tt:role>Partnerships Manager</tt:role>
+      <tt:division />
+    </item>
+    <item>
+      <title>Account Executive - Bogota</title>
+      <description>&lt;h4&gt;&lt;strong&gt;Join us to shape the future!&lt;/strong&gt;&lt;/h4&gt;&lt;p&gt;Northwind is a global Employer Branding and ATS SaaS platform used by over 13,000 companies, 250,000 users, and available in 90 countries worldwide. 🌍&lt;/p&gt;&lt;p&gt;Working at &lt;a target="_blank" href="https://www.northwind.com/en/"&gt;Northwind&lt;/a&gt; means being part of a dynamic, fast-paced tech company that values impact and responsibility. Our workplace fosters an environment where everyone can contribute meaningfully to the growth of the company. 🎉🥳&lt;/p&gt;</description>
+      <pubDate>Tue, 27 Oct 2026 19:09:21 +0100</pubDate>
+      <link>https://careers.northwind.example/jobs/8626868-account-executive-bogota</link>
+      <remoteStatus>hybrid</remoteStatus>
+      <guid>10331f7b-0619-462d-a571-d84b19e6da45</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name />
+          <tt:address>1 Example Street</tt:address>
+          <tt:zip>110221</tt:zip>
+          <tt:city>Bogotá</tt:city>
+          <tt:country>Colombia</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Sales</tt:department>
+      <tt:role>Account Executive</tt:role>
+      <tt:division />
+    </item>
+    </channel>
+</rss>

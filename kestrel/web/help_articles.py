@@ -30,7 +30,7 @@ TOPICS: tuple[Topic, ...] = (
     Topic(
         "start",
         "Getting started",
-        "compass",
+        "start",
         "i",
         (
             Article(
@@ -131,7 +131,7 @@ Preferences. Turning a track off never deletes your roles or ratings.</p>""",
     Topic(
         "score",
         "How scoring works",
-        "analytics",
+        "gauge",
         "v",
         (
             Article(
@@ -429,7 +429,7 @@ something's off</h6><p>If it stays grey after you shortlist, run Check my models
     Topic(
         "fix",
         "Troubleshooting",
-        "tune",
+        "wrench",
         "w",
         (
             Article(

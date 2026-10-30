@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from kestrel import paths
 from kestrel.db.engine import make_async_engine
-from kestrel.db.models import Run, Setting, Task
+from kestrel.db.models import Run, ScrapeRun, Setting, Task
 from kestrel.web.app import build_app, set_paused
 from tests import runs_seed
 
@@ -152,7 +152,7 @@ def test_latest_run_tiles_and_cards_when_idle(idle):
     c, seed = idle
     live = _region(c.get("/runs").text, "live")
     assert 'data-run="idle"' in live and "Latest run" in live and "Finished" in live
-    for word in ("found", "rated", "failed", "needs another try"):
+    for word in ("found", "rated", "failed", "waiting for another try"):
         assert f"<span>{word}</span>" in live
     for card in ("Duration", "Model", "Sources"):
         assert f'rn-mini__k">{card}<' in live
@@ -176,7 +176,8 @@ def test_timeline_shows_ten_runs_four_labels_and_show_more(idle):
     assert tl.count('data-testid="rn-run"') == 10
     for label in ("Finished", "Partial", "Stopped by you", "Did not run"):
         assert label in html.split('id="runs-history"')[1], label
-    assert "Show 2 more" in tl and "Every run is in the Analytics export." in tl
+    assert "Show 2 more" in tl
+    assert "Every past run is included when you export from Analytics." in tl
     assert "12 runs" in html
     full = c.get("/runs/history?all=1").text
     assert full.count('data-testid="rn-run"') == 12 and "Show fewer" in full
@@ -228,6 +229,69 @@ def test_drawer_has_the_summary_rates_sources_and_details(idle):
     assert "Operations Analyst on Indeed" in html and ">OK<" in html and ">Rate-limited<" in html
     assert 'data-testid="rn-run-details"' in html and "Show details" in html
     assert "HTTP 429" in html.split("Show details")[1]  # the raw reason stays behind details
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+@pytest.mark.parametrize("area,titles", [(30, 12), (30, 0), (0, 12), (0, 0), (None, None)])
+def test_run_details_show_recorded_skips_only_when_positive(idle, suffix, area, titles):
+    client, seed = idle
+
+    async def record(session):
+        rows = (await session.execute(select(ScrapeRun).order_by(ScrapeRun.id))).scalars().all()
+        for index, row in enumerate(rows):
+            row.counts = {
+                **(row.counts or {}),
+                **({"dropped_outside_area": area} if area is not None and index == 0 else {}),
+                **(
+                    {"dropped_unrelated_title": titles} if titles is not None and index == 1 else {}
+                ),
+            }
+
+    _write(record)
+    response = client.get(f"/runs/{seed['runs'][0]}{suffix}")
+    assert response.status_code == 200
+    if area or titles:
+        assert (
+            f"Skipped {(area or 0) + (titles or 0)}: {area or 0} outside your area, "
+            f"{titles or 0} unrelated titles"
+        ) in response.text
+        assert response.text.count('data-testid="rn-skipped"') == 1
+    else:
+        assert 'data-testid="rn-skipped"' not in response.text
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_skip_totals_include_searches_beyond_display_cap_and_exclude_other_runs(idle, suffix):
+    client, seed = idle
+
+    async def record(session):
+        run = await session.get(Run, seed["runs"][0])
+        source = (await session.execute(select(ScrapeRun))).scalars().first()
+        session.add_all(
+            [
+                ScrapeRun(
+                    source_id=source.source_id,
+                    started_at=run.started_at,
+                    finished_at=run.finished_at,
+                    status="ok",
+                    counts={"dropped_outside_area": 1, "dropped_unrelated_title": 2},
+                )
+                for _ in range(65)
+            ]
+        )
+        older = await session.get(Run, seed["runs"][1])
+        session.add(
+            ScrapeRun(
+                source_id=source.source_id,
+                started_at=older.started_at,
+                status="ok",
+                counts={"dropped_outside_area": 1000, "dropped_unrelated_title": 1000},
+            )
+        )
+
+    _write(record)
+    response = client.get(f"/runs/{seed['runs'][0]}{suffix}")
+    assert "Skipped 195: 65 outside your area, 130 unrelated titles" in response.text
 
 
 def test_a_rate_from_fewer_than_five_roles_is_labeled_not_shown(idle):
@@ -419,8 +483,10 @@ def test_runs_css_and_js_use_tokens_and_no_em_dash():
 
 def test_the_responsive_rules_are_container_queries():
     css = (_WEB / "static" / "css" / "pages" / "runs.css").read_text(encoding="utf-8")
-    assert "@container (max-width: 1300px)" in css and "@container (max-width: 1000px)" in css
-    assert "container-type: inline-size" in css
+    # The steps measure the window (kwin, as the mockup's .win), never the page wrapper.
+    assert "@container kwin (max-width: 1300px)" in css
+    assert "@container kwin (max-width: 1000px)" in css
+    assert "container-type" not in css
 
 
 def test_poll_response_is_valid_json_free_html_and_escapes_what_a_posting_wrote(idle):

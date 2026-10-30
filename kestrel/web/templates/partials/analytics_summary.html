@@ -23,7 +23,7 @@
   </div>
   {% endif %}
   <div class="an-foot">
-    <span class="an-sub">{% if narrative %}Written by your AI from the numbers below. {% endif %}It can be wrong, so check the numbers.</span>
+    <span class="an-sub">Written by {{ 'your AI' if hosted_send else 'your local AI' }} from the numbers below. It can be wrong, so check the numbers.</span>
     <span class="k-grow"></span>
     {% if print_mode %}
     {% elif can_write and hosted_send %}
@@ -36,6 +36,7 @@
       <span class="import-status" role="status" aria-live="polite"><span class="spin" aria-hidden="true"></span>Asking the model. This takes a few seconds.</span>
     </form>
     {% else %}
+    <button class="k-btn k-btn--sm" type="button" disabled data-testid="rewrite-summary-off">Rewrite summary</button>
     <span class="an-sub" data-testid="an-nothing-reliable">Nothing is reliable yet{% if svo %} ({{ svo.n_outcomes }} of 10 outcomes needed){% endif %}.</span>
     {% endif %}
   </div>

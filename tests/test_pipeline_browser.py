@@ -18,7 +18,13 @@ import pytest
 from sqlalchemy import select
 
 from tests import test_pipeline_view as T
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 from tests.test_pipeline_screen import _signals
 
 pytestmark = [
@@ -311,6 +317,57 @@ def test_consulting_tabs_glide_and_the_signal_panel_adds_a_lead(live):
         page.click("#pl-foot .pl-due [data-due=today]")
         page.click("#pl-foot form button[type=submit]")
         page.wait_for_selector(f"#row-{sig['sig1']} [data-testid=in-leads]")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_and_keeps_its_history(live):
+    """The page lifecycle (D-UI-210): Pipeline unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves nothing running in between (the scroll-cue
+    timer above all). After it, one j moves one row, not two, and the panel's own history still
+    works: a row pushes ?open=<id> with its {pl: id} state, Back closes it, Forward reopens it."""
+    base, browser, ids, _sig = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/opportunities")
+        page.wait_for_selector('[data-testid="pl-row"]')
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "pipeline", "pipeline.js", settle_ms=800)
+        assert first["timers"] == 1  # the scroll-cue refresh
+        before = page.evaluate("history.length")
+        page.click(f"#row-{ids['a']} .pl-title__t")
+        page.wait_for_selector(f"#pl-panel [data-id='{ids['a']}']")
+        assert f"open={ids['a']}" in page.url
+        state = page.evaluate("history.state")
+        # The panel's own entry, which the navigation controller files as the page's (D-UI-220).
+        assert state["pl"] == ids["a"] and state["kNav"]["kind"] == "page", state
+        assert page.evaluate("history.length") == before + 1
+        order = page.evaluate("[...document.querySelectorAll('#pipeline-list .pl-row[data-id]')]"
+                              ".filter(r => r.offsetParent).map(r => Number(r.dataset.id))")
+        page.keyboard.press("j")
+        want = order[order.index(ids["a"]) + 1]
+        page.wait_for_selector(f"#pl-panel .pl-panel__in[data-id='{want}']")
+        assert f"open={want}" in page.url
+        page.go_back()
+        page.wait_for_selector(f"#pl-panel .pl-panel__in[data-id='{ids['a']}']")
+        page.go_back()
+        page.wait_for_function("() => !document.querySelector('#pl-panel.is-open')")
+        assert "open=" not in page.url
+        page.go_forward()
+        page.wait_for_selector("#pl-panel.is-open")
+        # Unmounted, the page no longer answers Back: the URL changes and the panel stays.
+        page.evaluate("KUI.page.unmount()")
+        page.go_back()
+        page.wait_for_function("() => !location.search.includes('open=')")
+        page.wait_for_timeout(300)
+        assert page.is_visible("#pl-panel.is-open")
+        assert page.evaluate(
+            "document.documentElement.style.getPropertyValue('--pl-bulk-left')") == ""
         assert errors == []
     finally:
         ctx.close()

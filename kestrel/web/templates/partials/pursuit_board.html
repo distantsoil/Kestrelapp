@@ -40,7 +40,7 @@
         <button type="button" class="k-btn k-btn--sm ap-colmore" data-colmore data-testid="show-all" data-col="{{ column.col.key }}" hidden>Show all {{ column.open|length }}</button>
         {% if column.col.key == 'closed' %}
         <div class="ap-closedg{% if closed_open %} is-open{% endif %}" data-testid="closed-group">
-          <button type="button" class="ap-cgh" data-testid="closed-toggle" aria-expanded="{{ 'true' if closed_open else 'false' }}"><span>Closed ({{ column.folded|length }})</span>{{ ic.icon('down', 'k-ic--sm') }}</button>
+          <button type="button" class="ap-cgh" data-testid="closed-toggle" aria-expanded="{{ 'true' if closed_open else 'false' }}"><span>Closed · {{ column.folded|length }}</span>{{ ic.icon('down', 'k-ic--sm') }}</button>
           <div class="ap-cgx"><div class="ap-cgi">
             {% for c in column.folded %}{{ card(c, track, ic) }}{% endfor %}
           </div></div>

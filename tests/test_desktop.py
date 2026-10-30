@@ -5,6 +5,7 @@ is interactive and local (see the build log)."""
 from __future__ import annotations
 
 import json
+import sys
 
 from sqlalchemy import select
 
@@ -92,6 +93,11 @@ def test_failed_health_check_stops_the_server_and_releases_the_lock(monkeypatch)
                         lambda: released.__setitem__("n", released["n"] + 1))
     monkeypatch.setattr("kestrel.db.migrate.run_migrations", lambda *a, **k: None)
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
+    monkeypatch.setattr(shell, "HEALTH_WAIT_S", 0.3)
+    monkeypatch.setitem(sys.modules, "webview", None)  # the no-window path
+    # That path exists on macOS and Linux only; Windows re-raises a missing WebView2 (its own
+    # failed-start path is test_platform's problem-card test), so run it as a non-Windows host.
+    monkeypatch.setattr(shell, "IS_WINDOWS", False)
 
     code = shell.run_desktop()
 

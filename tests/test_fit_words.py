@@ -29,6 +29,19 @@ def test_disagreement_is_your_call_in_the_worth_a_look_group():
     assert "disagree" in f.why
 
 
+def test_a_disagreement_on_one_side_of_the_lines_is_not_your_call():
+    """Owner round 14: a 1.0 model score against a 1.8 weighted score read as a maybe."""
+    low = fit.fit_for(_ev(verdict="pass", score=1.0, weighted_score=1.8, needs_review=True),
+                      "t2_done")
+    assert low.word == fit.NOT_FIT and low.group == fit.GROUP_NOT_FIT
+    high = fit.fit_for(_ev(verdict="apply", score=4.6, weighted_score=4.1, needs_review=True),
+                       "t2_done")
+    assert high.word == fit.GOOD and high.group == fit.GROUP_WORTH
+    split = fit.fit_for(_ev(verdict="pass", score=2.0, weighted_score=3.6, needs_review=True),
+                        "t2_done")
+    assert split.word == fit.YOUR_CALL
+
+
 def test_tier1_keep_is_new_never_a_no_and_kill_is_not_a_fit():
     kept = fit.fit_for(_ev(verdict="keep", tier=1), "t1_pass")
     assert kept.word == fit.NEW and kept.group == fit.GROUP_NEW and kept.score is None
@@ -104,3 +117,24 @@ def test_operator_group_outranks_the_model_for_grouping():
     assert operator_group("pass") == GROUP_NOT_FIT
     assert operator_group(None) is None and operator_group("keep") is None
     assert GROUP_LABELS[GROUP_NEW] == "Being scored"
+
+
+def test_a_forced_pass_never_reads_as_a_fit_and_the_lines_follow_settings():
+    """Round 14 review: a blocker or fake-posting pass with high scores stays Your call; the
+    lines are the operator's thresholds; one missing score stands in for the other."""
+    forced = fit.fit_for(_ev(verdict="pass", score=4.6, weighted_score=4.1, needs_review=True),
+                         "t2_done")
+    assert forced.word == fit.YOUR_CALL
+    try:
+        fit.set_lines(2.5, 4.0)
+        mid = fit.fit_for(_ev(verdict="consider", score=2.6, weighted_score=2.9,
+                              needs_review=True), "t2_done")
+        assert mid.word == fit.YOUR_CALL  # above the operator's consider line: still a call
+    finally:
+        fit.set_lines(3.0, 4.0)
+    one = fit.fit_for(_ev(verdict="pass", score=2.0, weighted_score=None, needs_review=True),
+                      "t2_done")
+    assert one.word == fit.NOT_FIT
+    none = fit.fit_for(_ev(verdict="pass", score=None, weighted_score=None, needs_review=True),
+                       "t2_done")
+    assert none.word == fit.YOUR_CALL

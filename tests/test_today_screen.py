@@ -131,12 +131,12 @@ def test_top_matches_rank_by_fit_show_every_score_and_leave_out_the_rest():
     data = _cards()
     assert _titles(data) == [
         "Senior Operations Analyst", "Process Improvement Lead", "Operations Program Manager",
-        "Inventory Planning Manager", "Warehouse Shift Supervisor", "Business Analyst II",
+        "Inventory Planning Manager", "Warehouse Shift Supervisor",
     ]
     by = {c["title"]: c for c in data["cards"]}
-    # A day that produced a 1.8 still shows it; the quick-screen role says its review is coming.
     assert by["Warehouse Shift Supervisor"]["score"] == 1.8
-    assert by["Business Analyst II"]["pending"] is True and by["Business Analyst II"]["tags"] == []
+    assert "Business Analyst II" not in by
+    assert data["pending"] == 1 and data["n"] == 5
     # Set aside by the rules, and from an earlier day, are not cards; both count as found today
     # only when first seen today (the rule reject was).
     assert all(c["id"] not in (ids["rule"], ids["backlog"], ids["listed"]) for c in data["cards"])
@@ -151,6 +151,100 @@ def test_top_matches_rank_by_fit_show_every_score_and_leave_out_the_rest():
     # BI appear in the description, Lean does not; "mysql" never makes SQL appear twice.
     assert by["Senior Operations Analyst"]["tags"] == ["SQL", "Power BI", "Forecasting"]
     assert "process improvement work" in by["Senior Operations Analyst"]["why"]
+
+
+def test_waiting_role_joins_matches_only_after_a_scored_full_review():
+    ids = _seed()
+    initial = _cards(limit=1)
+    assert initial["pending"] == 1 and initial["n"] == 5
+    have = ",".join(str(c["id"]) for c in _cards()["cards"])
+
+    async def finish(s):
+        opp = await s.get(Opportunity, ids["quick"])
+        opp.stage = "t2_done"
+        s.add(Evaluation(opportunity_id=opp.id, track="employment", tier=2,
+                         verdict="consider", score=3.2, weighted_score=3.2, blocks={}))
+
+    _db(finish)
+    data = _cards()
+    assert data["pending"] == 0 and data["found"] == 7 and data["n"] == 6
+    reviewed = next(c for c in data["cards"] if c["id"] == ids["quick"])
+    assert reviewed["score"] == 3.2 and reviewed["pending"] is False
+    with _client() as client:
+        update = client.get(f"/today/matches/new?have={have}").json()
+        html = client.get("/today/matches").text
+    assert [card["id"] for card in update["new"]] == [ids["quick"]]
+    assert update["new"][0]["before"] == ids["nofit"]
+    assert update["pending"] == 0
+    assert 'aria-live="polite"></p>' in html
+    assert "more being reviewed" not in html
+
+
+def test_pending_only_matches_keep_the_found_heading():
+    ids = _seed()
+
+    async def earlier(s):
+        for opp in (await s.execute(select(Opportunity))).scalars():
+            if opp.id != ids["quick"]:
+                opp.first_seen_at = "2020-01-01T00:00:00+00:00"
+
+    _db(earlier)
+    with _client() as client:
+        html = client.get("/today/matches").text
+    assert "1 new role found today" in html
+    assert "1 more being reviewed" in html
+    assert 'data-testid="td-card"' not in html
+    assert "No matches yet" in html
+
+
+@pytest.mark.parametrize("stage", ["new", "t1_pass", "t2_done"])
+def test_unscored_roles_count_without_becoming_cards(stage):
+    ids = _seed()
+
+    async def unscore(s):
+        opp = await s.get(Opportunity, ids["quick"])
+        opp.stage = stage
+        ev = (await s.execute(select(Evaluation).where(
+            Evaluation.opportunity_id == opp.id))).scalar_one()
+        if stage == "new":
+            await s.delete(ev)
+        elif stage == "t2_done":
+            ev.tier, ev.verdict = 2, "consider"
+
+    _db(unscore)
+    data = _cards()
+    assert data["pending"] == 1
+    assert ids["quick"] not in {card["id"] for card in data["cards"]}
+
+
+@pytest.mark.parametrize("excluded", ["saved", "pass", "pursuit", "t0_reject",
+                                      "t1_reject", "quarantined", "error", "trigger_event", "old"])
+def test_pending_count_keeps_the_existing_exclusions(excluded):
+    ids = _seed()
+
+    async def exclude(s):
+        opp = await s.get(Opportunity, ids["quick"])
+        if excluded == "saved":
+            from kestrel.services.saved_roles import save
+
+            await save(s, opp.id)
+        elif excluded == "pass":
+            from kestrel.db.models import VerdictOverride
+
+            s.add(VerdictOverride(opportunity_id=opp.id, operator_verdict="pass"))
+        elif excluded == "pursuit":
+            s.add(Pursuit(opportunity_id=opp.id, track="employment", status="shortlisted"))
+        elif excluded == "trigger_event":
+            opp.opp_type = "trigger_event"
+        elif excluded == "old":
+            opp.first_seen_at = "2020-01-01T00:00:00+00:00"
+        else:
+            opp.stage = excluded
+
+    _db(exclude)
+    data = _cards()
+    assert data["pending"] == 0
+    assert ids["quick"] not in {card["id"] for card in data["cards"]}
 
 
 def test_top_matches_follow_the_track_and_hidden_companies_never_count():
@@ -212,11 +306,10 @@ def test_every_card_part_is_printed_and_the_buttons_use_the_pipeline_routes():
     est = sec.split(f'data-id="{ids["est"]}"')[1].split("</article>")[0]
     assert 'data-testid="td-est"' in est and "may be wrong" in est and "est.<" in est
     assert "est." not in card.split('data-testid="td-pay"')[1].split("</div>")[0]
-    # Good fit and maybe carry their own tone; the quick-screen role shows no pay or tags.
     assert 'data-fit="good fit"' in sec and 'data-fit="maybe"' in sec
-    pending = sec.split(f'data-id="{ids["quick"]}"')[1].split("</article>")[0]
-    assert "Full review in progress" in pending and "td-pay" not in pending
-    assert 'data-fit="new"' in pending
+    assert f'data-id="{ids["quick"]}"' not in sec
+    assert "1 more being reviewed" in sec
+    assert "Full review in progress" not in sec and "Not scored yet" not in sec
     # Every title area reserves two lines in CSS, so the cards share one height.
     css = Path(paths.web_static_dir(), "css", "pages", "today.css").read_text(encoding="utf-8")
     assert re.search(r"\.td-t \{[^}]*min-height: 39px", css)
@@ -304,7 +397,7 @@ def test_a_problem_holds_on_last_run_and_a_schedule_fades():
     html = _strip_ctx(problem)
     assert 'data-hold="1"' in html
     assert ">2 problems<" in html.replace("\n", "").replace("  ", "") or "2 problems" in html
-    assert "2 roles failed scoring" in html and "td-bad" in html
+    assert "2 roles need another try" in html and "td-bad" in html
 
     # A schedule exists and the run was clean: Last run cross-fades to Next run.
     async def sched(s):
@@ -420,7 +513,7 @@ def test_a_strong_match_follows_the_strong_match_cutoff_not_a_fixed_number():
     # thresholds.apply is 4.0 by default: 4.1 and above are strong matches, 3.4 is not.
     assert strong["Operations Program Manager"] is True
     assert strong["Inventory Planning Manager"] is False
-    assert strong["Business Analyst II"] is False  # not scored yet
+    assert "Business Analyst II" not in strong
 
     async def raise_cutoff(s):
         s.add(Setting(key="thresholds.apply", value=4.5))
@@ -444,11 +537,11 @@ def test_new_matches_come_with_their_ranked_position_and_nothing_the_page_has():
     with _client() as c:
         d = c.get(f"/today/matches/new?have={have}").json()
     got = {n["id"]: n for n in d["new"]}
-    assert set(got) == {ids["good"], ids["maybe"], ids["quick"]}
+    assert set(got) == {ids["good"], ids["maybe"]}
     # The "good" card sits between the strong one and the estimate; "maybe" before the 1.8.
     assert got[ids["good"]]["before"] == ids["est"]
     assert got[ids["maybe"]]["before"] == ids["nofit"]
-    assert got[ids["quick"]]["before"] is None  # last: the quick-screen roles rank after
+    assert d["pending"] == 1
     assert f'data-id="{ids["good"]}"' in got[ids["good"]]["html"]
     assert got[ids["good"]]["strong"] is True and got[ids["maybe"]]["strong"] is False
     assert d["found_line"] == "7 new roles found today"
@@ -456,6 +549,21 @@ def test_new_matches_come_with_their_ranked_position_and_nothing_the_page_has():
     with _client() as c:
         none = c.get("/today/matches/new?have=" + ",".join(str(i) for i in d["ids"])).json()
     assert none["new"] == []
+
+
+def test_a_card_the_page_shows_in_review_comes_back_finished_with_the_order():
+    """Owner round 13: a role whose review finished moves ahead of roles still in review."""
+    ids = _seed()
+    every = ",".join(str(i) for i in ids.values())
+    # The page still shows "good" and "quick" as in review; only "good" has finished.
+    pend = f"{ids['good']},{ids['quick']}"
+    with _client() as c:
+        d = c.get(f"/today/matches/new?have={every}&pending={pend}").json()
+    done = {n["id"]: n for n in d["done"]}
+    assert set(done) == {ids["good"]}
+    assert f'data-id="{ids["good"]}"' in done[ids["good"]]["html"]
+    assert 'data-pending="1"' not in done[ids["good"]]["html"]
+    assert ids["quick"] not in d["ids"]
 
 
 # ------------------------------------------------------------- Decisions and Applications
@@ -708,11 +816,11 @@ def test_the_page_stops_loading_the_legacy_stylesheet_and_loads_its_own():
 
 def test_the_container_steps_match_the_mockup():
     css = Path(paths.web_static_dir(), "css", "pages", "today.css").read_text(encoding="utf-8")
-    # The strip stacks at 1300px of content or less; the lower panels at the mockup's 1100px
-    # window (870px of content); a container query, not only a media query.
-    assert re.search(r"@container \(max-width: 1300px\) \{[^@]*\.td-strip \{[^}]*minmax\(0, 1fr\)",
-                     css)
-    assert "@container (max-width: 870px)" in css
+    # The strip stacks at the mockup's 1300px window and the lower panels at its 1100px window:
+    # both measure the window (the kwin container), not the content column.
+    assert re.search(
+        r"@container kwin \(max-width: 1300px\) \{[^@]*\.td-strip \{[^}]*minmax\(0, 1fr\)", css)
+    assert "@container kwin (max-width: 1100px)" in css
     # The strip hover follows the strip's outer radius only: square segments clipped by the strip.
     assert re.search(r"\.td-strip \{[^}]*overflow: hidden", css)
     assert re.search(r"\.td-seg \{[^}]*border-radius: 0", css)

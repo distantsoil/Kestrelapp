@@ -69,9 +69,12 @@ def _section_ctx(track: str, state: pe.ProfileState | None = None) -> dict:
     return {
         "track": track, "profile_exists": state.exists, "profile_problem": state.problem,
         "block": block,
-        "terms": block.get("employment_terms") or {},
-        "cterms": block.get("consulting_terms") or {},
-        "geo": block.get("geo_rules") or {},
+        # Work mode is the one answer to "remote or hybrid?"; Location reads it (D-UI-214).
+        "terms": {**(block.get("employment_terms") or {}),
+                  "work_modes": pe.effective_modes(block, "employment")},
+        "cterms": {**(block.get("consulting_terms") or {}),
+                   "work_modes": pe.effective_modes(block, "consulting")},
+        "geo": pe.effective_geo(block, track),
         "metros_text": pe.metros_text(block),
         "about_missing": pe.about_missing(state),
         "from_example": state.from_example.get(track, ()),
@@ -201,7 +204,20 @@ async def _rebuild_searches() -> bool:
 # ------------------------------------------------------------------------------------ photo
 def _photo_response(request: Request, track: str, problem: str | None = None):
     ctx = {**_section_ctx(track), "photo_problem": problem}
-    return templates().TemplateResponse(request, "partials/profile_photo.html", ctx)
+    page = templates().get_template("partials/profile_photo.html").render(
+        {**ctx, "request": request})
+    # The top bar shows the same picture: swapped out of band so it changes with the card, with
+    # no page change (O18). A refused upload changed nothing, so it sends nothing.
+    top = "" if problem else (
+        templates().get_template("partials/topbar_avatar.html").render({"oob": True}))
+    return HTMLResponse(page + top)
+
+
+@router.get("/ui/avatar", response_class=HTMLResponse)
+async def top_avatar_fragment(request: Request):
+    """The top bar avatar as it is now: a page that changed the picture without htmx (Settings)
+    fetches this and swaps it in place."""
+    return templates().TemplateResponse(request, "partials/topbar_avatar.html", {})
 
 
 @router.get("/profile/photo")

@@ -160,7 +160,8 @@ def why_it_fits(opp, ev_json: dict | None) -> str:
         rank = {"strong": 0, "partial": 1, "adjacent": 2}
         matches.sort(key=lambda m: rank.get(m.get("strength"), 3))
         for m in matches:
-            if m.get("evidence"):
+            # An unverified match's evidence says what the profile lacks, not why it fits (O20).
+            if m.get("evidence") and m.get("strength") != "unverified":
                 parts.append(_first_sentence(str(m["evidence"])))
                 break
     return " ".join(p for p in parts if p)
@@ -221,8 +222,8 @@ async def top_matches(s, track: str, *, limit: int = CARD_LIMIT, settings=None) 
     and 2s still shows them). Today's roles only (the local day), not the backlog. A role the
     operator already decided (shortlisted, saved, labeled not for me), one the rules set aside, a
     scoring failure (the retry note covers it) and a signal are not cards. A role with only a
-    quick screen is a card that says its full review is in progress. `found` counts every role
-    found today, whether or not it earns a card."""
+    quick screen counts as `pending` until its full review supplies a fit score. `found` counts
+    every role found today, whether or not it earns a card."""
     stmt = _with_operator(
         _base_stmt(
             OppFilters(track=track, new_today=True),
@@ -238,6 +239,7 @@ async def top_matches(s, track: str, *, limit: int = CARD_LIMIT, settings=None) 
     conf, mapping = await confidential_once(s)
     skills = await operator_skills(s, track)
     cards: list[dict[str, Any]] = []
+    pending = 0
     for opp, ev, org_name, pursuit_id, label, saved in rows:
         if pursuit_id is not None or saved or label == "pass":
             continue
@@ -246,17 +248,25 @@ async def top_matches(s, track: str, *, limit: int = CARD_LIMIT, settings=None) 
         fit = row_fit(opp, ev)
         if fit.group == GROUP_FAILED or (fit.group == "not_fit" and ev is None):
             continue
+        if ev is None or ev.tier < 2 or fit.group == GROUP_NEW or fit.score is None:
+            pending += 1
+            continue
         cards.append(
             _card(opp, ev, fit, org_name or opp.org_name, mapping=mapping, conf=conf,
                   skills=skills, settings=settings)
         )
     cards.sort(key=_rank)
-    return {"cards": cards[:limit], "found": len(rows), "n": len(cards)}
+    return {"cards": cards[:limit], "found": len(rows), "n": len(cards), "pending": pending}
 
 
-async def cards_after(s, track: str, have: set[int], settings=None) -> dict[str, Any]:
+async def cards_after(
+    s, track: str, have: set[int], settings=None, pending: set[int] | None = None
+) -> dict[str, Any]:
     """The cards the page does not have yet, each with the id of the card it sits before (None:
-    at the end), so a new match opens a gap at its ranked position (live updates, D-UI-156)."""
+    at the end), so a new match opens a gap at its ranked position (live updates, D-UI-156).
+    `done` holds the cards the page shows as still in review (`pending`) whose review finished,
+    and `ids` the best-first order, so a finished role moves to its place (owner round 13: a
+    "Your call" stayed behind roles still in review)."""
     data = await top_matches(s, track, settings=settings)
     cards = data["cards"]
     out = []
@@ -265,7 +275,8 @@ async def cards_after(s, track: str, have: set[int], settings=None) -> dict[str,
             continue
         before = next((x["id"] for x in cards[i + 1:] if x["id"] in have), None)
         out.append({"card": c, "before": before})
-    return {"new": out, "found": data["found"], "ids": [c["id"] for c in cards]}
+    done = [c for c in cards if c["id"] in (pending or set()) and not c["pending"]]
+    return {"new": out, "done": done, "found": data["found"], "ids": [c["id"] for c in cards]}
 
 
 # ----------------------------------------------------------------------- decisions waiting

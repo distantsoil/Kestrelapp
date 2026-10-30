@@ -353,7 +353,7 @@ def test_filters_tab_points_at_the_profile_not_the_yaml_and_lan_says_why():
     assert "Change in Profile" in roles and "Rules file: filters.yml" in roles  # not a file to edit
     access = (_TEMPLATES / "partials" / "st_access.html").read_text(encoding="utf-8")
     assert "Only works on your own network" in access and "Only this computer can change" in access
-    help_ = (_TEMPLATES / "help.html").read_text(encoding="utf-8")
+    help_ = (_TEMPLATES / "partials" / "help_ref_lan.html").read_text(encoding="utf-8")
     assert 'id="lan"' in help_ and "same home network" in help_
 
 

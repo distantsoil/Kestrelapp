@@ -14,6 +14,7 @@ import respx
 from httpx import Response
 from sqlalchemy import select
 
+from kestrel import paths
 from kestrel.config import BackendConfig, HostedOptions, get_settings
 from kestrel.db.models import FrontierTransmission, Run, ScrapeRun, Source, Task
 from kestrel.llm.client import LLMClient, build_request_body, json_schema_for, strict_schema
@@ -133,6 +134,11 @@ _GH = json.loads((Path(__file__).parent / "fixtures" / "greenhouse.json").read_t
 async def test_scrape_task_is_leased_executed_and_completed(sm):
     """The scheduler, tray and MCP enqueue `scrape`; the worker must consume it (it did not: the
     tasks sat pending forever and suppressed every re-enqueue)."""
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("profile.yml").write_text(
+        "employment:\n  employment_terms:\n    target_titles: [VP of IT, Sales Director]\n",
+        encoding="utf-8",
+    )
     respx.get("https://boards-api.greenhouse.io/v1/boards/m/jobs").mock(
         return_value=Response(200, json=_GH)
     )

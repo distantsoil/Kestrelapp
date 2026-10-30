@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from tests.browser import launch_sync, wait_for_layout
+from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
 
 pytestmark = [
     pytest.mark.skipif(
@@ -121,6 +121,24 @@ def test_old_links_open_the_section_that_holds_them_now(live):
             ctx.close()
 
 
+def test_classic_page_loads_turns_the_in_place_page_change_off_at_once(live):
+    """D-UI-220: the switch saves, says so, and the very next page change is a new document."""
+    ctx, page, errors = _page(live, "light", 1680, "#preferences")
+    try:
+        page.wait_for_selector('#st-sec-preferences:not([hidden])')
+        assert page.get_attribute("html", "data-k-nav") == "1"
+        page.click('[data-st-key="ui.classic_nav"] + .k-switch__track')
+        page.wait_for_selector('.k-toast:has-text("Pages now load the classic way.")')
+        assert page.get_attribute("html", "data-k-nav") == "0"
+        page.evaluate("window.__doc = 'settings'")
+        page.click('#sidebar .mainnav > a[href="/about"]')
+        page.wait_for_function("() => !window.__doc && location.pathname === '/about'")
+        assert page.get_attribute("html", "data-k-nav") == "0"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_a_switch_saves_with_undo_and_the_rule_list_opens(live):
     ctx, page, errors = _page(live, "light", 1680, "#preferences")
     try:
@@ -172,6 +190,54 @@ def test_the_three_run_cards_sit_in_one_row_like_the_mockup(live, width):
         tops = page.evaluate("Array.from(document.querySelectorAll('#st-sec-computer .st-mc'))"
                              ".map(e => Math.round(e.getBoundingClientRect().top))")
         assert len(tops) == 3 and len(set(tops)) == 1, tops
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live):
+    """The page lifecycle (D-UI-210): Settings unmounted and mounted again in place starts exactly
+    what it started on the document load (its listeners, and the quiet prefetch of the two heavy
+    sections now started from mount) and leaves nothing running in between. After it, one press of
+    a switch saves once, not twice; and a message with an Undo that another page raises is no
+    longer taken over by Settings."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 1000}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/settings#preferences")
+        page.wait_for_selector('#st-sec-preferences:not([hidden]) .st-panebody')
+        wait_for_layout(page)
+        # The prefetch asked for both heavy sections once the page was up.
+        page.wait_for_function(
+            "document.querySelector('#st-sec-roles').getAttribute('data-st-loaded') === '1' && "
+            "document.querySelector('#st-sec-scoring').getAttribute('data-st-loaded') === '1'")
+        first = assert_page_remounts_clean(page, "settings", "settings.js", settle_ms=1600)
+        assert first["timers"] == 0 and first["observers"] == 0, first
+        # The palette's Settings entries are added once for the root, however often it mounts.
+        assert page.evaluate("Alpine.$data(document.documentElement).pages.filter("
+                             "p => (p.label || '').startsWith('Settings: ')).length") == 29
+        # Mounted again, the first section shown is the one the address names, and one press of a
+        # switch posts once.
+        page.wait_for_selector('#st-sec-preferences:not([hidden])')
+        posts: list[str] = []
+        page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+        page.click('[data-st-key="ui.reduce_motion"] + .k-switch__track')
+        page.wait_for_selector('.k-toast:has-text("Motion reduced.")')
+        page.wait_for_timeout(300)
+        assert [u for u in posts if u.endswith("/settings/ui")] == [f"{base}/settings/ui"]
+        # Left, the page lets go of other pages' messages: an Undo toast keeps its own Undo.
+        page.evaluate("KUI.page.unmount()")
+        page.evaluate("""() => { window.__undone = 0;
+          document.addEventListener('kestrel:undone', () => { window.__undone += 1; });
+          document.dispatchEvent(new CustomEvent('k-toast',
+            { detail: { message: 'Moved.', undoUrl: '/x-undo' } })); }""")
+        page.route("**/x-undo", lambda route: route.fulfill(status=204))
+        page.click('.k-toast:has-text("Moved.") .k-toast__undo')
+        page.wait_for_function("window.__undone === 1")
         assert not errors, errors
     finally:
         ctx.close()

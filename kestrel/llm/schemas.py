@@ -156,7 +156,9 @@ class P2ARoleSummary(_Base):
 class P2Match(_Base):
     requirement: Annotated[str, _truncate(200)]
     evidence: Annotated[str, _truncate(300)]
-    strength: Literal["strong", "partial", "adjacent"]
+    # "unverified": the posting asks for it and the profile neither shows nor rules it out. Shown
+    # as Partly met under Gaps, never Met (hard rule 4, PROMPTS.md P2 rule 6, O20).
+    strength: Literal["strong", "partial", "adjacent", "unverified"]
 
 
 class P2Gap(_Base):
@@ -293,6 +295,9 @@ class P2CPhase(_Base):
 class P2CThesis(_Base):
     engagement: str
     service_lines: list[str]
+    # What the engagement needs against the practitioner's proof, graded as P2's matches are
+    # ("unverified" is Partly met under Gaps, never Met; PROMPTS.md P2C rule 7, O20).
+    matches: list[P2Match]
     phases: list[P2CPhase]
     estimated_days: int
     estimated_weeks: int
@@ -831,10 +836,17 @@ class P17FollowUp(_Base):
 
 # Registry: prompt version string -> pydantic model. Used by the guard/caller to pick the model.
 SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
+    # The version before each current one stays runnable so the model check can compare against
+    # it (SPEC-INTERFACES 2.1 /models check: "Current ... or the version before it"). Their
+    # schemas are unchanged or a strict subset of today's, so the current models validate them.
+    # evaluate_consulting/v1 is not kept: P2C v2 added a required field its output lacks.
     "triage/v1": P1Triage,
     "triage_consulting/v1": P1CTriage,
     "evaluate/v1": P2Eval,
-    "evaluate_consulting/v1": P2CEval,
+    "triage/v2": P1Triage,
+    "triage_consulting/v2": P1CTriage,
+    "evaluate/v2": P2Eval,
+    "evaluate_consulting/v2": P2CEval,
     "doc_select/v1": P3DocSelect,
     "cover/v1": P4Cover,
     "engagement_outline/v1": P4CEngagement,

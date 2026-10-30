@@ -7,9 +7,9 @@
    answers with this panel again, and the bell count swaps out of band. Styles:
    static/css/pages/surfaces.css. #}
 {% from "ui/macros.html" import icon %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <div id="sf-np" class="sf-np" data-testid="notifications-panel" data-tab="{{ tab }}">
-  <span id="bellcount" class="badge" hx-swap-oob="true">{{ unread if unread else '' }}</span>
+  <span id="bellcount" class="k-icon__n" hx-swap-oob="true">{{ unread if unread else '' }}</span>
   <div class="sf-tabs" role="tablist" aria-label="Notifications">
     {% for key, label in [('all', 'All'), ('attention', 'Needs attention')] %}
     <button type="button" role="tab" class="sf-tab{% if tab == key %} is-on{% endif %}" aria-selected="{{ 'true' if tab == key else 'false' }}"

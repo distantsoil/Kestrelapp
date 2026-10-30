@@ -88,7 +88,7 @@
     <p class="quiet run-line" data-testid="run-line2">{{ second_line()|trim }}</p>
   {% endif %}
   {% if open_failed and open_failed != rs.failed %}
-    <p class="quiet run-line" data-testid="open-failed"><a href="/quarantine">{{ open_failed }} {{ w.role if open_failed == 1 else w.roles }} failed scoring</a>. Retry them on the same model or another.</p>
+    <p class="quiet run-line" data-testid="open-failed"><a href="/quarantine">{{ open_failed }} {{ w.role + ' needs' if open_failed == 1 else w.roles + ' need' }} another try</a>. Retry them on the same model or another.</p>
   {% endif %}
 </div>
 {% if oob %}

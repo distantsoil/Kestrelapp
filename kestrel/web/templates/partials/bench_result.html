@@ -6,7 +6,7 @@
 <div id="ck-result" data-testid="ck-result"{% if ck_oob %} hx-swap-oob="outerHTML"{% endif %}>
 {% if not ck_latest %}
   <section class="k-card mo-card" data-testid="ck-none">
-    <header class="mo-head"><span class="k-badge">{{ ui.icon('analytics') }}</span><div class="k-grow"><h3>No check yet</h3><p class="k-muted">Your first result will show here, with a plain recommendation for each step.</p></div></header>
+    <header class="mo-head"><span class="k-badge k-badge--good">{{ ui.icon('compass') }}</span><div class="k-grow"><h3>Recommendation</h3><p class="k-muted">{% if ck_enough is defined and not ck_enough %}Your first check needs at least 5 rated roles. <a class="k-link" href="/calibrate">Rate a few in Calibrate</a>, then come back.{% else %}Your first result will show here, with a plain recommendation for each step.{% endif %}</p></div></header>
   </section>
 {% else %}
   {% set changes = ck_changes %}
@@ -19,7 +19,7 @@
     {% else %}
       <p data-testid="ck-summary"><b>{{ ck_lead }}</b>{% if ck_rest %} {{ ck_rest }}{% endif %}</p>
     {% endif %}
-    {% for h in ck_held %}<p class="mo-msg is-warn" data-testid="ck-held">{{ h.model }} ({{ h.step }}) was not tested online. Confidential mode is on and no current employer is chosen under Settings, Core, so nothing was sent.</p>{% endfor %}
+    {% for h in ck_held %}<p class="mo-msg is-warn" data-testid="ck-held">{{ h.model }} ({{ h.step }}) was not tested online. Confidential mode is on and no current employer is chosen under Settings > Privacy and access, so nothing was sent.</p>{% endfor %}
 
     {% for c in changes %}
     <article class="mo-result-step" data-testid="ck-change-{{ c.step }}">

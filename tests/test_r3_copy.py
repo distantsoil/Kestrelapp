@@ -87,7 +87,9 @@ def test_the_status_rail_uses_plain_words(monkeypatch):
     c = _fresh()
     with c:
         rail = _visible(c.get("/status/rail").text)
-    assert "Not scoring anything right now" in rail and "Worker idle" not in rail
+    # The two-line readout (D-UI-91): plain words, no internal names.
+    assert "Idle · no run scheduled" in rail and "Worker idle" not in rail
+    assert "Local AI not running" in rail
     assert "Ollama not reachable" not in rail
 
 
@@ -305,5 +307,5 @@ def test_help_and_about_state_the_public_promises_and_no_linkedin_source():
     assert "Claude, Qwen and NVIDIA Nemotron" not in about
     assert "PolyForm Noncommercial" in about and "LICENSE.md" in about
     # The source table is generated from the catalog; no row is a LinkedIn source.
-    table = c.get("/help").text.split("Where opportunities come from")[1].split("<h3>LinkedIn")[0]
+    table = c.get("/help").text.split('id="sources"')[1].split("<h3>LinkedIn")[0]
     assert "linkedin" not in re.sub(r"LinkedIn is not offered[^<]*", "", table).lower()

@@ -12,7 +12,13 @@ import os
 
 import pytest
 
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 from tests.test_calibrate_page import _seed
 
 pytestmark = pytest.mark.skipif(
@@ -72,6 +78,9 @@ def test_train_button_explains_the_rating_floor_in_place(live):
 
     ctx, page, errors = _page(live, "light", 1280)
     try:
+        # Training lives in the Your sorting model flyout, opened from the taste strip.
+        page.click('[data-testid="cal-taste"]')
+        page.wait_for_selector("#cal-model-fly.is-open")
         page.click('[data-testid="cal-train"]')
         expect(page.locator('#cal-training [role="status"]')).to_contain_text("Nothing queued")
         expect(page.locator('#cal-training [role="status"]')).to_contain_text("ratings so far")
@@ -157,7 +166,7 @@ def test_answer_first_keys_save_skip_undo_and_change(live):
         assert "You said Good" in page.inner_text('[data-testid="cal-reveal"]')
         assert page.is_enabled("#cal-save")
         page.keyboard.press("o")
-        assert page.is_visible("#cal-why-panel")
+        page.wait_for_selector("#cal-why-panel", state="visible")  # grid-rows transition opens it
         page.click(".cal-chip >> nth=0")
         assert page.inner_text("#cal-savel") == "Save with reasons"
         page.keyboard.press("Enter")
@@ -179,6 +188,56 @@ def test_answer_first_keys_save_skip_undo_and_change(live):
         assert page.query_selector('[data-testid="cal-reveal"]')
         page.click('[data-testid="cal-revisit-cancel"]')
         page.wait_for_selector('[data-testid="cal-veil"]')
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
+    """The page lifecycle (D-UI-210): Calibrate unmounted and mounted again in place starts exactly
+    what it started on the document load and leaves nothing behind. Mount syncs the Save button
+    itself (the old start waited for DOMContentLoaded, which a page mounted in place never sees).
+    After it, one O opens the Tell Kestrel why panel (a doubled listener toggles it twice, so it
+    stays shut), one nudge click moves one step, and an unmounted page answers no key."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/calibrate")
+        page.wait_for_selector('[data-testid="cal-card"] .cal-q')
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(
+            page, "calibrate", "calibrate.js", settle_ms=400, quiet_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0
+        assert page.is_disabled("#cal-save")
+        # Mount runs syncSave: an answer already on the form enables Save with no event at all.
+        page.evaluate("""() => { document.querySelector('#cal-form').elements.score.value = '3';
+          KUI.page.mount(); }""")
+        assert page.is_enabled("#cal-save")
+        page.evaluate("document.querySelector('#cal-form').elements.score.value = ''")
+        page.evaluate("KUI.page.mount()")
+        assert page.is_disabled("#cal-save")
+        page.keyboard.press("4")
+        page.wait_for_selector('[data-testid="cal-reveal"]')
+        assert page.is_enabled("#cal-save")
+        page.keyboard.press("o")
+        page.wait_for_selector("#cal-why-panel.is-open", state="attached")
+        assert page.get_attribute("#cal-whybtn", "aria-expanded") == "true"
+        page.wait_for_selector(".cal-nud button")
+        row = page.query_selector(".cal-nud")
+        base_score = int(row.get_attribute("data-base"))
+        step = 1 if base_score < 5 else -1
+        row.query_selector(f"button[data-nd='{step}']").click()
+        assert row.query_selector("input").input_value() == str(step)  # one click, one step
+        assert row.query_selector("b").inner_text() == str(base_score + step)
+        # Unmounted, the keys do nothing: the panel stays as it was.
+        page.evaluate("KUI.page.unmount()")
+        page.keyboard.press("o")
+        page.wait_for_timeout(300)
+        assert page.get_attribute("#cal-whybtn", "aria-expanded") == "true"
         assert not errors, errors
     finally:
         ctx.close()

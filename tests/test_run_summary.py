@@ -678,13 +678,14 @@ def test_every_run_summary_class_has_a_css_rule():
 
     tdir = Path(paths.web_templates_dir()) / "partials"
     css = (Path(paths.web_static_dir()) / "css" / "kestrel.css").read_text("utf-8")
+    shell_css = (Path(paths.web_static_dir()) / "css" / "components.css").read_text("utf-8")
     block = css.split("/* --- run summary (D-UI-58) --- */")[1]
     classes: set[str] = set()
     for name in ("today_run.html", "run_live_panel.html"):
         for attr in re.findall(r'class="([^"]+)"', (tdir / name).read_text("utf-8")):
             classes |= {c for c in attr.split() if c.startswith("run-") and "{" not in c}
     assert classes and all(f".{c}" in block for c in classes), classes
-    assert ".track-switch a .n" in css
+    assert ".track-switch a .n" in shell_css  # the shell's track switch (components.css)
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", block)  # theme variables only
 
 

@@ -60,7 +60,7 @@ PRESETS: dict[str, dict[str, str]] = {
         "env": "OPENMODEL_API_KEY",
         "key_prefix": "om-",
         "console": "https://console.openmodel.ai",
-        "privacy": "https://www.openmodel.ai/_TO_privacy",
+        "privacy": "https://www.openmodel.ai/privacy",
     },
     "anthropic": {
         "backend": "anthropic",

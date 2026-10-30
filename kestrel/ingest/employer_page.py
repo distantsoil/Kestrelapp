@@ -8,14 +8,11 @@ model is involved. Pure functions, no network."""
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from kestrel.ingest.base import RawPosting
+from kestrel.ingest.jobposting import ld_json_blocks
 
-_LD_BLOCK = re.compile(
-    r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>", re.I | re.S
-)
 MAX_PAGE_BYTES = 2_000_000
 
 
@@ -59,7 +56,7 @@ def parse_job_posting(html: str, url: str) -> RawPosting | None:
     (no JobPosting block, or one missing its title or description)."""
     if not html or len(html) > MAX_PAGE_BYTES:
         return None
-    for block in _LD_BLOCK.findall(html):
+    for block in ld_json_blocks(html):
         try:
             data = json.loads(block.strip())
             objs = list(_walk(data))

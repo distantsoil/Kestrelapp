@@ -4,8 +4,12 @@
 {% extends "base.html" %}
 {% import "ui/macros.html" as ui %}
 {% block title %}Kestrel could not load this page{% endblock %}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
-{% block head_extra %}<link rel="stylesheet" href="/static/css/pages/surfaces.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">{% endblock %}
+{# The page lifecycle (D-UI-210): js/error.js defines the page's two buttons. A page script file,
+   not an inline one, so an in-place page change loads it like every other page's script. #}
+{% block page_name %}error{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/error.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="sf-err-wrap">
   <div class="sf-err" role="alert" data-testid="error-page">
@@ -29,25 +33,4 @@
     </div>
   </div>
 </div>
-<script>
-  (function () {
-    var toggle = document.getElementById('sf-show-details');
-    var panel = document.getElementById('sf-details');
-    var copy = document.getElementById('sf-copy');
-    toggle.addEventListener('click', function () {
-      panel.hidden = !panel.hidden;
-      toggle.setAttribute('aria-expanded', String(!panel.hidden));
-      toggle.textContent = panel.hidden ? 'Show details' : 'Hide details';
-    });
-    copy.addEventListener('click', function () {
-      var text = document.getElementById('sf-code').textContent;
-      var done = function () {
-        if (window.KUI) window.KUI.toast('Details copied.');
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, function () {});
-      }
-    });
-  })();
-</script>
 {% endblock %}

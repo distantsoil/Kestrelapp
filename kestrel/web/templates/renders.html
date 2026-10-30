@@ -7,18 +7,23 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}{{ title }} · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/tailor.css">
-<script src="/static/js/tailor.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/tailor.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): tailor.js defines the page "tailor"; base.html mounts it. #}
+{% block page_name %}tailor{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/tailor.js') }}" defer></script>{% endblock %}
 {% block content %}
 {% set kind = ('capability statement' if master and master.doc_kind != 'resume' else 'resume') %}
 <div class="tl-wrap"><div class="tl-page" data-render="{{ render.id if render else '' }}" data-back="{{ back or '' }}">
+  {# The mockup's trail: where you came from, the role, then this page. The first link is the way
+     back; its accessible name says so. #}
   {% set crumb %}<nav class="tl-crumb" aria-label="Breadcrumb">
-    {% if back %}<a href="{{ '/pursuits' if back.startswith('/pursuits') else back }}" data-testid="render-back">&larr; Back to {{ (w.apps if w else 'Applications') if back.startswith('/pursuits') else 'the role' }}</a>
-    {% else %}<a href="/documents{% if master %}?master_id={{ master.id }}{% endif %}" data-testid="render-back">&larr; Back to Documents</a>{% endif %}
-    {% if back and back.startswith('/opportunities') and opportunity %} › <span>{{ opportunity.title or 'Role' }}</span>{% endif %}
+    {% if back and back.startswith('/pursuits') %}<a href="/pursuits" data-testid="render-back" aria-label="Back to {{ w.apps if w else 'Applications' }}">{{ w.apps if w else 'Applications' }}</a>{% if opportunity %} › <span>{{ opportunity.title or 'Role' }}</span>{% endif %}
+    {% elif back %}<a href="/opportunities">Pipeline</a> › <a href="{{ back }}" data-testid="render-back" aria-label="Back to the role">{{ (opportunity.title if opportunity else None) or 'The role' }}</a>
+    {% else %}<a href="/documents{% if master %}?master_id={{ master.id }}{% endif %}" data-testid="render-back" aria-label="Back to Documents">Documents</a>{% endif %}
+    › <span class="tl-crumb__here">Tailor {{ kind }}</span>
   </nav>{% endset %}
   {% call ui.scene_band(title, crumb=crumb) %}
     <button type="button" class="k-btn k-btn--sm" data-k-flyout="#tl-help-fly" aria-controls="tl-help-fly" aria-expanded="false" data-testid="tl-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>

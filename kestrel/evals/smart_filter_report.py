@@ -9,8 +9,8 @@ background lane (it did not), then reports how each lane's scored roles came out
 
 A fit is a role whose final verdict is apply, pursue or consider; a role scored `pass` (Tier 2) or
 `kill` (Tier 1) is not a fit. A role with no final verdict yet, or one the rules set aside, is
-counted as not scored and left out of every rate. Run it after "Score everything now", when the
-background lane has been scored too. Any figure from fewer than five observations is labeled
+counted as not scored and left out of every rate. This is a historical lane report: D-SRC-13
+rechecks waiting rows and scores surviving matches locally only. Fewer than five observations are
 insufficient and never rendered as a percentage (hard rule 6). It only reads (SELECT).
 
     uv run python -m kestrel.evals.smart_filter_report [--track employment|consulting]
@@ -126,7 +126,9 @@ def render(r: dict[str, Any]) -> str:
         )
     )
     if b["unscored"]:
-        out.append("Run Score everything now first, so the background lane is scored too.")
+        out.append(
+            "Legacy waiting roles are rechecked before local scoring; mismatches stay unscored."
+        )
     return "\n".join(out)
 
 

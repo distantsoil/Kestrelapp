@@ -6,11 +6,13 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}Needs another try · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/retry.css">
-<script src="/static/js/retry.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/retry.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): retry.js defines the page "needs-try"; base.html mounts it. #}
+{% block page_name %}needs-try{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/retry.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="rt-wrap"><div class="rt-page">
   {# The breadcrumb and the lede sit in the band beside the art, as in the mockup. #}
@@ -25,9 +27,12 @@
       {% include "partials/retry_card.html" %}
     </div>
     {% call ui.help_column() %}
-      {{ ui.help_card('Why this happens', ['The AI sometimes gives an answer Kestrel can’t read, runs out of time, or an online service says no. Kestrel already tried once more by itself.'], 'warn', 'alert', 'rt-why-fly') }}
-      {{ ui.help_card('Nothing is lost', ['Every role here is still in Pipeline, just without a score. Quitting Kestrel changes nothing.'], 'good', 'shield', 'rt-safe-fly') }}
-      {{ ui.help_card('Trying a different model', ['Another model often reads what the first could not. On your computer it is free. Online asks first.'], 'info', 'cpu', 'rt-model-fly') }}
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge k-badge--warn">{{ ui.icon('alert') }}</span><h3>Why this happens</h3></div>
+        <p class="k-hcard__p">The AI sometimes gives an answer Kestrel can’t read, runs out of time, or an online service says no. Kestrel already tried once more by itself.</p>{{ ui.flyout_trigger('rt-why-fly') }}</article>
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('shield') }}</span><h3>Nothing is lost</h3></div>
+        <p class="k-hcard__p">Every role here is still in Pipeline, just without a score. Quitting Kestrel changes nothing.</p>{{ ui.flyout_trigger('rt-safe-fly') }}</article>
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge">{{ ui.icon('models') }}</span><h3>Trying a different model</h3></div>
+        <p class="k-hcard__p">Another model often reads what the first could not. On your computer it is free. Online asks first.</p>{{ ui.flyout_trigger('rt-model-fly') }}</article>
     {% endcall %}
   </div>
   {# Where the actions put their dialog (Score it anyway, the online ask). #}

@@ -1,6 +1,6 @@
 ---
 id: P2C
-version: evaluate_consulting/v1
+version: evaluate_consulting/v2
 tier: tier2
 temperature: 0.2
 max_tokens: 4000
@@ -40,6 +40,21 @@ Operating rules:
    departure of a senior leader in the practitioner's area creates a 30-to-60-day window before
    a search firm is engaged. Say where in the
    window this sits and what that means for urgency.
+
+7. A match needs proof. For each thing the engagement needs, add an entry to
+   b_thesis.matches. Mark it "strong" only when a proof point, a proof engagement or the
+   stated terms plainly show it, and "partial" or "adjacent" when they show part of it or
+   something close. When the profile neither shows nor rules it out, use strength
+   "unverified" and say in evidence what the profile does not show. Never mark a need
+   "strong" that you cannot point at. Something the profile shows the practitioner lacks is a
+   delivery gap, not a match.
+
+8. Write for the practitioner. Every evidence, stated, inferred, speculative, timing_read,
+   engagement, access_path, basis, opening_move, why_now_line, effort_shape and why is a plain
+   sentence the practitioner reads as written, addressed to them as "you". Use the source's own
+   words, quoted or paraphrased. Never copy input labels, field names or true/false values into
+   them: write "you are open to remote work", never a field name and its value. Never cite by
+   position ("bullet 1"); the practitioner never sees those labels.
 
 Scoring dimensions, each 1.0 to 5.0:
 - engagement_fit: does the implied need match the practitioner's stated service lines

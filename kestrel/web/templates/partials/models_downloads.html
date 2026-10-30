@@ -11,7 +11,7 @@
   {% else %}
   {% if dl_message %}<p class="mo-msg {{ 'is-good' if dl_ok else 'is-bad' }}" role="status" data-testid="mo-dl-message">{{ dl_message }}</p>{% endif %}
   {% if dl_engine_down %}<p class="mo-msg is-bad" data-testid="mo-engine-down">The AI engine is not running. Open Ollama, then press Run check.</p>{% endif %}
-  <div class="mo-actions">
+  <div class="mo-actions mo-hact">
     {% if dl_live %}
       <button type="button" class="k-btn k-btn--sm" hx-post="/models/download/pause" hx-target="#mo-downloads" hx-swap="outerHTML" data-testid="mo-dl-pause">Pause</button>
     {% elif dl_missing %}
@@ -19,6 +19,7 @@
     {% elif dl_tune_missing %}
       <button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/models/download/tune" hx-target="#mo-downloads" hx-swap="outerHTML" data-testid="mo-dl-tune">Tune models for Kestrel</button>
     {% endif %}
+    <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-change" hx-get="/models/change/tier2" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-dl-other">Try a different model</button>
   </div>
   <ul class="mo-checks">
     {% for r in dl_rows %}

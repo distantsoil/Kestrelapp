@@ -68,7 +68,8 @@ async def _summary_ctx(
     settings = await load_settings_with_db(session)
     online = await osum.runs_online(session)
     live = await osum.is_queued(session, org.id)
-    _, redact = await _redaction(session, settings)
+    mapping, redact = await _redaction(session, settings)
+    about_name = redact_name(org.name, mapping, enabled=True) if mapping else org.name
     view = cv.summary_view(
         await osum.load_record(session, org.id),
         live=live,
@@ -80,7 +81,7 @@ async def _summary_ctx(
             "Nothing was sent. This summary now runs on an online model. "
             "Refresh again to confirm the online send."
         )
-    return {"org": org, "sm": view, "notice": notice, "dialog": dialog}
+    return {"org": org, "sm": view, "notice": notice, "dialog": dialog, "about_name": about_name}
 
 
 async def _ask_dialog(session: AsyncSession, org: Org, settings: Any) -> dict[str, Any]:

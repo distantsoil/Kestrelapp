@@ -479,7 +479,7 @@ def test_research_poll_and_cancel_are_scoped_to_the_role(ids):
         assert _rows(Task, Task.id == task.id)[0].status == "pending"
         client.post(f"{url}/{task.id}/cancel")
         state = client.get(url).text
-        assert 'data-state="cancelled"' in state and "Cancelled." in state
+        assert 'data-state="cancelled"' in state and "Canceled." in state
         assert "every 2s" not in state and "Pat Lee" in state
         assert client.get("/opportunities/999999/role/research").status_code == 404
 
@@ -528,7 +528,7 @@ def test_history_lists_found_screen_scored_shortlisted_and_rating(ids):
         c.post(f"/opportunities/{ids['strong']}/role/shortlist")
         c.post(f"/opportunities/{ids['strong']}/role/view", data={"mode": "agree"})
         h = c.get(f"/opportunities/{ids['strong']}/history").text
-    assert "Scored 4.6 by Full review" in h and "qwen3:14b · prompt version evaluate/v7" in h
+    assert "Scored 4.6 by Full review" in h and "qwen3:14b · prompt version 7" in h
     assert "Found on Indeed" in h and "Added to my shortlist" in h or "shortlist" in h.lower()
     assert "Label (manual)" in h or "rated" in h.lower()
 

@@ -69,3 +69,21 @@ def test_a_refused_undo_shows_its_message(live):
 def test_an_undo_that_worked_announces_itself_quietly(live):
     texts, undone = _undo(live, lambda route: route.fulfill(status=204))
     assert undone == 1 and "Could not undo. Nothing changed." not in texts
+
+
+def test_a_toast_and_its_undo_outlive_the_page_that_raised_them(live):
+    """D-UI-210: a toast belongs to the shell, not to the page. Raised while Settings is mounted,
+    its Undo still works after Settings is unmounted, and its request is not cancelled with the
+    page's signal."""
+    base, browser = live
+    page = browser.new_page()
+    page.goto(f"{base}/settings")
+    page.wait_for_selector('[data-testid="st-nav-computer"]')
+    assert page.evaluate("KUI.page.current()") == "settings"
+    page.route("**/x-undo", lambda route: route.fulfill(status=204))
+    page.evaluate("""() => { window.__undone = 0;
+      document.addEventListener('kestrel:undone', () => { window.__undone += 1; });
+      KUI.toast('Moved.', {undoUrl: '/x-undo'}); }""")
+    page.evaluate("KUI.page.unmount()")
+    page.click(".k-toast__undo")
+    page.wait_for_function("window.__undone === 1")

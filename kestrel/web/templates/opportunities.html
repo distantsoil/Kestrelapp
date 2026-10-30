@@ -8,11 +8,13 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}Pipeline · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/pipeline.css">
-<script src="/static/js/pipeline.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/pipeline.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): pipeline.js defines the page "pipeline"; base.html mounts it. #}
+{% block page_name %}pipeline{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/pipeline.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="pl-wrap"><div class="pl-page" id="pipeline" data-open="{{ open_id or '' }}" data-track="{{ track }}">
   {% call ui.scene_band('Pipeline') %}
@@ -20,7 +22,7 @@
       {%- if signals_tab -%}{{ signals|length }} signals · {{ signals|selectattr('view.this_week')|list|length }} this week
       {%- else -%}{{ total_open }} open{% if f.hidden_only %} · showing hidden{% endif %}
         {%- if being_scored %} · {{ being_scored }} still being scored{% endif %}
-        {%- if scoring_failed %} · <a href="/quarantine" data-testid="failed-link">{{ scoring_failed }} failed scoring</a>{% endif %}{%- endif -%}
+        {%- if scoring_failed %} · <a href="/quarantine" data-testid="failed-link">{{ scoring_failed }} {{ 'needs' if scoring_failed == 1 else 'need' }} another try</a>{% endif %}{%- endif -%}
     </span>
   {% endcall %}
 

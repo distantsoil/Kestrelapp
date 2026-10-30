@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import secrets
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -36,6 +37,8 @@ from sqlalchemy import select
 
 from kestrel.db.models import Setting, Source
 from kestrel.ingest.adapters import get_adapter
+from kestrel.ingest.adapters.adzuna import KEY_SIGNUP_URL as ADZUNA_SIGNUP_URL
+from kestrel.ingest.adapters.usajobs import KEY_SIGNUP_URL
 from kestrel.ingest.base import AdapterError, SourceConfigError
 from kestrel.services import pursuit_undo, source_suggestions
 from kestrel.web import source_view as sv
@@ -50,7 +53,7 @@ TYPES = {  # the tile per type, in order: (key, title, plain line)
     "employment": [
         ("boards", "Job board search", "Kestrel searches public job boards for a title and place."),
         ("ats", "Company career page",
-         "Paste a careers page link. Kestrel reads the hiring systems it knows."),
+         "Paste any careers page link. Kestrel reads most of them."),
         ("name", "Company by name", "Type a company name. Kestrel looks for its job board."),
         ("feeds", "Job feed", "Any board's RSS or Atom link."),
     ],
@@ -61,8 +64,8 @@ TYPES = {  # the tile per type, in order: (key, title, plain line)
         ("feeds", "Company news", "A company newsroom's RSS or Atom link."),
     ],
 }
-SUPPORTED = ("Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP, Paylocity and "
-             "Workable")
+SUPPORTED = ("Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP, Paylocity, "
+             "Workable, Recruitee, Teamtailor, Personio and Breezy HR")
 # Boards the sheet offers: (jobspy site, label, why it is limited or "")
 BOARDS = (
     ("indeed", "Indeed", ""), ("glassdoor", "Glassdoor", ""),
@@ -71,6 +74,25 @@ BOARDS = (
     ("google", "Google Jobs", "Google Jobs returns nothing right now. Kestrel keeps the search "
                               "in case that changes."),
 )
+# The board the sheet offers beside the JobSpy ones: its own adapter, a key of the user's own.
+USAJOBS = ("usajobs", "USAJobs", "US government jobs")
+USAJOBS_SENT = (
+    "Kestrel sends USAJobs your search words and place, your key and your email address. "
+    "Nothing else leaves this computer."
+)
+ADZUNA = ("adzuna", "Adzuna", "")
+ADZUNA_SENT = (
+    "Kestrel sends Adzuna your search words and place and your app ID and app key. "
+    "Nothing else leaves this computer."
+)
+# Remote job boards that need no key: (form name, label, small note under the chip).
+REMOTE_BOARDS = (
+    ("himalayas", "Himalayas", "Remote jobs open to the US"),
+    ("weworkremotely", "We Work Remotely", "Whole feed"),
+)
+# Every board the sheet adds as its own source, beside the JobSpy ones.
+EXTRA_BOARDS = ("usajobs", "adzuna", "himalayas", "weworkremotely")
+EXTRAS_ONLY = "extras"  # a sheet add whose boards all have a source of their own
 DICE = ("Dice", "Dice has no public feed Kestrel can read yet, so it cannot be added.")
 INDEED_FILTERS = ("hours", "type", "remote", "easy", "none")
 MAX_FIELD = 200
@@ -104,23 +126,32 @@ def _types(track: str) -> list[tuple[str, str, str]]:
 def _sheet_base(track: str) -> dict:
     return {
         "track": track, "types": _types(track), "supported": SUPPORTED, "boards": BOARDS,
+        "usajobs_board": USAJOBS, "usajobs_sent": USAJOBS_SENT,
+        "usajobs_signup": KEY_SIGNUP_URL, "adzuna_board": ADZUNA, "adzuna_sent": ADZUNA_SENT,
+        "adzuna_signup": ADZUNA_SIGNUP_URL, "remote_boards": REMOTE_BOARDS,
         "dice": DICE, "paste_label": "Leads" if track == "consulting" else "Applications",
         "paste_href": f"/pursuits?track={track}",
     }
 
 
-async def _added(request: Request, session, message: str, source_id: int) -> HTMLResponse:
-    """The sheet closes, the new row arrives, a toast offers Undo (which removes it)."""
-    src = await session.get(Source, source_id)
-    token = await pursuit_undo.save(
-        session, {"kind": "source_added", "source": pursuit_undo.row_dict(src)}
-    )
+async def _added(
+    request: Request, session, message: str, source_ids: list[int]
+) -> HTMLResponse:
+    """The sheet closes, the new rows arrive, a toast offers Undo. One add can create several
+    sources (a JobSpy search and a board of its own); the Undo token remembers all of them, so
+    Undo removes everything that add created."""
+    first = await session.get(Source, source_ids[0])
+    snapshot = {"kind": "source_added", "source": pursuit_undo.row_dict(first)}
+    others = [await session.get(Source, sid) for sid in source_ids[1:]]
+    if others:
+        snapshot["also"] = [pursuit_undo.row_dict(o) for o in others if o is not None]
+    token = await pursuit_undo.save(session, snapshot)
     await session.commit()
     ctx = await pg._panel_ctx(request, session)
     headers = pg.toast_header(
         message,
-        f"/sources/{source_id}/remove?token={token}",
-        **{"src-sheet-close": {}, "src-arrived": {"id": source_id}},
+        f"/sources/{source_ids[0]}/remove?token={token}",
+        **{"src-sheet-close": {}, "src-arrived": {"id": source_ids[0]}},
     )
     headers["HX-Retarget"] = "#src-list"
     headers["HX-Reswap"] = "outerHTML"
@@ -139,9 +170,12 @@ async def add_choose(request: Request):
 async def add_form(request: Request, kind: str):
     async with sessionmaker()() as s:
         track = await _track(request, s)
+        usajobs = await pg.usajobs_status(s)
+        adzuna = await pg.adzuna_status(s)
     if kind not in {k for k, _t, _d in _types(track)}:
         return _sheet(request, "", _sheet_base(track), 404)
-    return _sheet(request, kind, {**_sheet_base(track), "values": {}})
+    return _sheet(request, kind, {**_sheet_base(track), "values": {}, "usajobs": usajobs,
+                                  "adzuna": adzuna})
 
 
 def _indeed_config(form) -> dict:
@@ -167,8 +201,10 @@ def _boards_config(form) -> tuple[dict, str | None]:
     sites = [site for site, _l, _w in BOARDS if form.get(f"board_{site}")]
     if not title:
         return {}, "Type a job title or keywords first."
-    if not sites:
+    if not sites and not any(form.get(f"board_{b}") for b in EXTRA_BOARDS):
         return {}, "Pick at least one job board."
+    if not sites:  # only boards with their own source: built in `_extra_specs`
+        return {"search_term": title, **({"location": place} if place else {})}, None
     config: dict = {"search_term": title, "site_name": sites}
     if place:
         config["location"] = place
@@ -187,22 +223,82 @@ async def add_source(request: Request, kind: str):
         base = _sheet_base(track)
         values = {k: str(v) for k, v in form.items() if isinstance(v, str)}
         spec, error = await _build_source(kind, form, track)
-        if error is None and spec is not None:
+        only_extras = spec is not None and spec["kind"] == EXTRAS_ONLY  # built below
+        if error is None and spec is not None and not only_extras:
             error = pg._validate_source_config(spec["kind"], spec["config"])
         if error is not None or spec is None:
             return _sheet(request, kind, {**base, "values": values, "error": error}, 200)
-        dupe = await _existing(s, spec)
+        dupe = None if only_extras else await _existing(s, spec)
         if dupe is not None:
             return _sheet(request, kind, {**base, "values": values,
                                           "error": f"{dupe.name} is already one of your sources."})
-        src = Source(
-            track=spec["track"], kind=spec["kind"], name=spec["name"], config=spec["config"],
-            enabled=True, cadence_hours=spec.get("cadence", pg._DEFAULT_CADENCE),
-            origin=pg.CUSTOM,
-        )
-        s.add(src)
+        specs = [] if only_extras else [spec]
+        message = "Added. Kestrel checks it on the next run."
+        if kind == "boards":
+            # Keys first: a refusal (a bad email) re-renders the sheet and adds nothing.
+            error = await _save_board_keys(s, form)
+            base = {**base, "usajobs": await pg.usajobs_status(s),
+                    "adzuna": await pg.adzuna_status(s)}
+            extras: list[dict] = []
+            if error is None:
+                extras, error = await _extra_specs(s, form, track, base)
+            if error is not None:
+                return _sheet(request, kind, {**base, "values": values, "error": error})
+            specs += extras
+            needs = [label for name, label in (("usajobs", "USAJobs"), ("adzuna", "Adzuna"))
+                     if form.get(f"board_{name}") and not base[name]["ready"]]
+            if needs:
+                what = {"USAJobs": "API key and email", "Adzuna": "app ID and app key"}
+                message = ("Added. " + " ".join(
+                    f"{b} needs your {what[b]} before it can search;" for b in needs
+                ) + " add them under Sources that need your own key.")
+        added: list[Source] = []
+        for sp in specs:
+            src = Source(
+                track=sp["track"], kind=sp["kind"], name=sp["name"], config=sp["config"],
+                enabled=True, cadence_hours=sp.get("cadence", pg._DEFAULT_CADENCE),
+                origin=pg.CUSTOM,
+            )
+            s.add(src)
+            added.append(src)
         await s.commit()
-        return await _added(request, s, "Added. Kestrel checks it on the next run.", src.id)
+        return await _added(request, s, message, [src.id for src in added])
+
+
+async def _save_board_keys(session, form) -> str | None:
+    """Save the keys typed into the panels of the boards that are ticked; a refusal is a plain
+    sentence and nothing is added."""
+    if form.get("board_usajobs"):
+        error = await pg.save_usajobs_credentials(
+            session, key=str(form.get("usajobs_key") or "").strip(),
+            email=str(form.get("usajobs_email") or "").strip(),
+        )
+        if error is not None:
+            return error
+    if form.get("board_adzuna"):
+        return await pg.save_adzuna_credentials(
+            session, app_id=str(form.get("adzuna_id") or "").strip(),
+            app_key=str(form.get("adzuna_key") or "").strip(),
+        )
+    return None
+
+
+async def _extra_specs(session, form, track: str, base: dict) -> tuple[list[dict], str | None]:
+    """The sources for the ticked boards that are not JobSpy ones, each checked for a repeat."""
+    out: list[dict] = []
+    title, place = _text(form, "title"), _text(form, "place")
+    for name in EXTRA_BOARDS:
+        if not form.get(f"board_{name}"):
+            continue
+        spec = _extra_spec(name, track, title, place, base)
+        error = pg._validate_source_config(spec["kind"], spec["config"])
+        dupe = await _existing(session, spec)
+        if error is None and dupe is not None:
+            error = f"{dupe.name} is already one of your sources."
+        if error is not None:
+            return [], error
+        out.append(spec)
+    return out, None
 
 
 async def _existing(session, spec: dict) -> Source | None:
@@ -222,7 +318,17 @@ async def _existing(session, spec: dict) -> Source | None:
                        str(c.get("location") or "").lower(), sorted(c.get("site_name") or [])):
                 return row
         return None
-    key = _KEY.get(spec["kind"])
+    if spec["kind"] in ("usajobs", "adzuna", "himalayas", "weworkremotely"):
+        cfg = spec["config"]
+        want = (str(cfg.get("keyword") or "").lower(), str(cfg.get("location") or "").lower())
+        for row in (await session.execute(
+                select(Source).where(Source.kind == spec["kind"]))).scalars():
+            c = row.config or {}
+            if not sv.is_removed(row) and want == (
+                    str(c.get("keyword") or "").lower(), str(c.get("location") or "").lower()):
+                return row
+        return None
+    key = _KEY.get(spec["kind"]) or ("url" if spec["kind"] == "careers_page" else None)
     if key is None:
         return None
     want = str(spec["config"].get(key) or "").lower()
@@ -243,6 +349,9 @@ async def _build_source(kind: str, form, track: str) -> tuple[dict | None, str |
             return None, error
         place = config.get("location")
         name = f"{config['search_term']} in {place}" if place else config["search_term"]
+        if "site_name" not in config:  # boards with their own source only; the caller adds them
+            return {"track": track, "kind": EXTRAS_ONLY, "name": name[:MAX_FIELD],
+                    "config": {}}, None
         return {"track": track, "kind": "jobspy", "name": name[:MAX_FIELD], "config": config}, None
     if kind in ("ats", "name"):
         parsed = _pick(str(form.get("pick") or "").strip())
@@ -272,6 +381,23 @@ async def _build_source(kind: str, form, track: str) -> tuple[dict | None, str |
     return None, "That type of source is not available."
 
 
+def _extra_spec(name: str, track: str, title: str, place: str, base: dict) -> dict:
+    """The source one ticked board gets from the sheet's title and place. The USAJobs email rides
+    in the config (it is not a secret); no key ever does. The remote boards take no place."""
+    if name == "usajobs":
+        config: dict = {"keyword": title, "contact_email": base["usajobs"]["email"]}
+    else:
+        config = {"keyword": title}
+    if place and name in ("usajobs", "adzuna"):
+        config["location"] = place
+    label = {"usajobs": "USAJobs", "adzuna": "Adzuna", "himalayas": "Himalayas",
+             "weworkremotely": "We Work Remotely"}[name]
+    if name == "weworkremotely":  # the whole feed: there is no search to name
+        return {"track": track, "kind": name, "name": label, "config": {}}
+    shown = f"{title} on {label}" + (f" in {place}" if place and "location" in config else "")
+    return {"track": track, "kind": name, "name": shown[:MAX_FIELD], "config": config}
+
+
 def _pick(raw: str) -> tuple[str, dict, str] | None:
     """The board a check found, as the sheet carries it: `pick:<kind>|<json config>|<name>`.
     Only a check produces one, so Add stays off until a link or a name has been read."""
@@ -295,6 +421,19 @@ def _msg(
     )
 
 
+def _domain_name(domain: object) -> str | None:
+    """A career site address as a company word: `career.example.org` is `example`, and
+    `harbor-point.teamtailor.com` is `harbor-point`."""
+    if not isinstance(domain, str) or "." not in domain:
+        return None
+    labels = domain.lower().split(".")
+    if domain.lower().endswith(".teamtailor.com"):
+        return labels[0]
+    while len(labels) > 2 and labels[0] in ("www", "career", "careers", "jobs", "join", "work"):
+        labels = labels[1:]
+    return labels[-2] if len(labels) >= 2 else labels[0]
+
+
 def _pretty(slug: str) -> str:
     """A board address as a name: `harbor-point` becomes `Harbor Point`; a mixed-case address is
     already written as the company writes it."""
@@ -306,38 +445,83 @@ def _pretty(slug: str) -> str:
 async def check_link(request: Request):
     """Read one careers page link: which hiring system it is, and how many roles it lists now.
     One polite request. Nothing is saved; Add is only enabled by a good answer."""
-    from kestrel.ingest.board_discovery import board_from_url
+    from kestrel.ingest.board_discovery import BoardRef, board_from_url
 
     url = _text(await request.form(), "url")
     if not url.lower().startswith(("http://", "https://")):
         return _msg(request, "bad", "Nothing found at that link. Check the address and try again.")
     ref = board_from_url(url)
+    html = None
+    if ref is None:  # a page on the employer's own domain: read once, for a hiring system first
+        html = await _page_text(url)
+        ref = _board_from_markup(html, url)
     if ref is None:
-        return _msg(
-            request, "warn",
-            f"Kestrel does not read that kind of page yet. It reads {SUPPORTED}. For any other "
-            "page, copy the posting text and add it with One posting.")
+        ref = BoardRef("careers_page", {"url": url})  # the generic reader (schema.org JobPosting)
     adapter = get_adapter(ref.kind)
-    platform = sv.PLATFORMS.get(ref.kind, ref.kind)
+    page = ref.kind == "careers_page"
+    platform = sv.PLATFORMS.get(ref.kind, "Careers page" if page else ref.kind)
     ident = str(ref.config.get("token") or ref.config.get("company") or ref.config.get("slug")
-                or ref.config.get("tenant") or platform)
+                or ref.config.get("tenant") or _domain_name(ref.config.get("domain"))
+                or _domain_name(urlsplit(url).hostname if page else None) or platform)
     name = _pretty(ident)
     try:
         async with await pg._http_client() as http:
-            postings = await adapter.fetch(ref.config, http) if adapter else []
-    except (httpx.HTTPError, AdapterError, SourceConfigError, ValueError, PermissionError,
+            if page and html is not None:  # the page is already in hand: do not ask for it twice
+                postings = await adapter.read_html(html, ref.config, http)
+            else:
+                postings = await adapter.fetch(ref.config, http) if adapter else []
+    except AdapterError as exc:
+        if page:  # the reader's own sentence says why (robots.txt, not found, blocked)
+            return _msg(request, "bad", str(exc))
+        log.info("source_link_check_failed", kind=ref.kind, error=type(exc).__name__)
+        return _msg(request, "bad", "Nothing found at that link. Check the address and try again.")
+    except (httpx.HTTPError, SourceConfigError, ValueError, PermissionError,
             RuntimeError) as exc:
         log.info("source_link_check_failed", kind=ref.kind, error=type(exc).__name__)
         return _msg(request, "bad", "Nothing found at that link. Check the address and try again.")
+    stopped = getattr(postings, "partial_error", None)
+    if not postings and stopped:  # a feed that is off or a rate limit: say so, offer no Add
+        if page:  # a page Kestrel could not read jobs from: say why, and the way round it
+            return _msg(request, "warn", f"{stopped} To track a role from this page, copy the "
+                                         "posting text and add it with One posting.")
+        return _msg(request, "warn", f"This is a {platform} job board. {stopped}")
     if not postings:
         return _msg(request, "warn",
                     f"This is a {platform} job board, but it lists no open roles right now. "
                     "You can still add it; Kestrel checks it daily.",
                     pick=_encode(ref.kind, ref.config, name), name=name)
+    if (ref.config.get("domain") or page) and postings[0].org_name:
+        name = postings[0].org_name  # the career site names its employer
+    config = {**ref.config, "company_name": name} if page else ref.config
     n = len(postings)
-    return _msg(request, "good", f"Found it. {platform} job board. {n} open role"
-                f"{'' if n == 1 else 's'}.", pick=_encode(ref.kind, ref.config, name),
+    what = "careers page" if page else f"{platform} job board"
+    cap = f" {stopped}" if page and stopped else ""
+    return _msg(request, "good", f"Found it. {what[0].upper() + what[1:]}. {n} open role"
+                f"{'' if n == 1 else 's'}.{cap}", pick=_encode(ref.kind, config, name),
                 name=name)
+
+
+async def _page_text(url: str) -> str | None:
+    """A careers page on the employer's own domain, read once. Any failure is None (the careers
+    page reader then reports the reason itself). The link is the operator's, so the fetch is the
+    guarded one: public addresses only, robots.txt checked, one request, 2 MB at most."""
+    from kestrel.ingest.http import UnsafeURLError
+
+    try:
+        async with await pg._http_client() as http:
+            return await http.get_text(
+                url, public_only=True, check_robots=True, retries=1, rate_per_sec=1.0
+            )
+    except (httpx.HTTPError, UnsafeURLError, PermissionError, ValueError) as exc:
+        log.info("source_link_page_unreadable", error=type(exc).__name__)
+        return None
+
+
+def _board_from_markup(html: str | None, url: str):
+    """The hiring system a page's own markup names (Recruitee, Teamtailor), or None."""
+    from kestrel.ingest.board_discovery import board_from_markup
+
+    return board_from_markup(html, url)
 
 
 def _encode(kind: str, config: dict, company: str) -> str:
@@ -480,6 +664,9 @@ def _facts(src: Source, view: sv.SourceView) -> list[tuple[str, str]]:
         rows.append(("Hiring system", sv.PLATFORMS[src.kind]))
         if ident:
             rows.append(("Company page", str(ident)))
+    elif src.kind == "careers_page":
+        rows.append(("Hiring system", "Careers page"))
+        rows.append(("Page", str(cfg.get("url") or "")))
     elif src.kind == "sec_edgar":
         rows.append(("Watching for", ", ".join(str(q) for q in (cfg.get("queries") or [])[:3])))
     elif src.kind == "rss":
@@ -607,6 +794,7 @@ async def remove_source(request: Request, source_id: int):
     async with sessionmaker()() as s:
         src = await s.get(Source, source_id)
         token = request.query_params.get("token")
+        siblings: list[Source] = []  # the other sources the same add created (Undo takes them too)
         if token is not None:
             row = await s.get(Setting, pursuit_undo.PREFIX + token)
             if (
@@ -619,6 +807,13 @@ async def remove_source(request: Request, source_id: int):
                 return HTMLResponse(
                     '<span data-undo-msg data-ok="0">This can no longer be undone.</span>'
                 )
+            for snap in row.value.get("also") or []:
+                other = await s.get(Source, snap.get("id"))
+                if other is None or snap != pursuit_undo.row_dict(other):
+                    return HTMLResponse(  # one of them changed since: undo none of them
+                        '<span data-undo-msg data-ok="0">This can no longer be undone.</span>'
+                    )
+                siblings.append(other)
             await s.delete(row)
         if src is None or sv.is_removed(src):
             return HTMLResponse("source not found", status_code=404)
@@ -627,11 +822,12 @@ async def remove_source(request: Request, source_id: int):
                 "only a source you added can be removed; turn it off instead", status_code=400
             )
         stamp = secrets.token_urlsafe(9)
-        src.config = {
-            **(src.config or {}),
-            sv.REMOVED_KEY: {"enabled": bool(src.enabled), "at": stamp},
-        }
-        src.enabled = False
+        for gone in (src, *siblings):  # one stamp: Restore brings back all of them
+            gone.config = {
+                **(gone.config or {}),
+                sv.REMOVED_KEY: {"enabled": bool(gone.enabled), "at": stamp},
+            }
+            gone.enabled = False
         await s.commit()
         name = src.name
         ctx = await pg._panel_ctx(request, s)
@@ -663,8 +859,17 @@ async def restore_source(request: Request, source_id: int):
                 '<span data-undo-msg data-ok="0">This can no longer be undone.</span>'
             )
         if marker:
-            src.config = {k: v for k, v in (src.config or {}).items() if k != sv.REMOVED_KEY}
-            src.enabled = bool(marker.get("enabled")) if isinstance(marker, dict) else False
+            # Everything removed together (same stamp) comes back together.
+            stamp = request.query_params["at"]
+            for row in (await s.execute(select(Source))).scalars():
+                mk = (row.config or {}).get(sv.REMOVED_KEY)
+                if row.id != src.id and not (isinstance(mk, dict) and mk.get("at") == stamp):
+                    continue
+                if not isinstance(mk, dict):
+                    continue
+                row.config = {k: v for k, v in (row.config or {}).items()
+                              if k != sv.REMOVED_KEY}
+                row.enabled = bool(mk.get("enabled"))
             await s.commit()
         ctx = await pg._panel_ctx(request, s)
     return pg.list_response(request, ctx)

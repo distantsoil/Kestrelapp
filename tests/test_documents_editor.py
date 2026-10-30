@@ -472,5 +472,8 @@ def test_prompt_p13_is_registered_and_says_it_never_writes_resume_text():
                                          ("calibrate.html", "scoring learns your taste")])
 def test_bench_and_calibrate_say_what_they_are_for(name, words):
     body = (Path(paths.web_templates_dir()) / name).read_text(encoding="utf-8")
-    purpose = body.split('data-testid="page-purpose">')[1].split("</p>")[0]
+    if name == "bench.html":  # the locked mockup drops the line; it lives in How it works
+        purpose = body.split("What it is not</h4>")[1].split("</p>")[0]
+    else:
+        purpose = body.split('data-testid="page-purpose">')[1].split("</p>")[0]
     assert words in purpose and "Profile &gt; Documents" in purpose and "—" not in purpose

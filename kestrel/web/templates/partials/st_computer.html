@@ -8,7 +8,7 @@
   {{ st.head('Everyday options', 'settings') }}
   <div class="st-row st-row--first">
     <div class="st-row__t"><b class="st-lab">Keep this computer awake during runs{% if opt.platform != 'windows' %} <span class="k-pill">Windows only</span>{% endif %}</b>
-      <span class="st-dsm">Stops sleep while Kestrel works. Ends when the run ends.</span></div>
+      <span class="st-dsm">Stops sleep while Kestrel works. Stays on until you quit Kestrel.</span></div>
     {{ st.sw('awake', 'Keep this computer awake during runs', opt.awake, {'data-st-url': '/settings/computer/option'}) }}
   </div>
   <div class="st-row">

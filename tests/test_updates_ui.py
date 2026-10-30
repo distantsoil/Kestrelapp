@@ -4,6 +4,7 @@ toggle). Cloud-safe: a migrated SQLite file, no network (check_now is monkeypatc
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -126,7 +127,8 @@ def test_details_escapes_and_links_plainly():
     assert "&lt;script&gt;" in body
     assert "ancient" not in body  # not newer than the running version
     assert f'href="{PAGE}" target="_blank" rel="noopener noreferrer"' in body
-    assert "?" not in body.split('href="')[1].split('"')[0]
+    page_link = [h for h in re.findall(r'href="([^"]+)"', body) if not h.startswith("/static/")]
+    assert "?" not in page_link[0]
     assert "Remind me tomorrow" in body and "Skip this version" in body
     assert "Your data stays where it is." in body
 

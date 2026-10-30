@@ -3,8 +3,11 @@
 {% extends "base.html" %}
 {% import "ui/macros.html" as ui %}
 {% block title %}{% if run %}Run {{ run.id }}{% else %}Run{% endif %} · Kestrel{% endblock %}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
-{% block head_extra %}<link rel="stylesheet" href="/static/css/pages/runs.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ static_url('css/pages/runs.css') }}">{% endblock %}
+{# The page lifecycle (D-UI-210): this page has no script of its own (runs.js is the list page's),
+   so its name is never defined and base.html mounts nothing. #}
+{% block page_name %}run-detail{% endblock %}
 {% block content %}
 <div class="rn-wrap"><div class="rn-page">
   {% set crumb %}<nav class="rn-crumb" aria-label="Breadcrumb"><a href="/runs">Runs</a> › <span>{% if run %}Run {{ run.id }}{% else %}Not found{% endif %}</span></nav>{% endset %}

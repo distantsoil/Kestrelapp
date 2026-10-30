@@ -6,11 +6,13 @@
 {% import "ui/macros.html" as ui %}
 {% block title %}Profile · Kestrel{% endblock %}
 {# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/profile.css">
-<script src="/static/js/profile.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/profile.css') }}">
 {% endblock %}
+{# The page lifecycle (D-UI-210): profile.js defines the page "profile"; base.html mounts it. #}
+{% block page_name %}profile{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/profile.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="pf-wrap" data-pf-tab="{{ tab }}">
   {% call ui.scene_band('Profile') %}
@@ -51,7 +53,7 @@
         <div class="pf-track" role="tablist" aria-label="Track" data-testid="profile-track-switch">
           <span class="pf-track__lbl">Track</span>
           {% for t in ('employment', 'consulting') %}
-            <a href="/profile?tab={{ tab }}&track={{ t }}" @click="setTrack('{{ t }}')" role="tab"
+            <a href="/profile?tab={{ tab }}&track={{ t }}" @click="setTrack('{{ t }}')" data-k-reload role="tab"
                aria-selected="{{ 'true' if track == t else 'false' }}"
                class="{% if track == t %}active{% endif %}" data-track="{{ t }}">{{ words(t).track_name }}</a>
         {% endfor %}
@@ -60,7 +62,7 @@
         {% if profile_problem %}
         <div class="pf-note pf-note--bad" role="alert" data-testid="profile-unreadable">
           <b>profile.yml cannot be read, so nothing here can be saved.</b> {{ profile_problem }}
-          Fix the file, or restore a backup from Settings &gt; LAN &amp; backup, then reload.
+          Fix the file, or restore a backup from Settings &gt; Your data, then reload.
         </div>
         {% elif not profile_exists %}
         <div class="pf-note pf-note--warn" data-testid="no-profile">
@@ -72,12 +74,6 @@
         <div id="profile-section">
           {% include "partials/profile_" ~ tab ~ ".html" %}
         </div>
-        {% if tab == 'employment' %}
-          {# P15 (D-TTL-3): titles suggested from the resume, accepted one at a time. #}
-          <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
-          {# D-TTL-2: loaded on its own so the Employment form stays one form. #}
-          <div id="title-variants" hx-get="/profile/title-variants" hx-trigger="load" hx-swap="outerHTML"></div>
-        {% endif %}
       {% endif %}
     </div>
     {% call ui.help_column() %}

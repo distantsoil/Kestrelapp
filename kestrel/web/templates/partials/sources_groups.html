@@ -14,7 +14,7 @@
   <section class="src-grp is-open src-sug" data-g="sug" data-testid="group-sug">
     <div class="src-grph">
       <button type="button" class="src-gtog" data-src-collapse="sug" aria-expanded="true" aria-label="Show or hide Suggested companies">{{ ui.icon('chev') }}</button>
-      <span class="k-badge k-badge--good">{{ ui.icon('restore') }}</span>
+      <span class="k-badge k-badge--good">{{ ui.icon('scan') }}</span>
       <div class="src-gtx"><h3>Suggested {{ 'companies to watch' if track == 'consulting' else 'companies' }} <span class="src-cnt">{{ suggestions | length }}</span></h3>
         <div class="src-sub">Based on {{ 'companies you work with' if track == 'consulting' else 'roles you shortlisted and applied to' }}. Nothing is added until you say so.</div></div>
     </div>
@@ -43,23 +43,24 @@
         </form>
       </div>
       {% elif not g.views %}
-      <p class="src-line" data-testid="no-searches">Your searches come from <a class="k-link" href="/profile?tab=employment">Profile &gt; Employment</a> and Location: add the job titles you want and where, and they appear here.</p>
+      <p class="src-line src-line--text" data-testid="no-searches">Your searches come from <a class="k-link" href="/profile?tab=employment">Profile &gt; Employment</a> and Location: add the job titles you want and where, and they appear here.</p>
       {% endif %}
     {% elif g.key == 'ats' %}
       {% if found_boards %}
       <p class="src-line" data-testid="found-boards">{{ found_boards }} company board{{ '' if found_boards == 1 else 's' }} found in your searches{% if found_boards >= found_cap %} (the most Kestrel adds is {{ found_cap }}){% endif %}. Each is read straight from the company, once a day. Turn one off and it stays off.</p>
       {% endif %}
+      <p class="src-note">Unrelated titles are skipped before storage and counted on each run. Uncertain matches are kept.</p>
       {% if lane_message %}<div class="src-note" data-testid="lane-result">{{ lane_message }}</div>{% endif %}
       {% if lane.waiting %}
       <div class="src-lane" data-testid="lane" x-data="{ confirming: false }">
-        <p data-testid="lane-waiting">Waiting: {{ lane.waiting }} role{{ '' if lane.waiting == 1 else 's' }} from company boards that do not look like your field or level are {{ 'kept for you' if lane.hosted else 'scored when Kestrel is idle' }}. None are rejected.{% if lane.hosted %} Because your scoring runs on an online model, these wait for you to choose Score everything now.{% endif %}
+        <p data-testid="lane-waiting">Waiting: {{ lane.waiting }} role{{ '' if lane.waiting == 1 else 's' }} from earlier runs. Kestrel rechecks their area and title before scoring. Clear mismatches are set aside. These roles use local models only.{% if lane.hosted %} Choose local models for both scoring tiers to score the remaining roles.{% else %} Remaining roles score when Kestrel is idle.{% endif %}
           <button class="k-btn k-btn--sm" type="button" data-testid="lane-score-now" x-show="!confirming" @click="confirming = true">Score everything now</button></p>
         <div class="src-confirm" x-show="confirming" x-cloak data-testid="lane-confirm">
-          <p><b>Score all {{ lane.waiting }} waiting role{{ '' if lane.waiting == 1 else 's' }} now?</b></p>
-          {% if lane.hosted %}<p data-testid="lane-sends">{{ lane.sends }}{% if lane.model %} Model: <b>{{ lane.model }}</b>.{% endif %} {{ 'Confidential mode is on: your current employer is hidden in what is sent.' if lane.confidential else '' }}</p>
-          <p>Kestrel is set to use an online model, so <b>every role can cost real money</b> on your account with that service, and the roles are sent to it. Kestrel cannot tell you the total beforehand. Stop here if you are unsure.</p>{% endif %}
-          <p>On a local model this takes your computer about <b>{{ lane.time }}</b> ({{ lane.waiting }} roles at about {{ lane.seconds }} seconds each{{ '' if lane.measured else ', a rough figure because not enough roles have been scored yet' }}), and it will be busy meanwhile.{% if not lane.hosted %} If you later switch to an online model, scoring each role there costs money.{% endif %}</p>
-          <p>This happens once. Afterward Kestrel goes back to scoring them slowly in the background.</p>
+          <p><b>Recheck {{ lane.waiting }} waiting role{{ '' if lane.waiting == 1 else 's' }} and score matches locally?</b></p>
+          {% if lane.hosted %}<p data-testid="lane-sends">Nothing will be sent to an online model. Choose local models for both scoring tiers first.</p>
+          {% endif %}
+          <p>On a local model this takes your computer about <b>{{ lane.time }}</b> (up to {{ lane.waiting }} roles at about {{ lane.seconds }} seconds each{{ '' if lane.measured else ', a rough figure because not enough roles have been scored yet' }}), and it will be busy meanwhile.</p>
+          <p>This happens once. Any remaining backlog waits for local scoring when Kestrel is idle.</p>
           <button class="k-btn k-btn--primary k-btn--sm" type="button" hx-post="/sources/score-everything" hx-vals='{{ {"confirm": "1", "model": lane.model, "dest": lane.dest, "online_approval": lane.approval_json} | tojson }}' hx-target="#sources-panel" hx-swap="outerHTML" data-testid="lane-confirm-yes">Yes, score them all now</button>
           <button class="k-btn k-btn--sm" type="button" @click="confirming = false">Cancel</button>
         </div>

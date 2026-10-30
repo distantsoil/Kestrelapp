@@ -2,7 +2,7 @@
 
 Everything here reuses kestrel.services.backup so the archive the browser downloads is byte-for-
 byte what `kestrel backup` writes, and the same exclusions hold (never .env, never API keys).
-Restore is deliberately NOT here: it lives on Settings > LAN & backup (`POST /settings/restore`)
+Restore is deliberately NOT here: it lives on Settings > Your data (`POST /settings/restore`)
 and this page links to it rather than duplicating a destructive route.
 
 The archive is built in a private temp directory off the event loop, streamed with FileResponse,

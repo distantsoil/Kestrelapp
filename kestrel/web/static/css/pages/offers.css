@@ -9,19 +9,20 @@
   min-width: 0; }
 .of-page, .of-page * { box-sizing: border-box; }
 .of-page .k-scene { margin: 0; padding: 4px 0 10px; }
-.of-lede { margin: 0; color: var(--muted); font-size: var(--fs-md); white-space: nowrap; }
 .of-page [hidden] { display: none !important; }
 .of-foot { font-size: 11.5px; color: var(--muted); margin: 0; }
 .of-pad { padding: 0 22px 12px; }
 
 /* ----------------------------------------------------------------------------------- tabs */
-.of-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-.of-tab { padding: 9px 18px; font-weight: 700; color: var(--muted); text-decoration: none;
-  border-bottom: 3px solid transparent; margin-bottom: -1px; white-space: nowrap;
-  transition: color var(--dur-1), border-color var(--dur-1); }
+.of-tabs { position: relative; display: flex; gap: 22px; border-bottom: 1px solid var(--line);
+  margin-top: -4px; }
+.of-tab { padding: 8px 2px 10px; font-weight: 700; color: var(--muted); text-decoration: none;
+  margin-bottom: -1px; white-space: nowrap; transition: color var(--dur-1); }
 .of-tab:hover { color: var(--ink); text-decoration: none; }
-.of-tab.is-on { color: var(--brand); border-bottom-color: var(--brand); }
-.of-pane { display: flex; flex-direction: column; gap: 16px; margin-top: 4px; min-width: 0; }
+.of-tab.is-on { color: var(--ink); }
+.of-count { font-size: 14px; font-weight: 500; }
+.of-pane { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; min-width: 0; }
+.of-chiprow + .of-foot { margin-top: 10px; }
 .of-note-card { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
 
 /* ---------------------------------------------------------------------------- offer cards */
@@ -77,16 +78,16 @@
 
 /* The pay band: a floor-to-target gradient, floor and target ticks, the similar-roles bracket
    (five or more only) and a marker at the offer. */
-.of-band { position: relative; height: 68px; margin: 0 26px; }
+.of-band { position: relative; height: 58px; margin: 0 26px; }
 .of-band__bar { position: absolute; left: 0; right: 0; top: 30px; height: 8px; border-radius: 5px;
   background: linear-gradient(90deg, var(--z1), var(--z2) 38%, var(--z3) 62%); }
 .of-band__sim { position: absolute; z-index: 1; top: 16px; height: 10px; box-sizing: border-box;
-  border: 2px solid var(--ink); border-bottom: 0; border-radius: 4px 4px 0 0; }
-.of-band__simt { position: absolute; top: 0; transform: translateX(-50%); font-size: 11.5px;
+  border: 2px solid var(--muted); border-bottom: 0; border-radius: 4px 4px 0 0; }
+.of-band__simt { position: absolute; top: 0; transform: translateX(-50%); font-size: 10.5px;
   color: var(--muted); white-space: nowrap; font-weight: 700; }
-.of-band__mk { position: absolute; z-index: 2; top: 24px; width: 4px; height: 20px; margin-left: -2px;
+.of-band__mk { position: absolute; z-index: 2; top: 24px; width: 3px; height: 20px; margin-left: -1.5px;
   background: var(--ink); border-radius: 2px; }
-.of-band__tk { position: absolute; top: 46px; transform: translateX(-50%); font-size: 11.5px;
+.of-band__tk { position: absolute; top: 46px; transform: translateX(-50%); font-size: 10.5px;
   color: var(--muted); white-space: nowrap; }
 .of-band__tk::before { content: ""; position: absolute; left: 50%; top: -7px; width: 2px;
   height: 6px; background: var(--muted); transform: translateX(-50%); }
@@ -107,7 +108,7 @@
 .of-menu { position: absolute; z-index: var(--z-overlay); top: calc(100% + 4px); right: 0;
   min-width: 200px; background: var(--paper); border: 1px solid var(--line);
   border-radius: var(--r-md); box-shadow: var(--shadow-pop); padding: 6px;
-  display: flex; flex-direction: column; }
+  display: flex; flex-direction: column; animation: k-inUp .2s ease both; }
 .of-menu button { border: 0; background: none; text-align: left; padding: 8px 10px;
   border-radius: var(--r-sm); font: inherit; font-size: 13.5px; font-weight: 700;
   color: var(--ink); cursor: pointer; }
@@ -137,15 +138,16 @@
 .of-cmp__name { font-weight: 700; }
 .of-cmp__name small { font-weight: 500; color: var(--muted); font-size: 11.5px; }
 .of-wt { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-.of-wt input, .of-w { width: 110px; accent-color: var(--brand); cursor: pointer; }
-.of-wt em { font-style: normal; font-size: 11.5px; color: var(--muted); width: 60px;
+.of-wt input, .of-w { width: 90px; accent-color: var(--brand); cursor: pointer; }
+.of-wt em { font-style: normal; font-size: 11.5px; color: var(--muted); width: 56px;
   white-space: nowrap; }
 .of-cell b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .of-src { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .of-cbar { height: 6px; border-radius: 4px; background: var(--soft); overflow: hidden;
   display: block; }
-.of-cbar i { display: block; height: 100%; background: var(--brand); border-radius: 4px; }
+.of-cbar i { display: block; height: 100%; background: var(--brand); border-radius: 4px;
+  transition: width .5s var(--ease); }
 .of-cell.is-top .of-cbar i { background: var(--good); }
 .of-stars { display: inline-flex; gap: 2px; }
 .of-stars button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--line);
@@ -155,7 +157,7 @@
 .of-how { margin: 0; }
 .of-wsum { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin-top: 8px; }
-.of-wbox { background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-lg);
+.of-wbox { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
   padding: 12px 14px; }
 .of-wbox b { font-size: 13.5px; display: block; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
@@ -268,14 +270,38 @@
 .of-fld .k-input { font-weight: 600; }
 .of-sheet .k-modal__foot { align-items: center; }
 
-@container (max-width: 1300px) {
+/* The mockup's steps measure the whole window (kwin), as its .win does. */
+@container kwin (max-width: 1300px) {
   .of-ngrid { grid-template-columns: minmax(0, 1fr); }
   .of-f3 { grid-template-columns: 1fr 1fr; }
 }
-@container (max-width: 900px) {
+@container kwin (max-width: 900px) {
   .of-facts, .of-f2, .of-f3 { grid-template-columns: 1fr; }
   .of-hrow { grid-template-columns: 1fr 1fr; }
 }
+/* The Record an offer sheet: a bottom sheet that rises from the window bottom (mockup .osheet). */
+#of-sheet.k-modal--sheet { --modal-w: 760px; width: min(760px, 94vw); max-height: 88vh; }
+.of-sheet__head { display: flex; align-items: flex-start; gap: 10px; }
+.of-sheet__head h2 { font-size: 16px; }
+.of-sheet__head p { margin: 2px 0 0; font-size: 12.5px; }
+.of-f2, .of-f3 { align-items: start; }
+.of-f2 > .of-fld, .of-f3 > .of-fld { margin-top: 0; }
+/* Each pane rises in on a tab change, cards on arrival (mockup rise .35s). */
+.k-pane-in .of-card { animation: k-inUp .4s var(--ease) both; }
+.of-stack i { transition: width .7s var(--ease); }
+/* A new offer's card arrives, and the draft panel pulses once when the walk-away unlocks it
+   (offers-mockup-locked.html :673 and :738). */
+.of-card.arrive { animation: of-arrive 1.4s ease both; }
+@keyframes of-arrive { 0% { opacity: 0; transform: translateY(10px); }
+  25% { opacity: 1; transform: none; box-shadow: 0 0 0 0 var(--soft); }
+  50% { box-shadow: 0 0 0 6px var(--soft); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.of-draft.unlock { animation: of-unl .6s ease; }
+@keyframes of-unl { 0% { transform: scale(1); } 40% { transform: scale(1.05); box-shadow: 0 0 0 3px var(--brand); }
+  100% { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) {
   .of-tab { transition: none; }
+  .of-card.arrive, .of-draft.unlock { animation: none; }
+  .k-pane-in .of-card, .of-menu { animation: none; }
 }
+
+/* "More about this" reads with a chevron (mockup help links). */

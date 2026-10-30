@@ -17,6 +17,9 @@
     <span class="k-select"><select id="src-forig" class="k-input" aria-label="Where it came from"><option value="">All origins</option>{% for k, o in origins.items() %}<option value="{{ k }}">{{ o[0] }}</option>{% endfor %}</select></span>
     <span class="k-select"><select id="src-fhealth" class="k-input" aria-label="Health"><option value="">All health</option><option value="g">Healthy</option><option value="w">Slowed down</option><option value="b">Needs you</option></select></span>
     <span class="k-grow"></span>
+    {# A plain link to the public GitHub new-issue page (D-UI-193). The person writes and sends it
+       there; Kestrel sends nothing. #}
+    <a class="k-btn k-btn--quiet k-btn--sm" href="https://github.com/distantsoil/Kestrelapp/issues/new?title=Suggest%20a%20board" target="_blank" rel="noopener noreferrer" data-testid="suggest-board">Suggest a board</a>
     <button type="button" class="k-btn k-btn--sm" hx-get="/sources/check-all/choose" hx-target="#sources-check-slot" hx-swap="innerHTML" data-testid="check-all">{{ ui.icon('scan', 'k-ic--sm') }}Check all now</button>
     <button type="button" class="k-btn k-btn--primary k-btn--sm" data-src-add="" data-testid="add-source">{{ ui.icon('plus', 'k-ic--sm') }}Add a source</button>
   </div>
@@ -25,8 +28,8 @@
   <div id="sources-check-slot"></div>
 
   {# Sources that need a key of your own: RemoteRocketship (all tracks) and SAM.gov (consulting). #}
-  <details class="k-card src-keys" data-testid="sources-keys"{% if rrs_message or sam_message %} open{% endif %}>
-    <summary><b>Sources that need your own key</b> <span class="src-sub">RemoteRocketship{% if consulting %} and SAM.gov{% endif %}</span></summary>
+  <details class="k-card src-keys" data-testid="sources-keys"{% if rrs_message or sam_message or usajobs_message or adzuna_message %} open{% endif %}>
+    <summary><b>Sources that need your own key</b> <span class="src-sub">USAJobs, Adzuna, RemoteRocketship{% if consulting %} and SAM.gov{% endif %}</span></summary>
 
     <div class="src-key" data-testid="rrs-card">
       <div class="src-key__head"><h3>RemoteRocketship <span class="src-sub">optional, needs your own paid subscription</span></h3>
@@ -51,6 +54,32 @@
       {% if run_message and rrs.source and run_message.id == rrs.source.id %}<p class="src-sub" data-testid="rrs-run-result">{{ run_message.text }}</p>{% endif %}
     </div>
     <!-- /rrs -->
+
+    <div class="src-key" data-testid="usajobs-card">
+      <div class="src-key__head"><h3>USAJobs <span class="src-sub">US government jobs, free key</span></h3>
+        {% if usajobs.ready %}<span class="k-pill k-pill--good" data-testid="usajobs-state">Ready</span>{% else %}<span class="k-pill" data-testid="usajobs-state">Needs key and email</span>{% endif %}</div>
+      <p>Searches the official USAJobs listings with your own free key. Kestrel sends USAJobs your search words and place, your key and your email address. Nothing else leaves this computer. <a class="k-link" href="https://developer.usajobs.gov/apirequest/" target="_blank" rel="noopener noreferrer">Get a free USAJobs key</a></p>
+      <form class="src-keyform" hx-post="/sources/usajobs/key" hx-target="#sources-panel" hx-swap="outerHTML">
+        <input class="k-input" type="password" name="api_key" autocomplete="off" aria-label="USAJobs key" placeholder="{{ 'Key saved: ' ~ usajobs.masked if usajobs.present else 'Paste your key' }}">
+        <input class="k-input" type="email" name="email" autocomplete="off" aria-label="Email you used to get the key" value="{{ usajobs.email }}" placeholder="Email you used to get the key">
+        <button class="k-btn k-btn--sm" type="submit" data-testid="usajobs-save">Save</button>
+      </form>
+      {% if usajobs_message %}<p class="{{ 'src-sub' if usajobs_message.ok else 'src-warn' }}" role="status" data-testid="usajobs-result">{{ usajobs_message.text }}</p>{% endif %}
+    </div>
+    <!-- /usajobs -->
+
+    <div class="src-key" data-testid="adzuna-card">
+      <div class="src-key__head"><h3>Adzuna <span class="src-sub">job search, free key</span></h3>
+        {% if adzuna.ready %}<span class="k-pill k-pill--good" data-testid="adzuna-state">Ready</span>{% else %}<span class="k-pill" data-testid="adzuna-state">Needs app ID and key</span>{% endif %}</div>
+      <p>Searches Adzuna's job ads with your own free keys. Kestrel sends Adzuna your search words and place and your app ID and app key. Nothing else leaves this computer. Each check of a search uses up to 8 of your free calls, and the free tier allows about 250 a day. Adzuna sends only the start of each description, so those roles are marked as partial. <a class="k-link" href="https://developer.adzuna.com/signup" target="_blank" rel="noopener noreferrer">Get a free Adzuna key</a></p>
+      <form class="src-keyform" hx-post="/sources/adzuna/key" hx-target="#sources-panel" hx-swap="outerHTML">
+        <input class="k-input" type="password" name="app_id" autocomplete="off" aria-label="Adzuna app ID" placeholder="{{ 'App ID saved' if adzuna.id_present else 'Paste your app ID' }}">
+        <input class="k-input" type="password" name="app_key" autocomplete="off" aria-label="Adzuna app key" placeholder="{{ 'Key saved: ' ~ adzuna.masked if adzuna.key_present else 'Paste your app key' }}">
+        <button class="k-btn k-btn--sm" type="submit" data-testid="adzuna-save">Save</button>
+      </form>
+      {% if adzuna_message %}<p class="{{ 'src-sub' if adzuna_message.ok else 'src-warn' }}" role="status" data-testid="adzuna-result">{{ adzuna_message.text }}</p>{% endif %}
+    </div>
+    <!-- /adzuna -->
 
     {% if consulting %}
     <div class="src-key" data-testid="sam-card">

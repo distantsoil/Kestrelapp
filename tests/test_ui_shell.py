@@ -32,7 +32,9 @@ _COMPONENTS_CSS = Path(paths.web_static_dir()) / "css" / "components.css"
 
 # Classes that templates set but that are state hooks for HTMX or Alpine, or that a page sets
 # only for a test selector, never styling targets in their own right.
-_CSS_SKIP = {"htmx-indicator", "htmx-request", "htmx-added", "htmx-settling", "htmx-swapping"}
+_CSS_SKIP = {"htmx-indicator", "htmx-request", "htmx-added", "htmx-settling", "htmx-swapping",
+             # pywebview's own drag hook (D-UI-88) and the nav lists' test selector.
+             "pywebview-drag-region", "mainnav"}
 
 
 def _fresh_engine():
@@ -101,7 +103,7 @@ def test_base_renders_the_three_groups_and_every_link():
     with _client() as c:
         html = c.get("/").text
     for group in ("Work", "Learn", "Setup"):
-        assert f'<div class="lbl">{group}</div>' in html
+        assert f'<div class="k-sec">{group}</div>' in html
     links = _links(html)
     for _group, items in NAV_GROUPS:
         for item in items:
@@ -113,12 +115,12 @@ def test_base_renders_the_three_groups_and_every_link():
                   "About"):
         assert f">{label}</a>" in html, label
     # Bench left the sidebar (D-DRIFT-11): it is Model check, reached from Models.
-    assert ">Bench</a>" not in html and 'href="/bench"' not in _links(html)
-    assert ">Dashboard</a>" not in html and ">Stories</a>" not in html
-    assert ">My stories</a>" not in html
+    assert ">Bench<" not in html and 'href="/bench"' not in _links(html)
+    assert ">Dashboard<" not in html and ">Stories<" not in html
+    assert ">My stories<" not in html
     # Brand mark: the icon plus the word, not split.
-    assert '<img class="mark" src="/static/icon.svg"' in html
-    assert '<span class="word">Kestrel</span>' in html
+    assert '<span class="k-brand__mark"><img src="/static/icon.svg?v=' in html
+    assert '<span class="k-brand__word">Kestrel</span>' in html
     assert "Kes<b>trel</b>" not in html
     # The three bottom-bar pages and More.
     assert '<nav class="bottombar"' in html
@@ -133,7 +135,9 @@ def test_base_renders_the_three_groups_and_every_link():
     # the employment-only default and this line wrongly passed with the switch absent.
     assert 'class="track-switch"' in html
     assert "serviceWorker" in html and "kestrel-track" in html
-    assert "⌘K" in html and 'hx-get="/notifications/bell"' in html
+    # The shortcut label follows the OS (D-UI-91): Ctrl K as rendered, the Cmd sign on a Mac.
+    assert '<kbd data-k-kbd>Ctrl K</kbd>' in html and "\\u2318K" in html
+    assert 'hx-get="/notifications/bell"' in html
 
 
 @pytest.mark.parametrize(
@@ -176,26 +180,62 @@ def test_html_carries_the_stored_scheme_for_the_first_paint():
     assert head.index("kestrel-scheme") < head.index('rel="stylesheet"')
 
 
+def test_pages_change_in_place_unless_classic_page_loads_is_on():
+    """D-UI-210/D-UI-220: <html data-k-nav> tells kestrel-ui.js whether to swap pages in place;
+    Settings > Preferences > Classic page loads turns it off."""
+    asyncio.run(_seed())
+    with _client() as c:
+        assert 'data-k-nav="1"' in c.get("/").text
+    asyncio.run(_seed([Setting(key="ui.classic_nav", value=True)]))
+    with _client() as c:
+        assert 'data-k-nav="0"' in c.get("/").text
+
+
 def test_a_bad_stored_scheme_falls_back_to_the_default():
     asyncio.run(_seed([Setting(key="ui.scheme", value="mauve")]))
     assert deps.ui_scheme() == "indigo"
 
 
 # -------------------------------------------------------------------------------- status rail
-def test_status_rail_returns_the_four_rows():
+def test_status_readout_is_two_lines_activity_then_the_ai_in_use():
+    """D-UI-91: two short lines, never five. Idle with no schedule says so; the local engine
+    line names the loaded model in plain words (the model row's display name)."""
     asyncio.run(_seed())
     with _client() as c:
         r = c.get("/status/rail")
     assert r.status_code == 200
-    rows = re.findall(r'data-rail="([a-z]+)"', r.text)
-    assert rows == ["worker", "model", "scan", "hosted"]
-    assert r.text.count('class="dot ') == 4
-    assert "Not scoring anything right now" in r.text
-    assert "Full review loaded" in r.text
-    assert "No scan yet" in r.text
-    assert "Online deeper-read key: not set" in r.text
-    for state in re.findall(r'class="dot ([a-z]+)"', r.text):
-        assert state in {"good", "idle", "warn", "bad"}
+    rows = re.findall(r'<div class="k-sstat__l" data-rail="([a-z]+)"', r.text)
+    assert rows == ["state", "engine"]
+    assert r.text.count('class="k-dot') == 2
+    assert "<b>Idle</b> · " in r.text and "no run scheduled" in r.text
+    assert 'title="Not scoring anything right now' in r.text  # the full state, as a tooltip
+    assert "Local AI ready · Full review" in r.text
+    assert "Online deeper-read key" not in r.text  # the mockup's readout has no key line
+
+
+def test_readout_problem_links_and_working_pulses():
+    from kestrel.web.routes_control import readout
+
+    base = {"worker": {"state": "idle", "label": "Not scoring anything right now"},
+            "scan": {"state": "idle"}, "model": {"up": True, "display": "Quick screen"},
+            "hosted": {}, "mode": "local"}
+    failed = readout({**base, "worker": {**base["worker"], "open_failed": 2}})["state"]
+    assert failed["word"] == "Problem" and failed["href"] == "/quarantine"
+    assert failed["text"] == "2 roles need another try" and failed["dot"] == "bad"
+    working = readout({**base, "worker": {"state": "good", "label": "Searching 3 of 5 searches"}})
+    assert working["state"]["word"] == "Working" and working["state"]["dot"] == "live"
+    nxt = readout({**base, "next_run": "Mon 08:00"})["state"]
+    assert nxt["text"] == "next run Mon 08:00"
+    down = readout({**base, "model": {"up": False}})["engine"]
+    assert down["text"] == "Local AI not running" and down["href"] == "/models"
+    online = readout({**base, "settings_mode": "hosted",
+                      "hosted": {"key_present": True, "provider": "OpenRouter"},
+                      "balance": {"label": "$4.82 left on your key's limit", "state": "good"}})
+    assert online["engine"]["text"] == "OpenRouter key" and online["engine"]["dot"] == "good"
+    low = readout({**base, "settings_mode": "hosted",
+                   "hosted": {"key_present": True, "provider": "OpenRouter"},
+                   "balance": {"label": "$0.42 left", "state": "warn"}})
+    assert low["engine"]["dot"] == "warn"
 
 
 def test_api_status_carries_the_rail_fields_and_counts():
@@ -206,7 +246,7 @@ def test_api_status_carries_the_rail_fields_and_counts():
                 "loaded_model", "scan", "hosted", "counts"):
         assert key in body, key
     assert body["loaded_model"] == "kestrel-tier2:latest"
-    assert body["counts"] == {"shortlist": 0, "unrated": 0, "calibrate": 0}
+    assert body["counts"] == {"shortlist": 0, "unrated": 0, "calibrate": 0, "followups": 0}
 
 
 def test_status_counts_are_out_of_band_badges_that_hide_at_zero():
@@ -286,7 +326,8 @@ def test_every_page_still_renders(monkeypatch):
             assert r.status_code == 200, (path, r.status_code)
             body = r.text
             assert '<aside class="side"' in body, path
-            assert '<main class="container">' in body, path
+            # The content root names its page for the lifecycle (D-UI-210).
+            assert re.search(r'<main class="container" data-k-page="[a-z_-]+">', body), path
             # No em dash reaches the screen anywhere (D-R3-2): entities are decoded first.
             assert "\u2014" not in html.unescape(body), path
 
@@ -341,8 +382,8 @@ def test_stylesheet_defines_both_schemes_in_both_modes_and_constant_verdict_toke
     assert "--keep: #D4622A" in css  # keep is the Kestrel orange in light mode
     assert "IBM Plex" not in css  # not loadable offline; the system stack is used
     for component in (".card", ".card > h3", ".list > .it", ".stripe", ".stripe.apply", ".step",
-                      ".meter", ".pill.keep", ".pill.review", ".pill.kill", ".dot", ".rail",
-                      ".navgroup", ".bottombar", ".sheet", ".stat", ".chip"):
+                      ".meter", ".pill.keep", ".pill.review", ".pill.kill",
+                      ".bottombar", ".sheet", ".stat", ".chip"):
         assert component in css, component
     assert "@media (max-width: 1000px)" in css and "@media (max-width: 700px)" in css
 
@@ -371,6 +412,8 @@ def test_rail_says_scanning_while_searches_run_and_names_failing_searches():
         html = c.get("/status/rail").text
     # The step in words (D-UI-58): the first of two searches is under way, nothing found yet.
     assert "Searching 1 of 2 searches" in html
+    # Two lines (D-UI-91): while the run works the failing searches ride in the tooltip; the
+    # Problem line takes over once it ends.
     assert "2 searches failing · see Sources" in html
     assert "Not scoring anything right now" not in html
 

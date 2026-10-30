@@ -13,11 +13,12 @@
       <button type="button" class="td-arr" id="td-next" aria-label="Next matches" data-testid="td-next">{{ ui.icon('chev') }}</button>
     </div>
   </div>
+  <p class="td-review-count" id="td-pending" data-testid="td-pending" aria-live="polite">{% if matches.pending %}{{ matches.pending }} more being reviewed{% endif %}</p>
   <p class="td-desc">{% if consulting %}The best of today's new postings, RFPs and referrals, ranked by fit.{% else %}The best of today's new roles, ranked by fit.{% endif %}</p>
   <div class="td-viewport" id="td-vp" role="region" tabindex="0" aria-label="Top matches. Use the arrow keys to move through them.">
     <div class="td-track" id="td-track" role="list" data-found="{{ matches.found }}">
       {% for c in matches.cards %}{{ card(c, consulting) }}{% endfor %}
-      {% if not matches.cards %}{{ empty_card(matches.found, consulting) }}{% endif %}
+      {% if not matches.cards %}{{ empty_card(0 if matches.pending else matches.found, consulting) }}{% endif %}
     </div>
   </div>
   <div class="td-dots" id="td-dots" role="group" aria-label="Pages"></div>

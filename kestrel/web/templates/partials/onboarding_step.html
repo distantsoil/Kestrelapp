@@ -5,12 +5,12 @@
 {% import "ui/macros.html" as ui %}
 {% set labels = {'welcome': 'Welcome', 'models': 'Thinking', 'about': 'You', 'resume': 'Resume', 'wants': 'Wants', 'searches': 'Searches'} %}
 <div id="ob-step" class="ob-wiz" data-step="{{ key }}" hx-get="/onboarding/step" hx-trigger="ob-refresh from:body" hx-swap="outerHTML">
-  <div class="ob-top">
+  <div class="ob-top pywebview-drag-region" data-k-drag>
     <div class="ob-brand">
-      <img class="ob-mark" src="/static/icon.svg" alt="" width="32" height="32">
+      <img class="ob-mark" src="{{ static_url('icon.svg') }}" alt="" width="32" height="32">
       <b>Kestrel</b>
       <span class="ob-step" data-testid="ob-count">Step {{ number }} of {{ total }}</span>
-      <span class="ob-saved">{{ ui.icon('check') }}{% if resumed %}<span data-testid="ob-resumed">Picked up where you left off</span>{% else %}Progress saves as you go{% endif %}</span>
+      <span class="ob-saved">{{ ui.icon('check') }}{% if resumed and key != 'welcome' %}<span data-testid="ob-resumed">Picked up where you left off</span>{% else %}Progress saves as you go{% endif %}</span>
     </div>
     <div class="k-scene ob-art" data-scene="mountains" data-touch="" data-animate="1" aria-hidden="true"></div>
   </div>
@@ -50,8 +50,9 @@
     <div class="k-card" role="status" aria-live="polite">
       <h2>Starting your first search</h2>
       <div class="ob-rw"><span class="ob-ok ob-ok--spin" data-ob-start-row="1"></span><div class="k-grow"><b>Opening your sources</b></div></div>
-      <div class="ob-rw"><span class="ob-ok" data-ob-start-row="2"></span><div class="k-grow"><b>Queuing your first scan</b></div></div>
+      <div class="ob-rw"><span class="ob-ok" data-ob-start-row="2"></span><div class="k-grow"><b>Looking for your first roles</b></div></div>
       <div class="ob-rw"><span class="ob-ok" data-ob-start-row="3"></span><div class="k-grow"><b>Getting Today ready</b></div></div>
+      <div class="ob-sbar" aria-hidden="true"><i data-ob-start-bar></i></div>
     </div>
   </div>
 </div>

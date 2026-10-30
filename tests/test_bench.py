@@ -129,7 +129,8 @@ def _valid_consulting_body(score: float, verdict: str) -> str:
                 "stated": "s", "inferred": "i", "speculative": "sp", "timing_read": "early",
             },
             "b_thesis": {
-                "engagement": "post-acquisition integration", "service_lines": [], "phases": [],
+                "engagement": "post-acquisition integration", "service_lines": [], "matches": [],
+                "phases": [],
                 "estimated_days": 30, "estimated_weeks": 6,
             },
             "c_buyers": {
@@ -231,22 +232,22 @@ def test_validate_bench_args_allows_one_axis_varying(models, versions):
 def test_build_variants_default_fans_models_across_both_tracks():
     variants = build_variants(["a", "b"], None)
     assert variants["employment"] == [
-        BenchVariant(track="employment", model="a", prompt_version="evaluate/v1"),
-        BenchVariant(track="employment", model="b", prompt_version="evaluate/v1"),
+        BenchVariant(track="employment", model="a", prompt_version="evaluate/v2"),
+        BenchVariant(track="employment", model="b", prompt_version="evaluate/v2"),
     ]
     assert variants["consulting"] == [
-        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v1"),
-        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v1"),
+        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v2"),
+        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v2"),
     ]
 
 
 def test_build_variants_routes_prompt_versions_to_their_own_track():
-    variants = build_variants(["m"], ["evaluate/v1", "evaluate_consulting/v1"])
+    variants = build_variants(["m"], ["evaluate/v2", "evaluate_consulting/v2"])
     assert variants["employment"] == [
-        BenchVariant(track="employment", model="m", prompt_version="evaluate/v1")
+        BenchVariant(track="employment", model="m", prompt_version="evaluate/v2")
     ]
     assert variants["consulting"] == [
-        BenchVariant(track="consulting", model="m", prompt_version="evaluate_consulting/v1")
+        BenchVariant(track="consulting", model="m", prompt_version="evaluate_consulting/v2")
     ]
 
 
@@ -254,14 +255,14 @@ def test_build_variants_single_version_keeps_every_model():
     # Regression: comparing 2+ models at ONE fixed version is a MODEL comparison. The version is
     # not the varying axis, so both models must run (an earlier bug kept only models[0]). The
     # explicit version applies to its own track; the other track uses its default.
-    variants = build_variants(["a", "b"], ["evaluate/v1"])
+    variants = build_variants(["a", "b"], ["evaluate/v2"])
     assert variants["employment"] == [
-        BenchVariant(track="employment", model="a", prompt_version="evaluate/v1"),
-        BenchVariant(track="employment", model="b", prompt_version="evaluate/v1"),
+        BenchVariant(track="employment", model="a", prompt_version="evaluate/v2"),
+        BenchVariant(track="employment", model="b", prompt_version="evaluate/v2"),
     ]
     assert variants["consulting"] == [
-        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v1"),
-        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v1"),
+        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v2"),
+        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v2"),
     ]
 
 
@@ -272,7 +273,7 @@ def test_build_variants_unknown_prompt_version_raises():
 
 def test_build_variants_rejects_non_evaluation_prompt_version():
     with pytest.raises(BenchArgError):
-        build_variants(["m"], ["triage/v1"])  # a real prompt, but not a tier-2 evaluation prompt
+        build_variants(["m"], ["triage/v2"])  # a real prompt, but not a tier-2 evaluation prompt
 
 
 # ============================================================================= load_goldset
@@ -323,7 +324,7 @@ async def test_run_bench_good_model_perfect_agreement_and_zero_mae(gold_dir: Pat
 
     emp = by_track["employment"]
     assert emp.model == GOOD_MODEL
-    assert emp.prompt_version == "evaluate/v1"
+    assert emp.prompt_version == "evaluate/v2"
     assert emp.n_items == 2
     assert emp.n_parsed == 2
     assert emp.first_attempt_validity_rate == 1.0
@@ -336,7 +337,7 @@ async def test_run_bench_good_model_perfect_agreement_and_zero_mae(gold_dir: Pat
     assert emp.mean_completion_tokens == 222
 
     con = by_track["consulting"]
-    assert con.prompt_version == "evaluate_consulting/v1"
+    assert con.prompt_version == "evaluate_consulting/v2"
     assert con.exact_verdict_agreement_rate == 1.0
     assert con.mean_absolute_score_error == 0.0
 

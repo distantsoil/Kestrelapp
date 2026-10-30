@@ -47,9 +47,9 @@ class _RecordingLLM(FakeLLM):
         return await super().complete(tier=tier, messages=messages, **kw)
 
 
-async def _source(sm, name="s") -> int:
+async def _source(sm, name="s", kind="greenhouse") -> int:
     async with sm() as s:
-        src = Source(track="employment", kind="greenhouse", name=name, enabled=True,
+        src = Source(track="employment", kind=kind, name=name, enabled=True,
                      config={"token": "meridian"})
         s.add(src)
         await s.commit()
@@ -90,6 +90,11 @@ async def _tasks(sm, task_type: str) -> list[Task]:
 
 
 async def test_run_source_records_the_choice_on_its_scrape_run_only(sm):
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("profile.yml").write_text(
+        "employment:\n  employment_terms:\n    target_titles: [VP of IT, Sales Director]\n",
+        encoding="utf-8",
+    )
     with respx.mock:
         respx.get("https://boards-api.greenhouse.io/v1/boards/meridian/jobs").mock(
             return_value=Response(200, json=_GH))
@@ -114,7 +119,7 @@ async def test_run_source_records_the_choice_on_its_scrape_run_only(sm):
 async def test_override_reaches_only_tier2_of_that_runs_roles(sm):
     settings = get_settings()
     configured = (settings.llm.tiers["tier1"].model, settings.llm.tiers["tier2"].model)
-    sid = await _source(sm)
+    sid = await _source(sm, kind="jobspy")  # a search, not the company-board lane (D-SRC-12)
     picked = await _scrape_run(sm, sid, OVERRIDE)
     usual = await _scrape_run(sm, sid, None)
     a = await _new_opp(sm, sid, picked, "VP of IT", OVERRIDE)
@@ -393,6 +398,11 @@ async def test_scan_now_carries_the_choice_on_each_scrape_task_except_signal_sea
 
 @respx.mock
 async def test_worker_runs_a_queued_scrape_with_its_override_after_a_restart(sm):
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("profile.yml").write_text(
+        "employment:\n  employment_terms:\n    target_titles: [VP of IT, Sales Director]\n",
+        encoding="utf-8",
+    )
     respx.get("https://boards-api.greenhouse.io/v1/boards/meridian/jobs").mock(
         return_value=Response(200, json=_GH))
     sid = await _source(sm)

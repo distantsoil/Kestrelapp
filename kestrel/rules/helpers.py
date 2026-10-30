@@ -252,10 +252,44 @@ def geo_evaluate(opp: Any, geo_rules: Any) -> tuple[bool, bool]:
     # 4. location_raw contains any alias as a substring
     if isinstance(location_raw, str) and any(_lower(a) in location_raw.lower() for a in aliases):
         return True, False
-    # 5. unknown remote type, nothing matched -> allow (bias to false positives), and flag it
+    # 5. unknown remote type, a specific place named and no remote or hybrid wording anywhere:
+    #    on-site there, so deny (owner ruling D-RULES-9; SPEC 6.1 step 5). The role stays in the
+    #    rules' set-aside list, restorable in one click.
+    if remote_type in (None, "unknown") and _names_a_place(state, city) and not _offers_remote(
+        getattr(opp, "title", None), location_raw, getattr(opp, "description_md", None)
+    ):
+        return False, False
+    # 6. unknown remote type, nothing matched -> allow (bias to false positives), and flag it
     if remote_type in (None, "unknown"):
         return True, True
     return False, False
+
+
+# Phrases that name no particular place: a posting that says only this is not on-site anywhere.
+_VAGUE_PLACES = {
+    "multiple locations", "various", "various locations", "anywhere", "nationwide", "worldwide",
+    "global", "united states", "usa", "us", "u.s.", "north america", "flexible", "tbd", "n/a",
+}
+_REMOTE_WORDS = re.compile(
+    r"\b(remote|remotely|hybrid|virtual|work from home|work-from-home|wfh|home[- ]based|"
+    r"telecommut\w*|work from anywhere)\b",
+    re.IGNORECASE,
+)
+
+
+_COUNTED_PLACES = re.compile(r"^\d+\s+(locations?|offices?|sites?|cities)$")
+
+
+def _names_a_place(state: Any, city: Any) -> bool:
+    if state:
+        return True
+    text = str(city or "").strip().lower()
+    # "2 Locations" (Workday's locationsText for a multi-site role) names no one place.
+    return bool(text) and text not in _VAGUE_PLACES and not _COUNTED_PLACES.match(text)
+
+
+def _offers_remote(*texts: Any) -> bool:
+    return any(isinstance(t, str) and _REMOTE_WORDS.search(t) for t in texts)
 
 
 def _geo_allows(opp: Any, geo_rules: Any) -> bool:

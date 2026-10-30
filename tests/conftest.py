@@ -119,6 +119,9 @@ def _no_provider_keys_from_the_host(monkeypatch):
         "OPENAI_API_KEY",
         "SAM_GOV_API_KEY",
         "REMOTEROCKETSHIP_API_KEY",
+        "USAJOBS_API_KEY",
+        "ADZUNA_APP_ID_KEY",
+        "ADZUNA_APP_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
     _dotenv_state["owned"].clear()  # type: ignore[union-attr]
@@ -212,6 +215,7 @@ def _reset_desktop_bridge():
     desktop_bridge.set_quit_handler(None)
     desktop_bridge.set_reveal_handler(None)
     desktop_bridge.set_folder_handler(None)
+    desktop_bridge.set_window_frame(False)
 
 
 @pytest.fixture

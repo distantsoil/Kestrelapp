@@ -5,13 +5,18 @@
 {% extends "base.html" %}
 {% block title %}Set up Kestrel · Kestrel{% endblock %}
 {% block pagetitle %}Set up Kestrel{% endblock %}
-{% block legacy_css %}<link rel="stylesheet" href="/static/css/shell.css">{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {# Profile's sheet and script give the title chips and the near-floor control their look. #}
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/pages/profile.css">
-<link rel="stylesheet" href="/static/css/pages/onboarding.css">
-<script src="/static/js/profile.js" defer></script>
-<script src="/static/js/onboarding.js" defer></script>
+<link rel="stylesheet" href="{{ static_url('css/pages/profile.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/pages/onboarding.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): onboarding.js defines the page "onboarding", which mounts
+   profile.js's form behavior (KProfile.mount) first, so profile.js loads first. #}
+{% block page_name %}onboarding{% endblock %}
+{% block page_scripts %}
+<script src="{{ static_url('js/profile.js') }}" defer></script>
+<script src="{{ static_url('js/onboarding.js') }}" defer></script>
 {% endblock %}
 {% block content %}
 {% with gap = linux_gap %}{% include "partials/linux_webkit.html" %}{% endwith %}

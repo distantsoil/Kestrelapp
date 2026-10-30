@@ -371,7 +371,9 @@ global.document = {
   addEventListener: (ev, fn) => { listeners[ev] = fn; },
   activeElement: null,
 };
-global.window = { addEventListener: (ev, fn) => { winListeners[ev] = fn; } };
+const kui = [];
+global.window = { addEventListener: (ev, fn) => { winListeners[ev] = fn; },
+                  KUI: { toast: (t, o) => { kui.push([t, o.timeout]); } } };
 global.requestAnimationFrame = (f) => f();
 const timers = [];
 global.setTimeout = (f, ms) => { if (ms >= 1000) { timers.push(ms); return 1; } f(); return 0; };
@@ -383,7 +385,7 @@ poll({'data-event': '2', 'data-new': '3'});
 const scanShown = 'data-show' in main.attrs;
 window.kestrelToast('Saved');
 const afterPlain = {scanStill: 'data-show' in main.attrs, scanTexts: main.texts.length,
-                    noteShown: 'data-show' in note.attrs, timers: timers.slice()};
+                    noteShown: 'data-show' in note.attrs, timers: timers.slice(), kui: kui};
 // Escape on the focused scan toast dismisses it and records the dismissal for other tabs.
 document.activeElement = main;
 listeners['keydown']({key: 'Escape'});
@@ -402,7 +404,9 @@ def test_plain_toasts_stack_under_the_scan_toast_and_dismissal_is_shared(tmp_pat
     if node is None:
         pytest.skip("node is not installed")
     html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
-    assert 'id="kestrel-toast-note"' in html and "localStorage" in html
+    # One toast system (the locked mockups): the second box is gone; plain toasts use the shared
+    # region (KUI.toast), where the scan toast also sits.
+    assert 'id="kestrel-toast-note"' not in html and "localStorage" in html
     assert "sessionStorage" not in html
     script = html.split("<script>")[1].split("</script>")[0]
     js = tmp_path / "toast_stack.js"
@@ -410,9 +414,9 @@ def test_plain_toasts_stack_under_the_scan_toast_and_dismissal_is_shared(tmp_pat
     out = subprocess.run([node, str(js)], capture_output=True, text=True, timeout=30, check=True)
     got = json.loads(out.stdout.strip().splitlines()[-1])
     assert got["scanShown"] is True
-    # The plain toast went to its own box with its own timer; the scan toast is untouched.
-    assert got["afterPlain"] == {"scanStill": True, "scanTexts": 1, "noteShown": True,
-                                 "timers": [6000]}
+    # The plain toast went to the shared region with its own timer; the scan toast is untouched.
+    assert got["afterPlain"] == {"scanStill": True, "scanTexts": 1, "noteShown": False,
+                                 "timers": [], "kui": [["Saved", 6000]]}
     assert got["afterEsc"] == {"scanShown": False, "dismissed": "2", "seen": "2"}
     assert got["otherTab"] is False
 

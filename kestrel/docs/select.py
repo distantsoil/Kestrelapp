@@ -53,7 +53,15 @@ def _catalog_text(catalog: MasterCatalog) -> str:
 def _render_user(spec, *, opp: Opportunity | None, ev: Evaluation | None, catalog: MasterCatalog):
     blocks = (ev.blocks if ev else None) or {}
     b = blocks.get("b_fit", {})
-    matches = "; ".join(m.get("requirement", "") for m in (b.get("matches") or [])) or "n/a"
+    # An unverified match is neither a match nor a gap to steer around (PROMPTS.md P3, O20).
+    matches = (
+        "; ".join(
+            m.get("requirement", "")
+            for m in (b.get("matches") or [])
+            if m.get("strength") != "unverified"
+        )
+        or "n/a"
+    )
     gaps = "; ".join(g.get("requirement", "") for g in (b.get("gaps") or [])) or "n/a"
     e = blocks.get("e_angle") or blocks.get("e_approach") or {}
     c = blocks.get("c_level") or blocks.get("c_buyers") or {}

@@ -76,6 +76,23 @@ in a spec file, it is deferred, not put into the code.
 every capability has a place in the interface. If something can only be done from the command line,
 fix the interface; do not change the spec to describe the CLI-only path (D-UI-129).
 
+**The locked mockups are the master for every screen (owner rule, 2026-10-26).**
+`the private overhaul notes*-mockup-locked.html` define layout, sizes, color, copy, states and motion.
+Where the built app differs, the app is wrong; change the mockup only with the owner's sign-off.
+- Every transition, save and button press has at least a mild animation, taken from the mockup:
+  page and tab changes, sections opening and closing, toggles, saves (a short confirmation),
+  presses (a brief state change), list changes. Nothing snaps from one state to the next.
+  Every change and transition is smooth (owner, 2026-10-26: "This is a visual forward
+  refresh"): no flash, no blank frame, no jump, no element redrawing that did not change. Check
+  motion frame by frame in a recording, not only in a still screenshot.
+  The OS reduced-motion setting turns all of it off.
+- No overlapping or clipped text at any supported window size, in light or dark.
+- If any part of a mockup cannot be built as drawn, say so to the owner before shipping: what, why,
+  and the closest alternative, recorded in the private decision log. Silently building something different is
+  never acceptable. "Not achievable" is an allowed answer; "not mentioned" is not.
+- A UI change is done only when a side-by-side screenshot against its locked mockup (light, dark
+  and narrow) matches and the overlap check reports nothing. Tests passing is not enough.
+
 **Commit at every phase boundary**, conventional-commit style (`feat:`, `fix:`, `test:`, `chore:`).
 
 **CI minutes are metered (D-CI-1, D-CI-2).** Windows bills 2x and macOS 10x, and every push to a
@@ -85,6 +102,9 @@ PR branch runs CI. So CI confirms; it does not discover.
 - Before every push run `uv run --extra dev python scripts/check.py` (lint plus the full suite, including
   the workflow, installer-script and notices guards) and push only when it ends "Ready to push."
   `--quick` is for iterating, not for pushing. The opt-in hook: `git config core.hooksPath .githooks`.
+- Exception (owner, D-CI-4): a push whose changes touch only the private decision log and/or `working.log`
+  skips `check.py`; no test reads either file. Any other doc (specs, CLAUDE.md, CHANGELOG) still
+  runs it, because tests read those.
 - A warning in any CI or release log (a deprecated runtime, an annotation, a resource warning)
   becomes a failing local test in the same PR, not a note for later.
 - Windows-only behavior is the one thing the Windows CI job still has to prove; say so in the PR.

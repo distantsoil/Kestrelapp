@@ -74,6 +74,14 @@ def _geo_summary(profile: Any) -> str:
 
 
 # --------------------------------------------------------------------------- PROFILE blocks
+def _yes_no(value: Any) -> str:
+    """A yes-or-no setting in plain words (PROMPTS.md PROFILE_COMPACT): never a program value
+    like `True`, which the model would otherwise copy into text the candidate reads (O20)."""
+    if value is None:
+        return "unspecified"
+    return "yes" if value else "no"
+
+
 def _money(value: Any, unit: str = "") -> str:
     if value is None or value == "":
         return "unspecified"
@@ -120,8 +128,9 @@ def profile_compact(profile: Any) -> str:
         ]
         lines += _work_modes_line(con)
     lines += [
-        f"Location: {_geo_summary(profile)}. Remote OK: {_get(geo, 'remote_ok')}. "
-        f"Relocation: {_get(geo, 'relocation_acceptable')}.",
+        f"Location: {_geo_summary(profile)}. "
+        f"Open to remote work: {_yes_no(_get(geo, 'remote_ok'))}. "
+        f"Open to relocating: {_yes_no(_get(geo, 'relocation_acceptable'))}.",
         f"Work authorization: {_get(profile, 'work_auth') or 'unspecified'}",
         f"Must have: {_joined(_get(profile, 'must_have'), 4)}",
         f"Must avoid: {_joined(_get(profile, 'must_avoid'), 4)}",

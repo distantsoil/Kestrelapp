@@ -318,7 +318,7 @@ class Rendered:
 
 
 def _render_tier1(track: str, description: str = JD_900_WORDS) -> Rendered:
-    version = "triage/v1" if track == "employment" else "triage_consulting/v1"
+    version = "triage/v2" if track == "employment" else "triage_consulting/v2"
     spec = load_prompt(version)
     opp, org = _opp(track, description), _org()
     values = build_tier1_values(
@@ -335,7 +335,7 @@ def _render_tier1(track: str, description: str = JD_900_WORDS) -> Rendered:
 def _render_tier2(
     track: str, *, tier: str = "tier2", k: int = FEW_SHOT_K, description: str = JD_900_WORDS
 ) -> Rendered:
-    version = "evaluate/v1" if track == "employment" else "evaluate_consulting/v1"
+    version = "evaluate/v2" if track == "employment" else "evaluate_consulting/v2"
     spec = load_prompt(version)
     opp, org = _opp(track, description), _org()
     few = few_shot_block(_few_shot(track)[:k])

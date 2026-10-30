@@ -82,7 +82,10 @@ a.sf-a:hover { text-decoration: underline; }
 /* ----------------------------------------------------------------------------- the banner */
 .sf-bn { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   border: 1px solid var(--tint-info-line); border-radius: var(--r-lg); padding: 9px 12px;
-  background: var(--tint-info); color: var(--ink); margin: 0 0 12px; }
+  background: var(--tint-info); color: var(--ink); margin: 0; }
+/* At the top of the window, above the search row (surfaces mockup .sf-banners). */
+#update-banner:has(.sf-bn) { padding: 10px 22px 0; }
+@media (max-width: 760px) { #update-banner:has(.sf-bn) { padding: 8px 16px 0; } }
 .sf-bn--warn { background: var(--tint-warn); border-color: var(--tint-warn-line); }
 .sf-bn .sf-ic { width: 30px; height: 30px; border-radius: 8px; }
 .sf-bn .sf-ic .k-ic { width: 16px; height: 16px; }
@@ -131,7 +134,10 @@ a.sf-a:hover { text-decoration: underline; }
 /* ------------------------------------------------------------------------ announcements */
 .sf-notice { display: flex; align-items: center; gap: 12px; padding: 9px 12px;
   border: 1px solid var(--tint-info-line); border-radius: var(--r-lg);
-  background: var(--tint-info); color: var(--ink); margin: 0 0 12px; }
+  background: var(--tint-info); color: var(--ink); margin: 0; }
+/* At the top of the window, above the search row (surfaces mockup .sf-banners). */
+#update-banner:has(.sf-bn) { padding: 10px 22px 0; }
+@media (max-width: 760px) { #update-banner:has(.sf-bn) { padding: 8px 16px 0; } }
 .sf-notice .sf-msg { flex: 1; min-width: 0; }
 
 /* -------------------------------------------------------------------------- score history */
@@ -156,16 +162,21 @@ a.sf-a:hover { text-decoration: underline; }
 }
 
 /* ------------------------------------------------------------------------ the bell panel */
-.sf-np { display: flex; flex-direction: column; gap: 4px; min-width: min(380px, 86vw);
+.sf-np { display: flex; flex-direction: column; gap: 4px; min-width: 0;
   font-size: var(--fs-md); color: var(--ink); }
-.sf-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-.sf-tab { background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
-  padding: 8px 12px; font: inherit; font-weight: 700; color: var(--muted); cursor: pointer;
-  white-space: nowrap; }
+/* Pill tabs on --bg (today-mockup-locked.html :259-261); the list cross-fades on a tab change. */
+.sf-tabs { display: flex; gap: 4px; margin: 0 16px; background: var(--bg); border-radius: 9px;
+  padding: 3px; }
+.sf-tab { flex: 1; background: none; border: 0; border-radius: 7px; padding: 5px 6px; font: inherit;
+  font-size: 12px; font-weight: 700; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .sf-tab:hover { color: var(--ink); }
-.sf-tab.is-on { color: var(--brand); border-bottom-color: var(--brand); }
+.sf-tab:disabled { cursor: default; opacity: .6; }
+.sf-tab.is-on { background: var(--paper); color: var(--brand); box-shadow: var(--shadow-soft); }
 .sf-tab-n { margin-left: 6px; padding: 0 7px; border-radius: var(--r-pill);
-  background: var(--warn-bg); color: var(--warn-ink); font-size: 12px; }
+  background: var(--warn-bg); color: var(--warn-ink); font-size: 11px; }
+.sf-np .sf-notes-list, .sf-np .sf-empty { max-height: min(520px, 60vh); overflow: auto;
+  padding: 6px 8px 10px; animation: sf-np-in .2s ease both; }
+@keyframes sf-np-in { from { opacity: 0; } }
 .sf-gh { font-size: 11px; letter-spacing: .09em; font-weight: 700; color: var(--muted);
   padding: 10px 6px 2px; text-transform: uppercase; }
 .sf-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;

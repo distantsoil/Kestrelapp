@@ -1,0 +1,9 @@
+{
+ "_fixture_note": "Captured 2026-10-29 from himalayas.app/jobs/api/search?q=analyst&country=US&sort=recent (descriptions trimmed). The last three jobs are edited copies for the expired, non-US and worldwide cases.",
+ "comments": "Search results come 20 to a page. Pass ?page=2, ?page=3 and so on for more; there is no cursor on search. Cursor pagination (nextCursor) is only on /jobs/api, the browse feed. 13/03/2026: The API has been updated to include the companySlug field in the response.",
+ "updatedAt": 1793309699,
+ "offset": 0,
+ "limit": 20,
+ "totalCount": 0,
+ "jobs": []
+}

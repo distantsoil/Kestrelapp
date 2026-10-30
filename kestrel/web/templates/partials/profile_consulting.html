@@ -42,7 +42,7 @@
           <div class="pf-f">
             <label for="pc-exsect">Excluded sectors</label>
             <textarea class="k-input" id="pc-exsect" name="excluded_sectors" rows="3" placeholder="One per line">{{ (cterms.excluded_sectors or []) | join('\n') }}</textarea>
-            <small class="pf-hint">An engagement in any of these is set aside (rule excluded_sector).</small>
+            <small class="pf-hint">An engagement in any of these is set aside.</small>
           </div>
         </div>
         <div class="pf-f">
@@ -65,7 +65,7 @@
             <small class="pf-hint">Raises the score.</small>
           </div>
         </div>
-        <p class="pf-hint">An engagement priced below your floor is set aside (rule rate_floor).</p>
+        <p class="pf-hint">An engagement priced below your floor is set aside.</p>
         {% with margin_name = 'day_rate_floor_margin_pct', margin_value = rate_margin, margin_what = 'day-rate floor', margin_id = 'pc-margin' %}
           {% include "partials/profile_margin.html" %}
         {% endwith %}

@@ -6,7 +6,7 @@
     <span class="k-badge">{{ ui.icon('clock') }}</span><h3>Learning history</h3>
     <span class="cal-sm cal-dsm cal-push" data-testid="cal-hist-count">
       {% if history.total == 0 %}Nothing yet
-      {% elif history.total < 5 %}Close on {{ history.close }} of {{ history.total }}. <i>Not enough ratings yet (n={{ history.total }})</i>
+      {% elif history.total < 5 %}Close on {{ history.close }} of {{ history.total }}. <span class="cal-few">Not enough data yet (n={{ history.total }})</span>
       {% else %}You and Kestrel were close on {{ history.close }} of {{ history.total }}{% endif %}
     </span>
   </header>

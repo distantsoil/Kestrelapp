@@ -26,7 +26,7 @@
         <div class="cal-sm cal-dsm">You approve any change.</div>
       </div>
     </div>
-    <div class="cal-seg cal-seg--taste" data-testid="cal-taste">
+    <div class="cal-seg cal-seg--taste cal-seg--open" data-testid="cal-taste" role="button" tabindex="0" data-k-flyout="#cal-model-fly" aria-controls="cal-model-fly" aria-expanded="false" aria-label="Your sorting model: details and training">
       {% if strips.taste_state == 'learning' %}
       <div class="cal-grow">
         <div class="cal-row"><span class="cal-k">Learns your taste</span><span class="cal-sm"><b>{{ strips.n }}</b> of {{ strips.rank_at }}</span></div>
@@ -38,7 +38,8 @@
       <div>
         <div class="cal-k">Your taste</div>
         {% if strips.taste_state == 'in_use' %}
-        <div class="cal-strong">In use{% if strips.taste_note %} ({{ strips.taste_note }}){% endif %}</div>
+        <div class="cal-strong">In use</div>
+        {% if strips.taste_note %}<div class="cal-sm cal-dsm cal-hide-narrow">{{ strips.taste_note }}</div>{% endif %}
         {% elif strips.taste_state == 'not_in_use' %}
         <div class="cal-strong">Learned, not in use yet</div>
         <div class="cal-sm cal-dsm cal-hide-narrow">Usual scoring still gets more of your ratings right. Kestrel retries every 50 ratings.</div>
@@ -48,45 +49,16 @@
         {% endif %}
       </div>
       {% endif %}
+      <span class="cal-chev" aria-hidden="true">{{ ui.icon('arrow', 'k-ic--sm') }}</span>
     </div>
   </section>
 
-  {% include "partials/calibrate_training.html" %}
-
-  {# Details behind a toggle: the promotion check, in full. #}
-  <details class="cal-details" data-testid="cal-details">
-    <summary>Show details</summary>
-    {% if strips.promo_error %}
-    <div data-testid="promotion-panel-error"><p class="cal-dsm">{{ strips.promo_error }}</p></div>
-    {% elif strips.promo %}
-    {% set promo = strips.promo %}
-    <div data-testid="promotion-panel">
-      <h3 title="Reranker promotion">Learned ranking</h3>
-      <p>
-        {% if promo.reranker_active %}<span class="k-pill k-pill--good">Learned ranking active</span> for {{ track }} quick-screen decisions.
-        {% else %}<span class="k-pill k-pill--warn">Not promoted</span> The rule-based quick screen is still in charge for {{ track }}, not the learned ranking.{% endif %}
-      </p>
-      <table class="cal-table">
-        <thead><tr><th>Criterion</th><th>Current</th><th>Required</th><th>Met</th></tr></thead>
-        <tbody>
-          {% for c in promo.criteria %}
-          <tr data-testid="criterion-{{ c.key }}">
-            <td>{{ c.label }}</td><td>{{ c.current }}</td><td>{{ c.required }}</td>
-            <td>{% if c.met is none %}not yet measurable{% elif c.met %}Yes{% else %}Not yet{% endif %}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% if promo.last_trained_at %}<p class="cal-dsm">Last trained {{ date_display(promo.last_trained_at, 'raw') }}, on {{ promo.last_trained_n_labeled }} labeled examples.</p>{% endif %}
-      <p><b>Next step:</b> {{ promo.next_step }}</p>
-    </div>
-    {% endif %}
-  </details>
+  {% if oob %}{% include "partials/calibrate_model.html" %}{% endif %}
 
   {% if tune %}
   <section class="k-card cal-tune" id="cal-tune" data-testid="cal-tune" aria-label="Weight tune-up">
     <header class="cal-tune__head">
-      <span class="k-badge">{{ ui.icon('tune') }}</span><h3>Weight tune-up ready</h3>
+      <span class="k-badge">{{ ui.icon('analytics') }}</span><h3>Weight tune-up ready</h3>
       <span class="cal-sm cal-dsm cal-push">Based on your {{ tune.n }} ratings</span>
     </header>
     <div class="cal-tune__body">

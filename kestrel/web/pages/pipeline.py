@@ -175,7 +175,9 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         "override_note": detail.get("override_note"),
     }
     if kind == "role":
-        watch = list(detail.get("watch") or watch_lines(ev_json.get("legitimacy"), opp.ghost_score))
+        watch = list(
+            detail.get("watch") or watch_lines(ev_json.get("legitimacy"), opp.ghost_score, opp)
+        )
         warn = pv.warning_text(opp, ev)
         if warn and not watch:
             watch = [warn]

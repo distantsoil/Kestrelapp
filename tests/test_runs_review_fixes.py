@@ -325,5 +325,5 @@ def test_run_now_after_stop_resumes_and_keeps_the_queued_work(active):
 # --------------------------------------------------------------------------- idle layout
 def test_the_idle_minis_stay_three_across_unless_online_adds_a_fourth():
     css = _CSS.read_text()
-    narrow = css.split("@container (max-width: 1300px)")[1].split("}\n@container")[0]
+    narrow = css.split("@container kwin (max-width: 1300px)")[1].split("}\n@container")[0]
     assert ".rn-minis--4" in narrow and ".rn-minis {" not in narrow

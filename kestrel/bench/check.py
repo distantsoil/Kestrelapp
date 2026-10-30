@@ -59,7 +59,7 @@ STEP_LABEL = {"quick_screen": "Quick screen", "rating": "Rating", "deeper_read":
 DEFAULT_STEPS = ("quick_screen", "rating")
 TRIAGE_VERSION_TRACKS = ("employment", "consulting")
 TRIAGE_VERSION = {
-    "employment": "triage/v1", "consulting": "triage_consulting/v1",
+    "employment": "triage/v2", "consulting": "triage_consulting/v2",
 }
 # A Quick screen reply under this confidence counts as "keep" (hard rule 4), as in production.
 KEEP_BELOW_CONFIDENCE = 0.6
@@ -233,7 +233,8 @@ NO_PROVIDER_MESSAGE = (
     "up under Models."
 )
 NO_APPROVAL_MESSAGE = (
-    "Online models need your approval first. Turn on online use under Settings, then try again."
+    "Online models need your approval first. Tick I understand what gets sent on the Models "
+    "page, then try again."
 )
 
 

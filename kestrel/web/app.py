@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 import structlog
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -491,17 +491,25 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 log.warning("cycle_run_close_failed", error=str(close_exc))
 
 
+DB_BUSY_MESSAGE = "Kestrel is busy saving something else. Nothing changed; try again in a moment."
+
+# D-UI-90: Quit stops in-flight tasks and exits in one to two seconds. A stopped task keeps its
+# row; its lease is released below, so it resumes at the next launch (hard rule 5). Quit never
+# waits on a running model call.
+WORKER_STOP_S = 1.0
+
+
 async def _graceful_worker_shutdown(task: asyncio.Task, stop: asyncio.Event) -> None:
-    """Stop the worker and RELEASE ITS LEASES (SPEC.md 1.3, FINDINGS F8). Signal the stop event so
-    the drain loop exits after its in-flight tasks finish, wait up to 30s for that, then release any
-    still-leased task back to pending so a restart resumes immediately rather than waiting for the
-    lease to expire. Runs on uvicorn's loop (where the DB sessions live), never a second loop."""
+    """Stop the worker and RELEASE ITS LEASES (SPEC.md 1.3, FINDINGS F8). Signal the stop event,
+    give the drain loop WORKER_STOP_S to exit on its own, cancel it otherwise, then release any
+    still-leased task back to pending so a restart resumes it immediately rather than waiting
+    for the lease to expire. Runs on uvicorn's loop (where the DB sessions live)."""
     from kestrel.db.engine import get_sessionmaker
     from kestrel.queue.queue import TaskQueue
 
-    stop.set()  # let the current drain finish its in-flight tasks and exit
+    stop.set()
     with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(task, timeout=30.0)
+        await asyncio.wait_for(asyncio.shield(task), timeout=WORKER_STOP_S)
     if not task.done():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -639,6 +647,23 @@ _EXTENSION_SCHEMES = frozenset({"chrome-extension", "moz-extension", "safari-web
 # the drive-by this guard exists to stop. The right long-term fix is to make it a POST; guarding it
 # here closes the hole without breaking the existing links that reach it.
 _UNSAFE_GETS = frozenset({"/renders/new"})
+
+
+class _VersionedStatic(StaticFiles):
+    """Static files. A request carrying ?v= (deps.static_url's build fingerprint) is cached for
+    good: its URL changes whenever the file does. Others, an older build's version among them,
+    keep Starlette's revalidation."""
+
+    async def get_response(self, path: str, scope) -> Response:  # noqa: ANN001 - ASGI scope
+        response = await super().get_response(path, scope)
+        from urllib.parse import parse_qs
+
+        from kestrel.web.deps import static_token
+
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        if query.get("v") == [static_token()] and response.status_code in (200, 304):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def _is_extension_origin(origin: str) -> bool:
@@ -907,6 +932,28 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     # a page navigation keeps Starlette's own answer.
     app.add_exception_handler(Exception, error_page.handle)
 
+    # A database another process or request is still writing (after busy_timeout) is a moment's
+    # wait, never a server error: say so plainly, as a toast for an htmx request (hardware check,
+    # 2026-10-26: POST /settings/desktop answered 500 while a closing copy held the file).
+    import sqlite3
+
+    from sqlalchemy.exc import OperationalError as SAOperationalError
+
+    async def _db_busy(request: Request, exc: Exception) -> Response:
+        if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+            return await error_page.handle(request, exc)
+        log.warning("database_busy", path=request.url.path, error_type=type(exc).__name__)
+        message = DB_BUSY_MESSAGE
+        headers = {"Retry-After": "2"}
+        if request.headers.get("HX-Request"):
+            import json as _json
+
+            headers["HX-Trigger"] = _json.dumps({"k-toast": {"message": message, "tone": "warn"}})
+        return PlainTextResponse(message, status_code=503, headers=headers)
+
+    app.add_exception_handler(SAOperationalError, _db_busy)
+    app.add_exception_handler(sqlite3.OperationalError, _db_busy)
+
     # LAN shared key: the third control, and the only one that stops an unauthenticated DEVICE.
     # Installed unconditionally, not just when bind_all is set, so that flipping bind_all can never
     # expose an unprotected app: the middleware exempts loopback anyway, so it is inert on a
@@ -951,7 +998,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         ],
     )
 
-    app.mount("/static", StaticFiles(directory=paths.web_static_dir()), name="static")
+    app.mount("/static", _VersionedStatic(directory=paths.web_static_dir()), name="static")
     app.include_router(api_router)
     app.include_router(learning_router)
     app.include_router(pages_router)

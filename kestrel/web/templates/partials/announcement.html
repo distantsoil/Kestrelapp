@@ -1,6 +1,6 @@
 {% if notice %}
 {# Good news, not a warning: the quiet info strip (D-UI-152), not the amber warning box. #}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <div class="sf-notice" role="status" data-testid="announcement" data-announcement-id="{{ notice.id }}">
   <span class="sf-msg">{{ notice.text }}</span>
   <button class="k-btn k-btn--sm" type="button" aria-label="Got it, hide this notice"

@@ -13,7 +13,13 @@ import os
 import pytest
 
 from tests import tailor_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -45,12 +51,14 @@ def live_needs():
     yield from _serve({"needs_pick": {"m_review": "alt_3"}})
 
 
-def _open(live, theme: str, width: int):
+def _open(live, theme: str, width: int, probe: bool = False):
     base, browser, ids = live
     ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
     page = ctx.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    if probe:
+        page.add_init_script(TIMER_PROBE_JS)
     page.goto(f"{base}/renders/{ids['render']}")
     page.wait_for_selector("#tl-frame")
     page.wait_for_function("document.querySelector('#tl-frame').contentDocument.body")
@@ -171,6 +179,35 @@ def test_download_is_fetched_so_an_error_never_replaces_the_page(live):
             page.click('[data-testid="tl-download"]')
         assert info.value.suggested_filename == (name or "resume.pdf")
         assert page.url == url and page.evaluate("window.__same") == 1
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live):
+    """The page lifecycle (D-UI-210): Tailor unmounted and mounted again in place starts exactly
+    what it started on the document load (the wrap's resize observer, the preview frame's own
+    hover listeners) and leaves nothing running in between. After it, one press of a card's
+    "more" opens it (a doubled listener would open and close it), and a printed line in the
+    preview still lights its card; once left, neither answers."""
+    ctx, page, errors = _open(live, "light", 1680, probe=True)
+    try:
+        first = assert_page_remounts_clean(page, "tailor", "tailor.js", settle_ms=600)
+        assert first["observers"] == 1 and first["timers"] == 0, first
+        card = "#tl-card-m_throughput"
+        page.click(f"{card} [data-tl-more]")
+        assert "is-open" in page.get_attribute(card, "class")
+        line = page.frame_locator("#tl-frame").locator('[data-slot="m_throughput"]').first
+        line.hover()
+        page.wait_for_function(f"document.querySelector('{card}').hasAttribute('data-hot')")
+        page.hover("h1")
+        page.wait_for_function(f"!document.querySelector('{card}').hasAttribute('data-hot')")
+        page.evaluate("KUI.page.unmount()")
+        page.click(f"{card} [data-tl-more]")
+        assert "is-open" in page.get_attribute(card, "class")  # nobody answered the press
+        line.hover()
+        page.wait_for_timeout(200)
+        assert not page.evaluate(f"document.querySelector('{card}').hasAttribute('data-hot')")
         assert not errors, errors
     finally:
         ctx.close()

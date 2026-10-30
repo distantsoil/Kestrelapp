@@ -24,8 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel import paths
 from kestrel.config import Settings
 from kestrel.db.models import Opportunity, Org, Source
-from kestrel.ingest import board_discovery, smart_filter
-from kestrel.pipeline import lane
 from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.rules import helpers, margin
@@ -118,7 +116,6 @@ async def run_tier0_batch(
     filters = helpers.load_filters(str(paths.config_file("filters.yml")))
     profiles = _profile_cache()
     counts = {"seen": 0, "pass": 0, "reject": 0, "geo_uncertain": 0, "lane": 0}
-    filter_ctx: dict[str, smart_filter.FilterContext] = {}  # per run, never global
 
     async with sessionmaker() as session:
         # Archived items are out of the active pipeline, which is exactly what the Archive action
@@ -172,23 +169,6 @@ async def run_tier0_batch(
                 # Any later pass (no marker left) uses the configured models.
                 extra: dict = {T2_ONLY_KEY: chosen} if chosen else {}
                 priority = int(result.pre_score * 100)
-                # A role from a company board found in a search, which the smart filter does not
-                # keep, waits in the background lane (D-SRC-8): stored, scored when idle, never
-                # rejected. A role the operator chose to score anyway is never held back.
-                if (
-                    source is not None
-                    and source.origin == board_discovery.DISCOVERED
-                    and opp.id not in anyway
-                ):
-                    if opp.track not in filter_ctx:
-                        filter_ctx[opp.track] = await smart_filter.build_context(
-                            session, opp.track, profile
-                        )
-                    if not smart_filter.keep(opp.title, filter_ctx[opp.track]):
-                        extra.update(lane.lane_extra(result.pre_score))
-                        priority = lane.LANE_PRIORITY
-                        opp.stage_reason += f"; {lane.LANE_REASON}"
-                        counts["lane"] += 1
                 await enqueue_once(
                     session, "t1", opp.id, priority=priority, extra=extra or None,
                 )

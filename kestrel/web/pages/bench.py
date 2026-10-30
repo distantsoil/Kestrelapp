@@ -214,13 +214,26 @@ async def _page_ctx(request: Request) -> dict:
     }
 
 
+# The run path does not yet pass a previous prompt version through the queue and harness, so a
+# "previous" pick would silently run the current instructions. Until it does, the choice stays
+# disabled even though the /v1 files are kept (owner-reported O21, 2026-10-26).
+PREVIOUS_RUNS_SUPPORTED = False
+
+
 def has_previous_instructions() -> bool:
     """Whether Kestrel keeps an earlier version of its instructions to the AI to compare with:
-    only when some prompt has a version past v1. Today none does, so the choice reads "Not
-    recorded" and a check always runs the current instructions."""
+    only when a prompt past v1 still ships the version before it (the O20 `/v2` prompts keep
+    their `/v1` files and registry entries for this, D-LLM-12)."""
     import re
 
-    return any((m := re.search(r"/v(\d+)$", v)) and int(m.group(1)) > 1 for v in all_versions())
+    if not PREVIOUS_RUNS_SUPPORTED:
+        return False
+    versions = set(all_versions())
+    for v in versions:
+        m = re.search(r"^(.*)/v(\d+)$", v)
+        if m and int(m.group(2)) > 1 and f"{m.group(1)}/v{int(m.group(2)) - 1}" in versions:
+            return True
+    return False
 
 
 NO_PREVIOUS_INSTRUCTIONS = (
@@ -459,7 +472,7 @@ async def cancel(request: Request):
     async with sessionmaker()() as s:
         n = await check.cancel_check(s)
     return await _panel(
-        request, notice="The check was cancelled." if n else "No check was running.", ok=bool(n)
+        request, notice="The check was canceled." if n else "No check was running.", ok=bool(n)
     )
 
 

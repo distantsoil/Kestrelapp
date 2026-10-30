@@ -155,6 +155,7 @@ async def _prefs_ctx(settings: Settings) -> dict:
         "photo": f"/profile/photo?v={photo_v}" if photo_v else "",
         "scene_animate": ui.scene_animate, "touches_enabled": ui.touches_enabled,
         "text_sizes": sv.TEXT_SIZES, "text_size": ui.text_size, "reduce_motion": ui.reduce_motion,
+        "classic_nav": ui.classic_nav,
         "date_formats": sv.date_format_options(), "date_format": region.date_format,
         "time_formats": sv.time_options(), "time_format": region.time_format,
         "region_preview": sv.region_preview(region.date_format, region.time_format),

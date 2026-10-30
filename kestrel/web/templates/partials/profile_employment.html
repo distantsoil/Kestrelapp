@@ -9,13 +9,26 @@
   {% endif %}
   <div class="pf-cols">
     <div class="pf-stack">
-      {% call ui.section_card('Titles you want', 'tune', sub='On every board.') %}
+      {% call ui.section_card('Titles you want', 'target', sub='On every board.') %}
         {% with chip_name = 'target_titles', chip_items = terms.target_titles, chip_id = 'pe-titles', chip_label = 'Target titles', chip_tone = '',
                 chip_placeholder = ((ex_terms.target_titles or [])[0] if not terms.target_titles and ex_terms.target_titles else 'Add a title') %}
           {% include "partials/profile_chips.html" %}
         {% endwith %}
+        {# The Suggest titles box opens inside this card (profile.js, data-pf-sugg-toggle). The
+           suggestions load into it on their own, so the Employment form stays one form. #}
+        <div class="pf-sugg" data-pf-sugg data-pf-nodirty>
+          <button type="button" class="k-btn k-btn--sm" data-pf-sugg-toggle aria-expanded="false" aria-controls="pf-sugg-panel"
+                  data-testid="title-suggest-toggle">{{ ui.icon('spark', 'k-ic--sm') }}Suggest titles</button>
+          <div class="pf-sugg__panel" id="pf-sugg-panel" role="region" aria-label="Suggested titles">
+            <div class="pf-sugg__clip">
+              <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></div>
+            </div>
+          </div>
+        </div>
         <small class="pf-hint">An exact, partial or near title match raises the score ("IT Director" counts for "Director of IT"). Not a filter.</small>
       {% endcall %}
+      {# D-TTL-2: the close versions, loaded on their own so the Employment form stays one form. #}
+      <div id="title-variants" hx-get="/profile/title-variants" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></div>
       {% call ui.section_card('Titles to skip', 'alert', 'bad', sub='A role is set aside only when its title clearly matches.') %}
         {% with chip_name = 'anti_titles', chip_items = terms.anti_titles, chip_id = 'pe-anti', chip_label = 'Excluded titles', chip_tone = 'skip', chip_placeholder = 'Add a title' %}
           {% include "partials/profile_chips.html" %}
@@ -39,7 +52,7 @@
             <input type="hidden" id="pe-floor" name="seniority_floor" value="{{ terms.seniority_floor or '' }}">
             {% for key, label in seniority_floors %}<button type="button" value="{{ key }}" class="{% if (terms.seniority_floor or '') == key %}is-on{% endif %}" aria-pressed="{{ 'true' if (terms.seniority_floor or '') == key else 'false' }}">{{ label }}</button>{% endfor %}
           </div>
-          <small class="pf-hint">A title with no rank passes (rule seniority_floor).</small>
+          <small class="pf-hint">A title with no clear rank passes.</small>
         </div>
       {% endcall %}
       {% call ui.section_card('Pay', 'offers', 'good', sub='Per year, in US dollars. Currency follows Region in Settings.') %}
@@ -55,7 +68,12 @@
             <small class="pf-hint">Raises the score.</small>
           </div>
         </div>
-        <p class="pf-hint">A posting whose top of range is below your floor is set aside (rule comp_floor).</p>
+        <div class="pf-payviz" data-pf-payviz aria-hidden="true">
+          <div class="pf-payviz__bar"></div>
+          <div class="pf-payviz__tk" data-pz="floor"></div><div class="pf-payviz__lbl" data-pz="floor">Floor</div>
+          <div class="pf-payviz__tk" data-pz="target"></div><div class="pf-payviz__lbl" data-pz="target">Target</div>
+        </div>
+        <p class="pf-hint">A posting whose top of range is below your floor is set aside.</p>
         {% with margin_name = 'comp_floor_margin_pct', margin_value = comp_margin, margin_what = 'pay floor', margin_id = 'pe-margin' %}
           {% include "partials/profile_margin.html" %}
         {% endwith %}

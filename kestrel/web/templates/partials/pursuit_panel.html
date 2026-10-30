@@ -11,6 +11,7 @@
     <h2 id="ap-panel-t">{{ c.title }}</h2>
     <div class="ap-o">{{ c.org_name or 'Unknown organization' }}{% if c.place %} · {{ c.place }}{% endif %}</div>
   </div>
+  <button type="button" class="k-iconbtn" data-copy-path="/opportunities/{{ c.opp.id }}" aria-label="Copy link" title="Copy link" data-testid="panel-copy-link">{{ ic.icon('link') }}</button>
   <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ ic.icon('x') }}</button>
 </div>
 <div class="k-flyout__body">

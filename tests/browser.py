@@ -123,6 +123,63 @@ def wait_for_layout(page: Page) -> None:
         }""")
 
 
+# Shared by the *_browser.py tests: the left edge of what the scene art visibly draws, or None
+# with no art. Measured in pixels, not geometry: the art's box starts in open sky, and a scene's
+# far ridges fade in from nothing under a mask, so neither the box nor a shape's bounds says where
+# a title would meet the drawing. Two screenshots of the band, the scene shown and hidden (its
+# motion and the seasonal touch paused or hidden), and the first column that differs clearly.
+def art_visible_left(page, threshold: int = 28, min_pixels: int = 2) -> float | None:
+    import io
+
+    from PIL import Image, ImageChops
+
+    box = page.evaluate("""() => {
+        const a = document.querySelector('.k-scene__art:not(.k-scene__touch)');
+        if (!a) return null;
+        const band = a.closest('.k-scene');
+        if (band) {
+          band.setAttribute('data-was-animate', band.getAttribute('data-animate') || '');
+          band.setAttribute('data-animate', '0');
+        }
+        document.querySelectorAll('.k-scene__touch').forEach(t => t.style.visibility = 'hidden');
+        const r = a.getBoundingClientRect();
+        return {x: r.left, y: r.top, width: r.width, height: r.height}; }""")
+    if not box or box["width"] < 2 or box["height"] < 2:
+        return None
+    page.wait_for_timeout(120)
+    shown = Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
+    page.evaluate("""() => {
+        document.querySelector('.k-scene__art:not(.k-scene__touch)').style.visibility = 'hidden';
+    }""")
+    page.wait_for_timeout(60)
+    hidden = Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
+    page.evaluate("""() => {
+        document.querySelectorAll('.k-scene__art').forEach(a => { a.style.visibility = ''; });
+        const b = document.querySelector('.k-scene[data-was-animate]');
+        if (b) {
+          b.setAttribute('data-animate', b.getAttribute('data-was-animate'));
+          b.removeAttribute('data-was-animate');
+        } }""")
+    diff = ImageChops.difference(shown, hidden).convert("L")
+    w, h = diff.size
+    px = diff.load()
+    scale = w / box["width"]
+    for x in range(w):
+        if sum(1 for y in range(h) if px[x, y] > threshold) >= min_pixels:
+            return box["x"] + x / scale
+    return None
+
+
+# Shared by the *_browser.py tests: the right edge of what the scene title row actually shows (its
+# children), not the row's box, which can stretch past its content.
+TITLE_RIGHT_JS = """() => {
+    const t = document.querySelector('.k-scene__title');
+    let r = -Infinity;
+    for (const c of t.children) {
+      if (c.getClientRects().length) r = Math.max(r, c.getBoundingClientRect().right);
+    }
+    return r === -Infinity ? t.getBoundingClientRect().right : r; }"""
+
 # Shared by the *_browser.py tests: how many lines of text an element shows. Lines are
 # clusters of text tops more than 6px apart; rounding top / 6 split one line in two at a bucket
 # edge (a pill and its neighbor either side of it).
@@ -146,3 +203,97 @@ LINES_JS = """el => {
   for (const t of tops) { if (t - last > 6) lines += 1; last = t; }
   return lines;
 }"""
+
+
+# The page lifecycle leak check (D-UI-210), shared by every page's *_browser.py test. Add
+# TIMER_PROBE_JS with page.add_init_script() before the page loads: it notes every timer and who
+# started it (the call stack, so the page's own script file shows in it), so the check can tell
+# what a page left pending, or what fired, once the page was unmounted. A timer htmx starts for
+# a declarative poll is htmx's (it goes with its element), not the page script's.
+TIMER_PROBE_JS = """(() => {
+  Error.stackTraceLimit = 64;
+  const live = new Map(), fired = [];
+  const set = { t: window.setTimeout, i: window.setInterval };
+  const clear = { t: window.clearTimeout, i: window.clearInterval };
+  const own = stack => !/htmx\\.min\\.js/.test(stack.split('\\n')[2] || '');
+  function make(kind) {
+    return function (fn, ms, ...args) {
+      const stack = new Error().stack || '';
+      let id = 0;
+      const run = typeof fn !== 'function' ? fn : function () {
+        if (kind === 't') live.delete(id);
+        fired.push({ stack: stack, at: performance.now() });
+        return fn.apply(this, arguments);
+      };
+      id = set[kind].call(window, run, ms, ...args);
+      live.set(id, stack);
+      return id;
+    };
+  }
+  window.setTimeout = make('t');
+  window.setInterval = make('i');
+  window.clearTimeout = function (id) { live.delete(id); return clear.t.call(window, id); };
+  window.clearInterval = function (id) { live.delete(id); return clear.i.call(window, id); };
+  window.__kTimers = {
+    pending: src => [...live.values()].filter(s => s.includes(src) && own(s)).length,
+    firedSince: (src, t) => fired.filter(f => f.at >= t && f.stack.includes(src) && own(f.stack))
+      .length,
+  };
+})();"""
+
+_NO_PAGE = {"name": None, "listeners": 0, "timers": 0, "observers": 0}
+
+
+def assert_page_remounts_clean(page: Page, name: str, script: str, settle_ms: int = 2600,
+                               quiet_ms: int = 3000) -> dict:
+    """The leak test every page copies (docs/handoff/D-UI-210-plan.md): the page base.html
+    mounted is unmounted and mounted again through the KUI.page hooks. After the unmount nothing
+    the page started is left (no listener, timer or observer, no timer of its script pending or
+    firing); the second mount holds exactly what the first did. settle_ms lets the one-shot start
+    timers (entrances) run out before each count. Returns the first mount's counts."""
+    src = f"/static/js/{script}"
+    assert page.evaluate("window.__kTimers !== undefined"), "add TIMER_PROBE_JS before goto"
+    assert page.evaluate("KUI.page.current()") == name
+    page.wait_for_timeout(settle_ms)
+    first = page.evaluate("KUI.page._stats()")
+    assert first["name"] == name and first["listeners"] > 0, first
+    started = page.evaluate("() => { KUI.page.unmount(); return performance.now(); }")
+    assert page.evaluate("KUI.page.current()") is None
+    assert page.evaluate("KUI.page._stats()") == _NO_PAGE
+    assert page.evaluate("src => window.__kTimers.pending(src)", src) == 0, "a timer survived"
+    page.wait_for_timeout(quiet_ms)
+    assert page.evaluate("([src, t]) => window.__kTimers.firedSince(src, t)", [src, started]) == 0
+    assert page.evaluate("KUI.page.mount()") is True
+    assert page.evaluate("KUI.page.current()") == name
+    page.wait_for_timeout(settle_ms)
+    assert page.evaluate("KUI.page._stats()") == first
+    return first
+
+
+# Counts the event listeners that are still live on matching elements (group 4 of D-UI-210: the
+# partials an htmx swap brings in, whose scripts must not double their handlers). Add it with
+# page.add_init_script() before the page loads: it wraps addEventListener / removeEventListener, and
+# a listener counts while it was not removed, its AbortSignal is not aborted and its element is
+# still in the document. window.__g4Listeners.live(selector[, type]) answers the count.
+G4_LISTENER_PROBE_JS = """(() => {
+  const reg = [];
+  const add = EventTarget.prototype.addEventListener;
+  const rm = EventTarget.prototype.removeEventListener;
+  const capOf = o => (o && typeof o === 'object') ? !!o.capture : !!o;
+  EventTarget.prototype.addEventListener = function (type, fn, opts) {
+    reg.push({ t: this, type, fn, cap: capOf(opts), gone: false,
+               signal: (opts && typeof opts === 'object') ? opts.signal : null });
+    return add.call(this, type, fn, opts);
+  };
+  EventTarget.prototype.removeEventListener = function (type, fn, opts) {
+    for (const r of reg) {
+      if (r.t === this && r.type === type && r.fn === fn && r.cap === capOf(opts)) r.gone = true;
+    }
+    return rm.call(this, type, fn, opts);
+  };
+  window.__g4Listeners = {
+    live: (sel, type) => reg.filter(r => !r.gone && !(r.signal && r.signal.aborted)
+      && r.t instanceof Element && r.t.isConnected && r.t.matches(sel)
+      && (!type || r.type === type)).length,
+  };
+})();"""

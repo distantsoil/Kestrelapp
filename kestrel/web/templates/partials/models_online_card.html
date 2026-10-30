@@ -14,7 +14,8 @@
   <div class="mo-row"><span class="k-muted">Keys stay on this computer.</span>
     <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-online-so" hx-get="/models/online?open=1" hx-target="#mo-online-body" hx-swap="innerHTML" data-testid="mo-online-manage">Manage keys</button></div>
   {% else %}
-  <div class="mo-row"><span class="k-muted">Add a key from OpenRouter, Anthropic, OpenAI or another provider.</span>
+  <p class="k-muted mo-line">Add a key from OpenRouter, Anthropic, OpenAI or another provider.</p>
+  <div class="mo-setup">
     <button type="button" class="k-btn k-btn--sm k-btn--primary" data-k-slideover="#mo-online-so" hx-get="/models/online?open=1" hx-target="#mo-online-body" hx-swap="innerHTML" data-testid="mo-online-setup">Set up</button></div>
   <ul class="mo-bene"><li>{{ ui.icon('clock') }}Faster than this computer on most steps.</li><li>{{ ui.icon('key') }}Pay per use, often cents per run.</li></ul>
   {% endif %}

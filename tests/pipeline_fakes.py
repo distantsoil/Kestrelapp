@@ -137,6 +137,7 @@ def _p2c(marker: str | None) -> str:
             "b_thesis": {
                 "engagement": "post-acquisition IT integration",
                 "service_lines": ["post-acquisition IT integration"],
+                "matches": [],
                 "phases": [{"name": "assess", "outcome": "plan", "days": 20}],
                 "estimated_days": 40, "estimated_weeks": 8,
             },

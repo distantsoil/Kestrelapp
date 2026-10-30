@@ -332,6 +332,9 @@ design; frameless is no longer a later trial behind a setting.
   `runtime.json`, and instead of failing or opening a second window shows "Finishing closing the
   last session" and opens by itself when the old process has exited. The operator never has to
   click again.
+- **Power button** (D-UI-197): the top row ends with a round power button beside the bell, theme
+  toggle and avatar, tooltip "Quit Kestrel", in the window and in the browser. It opens the same
+  Quit dialog as the palette's Quit entry.
 - **Quit** (D-UI-90): a short closing screen ("Closing Kestrel. Your work is saved and picks up
   where it left off next time."), in-flight tasks are stopped (their rows resume at the next
   launch), and the process exits in one to two seconds. Quit never waits up to 30 seconds.
@@ -442,6 +445,12 @@ to bottom:
   and Research, Add to leads and Not relevant. Trigger events appear only here.
 - **Top matches today**: the best of today's newly found roles, ranked by fit, whatever the score
   (a day that only produced 1s and 2s still shows them). Today's roles only, not the backlog.
+  Only roles with a full review and a fit score become cards (D-UI-211). Eligible roles still
+  waiting for that review count as "N more being reviewed" under the heading, never as cards.
+  The count is absent at zero; its line reserves space so completing a review does not shift
+  the screen. The existing refresh inserts the finished role with the arrival animation and
+  updates the count in place. The first reviewed card replaces the empty state with a smooth
+  height transition. The heading's found count still includes all roles found today.
   A horizontal carousel of fixed-width cards (about 270 to 300 px): a wider window shows more
   cards, a narrower one fewer, with the next card peeking from the edge. Arrows, keys, the page
   dots (large hit area), and touch, pen or mouse dragging move it (a drag never presses the button
@@ -453,8 +462,8 @@ to bottom:
   `headline_reason` followed by the evidence line of its strongest `b_fit.matches` entry, so
   it adds no model call and no new evaluation field (D-UI-92). Actions: a bookmark
   (Save for later, distinct from Shortlist, retrievable under the Saved chip in Pipeline), Shortlist
-  (Add to leads in consulting), and Review. A role scored only by Tier 1 shows "Full review in
-  progress". Shortlist or Save for later removes the card (it fades, collapses, and the shortlisted
+  (Add to leads in consulting), and Review. Shortlist or Save for later removes the card
+  (it fades, collapses, and the shortlisted
   role appears in Decisions waiting); Review alone does not. When every card is actioned a single
   dashed card says "You're done for now! Run another scan or check out your pipeline." with Run a
   scan and Open Pipeline. With nothing yet, one dashed card says "No matches yet" with Run a scan.
@@ -591,25 +600,26 @@ right-aligned.
   leads on a signal opens an inline form (next step, prefilled "Research the company"; due Today,
   This week or Next week) and creates a pursuit from existing fields only (status, `next_action`,
   `next_action_at`); there are no contacts, stages or amounts, and Kestrel is not a CRM.
-- Fit groups in order (Worth a look, Maybe, Applied, Being scored, Scoring failed) page
-  together, 25 rows per group with "Show 25 more" and state kept in the URL. **Applied**
+- Fit groups in order (D-UI-198): Worth a look, Maybe, Applied, Not a fit, Being scored, Scoring
+  failed. All but Not a fit page together, 25 rows per group with "Show 25 more" and state kept in the URL. **Applied**
   (D-UI-51 amended, #37) holds a role with an open pursuit at `applied` or
   later (`APPLIED_OR_LATER`): it leaves Worth a look, Today's Decisions waiting and the Pipeline badge,
   and its row shows the pursuit status as a pill ("applied", "interviewing") instead of "on my
   shortlist". A merely shortlisted role stays in Worth a look. An unscored row's pill says why
   (D-UI-81, #34): scoring now, queued, background (a company-board role waiting in the lane),
   held (its track is switched off), not queued, failed or stuck. Under the Being scored header a
-  note counts the background roles: they score when Kestrel is idle, or, when Tier 1 or Tier 2
-  runs on an online model, only when the operator chooses Score everything now on Sources. The
+  note counts legacy background roles and links to Sources to recheck and score current matches
+  locally. When either scoring tier uses an online model, they wait for local models instead
+  (D-SRC-13). The
   list refreshes every 10 seconds while a run is in flight (not while the search box has focus);
   a new role from a scan drops into its group with the fading ring. **Not a fit is its own
-  section below them** (D-UI-62): a short line "Not a fit · 49 · Show" with the note over the
+  section between Applied and Being scored** (D-UI-62, D-UI-198): a short line "Not a fit · 49 · Show" with the note over the
   whole filter set ("49 set aside by your rules before any model ran (location 31, title 18); 0
   scored low by the model."), and a Show button that expands its rows inside their own scroll box
   (about 300 px, "Showing 12 of 49 · Load more", paged by `/opportunities/not-fit?nf_page=`),
   each with "Keep it anyway" (moves the role to Being scored). Its panel says the AI never scored
   it, shows the rule that set it aside and the posting as posted, with Keep it anyway, Review your
-  rules and Open full role. It never takes a page slot from the groups above.
+  rules and Open full role. It never takes a page slot from the groups around it.
 - Failed scoring also appears as the chip and the Scoring failed group; a failed role is kept
   (hard rule 4) and the group links to Needs another try.
 - Empty list: "Select a role to see why it fits", with the j / k / Enter keyboard hint.
@@ -641,7 +651,10 @@ The Evaluation tab never shows less than the side panel does:
   met, with "3 of 6" at the center; segments and legend chips are clickable to focus the
   matching rows below and dim the rest, and a click elsewhere clears it. Beside it, **In your
   favor** (green) and **Gaps** (amber), each gap with how to handle it (`b_fit.gaps`) and a plain
-  link "I have a story for this".
+  link "I have a story for this". Only a `strong` match is Met. A match the profile neither
+  shows nor rules out (`strength` `unverified`, PROMPTS.md P2) is Partly met and listed under
+  Gaps with "Your profile does not show this yet, so Kestrel can't tell"; it never counts in
+  the role's favor and never reaches Evidence (hard rule 4, O20).
 - **Evidence**: a posting quote, the operator's matching proof, and a link to the exact resume
   bullet or story, with "+ I have a story that shows something else they ask for".
 - **What the role is**: the model-written summary, labeled as AI-written, with tags and a "Read
@@ -1307,6 +1320,14 @@ Settings > Preferences) removes the movement and keeps the state changes. The pa
 auto-scrolls to something already visible; when it must scroll it moves only as far as needed
 and returns afterward only if it moved.
 
+**Page changes (D-UI-210, D-UI-220).** A link to another page in the app changes the page in
+place: the window, sidebar, top row and scene art stay, and only the content under them is
+swapped, with the same cross-fade a page load has. The old page stays on screen until the new
+one and its styles are ready, so the window never shows a blank or grey frame. Back and Forward
+move through the pages shown this way; a page with unsaved changes holds a link, the command
+palette and Back alike. *Classic page loads* (Settings > Preferences > Appearance,
+`ui.classic_nav`, off by default) loads a new document for every page change instead.
+
 **Layout (D-UI-126).** Nothing sits on the scene art; header actions go beside the title. Paired
 cards are equal height; titles, buttons, tags and chips never wrap, and tables aim for one line per
 cell. `scrollbar-gutter: stable` on scrolling areas so collapsing never resizes the page; scroll
@@ -1494,7 +1515,7 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    nothing; with only one on the sidebar track switcher is hidden (D-UI-57). *Appearance*: Theme
    (Light, Dark, Match computer), Color scheme (§2.4), Your picture (D-UI-112), Scene with Manage
    scenes, Animate the scene, Seasonal touches with Manage touches (§2.5), Text size, Reduce
-   motion (§2.4). *Region* (D-UI-109): country is United States and locked
+   motion (§2.4), Classic page loads (D-UI-220). *Region* (D-UI-109): country is United States and locked
    ("Kestrel supports the US only for now. More countries are coming."), currency US dollars,
    **Date format** (MM/DD/YYYY, MM/DD/YY, DD/MM/YYYY, DD/MM/YY, YYYY-MM-DD, or "Oct 23, 2026")
    and **Time** (12-hour or 24-hour), each with a live preview (`region.date_format`,

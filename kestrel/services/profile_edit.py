@@ -87,6 +87,77 @@ TERM_SECTIONS = {
 }
 BLANK_TERMS: dict[str, dict] = {"geo_rules": {"remote_ok": True}}
 
+_MODE_TERMS = {"employment": "employment_terms", "consulting": "consulting_terms"}
+
+
+def _mode_terms_key(track: str) -> str:
+    return _MODE_TERMS.get(track, "employment_terms")
+
+
+def effective_modes(block: dict, track: str) -> list[str]:
+    """The work modes a track's block really states (D-UI-214). `work_modes` is the source of
+    truth for whether remote and hybrid are accepted. A profile that never saved it (an older
+    file, a blank one) is read from the Location flags instead, so nothing contradicts."""
+    terms = block.get(_mode_terms_key(track))
+    terms = terms if isinstance(terms, dict) else {}
+    if terms.get("work_modes") is not None:
+        known = {k for k, _ in WORK_MODES}
+        return [m for m in terms["work_modes"] if m in known]
+    geo = block.get("geo_rules") if isinstance(block.get("geo_rules"), dict) else {}
+    modes = []
+    if geo.get("remote_ok"):
+        modes.append("remote")
+    if geo.get("hybrid_requires_metro"):
+        modes.append("hybrid")
+    return modes
+
+
+def effective_geo(block: dict, track: str) -> dict:
+    """geo_rules as the Location tab shows it: the remote and hybrid boxes follow the work
+    modes, so the two tabs always read the same answer."""
+    geo = dict(block.get("geo_rules") if isinstance(block.get("geo_rules"), dict) else {})
+    modes = effective_modes(block, track)
+    geo["remote_ok"] = "remote" in modes
+    flag = geo.get("hybrid_requires_metro")
+    if flag is None:  # Location never saved this: Hybrid chosen means the metro rule by default
+        flag = "hybrid" in modes
+    geo["hybrid_requires_metro"] = bool(flag) and "hybrid" in modes
+    return geo
+
+
+def _reconcile(block: dict, merged: dict, track: str, section: str) -> None:
+    """Make the work modes and the Location flags agree after a save (D-UI-214). `block` is the
+    track block before the save, `merged` after it; `merged` is changed in place.
+    Saving Work mode (Employment or Consulting) decides remote and hybrid: remote_ok follows
+    Remote, and a newly ticked Hybrid ticks "Hybrid roles must be in a metro" (owner default),
+    an unticked one clears it. Saving Location decides the other way: remote_ok adds or drops
+    Remote, and the hybrid-metro rule ticked adds Hybrid. Unticking the rule keeps Hybrid."""
+    key = _mode_terms_key(track)
+    geo = merged.get("geo_rules") if isinstance(merged.get("geo_rules"), dict) else {}
+    terms = merged.get(key) if isinstance(merged.get(key), dict) else {}
+    before = effective_modes(block, track)
+    if section in ("employment", "consulting"):
+        if not geo:
+            return  # Location was never saved: it stays "not saved yet" and reads the modes
+        modes = effective_modes(merged, track)
+        geo["remote_ok"] = "remote" in modes
+        if "hybrid" not in modes:
+            geo["hybrid_requires_metro"] = False
+        elif "hybrid" not in before:
+            geo["hybrid_requires_metro"] = True
+    elif section == "location":
+        modes = set(before)
+        modes.discard("remote")
+        if geo.get("remote_ok"):
+            modes.add("remote")
+        if geo.get("hybrid_requires_metro"):
+            modes.add("hybrid")
+        terms["work_modes"] = [k for k, _ in WORK_MODES if k in modes]
+        merged[key] = terms
+    else:
+        return
+    merged["geo_rules"] = geo
+
 PROFILE_NAME = "profile.yml"
 PROFILE_BAK = "profile.yml.bak"
 _INCOMING = "profile.yml.editing"
@@ -348,6 +419,8 @@ def save_section(track: str, section: str, values: dict) -> Path:
             block[key] = merged
         else:
             block[key] = val
+    _reconcile(data.get(track) if isinstance(data.get(track), dict) else {}, block, track,
+               section)
     data[track] = block
 
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)

@@ -23,14 +23,13 @@
 {% include "partials/pp_qstate.html" %}
 {%- else %}
 {%- if build_error %}<div class="pp-warn" role="alert" data-testid="pp-build-error">{{ build_error }}</div>{% endif %}
-{% include "partials/pp_ready.html" %}
 <div class="pp-grid">
   <div class="pp-col">
     {% include "partials/pp_questions.html" %}
     <section class="k-card pp-gaps" data-testid="pp-gaps">
       <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ i.pi('alert') }}</span><div class="k-grow"><h3>Gaps and how to handle them</h3></div></header>
       {%- for g in gaps %}
-      <div class="pp-gap"><span class="pp-gap__m{% if g.fatal %} is-fatal{% endif %}" aria-hidden="true">{{ g.mark }}</span>
+      <div class="pp-gap"><span class="pp-gap__m{% if g.fatal %} is-fatal{% endif %}" aria-hidden="true">{% if g.fatal %}{{ i.pi('alert', 'k-ic--sm') }}{% else %}{{ ui.icon('gap', 'k-ic--sm') }}{% endif %}</span>
         <span><b>{{ g.requirement }}</b>{% if g.mitigation %}<span class="pp-sub">{{ g.mitigation }}</span>{% endif %}</span></div>
       {%- else %}
       <p class="k-muted">No gaps were found when Kestrel rated this role.</p>

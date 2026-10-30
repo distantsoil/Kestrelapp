@@ -5,8 +5,10 @@ a JSON client gets JSON."""
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from kestrel import __version__
 from kestrel.db.enums import VERDICTS
@@ -25,6 +27,7 @@ from kestrel.web.queries import (
 from kestrel.web.redact import confidential, redact_name, redact_text
 
 router = APIRouter()
+_log = structlog.get_logger("kestrel.web.diag")
 
 
 def filters_from_query(params) -> OppFilters:
@@ -107,6 +110,48 @@ async def updates_status():
         state = await updater.load_state(s)
     version = updater.banner_version(state, __version__, utcnow_iso()) if enabled else None
     return {"available": version is not None, "version": version}
+
+
+class PageChange(BaseModel):
+    """One page change in the desktop window, as the new page saw it (D-UI-204). Numbers only and
+    two in-app paths: nothing about roles or the person."""
+
+    to: str = Field(default="", max_length=200)
+    came_from: str = Field(default="", max_length=200)
+    vt: bool = False
+    ttfb_ms: float = 0
+    reveal_ms: float = 0
+    hidden: bool = False
+    # What the page being left saw as it was swapped out (pageswap), when it saw anything: whether
+    # Chromium gave it a transition, how many animations were running, whether a background
+    # update was in flight, and how long its main thread was busy in the last second.
+    out_vt: bool | None = None
+    out_anims: int = 0
+    out_htmx: int = 0
+    out_busy_ms: float = 0
+    # An in-place page change (D-UI-210): no new document, so no navigation timing; instead how
+    # long the page took to arrive and how long the swap itself took.
+    inplace: bool = False
+    fetch_ms: float = 0
+    swap_ms: float = 0
+
+
+@router.post("/api/diag/page")
+async def diag_page(change: PageChange) -> JSONResponse:
+    """The page-change recorder (owner round 13: an occasional black flash between pages): whether
+    the cross-fade ran and how long the new page took to draw, written to Kestrel's own log so the
+    diagnostics file carries it. Never leaves the computer."""
+    _log.info(
+        "page_change", to=change.to[:200], came_from=change.came_from[:200], vt=change.vt,
+        ttfb_ms=round(max(0.0, min(change.ttfb_ms, 600000.0))),
+        reveal_ms=round(max(0.0, min(change.reveal_ms, 600000.0))), hidden=change.hidden,
+        out_vt=change.out_vt, out_anims=max(0, min(change.out_anims, 10000)),
+        out_htmx=max(0, min(change.out_htmx, 1000)),
+        out_busy_ms=round(max(0.0, min(change.out_busy_ms, 600000.0))),
+        inplace=change.inplace, fetch_ms=round(max(0.0, min(change.fetch_ms, 600000.0))),
+        swap_ms=round(max(0.0, min(change.swap_ms, 600000.0))),
+    )
+    return JSONResponse({"ok": True})
 
 
 @router.post("/api/quit")

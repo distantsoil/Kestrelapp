@@ -89,8 +89,8 @@ async def test_the_header_the_tabs_and_one_card_per_offer():
     assert "<h1>Offers</h1>" in t
     assert 'data-testid="of-count"' in t and "2 open" in t
     assert "Record an offer" in t
-    # One lede line, stated once: the trade-offs, never advice, never sent.
-    assert t.count("never advises and never sends anything") == 1
+    # The locked mockup has no sub-line under the title (the help cards carry the promise).
+    assert "never advises and never sends anything" not in t
     for tab in ("Compare", "Negotiate", "History"):
         assert f">{tab}</a>" in t
     assert t.count('data-testid="of-card"') == 2

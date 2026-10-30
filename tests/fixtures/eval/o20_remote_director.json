@@ -1,0 +1,36 @@
+{
+  "_note": "Invented data in the shape of the owner's O20 case: a remote Director role, five requirements, a profile with no proof points. The model reply as P2 asks for it after the fix: each requirement it cannot check is strength 'unverified', and every reason is a plain sentence.",
+  "blocks": {
+    "a_role_summary": {
+      "what_this_actually_is": "Runs the enterprise applications group for a mid-size software company: owns the ERP and CRM roadmap, manages vendors, and leads a team of about ten.",
+      "title_body_mismatch": null
+    },
+    "b_fit": {
+      "matches": [
+        {"requirement": "7+ years of progressive enterprise applications leadership", "evidence": "Your profile has no proof points yet, so this cannot be verified.", "strength": "unverified"},
+        {"requirement": "Led at least one full ERP implementation", "evidence": "Your profile has no proof points yet, so this cannot be verified.", "strength": "unverified"},
+        {"requirement": "Manages software vendor contracts and renewals", "evidence": "Your profile has no proof points yet, so this cannot be verified.", "strength": "unverified"},
+        {"requirement": "Built and led a team of ten or more", "evidence": "Your profile has no proof points yet, so this cannot be verified.", "strength": "unverified"},
+        {"requirement": "Presents roadmap and budget to the executive team", "evidence": "Your profile has no proof points yet, so this cannot be verified.", "strength": "unverified"}
+      ],
+      "gaps": []
+    },
+    "c_level": {"relative_level": "below", "scope_read": "A director role with about ten people, a step below the vice president level you hold now.", "reports_to": "The CIO", "team_size": "About 10", "budget": null},
+    "d_comp": {"stated": null, "estimate_min": null, "estimate_max": null, "estimate_confidence": "low", "estimate_basis": "The posting does not list pay.", "vs_floor": "unknown", "geo_adjustment_risk": false},
+    "e_angle": {"lead_with": "Lead with the largest systems program you have run, once you add it to your profile.", "jd_citations": ["owns the ERP and CRM roadmap"]},
+    "f_interview": []
+  },
+  "dimensions": {
+    "role_fit": {"score": 2.5, "why": "The role is a step below the level you hold now."},
+    "domain_match": {"score": 2.8, "why": "Your profile does not show enterprise applications work yet."},
+    "company_context": {"score": 3.0, "why": "A stable mid-size software company."},
+    "comp_logistics": {"score": 3.6, "why": "The role is remote in the United States, and you are open to remote work."},
+    "trajectory": {"score": 2.2, "why": "A director role would be a step back from where you are heading."}
+  },
+  "holistic": 2.7,
+  "verdict": "pass",
+  "blockers": [],
+  "legitimacy": {"status": "clean", "confidence": 0.8, "signals": []},
+  "work_auth_signal": "not_mentioned",
+  "headline_reason": "A step below your current level, and your profile does not yet show the enterprise applications work it asks for."
+}

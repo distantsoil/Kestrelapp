@@ -15,18 +15,18 @@
     <section class="k-card ob-acc ob-acc--good">
       {{ head('What Kestrel does', 'check', 'good') }}
       <ul class="ob-ul">
-        <li>{{ ui.icon('sources') }}Finds roles from public job boards and company pages</li>
-        <li>{{ ui.icon('compass') }}Scores how well each one fits you</li>
-        <li>{{ ui.icon('wand') }}Tailors your own resume lines for each role</li>
+        <li>{{ ui.icon('search') }}Finds roles from public job boards and company pages</li>
+        <li>{{ ui.icon('target') }}Scores how well each one fits you</li>
+        <li>{{ ui.icon('pen') }}Tailors your own resume lines for each role</li>
         <li>{{ ui.icon('apps') }}Tracks your applications to the outcome</li>
       </ul>
     </section>
     <section class="k-card ob-acc ob-acc--info">
       {{ head('What Kestrel never does', 'shield') }}
       <ul class="ob-ul" data-testid="ob-never">
-        <li>{{ ui.icon('x') }}Never applies for you</li>
-        <li>{{ ui.icon('x') }}Never emails or messages anyone</li>
-        <li>{{ ui.icon('x') }}Never logs in to a site as you</li>
+        <li>{{ ui.icon('ban') }}Never applies for you</li>
+        <li>{{ ui.icon('ban') }}Never emails or messages anyone</li>
+        <li>{{ ui.icon('ban') }}Never logs in to a site as you</li>
         <li>{{ ui.icon('check') }}It drafts and hands over. You decide.</li>
       </ul>
     </section>
@@ -43,7 +43,7 @@
   <section class="k-card">
     {{ head('How setup goes', 'pipeline') }}
     <div class="ob-road">
-      {% for icon, title, sub in [('cpu', 'Choose the AI', 'Where it runs'), ('profile', 'About you', 'Name and what you want'), ('folder', 'Your resume', 'Or skip for now'), ('compass', 'What you want', 'A few short answers'), ('sources', 'Your searches', 'Then a quick tour')] %}
+      {% for icon, title, sub in [('cpu', 'Choose the AI', 'Where it runs'), ('user', 'About you', 'Name and what you want'), ('file', 'Your resume', 'Or skip for now'), ('target', 'What you want', 'A few short answers'), ('search', 'Your searches', 'Then a quick tour')] %}
       <div class="ob-rs"><span class="k-badge">{{ ui.icon(icon) }}</span><div><b>{{ title }}</b><span class="ob-dsm">{{ sub }}</span></div></div>
       {% endfor %}
     </div>
@@ -122,7 +122,7 @@
         <button class="k-btn k-btn--primary" type="submit" id="ob-connect-btn" data-ob-connect-btn>Connect</button>
         <span class="ob-dsm" data-ob-connect-hint></span>
       </div>
-      <label class="ob-consent" for="ob-ack"><input type="checkbox" id="ob-ack" name="ack" value="on" data-testid="ob-ack">
+      <label class="ob-consent" for="ob-ack"><input type="checkbox" id="ob-ack" name="ack" value="on" data-testid="ob-ack"{% if connect_form and connect_form.ack %} checked{% endif %}>
         <span><b>I understand what gets sent</b>{% if st.choice == 'both' %}<span class="ob-dsm">Only a deep read you start on one role goes to this service, and Kestrel shows what is sent first. What exactly is listed below.</span>{% else %}<span class="ob-dsm">Role text and the resume lines a step needs go to this service, under your own key. What exactly is listed below.</span>{% endif %}</span></label>
       <details class="ob-details" data-testid="ob-sends">
         <summary>What leaves this computer</summary>
@@ -130,10 +130,12 @@
         <p class="ob-dsm" data-testid="ob-sends-both">Quick sort and fit score stay on this computer. A deep read you start on one role sends {{ tier_sends.tier3 }}. Kestrel shows exactly what before you confirm, and holds the send when confidential mode is on and no current employer is chosen. The service's own retention rules apply to anything sent; Kestrel cannot recall it. Keys stay on this computer and go only to the service.</p>
         {% else %}{{ disclosure_text() }}{% endif %}
       </details>
-      <details class="ob-details">
+      {% set free_on = connect_form.free_only if connect_form else hosted_mode.free_only %}
+      {% set train_on = connect_form and connect_form.allow_training %}
+      <details class="ob-details" data-ob-more{% if free_on or train_on %} open{% endif %}>
         <summary>More options</summary>
-        <label class="ob-check"><input type="checkbox" name="free_only" value="on" {% if hosted_mode.free_only %}checked{% endif %}> Free models only (OpenRouter)</label>
-        <label class="ob-check" data-testid="allow-training"><input type="checkbox" name="allow_training" value="on"> Allow providers that may train on what Kestrel sends
+        <label class="ob-check"><input type="checkbox" name="free_only" value="on" data-ob-free{% if free_on %} checked{% endif %}> Free models only (OpenRouter)</label>
+        <label class="ob-check" data-testid="allow-training"><input type="checkbox" name="allow_training" value="on" data-ob-train{% if train_on %} checked{% endif %}> Allow providers that may train on what Kestrel sends
           <span class="ob-dsm">Needed for free models: almost every free model is offered only by providers that keep or train on prompts. Kestrel blocks them unless you tick this.</span></label>
       </details>
       <p class="ob-dsm">Kestrel asks the service two things: is this key valid, and which models can it use. Nothing about you is sent.</p>
@@ -160,7 +162,7 @@
     <div class="ob-stack">
     <section class="k-card">
       {{ head('Who are you?', 'about') }}
-      <p class="ob-dsm ob-lockline">{{ ui.icon('lock') }}These fill the top of your resume and stay on this computer.</p>
+      <p class="ob-dsm ob-lockline">{{ ui.icon('lock') }}Used on your resume. Never sent anywhere.</p>
       <div class="ob-fields">
         <div class="ob-f"><label for="ob-first">First name <span class="k-pill k-pill--warn">Required</span></label>
           <input class="k-input" id="ob-first" name="first_name" value="{{ a.first_name }}" placeholder="e.g. Your first name" autocomplete="given-name" data-ob-need="first"></div>
@@ -238,7 +240,7 @@
         <textarea class="k-input" name="text" rows="6" placeholder="Paste your resume text here" aria-label="Resume text"></textarea>
       </div></div></div>
       <div class="ob-row ob-readrow">
-        <button class="k-btn{% if not masters %} k-btn--primary{% endif %}" type="submit" id="ob-read-btn">{{ 'Import another' if masters else 'Read my resume' }}</button>
+        <button class="k-btn" type="submit" id="ob-read-btn">{{ 'Import another' if masters else 'Read my resume' }}</button>
         <span class="ob-dsm">{{ ui.icon('info', 'k-ic--sm') }}Kestrel shows what it read, then the lines it will use. Nothing is saved until you approve it. Reading takes about a minute.</span>
       </div>
       <div class="ob-note{% if import_online %} ob-note--warn{% endif %}" data-testid="ob-import-where">{{ ui.icon('cloud' if import_online else 'laptop') }}<div>

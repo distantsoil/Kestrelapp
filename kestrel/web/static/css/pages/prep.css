@@ -54,15 +54,16 @@
 .pp-menu form { margin: 0; }
 
 /* -------------------------------------------------------------------------------- tabs */
-.pp-tabrow { display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line); }
-.pp-tabs { display: flex; gap: 4px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; }
-.pp-tab { padding: 9px 18px; font-weight: 700; color: var(--muted); text-decoration: none;
-  border-bottom: 3px solid transparent; margin-bottom: -1px; white-space: nowrap;
-  display: inline-flex; align-items: center; gap: 8px;
-  transition: color var(--dur-1), border-color var(--dur-1); }
+.pp-shell { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.pp-tabrow { position: relative; display: flex; align-items: center; gap: 16px;
+  border-bottom: 1px solid var(--line); }
+.pp-tabs { display: flex; gap: 22px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; }
+.pp-tab { padding: 8px 2px 10px; font-weight: 700; color: var(--muted); text-decoration: none;
+  margin-bottom: -1px; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px;
+  transition: color var(--dur-1); }
 .pp-tab:hover { color: var(--ink); text-decoration: none; }
-.pp-tab.is-on { color: var(--brand); border-bottom-color: var(--brand); }
-.pp-tab__n { font-size: 11px; background: var(--soft); color: var(--link-ink);
+.pp-tab.is-on { color: var(--ink); }
+.pp-tab__n { font-size: 11px; background: var(--soft); color: var(--brand);
   border-radius: var(--r-pill); padding: 1px 7px; }
 .pp-tabacts { display: flex; gap: 8px; align-items: center; flex: none; padding-bottom: 4px; }
 .pp-tabacts .k-btn { white-space: nowrap; flex: none; }
@@ -87,20 +88,20 @@
 .pp-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .pp-pgrid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
 .pp-bankgrid { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-/* The locked mockup measures its whole window (sidebar included, about 290px more than the main
-   column) and stacks the main column and side cards at 1000px, the four tiles at 900px. This
-   wrapper measures the main column only, so the same breakpoints read 290px lower: at a 1280
-   window the cards stay beside the main column and the four tiles stay in one row. */
-@container (max-width: 710px) {
+/* The locked mockup's steps measure the whole window (kwin): the side cards stack at 1000, the
+   four tiles go two by two at 900 (prep-mockup-locked.html :851-853). */
+@container kwin (max-width: 1000px) {
   .pp-grid, .pp-pgrid { grid-template-columns: minmax(0, 1fr); }
 }
-@container (max-width: 610px) {
+@container kwin (max-width: 900px) {
   .pp-ready { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pp-tile--ring { grid-column: 1 / -1; }
 }
+@container kwin (max-width: 1300px) {
+  .pp-themes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @container (max-width: 760px) {
   .pp-tabrow { flex-wrap: wrap; }
-  .pp-themes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pp-slist { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -242,10 +243,13 @@
 
 /* ------------------------------------------------------------------------------ story bank */
 .pp-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.pp-btnsub { display: block; font-size: 11.5px; font-weight: 500; opacity: .85; max-width: 38ch;
-  white-space: normal; text-align: left; }
-.pp-tools .k-btn { height: auto; padding-top: 6px; padding-bottom: 6px; }
-.pp-tools .k-btn b { white-space: nowrap; }
+.pp-tools { align-items: flex-start; }
+.pp-tools { align-items: center; }
+/* The form's pieces join the toolbar row; the caption drops to its own line at the card's left
+   edge, so it and the paragraph under it share one alignment. */
+.pp-tools form { display: contents; }
+.pp-btnsub { display: block; flex: 1 0 100%; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.pp-tools .k-btn { white-space: nowrap; }
 .pp-status { margin: 8px 0 0; font-size: 13px; }
 .pp-cov { font-weight: 600; font-size: 12.5px; }
 .pp-themes { margin-bottom: 12px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -253,7 +257,10 @@
   display: flex; flex-direction: column; gap: 6px; text-align: left; font: inherit; color: var(--ink);
   min-width: 0; }
 button.pp-th { cursor: pointer; }
-button.pp-th:hover { border-color: var(--brand); }
+button.pp-th { transition: transform .2s, border-color .2s, box-shadow .2s; }
+button.pp-th:hover { border-color: var(--brand); transform: translateY(-1px); }
+.pp-th, .pp-scard, .pp-merge { animation: k-inUp .4s var(--ease) backwards; }
+@media (prefers-reduced-motion: reduce) { .pp-th, .pp-scard, .pp-merge { animation: none; } }
 .pp-th b { font-size: 13.5px; }
 .pp-th__st { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
 .pp-th.is-ok { border-left: 4px solid var(--good); } .pp-th.is-ok .pp-th__st { color: var(--good-ink); }
@@ -269,7 +276,8 @@ button.pp-th:hover { border-color: var(--brand); }
 .pp-slist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .pp-scard { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--paper);
   padding: 0; display: flex; flex-direction: column; min-width: 0; }
-.pp-scard:hover { border-color: var(--brand); }
+.pp-scard { transition: transform .2s, border-color .2s, box-shadow .2s; }
+.pp-scard:hover { border-color: var(--brand); transform: translateY(-1px); box-shadow: var(--shadow); }
 .pp-scard__open { border: 0; background: none; font: inherit; color: var(--ink); text-align: left;
   cursor: pointer; padding: 14px 16px 6px; }
 .pp-scard__open b { font-size: 14.5px; display: block; }
@@ -299,6 +307,8 @@ button.pp-th:hover { border-color: var(--brand); }
 .pp-wpt::placeholder { color: var(--muted); opacity: .6; }
 .pp-sheet__del { margin-right: auto; }
 .pp-preview { --modal-w: 760px; height: calc(100vh - 32px); max-height: calc(100vh - 32px); }
+/* The PDF preview rises from the window bottom as a sheet (mockup .pdfm .pvbox). */
+.pp-preview.k-modal--sheet { width: min(860px, 92vw); height: 92vh; max-height: 92vh; }
 .pp-preview__head { display: flex; align-items: center; gap: 10px; padding: 14px 20px;
   border-bottom: 1px solid var(--line); }
 .pp-preview__head h2 { margin: 0; font-size: var(--fs-xl); }
@@ -314,3 +324,11 @@ button.pp-th:hover { border-color: var(--brand); }
 .pp-q__main { min-width: 0; }
 .pp-qtext { display: block; }
 .pp-ask, .pp-people, .pp-hist { min-width: 0; }
+
+/* Opening a question's story eases in; the bubbles and critiques rise (mockup .bub, .crit). */
+.pp-star:not([hidden]) { animation: k-fold-in .35s var(--ease) backwards; }
+.pp-bub, .pp-crit { animation: k-inUp .4s var(--ease) backwards; }
+.pp-rub__tr i { transition: width .8s var(--ease); }
+@media (prefers-reduced-motion: reduce) { .pp-star, .pp-bub, .pp-crit { animation: none; } }
+
+/* "More about this" reads with a chevron (mockup help links). */

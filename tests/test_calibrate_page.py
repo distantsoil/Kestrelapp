@@ -334,7 +334,7 @@ def test_few_labels_say_not_enough_yet_in_the_history_header():
     _seed(n_roles=6, n_labeled=3)
     with _client() as c:
         body = c.get("/calibrate").text
-    assert "Not enough ratings yet (n=3)" in body
+    assert "Not enough data yet (n=3)" in body
     assert "You and Kestrel were close on" not in body
     assert "27 more ratings" in body and "3/30" in body
 
@@ -344,7 +344,7 @@ def test_history_header_states_the_count_from_five_ratings():
     with _client() as c:
         body = c.get("/calibrate").text
     assert re.search(r"You and Kestrel were close on \d+ of 6", body)
-    assert "Not enough ratings yet" not in body
+    assert "Not enough data yet" not in body
 
 
 def test_history_pages_by_eight_and_pages_keep_their_state():
@@ -511,8 +511,10 @@ def test_few_shot_threshold_is_the_configured_one():
     _seed()
     with _client() as c:
         body = c.get("/calibrate").text
-    assert "At 15: Kestrel shows the AI your own rated roles as examples" in body
-    assert "At 30: a scoring tune-up" in body and "At 200: Kestrel learns" in body
+    # The side card is drawn with bold lead-ins (calibrate-mockup-locked sideCard): Right away,
+    # At 30, At 200; the configured example threshold rides in the first line.
+    assert "<b>Right away</b>" in body and "From 15, Kestrel shows the AI a few of them" in body
+    assert "<b>At 30</b>" in body and "<b>At 200</b>" in body
 
 
 def test_change_of_a_role_without_an_evaluation_keeps_the_queue():

@@ -125,7 +125,10 @@ def test_history_shows_friendly_names_never_a_raw_kestrel_tag():
 def test_history_partial_has_no_raw_id():
     from jinja2 import Environment, FileSystemLoader
 
+    from kestrel.web.deps import static_url
+
     env = Environment(loader=FileSystemLoader(str(TEMPLATES)))
+    env.globals["static_url"] = static_url
     rows = [
         {"date": "2026-10-02", "model": "kestrel-tier2:latest", "name": "qwen3:14b",
          "fit": "good fit", "tone": "good", "score": 4.1},

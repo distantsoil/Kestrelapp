@@ -162,7 +162,7 @@ def test_cancel_stops_the_check_in_place_and_the_button_comes_back():
     seed_labels(6)
     client.post("/bench/start", data={})
     r = client.post("/bench/cancel")
-    assert "The check was cancelled." in r.text
+    assert "The check was canceled." in r.text
     assert 'data-testid="ck-live"' not in r.text and 'data-testid="ck-run"' in r.text
     assert 'hx-trigger="every 2s"' not in r.text
     assert client.get("/bench/check/status").json()["state"] == "cancelled"

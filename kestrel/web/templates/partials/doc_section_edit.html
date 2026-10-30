@@ -5,7 +5,7 @@
 {% set is_employer = section.section_kind in ("role", "proof_engagement") %}
 {% set is_current = section.org_label_redacted is not none %}
 {% if employer_error %}{% set is_current = true %}{% endif %}
-<details class="section-edit" {% if saved or edit_open %}open{% endif %}>
+<details data-k-fold class="section-edit" {% if saved or edit_open %}open{% endif %}>
   <summary class="muted">Edit role details</summary>
   <form hx-post="/documents/section/{{ section.id }}" hx-target="closest details"
         hx-swap="outerHTML" class="formgrid section-form"
@@ -33,7 +33,7 @@
         <input id="sec-redacted-{{ section.id }}" type="text" name="org_label_redacted"
                value="{{ form_shown_as or section.org_label_redacted or placeholder_hint or 'a company in your industry' }}"
                x-bind:required="current" maxlength="200">
-        <span class="muted current-employer-help">With confidential mode on (Settings, Core), this
+        <span class="muted current-employer-help">With confidential mode on (Settings > Privacy and access), this
         replaces the company name in lists, documents and anything sent to an online model.</span>
       </span>
       {# The exact names hidden for this employer (D-PRIV-1): removable chips and "Add a name".

@@ -153,9 +153,10 @@ def test_geo_uncertain_matches_spec_step5_both_directions(opted_in_geo):
 
     def geo_uncertain_for(**opp_kw) -> bool:
         opp = SimpleNamespace(
-            title="VP of IT", description_md="lead IT", comp_max=250000, comp_source="parsed",
+            title="VP of IT", comp_max=250000, comp_source="parsed",
             date_posted=None, event_date=None, seen_count=1, ghost_score=0.1, url=None,
-            trigger_data=None, employment_type=None, is_remote=None, **opp_kw,
+            trigger_data=None, employment_type=None, is_remote=None,
+            **{"description_md": "lead IT", **opp_kw},
         )
         r = evaluate_tier0(opp=opp, org=None, profile=profile, source=None, settings=settings,
                            filters=filters, track="employment")
@@ -165,10 +166,15 @@ def test_geo_uncertain_matches_spec_step5_both_directions(opted_in_geo):
     assert geo_uncertain_for(
         remote_type="unknown", state=None, city=None, location_raw="Columbus, OH"
     ) is False
-    # parsed-but-unlisted state, nothing matches -> genuinely uncertain (was under-reported)
+    # parsed-but-unlisted state with remote wording in the posting -> genuinely uncertain
+    assert geo_uncertain_for(
+        remote_type="unknown", state="CA", city=None, location_raw="Somewhere, CA",
+        description_md="lead IT, remote friendly",
+    ) is True
+    # the same state with no remote or hybrid wording is on-site there: set aside (D-RULES-9)
     assert geo_uncertain_for(
         remote_type="unknown", state="CA", city=None, location_raw="Somewhere, CA"
-    ) is True
+    ) is False
 
 
 async def test_tier0_is_idempotent_on_rerun(sm):

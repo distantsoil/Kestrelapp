@@ -275,7 +275,7 @@ def test_tab_partials_return_their_content():
         hist = c.get(f"/opportunities/{ids['opp']}/tab/history")
         assert hist.status_code == 200
         assert "Scored 4.6 by Full review" in hist.text and "kestrel-tier2" in hist.text
-        assert "prompt version evaluate/v1" in hist.text
+        assert "prompt version 1" in hist.text
         assert "shortlisted to applied" in hist.text
         assert "Deeper read sent to OpenRouter" in hist.text and "$0.0213" in hist.text
         assert "Found on Greenhouse board" in hist.text

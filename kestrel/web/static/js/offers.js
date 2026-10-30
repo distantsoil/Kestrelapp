@@ -2,12 +2,20 @@
    Record an offer sheet the server returns, the weight words while a slider moves, and the draft
    panel: unlock on a walk-away, pick a situation, copy and edit. Everything is delegated on the
    document, so it keeps working after the body is swapped. Nothing here sends anything: Copy
-   draft only puts the text on the clipboard. User-facing strings here are the six weight words,
-   the draft panel's toasts and the Copy label. */
+   draft only puts the text on the clipboard. The page runs on the lifecycle (KUI.page, D-UI-210):
+   this file only defines it, and mount starts every listener and timer through its context, so
+   leaving stops all of them and coming back starts one set. User-facing strings here are the six
+   weight words, the draft panel's toasts and the Copy label. */
 (function (root) {
   'use strict';
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
+
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
+  var cx = null;
+  var justSaved = false, known = null;  // a save, and the cards seen before it
+  var ready = null;                     // the draft panel's first content
+  var inkFrom = null;                   // where the tab ink was before a tab change
 
   var WORDS = ['Ignore', 'A little', 'Some', 'Matters', 'A lot', 'Most'];
 
@@ -27,7 +35,7 @@
     $$('.of-menu').forEach(function (m) { m.hidden = true; });
     $$('[data-of-menu]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
   }
-  doc.addEventListener('click', function (e) {
+  function onMenuClick(e) {
     var btn = e.target.closest && e.target.closest('[data-of-menu]');
     if (btn) {
       var menu = doc.getElementById(btn.getAttribute('data-of-menu'));
@@ -44,11 +52,11 @@
     if (!(e.target.closest && e.target.closest('.of-menu')) || (e.target.closest('.of-menu button'))) {
       closeMenus();
     }
-  });
-  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(); });
+  }
+  function onEscape(e) { if (e.key === 'Escape') closeMenus(); }
 
   /* ------------------------------------------------------------------------- the sheet */
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  function onSheetSwap(e) {
     var t = e.target;
     if (t && t.id === 'of-dialog') {
       var sheet = $('#of-sheet', t);
@@ -58,9 +66,28 @@
         if (first) first.focus();
       }
     }
-  });
+  }
   // The server answers a saved sheet with this event: close it; the body was swapped already.
-  doc.addEventListener('of-saved', function () { if (root.KUI) root.KUI.closeModal(); });
+  function onSaved() { justSaved = true; if (root.KUI) root.KUI.closeModal(); }
+  // A newly recorded offer's card arrives with a soft pulse (mockup .oc.arrive). The ids seen
+  // before the save are compared with those after the swap; only a save triggers it, never a
+  // tab change.
+  function cardIds() {
+    return Array.prototype.slice.call(doc.querySelectorAll('.of-card[data-offer]'));
+  }
+  function snapshot() { known = cardIds().map(function (c) { return c.getAttribute('data-offer'); }); }
+  function onSettle() {
+    if (justSaved && known) {
+      cardIds().forEach(function (c) {
+        if (known.indexOf(c.getAttribute('data-offer')) < 0) {
+          c.classList.add('arrive');
+          c.addEventListener('animationend', function () { c.classList.remove('arrive'); }, { once: true });
+        }
+      });
+    }
+    justSaved = false;
+    snapshot();
+  }
   // Undo of an outcome, or any change the page cannot patch: ask for the body again.
   function reload() {
     if (!root.htmx || !$('#of-body')) return;
@@ -71,8 +98,6 @@
     var url = '/offers?tab=' + encodeURIComponent(tab) + (pursuit && tab === 'negotiate' ? '&pursuit=' + pursuit : '');
     root.htmx.ajax('GET', url, { target: '#of-body', swap: 'innerHTML' });
   }
-  doc.addEventListener('of-reload', reload);
-  doc.addEventListener('kestrel:undone', reload);
 
   /* ---------------------------------------------------- amounts: shown with separators, sent plain */
   // The visible box may read "140,000"; the hidden box named in data-plain carries what is
@@ -86,10 +111,10 @@
     var hid = id && doc.getElementById(id);
     if (hid) hid.value = plain(box.value);
   }
-  doc.addEventListener('input', function (e) {
+  function onPlainInput(e) {
     if (e.target && e.target.getAttribute && e.target.getAttribute('data-plain')) syncPlain(e.target);
-  });
-  doc.addEventListener('change', function (e) {
+  }
+  function onPlainChange(e) {
     var t = e.target;
     if (!t || !t.getAttribute || !t.getAttribute('data-plain')) return;
     syncPlain(t);
@@ -98,10 +123,10 @@
       var parts = p.split('.');
       t.value = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (parts[1] ? '.' + parts[1] : '');
     }
-  }, true);
+  }
 
   /* ------------------------------------------------------------------------ weight words */
-  doc.addEventListener('input', function (e) {
+  function onWeightInput(e) {
     var t = e.target;
     if (t && t.classList && t.classList.contains('of-w')) {
       var em = t.parentNode.querySelector('em');
@@ -109,20 +134,27 @@
     } else if (t && t.id === 'of-walk') {
       lock(!t.value.trim());
     }
-  });
+  }
 
   /* ------------------------------------------------------------------ the draft panel */
-  var ready = null;  // the panel's first content, so a cleared walk-away puts it back
+  // ready (above) is the panel's first content, so a cleared walk-away puts it back.
   function lock(on) {
     var w = $('#of-draft-wrap');
-    if (w) w.setAttribute('data-locked', on ? '1' : '0');
+    if (!w) return;
+    var was = w.getAttribute('data-locked') === '1';
+    w.setAttribute('data-locked', on ? '1' : '0');
+    // Typing the walk-away unlocks the panel with a small pulse (mockup .unlock).
+    if (was && !on) {
+      w.classList.remove('unlock'); void w.offsetWidth; w.classList.add('unlock');
+      w.addEventListener('animationend', function () { w.classList.remove('unlock'); }, { once: true });
+    }
   }
   function amount(v) {
     var m = /^(\d+\.?\d*|\.\d+)([km]?)$/.exec(String(v || '').toLowerCase().replace(/[$,\s]/g, ''));
     if (!m) return null;
     return parseFloat(m[1]) * ({ '': 1, k: 1e3, m: 1e6 }[m[2]]);
   }
-  doc.addEventListener('change', function (e) {
+  function onDraftChange(e) {
     var t = e.target;
     if (!t) return;
     if (t.id === 'of-walk') {
@@ -146,8 +178,8 @@
       t.setAttribute('data-prev', t.value);
       if (drafted()) submit();
     }
-  });
-  doc.addEventListener('click', function (e) {
+  }
+  function onDraftClick(e) {
     var t = e.target;
     var sit = t.closest && t.closest('[data-sit]');
     if (sit && !sit.disabled) {
@@ -177,11 +209,13 @@
     var copy = t.closest && t.closest('[data-of-copy]');
     if (copy) {
       var text = ($('#of-dbody') || {}).innerText || '';
+      var mine = cx;
       var done = function () {
+        if (!mine || mine.signal.aborted) return;  // the page was left before the clipboard answered
         say('Copied. Paste it into your own email. Kestrel never sends it.');
         var was = copy.textContent;
         copy.textContent = 'Copied';
-        setTimeout(function () { copy.textContent = was; }, 1600);
+        mine.after(1600, function () { copy.textContent = was; });
       };
       if (root.navigator && root.navigator.clipboard) {
         root.navigator.clipboard.writeText(text).then(done, function () {
@@ -191,13 +225,60 @@
         say('Kestrel could not reach the clipboard. Select the draft and copy it by hand.', 'warn');
       }
     }
-  });
+  }
 
   // A new draft arrived: the panel is no longer in editing mode.
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  function onDraftSwap(e) {
     if (e.target && e.target.id === 'of-draft') {
       var body = $('#of-dbody');
       if (body) { body.contentEditable = 'false'; body.classList.remove('is-editing'); }
+    }
+  }
+  /* ----------------------------------------------------------------------- tab ink and rise */
+  function placeInk(from) {
+    var tabs = $('.of-tabs');
+    if (tabs && root.KUI) root.KUI.ink(tabs, from);
+  }
+  function onTabRequest(e) {
+    var elt = e.detail && e.detail.elt;
+    if (elt && elt.classList && elt.classList.contains('of-tab') && root.KUI) {
+      inkFrom = root.KUI.inkPos($('.of-tabs'));
+    }
+  }
+  function onInkSwap(e) {
+    var elt = e.detail && e.detail.requestConfig && e.detail.requestConfig.elt;
+    if (!elt || !elt.classList || !elt.classList.contains('of-tab')) { placeInk(null); return; }
+    placeInk(inkFrom);
+    inkFrom = null;
+    if (root.KUI) root.KUI.paneIn($('#of-pane'));
+  }
+  function onResize() { placeInk(null); }
+
+  /* ------------------------------------------------------------------------------ the page */
+  root.KUI.page.define('offers', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      justSaved = false; known = null; ready = null; inkFrom = null;
+      // The order the file added them in: a handler that stops the others must stay where it was.
+      ctx.on(doc, 'click', onMenuClick);
+      ctx.on(doc, 'keydown', onEscape);
+      ctx.on(doc, 'htmx:afterSwap', onSheetSwap);
+      ctx.on(doc, 'of-saved', onSaved);
+      ctx.on(doc, 'htmx:afterSettle', onSettle);
+      snapshot();
+      ctx.on(doc, 'of-reload', reload);
+      ctx.on(doc, 'kestrel:undone', reload);
+      ctx.on(doc, 'input', onPlainInput);
+      ctx.on(doc, 'change', onPlainChange, true);
+      ctx.on(doc, 'input', onWeightInput);
+      ctx.on(doc, 'change', onDraftChange);
+      ctx.on(doc, 'click', onDraftClick);
+      ctx.on(doc, 'htmx:afterSwap', onDraftSwap);
+      ctx.on(doc, 'htmx:beforeRequest', onTabRequest);
+      ctx.on(doc, 'htmx:afterSwap', onInkSwap);
+      placeInk(null);
+      ctx.on(root, 'resize', onResize);
+      ctx.onUnmount(function () { if (cx === ctx) cx = null; });
     }
   });
 })(window);

@@ -105,10 +105,10 @@ def test_pages_that_use_the_combobox_link_a_sheet_that_styles_it():
     web = Path(paths.web_static_dir()).parent / "templates"
     for page in ("bench.html", "models.html"):
         text = (web / page).read_text("utf-8")
-        assert "/static/css/shell.css" in text and "kestrel.css" not in text, page
+        assert "css/shell.css" in text and "kestrel.css" not in text, page
     # shell.css is what those pages load, so components.css (loaded by base.html) must carry it.
     base = (web / "base.html").read_text("utf-8")
-    assert "/static/css/components.css" in base
+    assert "css/components.css" in base
 
 
 def test_existing_callers_render_the_combobox():

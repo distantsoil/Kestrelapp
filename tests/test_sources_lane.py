@@ -54,7 +54,7 @@ async def _seed(n: int) -> None:
         await s.flush()
         for i in range(n):
             o = Opportunity(track="employment", opp_type="job_posting", source_id=src.id,
-                            external_id=f"e{i}", title=f"Pastry Chef {i}", stage="t0_pass")
+                            external_id=f"e{i}", title=f"Operations Analyst {i}", stage="t0_pass")
             s.add(o)
             await s.flush()
             s.add(Task(type="t1", priority=lane.LANE_PRIORITY,
@@ -73,7 +73,8 @@ def test_waiting_count_and_the_cost_warning_are_shown_before_confirming():
         html = c.get("/sources").text
     assert 'data-testid="lane-waiting"' in html and "Waiting: 3 roles" in html
     assert 'data-testid="lane-score-now"' in html and 'data-testid="lane-confirm"' in html
-    assert "Score all 3 waiting roles now?" in html
+    assert "Recheck 3 waiting roles and score matches locally?" in html
+    assert "Unrelated titles are skipped before storage and counted on each run." in html
     assert "rough figure" in html  # no evaluations yet: the figure says it is rough
 
 
@@ -98,11 +99,13 @@ def test_score_everything_needs_the_confirmation_and_then_runs_once():
     assert _run(_normal()) == 3
 
 
-def test_hosted_scoring_says_the_roles_wait_for_the_operator(monkeypatch):
+def test_hosted_scoring_says_the_backlog_requires_local_models(monkeypatch):
     _run(_seed(2))
     with _client() as c:
-        assert "wait for you to choose Score everything now" not in c.get("/sources").text
+        assert "Remaining roles score when Kestrel is idle." in c.get("/sources").text
         monkeypatch.setattr(lane, "scores_on_hosted", lambda settings: True)
         html = c.get("/sources").text
-    assert ("Because your scoring runs on an online model, these wait for you to choose "
-            "Score everything now.") in html
+        refused = c.post("/sources/score-everything", data={"confirm": "1"})
+    assert "Choose local models for both scoring tiers" in html
+    assert refused.status_code == 400 and "Nothing was sent" in refused.text
+    assert _run(_lane_left()) == 2

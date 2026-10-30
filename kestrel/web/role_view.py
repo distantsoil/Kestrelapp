@@ -24,6 +24,11 @@ WHEEL_GAP = 3.0
 MET, PART, GAP = "met", "part", "gap"
 STATE_WORDS = {MET: "Met", PART: "Partly met", GAP: "Not met"}
 MARKS = {MET: "+", PART: "~", GAP: "!"}
+# A match the model could not check against the profile (strength "unverified", PROMPTS.md P2
+# rule 6): Partly met, listed under Gaps with this line, never Met and never shown as proof
+# (hard rule 4, O20).
+UNVERIFIED = pv.UNVERIFIED
+UNVERIFIED_HOW = pv.UNVERIFIED_HOW
 
 _ORDER = ("evaluation", "posting", "organization", "documents", "history")
 TAB_LABELS = {
@@ -126,8 +131,10 @@ def read_card(opp, ev_json: dict | None, fit_word: str | None) -> dict[str, str]
             if isinstance(fit, dict)
             else []
         )
-        strong = [m for m in matches if m.get("strength") == "strong" and m.get("evidence")]
-        for m in (strong or [m for m in matches if m.get("evidence")])[:2]:
+        # An unverified match's evidence says what the profile lacks: it is not a reason (O20).
+        shown = [m for m in matches if m.get("evidence") and m.get("strength") != UNVERIFIED]
+        strong = [m for m in shown if m.get("strength") == "strong"]
+        for m in (strong or shown)[:2]:
             parts.append(_sentence(m["evidence"]))
         comp = b.get("d_comp") or {}
         if isinstance(comp, dict) and comp.get("vs_floor") in _PAY_SENTENCES:
@@ -135,7 +142,8 @@ def read_card(opp, ev_json: dict | None, fit_word: str | None) -> dict[str, str]
         level = b.get("c_level") or {}
         if isinstance(level, dict) and level.get("relative_level") in _LEVEL_SENTENCES:
             parts.append(_LEVEL_SENTENCES[level["relative_level"]])
-        gaps = gap_rows(ev_json)
+        # The same gaps the Pipeline panel names, unverified matches included (O20).
+        gaps = pv.all_gap_rows(ev_json)
         if gaps and fit_word in ("strong fit", "good fit", "maybe"):
             parts.append(f"Worth watching: {_s(gaps[0]['text']).rstrip('.')}.")
     if not parts:
@@ -169,20 +177,62 @@ def gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
 
 
 # ------------------------------------------------------------------------------- match wheel
+LEGACY_SERVICE_HOW = (
+    "The earlier read named this without saying what shows it. Score again to check it."
+)
+
+
+def _match_rows(matches: list) -> list[dict[str, Any]]:
+    """P2 `b_fit.matches` or P2C `b_thesis.matches` as rows: only `strong` is Met; partial,
+    adjacent and unverified are Partly met. An unverified match carries no evidence (what the
+    profile lacks is not proof: no Evidence row, no source lookup) and says Kestrel can't tell
+    (hard rule 4, O20)."""
+    rows: list[dict[str, Any]] = []
+    for m in matches:
+        if not isinstance(m, dict) or not m.get("requirement"):
+            continue
+        unverified = m.get("strength") == UNVERIFIED
+        rows.append(
+            {
+                "text": _s(m["requirement"]),
+                "state": MET if m.get("strength") == "strong" else PART,
+                "evidence": "" if unverified else _s(m.get("evidence")),
+                "how": UNVERIFIED_HOW if unverified else "",
+                "strength": _s(m.get("strength")),
+                "unverified": unverified,
+            }
+        )
+    return rows
+
+
 def requirements(opp, ev_json: dict | None) -> list[dict[str, Any]]:
-    """One row per thing the posting asks for: Met (a strong match), Partly met (partial or
-    adjacent) or Not met (a gap). From the model's `b_fit` for a role; for a lead from what its
-    delivery read says (service lines and solo-feasibility are met, delivery gaps and a partner
-    need are not). Each row carries its `k` (the wheel segment), its state and the model's
-    evidence or how to handle it."""
+    """One row per thing the posting asks for: Met (a strong match), Partly met (partial,
+    adjacent, or unverified: the profile neither shows nor rules it out) or Not met (a gap).
+    From the model's `b_fit` for a role; for a lead from `b_thesis.matches` graded the same way
+    (an older read's bare service lines are Partly met) and its delivery read (solo-feasibility
+    is met, delivery gaps and a partner need are not). Each row carries its `k` (the wheel
+    segment), its state and the model's evidence or how to handle it."""
     rows: list[dict[str, Any]] = []
     b = _blocks(ev_json)
     if getattr(opp, "track", None) == "consulting":
         thesis = b.get("b_thesis") or {}
         delivery = b.get("f_delivery") or {}
-        for line in (thesis.get("service_lines") if isinstance(thesis, dict) else None) or []:
-            if _s(line):
-                rows.append({"text": f"{_s(line)} work", "state": MET, "evidence": "", "how": ""})
+        graded = thesis.get("matches") if isinstance(thesis, dict) else None
+        if isinstance(graded, list):
+            rows += _match_rows(graded)
+        else:
+            # A read from before b_thesis.matches named service lines with no evidence: nothing
+            # to count as Met, so each is Partly met under Gaps (PROMPTS.md P2C, O20).
+            for line in (thesis.get("service_lines") if isinstance(thesis, dict) else None) or []:
+                if _s(line):
+                    rows.append(
+                        {
+                            "text": f"{_s(line)} work",
+                            "state": PART,
+                            "evidence": "",
+                            "how": LEGACY_SERVICE_HOW,
+                        }
+                    )
         if isinstance(delivery, dict):
             if delivery.get("solo_feasible"):
                 rows.append(
@@ -207,19 +257,7 @@ def requirements(opp, ev_json: dict | None) -> list[dict[str, Any]]:
                 )
     else:
         fit = b.get("b_fit") or {}
-        for m in (fit.get("matches") if isinstance(fit, dict) else None) or []:
-            if not isinstance(m, dict) or not m.get("requirement"):
-                continue
-            strong = m.get("strength") == "strong"
-            rows.append(
-                {
-                    "text": _s(m["requirement"]),
-                    "state": MET if strong else PART,
-                    "evidence": _s(m.get("evidence")),
-                    "how": "",
-                    "strength": _s(m.get("strength")),
-                }
-            )
+        rows += _match_rows((fit.get("matches") if isinstance(fit, dict) else None) or [])
         for g in gap_rows(ev_json):
             rows.append(
                 {
@@ -526,7 +564,8 @@ def history_timeline(
                     b
                     for b in (
                         it.get("model"),
-                        f"prompt version {it['prompt']}" if it.get("prompt") else "",
+                        (f"prompt version {_prompt_number(it['prompt'])}"
+                         if it.get("prompt") else ""),
                     )
                     if b
                 ]
@@ -586,3 +625,9 @@ def history_timeline(
     for e in out:
         e["when"] = when_words(e["at"], now)
     return out
+
+
+def _prompt_number(prompt: str) -> str:
+    """"evaluate/v7" reads as "7" (the mockup's "prompt version 7"); anything else as given."""
+    tail = str(prompt).rsplit("/", 1)[-1]
+    return tail[1:] if tail[:1] in ("v", "V") and tail[1:].isdigit() else str(prompt)

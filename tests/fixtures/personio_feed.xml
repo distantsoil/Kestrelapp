@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<workzag-jobs>
+
+<position>
+    <id>1822268</id>
+    <office>München</office>
+    <recruitingCategory>Talentpool</recruitingCategory>
+    <name>Bewerberpool</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Ihre Aufgaben</name>
+            <value>
+                <![CDATA[<p style="color:rgb(0,0,0);font-family:Verdana, Arial, Helvetica, sans-serif;font-size:12px;font-style:normal;font-weight:normal;background-color:rgb(255,255,255);">Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum.</p><ul style="color:rgb(0,0,0);font-family:Verdana, Arial, Helvetica, sans-serif;font-size:12px;font-style:normal;font-weight:normal;background-color:rgb(255,255,255);"><li>Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.</li><li>Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua.</li><li>At vero eos et accusam et justo duo dolores et ea rebum.</li><li>Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.</li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Ihr Profil</name>
+            <value>
+                <![CDATA[<p style="color:rgb(0,0,0);font-family:Verdana, Arial, Helvetica, sans-serif;font-size:12px;font-style:normal;font-weight:normal;background-color:rgb(255,255,255);">Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum.</p><ul style="color:rgb(0,0,0);font-family:Verdana, Arial, Helvetica, sans-serif;font-size:12px;font-style:normal;font-weight:normal;background-color:rgb(255,255,255);"><li>Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.</li><li>Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua.</li><li>At vero eos et accusam et justo duo dolores et ea rebum.</li><li>Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet.</li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Warum wir?</name>
+            <value>
+                <![CDATA[<p style="color:rgb(0,0,0);font-family:Verdana, Arial, Helvetica, sans-serif;font-size:12px;font-style:normal;font-weight:normal;background-color:rgb(255,255,255);">Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum.</p>]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>entry-level</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>lt-1</yearsOfExperience>
+    <occupation>other</occupation>
+    <occupationCategory>other</occupationCategory>
+    <createdAt>2017-03-16T16:25:09+00:00</createdAt>
+</position>
+
+<position>
+    <id>1822269</id>
+    <subcompany>Mutter AG</subcompany>
+    <office>Remote</office>
+    <recruitingCategory>Festangestellte</recruitingCategory>
+    <name>Initiativbewerbung (Festanstellung)</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Ihre Aufgaben</name>
+            <value>
+                <![CDATA[Wir sind ein innovatives IT-Unternehmen, das sich auf zukunftsweisende Lösungen und Technologien spezialisiert hat. Unsere Mission ist es, durch kreative Ideen und moderne Ansätze einen echten Mehrwert für unsere Kunden zu schaffen. Wir glauben an das Potenzial unserer Mitarbeiter und fördern eine offene, kollaborative Arbeitsatmosphäre.<br><br><strong>Ihre Chance: </strong>Sie sind IT-Experte (m/w/d) und suchen nach neuen Herausforderungen? Wir sind immer auf der Suche nach talentierten und engagierten Fachkräften, die unser Team verstärken. Bewerben Sie sich initiativ und bringen Sie Ihre Ideen und Erfahrungen ein!]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Ihr Profil</name>
+            <value>
+                <![CDATA[<ul><li>Abgeschlossenes Studium oder vergleichbare Qualifikation im IT-Bereich.</li><li>Leidenschaft für Technologie und IT-Lösungen.</li><li>Erfahrung in relevanten Bereichen wie Softwareentwicklung, IT-Sicherheit, Datenanalyse oder Projektmanagement.</li><li>Teamfähigkeit und Kommunikationsstärke.</li><li>Bereitschaft, neue Herausforderungen anzunehmen und Verantwortung zu übernehmen.</li></ul><strong>Was wir bieten:</strong><br><ul><li>Ein kreatives und dynamisches Arbeitsumfeld.</li><li>Möglichkeiten zur fachlichen und persönlichen Weiterentwicklung.</li><li>Flexible Arbeitszeiten und die Option auf Homeoffice.</li><li>Spannende Projekte und die Chance, innovative Ideen umzusetzen.</li><li>Ein kollegiales Team und eine wertschätzende Unternehmenskultur.</li></ul><br>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Warum wir?</name>
+            <value>
+                <![CDATA[Bei uns finden Sie ein inspirierendes Arbeitsumfeld, in dem Innovation und Teamgeist im Mittelpunkt stehen. Wir legen Wert auf flache Hierarchien und offene Kommunikation, sodass jede Idee Gehör findet. Durch kontinuierliche Weiterbildung und spannende Projekte ermöglichen wir Ihnen, Ihr Potenzial voll auszuschöpfen. Wenn Sie Teil eines dynamischen Teams werden möchten, das die digitale Zukunft gestaltet, sind Sie bei uns genau richtig. Lassen Sie uns gemeinsam an Lösungen arbeiten, die einen Unterschied machen!]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>entry-level</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>lt-1</yearsOfExperience>
+    <occupation>other</occupation>
+    <occupationCategory>other</occupationCategory>
+    <createdAt>2018-07-31T09:25:04+00:00</createdAt>
+</position>
+
+<position>
+    <id>1822270</id>
+    <subcompany>Mutter AG</subcompany>
+    <office>München</office>
+    <department>EDV</department>
+    <name>Junior IT-Sicherheitsberater</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Ihre Aufgaben</name>
+            <value>
+                <![CDATA[<ul><li>Unterstützung bei der Analyse von IT-Sicherheitsrisiken.</li><li>Mitwirkung bei der Entwicklung von Sicherheitskonzepten.</li><li>Durchführung von Sicherheitsprüfungen und -tests.</li><li>Dokumentation von Sicherheitsvorfällen und -maßnahmen.</li><li>Schulung von Mitarbeitern zu Sicherheitsrichtlinien.</li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Ihr Profil</name>
+            <value>
+                <![CDATA[<ul><li>Abgeschlossenes Studium der Informatik oder vergleichbare Qualifikation.</li><li>Grundkenntnisse in IT-Sicherheitsstandards und -technologien.</li><li>Analytisches Denkvermögen und Problemlösungsfähigkeiten.</li><li>Teamfähigkeit und Kommunikationsstärke.</li><li>Erste Erfahrungen im Bereich IT-Sicherheit sind von Vorteil.</li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Warum wir?</name>
+            <value>
+                <![CDATA[Wir sind ein dynamisches und innovatives Unternehmen, das großen Wert auf IT-Sicherheit legt. Bei uns hast du die Möglichkeit, in einem engagierten Team zu arbeiten und deine Fähigkeiten in einem praxisorientierten Umfeld weiterzuentwickeln. Wir fördern deine persönliche und berufliche Weiterbildung und bieten dir spannende Projekte, die dir helfen, deine Karriere voranzutreiben. Wenn du Leidenschaft für IT-Sicherheit hast und in einem Umfeld arbeiten möchtest, das Kreativität und Initiative schätzt, bist du bei uns genau richtig! Gemeinsam gestalten wir eine sichere digitale Zukunft.]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>permanent</employmentType>
+    <seniority>entry-level</seniority>
+    <schedule>full-time</schedule>
+    <occupation>computer_and_network_security</occupation>
+    <occupationCategory>it_software</occupationCategory>
+    <createdAt>2024-09-03T10:21:21+00:00</createdAt>
+    <salaryInformation>
+        <min>45000.00</min>
+        <max>55000.00</max>
+        <currencySymbol>€</currencySymbol>
+        <currencyCode>EUR</currencyCode>
+        <type>yearly</type>
+    </salaryInformation>
+</position>
+
+<position>
+    <id>1822267</id>
+    <subcompany>Tochter 2 GmbH</subcompany>
+    <office>München</office>
+    <department>Kundenbetreuung</department>
+    <recruitingCategory>Werkstudenten</recruitingCategory>
+    <name>Kundendienst (Werkstudent)</name>
+    <jobDescriptions>
+        <jobDescription>
+            <name>Ihre Aufgaben</name>
+            <value>
+                <![CDATA[<ul><li>Unterstützung des Kundenserviceteams bei der Bearbeitung von Anfragen und Anliegen via Telefon, E-Mail und Chat.</li><li>Dokumentation und Nachverfolgung von Kundeninteraktionen in unserem CRM-System.</li><li>Aktive Mitwirkung bei der Lösung von Kundenproblemen und Bereitstellung von Produktinformationen.</li><li>Teilnahme an Schulungen und Meetings zur Verbesserung des Kundenservices.</li><li>Unterstützung bei der Erstellung von FAQ-Dokumenten und Schulungsmaterialien.</li><li>Mitarbeit bei der Analyse von Kundenfeedback zur Optimierung der Servicequalität.</li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Ihr Profil</name>
+            <value>
+                <![CDATA[<ul><li>Freundliche und kommunikative Persönlichkeit mit einer hohen Serviceorientierung.</li><li>Teamfähigkeit und die Fähigkeit, auch in stressigen Situationen einen kühlen Kopf zu bewahren.</li><li>Gute PC-Kenntnisse, insbesondere in Microsoft Office und idealerweise Erfahrung mit CRM-Systemen.</li><li>Selbstständige und strukturierte Arbeitsweise.</li><li>Interesse an Kundenbeziehungen und -zufriedenheit.</li></ul>]]>
+            </value>
+        </jobDescription>
+        <jobDescription>
+            <name>Warum wir?</name>
+            <value>
+                <![CDATA[Bei Mutter AG schätzen wir die Bedeutung eines exzellenten Kundenservices. In unserem engagierten Team hast du die Möglichkeit, wertvolle Erfahrungen zu sammeln und deine Fähigkeiten weiterzuentwickeln. Wir fördern eine offene Kommunikationskultur und bieten dir die Chance, aktiv zum Erfolg unseres Unternehmens beizutragen. <br><br>Wenn du ein Teil unseres motivierten Teams werden möchtest und eine Leidenschaft für Kundenservice mitbringst, freuen wir uns auf deine Bewerbung!]]>
+            </value>
+        </jobDescription>
+    </jobDescriptions>
+    <employmentType>intern</employmentType>
+    <seniority>student</seniority>
+    <schedule>full-or-part-time</schedule>
+    <yearsOfExperience>lt-1</yearsOfExperience>
+    <occupation>call_center</occupation>
+    <occupationCategory>customer_support_and_client_care</occupationCategory>
+    <createdAt>2016-10-31T20:03:06+00:00</createdAt>
+</position>
+
+
+<position>
+    <id>1822299</id>
+    <office>Chicago</office>
+    <department>Operations</department>
+    <recruitingCategory>Festangestellte</recruitingCategory>
+    <name>Operations Analyst</name>
+    <jobDescriptions/>
+    <employmentType>permanent</employmentType>
+    <seniority>experienced</seniority>
+    <schedule>full-time</schedule>
+    <occupation>other</occupation>
+    <occupationCategory>other</occupationCategory>
+    <createdAt>2026-10-20T09:30:00+00:00</createdAt>
+</position>
+
+</workzag-jobs>

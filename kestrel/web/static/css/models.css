@@ -3,7 +3,7 @@
    the locked design mockup (kept privately) and bench-mockup-locked.html. */
 
 /* The wrapper is the container the shared @container rules measure (the main column). */
-.mo-wrap { container-type: inline-size; min-width: 0; }
+.mo-wrap { min-width: 0; }
 .mo-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px; min-width: 0; }
 .mo-page, .mo-page * { box-sizing: border-box; }
 .mo-page .k-scene { margin: 0; padding: 4px 0 10px; }
@@ -12,7 +12,7 @@
 .mo-crumb a:hover { text-decoration: underline; }
 .mo-main { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
 .mo-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
-@container (max-width: 900px) { .mo-two { grid-template-columns: minmax(0, 1fr); } }
+@container kwin (max-width: 1000px) { .mo-two { grid-template-columns: minmax(0, 1fr); } }
 .mo-uses { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
 .mo-banner {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--r-md);
@@ -88,10 +88,13 @@
 .mo-tbl tr:last-child td { border-bottom: 0; }
 .mo-tbl tr.is-bad td { background: var(--bad-bg); }
 .mo-tbl td:nth-child(2) { min-width: 200px; }
-.mo-does { font-size: 13px; white-space: nowrap; }
-@container (max-width: 1300px) { .mo-does { white-space: normal; } }
+/* The model cell keeps its own room, so "No AI model" and a model name never break per letter. */
+.mo-tbl td:nth-child(3) { min-width: 150px; }
+.mo-does { font-size: 13px; white-space: normal; }
 .mo-asks { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; margin-left: 6px; }
-.mo-model { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mo-model { display: inline-grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 6px; align-items: center; }
+.mo-model > .k-muted { grid-column: 2; font-size: 12.5px; }
+.mo-model > b { overflow-wrap: break-word; word-break: normal; }
 .mo-model .k-ic { color: var(--brand); }
 .mo-meter { width: 90px; height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; }
 .mo-meter i { display: block; height: 100%; background: var(--good); }
@@ -153,8 +156,15 @@
 .mo-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* ------------------------------------------------------------------------- Model check */
-.mo-check-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; align-items: start; }
-.mo-check-card h2 { margin: 0; font-size: 22px; }
+.mo-check-card { gap: 14px; }
+.mo-chkg { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: center; }
+.mo-chk-l { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.mo-ctarow { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 2px; }
+.mo-cta { padding: 10px 18px; font-size: 15px; flex: none; }
+.mo-ctarow .mo-opt-line { align-items: flex-start; }
+.mo-ctarow .mo-opt-line > span { display: flex; flex-direction: column; max-width: 46ch; }
+.mo-ctarow .mo-opt-sub { margin: 0; font-weight: 400; }
+.mo-check-card h2 { margin: 0; font-size: 20px; }
 .mo-check-card .mo-lede { margin: 4px 0 0; color: var(--muted); max-width: 56ch; }
 .mo-counter {
   display: flex; gap: 14px; align-items: center; padding: 14px 18px; border-radius: var(--r-md);
@@ -189,7 +199,7 @@
 .mo-ring[data-p="100"] { --p: 100; }
 .mo-counter b { font-size: 28px; line-height: 1; display: block; }
 .mo-counter span { font-size: 12.5px; color: var(--muted); display: block; }
-.mo-run { display: flex; flex-direction: column; gap: 8px; grid-column: 1 / -1; }
+.mo-run { display: flex; flex-direction: column; gap: 8px; }
 .mo-run .k-btn { align-self: flex-start; }
 .mo-opt-line { display: flex; align-items: flex-start; gap: 8px; font-weight: 700; }
 .mo-opt-sub { margin: 0 0 0 26px; font-size: 13px; color: var(--muted); }
@@ -214,8 +224,39 @@
 .mo-adv summary { cursor: pointer; color: var(--link-ink); font-weight: 700; }
 .mo-adv--in-card { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 12px; }
 .mo-adv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
-@container (max-width: 900px) { .mo-adv-grid, .mo-check-card { grid-template-columns: minmax(0, 1fr); } }
+@container kwin (max-width: 1000px) { .mo-adv-grid, .mo-chkg { grid-template-columns: minmax(0, 1fr); } }
 
 .mo-speed { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 
 .md-speed-note { margin: 0; }
+
+/* Scoring quality bar (models-mockup-locked.html .qbar): readable first time, fixed after a retry,
+   set aside. It grows from zero when the card arrives. */
+.mo-kv > .mo-qbar { display: flex; gap: 2px; height: 8px; padding: 0; margin: 0 0 6px; border-top: 0; }
+.mo-qbar i { display: block; height: 100%; border-radius: 3px; animation: mo-grow .7s var(--ease) both; }
+.mo-qbar i.is-g { background: var(--good); }
+.mo-qbar i.is-i { background: var(--brand); }
+.mo-qbar i.is-w { background: var(--warn); }
+@keyframes mo-grow { from { width: 0; } }
+.mo-qnote { margin: 0; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .mo-qbar i { animation: none; } }
+
+/* Row more menu (mockup .kb and .mmenu). */
+.mo-actrow { display: inline-flex; align-items: center; gap: 4px; }
+.mo-more { position: relative; display: inline-flex; }
+.mo-kb { border: 0; background: none; width: 30px; height: 30px; border-radius: 8px; color: var(--muted);
+  font-size: 18px; line-height: 1; cursor: pointer; }
+.mo-kb:hover, .mo-kb[aria-expanded="true"] { background: var(--soft); color: var(--ink); }
+.mo-menu { position: fixed; z-index: 45; background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column;
+  min-width: 210px; text-align: left; animation: k-inUp .18s ease both; }
+.mo-menu[hidden] { display: none; }
+.mo-menu > * { border: 0; background: none; text-align: left; padding: 9px 10px; border-radius: var(--r-sm);
+  font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; text-decoration: none; }
+.mo-menu > *:hover, .mo-menu > *:focus-visible { background: var(--soft); }
+@media (prefers-reduced-motion: reduce) { .mo-menu { animation: none; } }
+
+/* Health check and downloads action row (mockup .hact), stacked online setup button. */
+.mo-hact { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 4px; }
+.mo-line { margin: 0; }
+.mo-setup { display: flex; }

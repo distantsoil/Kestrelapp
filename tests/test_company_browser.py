@@ -27,7 +27,13 @@ from kestrel.db.models import (
     Pursuit,
 )
 from tests import retry_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -211,6 +217,48 @@ def test_a_source_marker_flashes_the_row_it_points_at(live):
     try:
         page.click('.co-sup[data-src="co-src-2"]')
         page.wait_for_selector("#co-src-2.is-flash")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(live):
+    """The page lifecycle (D-UI-210): the Company page unmounted and mounted again in place
+    starts exactly what it started on the document load. After it, one Copy click raises one
+    toast (a doubled listener raises two), and Hide then Undo refreshes the header with exactly
+    one request for its state, not two."""
+    base, browser, org_id = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light",
+                              permissions=["clipboard-read", "clipboard-write"])
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    states: list[str] = []
+    page.on("request", lambda r: states.append(r.url) if r.url.endswith("/state") else None)
+    try:
+        page.goto(f"{base}/orgs/{org_id}")
+        page.wait_for_selector('[data-testid="co-summary"]')
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "company", "company.js", settle_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0 and first["listeners"] == 2, first
+        page.locator("[data-copy]").first.click()
+        page.wait_for_selector(".k-toast")
+        page.wait_for_timeout(300)
+        assert page.locator(".k-toast").count() == 1
+        page.click('.co-sup[data-src="co-src-2"]')
+        page.wait_for_selector("#co-src-2.is-flash")
+        page.click('[data-testid="co-hide"]')
+        page.wait_for_selector('[data-testid="co-show"]')
+        page.locator(".k-toast__undo").last.click()
+        page.wait_for_selector('[data-testid="co-hide"]')
+        page.wait_for_timeout(300)
+        assert len(states) == 1, states
+        # Unmounted, an Undo no longer reaches into the page.
+        page.evaluate("KUI.page.unmount()")
+        page.evaluate("document.dispatchEvent(new CustomEvent('kestrel:undone'))")
+        page.wait_for_timeout(300)
+        assert len(states) == 1, states
         assert errors == []
     finally:
         ctx.close()

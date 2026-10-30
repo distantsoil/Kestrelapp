@@ -46,16 +46,46 @@ Name: "startupicon"; Description: "Launch Kestrel at login (minimized to the tra
 ; The whole PyInstaller one-folder output.
 Source: "..\dist\Kestrel\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
+[InstallDelete]
+; Shortcuts are deleted and written fresh on every install and upgrade, so each one carries the
+; current AppUserModelID and icon rather than whatever an older Kestrel stamped (round 4: the
+; toast kept the pre-upgrade orange mark).
+Type: files; Name: "{group}\Kestrel.lnk"
+Type: files; Name: "{autodesktop}\Kestrel.lnk"
+Type: files; Name: "{userstartup}\Kestrel.lnk"
+
 [Icons]
-Name: "{group}\Kestrel"; Filename: "{app}\Kestrel.exe"; AppUserModelID: "Kestrel.Desktop"
+Name: "{group}\Kestrel"; Filename: "{app}\Kestrel.exe"; IconFilename: "{app}\Kestrel.exe"; IconIndex: 0; AppUserModelID: "Kestrel.Desktop"
 Name: "{group}\Uninstall Kestrel"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Kestrel"; Filename: "{app}\Kestrel.exe"; AppUserModelID: "Kestrel.Desktop"; Tasks: desktopicon
-Name: "{userstartup}\Kestrel"; Filename: "{app}\Kestrel.exe"; AppUserModelID: "Kestrel.Desktop"; Tasks: startupicon
+Name: "{autodesktop}\Kestrel"; Filename: "{app}\Kestrel.exe"; IconFilename: "{app}\Kestrel.exe"; IconIndex: 0; AppUserModelID: "Kestrel.Desktop"; Tasks: desktopicon
+Name: "{userstartup}\Kestrel"; Filename: "{app}\Kestrel.exe"; IconFilename: "{app}\Kestrel.exe"; IconIndex: 0; AppUserModelID: "Kestrel.Desktop"; Tasks: startupicon
+
+[Registry]
+; The name and picture Windows draws on Kestrel's notifications (AppUserModelID Kestrel.Desktop).
+; The app writes the same values at startup (shell.register_notification_icon); the key is
+; removed on uninstall.
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\Kestrel.Desktop"; ValueType: string; ValueName: "DisplayName"; ValueData: "Kestrel"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\Kestrel.Desktop"; ValueType: string; ValueName: "IconUri"; ValueData: "{app}\_internal\kestrel\resources\icons\kestrel.ico"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\Kestrel.exe"; Description: "Launch Kestrel now"; Flags: nowait postinstall skipifsilent
 
 [Code]
+// Tell Explorer that icons changed, so the refreshed shortcuts and the notification identity
+// replace any cached older mark without a sign-out.
+procedure SHChangeNotify(wEventId: Integer; uFlags: Cardinal; dwItem1, dwItem2: Integer);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
+const
+  SHCNE_ASSOCCHANGED = $08000000;
+  SHCNF_IDLIST = $0000;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
+end;
+
 // Optional data cleanup (D-PKG-UNINSTALL). After the program files are gone, offer to delete the
 // data directory as well. No is the default button; a silent uninstall never deletes data. The
 // path is the default data home (paths.data_home on Windows); a KESTREL_DATA_HOME override is
@@ -67,6 +97,7 @@ var
 begin
   if CurUninstallStep <> usPostUninstall then
     exit;
+  SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
   DataDir := ExpandConstant('{localappdata}\Kestrel');
   if UninstallSilent or not DirExists(DataDir) then
     exit;

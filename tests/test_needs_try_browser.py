@@ -13,7 +13,15 @@ import os
 import pytest
 
 from tests import retry_seed
-from tests.browser import LINES_JS, launch_sync, wait_for_layout
+from tests.browser import (
+    LINES_JS,
+    TIMER_PROBE_JS,
+    TITLE_RIGHT_JS,
+    art_visible_left,
+    assert_page_remounts_clean,
+    launch_sync,
+    wait_for_layout,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -123,9 +131,9 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, theme, width):
         assert not page.query_selector("#announcement-slot")
         # Nothing sits on the scene art: the band's title block ends before the art begins.
         title = page.evaluate(_BOXES, ".k-scene__title")[0]
-        art = page.evaluate(_BOXES, ".k-scene__art")
-        if art:
-            assert title["r"] <= art[0]["l"] + 80, (title, art[0])
+        drawn = art_visible_left(page)
+        if drawn is not None:
+            assert page.evaluate(TITLE_RIGHT_JS) <= drawn, (title, drawn)
         assert not errors, errors
     finally:
         ctx.close()
@@ -246,6 +254,50 @@ def test_try_again_waits_in_place_and_remove_has_an_undo(live):
         assert "stays in Pipeline, not scored" in toast.inner_text()
         toast.get_by_role("button", name="Undo").click()
         page.wait_for_function("document.querySelectorAll('[data-testid=rt-row]').length === 7")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
+    """The page lifecycle (D-UI-210): Needs another try unmounted and mounted again in place
+    starts exactly what it started on the document load. After it, one rt-reload asks for the
+    card once, not twice (a doubled listener would ask twice), the model menu still opens and
+    closes, and selecting still counts. Unmounted, an Undo (kestrel:undone) asks for nothing."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    asked: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("request", lambda r: asked.append(r.url) if "/quarantine?step=" in r.url else None)
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/quarantine")
+        page.wait_for_selector('[data-testid="rt-row"]')
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(page, "needs-try", "retry.js", settle_ms=500)
+        assert first["timers"] == 0
+        asked.clear()
+        page.evaluate("document.dispatchEvent(new CustomEvent('rt-reload'))")
+        page.wait_for_function("document.querySelectorAll('[data-testid=rt-row]').length === 7")
+        page.wait_for_timeout(400)
+        assert len(asked) == 1, asked
+        row = page.locator('[data-testid="rt-row"]').first
+        row.get_by_test_id("rt-model").click()
+        page.get_by_test_id("rt-menu").wait_for()
+        page.keyboard.press("Escape")
+        assert page.locator('[data-testid="rt-menu"]').count() == 0
+        page.locator(".rt-cb").nth(0).check()
+        assert page.get_by_test_id("rt-bulk").inner_text() == "Try selected again (1)"
+        page.evaluate("KUI.page.unmount()")
+        asked.clear()
+        page.evaluate("document.dispatchEvent(new CustomEvent('kestrel:undone'))")
+        page.evaluate("document.dispatchEvent(new CustomEvent('rt-reload'))")
+        page.wait_for_timeout(600)
+        assert asked == []
+        page.locator(".rt-cb").nth(1).check()
+        assert page.get_by_test_id("rt-bulk").inner_text() == "Try selected again (1)"
         assert not errors, errors
     finally:
         ctx.close()

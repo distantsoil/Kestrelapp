@@ -3,16 +3,18 @@
    Theme tokens only (pages/profile.css). #}
 {% import "ui/macros.html" as ui %}
 {% import "partials/online_ask.html" as online_ask %}
-<section id="title-suggestions" class="k-card" data-testid="title-suggestions"
-     hx-get="/profile/title-suggestions?version={{ version }}" hx-trigger="every 5s" hx-swap="outerHTML" hx-params="none">
+{# "Suggest" until a pass has been asked for or has run; "Suggest again" after. #}
+{% set suggest_label = 'Suggest again' if (suggestions or last or pending) else 'Suggest' %}
+<section id="title-suggestions" class="k-card pf-sugg__box" data-testid="title-suggestions"
+     hx-get="/profile/title-suggestions?version={{ version }}" hx-trigger="every 5s" hx-target="this" hx-swap="outerHTML" hx-params="none">
   <header class="k-sec-head">
     <span class="k-badge">{{ ui.icon('wand') }}</span>
     <div class="k-grow"><h3>Suggested titles{% if suggestions %} <span class="k-pill k-pill--info" data-testid="title-suggestions-count">{{ suggestions|length }}</span>{% endif %}</h3>
       <p>Titles that fit your resume. Nothing is added until you accept.</p></div>
     <div class="k-sec-head__actions">
       {% if not (route and route.online) %}
-      <button class="k-btn k-btn--sm" type="button" data-testid="title-suggest-again" hx-post="/title-suggestions/refresh"
-              hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>Suggest again</button>
+      <button class="k-btn k-btn--sm" type="button" data-testid="title-suggest-again" hx-post="/title-suggestions/refresh" hx-params="none"
+              hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
       {% endif %}
     </div>
   </header>
@@ -22,9 +24,9 @@
     <li data-testid="title-suggestion">
       <div class="pf-list__row">
         <b>{{ s.title }}</b>
-        <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="title-accept" hx-post="/title-suggestions/{{ s.id }}/accept"
+        <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="title-accept" hx-post="/title-suggestions/{{ s.id }}/accept" hx-params="none"
                 hx-target="#title-suggestions" hx-swap="outerHTML">Accept</button>
-        <button class="k-btn k-btn--sm" type="button" data-testid="title-dismiss" hx-post="/title-suggestions/{{ s.id }}/dismiss"
+        <button class="k-btn k-btn--sm" type="button" data-testid="title-dismiss" hx-post="/title-suggestions/{{ s.id }}/dismiss" hx-params="none"
                 hx-target="#title-suggestions" hx-swap="outerHTML">Dismiss</button>
       </div>
       <details data-testid="title-why">
@@ -43,10 +45,14 @@
   <p class="pf-hint" data-testid="title-suggestions-empty">Nothing new to suggest.</p>
   {% endif %}
   {% if route and route.online %}
-  <form hx-post="/title-suggestions/refresh" hx-target="#title-suggestions" hx-swap="outerHTML" hx-params="*" data-testid="title-suggest-online">
+  {# A div, not a form: this sits inside the Employment form (and the onboarding form). The button
+     sends only the consent fields from this panel, which the server checks again. #}
+  <div data-testid="title-suggest-online" data-pf-nodirty>
     {{ online_ask.ask(route, 'title-suggest', 'suggest titles') }}
-    <button class="k-btn k-btn--sm" type="submit" data-testid="title-suggest-again" {% if pending %}disabled{% endif %}>Suggest again</button>
-  </form>
+    <button class="k-btn k-btn--sm" type="button" data-testid="title-suggest-again" hx-post="/title-suggestions/refresh"
+            hx-include="closest [data-testid='title-suggest-online']" hx-params="confirmed,model,dest"
+            hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
+  </div>
   {% endif %}
   {% if note %}<p class="pf-hint" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}
   <details data-testid="title-details">

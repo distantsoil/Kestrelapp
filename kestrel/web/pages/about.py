@@ -142,7 +142,7 @@ PROMISES: tuple[dict[str, str], ...] = (
     },
     {
         "tone": "",
-        "icon": "text",
+        "icon": "code",
         "title": "Source is public",
         "summary": "Under PolyForm Noncommercial 1.0.0.",
         "body": "<p>Anyone can read the code, run it and change it for noncommercial use. "
@@ -237,16 +237,17 @@ async def notices() -> PlainTextResponse:
 @router.get("/about", response_class=HTMLResponse)
 async def page(request: Request):
     from kestrel.services import updater
-    from kestrel.web.pages.updates import format_last_checked
+    from kestrel.web.pages.updates import relative_last_checked
 
     # The top card's Check for updates button shows when the last check ran, as Settings does. A
     # database that cannot be read yet (first launch, mid-restore) shows "never" rather than a 500.
     try:
         async with sessionmaker()() as s:
-            update_last_checked = format_last_checked((await updater.load_state(s)).last_checked_at)
+            state = await updater.load_state(s)
+            update_last_checked = relative_last_checked(state.last_checked_at)
     except (SQLAlchemyError, sqlite3.Error) as exc:
         log.warning("about_last_checked_failed", error=f"{type(exc).__name__}: {exc}")
-        update_last_checked = format_last_checked(None)
+        update_last_checked = relative_last_checked(None)
     ctx = {
         "title": "About",
         "query": dict(request.query_params),

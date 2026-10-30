@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from tests.browser import launch_sync, wait_for_layout
+from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
 from tests.test_analytics_page import _seed_web
 
 pytestmark = [
@@ -159,6 +159,10 @@ def test_funnel_bars_are_their_true_share_of_the_track(live, theme, width):
     """A 12-of-12 bar spans its whole track and a 6-of-12 bar about half of it."""
     ctx, page, errors = _page(live, theme, width)
     try:
+        # The later steps sit in a fold under the four narrowing steps (the mockup draws four).
+        page.evaluate(
+            "document.querySelectorAll('details.an-fold').forEach(d => { d.open = true; })")
+        page.wait_for_timeout(1200)  # the bars grow in (.9s); measure them at rest
         rows = page.evaluate("""() => Array.from(document.querySelectorAll('.an-frow'))
           .filter(r => r.offsetParent !== null).map(r => {
             const t = r.querySelector('.an-frow__bar').getBoundingClientRect().width;
@@ -230,3 +234,68 @@ def test_how_kestrel_is_running_sits_at_the_top_of_its_card(live):
         ctx.close()
 
 
+
+
+def test_paired_cards_stretch_to_equal_height(live):
+    """D-UI-218: the funnel row and the Replies by fit / Where roles come from row stretch to
+    equal height, as the mockup's grid does."""
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        for left, right in (("an-standing", "an-funnel"), ("an-bands", "an-sources")):
+            a = page.get_by_test_id(left).bounding_box()
+            b = page.get_by_test_id(right).bounding_box()
+            assert abs(a["height"] - b["height"]) <= 1, (left, right, a, b)
+            assert abs(a["y"] - b["y"]) <= 1, (left, right)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
+    """The page lifecycle (D-UI-210): Analytics unmounted and mounted again in place starts
+    exactly what it started on the document load and leaves nothing behind. Afterwards the ask-first
+    dialog that HTMX swaps in opens once, not twice (a doubled listener opens it twice), the group
+    tabs and the hover tip still work, and an unmounted page answers none of them."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(TIMER_PROBE_JS)
+    try:
+        page.goto(f"{base}/analytics")
+        page.wait_for_selector('[data-testid="an-kpis"]')
+        wait_for_layout(page)
+        first = assert_page_remounts_clean(
+            page, "analytics", "analytics.js", settle_ms=400, quiet_ms=600)
+        assert first["timers"] == 0 and first["observers"] == 0
+        page.evaluate("""() => { window.__opens = 0; const o = KUI.openModal;
+          KUI.openModal = function () { window.__opens++; return o.apply(this, arguments); }; }""")
+        ask = "htmx.ajax('GET', '/analytics/narrative/online?track=employment', " \
+              "{target: '#an-dialog', swap: 'innerHTML'})"
+        page.evaluate(ask)
+        page.wait_for_selector("#an-dialog .k-modal.is-open")
+        assert page.evaluate("window.__opens") == 1
+        page.keyboard.press("Escape")
+        page.wait_for_function("!document.querySelector('#an-dialog .k-modal.is-open')")
+        page.click('[data-testid="an-tab-remote"]')
+        assert page.is_visible('[data-panel="remote"]')
+        assert not page.is_visible('[data-panel="src"]')
+        page.hover(".an-sbar i")
+        box = page.query_selector(".an-sbar i").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2 + 2, box["y"] + box["height"] / 2)
+        page.wait_for_selector(".an-tip.is-on")
+        # Unmounted, the tip goes and stays gone, and the swapped-in dialog is not opened.
+        page.evaluate("KUI.page.unmount()")
+        assert not page.query_selector(".an-tip.is-on")
+        page.mouse.move(box["x"] + box["width"] / 2 - 2, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(200)
+        assert not page.query_selector(".an-tip.is-on")
+        page.evaluate("window.__opens = 0")
+        page.evaluate(ask)
+        page.wait_for_selector("#an-dialog .k-modal", state="attached")
+        page.wait_for_timeout(200)
+        assert page.evaluate("window.__opens") == 0
+        assert not errors, errors
+    finally:
+        ctx.close()

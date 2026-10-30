@@ -180,7 +180,7 @@ async def _seed_rows(sm, rows: dict) -> None:
 
 async def _seed_opps(sm, n: int = 3) -> None:
     async with sm() as s:
-        src = Source(track="employment", kind="greenhouse", name="emp", enabled=True)
+        src = Source(track="employment", kind="jobspy", name="emp", enabled=True)  # D-SRC-12
         s.add(src)
         await s.flush()
         for i in range(n):

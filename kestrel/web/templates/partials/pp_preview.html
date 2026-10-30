@@ -1,7 +1,7 @@
 {# Download PDF, step one: the prep pack as the pages that will be saved. The pages are the PDF's
    own at true Letter size, scaled to fit, never reflowed. Paper is white with ink by design. #}
 {% import "partials/pp_icons.html" as i %}
-<div class="k-modal pp-preview" id="pp-preview" role="dialog" aria-modal="true" aria-labelledby="pp-preview-t" aria-hidden="true" data-testid="pp-preview">
+<div class="k-modal k-modal--sheet pp-preview" id="pp-preview" role="dialog" aria-modal="true" aria-labelledby="pp-preview-t" aria-hidden="true" data-testid="pp-preview">
   <div class="pp-preview__head">
     <div class="k-grow"><h2 id="pp-preview-t">Your prep pack</h2><span class="k-muted">Page <span id="pp-pgn">1</span> of {{ pages|length }}</span></div>
     {%- if pack and pages %}

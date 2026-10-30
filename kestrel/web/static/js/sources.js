@@ -1,8 +1,11 @@
 /* Sources (D-UI-102): the behavior HTMX does not give the page. Search and filters over the rows
    already on the page, the collapsible groups, the switch that slides and folds a row out, opening
    the drawer and the Add sheet, and the Add sheet's small helpers. Everything is delegated on the
-   document, so it keeps working after the groups or the whole panel are swapped. All user-facing
-   words come from the server's markup (data-why, toasts); none are written here. */
+   document, so it keeps working after the groups or the whole panel are swapped. The page runs on
+   the lifecycle (KUI.page, D-UI-210): this file only defines it, and mount starts every listener
+   and timer through its context, so leaving stops all of them and coming back starts one set.
+   All user-facing words come from the server's markup (data-why, toasts); none are written
+   here. */
 (function (root) {
   'use strict';
   function reduced() {
@@ -10,15 +13,17 @@
   }
   function smooth() { return reduced() ? 'auto' : 'smooth'; }
   var doc = root.document;
-  if (!doc) return;
+  if (!doc || !root.KUI || !root.KUI.page) return;
 
   var FILTERS_KEY = 'kestrel.sources.filters';
   var COLLAPSED_KEY = 'kestrel.sources.collapsed';
+  // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
   var state = { q: '', type: '', origin: '', health: '' };
   var collapsed = null;       // group keys the operator folded; Paused starts folded
   var arrive = null;          // a row id to bring in with a glow after the next swap
   var drawerWasOpen = false;
   var sheetWasOpen = false;
+  var cx = null;
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -75,20 +80,20 @@
     syncControls();
   }
 
-  doc.addEventListener('input', function (e) {
+  function onSearchInput(e) {
     if (e.target && e.target.id === 'src-q') { state.q = e.target.value; save(); apply(); }
-  });
-  doc.addEventListener('change', function (e) {
+  }
+  function onChange(e) {
     var t = e.target; if (!t) return;
     if (t.id === 'src-ftype') { state.type = t.value; save(); apply(); }
     else if (t.id === 'src-forig') { state.origin = t.value; save(); apply(); }
     else if (t.id === 'src-fhealth') { state.health = t.value; save(); apply(); }
     else if (t.getAttribute && t.getAttribute('data-src-toggle')) { toggle(t); }
     else if (t.getAttribute && t.getAttribute('data-board')) { boardNote(); }
-  });
+  }
 
   /* ------------------------------------------------------------------------------- clicks */
-  doc.addEventListener('click', function (e) {
+  function onClick(e) {
     var t = e.target; if (!t || !t.closest) return;
     var tile = t.closest('[data-src-health]');
     if (tile) { var k = tile.getAttribute('data-src-health'); state.health = state.health === k ? '' : k; save(); apply(); return; }
@@ -110,21 +115,37 @@
       var d = $('[data-testid="drawer-details"]'); if (d) d.open = true;
       var f = $('#ed-name'); if (f) { f.scrollIntoView({ block: 'center' }); f.focus(); }
     }
-  });
+  }
 
   /* ---------------------------------------------------------- the switch, then the fold out */
+  // A switch's save waits for its animation, but never for the page: leaving sends it at once.
+  var pending = [];
   function toggle(box) {
     var id = box.getAttribute('data-src-toggle');
     var row = box.closest('.src-row');
     box.disabled = true;
-    var go = function () {
-      if (!root.htmx) return;
-      root.htmx.ajax('POST', '/sources/' + id + '/toggle', { target: '#src-list', swap: 'outerHTML' });
+    var sent = false;
+    var url = '/sources/' + id + '/toggle';
+    var go = function (leaving) {
+      if (sent || !root.htmx) return;
+      sent = true;
+      var i = pending.indexOf(go);
+      if (i >= 0) pending.splice(i, 1);
+      var list = doc.getElementById('src-list');
+      if (list && leaving !== true) {
+        root.htmx.ajax('POST', url, { target: list, swap: 'outerHTML' });
+      } else {
+        // Leaving: each save is its own request (htmx would queue several from one element and
+        // keep only the last), and keepalive lets it finish if the window loads a new document.
+        root.fetch(url, { method: 'POST', credentials: 'same-origin', keepalive: true,
+                          headers: { 'HX-Request': 'true' } }).catch(function () {});
+      }
     };
+    pending.push(go);
     // The switch slides first, then the row folds out, then the groups arrive from the server.
-    setTimeout(function () {
+    cx.after(240, function () {
       if (row && root.KUI && root.KUI.foldOut) root.KUI.foldOut(row, go); else go();
-    }, 240);
+    });
   }
 
   /* ------------------------------------------------------------- the drawer and the sheet */
@@ -145,21 +166,24 @@
     if (!el || !root.KUI) return;
     if (was) el.style.transition = 'none';
     if (kind === 'slideover') root.KUI.openSlideOver(el); else root.KUI.openModal(el);
-    if (was) { void el.offsetWidth; setTimeout(function () { el.style.transition = ''; }, 60); }
+    if (was) { void el.offsetWidth; cx.after(60, function () { el.style.transition = ''; }); }
   }
 
   // The "Checking N sources" note re-reads the list every 6 seconds, for at most ten minutes
   // after the last Check all now, so a stuck task cannot poll forever.
+  // The polling nodes ask srcPollOk() through their hx-trigger filter; mount publishes it and
+  // unmount makes it answer no, so a poll still on its way after the page is left stops there.
   var polls = 0;
-  root.srcPollOk = function () { return ++polls <= 100; };
-  doc.addEventListener('htmx:beforeRequest', function (e) {
+  function pollOk() { return ++polls <= 100; }
+  function pollStopped() { return false; }
+  function onCheckAll(e) {
     var p = e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath;
     if (p && /\/sources\/check-all$/.test(p)) polls = 0;
-  });
+  }
 
   // The overlay opens after htmx has settled the new element: htmx re-applies the response's own
   // attributes during the settle step, which would drop the is-open class added any earlier.
-  doc.addEventListener('htmx:afterSettle', function (e) {
+  function onOverlaySettle(e) {
     var t = e.target; if (!t) return;
     if (t.id === 'sources-check-slot') {
       reopen($('#sources-check-dialog', t), 'modal', false);
@@ -172,21 +196,21 @@
       sheetWasOpen = true;
       sheetInit(sh);
     }
-  });
-  doc.addEventListener('htmx:afterSwap', function (e) {
+  }
+  function onCheckSwap(e) {
     var t = e.target; if (!t) return;
     if (t.id === 'src-check') {
       var go = $('#src-add-go');
       if (go) go.disabled = !$('[name="pick"]', t);
     }
-  });
-  doc.addEventListener('k-closed', function (e) {
+  }
+  function onClosed(e) {
     var t = e.target; if (!t || !t.id) return;
     if (t.id === 'src-drawer') {
       drawerWasOpen = false;
       $$('.src-row.is-sel').forEach(function (r) { r.classList.remove('is-sel'); });
     } else if (t.id === 'src-sheet') { sheetWasOpen = false; }
-  });
+  }
 
   function pulse(row) {
     if (!row || !root.KUI) return;
@@ -195,15 +219,15 @@
     if (head) { head.classList.remove('k-pulse-once'); void head.offsetWidth; head.classList.add('k-pulse-once'); }
   }
   // Events the server raises with HX-Trigger.
-  doc.addEventListener('src-drawer-close', function () { if (root.KUI) root.KUI.closeSlideOver(); });
-  doc.addEventListener('src-sheet-close', function () { if (root.KUI) root.KUI.closeModal(); });
-  doc.addEventListener('src-moved', function (e) {
+  function onDrawerClose() { if (root.KUI) root.KUI.closeSlideOver(); }
+  function onSheetClose() { if (root.KUI) root.KUI.closeModal(); }
+  function onMoved(e) {
     arrive = e.detail && e.detail.id;
     if (root.KUI) root.KUI.closeSlideOver();
-  });
-  doc.addEventListener('src-arrived', function (e) { arrive = e.detail && e.detail.id; });
+  }
+  function onArrived(e) { arrive = e.detail && e.detail.id; }
 
-  doc.addEventListener('htmx:afterSettle', function (e) {
+  function onListSettle(e) {
     var t = e.target; if (!t) return;
     if (t.id === 'src-list' || t.id === 'sources-panel') {
       apply();
@@ -218,21 +242,19 @@
         arrive = null;
       }
     }
-  });
-  doc.addEventListener('htmx:oobAfterSwap', function (e) {
+  }
+  function onOobSwap(e) {
     var t = e.detail && e.detail.target;
     if (t && t.id === 'src-list') apply();
-  });
+  }
   // A failed switch leaves the row folded: ask for the groups again.
   function reload() {
     if (root.htmx && $('#src-list')) root.htmx.ajax('GET', '/sources/list', { target: '#src-list', swap: 'outerHTML' });
   }
-  doc.addEventListener('htmx:responseError', function (e) {
+  function onResponseError(e) {
     var p = e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath;
     if (p && /\/sources\/\d+\/toggle$/.test(p)) reload();
-  });
-  doc.addEventListener('htmx:sendError', reload);
-  doc.addEventListener('kestrel:undone', reload);
+  }
 
   /* --------------------------------------------------------------- the Add sheet's helpers */
   function boardNote() {
@@ -247,6 +269,10 @@
       box.appendChild(p);
       note.appendChild(box);
     }
+    $$('[data-src-key-panel]').forEach(function (box) {
+      var panel = $(box.getAttribute('data-src-key-panel'));
+      if (panel) panel.hidden = !box.checked;
+    });
     var ind = $('#src-indeed'), cb = $('[data-board="indeed"]');
     if (ind && cb) ind.hidden = !cb.checked;
     // At least one board stays picked.
@@ -257,20 +283,72 @@
     if ($('[data-board]', sheet)) boardNote();
   }
   // Editing the link, name or feed clears the last answer and turns Add off again.
-  doc.addEventListener('input', function (e) {
+  function onCheckInput(e) {
     if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-src-check-input')) {
       var out = $('#src-check'); if (out) out.textContent = '';
       var go = $('#src-add-go'); if (go) go.disabled = true;
     }
-  });
+  }
   // Enter checks; it never adds something that has not been read.
-  doc.addEventListener('keydown', function (e) {
+  function onKeyDown(e) {
     if (e.key === 'Enter' && e.target && e.target.hasAttribute && e.target.hasAttribute('data-src-check-input')) {
       e.preventDefault();
       var b = $('#src-check-go'); if (b) b.click();
     }
-  });
+  }
 
-  load();
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', apply); else apply();
+  // A good link answer lights the platform chip it names (mockup .plat.hit).
+  function onCheckAnswer(e) {
+    var t = e.detail && e.detail.target;
+    if (!t || t.id !== 'src-check') return;
+    var text = (t.textContent || '').toLowerCase();
+    var good = !!t.querySelector('[data-testid="check-good"], [data-testid="check-match"], [data-testid="check-info"]');
+    $$('.src-plat[data-p]').forEach(function (c) {
+      c.classList.toggle('is-hit', good && text.indexOf(c.getAttribute('data-p').toLowerCase()) >= 0);
+    });
+  }
+  function onCheckClear(e) {
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-src-check-input')) {
+      $$('.src-plat.is-hit').forEach(function (c) { c.classList.remove('is-hit'); });
+    }
+  }
+
+  root.KUI.page.define('sources', {
+    mount: function (main, ctx) {
+      cx = ctx;
+      state = { q: '', type: '', origin: '', health: '' };
+      collapsed = null; arrive = null; drawerWasOpen = false; sheetWasOpen = false; polls = 0;
+      pending = [];
+      // A page change (in place: k-page-leave, before the next page is read; a full load:
+      // pagehide) or the end of the page sends any switch save still waiting for its animation.
+      var flush = function () { pending.slice().forEach(function (go) { go(true); }); };
+      ctx.on(doc, 'k-page-leave', flush);
+      ctx.on(root, 'pagehide', flush);
+      ctx.onUnmount(flush);
+      root.srcPollOk = pollOk;
+      ctx.on(doc, 'input', onSearchInput);
+      ctx.on(doc, 'change', onChange);
+      ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'htmx:beforeRequest', onCheckAll);
+      ctx.on(doc, 'htmx:afterSettle', onOverlaySettle);
+      ctx.on(doc, 'htmx:afterSwap', onCheckSwap);
+      ctx.on(doc, 'k-closed', onClosed);
+      ctx.on(doc, 'src-drawer-close', onDrawerClose);
+      ctx.on(doc, 'src-sheet-close', onSheetClose);
+      ctx.on(doc, 'src-moved', onMoved);
+      ctx.on(doc, 'src-arrived', onArrived);
+      ctx.on(doc, 'htmx:afterSettle', onListSettle);
+      ctx.on(doc, 'htmx:oobAfterSwap', onOobSwap);
+      ctx.on(doc, 'htmx:responseError', onResponseError);
+      ctx.on(doc, 'htmx:sendError', reload);
+      ctx.on(doc, 'kestrel:undone', reload);
+      ctx.on(doc, 'input', onCheckInput);
+      ctx.on(doc, 'keydown', onKeyDown);
+      ctx.on(doc, 'htmx:afterSwap', onCheckAnswer);
+      ctx.on(doc, 'input', onCheckClear);
+      load();
+      apply();
+      ctx.onUnmount(function () { root.srcPollOk = pollStopped; });
+    }
+  });
 })(window);

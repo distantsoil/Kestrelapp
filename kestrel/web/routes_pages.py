@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import replace
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Request
@@ -348,7 +349,7 @@ async def opportunities(request: Request):
             has_any = await any_opportunities(s, f.track)
         running = await run_active(s)
         # Roles waiting in the background lane explain themselves under Being scored (#34): how
-        # many, and whether they start on their own or only on Score everything now.
+        # many, and whether local scoring is available for the legacy backlog.
         being_scored = page.group_counts.get(GROUP_NEW, 0)
         background = await lane.waiting_count(s, f.track) if being_scored else 0
         if f.track and f.track in set(switched_off_tracks()):
@@ -472,8 +473,26 @@ AI_DISCLAIMER = (
 )
 
 
-def watch_lines(legitimacy: dict | None, ghost_score: float | None = None) -> list[str]:
-    """The drawer's Watch line: the legitimacy flags in plain words, plus a likely ghost."""
+def contradicted(key: str, opp: Any) -> bool:
+    """A model's warning sign that a fact Kestrel holds about the posting rules out (owner round
+    14: "No pay, location or team named" on a posting located in North Carolina). "Agency posting"
+    is left alone: staffing agencies run their own Greenhouse, Lever and Workday boards, so the
+    board says nothing (round 14 review). The stored evaluation keeps the model's words."""
+    if opp is None:
+        return False
+    if key == "no_comp_no_location_no_team":
+        loc = str(getattr(opp, "location_raw", "") or "").strip()
+        has_comp = getattr(opp, "comp_min", None) is not None or getattr(
+            opp, "comp_max", None) is not None
+        return bool(loc) or has_comp
+    return False
+
+
+def watch_lines(
+    legitimacy: dict | None, ghost_score: float | None = None, opp: Any = None
+) -> list[str]:
+    """The drawer's Watch line: the legitimacy flags in plain words, plus a likely ghost. A flag
+    that a known fact about the posting rules out is left out and logged (contradicted)."""
     out: list[str] = []
     for sig in (legitimacy or {}).get("signals") or []:
         if isinstance(sig, dict):
@@ -482,6 +501,9 @@ def watch_lines(legitimacy: dict | None, ghost_score: float | None = None) -> li
         else:
             key = str(sig)
             text = _WATCH_WORDS.get(key) or key.replace("_", " ").capitalize() + "."
+        if contradicted(key, opp):
+            log.info("watch_signal_contradicted", signal=key, opp=getattr(opp, "id", None))
+            continue
         if text and text not in out:
             out.append(text)
     if ghost_score is not None and ghost_score >= 0.6:
@@ -569,7 +591,7 @@ def decision_extras(detail: dict) -> dict:
         "model_word": model_word,
         "rules_word": rules_word,
         "why": why,
-        "watch": watch_lines(legit, opp.ghost_score),
+        "watch": watch_lines(legit, opp.ghost_score, opp),
         # The legitimacy check doubted the posting (P1/P2 "suspect" or "reject").
         "legit_flag": isinstance(legit, dict) and legit.get("status") in ("suspect", "reject"),
         "ai_disclaimer": AI_DISCLAIMER,

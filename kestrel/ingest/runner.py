@@ -17,12 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Notification, ScrapeRun, Source, Task
-from kestrel.ingest import board_discovery, employer_links
+from kestrel.ingest import board_discovery, employer_links, smart_filter
 from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import AdapterError, SourceConfigError
 from kestrel.ingest.http import HttpClient
+from kestrel.ingest.location import parse_location
 from kestrel.ingest.normalize import normalize_and_store
+from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tasks import enqueue_once
+from kestrel.rules.helpers import value_in
 from kestrel.services import run_model
 
 log = structlog.get_logger()
@@ -49,12 +52,19 @@ async def run_source(
     scrape_run, attached to each role this run stores at stage `new` (a marker Tier 0 consumes,
     kestrel.services.run_model) and put on the Tier 2 task of a posting it re-reads as changed.
     It reaches Tier 2 only; Tier 1 stays on the configured model."""
-    counts: dict = {"fetched": 0, "new": 0, "reseen": 0, "changed": 0, "errors": 0}
+    counts: dict = {
+        "fetched": 0, "new": 0, "reseen": 0, "changed": 0, "errors": 0,
+        "dropped_outside_area": 0,
+        "dropped_unrelated_title": 0,
+    }
     run_model.stamp(counts, model_override, model_label)
     async with sessionmaker() as session:
         source = await session.get(Source, source_id)
         if source is None:
             raise ValueError(f"source {source_id} not found")
+        profile = load_profile(source.track)
+        geo_rules = getattr(profile, "geo_rules", None)
+        countries = getattr(geo_rules, "remote_country_allowlist", None) or []
         run = ScrapeRun(
             source_id=source.id, status="running", started_at=utcnow_iso(), counts=dict(counts)
         )
@@ -74,6 +84,10 @@ async def run_source(
             adapter.validate_config(source.config)
             postings = await adapter.fetch(source.config, http)
             counts["fetched"] = len(postings)
+            if not getattr(adapter, "discovery_only", False):
+                # A search board that stopped early or could not start (a key not saved, a 429,
+                # a 5xx) hands back what it has plus the reason: partial, not a source failure.
+                error = getattr(postings, "partial_error", None) or error
             if getattr(adapter, "discovery_only", False):
                 # A link source (RemoteRocketship, D-SRC-14): the fetch holds only employer URLs,
                 # which are never stored. Boards are found through D-SRC-7; the rest are read
@@ -107,8 +121,15 @@ async def run_source(
         if postings is not None:
             from kestrel.services.online_consent import read_approval
 
+            filter_ctx = await smart_filter.build_context(session, source.track, profile)
             for raw in postings:
                 try:
+                    if countries and _outside_area(raw.location_raw, countries):
+                        counts["dropped_outside_area"] += 1
+                        continue
+                    if not smart_filter.keep(raw.title, filter_ctx):
+                        counts["dropped_unrelated_title"] += 1
+                        continue
                     res = await normalize_and_store(session, raw, source=source, scrape_run=run)
                     await session.flush()
                     if model_override and res.opportunity.stage == "new":
@@ -198,3 +219,19 @@ async def run_source(
         await session.commit()
 
     return RunOutcome(run_id, status, counts, error)
+
+
+def _outside_area(location_raw: str | None, countries: list) -> bool:
+    """True only when every place a role names is a known country outside the operator's
+    countries (D-SRC-13). A role listed in several places ("New York, NY; London, GB") stays
+    when any of them is in the area; a place with no known country keeps it (hard rule 4)."""
+    import re
+
+    places = [p for p in re.split(r"\s*(?:;|\|)\s*", location_raw or "") if p.strip()]
+    if not places:
+        return False
+    for place in places:
+        country, _, _ = parse_location(place)
+        if not country or value_in(country, countries):
+            return False
+    return True

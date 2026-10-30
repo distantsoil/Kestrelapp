@@ -3,7 +3,7 @@
    role panel already shows the one score. Models read by their friendly name (`r.name`), never a
    raw id. Styles: static/css/pages/surfaces.css (.sf-hist), theme tokens only. #}
 {% if rows | length > 1 %}
-<link rel="stylesheet" href="/static/css/pages/surfaces.css">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <section class="sf-hist" data-testid="score-history" aria-label="Every score for this role">
   <h3>Every score, newest first</h3>
   {% if compare %}<p class="sf-hist-compare" data-testid="score-history-compare">{{ compare }}</p>{% endif %}

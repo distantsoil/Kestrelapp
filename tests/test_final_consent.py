@@ -420,7 +420,7 @@ async def test_c1_local_only_approval_survives_the_quick_screen(sm):
     from tests.test_run_model_choice import _new_opp, _scrape_run, _source, _tasks
 
     settings = get_settings().model_copy(deep=True)
-    sid = await _source(sm)
+    sid = await _source(sm, kind="jobspy")  # a search, not the company-board lane (D-SRC-12)
     run_id = await _scrape_run(sm, sid, None)
     await _new_opp(sm, sid, run_id, "VP of IT")
     await run_tier0_batch(sm, settings=settings)
@@ -439,10 +439,16 @@ async def test_c1_local_only_approval_survives_a_changed_posting(sm):
     import respx
     from sqlalchemy import select
 
+    from kestrel import paths
     from kestrel.ingest.http import HttpClient
     from kestrel.ingest.runner import run_source
     from tests.test_run_model_choice import _GH, _source, _tasks
 
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("profile.yml").write_text(
+        "employment:\n  employment_terms:\n    target_titles: [VP of IT, Sales Director]\n",
+        encoding="utf-8",
+    )
     sid = await _source(sm)
     changed = copy.deepcopy(_GH)
     changed["jobs"][0]["content"] = "A completely changed role leading all technology operations."
@@ -502,3 +508,53 @@ def test_c1_run_dialog_approval_reaches_the_signal_worker(monkeypatch, mode):
                 assert task.status == "done"
                 assert calls == [task.payload["source_id"]]
         asyncio.run(drain())
+
+
+def test_r1_today_scan_dialog_posts_an_approval_that_covers_every_online_tier():
+    """R1 (owner, 2026-10-28): Today's Start now never sent the destination approval the server
+    checks, so ticking the box could not start a scan. The dialog now posts a snapshot covering
+    tier 1, tier 2 and the trigger tier, and a checked send with it queues the scan once."""
+    with _hosted_app() as client:
+        soup = BeautifulSoup(client.get("/scan/choose", headers={"HX-Request": "true"}).text,
+                             "html.parser")
+        posted = json.loads(soup.select_one('[name="online_approval"]')["value"])
+        expected = _approval()
+        for tier, destinations in expected.items():
+            assert set(destinations) <= set(posted.get(tier, [])), (tier, posted)
+        assert soup.select_one("form[data-usual-online]") is not None
+        response = client.post("/scan/start", headers={"HX-Request": "true"}, data={
+            "scope": "all", "model_choice": "usual", "confirmed": "1",
+            "online_approval": json.dumps(posted),
+        })
+        assert response.status_code == 200
+        assert "Not started" not in response.text
+        assert response.headers.get("HX-Trigger") == "run-refresh"
+
+        async def read(s):
+            from sqlalchemy import select
+
+            tasks = (await s.execute(select(Task).where(Task.type == "scrape"))).scalars().all()
+            assert len(tasks) == 1
+            assert tasks[0].payload["online_approval"]
+        _app_db(read)
+
+
+@pytest.mark.parametrize(
+    ("data", "says"),
+    [
+        ({"model_choice": "usual"}, "Confirm the online send"),
+        ({"model_choice": "usual", "confirmed": "1", "online_approval": "{}"}, "changed"),
+    ],
+)
+def test_r1_a_refused_scan_says_why_and_queues_nothing(data, says):
+    with _hosted_app() as client:
+        response = client.post("/scan/start", headers={"HX-Request": "true"},
+                               data={"scope": "all", **data})
+        assert "Not started" in response.text and says in response.text, response.text
+        assert "HX-Trigger" not in response.headers
+
+        async def read(s):
+            from sqlalchemy import select
+
+            assert not (await s.execute(select(Task).where(Task.type == "scrape"))).first()
+        _app_db(read)

@@ -51,6 +51,7 @@ SECRET_KEY_WORDS: tuple[str, ...] = ("key", "secret", "token", "password")
 KEEP_KEYS: frozenset[str] = frozenset({"api_key_env"})
 LOG_TAIL_LINES = 2000
 QUARANTINE_ROWS = 20
+ROLE_ROWS = 500  # roles.json: the newest roles by ID (owner round 14)
 RAW_RESPONSE_CHARS = 500
 RUN_ROWS = 5
 SCRAPE_RUN_ROWS = 10
@@ -94,6 +95,14 @@ CONTENTS: tuple[tuple[str, str], ...] = (
         f"the last {QUARANTINE_ROWS} quarantine rows: tier, model, error, time, and the raw model "
         f"response cut to {RAW_RESPONSE_CHARS} characters; raw model output may quote the posting, "
         "so delete this file from the zip if you would rather not share it",
+    ),
+    (
+        "roles.json",
+        f"the newest {ROLE_ROWS} roles by role ID (the ID shows under Show details on a role's "
+        "Evaluation tab): title, organization, the location as posted and as Kestrel read it, the "
+        "remote type, the stage and the rule that set it aside, the posting's site, and each "
+        "scoring pass (tier, model, prompt version, verdict, scores, the five dimension scores and "
+        "the warning signs). Never the posting text, your profile, your resume or your notes",
     ),
     ("packages.txt", "installed Python packages and their versions"),
 )
@@ -429,18 +438,22 @@ def recent_scrape_runs(conn: sqlite3.Connection, scrub: Scrubber) -> list[dict[s
         ).fetchall()
     except sqlite3.Error as exc:
         return f"unavailable: {exc}"
-    return [
-        {
+    out = []
+    for r in rows:
+        loaded = _loads(r["counts"])
+        counts = loaded if isinstance(loaded, dict) else {}
+        out.append({
             "id": r["id"],
             "source_kind": r["kind"],
             "status": r["status"],
-            "counts": _loads(r["counts"]),
+            "counts": counts,
+            "dropped_outside_area": counts.get("dropped_outside_area", 0),
+            "dropped_unrelated_title": counts.get("dropped_unrelated_title", 0),
             "started_at": r["started_at"],
             "finished_at": r["finished_at"],
             "error": scrub(r["error"]) if r["error"] else None,
-        }
-        for r in rows
-    ]
+        })
+    return out
 
 
 WITHHELD = "withheld: Kestrel could not confirm your current employer would be hidden"
@@ -481,6 +494,68 @@ def quarantine_rows(
     if conservative:
         note = f"last {QUARANTINE_ROWS} rows; excerpts {WITHHELD}"
     return {"note": note, "rows": out}
+
+
+def role_rows(
+    conn: sqlite3.Connection | None, scrub: Scrubber, *, conservative: bool = False
+) -> dict[str, Any]:
+    """The newest roles with what the filters and each scoring pass decided, so a role ID the
+    operator reads off its Evaluation tab can be looked up (owner round 14). Posting text, the
+    model's prose and anything about the operator stay out. `conservative` (confidential mode
+    that cannot be honored) withholds titles and organizations."""
+    if conn is None:
+        return {"note": "database not initialized", "rows": []}
+    from urllib.parse import urlparse
+
+    try:
+        opps = conn.execute(
+            "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "
+            "stage_reason, url, first_seen_at, date_posted FROM opportunity "
+            f"ORDER BY id DESC LIMIT {ROLE_ROWS}"
+        ).fetchall()
+        ids = [r["id"] for r in opps]
+        evs: dict[int, list[dict[str, Any]]] = {}
+        if ids:
+            marks = ",".join("?" * len(ids))
+            for e in conn.execute(
+                "SELECT opportunity_id, tier, model, prompt_version, verdict, score, "
+                "weighted_score, needs_review, dimensions, legitimacy, created_at "
+                f"FROM evaluation WHERE opportunity_id IN ({marks}) ORDER BY id", ids
+            ).fetchall():
+                legit = _loads(e["legitimacy"]) or {}
+                signals = legit.get("signals") if isinstance(legit, dict) else None
+                dims = _loads(e["dimensions"])
+                evs.setdefault(e["opportunity_id"], []).append({
+                    "tier": e["tier"], "model": e["model"], "prompt": e["prompt_version"],
+                    "verdict": e["verdict"], "score": e["score"],
+                    "weighted_score": e["weighted_score"], "needs_review": bool(e["needs_review"]),
+                    "dimensions": {k: v.get("score") if isinstance(v, dict) else v
+                                   for k, v in dims.items()} if isinstance(dims, dict) else None,
+                    "signals": [s.get("kind") if isinstance(s, dict) else s
+                                for s in signals] if isinstance(signals, list) else None,
+                    "created_at": e["created_at"],
+                })
+    except sqlite3.Error as exc:
+        return {"note": f"unavailable: {exc}", "rows": []}
+    out = []
+    for r in opps:
+        out.append({
+            "id": r["id"],
+            "title": WITHHELD if conservative else scrub(r["title"] or ""),
+            "org": WITHHELD if conservative else scrub(r["org_name"] or ""),
+            "location_raw": r["location_raw"], "country": r["country"], "state": r["state"],
+            "city": r["city"], "remote_type": r["remote_type"], "stage": r["stage"],
+            # A site name ("acme.wd5.myworkdayjobs.com") or a set-aside reason can name the
+            # employer: scrubbed, and withheld with the title when confidential mode cannot be
+            # honored (round 14 review).
+            "stage_reason": (WITHHELD if conservative else scrub(r["stage_reason"]))
+            if r["stage_reason"] else None,
+            "site": (WITHHELD if conservative else scrub(urlparse(r["url"]).hostname or ""))
+            if r["url"] else None,
+            "first_seen_at": r["first_seen_at"], "date_posted": r["date_posted"],
+            "evaluations": evs.get(r["id"], []),
+        })
+    return {"note": f"newest {ROLE_ROWS} roles by ID; no posting text", "rows": out}
 
 
 def summary(settings: Settings, scrub: Scrubber) -> dict[str, Any]:
@@ -673,6 +748,7 @@ def build_bundle(
     conn = _connect()
     try:
         quarantine = quarantine_rows(conn, scrub, conservative=conservative)
+        roles = role_rows(conn, scrub, conservative=conservative)
     finally:
         if conn is not None:
             conn.close()
@@ -693,6 +769,7 @@ def build_bundle(
             for name, text in log_tails(scrub):
                 z.writestr(name, text)
             z.writestr("quarantine.json", _json(_scrub_values(quarantine, scrub, key_scrub)))
+            z.writestr("roles.json", _json(_scrub_values(roles, scrub, key_scrub)))
             z.writestr("packages.txt", packages_text())
         os.replace(part, archive)
         finished = True

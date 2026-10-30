@@ -3,12 +3,12 @@
    (scored, failed, running), legend, model, the time left only when an estimate exists, and the
    speed note; it re-polls every 10 s. Finished within 12 hours: one line with a link to Failed
    scoring when any failed. Whenever roles sit in the Pipeline's Scoring failed group, a line
-   says "N roles failed scoring" with a link there, whatever the latest run said (D-UI-56).
+   says "N roles need another try" with a link there, whatever the latest run said (D-UI-56).
    Otherwise an empty, silent placeholder. #}
 {% set p = progress %}{% set w = words(track if track is defined else '') %}
 {% macro open_failed_line() -%}
   {%- if p.open_failed -%}
-  <p class="progress-note" data-testid="open-failed"><a href="/quarantine">{{ p.open_failed }} {{ w.role if p.open_failed == 1 else w.roles }} failed scoring</a>. Retry them on the same model or another.</p>
+  <p class="progress-note" data-testid="open-failed"><a href="/quarantine">{{ p.open_failed }} {{ w.role + ' needs' if p.open_failed == 1 else w.roles + ' need' }} another try</a>. Retry them on the same model or another.</p>
   {%- endif -%}
 {%- endmacro %}
 {% if p.state == 'active' %}
