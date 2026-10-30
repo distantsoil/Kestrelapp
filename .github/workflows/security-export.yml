@@ -1,0 +1,57 @@
+name: Security alert export
+
+# Exports the open Dependabot and code-scanning alerts as one artifact, on demand (D-SEC-6), so
+# they can be worked from a complete list. The read-only token (Dependabot alerts and code
+# scanning alerts, this repository only) lives in the ALERTS_READ_TOKEN repository secret. Only
+# GitHub's own `gh` command line sees it: no third-party action is used.
+# A manually run workflow runs only once this file is on the default branch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Export open alerts
+        env:
+          GH_TOKEN: ${{ secrets.ALERTS_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          gh api --paginate --slurp "repos/$REPO/dependabot/alerts?state=open&per_page=100" \
+            | jq 'add // []' > out/dependabot-raw.json
+          gh api --paginate --slurp "repos/$REPO/code-scanning/alerts?state=open&per_page=100" \
+            | jq 'add // []' > out/code-scanning-raw.json
+          jq '[.[] | {number, severity: .security_advisory.severity,
+                      package: .dependency.package.name, ecosystem: .dependency.package.ecosystem,
+                      manifest: .dependency.manifest_path, scope: .dependency.scope,
+                      vulnerable: .security_vulnerability.vulnerable_version_range,
+                      patched: .security_vulnerability.first_patched_version.identifier,
+                      ghsa: .security_advisory.ghsa_id, summary: .security_advisory.summary}]' \
+            out/dependabot-raw.json > out/dependabot.json
+          jq '[.[] | {number, rule: .rule.id, severity: .rule.security_severity_level,
+                      level: .rule.severity, path: .most_recent_instance.location.path,
+                      line: .most_recent_instance.location.start_line,
+                      message: .most_recent_instance.message.text}]' \
+            out/code-scanning-raw.json > out/code-scanning.json
+          {
+            echo "## Open security alerts"
+            echo
+            echo "Dependabot: $(jq length out/dependabot.json) open"
+            jq -r 'group_by(.severity) | .[] | "- \(.[0].severity): \(length)"' out/dependabot.json
+            echo
+            echo "Code scanning: $(jq length out/code-scanning.json) open"
+            jq -r 'group_by(.rule) | .[] | "- \(.[0].rule): \(length)"' out/code-scanning.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the export
+        uses: actions/upload-artifact@v6
+        with:
+          name: security-alerts
+          path: out/
+          retention-days: 14

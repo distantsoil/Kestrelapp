@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -291,7 +292,9 @@ async def test_the_keys_do_not_reach_kestrel_log_even_through_httpxs_own_request
         root.setLevel(level)
         logging_setup._configured = False
         structlog.reset_defaults()
-    assert "api.adzuna.com" in text, "the request line should still be logged"
+    # Compare each logged URL's parsed host exactly, not a substring of the log text.
+    logged_hosts = [urlparse(u).hostname for u in re.findall(r"https?://[^\s\"']+", text)]
+    assert logged_hosts.count("api.adzuna.com") >= 1, "the request line should still be logged"
     assert APP_KEY not in text and APP_ID not in text and "app_key=***" in text
 
 

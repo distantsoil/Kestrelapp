@@ -64,7 +64,7 @@ from kestrel.services import pursuit_undo
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import tailor_view as tv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pipeline_view import pay_text, place_text
 
 log = structlog.get_logger()
@@ -1406,7 +1406,7 @@ async def download(request: Request, render_id: int):
                 log.warning("tailor_pdf_failed", render_id=render_id,
                             error_type=type(exc).__name__)
                 return PlainTextResponse(
-                    f"Could not make the PDF: {plain_error(exc)}", status_code=503)
+                    f"Could not make the PDF: {fixed_reason(exc)}", status_code=503)
             if fresh is None:
                 return PlainTextResponse("The document this came from no longer exists.",
                                     status_code=404)

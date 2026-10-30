@@ -65,7 +65,8 @@ def test_a3_deeper_read_confirmation_wording_and_full_payload(monkeypatch):
         pre.decompose()
     text = visible.get_text(" ", strip=True)
     assert "frontier" not in text.lower(), text
-    assert "openrouter.ai" in text  # the service named, in the warning and the summary
+    # The service is named, in the warning and the summary: the host is a whole word of the text.
+    assert re.findall(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", text).count("openrouter.ai") >= 2
     assert "current employer redacted" not in text  # redaction needs an employer chosen
     assert "This sends the job posting and your profile to openrouter.ai, using the model" in text
     assert "Confidential redaction:" in text

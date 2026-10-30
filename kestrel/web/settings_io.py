@@ -25,6 +25,9 @@ log = structlog.get_logger()
 
 ABSENT = object()  # the row did not exist
 NO_UNDO = "This can no longer be undone."
+# Said when a save or an Undo fails inside a file or the database (D-SEC-4): a fixed sentence,
+# because the failure's own text can carry a path. The caller logs the failure.
+SAVE_FAILED = "Could not save that. The details are in the log."
 
 # The rows Undo may touch. Anything else is refused, so the route cannot become a way to write
 # an arbitrary setting.

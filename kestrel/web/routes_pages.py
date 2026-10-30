@@ -23,7 +23,6 @@ from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
 from kestrel.web.deps import active_track, sessionmaker, templates
-from kestrel.web.errors import plain_error
 from kestrel.web.fit import (
     FAILED_NOTE,
     FIT_WORDS,
@@ -983,7 +982,11 @@ async def runs_now(request: Request):
     from kestrel.config import MODES, HostedModeError
     from kestrel.llm import credit
     from kestrel.services.online_consent import online_run_refusal
-    from kestrel.services.setting_overrides import queue_run_mode
+    from kestrel.services.setting_overrides import (
+        HOSTED_CHANGED,
+        hosted_run_problem,
+        queue_run_mode,
+    )
 
     credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     form = await request.form()
@@ -999,9 +1002,12 @@ async def runs_now(request: Request):
             )
         try:
             settings = await load_settings_with_db(s, mode=mode)
-        except HostedModeError as exc:
+        except HostedModeError:
+            # The reason is read again from the settings, not taken from the exception's text
+            # (D-SEC-4); if they changed meanwhile it is the fixed sentence.
+            problem = await hosted_run_problem(s, mode) or HOSTED_CHANGED
             return HTMLResponse(
-                f'<span class="warnbox">Not queued: {html.escape(plain_error(exc))}.</span>',
+                f'<span class="warnbox">Not queued: {html.escape(problem)}.</span>',
                 status_code=400,
             )
         refusal = await online_run_refusal(
@@ -1015,9 +1021,9 @@ async def runs_now(request: Request):
         try:
             await queue_run_mode(s, mode, online_approval=form.get("online_approval"))
             await s.commit()
-        except HostedModeError as exc:
+        except HostedModeError:  # the settings changed since they were loaded above
             return HTMLResponse(
-                f'<span class="warnbox">Not queued: {html.escape(plain_error(exc))}.</span>'
+                f'<span class="warnbox">Not queued: {html.escape(HOSTED_CHANGED)}.</span>'
             )
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return HTMLResponse(

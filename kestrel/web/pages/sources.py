@@ -298,14 +298,13 @@ async def save_usajobs_credentials(
     """Save what the user typed: the key through the helper the online-model keys use (data-home
     .env only), the email as a setting copied into every USAJobs search so each run can send it.
     An empty field keeps what is saved. Returns a plain sentence on refusal, else None."""
-    import re
-
     from kestrel.db.base import utcnow_iso
     from kestrel.db.models import Setting
+    from kestrel.ingest.adapters.usajobs import looks_like_email
     from kestrel.llm import providers
 
     email = email.strip()
-    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+    if email and not looks_like_email(email):
         return "That does not look like an email address."
     if key:
         try:

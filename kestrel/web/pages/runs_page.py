@@ -35,7 +35,6 @@ from kestrel.pipeline.runlog import INTERRUPTED
 from kestrel.services import hosted_balance, run_model
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
 from kestrel.web.pages.needs_try import _role_views
 from kestrel.web.pages.runs_detail import _open_total, _quarantine_rows, _retry_quarantine
 
@@ -772,7 +771,7 @@ async def start(request: Request):
     from kestrel.ingest.scheduler import enqueue_all_scrapes
     from kestrel.llm import credit
     from kestrel.queue.queue import TaskQueue
-    from kestrel.services.setting_overrides import queue_run_mode
+    from kestrel.services.setting_overrides import HOSTED_CHANGED, queue_run_mode
 
     form = await request.form()
     mode = str(form.get("mode") or "")
@@ -803,11 +802,9 @@ async def start(request: Request):
             effective = await load_settings_with_db(s, mode=chosen)
         except HostedModeError:
             effective = settings
-        problem = (
-            hosted_mode_problem(settings)
-            if chosen in ("hosted", "both")
-            else None
-        )
+        # Why an online run cannot start, read from the settings (D-SEC-4): said below as a
+        # sentence, never as the text of an exception.
+        hosted_problem = hosted_mode_problem(settings) if online_choice else None
         if online_choice:
             from kestrel.web.pages.needs_try import _employer_state
 
@@ -820,18 +817,18 @@ async def start(request: Request):
             problem = await approval_problem(s, effective, RUN_TIERS, form)
             if problem:
                 return _note("Not started: confirm the online send first.", status=400)
-        if problem and not mode:  # the saved choice cannot run: say so now, not in the worker
-            return _note(f"Not started: {problem}.", status=409)
         # The sheet offers several modes, but only the selected mode was approved. Local
         # explicitly approves no online destination, even when the hidden field names them.
         selected_approval = approval_for(effective, RUN_TIERS) if online_choice else {}
         credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
+        if hosted_problem is not None:  # it cannot run: say so now, not in the worker
+            return _note(f"Not started: {hosted_problem}.", status=409)
         if mode or online_choice:
             try:
                 await queue_run_mode(s, chosen, online_approval=selected_approval)
                 await s.commit()
-            except HostedModeError as exc:
-                return _note(f"Not started: {plain_error(exc)}.", status=409)
+            except HostedModeError:  # the settings changed since the check above
+                return _note(f"Not started: {HOSTED_CHANGED}.", status=409)
             except StaleDataError:
                 return _note(
                     "Not started: the queue changed while starting. Try again.", status=409

@@ -30,7 +30,7 @@ from kestrel.rules import helpers
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.auth import SETTING_KEY as SHARED_SECRET_KEY
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, fixed_reason, plain_error
 from kestrel.web.uploads import closing_upload
 
 # Settings > Appearance (docs/UI_PROPOSAL.html): the two shipped schemes with their swatches.
@@ -405,7 +405,12 @@ async def restore_from_upload(request: Request):
     from pathlib import Path
 
     from kestrel.db import migrate
-    from kestrel.services.backup import InvalidBackupError, restore_backup
+    from kestrel.services.backup import (
+        BACKUP_REFUSALS,
+        RESTORE_FALLBACK,
+        InvalidBackupError,
+        restore_backup,
+    )
     from kestrel.services.reset import IDLE_WAIT_S, _forget_caches
     from kestrel.web import app as app_mod
 
@@ -425,14 +430,12 @@ async def restore_from_upload(request: Request):
         log.warning("restore_upload_read_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
             f'<div class="warnbox">Could not read the upload: '
-            f"{html.escape(plain_error(exc))}</div>"
+            f"{html.escape(fixed_reason(exc))}</div>"
         )
 
-    # `InvalidBackupError` messages quote the archive's own entry names, which the uploader fully
-    # controls (a rejected member may be named `config/<img src=x onerror=...>/../../x.yml`).
-    # Escaped here so a crafted archive cannot execute markup in the app's own origin, which is
-    # the origin holding the LAN shared secret and every mutating endpoint. `/backup/download`
-    # escapes the same way; documents.py and bench.py do too.
+    # The archive's own entry names are the uploader's to choose (a rejected member may be named
+    # `config/<img src=x onerror=...>/../../x.yml`), so no refusal quotes one: `InvalidBackupError`
+    # carries a sentence from `backup.BACKUP_REFUSALS` and the name goes to the log (D-SEC-4).
     # The database is written through SQLite while the app's connections stay open (R1), so the
     # pool is NOT torn down here: disposing it used to leave the background loops on the old
     # engine and every new request on a second one, both open on the same file. What must stop is
@@ -462,12 +465,14 @@ async def restore_from_upload(request: Request):
                 # with every request on uvicorn's one loop, so they run in a thread.
                 result = await asyncio.to_thread(restore_backup, tmp_zip)
         except InvalidBackupError as exc:
-            return HTMLResponse(f'<div class="warnbox">{html.escape(plain_error(exc))}</div>')
+            log.info("restore_refused_upload", error=str(exc))
+            said = authored_error(exc, BACKUP_REFUSALS, RESTORE_FALLBACK)
+            return HTMLResponse(f'<div class="warnbox">{html.escape(said)}</div>')
         except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
             log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
             return HTMLResponse(
                 f'<div class="warnbox">Restore failed: '
-                f"{html.escape(plain_error(exc))}</div>"
+                f"{html.escape(fixed_reason(exc))}</div>"
             )
         try:
             # A backup from an older Kestrel is on an older schema. Startup migrates; a restore in
@@ -496,7 +501,7 @@ async def restore_from_upload(request: Request):
         await app_mod._load_enabled_tracks()
 
     # Escaped: the restored config and document file names come from the archive, which the
-    # uploader controls (the same reason InvalidBackupError messages are escaped above).
+    # uploader controls (the same reason no refusal above quotes an entry name).
     if form.get("from_settings"):
         # Settings > Your data: one plain sentence and a message, not the file-by-file summary.
         import json as _json

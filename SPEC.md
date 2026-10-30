@@ -1522,7 +1522,7 @@ a 16GB-VRAM NVIDIA GPU, 64GB system RAM.
   sweet spot for tier 2.
 - **MoE alternative:** a 30B-A3B class model at Q4 is around 18GB and will partially offload,
   but with ~3B active parameters per token the penalty is far smaller than for a dense model of
-  the same size, and the 7950X3D handles the CPU-side layers well. Benchmark it; it may beat the
+  the same size, and a modern multi-core CPU handles the CPU-side layers well. Benchmark it; it may beat the
   dense 14B at similar speed.
 - **Avoid dense models above ~20B** at usable quantization. The offload penalty dominates a
   multi-hundred-item run.

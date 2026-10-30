@@ -67,6 +67,11 @@ MAX_EDGE = 512  # the longest side kept, in pixels: it only ever shows as a smal
 # The declared size is read from the header and checked BEFORE any pixel is decoded.
 MAX_PIXELS = 40_000_000
 TOO_BIG_PIXELS = "That picture is too large. Choose one under 40 megapixels (about 8000 by 5000)."
+# Every refusal save() can raise: the Settings route answers from this list (D-SEC-4).
+TOO_BIG = "Choose a photo smaller than 2 MB."
+NOT_A_PICTURE = "Choose a PNG, JPEG, WebP or GIF picture."
+NOT_SAVED = "Could not save the photo on this computer."
+REFUSALS: tuple[str, ...] = (TOO_BIG_PIXELS, TOO_BIG, NOT_A_PICTURE, NOT_SAVED)
 
 
 def _shrunk(data: bytes, ext: str) -> tuple[bytes, str]:
@@ -107,10 +112,10 @@ def _shrunk(data: bytes, ext: str) -> tuple[bytes, str]:
 def save(data: bytes) -> Path:
     """Keep this picture as the photo, replacing any earlier one. Raises PhotoError."""
     if len(data) > MAX_BYTES:
-        raise PhotoError("Choose a photo smaller than 2 MB.")
+        raise PhotoError(TOO_BIG)
     ext = kind_of(data)
     if ext is None:
-        raise PhotoError("Choose a PNG, JPEG, WebP or GIF picture.")
+        raise PhotoError(NOT_A_PICTURE)
     data, ext = _shrunk(data, ext)
     target_dir = folder()
     try:
@@ -122,7 +127,7 @@ def save(data: bytes) -> Path:
         os.replace(incoming, target)
     except OSError as exc:
         log.warning("profile_photo_write_failed", error_type=type(exc).__name__)
-        raise PhotoError("Could not save the photo on this computer.") from exc
+        raise PhotoError(NOT_SAVED) from exc
     return target
 
 

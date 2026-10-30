@@ -467,27 +467,20 @@
       .then(function (res) { if (!res.ok) toast(res.message); else say(res.message, res.undoUrl); });
   }
 
-  var AC = null;
+  /* Play auditions the choice on the page (the sound, and the slider's volume as it stands, saved
+     or not). Kestrel's own sound is played by the app, not by this window (D-REL-7): the same
+     path a delivered alert takes, so the two are the same sound. The window only asks. */
   function playSound() {
     var name = ($('[data-testid="st-sound-name"]') || {}).value || 'chime';
     var vol = +(($('#st-vol') || { value: 60 }).value) / 100;
     var btn = $('#st-play');
-    try { AC = AC || new (root.AudioContext || root.webkitAudioContext)(); } catch (e) { return; }
-    var t0 = AC.currentTime;
-    var out = AC.createGain();
-    out.gain.value = Math.max(0, Math.min(1, vol)) * 0.5;
-    out.connect(AC.destination);
-    function tone(f, start, dur, type, peak) {
-      var o = AC.createOscillator(), g = AC.createGain();
-      o.type = type; o.frequency.value = f;
-      g.gain.setValueAtTime(0, t0 + start);
-      g.gain.linearRampToValueAtTime(peak, t0 + start + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
-      o.connect(g); g.connect(out); o.start(t0 + start); o.stop(t0 + start + dur + 0.05);
-    }
-    if (name === 'soft_click') { tone(1800, 0, 0.05, 'triangle', 0.6); tone(900, 0.012, 0.06, 'sine', 0.4); }
-    else if (name === 'bell') { [[880, 1], [1760, 0.35], [2640, 0.18], [1318.5, 0.25]].forEach(function (p) { tone(p[0], 0, 1.6, 'sine', p[1] * 0.7); }); }
-    else { tone(1046.5, 0, 0.5, 'sine', 0.6); tone(1568, 0.13, 0.7, 'sine', 0.5); }
+    root.fetch('/settings/sound/preview', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, volume: vol })
+    }).then(function (r) { return r.json(); })
+      .catch(function () { return { ok: false, message: 'Could not play the sound. Try again.' }; })
+      .then(function (res) { if (res && !res.ok) toast(res.message); });
     if (btn) { btn.disabled = true; cx.after(1100, function () { btn.disabled = false; }); }
   }
 
@@ -940,10 +933,8 @@
       else ctx.on(root, 'load', function () { ctx.after(600, prefetch); }, { once: true });
       start();
       ctx.onUnmount(function () {
-        // The key form's marker and the alert sound's audio context belong to this visit.
+        // The key form's marker belongs to this visit.
         delete root.__stKeyOp;
-        if (AC && AC.close) { try { AC.close(); } catch (err) { /* already closed */ } }
-        AC = null;
       });
     }
   });

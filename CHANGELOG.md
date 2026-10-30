@@ -10,6 +10,16 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 - Adzuna, a job search board with your own free keys, and two remote job boards that need none: Himalayas and We Work Remotely. Tick them when adding a job board search. Adzuna sends only the start of each description, so those roles say so. Ticking two boards at once and pressing Undo now removes both.
 - Any careers page, not only the named systems. Paste a link and Kestrel reads the job data the page publishes for search engines (schema.org JobPosting), including pages that only link to their job pages (up to 25 a run). A page that builds its list with JavaScript is told plainly instead of showing zero. A link to a hiring system Kestrel already reads still uses that reader.
 - More company job boards: Recruitee, Teamtailor, Personio and Breezy HR. Kestrel follows it from your searches like the others, and a careers page on the company's own domain is recognized too. A Teamtailor site that has switched its job feed off is reported plainly instead of failing. Personio roles with no description in its feed get theirs from the job page, within a per-run cap, as Breezy HR roles do from their posting pages.
+- An alert sound: with **Play a sound** on in Settings, Kestrel plays the sound and volume you picked with each pop-up it delivers (its own sound, never the system's, and it works with the window hidden), at most once a minute and never during Quiet hours.
+- Quiet hours work: pop-ups (on this computer, by phone, or by webhook) wait until the quiet hours end, then arrive as one summary. The bell in Kestrel still updates.
+
+### Fixed
+- The **Computer notifications** switch and the per-alert switches in Settings now take effect for pop-ups (they were saved but not read).
+- Windows pop-ups no longer play the system sound.
+
+### Security
+- Updated the image, PDF and sign-in libraries Kestrel bundles to versions without known vulnerabilities.
+- Error messages on screen never include file paths, addresses or other internal details; the log keeps them.
 
 ## [0.7.0] - 2026-10-26
 

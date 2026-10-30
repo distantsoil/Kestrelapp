@@ -36,13 +36,14 @@ from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
 from kestrel.services.online_consent import online_run_refusal
 from kestrel.services.setting_overrides import (
+    HOSTED_CHANGED,
+    hosted_run_problem,
     load_settings_with_db,
     peek_run_mode,
     queue_run_mode,
 )
 from kestrel.web.app import current_run_mode, is_paused, set_paused
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
 
@@ -119,8 +120,11 @@ async def run_now(request: Request, mode: str | None = None):
         # approval, so an explicit hosted request cannot be judged against stored local tiers.
         try:
             settings = await load_settings_with_db(s, mode=chosen)
-        except HostedModeError as exc:
-            return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
+        except HostedModeError:
+            # The reason is read again from the settings, not taken from the exception's text
+            # (D-SEC-4); if they changed meanwhile it is the fixed sentence.
+            problem = await hosted_run_problem(s, chosen) or HOSTED_CHANGED
+            return JSONResponse({"queued": False, "reason": problem}, status_code=400)
         refusal = await online_run_refusal(
             s, settings, mode=chosen, confirmed=await _confirmed(request),
             approval=request_form.get("online_approval")
@@ -130,8 +134,8 @@ async def run_now(request: Request, mode: str | None = None):
         try:
             await queue_run_mode(s, chosen, online_approval=request_form.get("online_approval"))
             await s.commit()
-        except HostedModeError as exc:
-            return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
+        except HostedModeError:  # the settings changed since they were loaded above
+            return JSONResponse({"queued": False, "reason": HOSTED_CHANGED}, status_code=400)
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return JSONResponse(
                 {"queued": False, "reason": "the queue changed while queuing; try again"},

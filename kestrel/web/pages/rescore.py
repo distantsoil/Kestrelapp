@@ -40,7 +40,7 @@ from kestrel.queue.rescore import MAX_ROLES, enqueue_rescore, parse_ids
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import models_view as mv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason
 from kestrel.web.fit import RuleWhy, explain_rule, fit_for
 
 router = APIRouter()
@@ -92,7 +92,12 @@ async def _hosted_models(settings) -> tuple[str, str | None, list, list, dict, s
     try:
         raw = await hm.fetch_models(name, backend)
     except hm.ModelListError as exc:
-        return label, name, [], [], {}, plain_error(exc)
+        # Built from the provider's name, not the failure's text (D-SEC-4); fetch_models logged why.
+        log.info("rescore_model_list_failed", provider=name, error=str(exc))
+        return label, name, [], [], {}, (
+            f"The model list from {label} could not be fetched. Check the key and your "
+            "connection under Settings > Hosted."
+        )
     raw = [m for m in raw if (m.json_mode or "schema") in _JSON_MODES]
     picker = hm.picker_models(raw)
     reasons = {m.id: why for m in picker if (why := hm.block_reason(m, _TIER, backend))}
@@ -501,7 +506,7 @@ async def rescore(request: Request):
             await s.commit()
     except Exception as exc:  # a write path never turns into a 500 (CLAUDE.md)
         log.warning("rescore_failed", error_type=type(exc).__name__, error=str(exc))
-        return answer(f"Not queued: {plain_error(exc)}", ok=False)
+        return answer(f"Not queued: {fixed_reason(exc)}", ok=False)
     n = len(result.queued)
     head = f"Queued {n} role{'s' if n != 1 else ''} for scoring." if n else "Nothing queued."
     body = " ".join([head, *result.messages()])

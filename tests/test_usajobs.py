@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +29,7 @@ from kestrel.ingest.adapters.usajobs import (
     NEEDS_KEY,
     UsaJobsAdapter,
     is_key_problem,
+    looks_like_email,
     to_posting,
 )
 from kestrel.ingest.base import AdapterError, SourceConfigError
@@ -377,3 +380,53 @@ async def test_a_rejected_key_is_a_failure_that_names_the_fix(sm):
     assert out.status == "partial" and KEY_PROBLEM_PHRASE in out.error
     async with sm() as s:
         assert (await s.get(Source, src.id)).consecutive_failures == 1
+
+
+# ----------------------------------------------------------------- the email check is linear
+# Code scanning flagged the regular expression that used to check the email: a long run of "!"
+# made it backtrack polynomially. The check is plain string operations now.
+_OLD_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # the pattern before the fix, for parity
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "seeker@example.com", "a@b.co", "first.last+tag@sub.example.co.uk", "a@b.c", "a@b..c",
+        "a@...", "a@..", "a@.c", "a@b.", "a@.bc", "@b.c", "a@", "a@@b.c", "a@b@c.d", "nope", "x",
+        "", "a b@c.d", "a@b c.d", "a@b.c ", "\ta@b.c", "a@b.c\n", "o'brien@example.org",
+        "!@!.!", "!!!!@!!!!.!!!!", "no-at-sign.example.com", "two words@example.com",
+    ],
+)
+def test_the_email_check_agrees_with_the_old_pattern_on_ordinary_input(value):
+    assert looks_like_email(value) is bool(_OLD_EMAIL.fullmatch(value))
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "!" * 50_000,
+        "x@" + "!" * 50_000,
+        "x@" + "." * 50_000 + " ",
+        "x@" + "!." * 25_000 + " ",
+        "!@" * 25_000,
+        " " * 50_000,
+    ],
+)
+def test_a_long_hostile_email_is_refused_in_well_under_a_second(hostile):
+    start = time.perf_counter()
+    assert looks_like_email(hostile) is False
+    assert time.perf_counter() - start < 0.2
+
+
+def test_the_saved_email_check_refuses_a_hostile_string_with_the_same_sentence():
+    import asyncio
+
+    from kestrel.web.pages.sources import save_usajobs_credentials
+
+    start = time.perf_counter()
+    # The email check comes before any use of the session, so none is needed to reach it.
+    said = asyncio.run(
+        save_usajobs_credentials(None, key="", email="!" * 50_000)  # type: ignore[arg-type]
+    )
+    assert said == "That does not look like an email address."
+    assert time.perf_counter() - start < 0.5

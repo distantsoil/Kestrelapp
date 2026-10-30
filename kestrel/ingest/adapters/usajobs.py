@@ -51,7 +51,20 @@ MAX_TITLES = 5
 MAX_REQUESTS = 12  # across all search terms in one run
 _RATE = 2.0
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAX_EMAIL_LENGTH = 254  # the longest address SMTP allows (RFC 5321)
+
+
+def looks_like_email(value: str) -> bool:
+    """True for text shaped like name@host.tld: no whitespace, exactly one "@", a name before it,
+    and a dot inside the host with a character on each side. Plain string operations, so the time
+    is linear in the length; the regular expression it replaces backtracked polynomially on a
+    long hostile string (code scanning, "Polynomial regular expression"). The length cap also
+    stops a pasted megabyte from being scanned at all."""
+    if not value or len(value) > MAX_EMAIL_LENGTH or "".join(value.split()) != value:
+        return False
+    name, _, host = value.partition("@")
+    return bool(name) and "@" not in host and "." in host[1:-1]
+
 
 NEEDS_KEY = (
     "USAJobs needs your API key and email. Add them on the Sources page under Sources that "
@@ -247,7 +260,7 @@ class UsaJobsAdapter:
             if config.get(name) is not None and not isinstance(config[name], str):
                 raise SourceConfigError(f"'{name}' must be text")
         email = (config.get("contact_email") or "").strip()
-        if email and not _EMAIL.match(email):
+        if email and not looks_like_email(email):
             raise SourceConfigError("'contact_email' must be an email address")
         if "remote_only" in config and not isinstance(config["remote_only"], bool):
             raise SourceConfigError("'remote_only' must be true or false")

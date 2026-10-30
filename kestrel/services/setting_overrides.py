@@ -145,6 +145,24 @@ async def load_settings_with_db(
     return settings
 
 
+# Said when the settings changed between the check and the queueing (D-SEC-4): a fixed sentence,
+# because an exception raised in that window is not shown.
+HOSTED_CHANGED = (
+    "online models can no longer run because the settings changed; check Settings > Hosted and "
+    "try again"
+)
+
+
+async def hosted_run_problem(session: AsyncSession, mode: str) -> str | None:
+    """Why a run in `mode` cannot go online, as a sentence for the operator, or None when it can
+    (and for "local", which has nothing to check). It reads the settings and returns the same
+    reason `HostedModeError` would carry, so a route can say it without catching an exception and
+    printing its text (D-SEC-4)."""
+    if mode not in ("hosted", "both"):
+        return None
+    return config_mod.hosted_mode_problem(await load_settings_with_db(session))
+
+
 async def queue_run_mode(
     session: AsyncSession, mode: str, *, online_approval: object = None
 ) -> None:
@@ -158,10 +176,9 @@ async def queue_run_mode(
     if mode not in config_mod.RUN_CHOICES:
         known = ", ".join(config_mod.RUN_CHOICES)
         raise ValueError(f"unknown run mode {mode!r}; expected one of {known}")
-    if mode in ("hosted", "both"):
-        problem = config_mod.hosted_mode_problem(await load_settings_with_db(session))
-        if problem is not None:
-            raise config_mod.HostedModeError(problem)
+    problem = await hosted_run_problem(session, mode)
+    if problem is not None:
+        raise config_mod.HostedModeError(problem)
     value: object = mode
     if online_approval is not None:
         from kestrel.services.online_consent import read_approval

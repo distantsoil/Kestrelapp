@@ -460,8 +460,12 @@ async def profile_undo(request: Request):
             "Your saved profile is unchanged.", status_code=409)
     try:
         pe.restore_backup()
-    except pe.ProfileEditError as exc:
-        return HTMLResponse(plain_error(exc), status_code=409)
+    except pe.NoEarlierVersion:
+        return HTMLResponse(pe.NO_EARLIER_VERSION, status_code=409)
+    except pe.EarlierVersionUnreadable:
+        return HTMLResponse(pe.EARLIER_VERSION_UNREADABLE, status_code=409)
+    except pe.ProfileEditError:  # not raised today; kept so a new refusal is still a 409
+        return HTMLResponse("The earlier version could not be restored.", status_code=409)
     except OSError as exc:
         log.warning("profile_undo_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse("Could not restore the earlier version.", status_code=500)

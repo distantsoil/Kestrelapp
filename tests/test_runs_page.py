@@ -375,6 +375,42 @@ def test_run_now_with_no_searches_on_says_so_and_queues_nothing():
     assert r.status_code == 409 and "No searches are on" in r.text
 
 
+@pytest.mark.parametrize("mode", ["hosted", "both"])
+def test_an_online_run_that_cannot_run_says_why_with_a_409_before_anything_is_queued(
+        idle, monkeypatch, mode):
+    """The early refusal in `start`: confirmed and consented, but Hosted mode is not usable here.
+    Its own sentence (not the queue's "changed since" one), a 409, and nothing queued."""
+    from kestrel.config import hosted_mode_problem
+    from kestrel.services import online_consent, setting_overrides
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    c, _ = idle
+
+    async def consented(*_a, **_k):
+        return None  # the approval step passes: this test is about the step after it
+
+    async def queued(*_a, **_k):
+        raise AssertionError("the run was queued although Hosted mode cannot run")
+
+    monkeypatch.setattr(online_consent, "approval_problem", consented)
+    monkeypatch.setattr(setting_overrides, "queue_run_mode", queued)
+
+    async def why(s):
+        return hosted_mode_problem(await load_settings_with_db(s))
+
+    sentence = _read(why)
+    assert sentence  # the idle app has no usable Hosted mode
+    r = c.post("/runs/start", data={"mode": mode, "confirmed": "1"})
+    assert r.status_code == 409
+    assert r.text == f"Not started: {sentence}."
+    assert setting_overrides.HOSTED_CHANGED not in r.text  # not the later, queue-time refusal
+
+    async def scrapes(s):
+        return len((await s.execute(select(Task).where(Task.type == "scrape"))).scalars().all())
+
+    assert _read(scrapes) == 0
+
+
 def test_an_online_run_is_refused_without_the_confirmation_and_queues_nothing(idle):
     c, _ = idle
     r = c.post("/runs/start", data={"mode": "hosted"})

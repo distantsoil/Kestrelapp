@@ -53,7 +53,7 @@ from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import desktop_bridge
 from kestrel.web import settings_io as io
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages.settings_roles import trigger
 from kestrel.web.uploads import UploadTooLarge, read_upload
 
@@ -139,7 +139,7 @@ async def backup_download():
         archive = await asyncio.to_thread(backup_service.create_backup_to_temp)
     except OSError as exc:
         log.warning("backup_build_failed", error_type=type(exc).__name__, error=str(exc))
-        return Response(f"Could not build the backup: {plain_error(exc)}", status_code=500,
+        return Response(f"Could not build the backup: {fixed_reason(exc)}", status_code=500,
                         media_type="text/plain")
     async with sessionmaker()() as s:
         await io.write(s, LAST_BACKUP_KEY, utcnow_iso())

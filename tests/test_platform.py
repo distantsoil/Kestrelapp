@@ -113,11 +113,12 @@ def test_toast_windows_uses_win11toast(delivery, monkeypatch):
     import types
 
     shown = []
-    fake = types.SimpleNamespace(notify=lambda t, b: shown.append((t, b)))
+    fake = types.SimpleNamespace(notify=lambda t, b, **kw: shown.append((t, b, kw.get("audio"))))
     monkeypatch.setitem(sys.modules, "win11toast", fake)
     monkeypatch.setattr(sys, "platform", "win32")
     assert delivery._toast("t", None) is True
-    assert shown == [("t", "")]
+    # Silent: the alert sound is Kestrel's own, never Windows' default chime (D-REL-7).
+    assert shown == [("t", "", {"silent": "true"})]
 
 
 def test_toast_missing_tool_is_skipped_and_logged_once(delivery, monkeypatch):

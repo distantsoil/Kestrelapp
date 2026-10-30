@@ -206,7 +206,7 @@ def test_model_check_runs_in_place_with_progress_and_cancel(live):
         assert page.evaluate("location.pathname") == "/bench"  # nothing navigated
         page.get_by_test_id("ck-cancel").click()
         page.wait_for_selector("[data-testid='ck-run']")
-        assert "cancelled" in page.get_by_test_id("ck-notice").inner_text()
+        assert "canceled" in page.get_by_test_id("ck-notice").inner_text()
         assert not errors, errors
     finally:
         ctx.close()

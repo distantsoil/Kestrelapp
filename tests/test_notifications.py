@@ -151,6 +151,30 @@ async def test_push_channels_are_redacted_in_confidential_mode(sm):
 
 
 @respx.mock
+async def test_one_bad_settings_row_neither_stops_a_push_nor_unredacts_it(sm):
+    """When a settings row no longer validates the delivery loop runs on the settings file
+    (kestrel.web.app). Confidential mode is a row too, so it is read by itself: the push still
+    goes, and it still hides the employer."""
+    from kestrel.db.models import Setting
+
+    ntfy = respx.post("https://ntfy.sh/kestrel-test").mock(return_value=httpx.Response(200))
+    await _seed_confidential(sm)
+    async with sm() as s:
+        s.add(Setting(key="thresholds.apply", value="not a number"))
+        await s.commit()
+    settings = _quiet_settings()
+    settings.notify.ntfy_topic = "kestrel-test"
+
+    async with sm() as s:
+        result = await deliver_pending(s, settings)
+
+    assert result.sent == 1 and result.channels == ["ntfy"]
+    sent = ntfy.calls[0].request
+    assert _EMPLOYER not in sent.content.decode("utf-8")
+    assert _EMPLOYER not in sent.headers["Title"]
+
+
+@respx.mock
 async def test_push_channels_carry_the_real_name_when_confidential_mode_is_off(sm):
     hook = respx.post("https://hooks.example/kestrel").mock(return_value=httpx.Response(200))
     async with sm() as s:

@@ -41,13 +41,17 @@ from kestrel.web.auth import (
     set_cached_key,
 )
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.pages.profile import apply_confidential
 from kestrel.web.pages.settings_roles import trigger
 from kestrel.web.redact import confidential_is_inert
 
 log = structlog.get_logger()
 router = APIRouter()
+
+# Said when Undo cannot change settings.yml for a reason that is not on lan_access.REFUSALS: the
+# file could not be read or written. The type goes to the log, not the page (D-SEC-4).
+LAN_UNDO_FAILED = "settings.yml could not be changed, so nothing was changed."
 
 
 # ------------------------------------------------------------------------ confidential mode
@@ -183,7 +187,8 @@ async def access_undo(request: Request) -> Response:
     try:
         lan_access.set_bind_all(was)
     except lan_access.LanAccessError as exc:
-        return io.refuse(plain_error(exc))
+        log.warning("lan_access_undo_failed", error=str(exc))
+        return io.refuse(authored_error(exc, lan_access.REFUSALS, LAN_UNDO_FAILED))
     return io.reply("Put back.")
 
 

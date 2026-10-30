@@ -522,24 +522,49 @@ async def _graceful_worker_shutdown(task: asyncio.Task, stop: asyncio.Event) -> 
         log.warning("lease_release_failed", error=str(exc))
 
 
+_delivery_fallback_logged = False
+
+
+async def _delivery_settings(s):
+    """The settings one delivery cycle uses: the file plus the rows the Settings page saved. One
+    bad row (a hand-edited value that no longer validates) must not stop every alert for good, so
+    when the rows cannot be applied the cycle uses the settings file alone, the same as before
+    those rows existed, and says so once (not every minute) until the rows read again."""
+    global _delivery_fallback_logged
+    from kestrel.config import get_settings
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    try:
+        settings = await load_settings_with_db(s)
+    except (ValueError, TypeError) as exc:  # pydantic's ValidationError is a ValueError
+        if not _delivery_fallback_logged:
+            _delivery_fallback_logged = True
+            log.warning("delivery_settings_rows_unusable", error_type=type(exc).__name__,
+                        error=str(exc))
+        return get_settings()
+    _delivery_fallback_logged = False
+    return settings
+
+
 async def _delivery_loop(stop: asyncio.Event) -> None:
     """Push undelivered notifications on a cadence, batching to at most one per window (SPEC 6)."""
-    from kestrel.config import get_settings
     from kestrel.db.engine import get_sessionmaker
     from kestrel.services.delivery import deliver_pending
 
     sm = get_sessionmaker()
     while not stop.is_set():
         # Settings are read INSIDE the try: a bad settings.yml used to raise here, outside it, and
-        # end the loop for the life of the process with nothing logged.
+        # end the loop for the life of the process with nothing logged. They are read WITH the
+        # rows the Settings page saves (Computer notifications, the kinds, Quiet hours), which
+        # `get_settings()` alone never saw.
         wait_seconds = 60.0
         if is_paused():  # a restore or reset is replacing the rows this would mark delivered
             await _wait(stop, 5.0)
             continue
         try:
-            settings = get_settings()
-            wait_seconds = float(max(5, settings.notify.batch_seconds))
             async with sm() as s:
+                settings = await _delivery_settings(s)
+                wait_seconds = float(max(5, settings.notify.batch_seconds))
                 await deliver_pending(s, settings)
         except Exception as exc:  # a delivery tick must never take down the app
             log.warning("delivery_tick_error", error=str(exc))

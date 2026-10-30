@@ -286,7 +286,7 @@ def test_a_failing_page_shows_the_calm_error_page_with_plain_details(monkeypatch
 
     @router.get("/boom")
     async def boom():
-        raise RuntimeError("secret /home/user/key=abc123 must not be shown")
+        raise RuntimeError("secret /srv/secret/key=abc123 must not be shown")
 
     app.include_router(router)
     client = TestClient(app, raise_server_exceptions=False)
@@ -296,7 +296,7 @@ def test_a_failing_page_shows_the_calm_error_page_with_plain_details(monkeypatch
     assert "Your roles and settings are safe on this computer." in r.text
     assert "Try again" in r.text and "Show details" in r.text and "Copy details" in r.text
     assert "What happened: an unexpected problem (RuntimeError)" in r.text
-    assert "secret" not in r.text and "abc123" not in r.text and "/home/user" not in r.text
+    assert "secret" not in r.text and "abc123" not in r.text and "/srv/secret" not in r.text
     assert "Kestrel " in r.text and "—" not in r.text
     # Not a page navigation: Starlette's own answer, so a fragment swap or a client is unchanged.
     assert client.get("/boom", headers=HX).text == "Internal Server Error"

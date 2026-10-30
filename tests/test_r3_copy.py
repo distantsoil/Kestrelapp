@@ -268,12 +268,14 @@ def test_dismiss_and_delete_routes_and_the_themed_confirm():
 
 
 # ------------------------------------------------------------- README / Help / About
-def test_readme_is_app_first_and_has_the_unsigned_beta_section():
+def test_readme_is_app_first_and_has_the_unsigned_release_candidate_section():
+    """The release stage is Release Candidate, not beta (owner, D-REL-7)."""
     readme = (_ROOT / "README.md").read_text(encoding="utf-8")
     first_run, dev = readme.split("## For developers", 1)
     assert "kestrel setup" not in first_run
-    assert "### Unsigned beta" in first_run
-    beta = first_run.split("### Unsigned beta", 1)[1].split("###", 1)[0]
+    assert "### Unsigned Release Candidate" in first_run
+    assert "beta" not in first_run.lower()
+    beta = first_run.split("### Unsigned Release Candidate", 1)[1].split("###", 1)[0]
     for phrase in ("More info", "Run anyway", "right-click", "**Open**", "Open** again",
                    "signing comes later"):
         assert phrase in beta, phrase

@@ -181,6 +181,16 @@ async def sm(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_alert_sound(monkeypatch):
+    """No test makes a sound or runs a sound player: a delivery cycle plays Kestrel's alert sound
+    (kestrel.services.alert_sound), and a developer's speakers must not chime through the suite.
+    tests/test_alert_sound.py takes the real functions at import time, before this replaces them."""
+    from kestrel.services import alert_sound
+
+    monkeypatch.setattr(alert_sound, "play", lambda name, volume, **kw: False)
+
+
+@pytest.fixture(autouse=True)
 def _no_dns(monkeypatch):
     """No test resolves a name (hard rule: tests never touch the network). The SSRF guard for
     operator-supplied links (kestrel.ingest.http.assert_public_url) resolves a host, so every

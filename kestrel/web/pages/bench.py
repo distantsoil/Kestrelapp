@@ -41,7 +41,7 @@ from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import bench_view as bv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages import models_ui
 
 log = structlog.get_logger()
@@ -737,7 +737,7 @@ async def promote(request: Request):
             error_type=type(exc).__name__, error=str(exc),
         )
         return HTMLResponse(
-            f'<div class="mo-msg is-bad">Could not save: {escape(plain_error(exc))}</div>'
+            f'<div class="mo-msg is-bad">Could not save: {escape(fixed_reason(exc))}</div>'
         )
     if not ok:
         return HTMLResponse(f'<div class="mo-msg is-bad">{escape(why)}</div>')
@@ -762,8 +762,14 @@ async def _promote_hosted(tier: str, model_id: str) -> HTMLResponse:
         name, backend = found
         try:
             models = await hm.fetch_models(name, backend)
-        except hm.ModelListError as exc:
-            return HTMLResponse(f'<div class="mo-msg is-bad">{escape(plain_error(exc))}</div>')
+        except hm.ModelListError:
+            # connected_backend() only returns a provider whose key is saved, so the list itself
+            # failed; fetch_models logged why. `name` is the provider's configured name, so the
+            # sentence is built from nothing the failure carried (D-SEC-4).
+            return HTMLResponse(
+                f'<div class="mo-msg is-bad">The model list from {escape(name)} could not be '
+                "fetched. Check the key and your connection under Settings &gt; Hosted.</div>"
+            )
         result = await hm.save_overrides(s, settings, name, backend, {tier: model_id}, models)
     box = "mo-msg is-bad" if result.refused else "mo-msg is-good"
     return HTMLResponse(

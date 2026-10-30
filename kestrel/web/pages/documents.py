@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant
 from kestrel.docs import convert as convert_mod
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.uploads import closing_upload
 
 router = APIRouter()
@@ -28,6 +28,11 @@ log = structlog.get_logger()
 
 
 _ROLE_PREFIX = re.compile(r"^r\d+_")
+# What the import page says when the write boundary refuses a proposal (the reason is in the log).
+IMPORT_REJECTED = (
+    "Rejected at the write boundary: the proposal did not pass its own check, so nothing was "
+    "saved. Read the resume again, or fix the text and try again."
+)
 
 
 def slot_label(key: str) -> str:
@@ -1719,11 +1724,13 @@ async def import_accept(request: Request):
             f'<a class="btn" href="/documents?master_id={master_id}">Open it</a></div>'
         )
     except ImportRejected as exc:
-        return HTMLResponse(
-            f'<div class="warnbox">Rejected at the write boundary: {escape(plain_error(exc))}</div>'
-        )
+        # The rejection quotes lines of the person's resume, so neither the page nor the log gets
+        # its text: the log goes into the diagnostics bundle. The page gets one fixed sentence
+        # (D-SEC-4) and the log only that a rejection happened.
+        log.warning("import_accept_rejected", error_type=type(exc).__name__)
+        return HTMLResponse(f'<div class="warnbox">{escape(IMPORT_REJECTED)}</div>')
     except Exception as exc:  # bad/absent proposal JSON, or a DB error
         log.warning("import_accept_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Could not accept the import: {escape(plain_error(exc))}</div>'
+            f'<div class="warnbox">Could not accept the import: {escape(fixed_reason(exc))}</div>'
         )

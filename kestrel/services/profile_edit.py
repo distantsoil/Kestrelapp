@@ -168,6 +168,35 @@ class ProfileEditError(UserFacingError, ValueError):
     loader (in which case the previous file is back in place)."""
 
 
+# The two ways Undo can be refused, one subclass and one sentence each. The Undo route answers
+# from the sentence of the class it caught, never from the exception it holds, so the page text
+# is a constant a code scanner can follow (D-SEC-4).
+NO_EARLIER_VERSION = "There is no earlier version to go back to."
+EARLIER_VERSION_UNREADABLE = "The earlier version could not be loaded; nothing was changed."
+
+
+class NoEarlierVersion(ProfileEditError):
+    """Undo was asked for and no profile.yml.bak exists."""
+
+
+class EarlierVersionUnreadable(ProfileEditError):
+    """profile.yml.bak exists but the loader would not read it; the current file was kept."""
+
+
+# The sentences a save of profile.yml can refuse with that are Kestrel's own and a closed list
+# (the Settings Undo for the shortest project shows one of these, or a fixed fallback, never the
+# exception's text: kestrel.web.errors.authored_error, D-SEC-4). `{line}` stands for one whole
+# number. Each is built where it is raised, from the same pieces.
+NOT_LOADED = "The saved profile could not be loaded; the previous file was kept."
+NOT_YAML = f"{PROFILE_NAME} is not valid YAML."
+NOT_YAML_AT = f"{PROFILE_NAME} is not valid YAML (line {{line}})."
+UNREADABLE_DENIED = f"{PROFILE_NAME} could not be read: permission was denied"
+UNREADABLE_MISSING = f"{PROFILE_NAME} could not be read: the file was not found"
+SAVE_REFUSALS: tuple[str, ...] = (
+    NOT_LOADED, NOT_YAML, NOT_YAML_AT, UNREADABLE_DENIED, UNREADABLE_MISSING,
+)
+
+
 @dataclass
 class ProfileState:
     """What the page shows: the operator's blocks (or the example's terms with blank personal
@@ -442,7 +471,7 @@ def save_section(track: str, section: str, values: dict) -> Path:
             shutil.copy2(bak, target)
         else:
             target.unlink(missing_ok=True)
-        raise ProfileEditError("The saved profile could not be loaded; the previous file was kept.")
+        raise ProfileEditError(NOT_LOADED)
     log.info("profile_saved", track=track, section=section)
     return target
 
@@ -467,7 +496,7 @@ def restore_backup() -> Path:
     target = profile_path()
     bak = target.with_name(PROFILE_BAK)
     if not bak.is_file():
-        raise ProfileEditError("There is no earlier version to go back to.")
+        raise NoEarlierVersion(NO_EARLIER_VERSION)
     current = target.read_bytes() if target.is_file() else None
     incoming = target.with_name(_INCOMING)
     shutil.copy2(bak, incoming)
@@ -482,7 +511,7 @@ def restore_backup() -> Path:
             target.unlink(missing_ok=True)
         else:
             target.write_bytes(current)
-        raise ProfileEditError("The earlier version could not be loaded; nothing was changed.")
+        raise EarlierVersionUnreadable(EARLIER_VERSION_UNREADABLE)
     log.info("profile_restored")
     return target
 

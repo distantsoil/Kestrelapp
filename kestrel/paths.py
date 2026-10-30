@@ -79,6 +79,13 @@ def db_path() -> Path:
     return data_dir() / "kestrel.db"
 
 
+def sounds_dir() -> Path:
+    """Where Kestrel keeps the alert sounds it renders for itself (kestrel.services.alert_sound):
+    one small WAV per sound and volume. A cache: deleting it only makes the next alert draw them
+    again."""
+    return data_home() / "cache" / "sounds"
+
+
 def ml_dir() -> Path:
     """Where the reranker and its fitted PCA are persisted (SPEC-MODULES 5.4). Lives under the
     writable data dir, never beside the read-only packaged app."""

@@ -42,7 +42,7 @@ from kestrel.llm.client import LLMClient
 from kestrel.pipeline._shared import tier_is_hosted
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages.needs_try import _employer_state
 from kestrel.web.redact import confidential_once, redact_json, redact_text
 
@@ -356,7 +356,7 @@ async def export_pdf(request: Request):
     except Exception as exc:  # no Edge or Playwright on this machine
         log.warning("analytics_pdf_failed", error_type=type(exc).__name__, error=str(exc))
         return Response(
-            content=f"The PDF needs Microsoft Edge on this computer: {plain_error(exc)}",
+            content=f"The PDF needs Microsoft Edge on this computer: {fixed_reason(exc)}",
             status_code=503, media_type="text/plain; charset=utf-8",
         )
     return Response(

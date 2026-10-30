@@ -2,6 +2,7 @@
 
   POST /settings/ui                  one interface-owned key (scene, touches, text size, region,
                                      sound, quiet hours ...), validated by kestrel.ui_settings
+  POST /settings/sound/preview       Play: Kestrel's own alert sound, played by the app
   POST /settings/prefs/tracks        Employment and Consulting switches (at least one stays on)
   POST /settings/prefs/scheme        the color scheme every browser sees first
   POST /settings/prefs/notify        a "Tell me about" kind, or Computer notifications
@@ -24,13 +25,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from kestrel import ui_settings as u
 from kestrel.config import UI_SCHEMES
-from kestrel.services import profile_photo, ui_state
+from kestrel.services import alert_sound, profile_photo, ui_state
 from kestrel.services import tracks as tracks_svc
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import settings_io as io
 from kestrel.web import settings_view as sv
+from kestrel.web.auth import is_loopback
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, fixed_reason
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -38,6 +40,48 @@ router = APIRouter()
 # The interface's own words for each key, as the message under the control reads (SPEC-INTERFACES
 # 2.6, matching the locked mockup).
 _TEXT_SIZE = {"small": "small", "default": "default", "large": "large"}
+
+
+# What a refused value says, one sentence per key (D-SEC-4). The check in kestrel.ui_settings raises
+# a ValueError; its text goes to the log and the person reads the sentence for the key, so the
+# refusal is always one of these constants. A key added later reads the fallback until it has one.
+_ON_OFF = "This setting is on or off."
+REFUSED_VALUE: dict[str, str] = {
+    "ui.scene": "Choose one of the scenes shown.",
+    "ui.scene_daily": _ON_OFF,
+    "ui.scene_rotation": "Keep at least one scene checked.",
+    "ui.scene_animate": _ON_OFF,
+    "ui.touches_enabled": _ON_OFF,
+    "ui.touches_off": "Choose touches from the list shown.",
+    "ui.touch_groups_off": "Choose touch groups from the list shown.",
+    "ui.avatar": "Choose one of the pictures shown.",
+    "ui.text_size": "Text size must be one of: small, default, large.",
+    "ui.reduce_motion": _ON_OFF,
+    "ui.classic_nav": _ON_OFF,
+    "notify.sound": _ON_OFF,
+    "notify.sound_name": "Choose one of the sounds shown.",
+    "notify.sound_volume": "Volume must be a number from 0 to 1.",
+    "notify.quiet_hours": "Quiet hours need a start and an end, each written HH:MM, like 21:00.",
+    "region.date_format": "Choose one of the date formats shown.",
+    "region.time_format": "Choose 12-hour or 24-hour time.",
+}
+REFUSED_FALLBACK = "That value is not one this setting accepts."
+# Two keys are refused for more than one reason, and the one sentence above is right for only one
+# of them. The cause is found by comparing the checker's message with its own constants
+# (kestrel.ui_settings); what the person reads is always one of these sentences.
+SCENES_NOT_LISTED = "Choose scenes from the list shown."
+QUIET_NOT_ON_OFF = "Quiet hours must be on or off."
+
+
+def _refusal(key: str, exc: ValueError) -> str:
+    """The sentence for a refused value of `key`, by cause. Never the text of the exception."""
+    cause = str(exc)  # compared with the checker's own sentences, never shown (D-SEC-4)
+    if key == "ui.scene_rotation" and cause != u.NO_SCENE_LEFT:
+        return SCENES_NOT_LISTED
+    if key == "notify.quiet_hours" and cause == u.NOT_ON_OFF:
+        return QUIET_NOT_ON_OFF
+    return REFUSED_VALUE.get(key, REFUSED_FALLBACK)
+PHOTO_REFUSED = "That picture could not be kept. Choose another one."
 
 
 def _scene_name(value: str) -> str:
@@ -103,7 +147,8 @@ async def save_ui_key(request: Request) -> Response:
     try:
         clean = ui_state.validate(key, body.get("value"))
     except ValueError as exc:
-        return io.refuse(str(exc))
+        log.info("settings_ui_refused", key=key, error=str(exc))
+        return io.refuse(_refusal(key, exc))
     quiet = bool(body.get("quiet"))
     async with sessionmaker()() as s:
         prev = await io.read(s, key)
@@ -115,7 +160,7 @@ async def save_ui_key(request: Request) -> Response:
         except SQLAlchemyError as exc:
             await s.rollback()
             log.warning("settings_ui_save_failed", key=key, error=f"{type(exc).__name__}: {exc}")
-            return io.refuse(f"Could not save that: {plain_error(exc)}")
+            return io.refuse(f"Could not save that: {fixed_reason(exc)}")
     extra: dict[str, Any] = {"value": clean}
     if key.startswith("region."):
         async with sessionmaker()() as s:
@@ -123,6 +168,42 @@ async def save_ui_key(request: Request) -> Response:
         extra["preview"] = sv.region_preview(st.region.date_format, st.region.time_format)
     msg = "" if quiet else message_for(key, clean)
     return io.reply(msg, undo=io.undo_url(key, prev, clean) if msg else None, **extra)
+
+
+SOUND_LOCAL_ONLY = "Play works on the computer running Kestrel."
+SOUND_OFF_VOLUME = "The volume is turned all the way down."
+SOUND_NO_PLAYER = "Kestrel could not play a sound on this computer."
+
+
+@router.post("/settings/sound/preview")
+async def preview_sound(request: Request) -> Response:
+    """Play (the Play button): Kestrel's own alert sound, `name` at `volume` exactly as the
+    controls stand, saved or not, through the same path a delivered alert uses
+    (kestrel.services.alert_sound), so what the person hears here is what an alert sounds like.
+    The app process plays it on THIS computer, so a request from another device (a phone using
+    LAN access) is refused rather than sounding on a computer nobody is looking at. A press while
+    a sound is still on is skipped quietly: repeated presses never pile players up. Quiet hours do
+    not apply: the person pressed Play."""
+    if not is_loopback(request):
+        return io.refuse(SOUND_LOCAL_ONLY)
+    body = await _json(request)
+    try:
+        name = u.sound_name(body.get("name"))
+    except ValueError as exc:
+        log.info("settings_sound_preview_refused", key="notify.sound_name", error=str(exc))
+        return io.refuse(REFUSED_VALUE["notify.sound_name"])
+    try:
+        volume = u.sound_volume(body.get("volume"))
+    except ValueError as exc:
+        log.info("settings_sound_preview_refused", key="notify.sound_volume", error=str(exc))
+        return io.refuse(REFUSED_VALUE["notify.sound_volume"])
+    if volume <= 0:
+        return io.refuse(SOUND_OFF_VOLUME)
+    if await alert_sound.play_async(name, volume, exclusive=True):
+        return io.reply("", played=True)
+    if alert_sound.is_playing():  # an earlier press is still sounding: nothing to add
+        return io.reply("", played=False, busy=True)
+    return io.refuse(SOUND_NO_PLAYER)
 
 
 # ------------------------------------------------------------------------------- tracks
@@ -323,7 +404,8 @@ async def avatar_photo(request: Request) -> Response:
     try:
         await profile_photo.save_async(data)
     except profile_photo.PhotoError as exc:
-        return io.refuse(plain_error(exc))
+        log.info("profile_photo_refused", error=str(exc))
+        return io.refuse(authored_error(exc, profile_photo.REFUSALS, PHOTO_REFUSED))
     async with sessionmaker()() as s:
         prev = await io.read(s, "ui.avatar")
         await ui_state.set_value(s, "ui.avatar", "photo")

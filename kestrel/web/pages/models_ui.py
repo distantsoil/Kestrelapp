@@ -43,7 +43,7 @@ from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import bench_view
 from kestrel.web import models_view as mv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -569,14 +569,18 @@ async def _create_derived(
             f"FROM {default_base}", f"FROM {base}", 1)
         body = mt.create_body(name, text)
     except (KeyError, ValueError) as exc:
-        return f"Kestrel cannot tune a model for this step on this computer: {plain_error(exc)}"
+        log.warning("model_tune_modelfile_failed", tier=tier, error_type=type(exc).__name__,
+                    error=str(exc))
+        return f"Kestrel cannot tune a model for this step on this computer: {fixed_reason(exc)}"
     body["stream"] = False
     url = settings.llm.ollama_native_url.rstrip("/") + "/api/create"
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
             (await client.post(url, json=body)).raise_for_status()
     except httpx.HTTPError as exc:
-        return f"Kestrel could not tune {base} for this step: {plain_error(exc)}"
+        log.warning("model_tune_failed", tier=tier, base=base, error_type=type(exc).__name__,
+                    error=str(exc))
+        return f"Kestrel could not tune {base} for this step: {fixed_reason(exc)}"
     await asyncio.to_thread(ss.forget_ollama_probe)
     return None
 

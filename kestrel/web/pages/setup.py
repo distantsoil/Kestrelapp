@@ -38,7 +38,7 @@ from kestrel.services import onboarding as ob
 from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.flash import flash_redirect, flash_text
 
 log = structlog.get_logger()
@@ -175,7 +175,7 @@ async def setup_profile(request: Request):
         return _fail(f"Unknown hardware profile: {html.escape(name)}.", 400)
     except OSError as exc:
         log.warning("setup_profile_record_failed", error_type=type(exc).__name__, error=str(exc))
-        return _fail(f"could not record the profile: {html.escape(plain_error(exc))}", 500)
+        return _fail(f"could not record the profile: {html.escape(fixed_reason(exc))}", 500)
     msg = f"Profile {name} recorded."
     if request.headers.get("HX-Request"):
         return await _system_partial(request, await setup_state(), message=msg)

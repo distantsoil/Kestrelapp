@@ -20,8 +20,6 @@ validated model calls, progress, cancellation and atomic result storage (D-UI-16
 
 from __future__ import annotations
 
-import html
-
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -332,9 +330,11 @@ async def _decision(
     headers = {"HX-Trigger": "pipelineRefresh"}
     ctx = await decision_context(session, opp_id)
     if ctx is None:
-        note = html.escape(error or "Opportunity not found.")
+        # The role is gone, so the page says so in a fixed sentence; the caller's `error` (which
+        # can come from a failure) is not echoed here (D-SEC-4).
         return HTMLResponse(
-            f'<div id="decision" class="decision"><div class="warnbox">{note}</div></div>{oob}',
+            '<div id="decision" class="decision"><div class="warnbox">Opportunity not found.'
+            f"</div></div>{oob}",
             headers=headers,
         )
     ctx.update(message=message, error=error)

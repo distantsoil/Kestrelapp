@@ -21,7 +21,7 @@ from starlette.background import BackgroundTask
 from kestrel import paths
 from kestrel.services import backup as backup_service
 from kestrel.web.deps import templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, fixed_reason
 from kestrel.web.uploads import closing_upload
 
 log = structlog.get_logger()
@@ -51,7 +51,7 @@ async def download_backup():
         log.warning("backup_build_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
             f'<div class="warnbox">Could not build the backup: '
-            f"{html.escape(plain_error(exc))}</div>",
+            f"{html.escape(fixed_reason(exc))}</div>",
             status_code=500,
         )
     return FileResponse(
@@ -97,16 +97,18 @@ async def import_profile(request: Request):
         log.warning("profile_upload_read_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
             f'<div class="warnbox">Could not read the upload: '
-            f"{html.escape(plain_error(exc))}</div>"
+            f"{html.escape(fixed_reason(exc))}</div>"
         )
     try:
         result = await asyncio.to_thread(backup_service.import_profile, data)
     except backup_service.InvalidProfileError as exc:
-        return HTMLResponse(f'<div class="warnbox">{html.escape(plain_error(exc))}</div>')
+        # One of the service's own sentences, or the fallback; never the exception's text (D-SEC-4).
+        said = authored_error(exc, backup_service.PROFILE_REFUSALS, backup_service.PROFILE_FALLBACK)
+        return HTMLResponse(f'<div class="warnbox">{html.escape(said)}</div>')
     except OSError as exc:
         log.warning("profile_import_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
-            f'<div class="warnbox">Import failed: {html.escape(plain_error(exc))}</div>'
+            f'<div class="warnbox">Import failed: {html.escape(fixed_reason(exc))}</div>'
         )
     kept = (
         f" The previous file is at <span class=\"mono\">{html.escape(str(result.previous_backup))}"

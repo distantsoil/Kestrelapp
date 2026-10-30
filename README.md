@@ -70,14 +70,14 @@ Download the installer for your computer from the [download page](https://kestre
 
 Kestrel was tested on Windows 11 with an NVIDIA graphics card. Mac and Linux builds have had less testing. To run the AI on your computer, setup helps you install Ollama, a free app. A smaller computer can use a free online model instead; see [computer requirements](https://kestrelapp.co/docs/requirements).
 
-### Unsigned beta
+### Unsigned Release Candidate
 
-The beta installers are not signed yet; signing comes later. Your computer warns you the first time you open Kestrel. You only do this once.
+The Release Candidate installers are not signed yet; signing comes later. Your computer warns you the first time you open Kestrel. You only do this once.
 
 - **Windows:** when SmartScreen warns, choose **More info**, then **Run anyway**.
 - **macOS:** right-click Kestrel in Applications, choose **Open**, then choose **Open** again. If macOS only offers Done or Move to Trash, choose Done, open System Settings, then Privacy & Security, and click **Open Anyway** next to the message about Kestrel.
 
-The [first-launch steps](https://kestrelapp.co/download#first-launch) have pictures. This is a beta, so expect a few rough edges and keep your own copy of your resume.
+The [first-launch steps](https://kestrelapp.co/download#first-launch) have pictures. This is a release candidate, so expect a few rough edges and keep your own copy of your resume.
 
 ## Good to know
 

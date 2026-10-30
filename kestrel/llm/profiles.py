@@ -227,6 +227,25 @@ def no_console_window() -> dict:
     return {}
 
 
+def system_tool_env() -> dict:
+    """Keyword arguments (`env=`) for starting a SYSTEM program from the app (notify-send, paplay,
+    aplay): the environment of the person's session, not of the frozen app. A PyInstaller build on
+    Linux points LD_LIBRARY_PATH at its own bundled libraries (the original is kept in
+    LD_LIBRARY_PATH_ORIG), and a system program that loads those instead of its own can fail.
+    Empty everywhere else: nothing changes when running from source, on Windows or on macOS."""
+    import sys
+
+    if not (sys.platform.startswith("linux") and getattr(sys, "frozen", False)):
+        return {}
+    env = dict(os.environ)
+    original = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original is not None:
+        env["LD_LIBRARY_PATH"] = original
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    return {"env": env}
+
+
 def _run(cmd: list[str], timeout: float = 10.0) -> str | None:
     """Run a detection command; None on any failure (missing binary, non-zero exit, timeout)."""
     try:

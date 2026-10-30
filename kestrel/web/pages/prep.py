@@ -27,7 +27,7 @@ from kestrel.interview.notes import save_notes
 from kestrel.interview.render import PAPER_CSS, pack_pages
 from kestrel.web import prep_view as pv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 
 log = structlog.get_logger()
 
@@ -329,7 +329,7 @@ async def render_pdf(request: Request, prep_pack_id: int):
             return HTMLResponse(
                 '<div class="pp-pdf-error" role="alert" data-testid="pp-pdf-error">'
                 "The PDF needs Microsoft Edge on this computer, and it could not be started: "
-                f"{_esc(plain_error(exc))}</div>"
+                f"{_esc(fixed_reason(exc))}</div>"
             )
     name = _file_name(sh["org_name"], sh["when"]["date"])
     return HTMLResponse(

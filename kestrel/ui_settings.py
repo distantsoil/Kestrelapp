@@ -84,6 +84,12 @@ def scene(value: Any) -> str:
     return _choice(value, (*SCENES, NO_SCENE), "Scene")
 
 
+# Sentences a caller compares a refusal with (kestrel.web.pages.settings_prefs picks what the
+# person reads by cause, never by copying these).
+NO_SCENE_LEFT = "At least one scene must stay checked."
+NOT_ON_OFF = "This setting is on or off."
+
+
 def scene_rotation(value: Any) -> list[str]:
     """The checked scenes, in library order and without repeats. At least one stays checked."""
     if not isinstance(value, (list, tuple)):
@@ -92,14 +98,14 @@ def scene_rotation(value: Any) -> list[str]:
         _choice(item, SCENES, "A scene in the list")
     chosen = [s for s in SCENES if s in value]
     if not chosen:
-        raise ValueError("At least one scene must stay checked.")
+        raise ValueError(NO_SCENE_LEFT)
     return chosen
 
 
 def flag(value: Any) -> bool:
     if isinstance(value, bool):
         return value
-    raise ValueError("This setting is on or off.")
+    raise ValueError(NOT_ON_OFF)
 
 
 def touches_off(value: Any) -> list[str]:
@@ -188,6 +194,18 @@ def in_quiet_hours(hours: dict[str, Any], now: time) -> bool:
     if start < end:
         return start <= now < end
     return now >= start or now < end
+
+
+def local_wall_time() -> time:
+    """The local wall-clock time of day, with no time zone: what Quiet hours are written in. One
+    place for it, so a test (or a caller) can supply its own clock."""
+    return datetime.now().time()
+
+
+def quiet_now(hours: dict[str, Any], clock: Callable[[], time] | None = None) -> bool:
+    """Whether Quiet hours hold pop-ups and sounds back right now. `clock` returns the local
+    wall-clock time; it defaults to `local_wall_time`, looked up at call time."""
+    return in_quiet_hours(hours, (clock or local_wall_time)())
 
 
 # ------------------------------------------------------------------------------- derived use

@@ -36,7 +36,7 @@ from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import settings_io as io
 from kestrel.web import settings_view as sv
 from kestrel.web.deps import active_track, sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.redact import confidential, redact_name, redact_text
 
 log = structlog.get_logger()
@@ -250,7 +250,12 @@ async def weeks_undo(request: Request):
         pe.save_section("consulting", "consulting", {"consulting_terms": {
             "min_engagement_days": int(q["prev"])}})
     except (pe.ProfileEditError, OSError) as exc:
-        return io.refuse(plain_error(exc))
+        # The value is a whole number the route checked, so the failure is the file or the
+        # profile's state, not the person's input. The person reads one of Kestrel's own
+        # sentences (the file is not valid YAML at line N; the saved profile could not be
+        # loaded, the previous file was kept), else a fixed one; never the exception's text.
+        log.warning("weeks_undo_failed", error_type=type(exc).__name__, error=str(exc))
+        return io.refuse(authored_error(exc, pe.SAVE_REFUSALS, io.SAVE_FAILED))
     return io.reply("Put back.")
 
 

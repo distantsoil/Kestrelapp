@@ -1528,7 +1528,8 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    attention; "Where": the bell (always on), Computer notifications, Play a sound (D-UI-95) with
    the sound choice (Chime, Soft click, Bell), a volume and a Play button, and Quiet hours
    (start and end; no pop-ups and no sounds, the bell still collects them, a night such as 9:00
-   PM to 7:00 AM counts as one).
+   PM to 7:00 AM counts as one). The sound plays from the app with each delivered pop-up, never
+   from the window, and the pop-ups are silent.
 
 **Your avatar (D-UI-112).** Preferences > Appearance > Your picture offers a lettered initial
 (the first name's first letter, the default), six drawn marks (bird, leaf, star, sun, mountain,
@@ -1747,13 +1748,26 @@ returns it) and Turn off this kind. **Dismissed items are deleted after 30 days.
 footer says so. Notification rows gain `dismissed_at`, `resolved_at` and `track` columns for this
 (`SPEC.md` §4.6 area; the private decision log D-UI-94); a dismissal never deletes the underlying event.
 
-**Sound (D-UI-95).** A short sound can play when a notification arrives. It is **on by default
-with Chime**; the operator can turn it off, pick another sound (Chime, Soft click, Bell), set a
-volume and press Play to hear it. The sounds are bundled with the app (or synthesized on the
-device) so they work offline, and a sound plays only for kinds the operator has turned on.
-Desktop pop-ups keep their own operating-system sound setting. **Quiet hours** (a start and an
-end, for example 9:00 PM to 7:00 AM, treated as one night) hold back pop-ups and sounds; the bell
-still collects every item, and scheduled runs still happen.
+**Sound (D-UI-95, D-REL-7).** The sound is Kestrel's own and never the operating system's. It
+is **on by default with Chime**; the operator can turn it off, pick another sound (Chime, Soft
+click, Bell), set a volume and press Play to hear it. Kestrel synthesizes the three sounds itself
+(a small WAV rendered once per sound and volume and kept in its cache folder, so they work
+offline) and the **app process** plays it, not the window: it plays exactly when the delivery
+cycle delivers a notification, once, with its pop-up (the sound does not depend on the Computer
+notifications switch), so it is never more than once a minute (the batching rule below), never
+for a kind the operator turned off, and it plays just the same with the window closed to the
+tray or hidden by a quiet start. Play in Settings goes through the same path, so a preview
+and an alert are the same sound; it works only on the computer running Kestrel (a phone using
+LAN access is told so), and a press while a sound is still playing is ignored. **The pop-ups themselves are silent** (the Windows toast carries
+`audio silent`, the Linux `notify-send` call carries the freedesktop hint
+`suppress-sound=true`, and the macOS notification names no sound), so on this computer the
+only sound is Kestrel's, and turning Play a sound off silences an alert there. Limits: a phone
+push (ntfy) uses the phone's own notification settings, and some Linux notification services
+may ignore the request for silence. **Quiet hours** (a start and
+an end, for example 9:00 PM to 7:00 AM, treated as one night) hold back pop-ups and sounds
+together: the cycle delivers nothing inside the window, the held items stay pending, and the
+first cycle after it sends them as the one usual summary with one sound. The bell still collects
+every item, and scheduled runs still happen.
 
 **Batching:** never more than one notification per minute. Overflow collapses into a single
 summary. A tool that pings forty times during a run gets muted permanently, and then none of the

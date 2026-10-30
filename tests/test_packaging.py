@@ -304,8 +304,13 @@ def test_ci_skips_only_files_no_test_or_build_reads():
         assert pattern != "docs/SOURCES.md"
 
 
+def _workflow_names() -> list[str]:
+    """Every workflow file, so a new one (the security export, D-SEC-6) is guarded too."""
+    return sorted(p.name for p in WORKFLOWS.glob("*.yml"))
+
+
 def test_every_workflow_action_meets_its_node24_floor():
-    for name in ("ci.yml", "release.yml"):
+    for name in _workflow_names():
         for job in _workflow(name)["jobs"].values():
             for step in job.get("steps", []):
                 uses = step.get("uses")
@@ -322,7 +327,7 @@ def test_every_workflow_action_meets_its_node24_floor():
 
 
 def test_workflow_actions_are_pinned_to_major_versions():
-    for name in ("ci.yml", "release.yml"):
+    for name in _workflow_names():
         wf = _workflow(name)
         for job in wf["jobs"].values():
             for step in job["steps"]:
@@ -847,3 +852,18 @@ def test_the_shipped_app_icon_is_the_installer_icon():
 
     with paths.resource_path(paths.packaged_app_icon()) as shipped:
         assert shipped.read_bytes() == (PACKAGING / "kestrel.ico").read_bytes()
+
+
+def test_security_export_keeps_its_token_away_from_third_party_actions():
+    """D-SEC-6: the alerts token reaches only GitHub's own gh CLI, the job is read-only, and it
+    runs only when started by hand."""
+    wf = _workflow("security-export.yml")
+    assert set(wf[True]) == {"workflow_dispatch"}  # YAML reads the key `on` as True
+    assert wf["permissions"] == {"contents": "read"}
+    for job in wf["jobs"].values():
+        for step in job["steps"]:
+            env = step.get("env", {})
+            if "ALERTS_READ_TOKEN" in str(env):
+                assert "uses" not in step and "gh api" in step["run"]
+            if "uses" in step:
+                assert "ALERTS_READ_TOKEN" not in str(step)

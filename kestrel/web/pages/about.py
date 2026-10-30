@@ -51,7 +51,7 @@ from kestrel.services import diagnostics
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import desktop_bridge
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages import help as help_page
 from kestrel.web.redact import redaction_map
 
@@ -338,7 +338,7 @@ async def download_diagnostics():
         log.warning("diagnostics_bundle_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
             f'<div class="ab-saved is-warn">Could not build the diagnostics bundle: '
-            f"{html.escape(plain_error(exc))}</div>",
+            f"{html.escape(fixed_reason(exc))}</div>",
             status_code=500,
         )
     return FileResponse(

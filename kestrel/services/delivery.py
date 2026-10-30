@@ -7,7 +7,10 @@ BATCHING IS MANDATORY and the whole point: never more than one delivered notific
 A delivery cycle collects every undelivered, still-enabled notification; if more than one is
 pending it collapses them into a SINGLE summary; and per-item scored notifications are off by
 default. A tool that pings forty times in a run gets muted, and then none of the useful
-notifications land either, so the batch window protects the channel's usefulness."""
+notifications land either, so the batch window protects the channel's usefulness.
+
+THE SOUND (D-UI-95, D-REL-7): every pop-up is silent, and Kestrel plays its own sound (kestrel.
+services.alert_sound) once with the message a cycle delivers, so it too is at most once a minute."""
 
 from __future__ import annotations
 
@@ -15,15 +18,20 @@ import asyncio
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import time
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel import ui_settings
 from kestrel.config import Settings
-from kestrel.db.models import Notification
-from kestrel.web.redact import confidential, redact_text
+from kestrel.db.models import Notification, Setting
+from kestrel.privacy import EmployerMap
+from kestrel.services import alert_sound
+from kestrel.web.redact import confidential, redact_text, redaction_map
 
 log = structlog.get_logger()
 
@@ -39,20 +47,35 @@ class DeliveryResult:
     sent: int = 0  # messages actually pushed this cycle: 0 or 1 (the batch guarantee)
     collapsed: int = 0  # how many notifications the single message represents
     suppressed: int = 0  # disabled-by-toggle notifications marked handled without delivery
+    held: int = 0  # notifications left pending because Quiet hours are on right now
+    sounded: bool = False  # Kestrel's own alert sound was started with this message
     title: str | None = None
     channels: list[str] = field(default_factory=list)
 
 
-def _enabled_for(settings: Settings, note: Notification) -> bool:
+def kind_enabled(settings: Settings, kind: str) -> bool:
+    """Whether the operator has this kind of alert turned on (a kind not listed is on)."""
     n = settings.notify
-    if note.kind == PER_ITEM_KIND:
+    if kind == PER_ITEM_KIND:
         return n.per_item_scored
-    return n.events.get(note.kind, True)
+    return n.events.get(kind, True)
+
+
+def _enabled_for(settings: Settings, note: Notification) -> bool:
+    return kind_enabled(settings, note.kind)
+
+
+# One info line when Quiet hours first hold a cycle, then debug for the cycles that follow, until a
+# cycle runs outside the window: an overnight window would otherwise log a line a minute.
+_hold_logged = False
 
 
 # Tools reported missing once per process, at debug: a machine without notify-send must not fill
 # the log with one line per delivery cycle.
 _missing_tools_logged: set[str] = set()
+
+# notify-send's flag for the freedesktop "suppress-sound" hint: the pop-up makes no sound itself.
+NOTIFY_SEND_SILENT = ("--hint=boolean:suppress-sound:true",)
 
 # osascript receives the operator's text as ARGUMENTS to this fixed script, never spliced into it:
 # a title containing a quote or a backslash must not be able to change what the script does.
@@ -81,27 +104,37 @@ def _toast(title: str, body: str | None) -> bool:
 
         # The installed app toasts as itself (the identity its shortcut carries); from source
         # there is no such shortcut, so it keeps win11toast's default rather than toast silently.
+        # Every pop-up is silent: the alert sound is Kestrel's own, played by deliver_pending
+        # (kestrel.services.alert_sound) when the person turned it on (owner, D-REL-7: "I dont
+        # want to use the system sound"), so the system's chime never plays on top of it, or in
+        # spite of it being off.
+        silent = {"silent": "true"}
         if paths.is_frozen():
-            win11toast.notify(title, body or "", app_id=APP_USER_MODEL_ID)
+            win11toast.notify(title, body or "", app_id=APP_USER_MODEL_ID, audio=silent)
         else:
-            win11toast.notify(title, body or "")
+            win11toast.notify(title, body or "", audio=silent)
         return True
     if sys.platform == "darwin":
         tool = shutil.which("osascript")
         if tool is None:
             _tool_missing("osascript")
             return False
+        # `display notification` without a `sound name` clause is silent, which is the point.
         argv = [tool, "-e", _OSASCRIPT, title, body or ""]
     else:
         tool = shutil.which("notify-send")
         if tool is None:
             _tool_missing("notify-send")
             return False
-        # "--" ends option parsing so a title beginning with "-" is text, not a flag.
-        argv = [tool, "--app-name=Kestrel", "--", title, body or ""]
-    from kestrel.llm.profiles import no_console_window
+        # The freedesktop hint keeps the pop-up silent (a desktop would otherwise play its own
+        # sound). "--" ends option parsing so a title beginning with "-" is text, not a flag.
+        argv = [tool, "--app-name=Kestrel", *NOTIFY_SEND_SILENT, "--", title, body or ""]
+    from kestrel.llm.profiles import no_console_window, system_tool_env
 
-    subprocess.run(argv, check=True, capture_output=True, timeout=10, **no_console_window())
+    subprocess.run(
+        argv, check=True, capture_output=True, timeout=10,
+        **no_console_window(), **system_tool_env(),
+    )
     return True
 
 
@@ -144,13 +177,42 @@ async def _dispatch(settings: Settings, title: str, body: str | None) -> list[st
     return channels
 
 
-async def deliver_pending(session: AsyncSession, settings: Settings) -> DeliveryResult:
+async def _confidentiality(session: AsyncSession, settings: Settings) -> tuple[bool, EmployerMap]:
+    """`confidential(session)`, which reads every settings row: when one of them no longer
+    validates (the delivery loop then runs on the settings file, kestrel.web.app) it raises, and
+    the one row that matters here, Confidential mode, is read by itself. A bad row elsewhere must
+    neither stop the alerts nor let a push leave the machine unredacted."""
+    try:
+        return await confidential(session)
+    except (ValueError, TypeError):
+        row = await session.get(Setting, "confidential_mode")
+        on = bool(row.value) if row is not None else bool(settings.confidential_mode)
+        return (True, await redaction_map(session)) if on else (False, EmployerMap())
+
+
+async def deliver_pending(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    clock: Callable[[], time] | None = None,
+) -> DeliveryResult:
     """One delivery cycle. Delivers AT MOST ONE message (a single notification, or a summary of
     several), marks every handled notification delivered, and returns what happened. Called on a
-    cadence (default every 60s), so at most one notification reaches the operator per minute."""
+    cadence (default every 60s), so at most one notification reaches the operator per minute.
+
+    Quiet hours (SPEC-INTERFACES 6): inside the window the cycle delivers nothing. To the person,
+    every channel here is a pop-up (the desktop toast, the ntfy push to their phone and the
+    webhook alike), so all of them wait together. The pending rows are left exactly as they are,
+    not marked delivered, which means the first cycle after the window ends finds them and sends
+    the usual single summary. The bell does not depend on this function: it lists every row.
+    `clock` returns the local wall-clock time (default: the machine's); tests pass their own."""
+    global _hold_logged
     result = DeliveryResult()
     if not settings.notify.enabled:
         return result
+    quiet = ui_settings.quiet_now(settings.notify.quiet_hours, clock)
+    if not quiet:
+        _hold_logged = False
 
     pending = (
         (
@@ -165,6 +227,15 @@ async def deliver_pending(session: AsyncSession, settings: Settings) -> Delivery
         .all()
     )
     if not pending:
+        return result
+
+    if quiet:
+        # A kind the operator turned off is not counted as held: it would never be shown anyway.
+        result.held = sum(1 for note in pending if _enabled_for(settings, note))
+        if result.held:
+            report = log.debug if _hold_logged else log.info
+            report("notify_held_quiet_hours", held=result.held)
+            _hold_logged = True
         return result
 
     deliverable = []
@@ -193,7 +264,7 @@ async def deliver_pending(session: AsyncSession, settings: Settings) -> Delivery
     # Confidential mode redacts everywhere. ntfy and the webhook are the two places a
     # notification LEAVES the machine, and a title like "Northwind Freight scored 4.7" would
     # carry the current employer to a third-party push service. Same map Tier 3 uses.
-    conf, mapping = await confidential(session)
+    conf, mapping = await _confidentiality(session, settings)
     title = redact_text(title, mapping, enabled=conf) or ""
     body = redact_text(body or "", mapping, enabled=conf) or ""
 
@@ -207,4 +278,14 @@ async def deliver_pending(session: AsyncSession, settings: Settings) -> Delivery
     result.collapsed = len(deliverable)
     result.title = title
     result.channels = channels
+    if settings.notify.sound:
+        # Kestrel's own sound, once, with the one message this cycle delivered: never more than
+        # once a minute, never inside Quiet hours or for a kind that is turned off (those returned
+        # above), and independent of the window and of the Computer notifications switch.
+        try:
+            result.sounded = await alert_sound.play_async(
+                settings.notify.sound_name, settings.notify.sound_volume
+            )
+        except Exception as exc:  # a sound that cannot play never undoes a delivery
+            log.debug("notify_sound_failed", error=str(exc))
     return result
