@@ -235,3 +235,18 @@ def browser_fallback(monkeypatch):
     from tests.browser import use_browser_fallback
 
     return use_browser_fallback(monkeypatch)
+
+
+# pytest puts each running test's id in the PYTEST_CURRENT_TEST environment variable, and Windows
+# caps a variable at 32,767 characters: a parametrized id built from a huge value errors before the
+# test runs, on Windows CI only. Fail at collection everywhere instead (keep ids short with `ids=`).
+_MAX_TEST_ID = 30_000  # under the 32,767 cap, with room for " (setup)"
+
+
+def pytest_collection_modifyitems(config, items):
+    too_long = [item.nodeid[:120] + "..." for item in items if len(item.nodeid) > _MAX_TEST_ID]
+    if too_long:
+        raise pytest.UsageError(
+            f"test ids longer than {_MAX_TEST_ID} characters break Windows; give the parametrize "
+            f"short ids: {too_long[:3]}"
+        )

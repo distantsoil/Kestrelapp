@@ -1,33 +1,48 @@
 # What's new in Kestrel
 
-This page covers the current release described in [CHANGELOG.md](../CHANGELOG.md). The unreleased entry updates the model credits; the latest published feature list is 0.6.5.
+This page covers the current release, 0.7.0, the Release Candidate for 1.0. The full list is in
+[CHANGELOG.md](../CHANGELOG.md).
 
-## Prepare for an interview
+## A new look
 
-When you mark a role Applied, Kestrel can write up to 12 likely interview questions. Each includes why it might be asked and links to one of your own stories when a story fits. Open **Interview prep** from the role to review the pack and practice.
+Every screen is redesigned. The window is frameless, with minimize, maximize and close in the
+sidebar (macOS keeps its own buttons), and it reopens at the size and place you left it. Press
+**Ctrl K** (or **Cmd K** on a Mac) to open the command palette and jump to a role, a company, a
+setting or an action. Page changes, tabs, folds and saves have gentle motion; your system's
+reduce-motion setting turns it off.
 
-## Find better titles
+## Smoother
 
-Kestrel can suggest job titles from your resume and the roles you pursue. A suggestion does not change your search until you press **Accept**. Dismissed titles stay dismissed.
+Moving between pages no longer reloads the window: the sidebar, top row and header art stay put
+and only the page changes. Back and Forward work as before. If you prefer each page loaded fresh,
+turn on **Classic page loads** in Settings > Preferences. The setup wizard now slides smoothly
+from one step to the next.
 
-## Keep the Applications board manageable
+## More places to find roles
 
-Show recent activity from the last 7, 14, 30, or 90 days, limit cards in a column, and fold Closed. Kestrel remembers those choices. A role with no reply for three weeks can offer **Mark as ghosted?**. You can also remove a role from your shortlist from its board card.
+When you add a job board search you can tick USAJobs or Adzuna (each with your own free key),
+Himalayas and We Work Remotely for remote roles, and the Recruitee, Teamtailor, Personio and
+Breezy HR hiring systems. You can also paste any company careers page that publishes its jobs
+for search engines.
 
-## See why a role is waiting
+## Fewer irrelevant roles
 
-Pipeline now gives applied roles their own group. Roles still waiting for a score say whether they are queued, being scored, waiting in the background, held, or not queued. Unrelated fetched titles are skipped and counted on each run. The **Sources** page has **Score everything now** to recheck an older background queue and score remaining matches on local models only.
+Roles outside your search area, and roles whose titles are unrelated to the ones you target, are
+dropped before they are stored or scored, so they cost no time or money. Top matches on Today
+shows fully reviewed roles only.
 
-## Find more company postings
+## Alerts on your terms
 
-Kestrel reads public company boards on Rippling, ADP Workforce Now, Paylocity, and Workable as well as the boards already supported. People with their own paid RemoteRocketship key can use it to find links to employer postings; Kestrel then reads the employer's page.
+Turn on **Play a sound** in Settings > Preferences to hear Kestrel's own sound with each alert it
+shows, even with the window hidden. Pop-ups themselves are silent. **Quiet hours** hold pop-ups
+(on this computer, by phone or by webhook) until the hours end, then send one summary.
 
-## Control models and access in the app
+## Safer
 
-Use **Models** to change the model assigned to a scoring step. If you enable local network access, Settings requires a shared secret and applies the change after a restart. With an OpenRouter key, the status rail can show what you have spent this month.
+The libraries Kestrel bundles are updated past their known vulnerabilities, and error messages
+on screen never include file paths or other internal details; the log keeps those.
 
-## Clearer status and fewer false alarms
+## Release Candidate
 
-A posting is marked closed only after two checks find it gone. The role page explains the closure. When an online account runs out of credit, Kestrel names the service and stops sending there; it does not switch services on its own. Error messages no longer expose technical details in the app.
-
-The About page and credits now name MiniMax M3, Kimi K2.7, and MiMo alongside the other models used to build Kestrel.
+0.7.0 is the Release Candidate for 1.0. The installers are not signed yet: the
+[README](../README.md) explains the one-time step on Windows and macOS.

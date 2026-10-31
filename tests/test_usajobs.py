@@ -411,6 +411,9 @@ def test_the_email_check_agrees_with_the_old_pattern_on_ordinary_input(value):
         "!@" * 25_000,
         " " * 50_000,
     ],
+    # Short ids: pytest puts the test id in an environment variable, which Windows caps at
+    # 32,767 characters, so a 50,000-character id fails before the test runs.
+    ids=["bangs", "at-bangs", "at-dots", "at-bang-dots", "bang-at", "spaces"],
 )
 def test_a_long_hostile_email_is_refused_in_well_under_a_second(hostile):
     start = time.perf_counter()

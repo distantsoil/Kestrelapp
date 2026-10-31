@@ -597,8 +597,9 @@ def test_linux_prefers_paplay_then_aplay(monkeypatch, popen):
     assert alert_sound._start(Path("/tmp/a.wav")) is True
     monkeypatch.setattr(alert_sound.shutil, "which", _which("aplay"))
     assert alert_sound._start(Path("/tmp/b.wav")) is True
-    assert [a for a, _ in popen.started] == [["/usr/bin/paplay", "/tmp/a.wav"],
-                                             ["/usr/bin/aplay", "-q", "/tmp/b.wav"]]
+    # str(Path(...)): the path's own spelling on the machine running the test (Windows CI).
+    assert [a for a, _ in popen.started] == [["/usr/bin/paplay", str(Path("/tmp/a.wav"))],
+                                             ["/usr/bin/aplay", "-q", str(Path("/tmp/b.wav"))]]
 
 
 @pytest.mark.parametrize(("platform", "tool"), [("darwin", "afplay"), ("linux", "paplay, aplay")])
