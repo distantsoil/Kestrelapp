@@ -768,6 +768,25 @@
       var now = swap === 'outerHTML' ? d.target.outerHTML : d.target.innerHTML;
       if (norm(now) === norm(d.xhr.responseText)) d.shouldSwap = false;
     });
+    // A request a person made that fails (an error answer, or no answer) always says so: htmx
+    // swaps nothing on an error, so without this a press looked like it did nothing (issue #50).
+    // Only a press, a submit, a change or a key counts: polls, lazy loads and background
+    // htmx.ajax calls stay quiet. A page that explains its own failure sets detail.kHandled.
+    var PERSON = /^(click|submit|change|input|search|keyup|keydown)$/;
+    var failed = function (e) {
+      var d = e.detail || {};
+      var ev = d.requestConfig && d.requestConfig.triggeringEvent;
+      if (!ev || !PERSON.test(ev.type)) return;
+      setTimeout(function () {
+        if (d.kHandled) return;
+        toast(e.type === 'htmx:sendError'
+          ? 'Kestrel did not answer, so nothing changed. Try again in a moment.'
+          : 'That did not go through, so nothing changed. Try again; if it keeps happening, report it with a diagnostics file from Settings.',
+          { tone: 'warn' });
+      }, 0);
+    };
+    doc.addEventListener('htmx:responseError', failed);
+    doc.addEventListener('htmx:sendError', failed);
     // A click on a page in the sidebar moves the highlight at once, so the click visibly lands
     // while the next page loads (owner round 15: a lag read as a missed click).
     doc.addEventListener('click', function (e) {

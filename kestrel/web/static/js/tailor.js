@@ -417,7 +417,7 @@
     var path = String((e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath) || '');
     if (path.indexOf('/renders/') !== 0 || !xhr) return;
     var text = plain(xhr.responseText, xhr.getResponseHeader('Content-Type'));
-    if (text && text.length < 240) toast(text);
+    if (text && text.length < 240) { e.detail.kHandled = true; toast(text); }
   }
 
   function onFrameLoad(e) {

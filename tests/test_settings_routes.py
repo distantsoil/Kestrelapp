@@ -515,6 +515,29 @@ def test_import_wizard_maps_reviews_adds_and_undo_removes_only_those_rows():
         assert not _undo(c, t["undoUrl"])["ok"]  # used up
 
 
+def test_import_wizard_takes_a_tracker_past_starlettes_form_defaults():
+    """Issue #50: every step carries the whole file in one field and Add sends one field per row,
+    so Starlette's defaults (1 MB a field url-encoded, 1,000 fields) answered 400 and the card
+    showed nothing. A tracker the importer accepts must get through every step."""
+    note = "Easy Apply | résumé v12, follow-up 10/08 with the recruiter; " * 30
+    rows = ["| Company | Role | Date | Status | Notes |", "| --- | --- | --- | --- | --- |"]
+    rows += [f"| Org {i} | Analyst {i} | 2026-09-{i % 28 + 1:02d} | | {note} |" for i in range(600)]
+    text = "\n".join(rows) + "\n"
+    assert len(text.encode()) > 1_000_000  # past 1 MB before url-encoding adds more
+    maps = {f"map_{i}": v for i, v in enumerate(("company", "title", "date", "status", "notes"))}
+    with _client() as c:
+        review = c.post("/settings/data/applied/review",
+                        data={"text": text, "file_name": "t.md", **maps})
+        assert review.status_code == 200 and 'data-step="2"' in review.text
+        body = {"text": text, "file_name": "t.md"}
+        for i in range(1, 601):  # 1,202 fields: a stage chosen on every row
+            body[f"include_{i}"] = "on"
+            body[f"status_{i}"] = "applied"
+        add = c.post("/settings/data/applied/add", data=body)
+        assert add.status_code == 200 and "600 applications added" in add.text
+        assert len(_all(select(Pursuit.id))) == 600
+
+
 def test_import_wizard_refuses_missing_required_columns_and_reads_a_spreadsheet():
     from kestrel.services import xlsx_text
 

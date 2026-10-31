@@ -55,7 +55,7 @@ from kestrel.web import settings_io as io
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages.settings_roles import trigger
-from kestrel.web.uploads import UploadTooLarge, read_upload
+from kestrel.web.uploads import UploadTooLarge, large_form, read_upload
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -186,7 +186,7 @@ def _imp_base(**extra: Any) -> dict:
 async def _file_text(request: Request) -> tuple[str, str, str]:
     """(text, file name, error) from the chosen file or the sample. A spreadsheet is read as its
     first sheet; every other file is read as text (UTF-8, a BOM tolerated)."""
-    form = await request.form()
+    form = await large_form(request, max(svc.MAX_ROWS, cx.MAX_ROWS))
     if form.get("sample"):
         return _SAMPLE_APPLIED, "sample-applications.csv", ""
     upload = form.get("file")
@@ -256,7 +256,7 @@ def _mapping(form: Any) -> dict[int, str]:
 @router.post("/settings/data/applied/review", response_class=HTMLResponse)
 async def applied_review(request: Request):
     """Step 2 to 3: apply the column choices and show every row, each untickable."""
-    form = await request.form()
+    form = await large_form(request, max(svc.MAX_ROWS, cx.MAX_ROWS))
     text = str(form.get("text") or "")
     name = str(form.get("file_name") or "")
     if not text.strip():
@@ -299,7 +299,7 @@ async def applied_add(request: Request):
     """Step 3 to 4: write only the ticked rows. Nothing is added before this press. The Undo
     token carries the pursuits and hidden roles this created and the cards it changed, and
     removes only those."""
-    form = await request.form()
+    form = await large_form(request, max(svc.MAX_ROWS, cx.MAX_ROWS))
     text = str(form.get("text") or "")
     name = str(form.get("file_name") or "")
     if not text.strip():
@@ -597,7 +597,7 @@ async def _similar(session: Any, name: str, org_id: int | None) -> list[dict]:
 async def contacts_read(request: Request):
     """Phase 1: read the file, show the counts, the company matches and (for a newer file) what
     changed. Nothing is stored. The email column is never read."""
-    form = await request.form()
+    form = await large_form(request, max(svc.MAX_ROWS, cx.MAX_ROWS))
     base = await contacts_state(request)
     if form.get("sample"):
         text, name = _SAMPLE_CONTACTS, "sample-connections.csv"
@@ -643,7 +643,7 @@ async def contacts_read(request: Request):
 async def contacts_apply(request: Request):
     """Phase 1 and 2 together: store the file as reviewed. Rulings on Possible matches are
     recorded after the import so they attach to the people it created."""
-    form = await request.form()
+    form = await large_form(request, max(svc.MAX_ROWS, cx.MAX_ROWS))
     try:
         parsed = _load(str(form.get("payload") or "[]"), int(form.get("skipped") or 0))
     except (ValueError, TypeError, KeyError):

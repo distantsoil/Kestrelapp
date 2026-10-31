@@ -201,6 +201,7 @@
   }
   function onResponseError(e) {
     var xhr = e.detail && e.detail.xhr;
+    if (xhr && xhr.status === 404) e.detail.kHandled = true;
     if (xhr && xhr.status === 404) say('That is no longer here. Reload the page to see what changed.', 'warn');
   }
 

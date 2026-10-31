@@ -97,3 +97,15 @@ async def read_upload(
                 raise too_large()
             chunks.append(chunk)
         return b"".join(chunks)
+
+
+LARGE_FIELD = 25 * 1024 * 1024 * 6  # a 25 MB file, url-encoded: a line break is %0D%0A
+
+
+async def large_form(request: Any, max_rows: int) -> Any:
+    """The form of an import step. These carry the whole file from one step to the next (a
+    hidden field) and up to three fields per row, so Starlette's defaults (1 MB a url-encoded
+    field, 1,000 fields) refused a tracker the importer accepts with a 400 the page never
+    showed (issue #50, D-IMPORT-7). The limits follow the importers' own caps; the app listens
+    on 127.0.0.1 only."""
+    return await request.form(max_fields=max_rows * 3 + 100, max_part_size=LARGE_FIELD)

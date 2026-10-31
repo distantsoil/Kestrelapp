@@ -197,7 +197,7 @@ async def test_spreadsheet_conversion_runs_outside_request_thread(monkeypatch) -
     converted_threads = []
     upload = UploadFile(io.BytesIO(_workbook("A1", "A2")), filename="tracker.xlsx")
 
-    async def form():
+    async def form(**_limits):
         return {"file": upload}
 
     def convert(data):
