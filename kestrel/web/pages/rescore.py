@@ -498,7 +498,7 @@ async def rescore(request: Request):
                 if override is None:
                     return answer(f"Not queued: {why}", ok=False)
             result = await enqueue_rescore(
-                s, ids, model_override=override, tier0_anyway=anyway,
+                s, ids, model_override=override, tier0_anyway=anyway, score_stubs=True,
                 explain=rule_explainer(s, settings),
                 online_approval=form.get("online_approval"),
             )

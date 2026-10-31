@@ -33,6 +33,12 @@
     {% endfor %}
   </div>
 
+  {% if readiness.show_notice or rescoring %}
+  <div class="pf-note pf-note--warn" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
+    {% set back = '/profile?tab=' ~ tab ~ '&track=' ~ track %}{% include "partials/profile_next_step.html" %}
+  </div>
+  {% endif %}
+
   {% if track in about_missing and not profile_problem and tab not in ('stories',) %}
   <div class="pf-note pf-note--warn" data-testid="about-missing">
     <b>About you ({{ track }}) has no name yet{% if tab == 'about' %}.{% else %}:{% endif %}</b>

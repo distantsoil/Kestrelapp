@@ -28,7 +28,8 @@ async def _director(sm, **kw) -> int:
             comp_max=250000, comp_source="parsed", remote_type="remote", country="US",
             location_raw="Remote (US)", date_posted=_recent(), seen_count=1, ghost_score=0.1,
             stage="t0_reject", stage_reason=_REASON,
-            description_md="Own IT services, budget and vendor accountability.",
+            description_md="Own IT services, budget and vendor accountability."
+            + " Details follow." * 20,  # over the Tier 2 stub floor (D-SRC-14)
         )
         for k, v in kw.items():
             setattr(o, k, v)

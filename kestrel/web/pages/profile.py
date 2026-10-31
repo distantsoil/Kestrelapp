@@ -138,6 +138,18 @@ async def _confidential_ctx(note: str | None = None, problem: str | None = None)
         "inferred": bool(first and first["inferred"]), "note": note, "problem": problem}}
 
 
+async def readiness_ctx(request: Request, track: str) -> dict:
+    """What the next-step notice (partials/profile_next_step.html) prints, for any page that
+    renders profile.html."""
+    from kestrel.services.profile_readiness import load_readiness
+    from kestrel.web.deps import sessionmaker
+    from kestrel.web.pages.today import _rescoring
+
+    async with sessionmaker()() as s:
+        readiness = await load_readiness(s, track)
+    return {"readiness": readiness, "rescoring": _rescoring(request)}
+
+
 @router.get("/profile", response_class=HTMLResponse)
 async def profile(request: Request):
     tab = request.query_params.get("tab") or "about"
@@ -160,7 +172,43 @@ async def profile(request: Request):
     if tab == "stories":
         ctx.update(await _stories_ctx())
     ctx["story_count"] = await _story_count()
+    ctx.update(await readiness_ctx(request, ctx["track"]))
     return templates().TemplateResponse(request, "profile.html", ctx)
+
+
+@router.post("/api/profile/score-again")
+async def score_again(request: Request):
+    """Queue the roles scored before the profile's proof points for scoring again (issue #67).
+    The list is read here again, never taken from the form, and `enqueue_rescore` is idempotent,
+    so a second press queues nothing new. Plain redirect back; nothing is sent anywhere new:
+    an online model still needs the operator's confirmation, which this route cannot give."""
+    from fastapi.responses import RedirectResponse
+
+    from kestrel.queue.rescore import enqueue_rescore
+    from kestrel.services.online_consent import approval_problem
+    from kestrel.services.profile_readiness import load_readiness
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web.deps import sessionmaker
+
+    form = await request.form()
+    track = str(form.get("track") or "employment")
+    back = str(form.get("back") or "/")
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/"
+    sep = "&" if "?" in back else "?"
+    queued = 0
+    async with sessionmaker()() as s:
+        readiness = await load_readiness(s, track)
+        if readiness.role_ids:
+            settings = await load_settings_with_db(s)
+            if await approval_problem(s, settings, ("tier1", "tier2"), {}):
+                return RedirectResponse(f"{back}{sep}rescore=confirm", status_code=303)
+            result = await enqueue_rescore(s, readiness.role_ids)
+            await s.commit()
+            queued = len(result.queued) + len(result.already)
+    return RedirectResponse(
+        f"{back}{sep}rescoring={queued}" if queued else back, status_code=303
+    )
 
 
 async def _queue_recheck(tracks: list[str]) -> int:
@@ -324,7 +372,9 @@ async def confidential_save(request: Request):
 
 
 # ----------------------------------------------------------------------------------- stories
-async def _stories_ctx(notice: str | None = None, error: str | None = None) -> dict:
+async def _stories_ctx(
+    notice: str | None = None, error: str | None = None, undo_url: str | None = None
+) -> dict:
     """The Stories tab: the same canonical story bank as /stories and Interview prep. Every
     word shown is the person's own; a draft the model proposed is marked as one."""
     from kestrel.web.deps import sessionmaker
@@ -334,7 +384,8 @@ async def _stories_ctx(notice: str | None = None, error: str | None = None) -> d
     async with sessionmaker()() as s:
         stories = await _canonical_stories(s)
         build = await _build_ctx(s)
-    return {"stories": stories, "story_notice": notice, "story_error": error, **build}
+    return {"stories": stories, "story_notice": notice, "story_error": error,
+            "story_undo_url": undo_url, **build}
 
 
 def _stories_response(request: Request, ctx: dict):
@@ -381,6 +432,37 @@ async def stories_build(request: Request):
     return _stories_response(request, await _stories_ctx(notice=(
         "Building stories in the background. They appear here as drafts when it finishes."
         if queued else "A build is already running. Drafts appear here when it finishes.")))
+
+
+@router.post("/profile/stories/dismiss-all", response_class=HTMLResponse)
+async def story_dismiss_all(request: Request):
+    """Clear all drafts (#65): dismiss every proposed story so Build never proposes it again. A
+    story the operator saved is never touched. The button asks first (hx-confirm)."""
+    from kestrel.interview.stories import dismiss_all_drafts
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        count, group = await dismiss_all_drafts(s)
+    notice = (
+        f"Cleared {count} draft{'' if count == 1 else 's'}. Build stories will not propose them "
+        "again." if count else None
+    )
+    return _stories_response(request, await _stories_ctx(
+        notice=notice, error=None if count else "There are no drafts to clear.",
+        undo_url=f"/profile/stories/undo-dismiss-all/{group}" if group else None))
+
+
+@router.post("/profile/stories/undo-dismiss-all/{group}", response_class=HTMLResponse)
+async def story_undo_dismiss_all(request: Request, group: str):
+    """Undo Clear all drafts from Profile: the same ten-minute undo as the bank, then the list."""
+    from kestrel.interview.stories import undo_dismissal_group
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        ok = await undo_dismissal_group(s, group)
+    return _stories_response(request, await _stories_ctx(
+        notice="Drafts restored." if ok else None,
+        error=None if ok else "This can no longer be undone."))
 
 
 @router.post("/profile/stories/{story_id}/delete", response_class=HTMLResponse)

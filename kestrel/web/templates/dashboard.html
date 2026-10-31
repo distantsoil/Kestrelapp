@@ -25,6 +25,13 @@
   {# The one-time local announcement (D-UI-157): Today only, under the what's-new card. #}
   <div id="announcement-slot" hx-get="/announcements" hx-trigger="load" hx-swap="innerHTML"></div>
 
+  {% if readiness.show_notice or rescoring %}
+  <link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
+  <div class="sf-notice" role="status" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
+    {% set back = '/?track=' ~ track %}{% include "partials/profile_next_step.html" %}
+  </div>
+  {% endif %}
+
   {% if finish %}
   <div class="td-finish" id="finish-setup" data-testid="finish-setup" role="status">
     <span class="k-badge k-badge--warn">{{ ui.icon('alert') }}</span>

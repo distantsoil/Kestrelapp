@@ -105,7 +105,7 @@
     {% macro chip(label, name, value, on, count=none, testid=none) -%}
       <button type="button" class="k-chip{% if on %} is-on{% endif %}"
               hx-get="/opportunities" hx-include="#pipeline-form" {{ swap|safe }}
-              hx-vals='{"{{ name }}": "{{ '' if on else value }}", "page": "1", "lim_worth": "", "lim_maybe": "", "lim_applied": "", "lim_new": "", "lim_failed": ""}'
+              hx-vals='{"{{ name }}": "{{ '' if on else value }}", "page": "1", "lim_worth": "", "lim_maybe": "", "lim_applied": "", "lim_new": "", "lim_unscored": "", "lim_failed": ""}'
               aria-pressed="{{ 'true' if on else 'false' }}"
               data-chip="{{ testid or name }}">{{ label }}{% if count is not none %}<span class="k-chip__n">{{ count }}</span>{% endif %}</button>
     {%- endmacro %}

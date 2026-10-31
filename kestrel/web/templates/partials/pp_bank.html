@@ -17,7 +17,9 @@
     <p class="k-muted pp-status" data-testid="build-status">
       {%- if building %}Building now. This page updates when it finishes.
       {%- elif build_failed %}<span data-testid="build-failed">Last build failed: {{ build_failed }} {% if not (build_route and build_route.online) %}· <button class="k-btn k-btn--sm" type="button" hx-post="/stories/build" hx-swap="none">Try again</button>{% else %}· Press Build stories and confirm the send to try again.{% endif %}</span>
-      {%- elif last_build and last_build.ok %}Last build: {{ last_build.created }} new draft{{ "" if last_build.created == 1 else "s" }}, {{ last_build.attached }} matched to a story you already have, from {{ last_build.sketches }} note or sketch{{ "" if last_build.sketches == 1 else "es" }}.{% if last_build.sketches == 0 %} Nothing new to build from: save notes on a prep page, or score more roles.{% endif %}
+      {%- elif last_build and last_build.ok and not last_build.created and not last_build.attached and last_build.skipped and not last_build.sketches %}<span data-testid="build-nothing">Nothing to build from yet. Add proof points on Profile &gt; Documents, then score your roles again.</span>
+      {%- elif last_build and last_build.ok and not last_build.created and not last_build.attached %}<span data-testid="build-nothing">Nothing new to build from: save notes on a prep page, or score more roles.</span>
+      {%- elif last_build and last_build.ok %}Last build: {{ last_build.created }} new draft{{ "" if last_build.created == 1 else "s" }}, {{ last_build.attached }} matched to a story you already have, from {{ last_build.sketches }} note or sketch{{ "" if last_build.sketches == 1 else "es" }}.
       {%- elif last_build %}Last build did not finish: {{ last_build.error }}
       {%- else %}Your interview stories, in your own words. A draft is yours once you save it; nothing rewrites it after that. Dismiss a draft you do not want and Build will not propose it again.{% endif %}
     </p>
@@ -51,7 +53,8 @@
 
   {%- if drafts %}
   <section class="k-card pp-merge" data-testid="pp-merge">
-    <header class="k-sec-head"><span class="k-badge">{{ i.pi('merge') }}</span><div class="k-grow"><h3>Kestrel found similar stories</h3></div><span class="k-pill k-pill--info">{{ drafts|length }} to review</span></header>
+    <header class="k-sec-head"><span class="k-badge">{{ i.pi('merge') }}</span><div class="k-grow"><h3>Kestrel found similar stories</h3></div><span class="k-pill k-pill--info">{{ drafts|length }} to review</span>
+      <button type="button" class="k-btn k-btn--sm" hx-post="/stories/dismiss-all" hx-vals='{"from": "bank"{% if opp_id %}, "opp": "{{ opp_id }}"{% endif %}}' hx-swap="none" hx-confirm="Clear all {{ drafts|length }} draft{{ '' if drafts|length == 1 else 's' }}? Stories you saved are not touched. Build stories will not propose them again." data-testid="clear-drafts">Clear all drafts</button></header>
     {%- for d in drafts %}
     <div class="pp-prop" id="story-{{ d.id }}" data-testid="pp-proposal">
       <p class="pp-body">Kestrel put these role write-ups together as one story. Review it in your own words?</p>

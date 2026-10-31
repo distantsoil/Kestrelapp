@@ -136,6 +136,9 @@ class JobSpyAdapter:
             comp_max=_num(_v(row, "max_amount")),
             comp_currency=_str(_v(row, "currency")),
             comp_interval=interval,
+            # Glassdoor's pay is its p10-p90 estimate (jobspy glassdoor _parse_salary), never
+            # a figure the employer posted.
+            comp_is_estimate=str(_v(row, "site") or "").lower() == "glassdoor",
             date_posted=_str(_v(row, "date_posted")),
             # Indeed exposes these three via JobSpy (SPEC.md 5.4).
             size_band=_str(_v(row, "company_num_employees") or _v(row, "company_employees_label")),

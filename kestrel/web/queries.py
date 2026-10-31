@@ -40,11 +40,13 @@ from kestrel.services import run_model
 from kestrel.services.hidden_orgs import not_hidden_org_clause, opp_visible_clause
 from kestrel.urls import safe_web_url
 from kestrel.web.fit import (
+    EMPTY_POSTING_STAGE_REASON,
     GROUP_APPLIED,
     GROUP_FAILED,
     GROUP_MAYBE,
     GROUP_NEW,
     GROUP_NOT_FIT,
+    GROUP_UNSCORED,
     GROUP_WORTH,
     Fit,
     failure_words,
@@ -264,7 +266,9 @@ _PARKED_STAGES = ("quarantined", "error")
 # scored and Scoring failed. Applied follows Worth a look and
 # Maybe: roles the operator already acted on, off the review queue (D-UI-51 amended). The index is
 # the CASE value _group_expr returns.
-GROUP_ORDER = (GROUP_WORTH, GROUP_MAYBE, GROUP_APPLIED, GROUP_NOT_FIT, GROUP_NEW, GROUP_FAILED)
+GROUP_ORDER = (
+    GROUP_WORTH, GROUP_MAYBE, GROUP_APPLIED, GROUP_NOT_FIT, GROUP_NEW, GROUP_UNSCORED, GROUP_FAILED,
+)
 _G = {key: i for i, key in enumerate(GROUP_ORDER)}
 # Task types that score a role, and the stages a task can be in while it is live.
 _SCORING_TASKS = ("embed", "t1", "t2", "t3", "rescore")
@@ -574,6 +578,15 @@ def _group_expr():
     mine = VerdictOverride.operator_verdict
     return case(
         (failed_scoring_clause(), _G[GROUP_FAILED]),
+        # A posting with no body that nothing is scoring: Not scored (D-SRC-14), not Being scored.
+        (
+            and_(
+                Opportunity.stage == "t1_pass",
+                Opportunity.stage_reason == EMPTY_POSTING_STAGE_REASON,
+                ~live_scoring_exists(),
+            ),
+            _G[GROUP_UNSCORED],
+        ),
         (being_scored, _G[GROUP_NEW]),
         (
             and_(
@@ -628,8 +641,10 @@ def row_fit(
     puts it in when there is one (fit.operator_group, D-UI-51), except that a role not scored
     yet stays in Being scored or Scoring failed. `live` is live_scoring_exists for the row.
     _group_expr is the SQL twin."""
-    fit = fit_for(ev, opp.stage, t0_rules=t0_rules(opp), live=live)
-    if fit.group in (GROUP_NEW, GROUP_FAILED):  # outranks the operator's label (_group_expr)
+    fit = fit_for(ev, opp.stage, t0_rules=t0_rules(opp), live=live,
+                  stage_reason=opp.stage_reason)
+    # These outrank the operator's label (_group_expr).
+    if fit.group in (GROUP_NEW, GROUP_UNSCORED, GROUP_FAILED):
         return fit
     group = operator_group(operator_verdict, pursued=pursued, pursuit_status=pursuit_status)
     return replace(fit, group=group) if group and group != fit.group else fit

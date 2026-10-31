@@ -1050,3 +1050,14 @@ html[data-reduce-motion="1"] *::after { animation: none !important; transition: 
   border-radius: var(--r-sm); background: var(--tint-info); }
 .doc-online-send ul { margin: var(--sp-2) 0; padding-left: var(--sp-5); }
 .doc-online-send p { margin: var(--sp-2) 0 0; }
+
+/* A form that sits inside a line of text (Score again in a notice). */
+.k-form-inline { display: inline; margin: 0; }
+
+/* Proof points listed for approval on the resume import review. */
+.k-proof-list { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px;
+  margin: 10px 0; background: var(--paper); }
+.k-proof-list legend { font-weight: 700; padding: 0 6px; }
+.k-proof-list__hint { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-sm); }
+.k-proof-list__row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
+.k-proof-list__ev { display: block; color: var(--muted); font-size: var(--fs-sm); }

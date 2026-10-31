@@ -17,6 +17,7 @@ keeps the phase migration-free (see the private decision log)."""
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -55,6 +56,12 @@ _CONSUMED_KEY = "consolidation.consumed_sketch_ids"
 # skips a sketch whose text is unchanged since it was dismissed, so a dismissed draft is never
 # proposed again, while a note the operator later rewrites is a new thing and is read again.
 DISMISSED_KEY = "stories.dismissed_sketches"
+_GROUP_PREFIX = "stories.dismiss_undo.group."
+# Sketches whose cluster the model refused to merge: {sketch id (str): fingerprint of its text}.
+# A separate map from the dismissed one, so nothing is hidden from the operator and undo is
+# unaffected. A later build skips a sketch only while its text is unchanged (a refused cluster is
+# not asked again at full model cost); an operator note is never put here.
+REFUSED_KEY = "stories.refused_sketches"
 
 
 @dataclass
@@ -82,9 +89,81 @@ class Sketch:
         )
 
 
+# ------------------------------------------------------------------ placeholder / refusal checks
+# Text a model writes when the profile had nothing to draw on. Matched against the whole field
+# after normalizing (lowercase, punctuation to spaces), so a real sentence that merely contains
+# one of these words is never treated as a placeholder.
+_PLACEHOLDER_PHRASES = frozenset({
+    "n a", "na", "none", "nil", "not applicable", "not available", "no content available",
+    "no content", "your own example", "not provided", "not specified", "unknown",
+    "no information available", "not available from your profile",
+})
+# Phrases a merge result uses, at the START of its title, to say it could not build a story.
+_REFUSAL_TITLE_RE = re.compile(
+    r"^\W*(unmergeable|unrecoverable|unresolved|no story\b|no source content|insufficient source"
+    r"|canonical story could not|story could not be (produced|reconstructed|built))",
+    re.IGNORECASE,
+)
+# Words a refusal body uses about itself; judged only on a short field and only together with a
+# refusal title.
+_REFUSAL_BODY_PHRASES = (
+    "could not be", "unmergeable", "no story", "insufficient", "no source content",
+    "unrecoverable", "unresolved", "no substantive", "not enough",
+)
+_REFUSAL_FIELD_MAX = 160
+_STAR_FIELDS = ("situation", "task", "action", "result", "reflection")
+
+
+def _normalize(text: object) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split())
+
+
+def is_placeholder_text(text: object) -> bool:
+    """True for an empty field or one that is only placeholder text ("Not available from your
+    profile", "No content available.", "Your own example.", "n/a" ...). Conservative: only a
+    short field that is exactly a known phrase, or says a profile item is not available."""
+    n = _normalize(text)
+    if not n or n in _PLACEHOLDER_PHRASES:
+        return True
+    return len(n.split()) <= 12 and "from your profile" in n and "not available" in n
+
+
+def is_placeholder_sketch(sketch: Sketch) -> bool:
+    """A sketch with nothing to build a story from: every STAR field empty or placeholder text.
+    An operator note is their own text, so it only counts when it is completely empty."""
+    fields = [getattr(sketch, f) for f in _STAR_FIELDS]
+    if sketch.kind == "note":
+        return not any(str(f or "").strip() for f in fields)
+    return all(is_placeholder_text(f) for f in fields)
+
+
+def _empty_or_self_referential(text: object) -> bool:
+    if is_placeholder_text(text):
+        return True
+    t = str(text or "")
+    return len(t) <= _REFUSAL_FIELD_MAX and any(p in t.lower() for p in _REFUSAL_BODY_PHRASES)
+
+
+def is_unusable_story(title: object, **fields: object) -> bool:
+    """A merge result that is not a story: no title, every STAR field empty or placeholder, or a
+    title that LEADS with a refusal ("Unmergeable: ...", "No story available") while every STAR
+    field is empty, placeholder or a short statement about the refusal itself. A real sentence
+    that merely contains such a word ("Cleared the backlog of unresolved incidents") is never
+    judged unusable. Works on already-validated strings only."""
+    if not str(title or "").strip():
+        return True
+    bodies = [fields.get(f) for f in _STAR_FIELDS]
+    if all(is_placeholder_text(b) for b in bodies):
+        return True
+    return bool(_REFUSAL_TITLE_RE.match(str(title))) and all(
+        _empty_or_self_referential(b) for b in bodies
+    )
+
+
 @dataclass
 class ConsolidationResult:
     sketches: int = 0
+    skipped: int = 0  # placeholder sketches left out, and sketches whose merge was discarded
     clusters: int = 0
     created_story_ids: list[int] = field(default_factory=list)
     attached: list[dict] = field(default_factory=list)  # [{story_id, sketches, operator_edited}]
@@ -119,6 +198,11 @@ async def _get_dismissed(session: AsyncSession) -> dict[str, str]:
     return dict(row.value) if row is not None and isinstance(row.value, dict) else {}
 
 
+async def _get_refused(session: AsyncSession, *, fresh: bool = False) -> dict[str, str]:
+    row = await session.get(Setting, REFUSED_KEY, populate_existing=fresh)
+    return dict(row.value) if row is not None and isinstance(row.value, dict) else {}
+
+
 def question_text(question: str | None) -> str:
     """A likely question as stored on a usage row: stripped, inner whitespace collapsed."""
     return " ".join((question or "").split())
@@ -147,6 +231,7 @@ async def dismiss_draft(
                 await session.delete(old)
     story = await session.get(Story, story_id)
     if story is None or story.operator_edited:
+        await session.rollback()  # end the write transaction opened above
         return False
     usages = (
         await session.execute(select(StoryUsage).where(StoryUsage.story_id == story_id))
@@ -186,6 +271,56 @@ async def dismiss_draft(
     return True
 
 
+async def dismiss_all_drafts(session: AsyncSession) -> tuple[int, str | None]:
+    """Dismiss every proposed story (never an operator-edited one) with `dismiss_draft`, so none
+    comes back on the next build. Returns (count, group token). The token undoes the whole clear
+    through `undo_dismissal_group` for ten minutes; None when there was nothing to clear."""
+    ids = (
+        await session.scalars(
+            select(Story.id).where(Story.is_canonical.is_(True), Story.operator_edited.is_(False))
+        )
+    ).all()
+    await session.rollback()  # end the read; dismiss_draft opens its own write transaction
+    tokens: list[str] = []
+    for story_id in ids:
+        token = dismissal_token()
+        try:
+            if await dismiss_draft(session, story_id, undo_token=token):
+                tokens.append(token)
+        except Exception:  # noqa: BLE001 - one draft that cannot be cleared must not stop the rest
+            await session.rollback()
+            log.warning("story_dismiss_all_item_failed", story=story_id)
+    if not tokens:
+        return 0, None
+    group = dismissal_token()
+    await _set_setting(
+        session, _GROUP_PREFIX + group, {"expires": time.time() + 600, "tokens": tokens}
+    )
+    await session.commit()
+    return len(tokens), group
+
+
+async def undo_dismissal_group(session: AsyncSession, group: str) -> bool:
+    """Restore the drafts a clear-all removed. True when at least one came back."""
+    row = await session.get(Setting, _GROUP_PREFIX + group)
+    if row is None or row.value["expires"] < time.time():
+        return False
+    tokens = list(row.value["tokens"])
+    await session.rollback()
+    restored = False
+    for token in reversed(tokens):  # last dismissed, first restored
+        try:
+            restored = await undo_dismissal(session, token) or restored
+        except Exception:  # noqa: BLE001 - skip an item that cannot come back, finish the rest
+            await session.rollback()
+            log.warning("story_undo_group_item_failed")
+    row = await session.get(Setting, _GROUP_PREFIX + group)
+    if row is not None:
+        await session.delete(row)
+        await session.commit()
+    return restored
+
+
 def dismissal_token() -> str:
     return uuid.uuid4().hex
 
@@ -195,6 +330,7 @@ async def undo_dismissal(session: AsyncSession, token: str) -> bool:
     await session.execute(sql_text("BEGIN IMMEDIATE"))
     row = await session.get(Setting, "stories.dismiss_undo." + token)
     if row is None:
+        await session.rollback()
         return False
     snapshot = row.value
     if time.time() > snapshot["expires"]:
@@ -202,14 +338,18 @@ async def undo_dismissal(session: AsyncSession, token: str) -> bool:
         await session.commit()
         return False
     if await session.get(Story, snapshot["story"]["id"]) is not None:
+        await session.rollback()
         return False
     for usage in snapshot["usages"]:
         if await session.get(StoryUsage, usage["id"]) is not None:
+            await session.rollback()
             return False
         if await session.get(Opportunity, usage["opportunity_id"]) is None:
+            await session.rollback()
             return False
     dismissed = await _get_dismissed(session)
     if any(dismissed.get(key) != change["after"] for key, change in snapshot["changes"].items()):
+        await session.rollback()
         return False
     for key, change in snapshot["changes"].items():
         if change["before"] is None:
@@ -375,9 +515,12 @@ def _quarantine_hook(session: AsyncSession) -> QuarantineHook:
     return hook
 
 
+UNUSABLE: Any = object()  # _merge_cluster: the model answered, but not with a story
+
+
 async def _merge_cluster(
     session: AsyncSession, client: Any, spec: Any, sketches: list[Sketch], proof_points: list
-) -> Story | None:
+) -> Story | None | Any:
     """Run P8 over a cluster and persist a PROPOSED canonical story (operator_edited stays False
     until the operator rewrites it). Returns None on a quarantined/failed call rather than
     fabricating a story from nothing (hard rule 3)."""
@@ -396,6 +539,15 @@ async def _merge_cluster(
         return None
 
     v = result.value
+    if is_unusable_story(
+        v.title, situation=v.situation, task=v.task, action=v.action, result=v.result,
+        reflection=v.reflection,
+    ):
+        # The model said it had nothing to build from. Never save that as a draft.
+        log.info(
+            "story_merge_discarded", title=(v.title or "")[:80], sketches=[s.id for s in sketches]
+        )
+        return UNUSABLE
     keys = {s.proof_point_key for s in sketches if s.proof_point_key}
     story = Story(
         title=v.title,
@@ -434,7 +586,23 @@ async def consolidate_stories(
     dismissed = await _get_dismissed(session)
     if dismissed:
         sketches = [s for s in sketches if dismissed.get(str(s.id)) != sketch_fingerprint(s)]
-    result = ConsolidationResult(sketches=len(sketches))
+    # A cluster the model refused before is not asked again while its sketches' text is unchanged.
+    # Never a note: the operator's own text is always read.
+    refused = await _get_refused(session)
+    refused_skipped = 0
+    if refused:
+        kept = [s for s in sketches
+                if s.kind == "note" or refused.get(str(s.id)) != sketch_fingerprint(s)]
+        refused_skipped, sketches = len(sketches) - len(kept), kept
+    # Sketches with nothing in them (a profile without proof points makes the model write "Not
+    # available") are never embedded or sent. This is a pure check of the text, repeated each
+    # build, so a sketch whose text later gains real content is read like any other. They count
+    # as handled for the watermark, so they never hold it back.
+    blank_ids = {s.id for s in sketches if is_placeholder_sketch(s)}
+    sketches = [s for s in sketches if s.id not in blank_ids]
+    result = ConsolidationResult(
+        sketches=len(sketches), skipped=len(blank_ids) + refused_skipped
+    )
     if not sketches:
         # Nothing new: leave the watermark exactly where it is. Advancing it to a wall-clock "now"
         # here would risk stepping over an evaluation that committed after this query but with an
@@ -462,6 +630,7 @@ async def consolidate_stories(
     spec = load_prompt("story_consolidate/v1")
 
     done_ids: set[int] = set()  # sketches actually consolidated (created or attached) this run
+    newly_refused: dict[str, str] = {}
     for cl in clusters:
         members = [sketches[i] for i in cl]
         centroid = _centroid(vecs, cl)
@@ -485,13 +654,28 @@ async def consolidate_stories(
             done_ids.update(s.id for s in members)
             continue
         story = await _merge_cluster(session, client, spec, members, proof_points)
-        if story is not None:
+        if story is UNUSABLE:
+            # Nothing is saved and NOTHING IS HIDDEN or dismissed: a refusal can be wrong, so the
+            # sketches stay out of done_ids (like a failed merge). Each non-note one is remembered
+            # in REFUSED_KEY by its text fingerprint, so a later build skips it while the text is
+            # unchanged and reads it again once it changes; a note is always read again.
+            # Placeholder-only sketches are already skipped before this point. The dismissed map
+            # is never written here, so a dismissal made while the build ran cannot be lost.
+            newly_refused.update(
+                {str(m.id): sketch_fingerprint(m) for m in members if m.kind != "note"}
+            )
+            result.skipped += len(members)
+        elif story is not None:
             result.created_story_ids.append(story.id)
             done_ids.update(s.id for s in members)
         # A failed merge (quarantine/bad response) leaves its sketches OUT of done_ids, so they are
         # neither consumed nor stepped over by the watermark; they re-consolidate on the next run.
 
     await _advance_progress(session, sketches, done_ids, watermark)
+    if newly_refused:  # union with what is stored now, inside this transaction
+        merged = await _get_refused(session, fresh=True)
+        merged.update(newly_refused)
+        await _set_setting(session, REFUSED_KEY, merged)
     await session.commit()
     return result
 

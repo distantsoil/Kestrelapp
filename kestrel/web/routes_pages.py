@@ -97,7 +97,9 @@ _FILTER_PARAMS = frozenset(
     {"q", "stage", "needs_review", "shortlisted", "new_today", "hidden", "saved", "sort", "type"}
     | set(_CARRIED) - {"tab", "page_size"}
 )
-_GROUP_LIMIT_PARAM = {key: f"lim_{key}" for key in ("worth", "maybe", "applied", "new", "failed")}
+_GROUP_LIMIT_PARAM = {
+    key: f"lim_{key}" for key in ("worth", "maybe", "applied", "new", "unscored", "failed")
+}
 _WORK = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite"}
 
 

@@ -346,6 +346,14 @@ def level_box(opp, ev_json: dict | None) -> dict[str, Any]:
 # rule 8): Partly met, listed with the gaps, never a reason the role fits (hard rule 4, O20).
 UNVERIFIED = "unverified"
 UNVERIFIED_HOW = "Your profile does not show this yet, so Kestrel can't tell."
+# The same gap when the whole profile is empty (issue #64): say what to do about it.
+UNVERIFIED_HOW_THIN = (
+    "Your profile has no proof points yet. Add them on Profile > Documents, then score again."
+)
+
+
+def unverified_how(thin: bool = False) -> str:
+    return UNVERIFIED_HOW_THIN if thin else UNVERIFIED_HOW
 
 
 def fit_reasons(ev_json: dict | None) -> list[dict[str, str]]:
@@ -364,7 +372,7 @@ def fit_reasons(ev_json: dict | None) -> list[dict[str, str]]:
     return out[:5]
 
 
-def all_gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
+def all_gap_rows(ev_json: dict | None, *, thin: bool = False) -> list[dict[str, Any]]:
     """Every gap to address, each with how to handle it: the model's gaps (a fatal gap says so;
     noise is left out), then each match the profile does not show yet ("unverified"), which is
     never counted in the role's favor (hard rule 4, O20)."""
@@ -377,7 +385,7 @@ def all_gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
                     "fatal": g.get("severity") == "fatal", "unverified": False})
     for m in (fit.get("matches") if isinstance(fit, dict) else None) or []:
         if isinstance(m, dict) and m.get("requirement") and m.get("strength") == UNVERIFIED:
-            out.append({"text": _s(m["requirement"]), "how": UNVERIFIED_HOW, "fatal": False,
+            out.append({"text": _s(m["requirement"]), "how": unverified_how(thin), "fatal": False,
                         "unverified": True})
     return out
 
@@ -385,10 +393,10 @@ def all_gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
 PANEL_GAPS = 4
 
 
-def gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
+def gap_rows(ev_json: dict | None, *, thin: bool = False) -> list[dict[str, Any]]:
     """The panel's gaps: at most four rows. When there are more, the fourth says how many more
     and how many of those the profile does not show yet, so nothing is dropped silently (O20)."""
-    rows = all_gap_rows(ev_json)
+    rows = all_gap_rows(ev_json, thin=thin)
     if len(rows) <= PANEL_GAPS:
         return rows
     shown, rest = rows[: PANEL_GAPS - 1], rows[PANEL_GAPS - 1 :]

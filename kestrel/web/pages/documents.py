@@ -263,7 +263,13 @@ async def _tree_response(request: Request, master_id: int, *, note: str | None =
 async def documents(request: Request):
     """Documents is the first tab of the Profile page (D-UI-21); this path stays so every link
     into it, with or without a master_id, keeps working."""
-    from kestrel.web.pages.profile import _section_ctx, _story_count, _tabs, _track
+    from kestrel.web.pages.profile import (
+        _section_ctx,
+        _story_count,
+        _tabs,
+        _track,
+        readiness_ctx,
+    )
 
     data = await documents_context(request)
     if request.headers.get("HX-Request"):
@@ -273,6 +279,7 @@ async def documents(request: Request):
         "tabs": _tabs(), **_section_ctx(_track(request)), **data,
         "story_count": await _story_count(),
     }
+    ctx.update(await readiness_ctx(request, ctx["track"]))
     return templates().TemplateResponse(request, "profile.html", ctx)
 
 
@@ -1676,7 +1683,13 @@ async def import_accept(request: Request):
     round-tripped as JSON in the form, so what is written is exactly what was shown; accept_import
     still re-validates verbatim/defaults/dup keys and raises on any violation before writing (the
     enforcement boundary), so a hallucinated bullet can never be written even here."""
-    from kestrel.docs.imports import ImportRejected, accept_import, place_unplaced
+    from kestrel.docs.imports import (
+        ImportRejected,
+        ImportTrackRefused,
+        ProofPointsNotSaved,
+        accept_import,
+        place_unplaced,
+    )
     from kestrel.llm.schemas import P7ResumeImport
 
     form = await request.form()
@@ -1698,6 +1711,13 @@ async def import_accept(request: Request):
         value = P7ResumeImport.model_validate_json(proposal_json)
         choices = list(zip(form.getlist("unplaced_line"), form.getlist("unplaced_to"),
                            strict=False))
+        # Only the proof points the operator ticked are kept (issue #68, hard rule 2). A form
+        # that does not carry the review field kept nothing: the operator must tick.
+        keep = set(form.getlist("proof_keep")) if form.get("proof_shown") == "1" else set()
+        if getattr(value, "proof_points", None):
+            value = value.model_copy(update={
+                "proof_points": [p for p in value.proof_points if p.key in keep]
+            })
         if any(to for _line, to in choices):
             value = place_unplaced(value, markdown, [(str(a), str(b)) for a, b in choices])
         from kestrel.docs.current_employer import clean_placeholder, suggested_placeholder
@@ -1729,6 +1749,17 @@ async def import_accept(request: Request):
         # (D-SEC-4) and the log only that a rejection happened.
         log.warning("import_accept_rejected", error_type=type(exc).__name__)
         return HTMLResponse(f'<div class="warnbox">{escape(IMPORT_REJECTED)}</div>')
+    except ImportTrackRefused as exc:
+        return HTMLResponse(f'<div class="warnbox">{escape(str(exc))}</div>')
+    except ProofPointsNotSaved as exc:
+        # The resume is saved; only the profile.yml write failed. One authored sentence plus a
+        # fixed reason (D-SEC-4), never the exception text.
+        return HTMLResponse(
+            '<div class="warnbox" data-testid="proof-points-not-saved">Your resume was saved, but '
+            f"its proof points could not be added to your profile: {escape(exc.reason)}. "
+            "Add them from the Documents tab once that is fixed."
+            f' <a class="btn" href="/documents?master_id={exc.master_id}">Open the resume</a></div>'
+        )
     except Exception as exc:  # bad/absent proposal JSON, or a DB error
         log.warning("import_accept_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(

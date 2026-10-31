@@ -134,3 +134,14 @@ async def test_benchmark_offer_surfaces_band_competing_history(sm):
     assert len(b.competing) == 1  # a real, open offer on another pursuit
     assert b.competing[0]["status"] == "verbal"
     assert len(b.history) == 1  # the accepted offer
+
+
+async def test_benchmark_stated_band_ignores_a_job_board_estimate(sm):
+    pid = await _seed_pursuit_with_offer(sm)
+    async with sm() as s:
+        opp = (await s.get(Pursuit, pid)).opportunity_id
+        o = await s.get(Opportunity, opp)
+        o.comp_source = "inferred"
+        await s.commit()
+        b = await benchmark_offer(s, pid)
+    assert b.stated_band is None and b.inside_stated_band is None

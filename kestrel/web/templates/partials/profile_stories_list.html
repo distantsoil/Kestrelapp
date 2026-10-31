@@ -11,10 +11,14 @@
       <button type="submit" class="k-btn k-btn--sm" data-testid="pf-stories-build"
             {% if building %}disabled{% endif %}>Build stories</button>
     </form>
+    {% set n_drafts = stories | rejectattr('operator_edited') | list | length %}
+    {% if n_drafts %}<button type="button" class="k-btn k-btn--sm" data-testid="pf-clear-drafts"
+            hx-post="/profile/stories/dismiss-all" hx-target="#pf-stories-list" hx-swap="outerHTML"
+            hx-confirm="Clear all {{ n_drafts }} draft{{ '' if n_drafts == 1 else 's' }}? Stories you saved are not touched. Build stories will not propose them again.">Clear all drafts</button>{% endif %}
     <button type="button" class="k-btn k-btn--sm k-btn--primary" data-k-modal="#pf-story-new"
             aria-haspopup="dialog">{{ ui.icon('plus', 'k-ic--sm') }}Add a story</button>
   </div>
-  {% if story_notice %}<p class="pf-saved" role="status" data-testid="story-notice">{{ story_notice }}</p>{% endif %}
+  {% if story_notice %}<p class="pf-saved" role="status" data-testid="story-notice">{{ story_notice }}{% if story_undo_url %} <button type="button" class="k-btn k-btn--sm" data-testid="pf-undo-clear" hx-post="{{ story_undo_url }}" hx-target="#pf-stories-list" hx-swap="outerHTML">Undo</button>{% endif %}</p>{% endif %}
   {% if story_error %}<p class="pf-problem" role="alert">{{ story_error }}</p>{% endif %}
   {% if building %}<p class="pf-hint" data-testid="build-status">Building now. Drafts appear here when it finishes.</p>
   {% elif build_failed %}<p class="pf-hint" data-testid="build-failed">Last build failed: {{ build_failed }}</p>{% endif %}

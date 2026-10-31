@@ -30,6 +30,8 @@ from kestrel.services import run_model
 from kestrel.services.run_model import T2_ONLY_KEY
 from tests.pipeline_fakes import FakeLLM
 
+_PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
+
 
 def _recent() -> str:
     return (datetime.now(UTC) - timedelta(days=3)).date().isoformat()
@@ -74,7 +76,7 @@ async def _new_opp(sm, sid: int, run_id: int, title: str, override: dict | None 
             comp_source="parsed", remote_type="hybrid", state="OH", city="Columbus",
             location_raw="Columbus, OH", date_posted=_recent(), seen_count=1, ghost_score=0.1,
             stage="new", source_id=sid, scrape_run_id=run_id,
-            description_md="Own IT leadership, budget and vendor accountability.",
+            description_md="Own IT leadership, budget and vendor accountability." + _PAD,
         )
         s.add(o)
         await s.flush()

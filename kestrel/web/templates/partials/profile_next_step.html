@@ -1,0 +1,19 @@
+{# The one next step for a thin or stale profile (issues #67, #68), shared by Today and Profile.
+   `readiness` is kestrel.services.profile_readiness.Readiness; `back` is where Score again returns. #}
+{% if rescoring == 'confirm' %}
+<span class="sf-msg" data-testid="rescoring-confirm">Scoring uses an online model, so nothing was queued. Choose Score again on the Pipeline page to confirm it.</span>
+{% elif rescoring %}
+<span class="sf-msg" data-testid="rescoring-note">{{ rescoring }} {{ 'role is' if rescoring == '1' else 'roles are' }} waiting to be scored again.</span>
+{% else %}
+<span class="sf-msg">{{ readiness.line }}
+  {% if readiness.next_step == 'score_again' %}
+  <form class="k-form-inline" method="post" action="/api/profile/score-again" data-testid="score-again-form">
+    <input type="hidden" name="track" value="{{ track }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="k-btn k-btn--sm" type="submit" data-testid="score-again-go">Score again</button>
+  </form>
+  {% else %}
+  <a class="k-link" href="{{ readiness.link_href }}" data-testid="next-step-link">{{ readiness.link_label }}</a>
+  {% endif %}
+</span>
+{% endif %}

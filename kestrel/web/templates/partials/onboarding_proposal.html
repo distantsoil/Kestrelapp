@@ -67,6 +67,7 @@
     <input type="hidden" name="text" value="{{ markdown }}">
     <input type="hidden" name="track" value="{{ track }}">
     <input type="hidden" name="doc_kind" value="{{ doc_kind }}">
+    {% include "partials/import_proof_points.html" %}
     {% if proposal.flags.unplaced %}
     <div class="ob-note ob-note--warn" data-testid="import-unplaced">{{ ui.icon('info') }}<div>
       <b>{{ proposal.flags.unplaced | length }} line(s) were not placed in any slot.</b>

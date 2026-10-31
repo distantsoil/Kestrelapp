@@ -34,7 +34,7 @@ from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import pipeline_view as pv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
-from kestrel.web.fit import GROUP_FAILED, GROUP_NEW, NOT_FIT, verdict_for_fit
+from kestrel.web.fit import GROUP_FAILED, GROUP_NEW, GROUP_UNSCORED, NOT_FIT, verdict_for_fit
 from kestrel.web.queries import (
     OppRow,
     _retry_removed,
@@ -108,11 +108,20 @@ async def _flags(s, opp_id: int) -> tuple[bool, bool, bool]:
 def _panel_kind(opp, fit) -> str:
     if opp.opp_type == "trigger_event":
         return "signal"
-    if fit.group in (GROUP_NEW, GROUP_FAILED):
+    if fit.group in (GROUP_NEW, GROUP_UNSCORED, GROUP_FAILED):
         return "pending"
     if opp.stage in ("t0_reject", "t1_reject") and fit.group == "not_fit":
         return "nf"
     return "role"
+
+
+async def _profile_thin(track: str) -> bool:
+    import asyncio
+
+    from kestrel.services.profile_readiness import operator_profile_is_thin
+
+    # The operator's own profile.yml only: the fictional example is not "a profile".
+    return await asyncio.to_thread(operator_profile_is_thin, track)
 
 
 async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
@@ -131,7 +140,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     # detail context edits any ORM field for display.
     probe = OppRow(
         opp=opp0, ev=ev0, org_name=None, source_name=None, removed=removed,
-        fit=fit_for(ev0, opp0.stage, live=live),
+        fit=fit_for(ev0, opp0.stage, live=live, stage_reason=opp0.stage_reason),
     )
     await scoring_states(s, [probe])
     detail = await _detail_context(s, opp_id)
@@ -189,7 +198,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
             pay=pv.pay_box(opp, ev_json),
             level=pv.level_box(opp, ev_json),
             reasons=pv.fit_reasons(ev_json),
-            gaps=pv.gap_rows(ev_json),
+            gaps=pv.gap_rows(ev_json, thin=await _profile_thin(opp.track)),
             lead=pv.lead_with(opp, ev_json),
             summary=pv.summary_text(opp, ev_json),
             watch=watch,
@@ -534,7 +543,8 @@ async def decide_keep_anyway(request: Request, opp_id: int):
                     )
                 })
             result = await enqueue_rescore(
-                s, [opp_id], tier0_anyway=True, explain=rule_explainer(s, settings),
+                s, [opp_id], tier0_anyway=True, score_stubs=True,
+                explain=rule_explainer(s, settings),
                 online_approval=form.get("online_approval"),
             )
             await s.commit()

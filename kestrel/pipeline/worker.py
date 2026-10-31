@@ -415,6 +415,8 @@ class Worker:
                     kwargs["rescore"] = True
                     kwargs["requested_at"] = payload.get("requested_at")
                     kwargs["task_id"] = task.id
+                    if payload.get("score_stub"):
+                        kwargs["score_stub"] = True  # the operator's explicit Score again
             if task_type == "t1":
                 if local_only:
                     kwargs["lane_local_only"] = True

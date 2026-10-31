@@ -46,6 +46,21 @@ async def _progress(s, settings=None) -> dict:
     return progress_view(await scoring_progress(s, settings))
 
 
+async def _readiness(s, track: str):
+    from kestrel.services.profile_readiness import load_readiness
+
+    return await load_readiness(s, track)
+
+
+def _rescoring(request: Request) -> str:
+    """How many roles Score again just queued (a digit string), "confirm" when an online model
+    needs the operator's confirmation first, else empty."""
+    if request.query_params.get("rescore") == "confirm":
+        return "confirm"
+    n = request.query_params.get("rescoring", "")
+    return n if n.isdigit() and 0 < int(n) < 100000 else ""
+
+
 def _tour_wanted(request: Request) -> bool:
     return request.query_params.get("tour") == "1"
 
@@ -93,6 +108,8 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
         "scan_msg": scan_outcome_text(request.query_params),
         "confidential": settings.confidential_mode,
         "finish": await tv.finish_setup(s),
+        "readiness": await _readiness(s, track),
+        "rescoring": _rescoring(request),
     }
 
 

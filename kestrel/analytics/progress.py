@@ -11,7 +11,8 @@ rail. One function, one dict shape; every page renders from it so the numbers ag
                                #   scored + failed + set_aside + running + waiting
       "scored": int,           # roles whose latest evaluation is a finished Tier 2 (or Tier 3)
       "failed": int,           # roles parked in Failed scoring (stage quarantined or error)
-      "set_aside": int,        # roles Tier 1 set aside in this batch (they left the queue too)
+      "set_aside": int,        # roles Tier 1 set aside in this batch, plus postings with no body
+                               # left Not scored (they left the queue too)
       "running": int,          # roles with a scoring task leased right now
       "waiting": int,          # roles with a scoring task pending (and none leased)
       "model": str | None,     # the Tier 2 model in use, "name (free, online)" / "(local)"
@@ -50,12 +51,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
 from kestrel.db.models import Evaluation, Opportunity, Run, Task
 from kestrel.services.hidden_orgs import hidden_opportunity_ids, opp_visible_clause
+from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON
 
 EMPTY: dict[str, Any] = {
     "active": False,
@@ -313,16 +315,30 @@ async def scoring_progress(
         def _n(stages: tuple[str, ...]):
             return func.coalesce(func.sum(case((Opportunity.stage.in_(stages), 1), else_=0)), 0)
 
-        scored, failed, set_aside = (
+        # A posting with no body is left at t1_pass, Not scored (D-SRC-14): it left the queue
+        # without a score, so it counts with the roles set aside, never out of the total.
+        no_body = func.coalesce(
+            func.sum(
+                case(
+                    (and_(Opportunity.stage == "t1_pass",
+                          Opportunity.stage_reason == EMPTY_POSTING_STAGE_REASON), 1),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+        scored, failed, set_aside, unscored = (
             await session.execute(
-                select(_n(_SCORED_STAGES), _n(_FAILED_STAGES), _n(_SET_ASIDE_STAGES)).where(
+                select(
+                    _n(_SCORED_STAGES), _n(_FAILED_STAGES), _n(_SET_ASIDE_STAGES), no_body
+                ).where(
                     Opportunity.id.in_(finished_ids), Opportunity.id.not_in(live_ids),
                     opp_visible_clause(),
                 )
             )
         ).one()
         out["scored"], out["failed"] = int(scored), int(failed)
-        out["set_aside"] = int(set_aside)
+        out["set_aside"] = int(set_aside) + int(unscored)
     out["total"] = (
         out["scored"] + out["failed"] + out["set_aside"] + out["running"] + out["waiting"]
     )

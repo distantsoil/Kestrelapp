@@ -141,7 +141,9 @@ def test_the_evaluation_tab_tells_one_story_for_the_o20_case():
     assert ">2.7<" in html
     assert ">0 of 5<" in html and "5 partly met" in html and "0 met" in html
     assert "No gaps found" not in html
-    assert html.count(rv.UNVERIFIED_HOW.replace("'", "&#39;")) == 5
+    # No operator profile.yml in this test, so the profile reads thin (#64): the unverified
+    # rows point to the fix instead of "can't tell".
+    assert html.count(pv.UNVERIFIED_HOW_THIN.replace(">", "&gt;")) == 5
     assert "Nothing the posting asks for is fully covered yet." in html
     assert "Source not recorded" not in html and "cannot be verified" not in html
     assert "Remote OK" not in html and "bullet 1" not in html

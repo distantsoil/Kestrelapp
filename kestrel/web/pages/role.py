@@ -300,7 +300,10 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         detail["hidden_why"] = (await hidden_unscored(s2, [opp])).get(opp.id)
         stats = None if track == "consulting" else await comp_intel_stats(s2, opp)
         n_seen = 0 if track == "consulting" else await comp_intel_count(s2, opp)
-        reqs = rv.requirements(opp, ev_json)
+        from kestrel.services.profile_readiness import operator_profile_is_thin
+
+        thin = await asyncio.to_thread(operator_profile_is_thin, track)
+        reqs = rv.requirements(opp, ev_json, thin=thin)
         sources = await _evidence_sources(s2, reqs, track, conf, mapping)
         labels = list(
             (
@@ -991,7 +994,9 @@ async def add_story(request: Request, opp_id: int):
         queued = None
         if rescore:
             credit.clear()
-            res = await enqueue_rescore(s, [opp_id], online_approval=form.get("online_approval"))
+            res = await enqueue_rescore(
+                s, [opp_id], online_approval=form.get("online_approval"), score_stubs=True
+            )
             queued = bool(res.queued)
         await s.commit()
     if rescore:

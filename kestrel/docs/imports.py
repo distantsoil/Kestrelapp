@@ -15,13 +15,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant, Profile
+from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant
 from kestrel.errors import UserFacingError
 from kestrel.llm.guard import run_prompt
 from kestrel.llm.prompts import load_prompt
+from kestrel.services.profile_readiness import changed_at, mark_proof_points_changed
 
 _WS = re.compile(r"\s+")
 _MAX_DERIVED_PER_SLOT = 2
@@ -564,6 +564,20 @@ class ImportRejected(UserFacingError, ValueError):
     """accept_import refused because the proposal did not pass its own re-validation."""
 
 
+class ImportTrackRefused(UserFacingError, ValueError):
+    """accept_import was given a track Kestrel does not have. Nothing is written."""
+
+
+class ProofPointsNotSaved(UserFacingError):
+    """The resume is saved, but its proof points could not be written to profile.yml. Carries
+    the cause on `__cause__`; the page shows `reason`, one of Kestrel's own sentences."""
+
+    def __init__(self, master_id: int, reason: str) -> None:
+        super().__init__(reason)
+        self.master_id = master_id
+        self.reason = reason
+
+
 def _validate_for_accept(value, markdown: str) -> None:
     """The write boundary enforces its own invariants, never trusting the caller (hard rule 2):
     the proposal must be verbatim-clean, every default_variant_key must name a real variant of its
@@ -621,6 +635,10 @@ async def accept_import(
     `current_employer` is the "Show it as" text from the proposal's opt-in (D-PRIV-1): when given,
     and the newest role is open-ended, that role is marked as the current employer. None (the
     operator did not tick it) sets nothing."""
+    from kestrel.db.enums import TRACKS
+
+    if track not in TRACKS:
+        raise ImportTrackRefused("That track is not one Kestrel knows, so nothing was imported.")
     _validate_for_accept(value, source_markdown)
     master = DocMaster(
         track=track,
@@ -682,7 +700,13 @@ async def accept_import(
         from kestrel.docs.current_employer import set_current_employer
 
         await set_current_employer(session, newest_section, current_employer)
-    await _merge_proof_points(session, track, value.proof_points or [])
+    points = _proof_point_dicts(value.proof_points)
+    previous_stamp = await changed_at(session, track)
+    if points:
+        # Stamped with the resume row, in the one commit below. The profile.yml write comes after
+        # it; a crash or a failed write in between leaves the resume and no points, which
+        # readiness reports as "review your resume", never as proof points with no resume.
+        await mark_proof_points_changed(session, track)
     if track == "employment" and doc_kind == "resume":
         # Suggested target titles (P15, D-TTL-3): one queued run read from this resume. The
         # suggestions wait for an Accept; nothing is added to the profile here.
@@ -693,28 +717,60 @@ async def accept_import(
         if not await _runs_online(session):
             await request_title_suggestions(session, "import")
     await session.commit()
+    await _merge_proof_points(session, track, points, previous_stamp, master.id)
     return master.id
 
 
-async def _merge_proof_points(session: AsyncSession, track: str, proof_points) -> None:
-    profile = (
-        await session.execute(select(Profile).where(Profile.track == track).limit(1))
-    ).scalar_one_or_none()
-    if profile is None:
+def _proof_point_dicts(proof_points) -> list[dict]:
+    return [
+        {"key": p.key, "claim": p.claim, "evidence": p.evidence, "metric": p.metric}
+        for p in proof_points or []
+    ]
+
+
+async def _restore_stamp(session: AsyncSession, track: str, previous: str | None) -> None:
+    """Put the proof-points stamp back to what it was before this import (and commit)."""
+    from kestrel.db.models import Setting
+    from kestrel.services.profile_readiness import KEY
+
+    row = await session.get(Setting, KEY)
+    if row is not None and isinstance(row.value, dict):
+        value = dict(row.value)
+        if previous:
+            value[track] = previous
+        else:
+            value.pop(track, None)
+        row.value = value
+        await session.commit()
+
+
+async def _merge_proof_points(
+    session: AsyncSession, track: str, points: list[dict], previous_stamp: str | None,
+    master_id: int,
+) -> None:
+    """Write the accepted proof points to profile.yml, the file scoring reads (issue #68), AFTER
+    the resume row and the stamp are committed. When nothing was new the stamp goes back to what
+    it was. When the write fails the stamp is cleared too, and ProofPointsNotSaved says so in
+    plain words: the resume is kept, the operator is told, and readiness asks to review it."""
+    import asyncio
+
+    import structlog
+
+    from kestrel.services import profile_edit
+    from kestrel.web.errors import fixed_reason, plain_error
+
+    if not points:
         return
-    existing = {p.get("key") for p in (profile.proof_points or []) if isinstance(p, dict)}
-    # Keys are positional (r1_cost), so a later import can reuse one for a different claim: the
-    # same claim is skipped, a different one gets a fresh key rather than being dropped.
-    claims = {p.get("claim") for p in (profile.proof_points or []) if isinstance(p, dict)}
-    new = []
-    for p in proof_points:
-        if p.claim in claims:
-            continue
-        key = _unique(p.key, existing)
-        claims.add(p.claim)
-        new.append({"key": key, "claim": p.claim, "evidence": p.evidence, "metric": p.metric})
-    if new:
-        profile.proof_points = (profile.proof_points or []) + new
+    try:
+        added = await asyncio.to_thread(profile_edit.add_proof_points, track, points)
+    except Exception as exc:
+        structlog.get_logger().warning(
+            "import_proof_points_not_saved", error_type=type(exc).__name__)
+        await _restore_stamp(session, track, previous_stamp)
+        reason = plain_error(exc) if isinstance(exc, UserFacingError) else fixed_reason(exc)
+        raise ProofPointsNotSaved(master_id, reason) from exc
+    if not added:
+        await _restore_stamp(session, track, previous_stamp)
 
 
 # ------------------------------------------------------------- P7c: wordings for one slot

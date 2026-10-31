@@ -10,13 +10,22 @@ to the org as accumulated signals so the next opportunity there starts warmer (P
 
 from __future__ import annotations
 
+import re
+
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Evaluation, Label, Opportunity, OpportunityEmbedding, Org, Source
+from kestrel.db.models import (
+    Evaluation,
+    Label,
+    Opportunity,
+    OpportunityEmbedding,
+    Org,
+    Source,
+)
 from kestrel.llm.client import LLMClient
 from kestrel.llm.embeddings import current_model, from_bytes
 from kestrel.llm.fewshot import FewShotExample, select_few_shot
@@ -35,11 +44,41 @@ from kestrel.pipeline._shared import (
 from kestrel.pipeline.context import (
     build_tier2_values,
     comp_intel_summary,
+    normalize_description,
     org_signals_lines,
     render_user,
 )
+from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON
 
 log = structlog.get_logger()
+
+# A posting body under this many words (after normalize_description) is a stub, not a posting: a
+# real one runs to hundreds, and even a terse one lists duties and requirements in 40+ words.
+# Scoring a stub made the model report an "empty posting" blocker (issue #66).
+MIN_DESCRIPTION_WORDS = 40
+# Scripts written without spaces between words: counted by characters, not words.
+MIN_DESCRIPTION_CHARS = 120
+_UNSPACED = re.compile(
+    "[\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
+    "\uf900-\ufaff]"
+)
+# Only a scraped job or contract posting is judged by its body. A pasted page, an RFP, a referral
+# or a trigger event carries its evidence elsewhere (or the operator chose to score it).
+_POSTING_TYPES = ("job_posting", "contract_posting")
+
+
+def is_stub_posting(opp, source=None) -> bool:
+    """True for a scraped posting with next to no body (issue #66). Exempt: a manual paste, any
+    non-posting type, and a role with trigger_data or an event date."""
+    if opp.trigger_data or opp.event_date or opp.opp_type not in _POSTING_TYPES:
+        return False
+    if source is not None and source.kind == "manual":
+        return False
+    text = normalize_description(opp.description_md)
+    flat = "".join(text.split())
+    if len(_UNSPACED.findall(flat)) * 2 > len(flat):
+        return len(flat) < MIN_DESCRIPTION_CHARS
+    return len(text.split()) < MIN_DESCRIPTION_WORDS
 
 _VERSION = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
 
@@ -137,8 +176,12 @@ async def handle_t2(
     rescore: bool = False,
     requested_at: str | None = None,
     task_id: int | None = None,
+    score_stub: bool = False,
 ) -> HandlerOutcome:
-    """`rescore` marks a score-again task (D-UI-50): the role is evaluated again whatever its
+    """`score_stub` is the operator's explicit Score again: a posting with next to no
+    description is scored anyway (D-SRC-14); an automatic path never sets it.
+
+    `rescore` marks a score-again task (D-UI-50): the role is evaluated again whatever its
     stage, a NEW Evaluation row is written beside the old ones, and a role already scored keeps
     its stage (and its earlier evaluation) when the new attempt quarantines. `requested_at` is
     when it was asked for: an evaluation made since then means a re-leased task already did the
@@ -191,6 +234,23 @@ async def handle_t2(
 
         org = await session.get(Org, opp.org_id) if opp.org_id else None
         source = await session.get(Source, opp.source_id) if opp.source_id else None
+
+        # Hard rule 4: uncertainty escalates, never rejects. No JobSpy detail fetch exists and none
+        # is built here, so a stub posting is not sent to the model. It is not a failure either: no
+        # quarantine row, no Retry. It stays at its stage, visible in Pipeline and on the role page
+        # as "Not scored" with the reason (D-UI-225 pattern, fit.hidden_unscored_why). A later
+        # re-scrape with a body re-queues Tier 2 (the `changed` task). A role already scored keeps
+        # its score and stage. The operator's own Score again (`score_stub`) skips this check.
+        if is_stub_posting(opp, source) and not (rescore and score_stub):
+            if already_scored:
+                log.info("t2_stub_rescrape_kept_score", opportunity_id=opp.id, stage=opp.stage)
+                return HandlerOutcome("skip", 2)
+            opp.stage = "t1_pass"
+            opp.stage_reason = EMPTY_POSTING_STAGE_REASON
+            await session.commit()
+            log.info("t2_empty_posting_not_scored", opportunity_id=opp.id)
+            return HandlerOutcome("skip", 2)
+
         profile = profiles.get(opp.track)
         spec = prompt_spec(_VERSION[opp.track])
 

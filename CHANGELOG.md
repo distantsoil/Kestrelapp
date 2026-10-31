@@ -12,10 +12,16 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 - **Where roles come from on Analytics** no longer runs past its card when the window is narrowed to just above the size where the cards stack. Long source names and the reply rate wrap instead.
 - **The "On my shortlist" button on a role** no longer cuts off the column name mid-letter. A long one such as "Interviewing" now ends in "…" when the column is narrow, and hovering shows the full label.
 - **Needs another try** no longer keeps a failure you cannot clear. A failure that did not come from scoring a role, such as job title ideas, names its step, says where to run it again, and can be removed.
+- **Proof points from your resume now reach scoring.** Accepting a resume import used to drop its proof points without a word, so every role was scored as if you had none. The review now lists each proof point to tick, and the ones you accept are saved to your profile.
+- **"Why it is a weak match" says why.** A role that is not a fit now leads with what held it back, in the model's words, instead of the reasons in its favor.
+- **Build stories no longer fills the list with empty drafts.** Write-ups with nothing in them are skipped, a story the model could not build is not saved, and **Clear all drafts** (with Undo) removes the drafts you have. Stories you saved are never touched.
+- **A posting with no description is not scored.** It shows as "Not scored" with the reason, and **Score anyway** scores it if you judge it enough. A re-scrape that brings the description scores it as usual.
+- **A job board's pay estimate is labeled as one.** Glassdoor's estimated pay shows as "est.", never rules a role out on pay, and is kept out of market pay figures.
 
 ### Changed
 
 - **Tap or click a card on Today** to see the role summary, the same as pressing Review role. Swiping and dragging the cards work as before.
+- **Kestrel tells you the next step to set up your profile.** Today and Profile name one step at a time: add your resume, review its proof points, add the titles you want, then score again the roles scored before your proof points. When your profile has no proof points, the rows Kestrel cannot check say how to fix that.
 
 ### Security
 

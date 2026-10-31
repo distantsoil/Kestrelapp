@@ -64,6 +64,43 @@ def test_the_read_names_the_models_evidence_and_never_invents():
     assert rv.read_card(OPP, {"blocks": {}}, "strong fit") is None
 
 
+def test_a_weak_match_says_why_it_is_weak_not_why_it_fits():
+    """#63: a capped role's card led with remote and pay (reasons in its favor) under the title
+    "Why it is a weak match". It now leads with the model's dealbreakers, the posting check and
+    the gaps, and leaves the reasons in its favor to their own card."""
+    ev = {
+        **EV,
+        "blockers": [
+            {"kind": "other", "detail": "The posting body is empty"},
+            {"kind": "other", "detail": "The posting body is empty"},
+        ],
+        "legitimacy": {"status": "suspect", "signals": ["no_company_detail"]},
+    }
+    card = rv.read_card(OPP, ev, "not a fit")
+    assert card["title"] == "Why it is a weak match"
+    text = card["text"]
+    assert text.startswith("The posting body is empty. The posting looks suspect.")
+    assert text.count("The posting body is empty") == 1
+    assert "Gap: E. Gap: C." in text  # fatal first, at most two
+    assert text.endswith("The level is a step above your current role.")
+    assert "Proof A" not in text and "above your target" not in text
+    below = {**ev, "blocks": {**EV["blocks"], "c_level": {}, "d_comp": {"vs_floor": "below_floor"}}}
+    assert rv.read_card(OPP, below, "not a fit")["text"].endswith("The pay is below your minimum.")
+    # The model's own "not a fit" with nothing to say falls back to its best dimension reason.
+    # The model's own "not a fit" with nothing else to say falls back to its WEAKEST dimension.
+    dims = {"role_fit": {"score": 4.7, "why": "Maps directly."},
+            "domain_match": {"score": 1.5, "why": "Different industry."}}
+    bare = rv.read_card(OPP, {"dimensions": dims, "blocks": {}}, "not a fit")
+    assert bare["text"] == "Different industry."
+    assert rv.read_card(OPP, {"dimensions": dims, "blocks": {}}, "good fit")["text"] == (
+        "Maps directly."
+    )
+    est = SimpleNamespace(**{**vars(OPP), "comp_source": "inferred"})
+    assert rv.read_card(est, below, "not a fit")["text"].endswith(
+        "The estimated pay is below your minimum."
+    )
+
+
 def test_pay_bracket_needs_five_observations_hard_rule_6():
     few = rv.pay_band(OPP, EV, None, 3, 90000, 110000)
     assert few["similar"] == {"text": "Similar roles: Too few (3).", "n": 3, "enough": False}

@@ -93,7 +93,7 @@ def _resolve_comp(raw: RawPosting, description: str | None, track: str) -> tuple
         comp = Comp(
             raw.comp_min, raw.comp_max, raw.comp_currency or "USD", raw.comp_interval or "year"
         )
-        source = "structured"
+        source = "inferred" if raw.comp_is_estimate else "structured"
     else:
         parsed = parse_comp(description)
         if parsed is None:

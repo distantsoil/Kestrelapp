@@ -43,10 +43,19 @@ def margin_floor(floor: Any, pct: Any) -> float | None:
     return base * (100 - normalize_margin(pct)) / 100.0
 
 
+def posted_comp_max(opp: Any) -> Any:
+    """The pay ceiling the posting itself states, or None. A job-board estimate (comp_source
+    "inferred", e.g. Glassdoor) is not posted pay, so it never decides a pay rule: uncertainty
+    escalates, never rejects (hard rule 4)."""
+    if getattr(opp, "comp_source", None) == "inferred":
+        return None
+    return getattr(opp, "comp_max", None)
+
+
 def comp_max_near_floor(opp: Any, floor: Any, pct: Any) -> bool:
     """True when the posted maximum is under the floor but inside the margin, so the role is
     kept and tagged. False for no posted pay, no floor, or exact mode (margin 0)."""
-    cap = getattr(opp, "comp_max", None)
+    cap = posted_comp_max(opp)
     if cap is None or floor is None:
         return False
     low = margin_floor(floor, pct)

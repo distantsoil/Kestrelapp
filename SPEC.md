@@ -1085,6 +1085,18 @@ to "Block G" for the employment track means this top-level `legitimacy` object. 
 track does nest its equivalent as `blocks.g_risk` **and** carries the top-level object; on that
 track the top-level object is authoritative for post-processing and `g_risk` is narrative detail.
 
+**Stub postings are not scored.** A scraped job or contract posting with under 40 words of
+description (after whitespace normalization; text in an unspaced script such as Chinese, Japanese
+or Thai is counted by characters, under 120) and no trigger event is not sent to the model. It is
+not a failure: no quarantine row, no Retry. It stays at `t1_pass` with `stage_reason` "t2 posting
+has no description" and reads **Not scored: the posting has no description** in Pipeline and on the
+role page (the D-UI-225 pattern). A manual paste, an RFP, a referral and a trigger event are
+exempt. A re-scrape that brings a body re-queues Tier 2 (`changed`); a re-scrape of a role already
+scored to a stub keeps its score and stage. A Glassdoor pay band (JobSpy's p10-p90
+`payPeriodAdjustedPay`) is stored with `comp_source = inferred`, reaches the model labelled as a
+job-board estimate, and is not posted pay: no Tier 0 pay rule compares it with the floor
+(uncertainty escalates, never rejects), and the company pay range and the comp corpus leave it out.
+
 Blocks:
 
 - **A — Role summary.** What the job actually is, and whether title and body disagree.
