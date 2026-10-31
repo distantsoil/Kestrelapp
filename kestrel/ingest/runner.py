@@ -19,7 +19,7 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Notification, ScrapeRun, Source, Task
 from kestrel.ingest import board_discovery, employer_links, smart_filter
 from kestrel.ingest.adapters import get_adapter
-from kestrel.ingest.base import AdapterError, SourceConfigError
+from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
 from kestrel.ingest.http import HttpClient
 from kestrel.ingest.location import parse_location
 from kestrel.ingest.normalize import normalize_and_store
@@ -29,6 +29,18 @@ from kestrel.rules.helpers import value_in
 from kestrel.services import run_model
 
 log = structlog.get_logger()
+
+# D-SRC-17: a small sample of titles the smart filter dropped, for the owner to check recall.
+DROPPED_SAMPLE_KEY = "dropped_title_sample"
+DROPPED_SAMPLE_CAP = 25
+_SAMPLE_CHARS = 200
+
+
+def _sample_entry(raw: RawPosting) -> dict[str, str | None]:
+    """Title and org only: no posting text, no URL (D-SRC-17)."""
+    title = (raw.title or "").strip()[:_SAMPLE_CHARS]
+    org = (raw.org_name or "").strip()[:_SAMPLE_CHARS] or None
+    return {"title": title, "org": org}
 
 
 @dataclass
@@ -58,6 +70,9 @@ async def run_source(
         "dropped_unrelated_title": 0,
     }
     run_model.stamp(counts, model_override, model_label)
+    # D-SRC-17: the first titles this run drops as unrelated, kept only on the stored scrape_run
+    # (never in RunOutcome.counts, which the CLI, Run now and the worker progress line print).
+    dropped_sample: list[dict[str, str | None]] = []
     async with sessionmaker() as session:
         source = await session.get(Source, source_id)
         if source is None:
@@ -129,6 +144,8 @@ async def run_source(
                         continue
                     if not smart_filter.keep(raw.title, filter_ctx):
                         counts["dropped_unrelated_title"] += 1
+                        if len(dropped_sample) < DROPPED_SAMPLE_CAP:
+                            dropped_sample.append(_sample_entry(raw))
                         continue
                     res = await normalize_and_store(session, raw, source=source, scrape_run=run)
                     await session.flush()
@@ -213,7 +230,9 @@ async def run_source(
         run = await session.get(ScrapeRun, run_id)
         run.status = status
         run.error = error
-        run.counts = dict(counts)
+        run.counts = (
+            {**counts, DROPPED_SAMPLE_KEY: dropped_sample} if dropped_sample else dict(counts)
+        )
         run.finished_at = utcnow_iso()
         source.last_run_at = utcnow_iso()
         await session.commit()

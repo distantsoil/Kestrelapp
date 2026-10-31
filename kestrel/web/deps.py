@@ -477,7 +477,8 @@ def templates() -> Jinja2Templates:
         # D-UI-72: a run's counts without its one-run model choice, and that choice in words.
         t.env.filters["run_counts"] = lambda c: {
             k: v for k, v in (c or {}).items()
-            if k not in (_run_model.OVERRIDE_KEY, _run_model.LABEL_KEY)
+            # D-SRC-17: the dropped-title sample has its own disclosure, never a raw dump.
+            if k not in (_run_model.OVERRIDE_KEY, _run_model.LABEL_KEY, "dropped_title_sample")
         }
         t.env.filters["run_model_label"] = lambda c: _run_model.label_of(c)
         t.env.filters["comma"] = lambda n: (

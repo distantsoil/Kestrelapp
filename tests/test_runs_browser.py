@@ -230,6 +230,139 @@ def test_skipped_summary_fits_the_existing_drawer(running, theme, width, tmp_pat
         ctx.close()
 
 
+_LONG_TITLE = "Senior" + "Unbroken" * 40 + "Title"
+_LONG_ORG = "A Very Long Fictional Organization Name " * 8
+
+
+def _seed_title_sample() -> None:
+    sample = [{"title": f"Pastry Chef {i}", "org": f"Fictional Bakery {i}"} for i in range(23)]
+    sample.append({"title": _LONG_TITLE, "org": _LONG_ORG})
+    sample.append({"title": "Night Baker", "org": None})
+
+    async def record(session):
+        rows = (await session.execute(select(ScrapeRun).order_by(ScrapeRun.id))).scalars().all()
+        rows[0].counts = {
+            **rows[0].counts,
+            "dropped_unrelated_title": 40,
+            "dropped_title_sample": sample,
+        }
+
+    _db(record)
+
+
+def _open_dropped(page):
+    page.get_by_test_id("rn-run").first.click()
+    page.get_by_test_id("rn-dropped-titles").wait_for()
+    wait_for_layout(page)
+    return page.get_by_test_id("rn-dropped-titles")
+
+
+_OPEN_PROBE = """el => new Promise(resolve => {
+  const list = el.querySelector('ul');
+  const seen = [];
+  el.querySelector('summary').click();
+  // Sample every frame until the fold has settled, bounded by time (2s), not a frame count,
+  // so a fast-refresh display cannot end the probe before the .28s animation does.
+  const t0 = performance.now();
+  const tick = () => {
+    seen.push(parseFloat(getComputedStyle(list).opacity));
+    const settled = seen.length >= 4 && seen[seen.length - 1] === 1
+      && list.getAnimations().length === 0;
+    if (!settled && performance.now() - t0 < 2000) {
+      requestAnimationFrame(tick);
+    } else { resolve(seen); }
+  };
+  tick();
+})"""
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1680), ("dark", 1680), ("light", 900)])
+def test_dropped_titles_disclosure_fits_opens_and_closes_smoothly(running, theme, width, tmp_path):
+    base, browser = running
+    _seed_title_sample()
+    ctx, page, errors = _page(base, browser, theme, width)
+    try:
+        details = _open_dropped(page)
+        assert details.evaluate("el => el.open") is False
+        details.locator("summary").click()
+        page.wait_for_function(
+            "document.querySelector('[data-testid=rn-dropped-titles]').open === true"
+        )
+        page.wait_for_timeout(450)  # the fold animation has ended
+        assert details.evaluate("el => el.open") is True
+        count = page.get_by_test_id("rn-dropped-count")
+        assert "Showing 25 of 40." in count.inner_text()
+        drawer = page.locator('[data-testid="rn-drawer-run"]')
+        box = drawer.bounding_box()
+        assert box
+        for sel in ('[data-testid="rn-dropped-titles"] li', '[data-testid="rn-dropped-count"]'):
+            items = page.locator(sel)
+            assert items.count() >= 1
+            for index in range(items.count()):
+                item = items.nth(index)
+                assert item.evaluate("el => el.scrollWidth <= el.clientWidth + 1"), (
+                    sel,
+                    item.inner_text()[:40],
+                )
+                rect = item.bounding_box()
+                assert rect and rect["x"] >= box["x"] - 1, (sel, rect, box)
+                assert rect["x"] + rect["width"] <= box["x"] + box["width"] + 1, (sel, rect, box)
+        kids = drawer.evaluate(_KIDS)
+        for index, first in enumerate(kids):
+            for second in kids[index + 1 :]:
+                assert not _overlaps(first, second), (first, second)
+        assert not errors, errors
+        page.screenshot(path=str(tmp_path / f"runs-dropped-{theme}-{width}.png"))
+        details.locator("summary").click()
+        page.wait_for_timeout(300)
+        assert details.evaluate("el => el.open") is False
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_dropped_titles_disclosure_animates_open(running):
+    base, browser = running
+    _seed_title_sample()
+    ctx, page, errors = _page(base, browser, "light", 1680)
+    try:
+        details = _open_dropped(page)
+        seen = details.evaluate(_OPEN_PROBE)
+        assert seen[0] < 1, seen
+        assert seen[-1] == 1, seen
+        assert details.evaluate("el => el.open") is True
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_dropped_titles_disclosure_opens_at_once_with_reduced_motion(running):
+    base, browser = running
+    _seed_title_sample()
+    ctx = browser.new_context(
+        viewport={"width": 1680, "height": 900}, color_scheme="light", reduced_motion="reduce"
+    )
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/runs")
+        page.wait_for_selector('[data-testid="run-live"]')
+        wait_for_layout(page)
+        details = _open_dropped(page)
+        seen = details.evaluate(_OPEN_PROBE)
+        assert seen[0] == 1 and set(seen) == {1}, seen
+        assert details.evaluate("el => el.open") is True
+        details.locator("summary").click()
+        page.wait_for_function(
+            "document.querySelector('[data-testid=rn-dropped-titles]').open === false",
+            timeout=1000,
+        )
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_a_past_run_opens_in_a_centered_drawer_that_does_not_jump(running):
     base, browser = running
     ctx, page, errors = _page(base, browser, "light", 1680)

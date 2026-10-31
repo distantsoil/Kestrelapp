@@ -8,7 +8,12 @@
   <div class="rn-nums rn-nums--wide"><span><b>{{ row.counts.found }}</b>found</span><span><b>{{ row.counts.new }}</b>new</span><span><b>{{ row.counts.rated }}</b>rated</span><span class="{{ 'is-bad' if row.counts.failed }}"><b>{{ row.counts.failed }}</b>need another try</span></div>
   {% if row.cost %}<p class="k-muted rn-small" data-testid="rn-dr-cost"><b>Online cost: {{ row.cost.label }}.</b> {% if row.cost.tokens %}Estimated from {{ row.cost.tokens }} tokens across {{ row.cost.roles }} ratings and the model's listed price. {% endif %}Your provider's bill is the exact figure; Kestrel does not store a bill for each rating.</p>{% endif %}
   {% set skipped_total = skipped.dropped_outside_area + skipped.dropped_unrelated_title %}
-  {% if skipped_total > 0 %}<p class="k-muted rn-small" data-testid="rn-skipped">Skipped {{ skipped_total }}: {{ skipped.dropped_outside_area }} outside your area, {{ skipped.dropped_unrelated_title }} unrelated titles</p>{% endif %}
+  {% if skipped_total > 0 %}<div class="rn-skip"><p class="k-muted rn-small" data-testid="rn-skipped">Skipped {{ skipped_total }}: {{ skipped.dropped_outside_area }} outside your area, {{ skipped.dropped_unrelated_title }} unrelated titles</p>
+  {% set sample = skipped.title_sample or [] %}
+  {% if sample and skipped.dropped_unrelated_title > 0 %}<details data-k-fold class="rn-details" data-testid="rn-dropped-titles"><summary>Show details</summary>
+    <p class="k-muted rn-small" data-testid="rn-dropped-count">{% if sample|length < skipped.dropped_unrelated_title %}Showing {{ sample|length }} of {{ skipped.dropped_unrelated_title }}. {% endif %}Kestrel keeps a short sample so you can check what the filter left out.</p>
+    <ul class="rn-dropped__list">{% for t in sample %}<li>{{ t.title }}{% if t.org %}<span class="k-muted">, {{ t.org }}</span>{% endif %}</li>{% endfor %}</ul>
+  </details>{% endif %}</div>{% endif %}
   <div><div class="rn-eyebrow">Roles per minute, by step</div>
     <div class="rn-chart" role="img" aria-label="Roles per minute by step">
       {% for c in chart %}<div><b>{{ c.words }}</b><i style="height:{{ c.pct }}%"></i></div>{% endfor %}
