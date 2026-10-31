@@ -202,11 +202,12 @@ async def _retry_quarantine(session: AsyncSession, quarantine_id: int) -> str | 
     if q is None:
         return f"No quarantine record #{quarantine_id}."
 
-    q.attempts = (q.attempts or 0) + 1
-
     if q.opportunity_id is None:
-        await session.commit()
-        return "Retried (no opportunity was attached to this record; attempt count updated only)."
+        # D-UI-224: no role, so no task to queue. Say where it runs again; count no try.
+        return ("This did not come from scoring a role, so it cannot be tried again here. "
+                "Run it again where it started, or remove it from this list.")
+
+    q.attempts = (q.attempts or 0) + 1
 
     opp = await session.get(Opportunity, q.opportunity_id)
     if opp is None:

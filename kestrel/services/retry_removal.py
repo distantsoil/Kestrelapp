@@ -16,6 +16,34 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 
 PREFIX = "retry_removed."
+# A failure with no role (D-UI-224) is removed by its own row: `retry_removed.q<quarantine id>`.
+# removed_ids reads digits only, so these never look like a role.
+ROW_PREFIX = f"{PREFIX}q"
+
+
+def row_key_for(quarantine_id: int) -> str:
+    return f"{ROW_PREFIX}{int(quarantine_id)}"
+
+
+async def mark_row(session: AsyncSession, quarantine_id: int) -> str:
+    """Remove one failure that has no role; the caller commits. Nothing is deleted."""
+    value = {"at": utcnow_iso()}
+    row = await session.get(Setting, row_key_for(quarantine_id))
+    if row is None:
+        session.add(Setting(key=row_key_for(quarantine_id), value=value))
+    else:
+        row.value = value
+        row.updated_at = utcnow_iso()
+    return value["at"]
+
+
+async def clear_row(session: AsyncSession, quarantine_id: int, *, at: str | None = None) -> bool:
+    """Undo mark_row. True when there was one; the caller commits."""
+    row = await session.get(Setting, row_key_for(quarantine_id))
+    if row is None or (at is not None and row.value.get("at") != at):
+        return False
+    await session.delete(row)
+    return True
 
 
 def key_for(opportunity_id: int) -> str:

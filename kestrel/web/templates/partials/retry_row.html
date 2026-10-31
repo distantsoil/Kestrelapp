@@ -11,7 +11,7 @@
      {%- if row.queued %} hx-get="/quarantine/{{ row.id }}/row" hx-trigger="every 4s" hx-target="this" hx-swap="outerHTML"{% endif %}>
   <div class="rt-in{% if flash %} rt-flash{% endif %}">
     <div class="rt-top">
-      <span class="rt-cbw"><input type="checkbox" class="rt-cb" name="ids" value="{{ row.id }}" aria-label="Select {{ who }}"></span>
+      <span class="rt-cbw">{% if opp %}<input type="checkbox" class="rt-cb" name="ids" value="{{ row.id }}" aria-label="Select {{ who }}">{% endif %}</span>
       <div class="rt-role">
         {% if opp %}<b title="{{ who }}"><a href="/opportunities/{{ opp.id }}">{{ who }}</a></b>
         {% else %}<b class="k-muted">No role attached</b>{% endif %}
@@ -26,6 +26,13 @@
     <div class="rt-wait" data-testid="retry-queued" role="status"><span class="rt-spin" aria-hidden="true"></span><span>Trying again…</span></div>
     {% else %}
     <div class="rt-acts">
+      {% if not opp %}
+      {# D-UI-224: no role, so nothing to queue here. Say where it runs again; Remove works. #}
+      {% if row.place %}<a class="k-btn k-btn--primary k-btn--sm" data-testid="rt-place" href="{{ row.place[1] }}">Open {{ row.place[0] }}</a>{% endif %}
+      <span class="k-grow"></span>
+      <button type="button" class="k-btn k-btn--quiet k-btn--sm rt-remove" data-testid="rt-remove"
+              hx-post="/quarantine/{{ row.id }}/remove" hx-swap="none">{{ icon('x', 'k-ic--sm') }}Remove</button>
+      {% else %}
       <button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="retry"
               hx-post="/quarantine/{{ row.id }}/retry" hx-target="#{{ row.dom_id }}" hx-swap="outerHTML">{{ icon('retry', 'k-ic--sm') }}Try again</button>
       {% if row.can_act %}
@@ -40,7 +47,9 @@
       <button type="button" class="k-btn k-btn--quiet k-btn--sm rt-remove" data-testid="rt-remove"
               hx-post="/quarantine/{{ row.id }}/remove" hx-swap="none">{{ icon('x', 'k-ic--sm') }}Remove</button>
       {% endif %}
+      {% endif %}
     </div>
+    {% if not opp %}<p class="rt-note" data-testid="rt-roleless">This did not come from scoring a role, so it can't be tried again here.{% if row.place %} Open {{ row.place[0] }} and press {{ row.place[2] }} to run it again.{% else %} Run it again where you started it.{% endif %} Remove takes it off this list; nothing is deleted.</p>{% endif %}
     {% endif %}
     {% if note %}<p class="rt-note" role="status" data-testid="retry-row-note">{{ note }}</p>{% endif %}
     {% if row.on_hold %}<p class="rt-note" data-testid="rt-held">Held, not sent. Confidential mode is on and no current employer is chosen, so Kestrel kept this role off the online model. <a href="/settings">Choose your employer in Settings</a>, then try again.</p>{% endif %}

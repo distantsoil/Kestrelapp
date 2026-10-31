@@ -251,6 +251,166 @@ def test_review_slides_the_summary_in_centered_and_never_decides(live):
         ctx.close()
 
 
+# ------------------------------------------------------- tap or click the card (D-UI-223)
+_DRAWER_OPEN = "!!document.querySelector('#td-drawer.is-open')"
+_COUNT_FETCHES = """() => { window.__sumFetches = 0; const f = window.fetch;
+  window.fetch = function (u) { if (String(u).includes('/summary')) window.__sumFetches++;
+    return f.apply(this, arguments); }; }"""
+
+
+def _body_point(page, card_sel: str = ".td-card:not(.is-peek)"):
+    """A point on the card's body: the title, never a button, link or the pay tooltip."""
+    t = page.query_selector(f"{card_sel} .td-t").bounding_box()
+    return t["x"] + 20, t["y"] + t["height"] / 2
+
+
+def test_clicking_the_card_body_opens_its_summary_once(live):
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        page.evaluate(_COUNT_FETCHES)
+        first = page.query_selector(".td-card").get_attribute("data-id")
+        x, y = _body_point(page)
+        assert page.evaluate(
+            "([x, y]) => getComputedStyle(document.elementFromPoint(x, y)"
+            ".closest('.td-card')).cursor", [x, y]) == "pointer"
+        page.mouse.dblclick(x, y)  # a double click asks for the summary once
+        page.wait_for_function(_DRAWER_OPEN, timeout=5000)
+        assert page.evaluate("window.__sumFetches") == 1
+        page.keyboard.press("Escape")
+        page.wait_for_function(f"!({_DRAWER_OPEN})", timeout=3000)
+        # Focus goes back to that card's Review button; nothing was decided.
+        assert page.evaluate("document.activeElement && document.activeElement"
+                             ".getAttribute('data-td-review')") == first
+        assert page.locator(".td-card").count() == 5
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_dragging_a_card_never_opens_its_summary(live):
+    ctx, page, _ = _page(live, "light", 1680)
+    try:
+        before = page.evaluate(_BOXES, ".td-card")[0]["l"]
+        x, y = _body_point(page)
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x - 160, y, steps=8)
+        page.mouse.up()
+        wait_for_layout(page)
+        assert page.evaluate(_BOXES, ".td-card")[0]["l"] < before - 100
+        page.wait_for_timeout(400)
+        assert not page.evaluate(_DRAWER_OPEN)
+    finally:
+        ctx.close()
+
+
+def test_a_peek_card_moves_there_and_the_cards_own_controls_do_only_their_job(live):
+    ctx, page, _ = _page(live, "light", 1680)
+    try:
+        before = page.evaluate(_BOXES, ".td-card")[0]["l"]
+        x, y = _body_point(page, ".td-card.is-peek")
+        page.mouse.click(x, y)
+        wait_for_layout(page)
+        assert page.evaluate(_BOXES, ".td-card")[0]["l"] < before - 100
+        page.wait_for_timeout(400)
+        assert not page.evaluate(_DRAWER_OPEN)
+        # The pay estimate's tooltip and Save for later open nothing.
+        est = page.query_selector(".td-card:not(.is-peek) .td-est")
+        if est is not None:
+            est.click()
+            page.wait_for_timeout(300)
+            assert not page.evaluate(_DRAWER_OPEN)
+        card = page.query_selector(".td-card:not(.is-peek)")
+        cid = card.get_attribute("data-id")
+        card.query_selector(".td-save").click()
+        page.wait_for_function(
+            f"!document.querySelector('.td-card[data-id=\"{cid}\"]')", timeout=5000)
+        assert not page.evaluate(_DRAWER_OPEN)
+    finally:
+        ctx.close()
+
+
+def test_selecting_text_on_a_card_does_not_open_its_summary(live):
+    """Reviewer finding (D-UI-223): a short, mostly vertical mouse drag that selects text never
+    becomes a carousel drag, and its click must not open the summary either."""
+    ctx, page, _ = _page(live, "light", 1680)
+    try:
+        page.evaluate("""() => { window.__sel = ''; document.addEventListener('mouseup',
+          () => { window.__sel = String(getSelection()); }, true); }""")
+        # A loaded machine can miss the selection on one drag; try up to three, then fail.
+        for _ in range(3):
+            page.evaluate("getSelection().removeAllRanges()")
+            t = page.query_selector(".td-card:not(.is-peek) .td-t").bounding_box()
+            page.mouse.move(t["x"] + 2, t["y"] + 4)
+            page.mouse.down()
+            page.mouse.move(t["x"] + 5, t["y"] + t["height"] + 30, steps=12)
+            page.mouse.up()
+            page.wait_for_timeout(400)
+            assert not page.evaluate(_DRAWER_OPEN)
+            if page.evaluate("window.__sel"):
+                break
+        assert page.evaluate("window.__sel"), "no drag selected the card text"
+    finally:
+        ctx.close()
+
+
+def _touch(cdp, kind: str, x: float, y: float) -> None:
+    pts = [] if kind == "touchEnd" else [{"x": x, "y": y}]
+    cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": pts})
+
+
+def test_on_touch_a_tap_opens_the_summary_and_a_swipe_only_moves(live):
+    base, browser, _ids = live
+    ctx = browser.new_context(viewport={"width": 1680, "height": 1000}, has_touch=True)
+    try:
+        page = ctx.new_page()
+        page.goto(f"{base}/")
+        page.wait_for_selector('[data-testid="td-card"]')
+        wait_for_layout(page)
+        cdp = ctx.new_cdp_session(page)
+        # A horizontal swipe moves the carousel and opens nothing.
+        before = page.evaluate(_BOXES, ".td-card")[0]["l"]
+        x, y = _body_point(page)
+        _touch(cdp, "touchStart", x, y)
+        for i in range(1, 11):
+            _touch(cdp, "touchMove", x - 18 * i, y)
+        _touch(cdp, "touchEnd", x - 180, y)
+        wait_for_layout(page)
+        page.wait_for_timeout(400)
+        assert page.evaluate(_BOXES, ".td-card")[0]["l"] < before - 100
+        assert not page.evaluate(_DRAWER_OPEN)
+        # A tap on the active card opens its summary.
+        x, y = _body_point(page)
+        page.touchscreen.tap(x, y)
+        page.wait_for_function(_DRAWER_OPEN, timeout=5000)
+    finally:
+        ctx.close()
+
+
+def test_the_card_press_shows_briefly_and_not_at_all_under_reduced_motion(live):
+    base, browser, _ids = live
+    for motion, expect in (("no-preference", True), ("reduce", False)):
+        ctx = browser.new_context(viewport={"width": 1680, "height": 1000},
+                                  reduced_motion=motion)
+        try:
+            page = ctx.new_page()
+            page.goto(f"{base}/")
+            page.wait_for_selector('[data-testid="td-card"]')
+            wait_for_layout(page)
+            page.evaluate("""() => { window.__pressed = false;
+              new MutationObserver(() => { if (document.querySelector('.td-card.is-pressed'))
+                window.__pressed = true; }).observe(document.getElementById('td-track'),
+                {subtree: true, attributes: true, attributeFilter: ['class']}); }""")
+            x, y = _body_point(page)
+            page.mouse.click(x, y)
+            page.wait_for_function(_DRAWER_OPEN, timeout=5000)
+            assert page.evaluate("window.__pressed") is expect, motion
+            page.wait_for_timeout(300)
+            assert page.locator(".td-card.is-pressed").count() == 0
+        finally:
+            ctx.close()
+
+
 @pytest.mark.parametrize("theme,width", [("light", 1680), ("dark", 1680), ("light", 1280)])
 @pytest.mark.parametrize("only_pending,batch", [
     (False, False), (False, True), (True, False), (True, True),

@@ -454,7 +454,9 @@ to bottom:
   A horizontal carousel of fixed-width cards (about 270 to 300 px): a wider window shows more
   cards, a narrower one fewer, with the next card peeking from the edge. Arrows, keys, the page
   dots (large hit area), and touch, pen or mouse dragging move it (a drag never presses the button
-  under it). A card shows the company monogram, the title (two lines reserved so every card has
+  under it). A tap or click on the active card's body opens its summary, as Review does, with a
+  brief press; a drag never opens it, a tap on the peeking card moves to it, and the card's own
+  controls do only their own job (D-UI-223). A card shows the company monogram, the title (two lines reserved so every card has
   one height), company and place, the fit word and score out of 5, pay (an estimate is labeled
   "est." with a hover disclaimer and its sample size, hard rule 6), skill tags (the operator's own skills, from their resume skill groups and profile must-haves, that
   the posting mentions, matched by text with no model call), and a short "why it fits" of two to
@@ -1092,7 +1094,11 @@ get a score, D-UI-74), and **Remove** (takes it off this list only; the role sta
 marked not scored; Undo brings it back). Rows can be selected for "Try all again". An online
 retry shows a dialog first: the provider, the posting text and the short profile summary that
 would be sent, what is not sent (name, contact details, the resume file), the approximate cost
-and the credit left, and waits for a yes. A refused key points to Models. A row leaves the list
+and the credit left, and waits for a yes. A refused key points to Models. A failure that did not come
+from scoring a role (job title ideas, company research and the like) reads "No role attached"
+with its own step name; it has no Try again and no checkbox, says where that step runs again
+(job title ideas: Profile, Suggest again), and Remove takes it off this list, with Undo
+(D-UI-224). A row leaves the list
 when it gets a score, or on Remove; a quarantine row is resolved once a later evaluation of the
 same role at the same or a higher tier exists, and stays as history (D-UI-70). Retry on a scored
 tier opens the Score again dialog on the model that failed (D-UI-71). Results appear in place:

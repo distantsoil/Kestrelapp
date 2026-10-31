@@ -364,10 +364,26 @@ def _retry_removed(opportunity_id):
     )
 
 
+def _row_removed():
+    """EXISTS the operator's Remove of this one failure with no role (D-UI-224), correlated to the
+    enclosing statement's Quarantine row. A later failure is a new row, so it still shows."""
+    from kestrel.services.retry_removal import ROW_PREFIX
+
+    return and_(
+        Quarantine.opportunity_id.is_(None),
+        select(Setting.key)
+        .where(Setting.key == literal(ROW_PREFIX).concat(cast(Quarantine.id, String)))
+        .correlate(Quarantine)
+        .exists(),
+    )
+
+
 def open_quarantine_clause():
     """A quarantine row nothing has resolved yet (D-UI-70) and the operator has not removed from
-    the list (D-UI-104): every row the Needs another try page lists."""
-    return and_(~quarantine_superseded(), ~_retry_removed(Quarantine.opportunity_id))
+    the list (D-UI-104, D-UI-224): every row the Needs another try page lists."""
+    return and_(
+        ~quarantine_superseded(), ~_retry_removed(Quarantine.opportunity_id), ~_row_removed()
+    )
 
 
 def quarantine_queued_clause():

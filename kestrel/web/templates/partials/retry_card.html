@@ -15,7 +15,7 @@
     <input type="hidden" id="rt-step" name="step" value="{{ step }}">
     <button type="button" class="k-btn k-btn--primary k-btn--sm rt-bulk" id="rt-bulk" data-testid="rt-bulk"
             hx-post="/quarantine/bulk" hx-include="#rt-step, #rt-card .rt-cb:checked" hx-swap="none"
-            {%- if not rows %} disabled{% endif %}>Try all again</button>
+            {%- if not rows|selectattr('opp')|list %} disabled{% endif %}>Try all again</button>
   </div>
   <span hidden hx-get="/quarantine/summary" hx-vals='{"step": "{{ step }}"}' hx-trigger="rt-refresh from:body"
         hx-target="#rt-chips" hx-swap="innerHTML"></span>
