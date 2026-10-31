@@ -587,7 +587,7 @@ def test_macos_uses_afplay(monkeypatch, popen):
     assert alert_sound._start(Path("/tmp/chime.wav")) is True  # returns while the player runs
     assert time_mod.monotonic() - began < 2  # the fake player only exits after 5 s: no waiting
     argv, kwargs = popen.started[0]
-    assert argv == ["/usr/bin/afplay", "/tmp/chime.wav"]
+    assert argv == ["/usr/bin/afplay", str(Path("/tmp/chime.wav"))]  # the machine's own spelling
     assert kwargs["stdout"] is alert_sound.subprocess.DEVNULL
 
 
