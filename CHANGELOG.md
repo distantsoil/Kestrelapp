@@ -8,6 +8,15 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 - **Import past applications** works again with a large tracker. A file over about 1 MB made Next do nothing; it now goes through every step, and the same fix covers importing your connections.
 - **A press that fails always says so.** When Kestrel cannot complete something you pressed, a message now says nothing changed, instead of the page staying as it was.
+- **Needs another try** no longer keeps a failure you cannot clear. A failure that did not come from scoring a role, such as job title ideas, names its step, says where to run it again, and can be removed.
+
+### Changed
+
+- **Tap or click a card on Today** to see the role summary, the same as pressing Review role. Swiping and dragging the cards work as before.
+
+### Security
+
+- **PDF reading library updated** to pypdf 6.21.4, which closes seven reported problems where a malformed PDF could make reading it very slow or use a lot of memory.
 
 ## [0.7.0] - 2026-10-30
 

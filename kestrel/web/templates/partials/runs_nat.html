@@ -7,7 +7,7 @@
   {% for r in waiting_views %}
   <li data-testid="rn-q" data-q="{{ r.id }}">
     <span class="rn-mono" aria-hidden="true">{{ ((r.opp.org_name if r.opp and r.opp.org_name else (r.opp.title if r.opp else '?')) or '?')[:2]|upper }}</span>
-    {% set q_title = r.opp.title if r.opp and r.opp.title else 'A role' %}
+    {% set q_title = r.opp.title if r.opp and r.opp.title else ('A role' if r.opp else 'No role attached') %}
     {% set q_sub = (r.opp.org_name ~ ' · ' if r.opp and r.opp.org_name else '') ~ 'stopped at ' ~ r.step_label %}
     <div class="rn-q__t"><b title="{{ q_title }}">{{ q_title }}</b>
       <span title="{{ q_sub }}">{{ q_sub }}</span>

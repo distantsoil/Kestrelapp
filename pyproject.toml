@@ -17,7 +17,7 @@ dependencies = [
   "httpx",
   "playwright",
   "markdownify",
-  "pypdf>=6.21.2",
+  "pypdf>=6.21.4",
   "python-docx",  # .docx import (kestrel.docs.convert); .pdf goes through pypdf above
 
   # Rules / config

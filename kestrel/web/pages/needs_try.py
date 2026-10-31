@@ -54,6 +54,7 @@ from kestrel.web.pages.runs_detail import _open_total, _quarantine_rows, _retry_
 from kestrel.web.retry_words import (
     FILTERS,
     is_held,
+    place_for,
     plain_reason,
     refused_key,
     step_for,
@@ -98,6 +99,8 @@ def _view(r: dict) -> dict:
         "attempts": max(int(q.attempts or 0), 1),
         "tries": tries_words(q.attempts),
         "can_act": r["opp"] is not None,
+        # A failure with no role (D-UI-224) runs again on its own page, never from here.
+        "place": place_for(q.tier) if r["opp"] is None else None,
     }
 
 
@@ -534,9 +537,20 @@ async def remove(request: Request, quarantine_id: int):
     replies and the role stays in Pipeline, not scored. Undo restores it."""
     async with sessionmaker()() as s:
         q = await s.get(Quarantine, quarantine_id)
-        if q is None or q.opportunity_id is None:
-            return await _row_response(
-                request, quarantine_id, error="Only a failure with a role can be removed."
+        if q is None:
+            return await _row_response(request, quarantine_id, error="This failure is gone.")
+        if q.opportunity_id is None:
+            # D-UI-224: a failure with no role is removed by its own row. Nothing is deleted.
+            stamp = await retry_removal.mark_row(s, quarantine_id)
+            await s.commit()
+            return _gone(
+                f"{ROW_PREFIX}{quarantine_id}",
+                {
+                    "k-toast": _toast(
+                        "Removed from this list. Nothing was deleted.",
+                        undo_url=f"/quarantine/{quarantine_id}/restore?at={quote(stamp)}",
+                    ),
+                },
             )
         view = await _view_for(s, quarantine_id)
         opp = await s.get(Opportunity, q.opportunity_id)
@@ -559,8 +573,12 @@ async def restore(request: Request, quarantine_id: int, at: str = ""):
     """Undo of Remove: the list asks for itself again (the toast's Undo posts here)."""
     async with sessionmaker()() as s:
         q = await s.get(Quarantine, quarantine_id)
-        if q is not None and q.opportunity_id is not None:
-            if not at or not await retry_removal.clear(s, q.opportunity_id, at=at):
+        if q is not None:
+            if q.opportunity_id is None:
+                cleared = bool(at) and await retry_removal.clear_row(s, quarantine_id, at=at)
+            else:
+                cleared = bool(at) and await retry_removal.clear(s, q.opportunity_id, at=at)
+            if not cleared:
                 return HTMLResponse(
                     '<span data-undo-msg data-ok="0">This can no longer be undone.</span>'
                 )
@@ -582,7 +600,8 @@ async def bulk(request: Request):
         rows = await _quarantine_rows(s, resolved_cap=0)
     views = _role_views([r for r in rows if not r["resolved"]])
     if ids:
-        targets = [v for v in views if v["id"] in ids]
+        # A failure with no role has nothing to queue here (D-UI-224).
+        targets = [v for v in views if v["id"] in ids and v["opp"] is not None]
     else:
         targets = [v for v in views if (step == "all" or v["step_key"] == step)
                    and not v["queued"] and not v["hidden"] and v["opp"] is not None]

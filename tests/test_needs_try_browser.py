@@ -301,3 +301,48 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(liv
         assert not errors, errors
     finally:
         ctx.close()
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1680), ("dark", 1680), ("light", 1000)])
+def test_a_failure_with_no_role_reads_right_and_can_be_removed(live, theme, width):
+    """D-UI-224, the owner's report: a job title ideas failure (no role) could not be cleared.
+    Its row names the step, points to Profile, lays out with no overlap, and Remove folds it out
+    with an Undo."""
+    import sqlite3
+
+    from kestrel import paths
+
+    con = sqlite3.connect(paths.db_path())
+    with con:
+        cur = con.execute(
+            "INSERT INTO quarantine (opportunity_id, tier, model, raw_response, error, attempts,"
+            " created_at) VALUES (NULL, 15, 'm', 'It is. It is.', 'the reply hit max_tokens"
+            " 16000', 3, '2026-10-30T23:18:19Z')")
+        qid = cur.lastrowid
+    con.close()
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        row = page.locator(f"#rt-row-{qid}")
+        row.scroll_into_view_if_needed()
+        text = row.inner_text()
+        assert "No role attached" in text and "Job title ideas" in text
+        assert "Open Profile and press Suggest again" in text
+        assert row.get_by_test_id("retry").count() == 0 and row.locator(".rt-cb").count() == 0
+        assert row.get_by_test_id("rt-place").get_attribute("href") == "/profile?tab=employment"
+        boxes = page.evaluate(_BOXES, f"#rt-row-{qid} .rt-top > *, #rt-row-{qid} .rt-acts > *")
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                assert not _overlaps(a, b), (a, b)
+        if os.environ.get("KESTREL_SHOT_DIR"):
+            row.screenshot(path=os.path.join(os.environ["KESTREL_SHOT_DIR"],
+                                             f"retry-roleless-{theme}-{width}.png"))
+        row.get_by_test_id("rt-remove").click()
+        page.locator(f"#rt-row-{qid}").wait_for(state="detached")
+        toast = page.locator(".k-toast")
+        toast.wait_for()
+        assert "Nothing was deleted" in toast.inner_text()
+        toast.get_by_role("button", name="Undo").click()
+        page.locator(f"#rt-row-{qid}").wait_for()
+        assert not errors, errors
+    finally:
+        ctx.close()

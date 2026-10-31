@@ -8,13 +8,29 @@ import re
 from datetime import UTC, datetime
 
 # The three scoring steps in the operator's words (tier 1 screen, tier 2 review, tier 3 read).
-# Anything else (research, interview and the like) reads "Other step" and shows under All only.
+# Anything else (research, interview and the like) shows under All only, named by its own step
+# (D-UI-224); an unknown tier reads "Other step".
 STEPS: dict[int, tuple[str, str]] = {
     1: ("quick", "Quick sort"),
     2: ("fit", "Fit score"),
     3: ("deep", "Deep read"),
 }
 OTHER_STEP = ("other", "Other step")
+OTHER_LABELS: dict[int, str] = {
+    4: "Resume import",
+    5: "Company research",
+    6: "Contacts",
+    8: "Story bank",
+    9: "Mock interview",
+    13: "Resume review",
+    14: "Interview questions",
+    15: "Job title ideas",
+    16: "Company summary",
+}
+# Where a failure with no role runs again (D-UI-224): (page name, link, what to press there).
+PLACES: dict[int, tuple[str, str, str]] = {
+    15: ("Profile", "/profile?tab=employment", "Suggest again"),
+}
 FILTERS = (("all", "All"), ("quick", "Quick sort"), ("fit", "Fit score"), ("deep", "Deep read"))
 
 REASON_FALLBACK = "Scoring did not finish"
@@ -40,7 +56,15 @@ _REASONS: tuple[tuple[tuple[str, ...], str], ...] = (
 
 def step_for(tier: int | None) -> tuple[str, str]:
     """(filter key, label) for the tier that failed."""
-    return STEPS.get(int(tier or 0), OTHER_STEP)
+    t = int(tier or 0)
+    if t in STEPS:
+        return STEPS[t]
+    return (OTHER_STEP[0], OTHER_LABELS.get(t, OTHER_STEP[1]))
+
+
+def place_for(tier: int | None) -> tuple[str, str, str] | None:
+    """Where the step behind a failure with no role runs again, or None when it has no one page."""
+    return PLACES.get(int(tier or 0))
 
 
 def is_held(error: str | None) -> bool:

@@ -164,6 +164,8 @@
   transition: transform .2s, box-shadow .2s, opacity .4s;
 }
 .td-card:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+.td-card:not(.is-peek) { cursor: pointer; } /* tap or click opens the summary (D-UI-223) */
+.td-card.is-pressed { transform: translateY(-1px) scale(.985); box-shadow: none; }
 .td-card.is-peek { opacity: .45; cursor: pointer; }
 .td-card.is-peek:hover { opacity: .75; transform: none; box-shadow: none; }
 .td-card.is-in { animation: td-in-up .45s ease backwards; animation-delay: calc(var(--i, 0) * 60ms + 380ms); }

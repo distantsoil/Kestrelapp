@@ -160,6 +160,20 @@
     }
     var rv = t.closest('[data-td-review]');
     if (rv) { openRole(rv.getAttribute('data-td-review'), rv); return; }
+    // D-UI-223: a tap or click on the active card's body opens its summary, as Review does. A
+    // drag never gets here (endDrag swallows its click); its own controls do their own job.
+    // Selecting text on the card is not a tap; the walkthrough owns clicks while it runs.
+    var card = t.closest('#td-track > .td-card');
+    if (card && !tour.on && !card.classList.contains('is-peek') &&
+        !t.closest('button, a, input, select, textarea, .td-est')) {
+      var sel = root.getSelection ? String(root.getSelection()) : '';
+      var own = card.querySelector('[data-td-review]');
+      if (own && !sel && $('#td-drawer')) {
+        pressCard(card);
+        openRole(own.getAttribute('data-td-review'), own);
+      }
+      return;
+    }
     if (t.closest('[data-td-runnow]')) {
       var b = $('[data-testid="scan-now"]');
       if (b) b.click();
@@ -265,9 +279,17 @@
   }
 
   /* -------------------------------------------------------------- the role summary (Review) */
+  // A brief press on the card itself (D-UI-223); none under reduced motion.
+  function pressCard(c) {
+    if (reduced()) return;
+    c.classList.add('is-pressed');
+    cx.after(160, function () { c.classList.remove('is-pressed'); });
+  }
+  var opening = null;  // the role whose summary is on its way: a double tap asks once
   function openRole(id, trigger) {
     var dr = $('#td-drawer');
-    if (!dr || !root.fetch || !cx) return;
+    if (!dr || !root.fetch || !cx || opening === id) return;
+    opening = id;
     var signal = cx.signal;  // leaving the page drops an answer still on its way
     root.fetch('/today/roles/' + encodeURIComponent(id) + '/summary',
       { credentials: 'same-origin', signal: signal })
@@ -278,7 +300,8 @@
         if (root.htmx) root.htmx.process(dr);
         if (root.KUI) root.KUI.openSlideOver('#td-drawer', { trigger: trigger });
       })
-      .catch(function () { /* offline, or the page was left: the summary stays closed */ });
+      .catch(function () { /* offline, or the page was left: the summary stays closed */ })
+      .then(function () { if (opening === id) opening = null; });
   }
 
   /* ------------------------------------------------------------------------ the status strip */
@@ -611,6 +634,7 @@
       cx = ctx;
       S = { idx: 0, perView: 4, cw: 0, fade: null, poll: null };
       drag = { x0: null, y0: 0, base: 0, moved: false, pid: null };
+      opening = null;
       tour = { on: false, i: 0, from: null };
       enterNext = false;
       stripFace = null;

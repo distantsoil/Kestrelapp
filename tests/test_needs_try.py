@@ -155,7 +155,9 @@ def test_steps_when_and_tries_in_plain_words():
     assert step_for(1) == ("quick", "Quick sort")
     assert step_for(2) == ("fit", "Fit score")
     assert step_for(3) == ("deep", "Deep read")
-    assert step_for(9) == ("other", "Other step") and step_for(None)[0] == "other"
+    assert step_for(9) == ("other", "Mock interview")
+    assert step_for(15) == ("other", "Job title ideas")
+    assert step_for(99) == ("other", "Other step") and step_for(None)[0] == "other"
     assert tries_words(1) == "1 try" and tries_words(2) == "2 tries"
     assert tries_words(0) == "1 try" and tries_words(None) == "1 try"
     now = datetime(2026, 10, 23, 15, 0, tzinfo=UTC)
@@ -261,10 +263,13 @@ def test_a_hidden_role_an_orphan_and_a_failed_score_again_each_read_right(seeded
     page = client.get("/quarantine").text
     assert "(hidden)" in _row_html(page, ids["Inventory Coordinator"]["q"])
     orphan = page[page.index("No role attached") - 600:]
-    assert "Other step" in orphan
+    assert "Mock interview" in orphan
     row = orphan.split('id="rt-row-', 1)[1]
     row = row.split('id="rt-row-', 1)[0] if 'id="rt-row-' in row else row
-    assert "Try again" in row and "Remove" not in row and "Score it anyway" not in row
+    # D-UI-224: no Try again that does nothing, no checkbox for Try all again; Remove works.
+    assert 'data-testid="retry"' not in row and 'class="rt-cb"' not in row
+    assert 'data-testid="rt-remove"' in row and "Score it anyway" not in row
+    assert "Run it again where you started it." in row
 
 
 # ------------------------------------------------------------------------------ try again
@@ -486,20 +491,66 @@ def test_another_roles_newer_failure_does_not_bring_a_removed_role_back(seeded):
     assert _read(lambda s: failure_summary(s)).total == 6
 
 
-def test_remove_needs_a_role_and_no_route_deletes_a_row(seeded):
-    client, ids = seeded
-
+def _add_title_ideas_failure() -> int:
     async def orphan(s):
-        q = Quarantine(opportunity_id=None, tier=9, model="m", error="x", attempts=1)
+        q = Quarantine(opportunity_id=None, tier=15, model="m", raw_response="It is. It is.",
+                       error="the reply hit max_tokens 16000", attempts=3)
         s.add(q)
         await s.flush()
         return q.id
 
-    oq = _write(orphan)
+    return _write(orphan)
+
+
+def test_a_failure_with_no_role_can_be_removed_and_undone(seeded):
+    """D-UI-224, the owner's report: a title ideas failure (no role) sat on the list forever."""
+    client, _ids = seeded
+    oq = _add_title_ideas_failure()
+    before = _read(lambda s: failure_summary(s)).total
     r = client.post(f"/quarantine/{oq}/remove", headers=_hx(oq))
-    assert "Only a failure with a role can be removed." in r.text
-    assert not _read(lambda s: s.execute(select(Setting).where(
-        Setting.key.like("retry_removed.%")))).scalars().all()
+    assert r.status_code == 200 and r.headers["HX-Reswap"] == "none"
+    ev = _events(r)
+    assert ev["rt-gone"] == {"id": f"rt-row-{oq}"}
+    assert ev["k-toast"]["message"] == "Removed from this list. Nothing was deleted."
+    assert _read(lambda s: s.get(Setting, f"retry_removed.q{oq}")) is not None
+    # Nothing is deleted (hard rule 3): the raw reply stays.
+    assert _read(lambda s: s.get(Quarantine, oq)).raw_response == "It is. It is."
+    assert f'id="rt-row-{oq}"' not in client.get("/quarantine").text
+    assert _read(lambda s: failure_summary(s)).total == before - 1
+    r = client.post(ev["k-toast"]["undoUrl"])
+    assert r.status_code == 204
+    assert f'id="rt-row-{oq}"' in client.get("/quarantine").text
+    assert _read(lambda s: failure_summary(s)).total == before
+
+
+def test_a_failure_with_no_role_says_where_it_runs_again(seeded):
+    client, _ids = seeded
+    oq = _add_title_ideas_failure()
+    page = client.get("/quarantine").text
+    row = _row_html(page, oq)
+    assert "Job title ideas" in row and 'href="/profile?tab=employment"' in row
+    assert "Open Profile and press Suggest again to run it again." in row
+    # Try again (a stale page) and Try all again with it selected count no try and queue nothing.
+    r = client.post(f"/quarantine/{oq}/retry", headers=_hx(oq))
+    assert "cannot be tried again here" in r.text
+    client.post("/quarantine/bulk", data={"step": "all", "ids": [str(oq)]}, headers=HX)
+    assert _read(lambda s: s.get(Quarantine, oq)).attempts == 3
+
+
+def test_removing_a_failure_with_no_role_hides_only_that_row(seeded):
+    client, _ids = seeded
+    first, second = _add_title_ideas_failure(), _add_title_ideas_failure()
+    client.post(f"/quarantine/{first}/remove", headers=_hx(first))
+    page = client.get("/quarantine").text
+    assert f'id="rt-row-{first}"' not in page and f'id="rt-row-{second}"' in page
+    # Role markers never read a row marker as a role.
+    from kestrel.services.retry_removal import removed_ids
+
+    assert _read(lambda s: removed_ids(s)) == set()
+
+
+def test_no_route_deletes_a_row(seeded):
+    client, ids = seeded
     qid = ids["Operations Analyst"]["q"]
     for verb in ("delete", "put", "patch"):
         for path in (f"/quarantine/{qid}", f"/quarantine/{qid}/remove",
@@ -859,3 +910,14 @@ def test_remove_undo_does_not_clear_a_later_removal(seeded):
     client.post(f"/quarantine/{qid}/remove")
     assert "This can no longer be undone." in client.post(first).text
     assert _read(lambda s: s.get(Setting, f"retry_removed.{oid}")) is not None
+
+
+def test_try_all_again_is_off_when_only_failures_with_no_role_remain(seeded):
+    """Reviewer finding (D-UI-224): Try all again has nothing to queue for a row with no role."""
+    client, ids = seeded
+    for role in ids.values():
+        client.post(f"/quarantine/{role['q']}/remove", headers=_hx(role["q"]))
+    _add_title_ideas_failure()
+    page = client.get("/quarantine").text
+    assert "No role attached" in page
+    assert "disabled" in re.search(r'<button[^>]*data-testid="rt-bulk"[^>]*>', page, re.S).group(0)
