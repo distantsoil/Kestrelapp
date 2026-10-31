@@ -30,6 +30,7 @@ from kestrel.ingest.dedup import jaccard, title_tokens
 from kestrel.ingest.normalize import normalize_and_store
 from kestrel.ingest.orgs import normalized_name
 from kestrel.urls import safe_web_url
+from kestrel.web.fit import IMPORTED_REASON
 
 # Header words accepted for each column, lowercased, punctuation and spaces removed.
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
@@ -492,7 +493,7 @@ async def commit(
             opp.archived_at = now
             opp.archive_reason = "applied"
         if opp.stage_reason is None:
-            opp.stage_reason = "Imported applied history"
+            opp.stage_reason = IMPORTED_REASON
         existing = (
             await session.execute(select(Pursuit).where(Pursuit.opportunity_id == opp.id))
         ).scalar_one_or_none()

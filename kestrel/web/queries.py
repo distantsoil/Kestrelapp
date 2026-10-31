@@ -50,6 +50,7 @@ from kestrel.web.fit import (
     failure_words,
     fit_for,
     fit_word_for_verdict,
+    hidden_unscored_why,
     operator_group,
 )
 
@@ -154,6 +155,8 @@ class OppRow:
     # The operator took this role off Needs another try (D-UI-133). It is not scored and not
     # failed: the row says so and links back there to undo.
     removed: bool = False
+    # Hidden as applied before any model read it (issue #59): why it has no score, else None.
+    hidden_why: str | None = None
     # Kept with Save for later (kestrel.services.saved_roles).
     saved: bool = False
     # What the Pipeline template prints for the row (kestrel.web.pipeline_view.row_view), set
@@ -660,6 +663,7 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
     from kestrel.services.tracks import switched_off_tracks
 
     stuck = await stuck_ids(session)
+    hidden = await hidden_unscored(session, [r.opp for r in todo])
     off = set(switched_off_tracks())
     track_of = {r.opp.id: r.opp.track for r in todo}
     oid = func.json_extract(Task.payload, "$.opportunity_id")
@@ -691,6 +695,12 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
         if o not in state or rank[this] < rank[state[o]]:
             state[o] = this
     for r in todo:
+        if r.opp.id in hidden:
+            # Hidden as applied and nothing queued to score it (D-UI-225); checked first because
+            # a re-post's embed task is live but never leads to a score.
+            r.scoring = "hidden"
+            r.hidden_why = hidden[r.opp.id]
+            continue
         # A live task wins over a parked stage: a quarantined role queued to score again stays
         # quarantined until its task runs (queue.rescore), and is queued, not failed.
         if r.opp.id in state:
@@ -702,6 +712,28 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
             r.scoring = "stuck"
         else:
             r.scoring = "not_queued"
+
+
+async def hidden_unscored(session: AsyncSession, opps: list[Opportunity]) -> dict[int, str]:
+    """Roles hidden as applied that nothing will score, with why (issue #59, D-UI-225): Tier 0
+    skips hidden roles, so with no queued or running t1/t2/t3/rescore task they are Not scored,
+    never Being scored. A re-post's own embed task does not count: it never leads to a score.
+    The one rule for the role page, the Pipeline row and panel, and Applications."""
+    cand = {o.id: why for o in opps if (why := hidden_unscored_why(o)) is not None}
+    if not cand:
+        return {}
+    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    queued = await session.execute(
+        select(oid).where(
+            Task.type.in_(_RESCORING_TASKS),
+            Task.status.in_(("pending", "leased")),
+            oid.in_(list(cand)),
+        )
+    )
+    for (o,) in queued.all():
+        if o is not None:
+            cand.pop(int(o), None)
+    return cand
 
 
 async def failure_reasons(session: AsyncSession, opp_ids: list[int]) -> dict[int, str]:
