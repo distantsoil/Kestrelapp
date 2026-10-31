@@ -628,6 +628,7 @@
   function onResponseError(e) {
     var path = String((e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath) || '');
     if (path.indexOf('/pursuits') !== 0) return;
+    e.detail.kHandled = true;
     toast('That card is no longer on the board.');
     closePanel();
     var b = board();

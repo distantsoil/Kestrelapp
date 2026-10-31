@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from kestrel.services import applied_import as svc
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.uploads import large_form
 
 router = APIRouter()
 log = structlog.get_logger()
@@ -54,7 +55,7 @@ def _partial(request: Request, ctx: dict) -> HTMLResponse:
 async def _text_from(request: Request) -> tuple[str, str | None]:
     """The pasted text, or the uploaded file's text (UTF-8, BOM tolerated). Returns (text,
     error)."""
-    form = await request.form()
+    form = await large_form(request, svc.MAX_ROWS)
     upload = form.get("file")
     text = str(form.get("text") or "")
     if upload is not None and hasattr(upload, "read"):
@@ -105,7 +106,7 @@ def _choices(form, rows: list[svc.ImportRow]) -> dict[int, svc.RowChoice]:
 
 @router.post("/settings/applied/import", response_class=HTMLResponse)
 async def applied_import(request: Request):
-    form = await request.form()
+    form = await large_form(request, svc.MAX_ROWS)
     text = str(form.get("text") or "")
     if not text.strip():
         return _partial(request, _ctx(error="Nothing to import: review a table first."))

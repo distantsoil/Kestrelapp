@@ -4,6 +4,11 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Import past applications** works again with a large tracker. A file over about 1 MB made Next do nothing; it now goes through every step, and the same fix covers importing your connections.
+- **A press that fails always says so.** When Kestrel cannot complete something you pressed, a message now says nothing changed, instead of the page staying as it was.
+
 ## [0.7.0] - 2026-10-30
 
 The Release Candidate for 1.0: every screen redesigned, smoother page changes, more places to find roles, and security fixes.

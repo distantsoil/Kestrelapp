@@ -417,6 +417,7 @@
   }
   function onResponseError(e) {
     var d = e.detail;
+    if (d) d.kHandled = true;
     if (d && d.xhr && d.xhr.status === 404 && d.target && d.target.id === 'pl-panel') return;
     toast('Could not do that. Try again.', { tone: 'warn' });
   }

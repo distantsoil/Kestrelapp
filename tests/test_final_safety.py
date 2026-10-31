@@ -220,7 +220,7 @@ async def test_applied_read_parses_outside_event_loop(monkeypatch):
     parser_threads = []
     original = applied_import.parse_table
 
-    async def form():
+    async def form(**_limits):
         return {"sample": "1"}
 
     def parse(text):
