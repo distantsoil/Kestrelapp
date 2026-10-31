@@ -119,8 +119,11 @@ async def test_the_recorded_offer_becomes_visible_on_the_page():
         r = c.get("/offers")
     assert r.status_code == 200
     assert "Acme " in r.text  # the seeded org
-    assert "185,000" in r.text  # the offer's own figure is rendered
-    assert f'value="{pid}"' in r.text  # the pursuit it belongs to
+    assert "$185k" in r.text  # the offer's own figure, in the card's short form
+    assert "base $185,000" in r.text  # and to the dollar, behind Show details
+    with _client() as c:
+        sheet = c.get("/offers/new")
+    assert f'value="{pid}"' in sheet.text  # the pursuit it belongs to, in the Record sheet
 
 
 async def test_a_blank_field_is_not_recorded_but_a_zero_is():
@@ -220,7 +223,7 @@ async def test_two_offers_produce_a_comparison_matrix_with_both_parts():
 
     assert r.status_code == 200
     assert "Comparison matrix" in r.text
-    for axis in ("total first-year comp", "four-year value", "level and scope", "company risk"):
+    for axis in ("first-year total", "four-year value", "level and scope", "company risk"):
         assert axis in r.text.lower()
 
 

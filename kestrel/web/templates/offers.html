@@ -1,11 +1,71 @@
+{# Offers (D-UI-122, D-UI-136). Built on the shared design system: ui/macros.html for the band,
+   help cards and flyouts, tokens for every color. The body (tabs and the pane) is what a tab or
+   an action swaps; the header count and the Record button ride along out of band. #}
 {% extends "base.html" %}
-{% block title %}Offers · Kestrel{% endblock %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
+{% block title %}{{ 'Engagement offers' if con else 'Offers' }} · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/pages/offers.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): offers.js defines the page "offers"; base.html mounts it. #}
+{% block page_name %}offers{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/offers.js') }}" defer></script>{% endblock %}
 {% block content %}
-<h1>Offers</h1>
-<p class="muted">Open offers, benchmarked against your own accumulated data, never model priors.
-Scripts below are drafts for you to edit and deliver yourself; nothing here sends anything on your
-behalf, and nothing here computes your walk-away number.</p>
-<div id="offers-list">
-  {% include "partials/offers_list.html" %}
-</div>
+<div class="of-wrap"><div class="of-page">
+  {% call ui.scene_band('Engagement offers' if con else 'Offers') %}
+    {% include "partials/offer_count.html" %}
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#of-how-fly" aria-controls="of-how-fly" aria-expanded="false" data-testid="of-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+    {% include "partials/offer_rec.html" %}
+  {% endcall %}
+  <div class="k-layout">
+    <div class="k-layout__main"><div id="of-body">{% include "partials/offers_list.html" %}</div></div>
+    {% call ui.help_column() %}
+      {{ ui.help_card('How offers are compared', ['Money rows add up a year or four.', 'Other rows use your own star ratings.', 'You choose how much each row counts.'], 'info', 'tune', 'of-how-fly') }}
+      {{ ui.help_card('Your walk-away is yours', ['You set the lowest number you would accept.', 'Every draft stays above it.', 'Kestrel never picks it for you.'], 'good', 'key', 'of-walk-fly') }}
+      {% if route.online %}{{ ui.help_card('Drafts use an online model', ['Written by ' ~ route.model ~ ', only after you confirm.', 'You see exactly what is sent first.', 'You copy it into your own email.'], 'warn', 'lock', 'of-local-fly') }}
+      {% else %}{{ ui.help_card('Drafts stay on this computer', ['Written here, in your voice.', 'Highlighted lines come from your resume.', 'You copy it into your own email.'], 'warn', 'lock', 'of-local-fly') }}{% endif %}
+      {{ ui.help_card('What too few means', ['Under 5 similar roles, no range is shown.', 'Your own past offers count too.', 'More data arrives as you record outcomes.'], 'info', 'alert', 'of-few-fly') }}
+    {% endcall %}
+  </div>
+  {# Where the Record an offer sheet lands. #}
+  <div id="of-dialog"></div>
+  {% call ui.flyout('of-how-fly', 'How offers are compared', help_href='/help') %}
+    <h4>What is counted</h4>
+    <p>First-year total is base, target bonus, signing pay once, and a quarter of your equity estimate. Four-year value assumes no raises, because nobody knows them yet.</p>
+    <h4>How to use the weights</h4>
+    <ul><li>Move a slider to Ignore for anything that does not matter to you.</li><li>Rate the judgment rows yourself. Kestrel shows the fact beside the stars.</li><li>Read the Ahead on lines, then decide.</li></ul>
+    <h4>What it never does</h4>
+    <p>It never picks a winner. This is your decision.</p>
+  {% endcall %}
+  {% call ui.flyout('of-walk-fly', 'Your walk-away is yours', help_href='/help') %}
+    <h4>Why it comes first</h4>
+    <p>A draft without a floor can talk you into less than you would take. Setting the number first keeps the draft honest.</p>
+    <h4>How to choose it</h4>
+    <ul><li>Start from your floor on the pay band.</li><li>Add what a move would cost you.</li><li>Round up, not down.</li></ul>
+  {% endcall %}
+  {% if route.online %}
+  {% call ui.flyout('of-local-fly', 'Drafts use an online model', help_href='/help') %}
+    <h4>What Kestrel sends</h4>
+    <p>Your negotiation draft is set to run on {{ route.model }}, an online model. Nothing goes until you tick the box on the Negotiate tab, which lists what is sent: {{ route.draft_sends }}. Kestrel never emails, messages or replies for you.</p>
+    <h4>The highlighted phrases</h4>
+    <p>Hover one to see where it came from: a resume line or a story you wrote. If a claim is not yours, delete it before sending.</p>
+  {% endcall %}
+  {% else %}
+  {% call ui.flyout('of-local-fly', 'Drafts stay on this computer', help_href='/help') %}
+    <h4>What Kestrel sends</h4>
+    <p>Nothing. It writes the draft on your computer and you copy it. Kestrel never emails, messages or replies for you.</p>
+    <h4>The highlighted phrases</h4>
+    <p>Hover one to see where it came from: a resume line or a story you wrote. If a claim is not yours, delete it before sending.</p>
+  {% endcall %}
+  {% endif %}
+  {% call ui.flyout('of-few-fly', 'What too few means', help_href='/help') %}
+    <h4>Why 5</h4>
+    <p>A range from three roles can look precise and still be wrong. Kestrel says “Too few” and shows only your own floor and target instead.</p>
+    <h4>How to add data</h4>
+    <p>Record offers you receive and the final outcome. Applications also adds pay from postings it reads.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

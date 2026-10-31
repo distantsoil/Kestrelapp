@@ -1,0 +1,2 @@
+{# The "N open" count in the header. Swapped out of band by every action (oob), so it never lies. #}
+<span id="of-count" class="of-count k-muted" data-testid="of-count"{% if oob %} hx-swap-oob="outerHTML"{% endif %}{% if empty %} hidden{% endif %}>{{ open_n }} open</span>

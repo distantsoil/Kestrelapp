@@ -502,7 +502,8 @@ def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
 
 _ATS_KINDS = (
     "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp", "paylocity",
-    "workable",
+    "workable", "recruitee", "teamtailor",
+    "personio", "breezy",
 )
 
 

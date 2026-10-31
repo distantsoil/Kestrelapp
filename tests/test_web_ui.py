@@ -102,32 +102,34 @@ def test_review_ui_end_to_end():
             page.on("console", _console)
             page.on("pageerror", lambda e: errors.append(f"pageerror:{e}"))
 
-            # 1. the triage list shows the seeded opportunity as a striped row
+            # 1. the triage list shows the seeded opportunity as a row with its fit pill
             page.goto(f"{base}/opportunities")
             page.wait_for_selector("text=VP of Information Technology")
-            assert "A real IT leadership role." in page.content()  # the summary line
+            assert page.is_visible(f"#row-{opp_id} [data-fit]")
 
             # 2. a chip narrows server-side (Your call removes it; clicking again restores)
             page.click("[data-chip=needs_review]")
-            page.wait_for_selector("text=No opportunities match these chips")
+            page.wait_for_selector("text=Nothing matches these filters")
             page.click("[data-chip=needs_review]")
             page.wait_for_selector("text=VP of Information Technology")
 
-            # 3. a row click opens the drawer with the fit card and the two primary actions
-            page.click(f"#row-{opp_id}")
-            page.wait_for_selector("#drawer-card")
-            assert "of 5" in page.inner_text("[data-testid=fit-line]")
-            assert page.is_visible("[data-testid=add-to-list]")
-            assert page.is_visible("[data-testid=not-for-me]")
+            # 3. a row click slides the panel in, with its own URL, the ring and the footer
+            page.click(f"#row-{opp_id} .pl-title__t")
+            page.wait_for_selector("#pl-panel.is-open [data-kind=role]")
+            assert "of 5" in page.get_attribute("#pl-panel .pl-ring", "aria-label")
+            assert "A real IT leadership role." in page.inner_text("#pl-panel")  # the summary
+            assert page.is_visible("[data-testid=panel-shortlist]")
+            assert page.is_visible("[data-testid=panel-not-for-me]")
+            assert f"open={opp_id}" in page.url
 
-            # 4. Add to my list: the panel and the row both change, and the agree label lands
-            page.click("[data-testid=add-to-list]")
-            page.wait_for_selector("[data-testid=on-my-list]")
+            # 4. Shortlist: the panel and the row both change, and the agree label lands
+            page.click("[data-testid=panel-shortlist]")
+            page.wait_for_selector("[data-testid=panel-on-list]")
             page.wait_for_selector(f"#row-{opp_id} [data-testid=on-shortlist]")
-            assert "on my shortlist" in page.inner_text(f"#row-{opp_id} [data-testid=on-shortlist]")
+            assert "On my shortlist" in page.inner_text(f"#row-{opp_id} [data-testid=on-shortlist]")
 
             # 5. the full page is one click away
-            page.click("[data-testid=drawer-open]")
+            page.click("[data-testid=panel-open]")
             page.wait_for_url(f"**/opportunities/{opp_id}")
 
             browser.close()

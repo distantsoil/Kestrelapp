@@ -1,0 +1,62 @@
+{# Import past applications (SPEC.md 5.6): choose a CSV, spreadsheet or Markdown file, match its
+   columns, review every row, then Add. Nothing is added until Add is pressed, and Undo removes
+   just the rows Add created. Steps: 0 choose, 1 match columns, 2 review, 3 done. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-imp" data-testid="st-imp" data-step="{{ step }}">
+  {{ st.head('Import past applications', 'sheet') }}
+  <ol class="k-steps st-steps" style="--k-steps: 4">
+    {% for label in ['Choose file', 'Match columns', 'Review', 'Add'] %}{% set n = loop.index0 %}
+    <li class="k-step{% if step == 3 or n < step %} is-done{% elif n == step %} is-now{% endif %}"{% if n == step and step < 3 %} aria-current="step"{% endif %}><span class="k-step__n">{% if step == 3 or n < step %}{{ st.sic('check', 'k-ic--sm') }}{% else %}{{ loop.index }}{% endif %}</span><span class="k-step__label">{{ label }}</span></li>
+    {% endfor %}
+  </ol>
+  {% if error %}<p class="st-note st-note--bad" role="alert" data-testid="st-imp-error">{{ error }}</p>{% endif %}
+  {% if step == 0 %}
+  <form class="st-row st-row--first" hx-post="/settings/data/applied/read" hx-target="#st-imp" hx-swap="outerHTML" hx-encoding="multipart/form-data">
+    <div class="st-row__t"><b>Choose a CSV, spreadsheet or Markdown file</b><span class="st-dsm">Nothing is added until you review it.</span></div>
+    <div class="st-chooser">
+      <button type="button" class="k-link" hx-post="/settings/data/applied/read" hx-vals='{"sample": "1"}' hx-target="#st-imp" hx-swap="outerHTML" data-testid="st-imp-sample">Use a sample file</button>
+      <label class="k-btn k-btn--sm k-btn--primary st-file">Choose file<input type="file" name="file" accept=".csv,.tsv,.txt,.md,.markdown,.xlsx" hidden data-st-autosubmit data-testid="st-imp-file"></label>
+    </div>
+  </form>
+  {% elif step == 1 %}
+  <form class="st-imprev" hx-post="/settings/data/applied/review" hx-target="#st-imp" hx-swap="outerHTML">
+    <input type="hidden" name="text" value="{{ text }}"><input type="hidden" name="file_name" value="{{ file_name }}">
+    <p class="st-dsm">{{ file_name }}: {{ n_rows }} row{{ '' if n_rows == 1 else 's' }} found. Check that each column matches.</p>
+    <div class="st-map">
+      <div class="st-kind">In your file</div><span></span><div class="st-kind">In Kestrel</div>
+      {% for c in cols %}
+      <span class="st-fc">{{ c.header }}</span>{{ st.sic('arrow', 'k-ic--sm') }}
+      <span class="k-select"><select name="map_{{ c.i }}" aria-label="{{ c.header }} maps to" data-testid="st-map-{{ c.i }}">
+        {% for key, name in labels.items() %}<option value="{{ key }}"{% if c.canonical == key %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        <option value=""{% if not c.canonical %} selected{% endif %}>Skip this column</option></select></span>
+      {% endfor %}
+    </div>
+    <div class="st-foot"><button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/applied" hx-target="#st-imp" hx-swap="outerHTML">Back</button><span class="st-sp"></span><button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-imp-next">Next</button></div>
+  </form>
+  {% elif step == 2 %}
+  <form class="st-imprev" hx-post="/settings/data/applied/add" hx-target="#st-imp" hx-swap="outerHTML">
+    <input type="hidden" name="text" value="{{ text }}"><input type="hidden" name="file_name" value="{{ file_name }}">
+    <p class="st-dsm">{{ file_name }}: {{ n_rows }} row{{ '' if n_rows == 1 else 's' }}. Untick any you do not want.</p>
+    <div class="k-table-wrap"><table class="k-table st-nw" data-testid="st-imp-table">
+      <thead><tr><th>Add</th><th>Company</th><th>Role</th><th>Applied</th><th>Stage</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for r in review.rows %}
+        <tr{% if r.problems %} class="is-bad"{% endif %}>
+          <td><input type="checkbox" name="include_{{ r.index }}" value="on" class="st-check" aria-label="Add {{ r.company }}"{% if r.default_include %} checked{% endif %}{% if not r.importable %} disabled{% endif %}></td>
+          <td><b>{{ r.company }}</b></td><td>{{ r.title }}</td><td>{{ date_display(r.date) or r.date_raw }}</td>
+          <td>{% if r.status %}<span class="k-pill{% if r.status == 'rejected' %}{% elif r.status in ('interviewing', 'screening', 'final', 'offer') %} k-pill--info{% else %} k-pill--warn{% endif %}">{{ r.status|replace('_', ' ')|capitalize }}</span>
+            {% else %}<span class="k-select"><select name="status_{{ r.index }}" aria-label="Stage for {{ r.company }}"><option value="">Choose a stage</option>{% for o in status_options %}<option value="{{ o }}">{{ o|replace('_', ' ')|capitalize }}</option>{% endfor %}</select></span>{% endif %}</td>
+          <td>{% if r.problems %}<span class="k-pill k-pill--bad">{{ r.problems[0] }}</span>{% elif r.existing_pursuit_id %}<span class="k-pill k-pill--warn">Possible duplicate</span>{% elif r.activity %}<span class="k-pill">Looks like an activity</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody></table></div>
+    <div class="st-foot"><button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/applied" hx-target="#st-imp" hx-swap="outerHTML">Back</button>
+      <span class="st-dsm">Nothing is added until you press Add.</span><span class="st-sp"></span>
+      <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-imp-add" id="st-imp-add">Add {{ review.rows|selectattr('default_include')|list|length }} application{{ '' if review.rows|selectattr('default_include')|list|length == 1 else 's' }}</button></div>
+  </form>
+  {% else %}
+  <div class="st-row st-row--first"><div class="st-row__t"><b data-testid="st-imp-done">{{ n_rows }} application{{ '' if n_rows == 1 else 's' }} added</b><span class="st-dsm">Find them in <a class="k-link" href="/pursuits">Applications</a>.{% if result and result.skipped %} {{ result.skipped }} skipped.{% endif %}</span></div>
+    <button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/applied" hx-target="#st-imp" hx-swap="outerHTML">Import another</button></div>
+  {% endif %}
+  <p class="st-dsm st-sample">Not sure what a file should look like? <a class="k-link" href="/settings/data/applied/sample" download>Download a sample</a>.</p>
+</section>

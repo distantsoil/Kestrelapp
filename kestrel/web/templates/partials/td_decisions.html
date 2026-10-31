@@ -1,0 +1,40 @@
+{# Decisions waiting (D-UI-92, D-UI-156): roles the operator has not decided (shortlist, applied
+   or set aside) plus shortlisted roles not yet applied to; in Consulting, undecided work plus
+   leads not yet contacted. A row slides out when actioned. Shortlist and Ignore use the
+   Pipeline's own routes (with Undo); I applied and I reached out record the Applications verb.
+   Draft outreach has no drafting back end (D-UI-150), so it is shown but never active. #}
+{% import "ui/macros.html" as ui %}
+<section class="k-card k-card--warn td-panel" id="td-decisions" data-testid="td-decisions"
+         hx-get="/today/decisions?track={{ track }}" hx-trigger="td-refresh from:body, kestrel:undone from:document" hx-swap="outerHTML" data-no-busy>
+  <header class="k-sec-head">
+    <span class="k-badge k-badge--warn">{{ ui.icon('alert') }}</span>
+    <div class="k-grow"><h3>Decisions waiting <span class="td-count td-count--warn" data-testid="dw-count">{{ decisions.n }}</span></h3>
+      <p>{% if consulting %}Work you have not decided on, and leads you have not contacted yet.{% else %}Roles you have not decided on, and shortlisted roles you have not applied to.{% endif %}</p></div>
+    <a class="k-link" href="/opportunities?track={{ track }}">View all</a>
+  </header>
+  <div class="td-list" data-testid="dw-list">
+    {% for d in decisions.rows %}
+    <div class="td-item" data-id="{{ d.id }}" data-testid="dw-row">
+      <div class="k-grow"><a class="td-item__t" href="/opportunities/{{ d.id }}">{{ d.title }}</a>
+        <div class="td-o">{{ d.org }} · <span class="k-pill{{ ' k-pill--warn' if d.status_key == 'undecided' else '' }}">{{ d.status }}</span></div></div>
+      {% if d.score is not none %}<span class="td-num td-num--{{ d.tone }}">{{ '%.1f'|format(d.score) }}</span>{% endif %}
+      {% if d.status_key == 'undecided' %}
+        <button type="button" class="k-btn k-btn--sm" data-testid="dw-shortlist" data-td-gone
+                hx-post="/opportunities/{{ d.id }}/decide/shortlist" hx-swap="none">{{ 'Add to leads' if consulting else 'Shortlist' }}</button>
+        <button type="button" class="k-btn k-btn--sm" data-testid="dw-ignore" data-td-gone
+                hx-post="/opportunities/{{ d.id }}/decide/not-for-me?reason=later" hx-swap="none">Ignore</button>
+      {% else %}
+        {% if consulting %}
+        <button type="button" class="k-btn k-btn--sm" disabled title="Kestrel does not draft this yet. Nothing is sent or made without you." data-testid="dw-draft">Draft outreach</button>
+        {% else %}
+        <a class="k-btn k-btn--sm" href="/opportunities/{{ d.id }}/tailor" data-testid="dw-tailor">Tailor resume</a>
+        {% endif %}
+        <button type="button" class="k-btn k-btn--sm" data-testid="dw-applied" data-td-gone
+                hx-post="/today/decisions/{{ d.pursuit_id }}/applied" hx-swap="none">{{ 'I reached out' if consulting else 'I applied' }}</button>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="td-quiet" data-testid="dw-empty">Nothing is waiting on you.</p>
+    {% endfor %}
+  </div>
+</section>

@@ -1,0 +1,44 @@
+{# The step footer (D-UI-65): Back, a hint saying what the primary waits for, a quiet "Skip for now"
+   where the step can wait, and the step's ONE primary button. Part of #ob-step, so a swap always
+   shows the footer for the step now shown. #}
+{% import "ui/macros.html" as ui %}
+{% set has_resume = masters is defined and masters %}
+<div class="ob-foot" data-testid="ob-foot" data-ob-foot>
+  {% if not is_first or ret %}
+  <form class="ob-inline" method="post" action="/onboarding/back" hx-post="/onboarding/back" hx-target="#ob-step" hx-swap="outerHTML">
+    <input type="hidden" name="step" value="{{ key }}">
+    <button class="k-btn k-btn--quiet" type="submit" data-testid="ob-back"><span class="ob-flip">{{ ui.icon('arrow') }}</span>{{ 'Back to searches' if ret else 'Back' }}</button>
+  </form>
+  {% endif %}
+  <div class="ob-hintwrap"><span class="ob-hint" data-ob-hint data-testid="ob-next-hint">{{ hint }}</span></div>
+  {% if skippable and not has_resume %}
+  <form class="ob-inline" method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step" hx-swap="outerHTML">
+    <input type="hidden" name="step" value="{{ key }}"><input type="hidden" name="skip" value="1">
+    <button class="k-btn k-btn--quiet" type="submit" data-testid="ob-skip">Skip for now</button>
+  </form>
+  {% endif %}
+  {% if key == 'welcome' %}
+  <form class="ob-inline" method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step" hx-swap="outerHTML">
+    <input type="hidden" name="step" value="welcome">
+    <button class="k-btn k-btn--primary ob-lg" type="submit" data-testid="ob-next">Get started</button>
+  </form>
+  {% elif key == 'models' %}
+  <form class="ob-inline" method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step" hx-swap="outerHTML">
+    <input type="hidden" name="step" value="models">
+    <button class="k-btn k-btn--primary ob-lg" type="submit" data-testid="ob-next"{% if hint %} disabled{% endif %}>Save and continue</button>
+  </form>
+  {% elif key == 'about' %}
+  <button class="k-btn k-btn--primary ob-lg" type="submit" form="ob-about" data-testid="ob-next" data-ob-gate="about"{% if hint %} disabled{% endif %}>{{ 'Save and go back to searches' if ret else 'Save and continue' }}</button>
+  {% elif key == 'resume' %}
+  <form class="ob-inline" method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step" hx-swap="outerHTML">
+    <input type="hidden" name="step" value="resume">
+    <button class="k-btn k-btn--primary ob-lg" type="submit" data-testid="ob-next"{% if not has_resume %} disabled{% endif %}>{{ 'Save and go back to searches' if ret else 'Save resume and continue' }}</button>
+  </form>
+  {% elif key == 'wants' %}
+  <button class="k-btn k-btn--primary ob-lg" type="submit" form="ob-wants" data-testid="ob-next" data-ob-gate="wants"{% if hint %} disabled{% endif %}>{{ 'Save and go back to searches' if ret else 'Save and continue' }}</button>
+  {% elif key == 'searches' %}
+  <form class="ob-inline" method="post" action="/onboarding/searches/start" hx-post="/onboarding/searches/start" hx-target="#ob-step" hx-swap="outerHTML" data-ob-start-form>
+    <button class="k-btn k-btn--primary ob-lg" type="submit" data-testid="ob-start-searching"{% if not specs %} disabled{% endif %}>Start searching</button>
+  </form>
+  {% endif %}
+</div>

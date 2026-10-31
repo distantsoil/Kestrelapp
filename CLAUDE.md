@@ -25,7 +25,7 @@ second track for consulting and contract work exists but is optional and off by 
 The public promises (kestrelapp.co) are binding on the code: free and "you are not the product";
 never applies, emails or messages anyone; asks before anything goes to an online model; source
 public under PolyForm Noncommercial 1.0.0; built with Claude, ChatGPT, Qwen, DeepSeek, NVIDIA
-Nemotron, Space Bunny and LongCat. Do not assume the original operator's hardware, seniority,
+Nemotron, MiniMax M3, LongCat, Kimi K2.7 and MiMo. Do not assume the original operator's hardware, seniority,
 location or field anywhere in shipped defaults, copy or examples.
 
 ## Source of truth
@@ -72,6 +72,27 @@ network.
 **No scope creep.** This specification is complete; there is no v2 backlog. If something is not
 in a spec file, it is deferred, not put into the code.
 
+**A feature reachable only from the CLI is a bug, never a spec correction.** Kestrel is app first:
+every capability has a place in the interface. If something can only be done from the command line,
+fix the interface; do not change the spec to describe the CLI-only path (D-UI-129).
+
+**The locked mockups are the master for every screen (owner rule, 2026-10-26).**
+`the private overhaul notes*-mockup-locked.html` define layout, sizes, color, copy, states and motion.
+Where the built app differs, the app is wrong; change the mockup only with the owner's sign-off.
+- Every transition, save and button press has at least a mild animation, taken from the mockup:
+  page and tab changes, sections opening and closing, toggles, saves (a short confirmation),
+  presses (a brief state change), list changes. Nothing snaps from one state to the next.
+  Every change and transition is smooth (owner, 2026-10-26: "This is a visual forward
+  refresh"): no flash, no blank frame, no jump, no element redrawing that did not change. Check
+  motion frame by frame in a recording, not only in a still screenshot.
+  The OS reduced-motion setting turns all of it off.
+- No overlapping or clipped text at any supported window size, in light or dark.
+- If any part of a mockup cannot be built as drawn, say so to the owner before shipping: what, why,
+  and the closest alternative, recorded in the private decision log. Silently building something different is
+  never acceptable. "Not achievable" is an allowed answer; "not mentioned" is not.
+- A UI change is done only when a side-by-side screenshot against its locked mockup (light, dark
+  and narrow) matches and the overlap check reports nothing. Tests passing is not enough.
+
 **Commit at every phase boundary**, conventional-commit style (`feat:`, `fix:`, `test:`, `chore:`).
 
 **CI minutes are metered (D-CI-1, D-CI-2).** Windows bills 2x and macOS 10x, and every push to a
@@ -81,9 +102,16 @@ PR branch runs CI. So CI confirms; it does not discover.
 - Before every push run `uv run --extra dev python scripts/check.py` (lint plus the full suite, including
   the workflow, installer-script and notices guards) and push only when it ends "Ready to push."
   `--quick` is for iterating, not for pushing. The opt-in hook: `git config core.hooksPath .githooks`.
+- Exception (owner, D-CI-4): a push whose changes touch only the private decision log and/or `working.log`
+  skips `check.py`; no test reads either file. Any other doc (specs, CLAUDE.md, CHANGELOG) still
+  runs it, because tests read those.
 - A warning in any CI or release log (a deprecated runtime, an annotation, a resource warning)
   becomes a failing local test in the same PR, not a note for later.
 - Windows-only behavior is the one thing the Windows CI job still has to prove; say so in the PR.
+- Static analysis runs first, not last: open the public draft PR at the start of a review cycle
+  so free CodeQL and CI report before model reviews. Write code an analyzer can prove safe
+  (server-rendered links, DOMParser text, `|tojson`/`xmlattr`), and verify each fix with the
+  tool that flagged it.
 
 ---
 

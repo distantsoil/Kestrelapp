@@ -1,0 +1,23 @@
+{# The Practice tab: the mode picker and where it runs on the left, the chat under it, and the
+   practice history on the right. Typed answers only; voice is not part of this. #}
+{% import "ui/macros.html" as ui %}
+{% import "partials/pp_icons.html" as i %}
+<div class="pp-pgrid">
+  <div class="pp-col">
+    <section class="k-card" data-testid="pp-practice-card">
+      <header class="k-sec-head"><span class="k-badge">{{ i.pi('mic') }}</span><div class="k-grow"><h3>{{ 'Practice the call' if con else 'Practice interview' }}</h3></div></header>
+      <div class="pp-modes" role="radiogroup" aria-label="Practice mode" id="pp-modes">
+        {%- for m in modes %}
+        <button type="button" class="pp-mode{% if (active and active.mode == m.key) or (not active and loop.first) %} is-on{% endif %}" role="radio"
+                aria-checked="{{ 'true' if (active and active.mode == m.key) or (not active and loop.first) else 'false' }}" data-pp-mode="{{ m.key }}" {% if active %}disabled{% endif %} data-testid="pp-mode-{{ m.key }}">
+          {{ i.pi(m.icon, 'k-ic--sm') }}<span>{{ m.name }}<span class="pp-sub">{{ m.note }}</span></span></button>
+        {%- endfor %}
+      </div>
+      {% include "partials/pp_route.html" %}
+    </section>
+    {% include "partials/pp_chat.html" %}
+  </div>
+  <div class="pp-col">
+    {% include "partials/pp_hist.html" %}
+  </div>
+</div>

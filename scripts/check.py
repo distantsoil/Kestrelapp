@@ -4,8 +4,9 @@ GitHub Actions minutes are metered (Windows 2x, macOS 10x), so CI confirms rathe
 discovers: lint, the full test suite (which includes the workflow, installer-script and
 third-party-notice guards), in that order, stopping at the first failure.
 
-    uv run --extra dev python scripts/check.py          # everything (about 3 minutes)
+    uv run --extra dev python scripts/check.py          # everything with capped parallelism
     uv run --extra dev python scripts/check.py --quick  # lint + packaging/workflow guards
+    uv run --extra dev python scripts/check.py --workers 0  # serial comparison
 
 Windows-only behavior still needs the Windows CI job; everything else should be green here
 before anything is pushed.
@@ -37,6 +38,18 @@ def _run(label: str, cmd: list[str]) -> bool:
 
 SKIP_LINE = re.compile(r"^SKIPPED \[(\d+)\] (.+?): (.*)$")
 BROWSER_WORDS = ("browser", "playwright", "edge", "chromium")
+
+
+def worker_count(value: str) -> int:
+    if value == "auto":
+        return max(1, min(8, (os.cpu_count() or 1) // 2))
+    try:
+        count = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("workers must be auto or a nonnegative integer") from exc
+    if count < 0:
+        raise argparse.ArgumentTypeError("workers must be auto or a nonnegative integer")
+    return count
 
 
 def _run_pytest(cmd: list[str]) -> tuple[bool, list[tuple[int, str, str]]]:
@@ -82,6 +95,11 @@ def _report_skips(skips: list[tuple[int, str, str]]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--quick", action="store_true", help="lint and the packaging guards only")
+    parser.add_argument("--workers", type=worker_count,
+                        default=os.environ.get("KESTREL_TEST_WORKERS", "auto"), metavar="N",
+                        help="workers (default: KESTREL_TEST_WORKERS or half the CPUs, "
+                             "capped at 8, minimum 1); 0 runs serially")
+    parser.add_argument("--junitxml", metavar="PATH", help="write test outcomes for comparison")
     args = parser.parse_args()
     py = sys.executable
     steps = [("ruff", [py, "-m", "ruff", "check", "."])]
@@ -90,9 +108,11 @@ def main() -> int:
         if not _run(label, cmd):
             print("Not ready to push: fix the failure above first.")
             return 1
-    ok, skips = _run_pytest(
-        [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider", *tests]
-    )
+    pytest_args = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
+                   "-n", str(args.workers), "--dist", "worksteal", "--max-worker-restart", "0"]
+    if args.junitxml:
+        pytest_args.extend(["--junitxml", args.junitxml])
+    ok, skips = _run_pytest([*pytest_args, *tests])
     _report_skips(skips)
     if not ok:
         print("Not ready to push: fix the failure above first.")

@@ -261,7 +261,7 @@ def test_no_route_deletes_a_quarantine_row():
     assert q is not None  # still there: retry is additive, never a delete/dismiss path
 
 
-def test_a_failed_score_again_is_listed_apart_and_try_again_keeps_the_stage():
+def test_a_failed_score_again_is_marked_and_try_again_keeps_the_stage():
     """Regression: a score-again of a scored role that fails keeps the stage; Failed scoring
     shows it under "Score again failed (the earlier score stands)", and Try again re-queues the
     same score-again (model override kept) without resetting the stage to t1_pass."""
@@ -300,12 +300,12 @@ def test_a_failed_score_again_is_listed_apart_and_try_again_keeps_the_stage():
     opp_id, q_id, first_task = asyncio.run(_add())
     with _client() as c:
         page = c.get("/quarantine").text
-        assert "Score again failed (the earlier score stands)" in page
-        section = page.split('data-testid="rescore-failures"')[1]
-        assert "CIO Rescored" in section and "Try again" in section and "bad json" in section
-        assert "[score again" not in section
-        # The banner is the one "needs you" number (D-UI-70): the two seeded rows and this one.
-        assert "3 need you." in page
+        # A failed score-again is a row of its own, marked so it never reads as a parked role.
+        assert "CIO Rescored" in page and "Your earlier score stands" in page
+        row = page.split(f'id="rt-row-{q_id}"')[1].split('id="rt-row-')[0]
+        assert "Try again" in row and "[score again" not in row
+        # Three roles wait: the two seeded rows and this one (one row per role, D-UI-104).
+        assert "3 roles waiting" in page
         assert c.post(f"/quarantine/{q_id}/retry").status_code == 200
 
     assert asyncio.run(_fetch(Opportunity, opp_id)).stage == "t3_done"

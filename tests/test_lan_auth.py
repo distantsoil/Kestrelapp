@@ -400,48 +400,51 @@ def test_join_block_without_a_lan_address_still_copies_the_secret(monkeypatch):
     assert 'data-testid="copy-secret"' in body and 'class="qr"' not in body
 
 
-def _secret_block(page: str) -> str:
-    return page.split('id="secret">', 1)[1].split("<!-- /secret -->", 1)[0].removesuffix("</div>")
+def _access_on(c):
+    return c.post("/settings/privacy/access", data={"on": "1", "ack": "on"})
 
 
-def test_settings_page_with_an_existing_secret_shows_the_same_block_as_generate(monkeypatch):
-    """#26/#27: a key without a QR on launch was confusing. The page now renders the block the
-    Generate/Rotate response renders, from one helper, so the two match."""
+def test_access_card_with_a_key_shows_the_qr_and_copy_but_no_anchor(
+    monkeypatch, _isolate_data_home
+):
+    """Settings > Privacy and access: with access on there is a QR code carrying the key link, a
+    Copy address button, and the join link is never an anchor (it carries the secret)."""
     monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    _seed_settings()
     with _client() as c:
-        generated = c.post("/settings/lan/secret").text
-        page = c.get("/settings").text
-    block = _secret_block(page)
-    assert '<div class="qr"' in block and "<svg" in block.split('<div class="qr"', 1)[1]
-    assert 'data-testid="lan-secret"' in block and 'data-testid="copy-secret"' in block
-    assert 'data-testid="join-url"' in block and 'data-testid="copy-join-url"' in block
-    assert block.count("navigator.clipboard.writeText($el.dataset.path)") == 2
-    assert "<a " not in block and "href=" not in block  # the join link is text, never an anchor
-    assert " ".join(block.split()) == " ".join(generated.split())  # one shared renderer
+        card = _access_on(c).text
+        again = c.get("/settings/privacy/access").text
+    assert 'data-testid="lan-qr"' in card and "<svg" in card.split('data-testid="lan-qr"', 1)[1]
+    assert 'data-testid="copy-join-url"' in card and 'data-st-copy="http://192.168.1.20:' in card
+    assert "href=\"http://192.168.1.20" not in card
+    assert 'data-testid="lan-qr"' in again
 
 
-def test_settings_page_without_a_secret_shows_no_block(monkeypatch):
+def test_access_card_without_a_key_shows_no_qr(monkeypatch, _isolate_data_home):
     monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    _seed_settings()
     with _client() as c:
-        block = _secret_block(c.get("/settings").text)
-    assert "lan-secret" not in block and 'class="qr"' not in block
+        card = c.get("/settings/privacy/access").text
+    assert 'data-testid="lan-qr"' not in card and "lan-secret" not in card
 
 
-def test_lan_tab_is_short_and_keeps_every_safety_fact_inside_show_details():
+def test_access_card_is_short_and_keeps_the_safety_facts_inside_show_details(
+    monkeypatch, _isolate_data_home
+):
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    _seed_settings()
     with _client() as c:
+        card = _access_on(c).text
         page = c.get("/settings").text
-    lan = page.split("<h2>LAN access</h2>", 1)[1].split("<h2", 1)[0]
-    assert "—" not in lan and "\u2014" not in lan
-    details = lan.split('<details data-testid="lan-details">', 1)[1].split("</details>", 1)[0]
-    assert "<summary>Show details</summary>" in details
-    for fact in ("no accounts", "plain HTTP", "What else the secret gates", "X-Kestrel-Key",
-                 "browser extension", "restart", "port forwarder", "public"):
+    assert "\u2014" not in card
+    details = card.split('<details class="st-det">', 1)[1].split("</details>", 1)[0]
+    assert "Show details" in details
+    for fact in ("private key", "plain HTTP", "home network", "VPN"):
         assert fact in " ".join(details.split()), fact
-    outside = lan.split('id="lan-bind"', 1)[0].replace(details, "")
-    for long in ("What else the secret gates", "no accounts", "port forwarder", "bind_all"):
-        assert long not in outside, long
-    assert "plain HTTP" in outside and "shared password" in outside  # the short warning line
-    assert len(outside.split()) < 260
+    # The confirm the person reads before it turns on carries the rest of the warning.
+    confirm = " ".join(page.split('id="st-access-dialog"', 1)[1].split("</div>", 2)[1].split())
+    assert "shared key" in confirm and "plain HTTP" in confirm and "port forward" in confirm
+    assert "X-Kestrel-Key" not in card.split("<details", 1)[0]
 
 
 # ------------------------------------------------- turning LAN access on from Settings (#27)
@@ -604,9 +607,9 @@ def test_the_environment_variable_wins_and_the_page_says_so(_isolate_data_home, 
     target = _seed_settings()
     monkeypatch.setenv("KESTREL_SERVER__BIND_ALL", "false")
     with _client() as c:
-        page = c.get("/settings").text
-        assert "KESTREL_SERVER__BIND_ALL" in page.split('data-testid="lan-bind"')[1]
-        r = _on(c)
+        card = c.get("/settings/privacy/access").text
+        assert "KESTREL_SERVER__BIND_ALL" in card.split('data-testid="lan-bind-state"')[1]
+        r = _access_on(c)
     assert "KESTREL_SERVER__BIND_ALL" in r.text and "wins" in r.text
     assert _server(target.read_text(encoding="utf-8"))["bind_all"] is True  # the file is recorded
     assert get_settings().server.bind_all is False  # but the environment still decides
@@ -616,14 +619,14 @@ def test_the_settings_page_shows_the_control_and_the_state(_isolate_data_home):
     _seed_settings()
     with _client() as c:
         page = c.get("/settings").text
-        assert 'data-testid="lan-bind"' in page and 'name="ack"' in page
-        assert "not on this page" not in page
-        assert "Off" in page.split('data-testid="lan-bind-state"')[1][:200]
-        c.post("/settings/lan/secret")
-        _post(c, bind_all="on", ack="on")
-        after = c.get("/settings").text
+        assert 'data-testid="st-access-switch"' in page and 'data-testid="lan-bind-ack"' in page
+        assert "Off." in page.split('data-testid="lan-bind-state"')[1][:200]
+        refused = c.post("/settings/privacy/access", data={"on": "1"})  # no confirm
+        assert "Confirm that you understand first" in refused.text
+        _access_on(c)
+        after = c.get("/settings/privacy/access").text
     state = after.split('data-testid="lan-bind-state"')[1][:600]
-    assert "On" in state and "restart" in state
+    assert "On." in state and "restart" in state
 
 
 def test_bind_host_and_both_allowlists_agree_after_the_write(_isolate_data_home, monkeypatch):

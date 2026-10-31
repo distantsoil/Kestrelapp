@@ -78,7 +78,7 @@
             <td class="mono">{{ r.index }}</td>
             <td>{{ r.company }}</td>
             <td>{{ r.title }}{% if r.url %} <a href="{{ r.url }}" target="_blank" rel="noopener" class="muted">link</a>{% endif %}</td>
-            <td class="mono">{{ r.date or r.date_raw }}</td>
+            <td class="mono">{{ date_display(r.date) or r.date_raw }}</td>
             <td>
               {% if r.status %}<span class="badge">{{ r.status }}</span>{% if r.status_raw|lower != r.status %} <span class="muted">from "{{ r.status_raw }}"</span>{% endif %}
               {% else %}

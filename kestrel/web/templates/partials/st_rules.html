@@ -1,0 +1,27 @@
+{# Rules that hide roles. Each row: a plain name, a switch, "Hides N" from the last 200 roles,
+   and See them. The pay, titles, level and places are edited in Profile. Swaps itself. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-rules" data-testid="st-rules" data-track="{{ track }}">
+  {% set seen = (rule_rows | map(attribute='of_n') | max) if rule_rows else 0 %}
+  {{ st.head('Rules that hide roles', 'list', sub='Each rule hides roles before any scoring. Counts come from ' ~ ('only ' ~ seen ~ (' role' if seen == 1 else ' roles') ~ ' so far, too few to tell much.' if seen < 5 else 'your last ' ~ seen ~ ' roles.')) }}
+  {% for r in rule_rows %}
+  <div class="st-row st-rr{% if loop.first %} st-row--first{% endif %}{% if not r.on %} is-off{% endif %}" data-rule="{{ r.def.key }}" data-testid="st-rule-{{ r.def.key }}">
+    <div class="st-row__t">
+      <b>{% if r.def.number %}{{ 'Older than' if r.def.number == 'age' else 'Too short (under' }}
+        <form class="st-numform" hx-post="/settings/roles/number" hx-target="#st-rules" hx-swap="outerHTML" hx-trigger="change">
+          <input type="hidden" name="track" value="{{ track }}"><input type="hidden" name="key" value="{{ r.def.key }}">
+          <input class="k-input st-num" name="value" inputmode="numeric" value="{{ r.value }}" aria-label="{{ r.label }}" autocomplete="off" data-testid="st-num-{{ r.def.key }}"{% if r.error %} aria-invalid="true"{% endif %}>
+        </form>{{ 'days' if r.def.number == 'age' else 'weeks)' }}
+        {% else %}{{ r.def.name }}{% endif %}</b>
+      <span class="st-dsm">{{ r.line }}{% if r.def.in_profile %} <a class="k-link" href="/profile?tab={{ 'employment' if track == 'employment' else 'consulting' }}&track={{ track }}">Change in Profile</a>{% endif %}</span>
+      {% if r.has_pay_note %}<span class="st-dsm st-mgnote">Roles a little under your minimum: set in <a class="k-link" href="/profile?tab={{ track }}&track={{ track }}">Profile</a> (Keep near-floor roles).</span>{% endif %}
+      {% if r.error %}<span class="st-err" role="alert" data-testid="st-num-error">{{ st.sic('warn', 'k-ic--sm') }}{{ r.error }}</span>{% endif %}
+    </div>
+    <span class="k-pill{% if r.on and r.n %} k-pill--info{% endif %}" data-testid="st-rule-chip-{{ r.def.key }}">{% if not r.on %}Off{% else %}Hides {{ r.n }}{% endif %}</span>
+    <button type="button" class="k-link st-see" data-testid="st-see-{{ r.def.key }}" hx-get="/settings/roles/see?track={{ track }}&key={{ r.def.key }}" hx-target="#st-dialog" hx-swap="innerHTML"{% if not r.on or not r.total %} disabled{% endif %}>See them</button>
+    <label class="k-switch st-sw"><input type="checkbox" role="switch" {% if r.on %}checked{% endif %} aria-label="{{ r.short if r.def.number else r.def.name }}" hx-post="/settings/roles/rule" hx-target="#st-rules" hx-swap="outerHTML" hx-trigger="change" hx-vals='{{ {"track": track, "key": r.def.key}|tojson }}' hx-include="this" name="on" value="1" data-testid="st-rule-switch-{{ r.def.key }}"><span class="k-switch__track" aria-hidden="true"></span></label>
+  </div>
+  {% endfor %}
+  <div class="st-keep">{{ st.sic('info') }}<div class="k-grow"><b>If Kestrel isn't sure, it keeps the role.</b><span class="st-dsm">A role is only hidden when a rule clearly applies.</span></div></div>
+  {{ st.det('Rules file: filters.yml\nRule ids: ' ~ rule_ids) }}
+</section>

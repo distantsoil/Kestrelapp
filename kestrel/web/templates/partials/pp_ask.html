@@ -1,0 +1,17 @@
+{# Questions to ask them: tick the ones to include in the PDF; add your own. #}
+{% import "partials/pp_icons.html" as i %}
+<section class="k-card pp-ask" id="pp-ask"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-ask">
+  <header class="k-sec-head"><span class="k-badge">{{ i.pi('ask') }}</span><div class="k-grow"><h3>Questions to ask them</h3></div></header>
+  {%- for a in ask %}
+  <label class="pp-askrow"><input type="checkbox" name="on" value="1" {% if a.on %}checked{% endif %}
+      hx-post="/prep/{{ opp.id }}/ask/tick" hx-vals='{"i": "{{ loop.index0 }}"}' hx-trigger="change" hx-swap="none" data-testid="pp-ask-tick">
+    <span>{{ a.shown }}<span class="pp-sub">{{ a.src }}</span></span></label>
+  {%- else %}
+  <p class="k-muted">None yet. Research found no open unknowns. Add your own below.</p>
+  {%- endfor %}
+  <form class="pp-addq" hx-post="/prep/{{ opp.id }}/ask" hx-swap="none" hx-on::after-request="if(event.detail.successful)this.reset()">
+    <input class="k-input" name="question" maxlength="400" placeholder="Add your own question" aria-label="Add your own question" data-testid="pp-addq">
+    <button type="submit" class="k-btn k-btn--sm">Add</button>
+  </form>
+  <p class="pp-sub">Ticked questions go in the PDF.</p>
+</section>

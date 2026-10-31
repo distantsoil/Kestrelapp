@@ -1,0 +1,8 @@
+{% import "partials/pp_icons.html" as i %}
+<section class="k-card" id="prep-notes" data-testid="prep-notes">
+      <header class="k-sec-head"><span class="k-badge k-badge--good">{{ i.pi('note') }}</span><div class="k-grow"><h3>Your notes</h3></div></header>
+      <form hx-post="/prep/{{ opp.id }}/notes" hx-trigger="input changed delay:700ms from:find textarea" hx-target="#pp-saved" hx-swap="outerHTML">
+        <textarea class="pp-notes" name="notes" rows="5" aria-label="Your notes for this {{ 'meeting' if con else 'interview' }}" placeholder="Anything you want in front of you on the day. Build stories reads these notes.">{{ notes }}</textarea>
+        <span class="pp-saved" id="pp-saved" role="status" data-testid="pp-saved">Saved</span>
+      </form>
+    </section>

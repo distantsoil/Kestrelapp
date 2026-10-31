@@ -60,7 +60,7 @@ PRESETS: dict[str, dict[str, str]] = {
         "env": "OPENMODEL_API_KEY",
         "key_prefix": "om-",
         "console": "https://console.openmodel.ai",
-        "privacy": "https://www.openmodel.ai/_TO_privacy",
+        "privacy": "https://www.openmodel.ai/privacy",
     },
     "anthropic": {
         "backend": "anthropic",
@@ -194,6 +194,13 @@ class ProviderStatus:
 
 
 # ------------------------------------------------------------------------------- secrets (.env)
+def presets(settings: Settings) -> dict[str, dict[str, str]]:
+    """Named services plus Other once its private address has been saved."""
+    from kestrel.services.other_service import BACKEND, PRESET
+
+    return {**PRESETS, **({"other": PRESET} if BACKEND in settings.llm.backends else {})}
+
+
 def secret_present(env_name: str | None) -> bool:
     from kestrel.config import get_secret
 

@@ -1,0 +1,1 @@
+{{ counts.open }} open · {{ counts.closed }} closed{% if counts.quiet %} · <button type="button" class="k-link ap-linkbtn" data-quiet-link data-testid="quiet-link">{{ counts.quiet }} need{{ '' if counts.quiet != 1 else 's' }} a follow-up</button>{% endif %}

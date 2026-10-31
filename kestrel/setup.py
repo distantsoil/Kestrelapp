@@ -103,7 +103,7 @@ HOSTED_DISCLOSURE = (
     "OpenRouter free models may train on your inputs unless the data collection option below is "
     "set to deny, and with deny on there may be no free model left to route to.\n"
     "Your current employer is redacted only when confidential mode is on and you have chosen it "
-    "(Settings, Core: Choose your current employer). With confidential mode on and no employer "
+    "(Settings > Privacy and access: Confidential mode). With confidential mode on and no employer "
     "chosen, the send is refused and the item is held in quarantine, not rejected.\n"
     "Keys stay on this machine and are never sent anywhere but the provider."
 )

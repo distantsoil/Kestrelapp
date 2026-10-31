@@ -1,0 +1,191 @@
+/* Kestrel shell stylesheet (UI overhaul). The chrome every page shares: element defaults, busy
+   and loading states, the sidebar, top bar, status rail, bell and menus, command palette, phone
+   bar, buttons, banners and the notice strip.
+
+   A converted screen replaces base.html's `legacy_css` block with a link to THIS sheet instead of
+   kestrel.css, so it no longer loads the legacy page styles but keeps a working shell. The rules
+   below are copied unchanged from kestrel.css (which keeps them until the last screen is
+   converted, then goes); the alias block gives the legacy token names the new tokens' values,
+   so the copied rules resolve without kestrel.css's own token blocks. Theme and scheme follow
+   tokens.css. Do not add page styles here. */
+
+/* Legacy token names, mapped onto tokens.css. kestrel.css (loaded instead of this sheet on a
+   legacy page) defines them itself. */
+:root {
+  --accent: var(--brand); --accent-deep: var(--link-ink); --accent-tint: var(--soft);
+  --action: var(--brand); --action-fg: var(--brand-ink);
+  --warm: var(--bg); --bg-alt: var(--soft); --panel: var(--paper); --border: var(--line);
+  --text: var(--ink); --sans: var(--font);
+  --good-tint: var(--good-bg); --warn-tint: var(--warn-bg); --bad-tint: var(--bad-bg);
+  --keep: var(--brand); --keep-tint: var(--soft); --keep-fg: var(--link-ink);
+  --radius: 8px; --radius-lg: 10px; --backdrop: var(--scrim);
+}
+
+/* ------------------------------------------------------------------------------------ base */
+* { box-sizing: border-box; }
+html { height: 100%; }
+body {
+  margin: 0; min-height: 100%; background: var(--warm); color: var(--ink);
+  font: var(--fs-md)/1.5 var(--sans); -webkit-text-size-adjust: 100%;
+}
+a { color: var(--accent-deep); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.005em; margin: 0 0 6px; }
+h2 { font-size: var(--fs-sm); margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); font-weight: 600; }
+h3 { font-size: var(--fs-md); margin: 0 0 6px; font-weight: 600; }
+p { margin: .5rem 0; }
+small, .muted, .quiet { color: var(--muted); }
+small { font-size: var(--fs-sm); }
+code, kbd, .mono, .score, .cmd { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+code { font-size: .92em; }
+kbd {
+  font-size: var(--fs-xs); line-height: 1; background: var(--warm); border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--muted);
+}
+img { max-width: 100%; }
+input, select, textarea, button { font: inherit; color: inherit; }
+input[type="text"], input[type="number"], input[type="search"], input[type="url"],
+input[type="email"], input[type="password"], input[type="file"], select, textarea {
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+  color: var(--ink); max-width: 100%;
+}
+textarea { width: 100%; min-height: 54px; }
+input[type="number"] { width: 90px; min-width: 0; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible,
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+[x-cloak] { display: none !important; }
+/* !important so no element rule (div.row, span.row below) can re-show a hidden panel */
+.hidden { display: none !important; }
+.right { text-align: right; }
+.sp { flex: 1; }
+.htmx-indicator { opacity: 0; transition: opacity .2s; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+
+/* A click is acknowledged at once: while any htmx request is in flight the page shows a busy
+   cursor and the element that sent it dims, so a slow answer reads as "working", not "ignored". */
+body.busy, body.busy * { cursor: progress; }
+/* Loading must be visible without the mouse (D-UI-20): a thin moving bar at the top of the
+   page for every request that does not show its own status. The cursor is a bonus, not the
+   indicator. */
+body.busy::before {
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 1000;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: busybar 1.1s linear infinite;
+}
+@keyframes busybar { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { body.busy::before { animation-duration: 2.6s; } }
+/* Long requests with their own status (the import): hidden until the request is in flight. */
+.import-status { display: none; align-items: center; gap: .5rem; margin-top: .6rem; }
+.htmx-request > .import-status, .htmx-request.import-status { display: flex; }
+.spin { width: 1em; height: 1em; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* Inline status that base.html adds beside any element with data-busy-text while its request
+   is open (D-UI-20): same spinner and wording style as the import. */
+
+/* ----------------------------------------------------------------------------------- shell
+   The sidebar, top row, status readout, bell and window controls moved to components.css
+   (.k-win, .k-side, .k-tools ...), which every page loads, legacy or converted. */
+/* The page uses the whole window (D-UI-20: "does not scale with resize"): no width cap on the
+   container, only on running text, which stays readable on a wide monitor. */
+.container { padding: 6px 22px 28px; width: 100%; min-width: 0; }
+.container > p, .container > .panel > p { max-width: 110ch; }
+.runstrip { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* phone bottom bar and the More sheet */
+.bottombar { display: none; }
+.sheet-backdrop { position: fixed; inset: 0; background: var(--backdrop); z-index: 60; }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; max-height: 86vh; overflow-y: auto;
+  background: var(--warm); border-top: 1px solid var(--line); border-radius: 14px 14px 0 0;
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); z-index: 61; display: grid; gap: 12px;
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.sheet .mainnav > a { min-height: 40px; }
+
+/* --------------------------------------------------------------------------------- buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 7px;
+  cursor: pointer; border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  font-weight: 500; font-size: 13px; line-height: 1.3; text-decoration: none;
+}
+.btn:hover { border-color: var(--accent); text-decoration: none; }
+.btn.primary, .btn.pri { background: var(--action); border-color: var(--action); color: var(--action-fg); }
+.btn.primary:hover, .btn.pri:hover { filter: brightness(.94); }
+.btn.ghost, .btn.quiet { background: transparent; }
+/* A ghost button can still be the selected one of a set (Models page window picker): primary
+   wins, otherwise the transparent background meets the primary text color and the label
+   vanishes (D-UI-20). */
+.btn.ghost.primary { background: var(--action); border-color: var(--action); color: var(--action-fg); }
+.btn.danger, .danger { color: var(--bad); border-color: var(--bad-tint); }
+button.danger { background: var(--bad-tint); border: 1px solid transparent; border-radius: 7px; padding: 6px 12px; cursor: pointer; font-weight: 500; }
+.btn:disabled, button:disabled { opacity: .55; cursor: not-allowed; }
+
+.warnbox {
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-tint);
+  border-radius: var(--radius); padding: .6rem .8rem;
+}
+
+.okbox {
+  border: 1px solid color-mix(in srgb, var(--good) 40%, transparent); background: var(--good-tint);
+  border-radius: var(--radius); padding: .6rem .8rem; color: var(--text);
+}
+
+/* the in-app Quit confirmation (D-UI-39): theme variables only */
+.quit-confirm {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 0;
+  width: min(420px, 92vw); font-family: var(--sans);
+}
+.quit-confirm-box { padding: 1.1rem 1.2rem; }
+.quit-confirm::backdrop { background: var(--backdrop); }
+.quit-confirm h2 { margin: 0 0 .4rem; font-size: var(--fs-lg); }
+.quit-confirm p { margin: 0 0 1rem; color: var(--muted); }
+.quit-confirm-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.quit-confirm .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+/* The one-line notice strip (announcements). */
+.notice-strip {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 7px 12px;
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: var(--radius); background: var(--bg-alt);
+  color: var(--text); font-size: var(--fs-sm);
+}
+.notice-strip .notice-text { flex: 1; min-width: 0; }
+.notice-strip .notice-x {
+  flex: none; background: none; border: 0; color: var(--muted); cursor: pointer;
+  padding: 0 4px; font-size: 16px; line-height: 1;
+}
+.notice-strip .notice-x:hover { color: var(--text); }
+
+/* The nav ring beside the Pipeline badge and on Being scored, only while a run is active (D-UI-61). */
+.ring { width: 11px; height: 11px; flex: none; border-radius: 50%; border: 2px solid var(--line);
+  border-top-color: var(--accent); animation: ring-spin 1.1s linear infinite; display: inline-block; }
+.ring[hidden] { display: none; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ring { animation: none; border-right-color: var(--accent); }
+}
+
+/* ------------------------------------------------------------------------------ responsive
+   The icon rail below 1100 px lives in components.css with the rest of the shell (D-UI-91). */
+@media (max-width: 700px) {
+  .container { padding: 4px 16px calc(72px + env(safe-area-inset-bottom)); }
+  .bottombar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: var(--paper); border-top: 1px solid var(--line); justify-content: space-around;
+    padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
+  }
+  .bottombar a, .bottombar button {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: var(--fs-xs);
+    color: var(--muted); border: 0; background: none; padding: 4px 10px; min-width: 64px;
+    text-decoration: none; cursor: pointer;
+  }
+  .bottombar a.active, .bottombar button.active { color: var(--accent-deep); font-weight: 600; }
+  .bottombar .k-ic { width: 20px; height: 20px; }
+  /* A wide table scrolls inside itself; the page never scrolls sideways. */
+  .container table { display: block; overflow-x: auto; max-width: 100%; }
+}

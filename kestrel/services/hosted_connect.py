@@ -11,7 +11,7 @@ nothing about the operator or any opportunity (hard rule 1 holds: no action on t
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
@@ -113,6 +113,26 @@ async def _set(session: AsyncSession, key: str, value: Any) -> None:
 
 
 async def connect_provider(
+    session: AsyncSession, settings: Settings, *, provider: str, api_key: str,
+    acknowledged: bool, free_only: bool, switch: bool, profile: str | None,
+    allow_training: bool = False,
+) -> ConnectOutcome:
+    from kestrel.private_logging import private_values, redact
+
+    # Protect a pasted replacement key during verification as well as saved credentials.
+    with private_values(api_key if provider == "other" else ""):
+        out = await _connect_provider(
+            session, settings, provider=provider, api_key=api_key, acknowledged=acknowledged,
+            free_only=free_only, switch=switch, profile=profile, allow_training=allow_training,
+        )
+        if provider == "other":
+            out.headline, out.detail = redact(out.headline), redact(out.detail)
+            if out.key is not None:
+                out.key = replace(out.key, detail=redact(out.key.detail))
+        return out
+
+
+async def _connect_provider(
     session: AsyncSession,
     settings: Settings,
     *,
@@ -129,7 +149,7 @@ async def connect_provider(
     from kestrel.services.setting_overrides import load_settings_with_db
 
     value = api_key.strip()
-    preset = prov.PRESETS.get(provider)
+    preset = prov.presets(settings).get(provider)
     backend = prov.external_backends(settings).get(preset["backend"]) if preset else None
     if preset is None or backend is None or not backend.api_key_env:
         return _refused(provider, "no_provider", "Choose a provider.")

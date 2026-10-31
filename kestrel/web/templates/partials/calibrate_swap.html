@@ -1,0 +1,6 @@
+{# What a rate, skip, undo or tune-up answers with: the card in place, and the parts around it
+   swapped out of band (hx-swap-oob), so the page never reloads. #}
+{% include "partials/calibrate_card.html" %}
+{% if all_parts %}
+{% with oob = true %}{% include "partials/calibrate_top.html" %}{% include "partials/calibrate_count.html" %}{% include "partials/calibrate_history.html" %}{% endwith %}
+{% endif %}

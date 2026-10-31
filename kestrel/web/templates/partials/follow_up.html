@@ -1,0 +1,36 @@
+<div class="ap-draft" data-testid="follow-up-dialog"{% if pending %}
+     hx-get="/pursuits/{{ pid }}/follow-up" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{% endif %}>
+  <p>You review, edit and copy the draft. Kestrel never sends it.</p>
+  {% if error %}<p class="ap-sherr" role="alert">{{ error }}</p>{% endif %}
+  {% if pending %}
+  <p role="status" data-testid="follow-up-pending">{{ 'Writing your draft' if task.status == 'leased' else 'Draft queued' }}. You can close this dialog and return later.</p>
+  {% elif result %}
+  <label class="ap-fl">Subject<input class="k-input" id="ap-draft-subject" value="{{ result.subject }}" maxlength="160"></label>
+  <label class="ap-fl">Draft<textarea class="ap-note ap-draft-text" id="ap-draft-text">{{ result.body }}</textarea></label>
+  {% if result.checks %}<p>Before you use it:</p><ul>{% for check in result.checks %}<li>{{ check }}</li>{% endfor %}</ul>{% endif %}
+  <button type="button" class="k-btn k-btn--primary" data-follow-up-copy>Copy draft</button>
+  <p class="ap-v" role="status" id="ap-copy-status"></p>
+  {% elif task and task.status == 'dead' %}
+  <p role="alert">The draft could not be written. Check Models, then try again.</p>
+  {% endif %}
+  {% if not pending and not result and eligible %}
+  <details><summary>Facts used for this draft</summary><dl class="ap-draft-facts">
+    {% for key, value in facts.items() %}<dt>{{ key|replace('_', ' ')|capitalize }}</dt><dd>{{ value or 'Not recorded' }}</dd>{% endfor %}
+  </dl></details>
+  <form class="ap-addform" hx-post="/pursuits/{{ pid }}/follow-up" hx-target="#ap-follow-up-body" hx-swap="innerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="route_stamp" value="{{ route.stamp }}">
+    <input type="hidden" name="facts_stamp" value="{{ facts_stamp }}">
+    {% if route.online %}
+    <b>This draft is written by an online model</b>
+    <p>{{ route.provider }}, using your own credit. Model: {{ route.model }}.</p>
+    <p data-testid="follow-up-sends">{{ route.sends[:1]|upper }}{{ route.sends[1:] }}.</p>
+    {% if route.problem %}<p role="alert">{{ route.problem }}</p>
+    {% elif route.hidden %}<p>Confidential mode is on: your current employer is hidden before anything is sent.</p>{% endif %}
+    <p>The facts above are the complete input for this draft. Your name, contact details, resume file, profile and notes are not sent. {{ route.provider }} handles what it receives under its own terms.</p>
+    <label class="ap-check"><input type="checkbox" name="confirmed" value="1" required> Send this to {{ route.provider }} to write the draft</label>
+    <input type="hidden" name="model" value="{{ route.model }}">
+    {% else %}<p>This draft is written on your computer.</p>{% endif %}
+    <button type="submit" class="k-btn k-btn--primary"{% if route.problem %} disabled{% endif %}>Write the draft</button>
+  </form>
+  {% elif not eligible and not result and not pending %}<p>This application no longer has a due follow-up.</p>{% endif %}
+</div>

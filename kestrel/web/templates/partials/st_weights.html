@@ -1,0 +1,35 @@
+{# What matters most (D-UI-108): the five weights as bars with plain names. READ ONLY: there are
+   no sliders. Kestrel can suggest a change after testing it on your past ratings. #}
+{% import "partials/st_macros.html" as st with context %}
+<div id="st-wts" data-testid="st-wts" data-track="{{ track }}">
+<section class="k-card st-card" id="st-w">
+  {{ st.head('What matters most', 'star', sub="How much each part counts toward a role's score. These bars are read only.") }}
+  <div class="st-bars">
+    {% for b in bars %}<div class="st-bar" data-testid="st-bar-{{ b.key }}"><span class="st-bl">{{ b.label }}</span><span class="st-trk"><span class="st-fill" style="width: {{ b.pct * 2 }}%"></span></span><span class="st-pct">{{ b.pct }}%</span></div>{% endfor %}
+  </div>
+  <p class="st-qn">Kestrel also learns from outcomes, like which roles led to interviews, once you have at least 5.</p>
+  <div class="st-ft">
+    <span class="st-res" data-testid="st-wnote">{% if weights_note %}{{ weights_note }}{% elif updated_on %}{{ st.sic('check', 'k-ic--sm') }}Updated from your ratings {{ updated_on }}.{% endif %}</span>
+    <button type="button" class="k-link" hx-post="/settings/scoring/weights/restore" hx-vals='{"track": "{{ track }}"}' hx-target="#st-wts" hx-swap="outerHTML" data-testid="st-wrestore">Restore original weights</button>
+  </div>
+  {{ st.det('Internal keys:\n' ~ keys|map('join', ' = ')|join('\n')) }}
+</section>
+{% if suggestion %}
+<section class="k-card st-card st-sug" id="st-sug" data-testid="st-sug">
+  {{ st.head('Kestrel suggests a change', 'wand') }}
+  <p class="st-sub">Based on {{ suggestion.n }} of your ratings, scores would match your calls more closely.</p>
+  {% for r in suggestion.rows %}
+  <div class="st-cmp"><span class="st-bl">{{ r.label }}</span>
+    <div><div class="st-ln"><span>Now</span><span class="st-trk"><span class="st-fill st-was" style="width: {{ r.now * 2 }}%"></span></span><span class="st-pct">{{ r.now }}%</span></div>
+      <div class="st-ln"><span>Suggested</span><span class="st-trk"><span class="st-fill" style="width: {{ r.new * 2 }}%"></span></span><span class="st-pct">{{ r.new }}%</span></div></div>
+  </div>
+  {% endfor %}
+  <div class="st-hact">
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/settings/scoring/suggestion/{{ suggestion.id }}/accept" hx-target="#st-wts" hx-swap="outerHTML" data-testid="st-sug-accept">Accept</button>
+    <button type="button" class="k-btn k-btn--sm" hx-post="/settings/scoring/suggestion/{{ suggestion.id }}/later" hx-target="#st-wts" hx-swap="outerHTML" data-testid="st-sug-later">Not now</button>
+  </div>
+  <p class="st-qn">You can undo this anytime with Restore original weights.</p>
+  {{ st.det('Average error ' ~ ('%.2f'|format(suggestion.mae_was or 0)) ~ ' to ' ~ ('%.2f'|format(suggestion.mae_now or 0)) ~ ' (cross-checked on your ratings)') }}
+</section>
+{% endif %}
+</div>

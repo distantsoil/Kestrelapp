@@ -1,0 +1,10 @@
+Notes:
+"When exporting your connection data, you may notice that some of the email addresses are missing. You will only see email addresses for connections who have chosen to allow their contacts to download their email addresses. This file is fictional test data."
+
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Imogen,Fairweather,https://www.linkedin.com/in/example-imogen,imogen.fairweather@mail.invalid,Cedar Ridge Foods Inc.,Plant Manager,04 Mar 2023
+Tobias,Quill,https://www.linkedin.com/in/example-tobias,tobias.quill@mail.invalid,Harbor & Sons Co.,"Director, Operations",19 Nov 2021
+Marisol,Venn,https://www.linkedin.com/in/example-marisol,,Northwind Logistics LLC,Analyst,02 Jan 2024
+Dmitri,Okonkwo-Hale,https://www.linkedin.com/in/example-dmitri,dmitri.hale@mail.invalid,Cedar Ridge,Buyer,15 Jun 2022
+Pell,Ashgrove,https://www.linkedin.com/in/example-pell,,,,07 Jul 2020
+Wren,Calloway,https://www.linkedin.com/in/example-wren,wren.calloway@mail.invalid,Ledgerwood Partners,Consultant,23 Sep 2019

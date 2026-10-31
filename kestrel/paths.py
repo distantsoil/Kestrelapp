@@ -69,8 +69,21 @@ def runtime_json() -> Path:
     return data_home() / "runtime.json"
 
 
+def window_state_json() -> Path:
+    """The desktop window's own remembered state (its light or dark theme), read before the
+    loading page paints so the first frame matches (D-UI-89)."""
+    return data_home() / "window.json"
+
+
 def db_path() -> Path:
     return data_dir() / "kestrel.db"
+
+
+def sounds_dir() -> Path:
+    """Where Kestrel keeps the alert sounds it renders for itself (kestrel.services.alert_sound):
+    one small WAV per sound and volume. A cache: deleting it only makes the next alert draw them
+    again."""
+    return data_home() / "cache" / "sounds"
 
 
 def ml_dir() -> Path:
@@ -164,6 +177,12 @@ def packaged_models() -> Traversable:
 def packaged_icons() -> Traversable:
     """The rasterized tray icons, generated from docs/images by scripts/make_icons.py."""
     return _resources() / "icons"
+
+
+def packaged_app_icon() -> Traversable:
+    """The indigo app icon (.ico, the installer's and Kestrel.exe's), for the Windows
+    notification identity (shell.register_notification_icon)."""
+    return _resources() / "icons" / "kestrel.ico"
 
 
 def packaged_embed_model() -> Traversable:

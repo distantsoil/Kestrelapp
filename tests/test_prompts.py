@@ -6,11 +6,12 @@ from kestrel.llm.prompts import all_versions, global_rules, load_prompt
 from kestrel.llm.schemas import SCHEMA_BY_VERSION
 
 
-def test_twenty_prompts_registered():
+def test_prompts_registered():
     # P7 became three prompts (outline, role map, per-slot wordings) in D-IMPORT-3; P13, the
     # resume assessment, was added in D-DOC-2; P14 (interview questions) in D-INTERVIEW-1 and
-    # P15 (suggested titles) in D-TTL-3.
-    assert len(all_versions()) == 20
+    # P15 (suggested titles) in D-TTL-3 and P16 (company summary) in D-LLM-9.
+    # Plus the /v1 of triage, triage_consulting and evaluate, kept beside their /v2 (D-LLM-12).
+    assert len(all_versions()) == 25
 
 
 def test_every_prompt_loads_and_substitutes_global_rules():
@@ -26,7 +27,7 @@ def test_every_prompt_loads_and_substitutes_global_rules():
 
 
 def test_specific_prompt_metadata():
-    p = load_prompt("evaluate/v1")
+    p = load_prompt("evaluate/v2")
     assert p.id == "P2"
     assert p.tier == "tier2"
     assert p.temperature == 0.2

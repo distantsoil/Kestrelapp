@@ -187,6 +187,16 @@ def build_notices(model_notice: Path | None = None, runtime_notice: Path | None 
             ]
         if tpn:
             parts += [f"--- {name} ThirdPartyNotices.txt ---", tpn, ""]
+    # The interface font ships inside the web assets, which no Python metadata describes.
+    from kestrel import paths
+
+    font_license = Path(paths.web_static_dir()) / "fonts" / "manrope" / "OFL.txt"
+    if font_license.is_file():
+        parts += [
+            _RULE, "Manrope (the interface font)", "License: OFL-1.1",
+            "Source: https://github.com/sharanda/manrope", _RULE,
+            font_license.read_text(encoding="utf-8").strip(), "",
+        ]
     if model_notice is not None and model_notice.is_file():
         parts += [_RULE, model_notice.read_text(encoding="utf-8").strip(), ""]
     if runtime_notice is not None and runtime_notice.is_file():

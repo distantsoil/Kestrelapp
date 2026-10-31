@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} · Kestrel{% endblock %}
+{# No script of its own; named for the page lifecycle (D-UI-210). #}
+{% block page_name %}stub{% endblock %}
 {% block content %}
   <h1>{{ title }}</h1>
   <p class="muted">This page is part of Phase 13 and is being built. The navigation, track switcher,

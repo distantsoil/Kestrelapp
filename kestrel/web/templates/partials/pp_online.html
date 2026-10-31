@@ -1,0 +1,44 @@
+{# The ask-first dialog for practice on an online model: the provider, exactly what is sent (the
+   Tier 2 line of the Hosted mode disclosure, the text the operator acknowledged), what is not,
+   the cost and the credit left. Nothing is sent until Use online model. static: a click outside
+   does not close it, because it asks before something goes online. #}
+{% import "ui/macros.html" as ui %}
+{% set native = route.native %}
+{% set go_attrs = {'data-testid': 'pp-online-go', 'hx-post': '/mock/' ~ opp_id ~ '/route', 'hx-include': '#pp-online-model', 'hx-target': '#pp-route', 'hx-swap': 'outerHTML'} %}
+{% if native or route.models %}
+{% call ui.modal('pp-online', ('Send your practice answers to ' ~ route.provider ~ '?') if native else 'Use an online model for this practice?', [
+  {'label': 'Stay on my computer', 'close': True},
+  {'label': 'Use online model', 'kind': 'primary', 'close': True, 'attrs': go_attrs, 'vals': {'confirmed': '1', 'model': route.model if native else '', 'dest': route.dest if native else '', 'online_approval': route.approval_json|default('{}')}}
+], static=True) %}
+  <p class="k-muted">{{ route.provider }}, using your own credit. Practice runs on your computer unless you confirm here.</p>
+  <div class="pp-send">
+    <b>What will be sent</b>
+    <ul>
+      <li data-testid="pp-sends">{{ route.sends }}.</li>
+      <li>For practice that means {{ route.practice_sends }}.</li>
+    </ul>
+    {%- if route.employer == 'hidden' %}
+    <p data-testid="pp-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+    {%- elif route.employer == 'held' %}
+    <p data-testid="pp-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>
+    {%- endif %}
+    <p><b>Not sent:</b> your name, contact details and your resume file. The role title and company are not sent separately. {{ route.provider }} handles what it receives under its own terms{% if route.any_free %}, and a free model may use it for training{% endif %}.</p>
+  </div>
+  {%- if native %}
+  <p><b>Model:</b> {{ route.model }}, set in Models.</p>
+  {%- else %}
+  <label class="pp-field">Model
+    <select id="pp-online-model" name="model" class="k-select" data-testid="pp-online-model">
+      {%- for m in route.models %}<option value="hosted:{{ m.id }}">{{ m.name }}, {{ m.cost }}</option>{% endfor %}
+    </select>
+  </label>
+  <p><b>Cost:</b> shown beside each model, an estimate for one answer.{% if credit %} {{ credit }}.{% endif %}</p>
+  {%- endif %}
+  <p class="k-muted">Online for this session only. You can switch back with one click, and nothing more is sent.</p>
+{% endcall %}
+{% else %}
+{% call ui.modal('pp-online', 'No online model is available', [{'label': 'Stay on my computer', 'close': True}], static=True) %}
+  <p data-testid="pp-online-none">{{ route.note or 'Turn on Hosted mode under Settings and add a key under Models to practice with an online model.' }}</p>
+  <p class="k-muted">Practice keeps running on your computer. Nothing was sent.</p>
+{% endcall %}
+{% endif %}

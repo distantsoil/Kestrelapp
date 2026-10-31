@@ -1,0 +1,23 @@
+{# The photo on About you (D-UI-117): Add, Change, Remove. The file is a local one kept in the
+   data folder; it shows in Kestrel only and never goes on a resume. Swapped in place by the
+   upload and Remove routes. The picker sits outside the page form's fields: it carries no name
+   the profile save would read. #}
+{% import "ui/macros.html" as ui %}
+<div class="pf-avwrap" id="pf-photo" data-testid="pf-photo">
+  <div class="pf-avatar" aria-label="{{ 'Your photo' if photo_version else 'Your initials' }}">
+    {%- if photo_version -%}<img src="/profile/photo?v={{ photo_version }}" alt="Your photo">{%- else -%}{{ initials }}{%- endif -%}
+  </div>
+  <div class="pf-stack pf-avwrap__side">
+    <div class="pf-row">
+      <label class="k-btn k-btn--sm" for="pf-photo-file">{{ ui.icon('up', 'k-ic--sm') }}{{ 'Change photo' if photo_version else 'Add a photo' }}</label>
+      <input type="file" id="pf-photo-file" name="photo" class="k-sr-only" accept="image/png,image/jpeg,image/webp,image/gif"
+             hx-post="/profile/photo?track={{ track }}" hx-trigger="change" hx-encoding="multipart/form-data"
+             hx-params="photo" hx-target="#pf-photo" hx-swap="outerHTML"
+             data-pf-nodirty>
+      {% if photo_version %}<button type="button" class="k-btn k-btn--sm" data-pf-photo-remove
+              hx-post="/profile/photo/delete?track={{ track }}" hx-params="none" hx-target="#pf-photo" hx-swap="outerHTML">Remove</button>{% endif %}
+    </div>
+    <small class="pf-hint">Shows in Kestrel only. It stays on this computer and never goes on a resume.</small>
+    {% if photo_problem %}<small class="pf-problem" role="alert" data-testid="photo-problem">{{ photo_problem }}</small>{% endif %}
+  </div>
+</div>

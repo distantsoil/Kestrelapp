@@ -11,10 +11,11 @@ below is therefore the setting-table layer and must exclude bootstrap keys when 
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -22,7 +23,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from kestrel import paths
+from kestrel import paths, ui_settings
 from kestrel.errors import UserFacingError
 
 
@@ -153,7 +154,8 @@ HOSTED_TIER_SENDS: dict[str, str] = {
     "tier2": (
         "the description slice (up to {t2} tokens in hosted mode), the organization context "
         "Kestrel has gathered, your confirmed labels used as examples, and your full profile; "
-        "and, only when you click Assess on Profile > Documents, your resume text"
+        "and, only when you click Assess on Profile > Documents or Suggest again on Profile, "
+        "your resume text"
     ),
     "tier3": (
         "the opportunity, the research gathered on it, and your profile, for cover letters, "
@@ -221,8 +223,13 @@ class HostedMode(BaseModel):
         return self.enabled and self.acknowledgement_current
 
 
-RunMode = Literal["local", "hosted"]
+RunMode = Literal["local", "hosted", "both"]
 MODES: tuple[str, ...] = ("local", "hosted")
+# What ONE run may be asked for (Runs "This run only", D-UI-103): "both" runs the quick screen on
+# this computer and sends only the full rating to the online model. It is never a stored mode.
+RUN_CHOICES: tuple[str, ...] = ("local", "hosted", "both")
+# The tiers an online run sends under each choice.
+BOTH_ONLINE_TIERS: tuple[str, ...] = ("tier2",)
 
 
 class LLMSettings(BaseModel):
@@ -251,12 +258,22 @@ class LLMSettings(BaseModel):
 
 # --------------------------------------------------------------------------- pipeline / scoring
 class Concurrency(BaseModel):
-    tier1: int = 4
-    tier2: int = 2
+    tier1: int = Field(default=4, ge=1, le=16, strict=True)
+    tier2: int = Field(default=2, ge=1, le=16, strict=True)
     # Embedding is a small, fast model (nomic-embed-text) and does not contend with the tier
     # models for VRAM the way tier1/tier2 do, so it can run wider without causing swap thrash.
     # The in-process engine serializes its own runs, so a wider setting only queues there.
-    embed: int = 4
+    embed: int = Field(default=4, ge=1, le=16, strict=True)
+
+    @field_validator("tier1", "tier2", "embed", mode="before")
+    @classmethod
+    def _whole_number_text(cls, value: object) -> object:
+        """Environment variables arrive as text (`KESTREL_CONCURRENCY__TIER1=4`). A whole-number
+        string is read as that integer; the strict int field still rejects fractions, booleans,
+        floats and out-of-range values."""
+        if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+            return int(value.strip())
+        return value
 
 
 class Pipeline(BaseModel):
@@ -313,6 +330,19 @@ class Learning(BaseModel):
     reranker_max_mae: float = 0.6
     reranker_uncertain_band: float = 0.4
     drift_threshold: float = 0.8
+    # The three switches on Settings > Scoring and learning (D-UI-108). Each stage still waits for
+    # its own floor above; a switch only lets the operator turn a stage off. On by default.
+    use_examples: bool = True
+    tune_weights: bool = True
+    build_model: bool = True
+
+
+class Tier0(BaseModel):
+    """Which hard-blocker rules the operator switched off, per track (Settings > Which roles you
+    see, D-UI-106). Rule ids are the ids in filters.yml. An unknown id is ignored, so a rule
+    removed in a later version never breaks loading. Nothing a rule had set aside is deleted."""
+
+    rules_off: dict[str, list[str]] = {}
 
 
 class Stories(BaseModel):
@@ -341,6 +371,23 @@ class Notify(BaseModel):
     # toggleable (SPEC-INTERFACES 6). The delivery layer batches to at most one per minute.
     events: dict[str, bool] = {}
     batch_seconds: int = 60  # never more than one delivered notification per this window
+    # The notification sound (D-UI-95): on by default with Chime. Bad stored values read as the
+    # default and a volume is clamped (kestrel.ui_settings), so a stray row never breaks loading.
+    sound: Annotated[bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, True))] = True
+    sound_name: Annotated[
+        str, BeforeValidator(ui_settings.lenient(ui_settings.sound_name, ui_settings.DEFAULT_SOUND))
+    ] = ui_settings.DEFAULT_SOUND
+    sound_volume: Annotated[
+        float,
+        BeforeValidator(ui_settings.lenient(ui_settings.sound_volume, ui_settings.DEFAULT_VOLUME)),
+    ] = ui_settings.DEFAULT_VOLUME
+    # Quiet hours hold back pop-ups and sounds; the bell still collects (SPEC-INTERFACES 6).
+    quiet_hours: Annotated[
+        dict,
+        BeforeValidator(
+            ui_settings.lenient(ui_settings.quiet_hours, ui_settings.default_quiet_hours)
+        ),
+    ] = ui_settings.default_quiet_hours()
 
 
 class Research(BaseModel):
@@ -381,7 +428,7 @@ class Server(BaseModel):
 
 class Ingest(BaseModel):
     # Descriptive User-Agent with a contact address (mandatory for SEC EDGAR; polite everywhere).
-    user_agent: str = "Kestrel/1.0 (+https://github.com/kestrel-app; contact: operator@example.com)"
+    user_agent: str = "Kestrel/1.0 (+https://kestrelapp.co)"
     default_rate_per_sec: float = 2.0
     workday_rate_per_sec: float = 1.0
     sec_rate_per_sec: float = 10.0
@@ -395,7 +442,7 @@ class Pursuits(BaseModel):
     ghosting_days: int = 21
 
 
-UI_SCHEMES: tuple[str, ...] = ("indigo", "teal")
+UI_SCHEMES: tuple[str, ...] = ("indigo", "teal", "plum", "graphite", "contrast")
 
 
 class Updates(BaseModel):
@@ -413,10 +460,69 @@ class UI(BaseModel):
     `data-scheme` on <html> for the first paint; the browser's own localStorage copy then wins.
     Light/dark/system is per browser only and never stored here."""
 
-    scheme: Literal["indigo", "teal"] = "indigo"
+    scheme: Literal["indigo", "teal", "plum", "graphite", "contrast"] = "indigo"
     # Desktop window: closing it hides Kestrel to the tray (the worker keeps running) instead of
     # quitting. On by default; Settings > Appearance turns it off (D-UI-8).
     close_to_tray: bool = True
+    # The scene behind the page title and the seasonal touches over it (D-UI-110, D-UI-111). The
+    # scene follows the install, never the browser. Change daily cycles the checked scenes by
+    # local date. A touch group off turns all of its touches off; touches_off names single ones.
+    scene: Annotated[
+        str, BeforeValidator(ui_settings.lenient(ui_settings.scene, ui_settings.DEFAULT_SCENE))
+    ] = ui_settings.DEFAULT_SCENE
+    scene_daily: Annotated[bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, True))] = (
+        True
+    )
+    scene_rotation: Annotated[
+        list[str],
+        BeforeValidator(
+            ui_settings.lenient(ui_settings.scene_rotation, lambda: list(ui_settings.SCENES))
+        ),
+    ] = list(ui_settings.SCENES)
+    scene_animate: Annotated[bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, True))] = (
+        True
+    )
+    touches_enabled: Annotated[
+        bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, True))
+    ] = True
+    touches_off: Annotated[
+        list[str], BeforeValidator(ui_settings.lenient(ui_settings.touches_off, list))
+    ] = []
+    touch_groups_off: Annotated[
+        list[str], BeforeValidator(ui_settings.lenient(ui_settings.touch_groups_off, list))
+    ] = []
+    # Your picture (D-UI-112): a lettered initial, one of six drawn marks, or a photo (the file
+    # lives in the data folder, never in a resume or export).
+    avatar: Annotated[
+        str, BeforeValidator(ui_settings.lenient(ui_settings.avatar, "initial"))
+    ] = "initial"
+    text_size: Annotated[
+        str, BeforeValidator(ui_settings.lenient(ui_settings.text_size, "default"))
+    ] = "default"
+    reduce_motion: Annotated[
+        bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, False))
+    ] = False
+    # Classic page loads (D-UI-220): a new document for every page change instead of the
+    # in-place swap. A fallback, off by default.
+    classic_nav: Annotated[
+        bool, BeforeValidator(ui_settings.lenient(ui_settings.flag, False))
+    ] = False
+
+
+class Region(BaseModel):
+    """Region (D-UI-109): country is the United States and currency US dollars, both fixed, so
+    neither is a setting. The date format and 12 or 24 hour time are editable and apply to every
+    date and time the interface prints."""
+
+    date_format: Annotated[
+        str,
+        BeforeValidator(
+            ui_settings.lenient(ui_settings.date_format, ui_settings.DEFAULT_DATE_FORMAT)
+        ),
+    ] = ui_settings.DEFAULT_DATE_FORMAT
+    time_format: Annotated[
+        str, BeforeValidator(ui_settings.lenient(ui_settings.time_format, "12h"))
+    ] = "12h"
 
 
 # --------------------------------------------------------------------------------- top-level
@@ -461,6 +567,7 @@ class Settings(BaseSettings):
     thresholds: Thresholds = Thresholds()
     consulting: ConsultingSettings = ConsultingSettings()
     learning: Learning = Learning()
+    tier0: Tier0 = Tier0()
     stories: Stories = Stories()
     docs: Docs = Docs()
     liveness: Liveness = Liveness()
@@ -471,15 +578,13 @@ class Settings(BaseSettings):
     ingest: Ingest = Ingest()
     pursuits: Pursuits = Pursuits()
     ui: UI = UI()
+    region: Region = Region()
     updates: Updates = Updates()
 
     # Top-level so Tier 0 rules can read `settings.max_posting_age_days` exactly as SPEC.md 6.1
     # writes it (its sibling is nested as `settings.consulting.max_trigger_age_days`).
     max_posting_age_days: int = 45
     confidential_mode: bool = False
-    # Ignored: superseded by updates.feed_url. Old feeds were a different format, so this value
-    # is deliberately not migrated.
-    update_check_url: str | None = None
     log_level: str = "INFO"
 
     @classmethod
@@ -653,9 +758,11 @@ def apply_mode(settings: Settings, mode: str | None = None) -> Settings:
     none (D-LLM-1); a tier absent from hosted_tiers stays exactly as it is. `settings.llm.mode`
     is left holding the EFFECTIVE mode."""
     requested = mode if mode is not None else settings.llm.mode
-    if requested not in MODES:
-        raise ValueError(f"unknown run mode {requested!r}; expected one of {', '.join(MODES)}")
-    if requested == "hosted":
+    if requested not in RUN_CHOICES:
+        raise ValueError(
+            f"unknown run mode {requested!r}; expected one of {', '.join(RUN_CHOICES)}"
+        )
+    if requested in ("hosted", "both"):
         problem = hosted_mode_problem(settings)
         if problem is not None:
             if mode is not None:
@@ -663,6 +770,8 @@ def apply_mode(settings: Settings, mode: str | None = None) -> Settings:
             settings.llm.mode = "local"
             return settings
         for tier, hosted in settings.llm.hosted_tiers.items():
+            if requested == "both" and tier not in BOTH_ONLINE_TIERS:
+                continue  # Both: the quick screen stays on this computer
             local = settings.llm.tiers.get(tier)
             overlay = hosted.model_dump(exclude_unset=True)
             if overlay.get("max_tokens") is None and tier in HOSTED_MAX_TOKENS:
@@ -687,7 +796,9 @@ def load_settings(*, db_overrides: dict | None = None, mode: str | None = None) 
     load_dotenv_into_environ()
     path = paths.config_file("settings.yml")
     _yaml_path["path"] = str(path) if path else None
-    return apply_mode(Settings(**(db_overrides or {})), mode)
+    from kestrel.services.other_service import apply as apply_other_service
+
+    return apply_mode(apply_other_service(Settings(**(db_overrides or {}))), mode)
 
 
 def get_settings() -> Settings:

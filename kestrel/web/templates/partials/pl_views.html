@@ -1,0 +1,15 @@
+{# The View dropdown (D-UI-96): the track's saved views, the default first. A view is its filters
+   and sort; picking one opens the list with them (view=<id>). Make default opens it first from
+   now on; Remove deletes only the view, never a role. Save as a view is under More filters. #}
+{% set swap = 'hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true"' %}
+<div class="pl-drop pl-drop--view" id="pl-view-menu" role="menu" data-testid="view-menu">
+  <a role="menuitem" href="{{ mine_href }}" hx-get="{{ mine_href }}" {{ swap|safe }}>My default</a>
+  {% for v in items %}
+    <div class="pl-drop__row">
+      <a role="menuitem" href="{{ v.href }}" hx-get="{{ v.href }}" {{ swap|safe }}>{{ v.name }}{% if v.default %} <span class="pl-tag">default</span>{% endif %}</a>
+      {% if not v.default %}<button type="button" class="k-btn k-btn--quiet k-btn--sm" hx-post="/pipeline/views/{{ v.id }}/default" hx-swap="none">Make default</button>{% endif %}
+      <button type="button" class="k-btn k-btn--quiet k-btn--sm" hx-post="/pipeline/views/{{ v.id }}/remove" hx-swap="none" hx-confirm="Remove this view? Your roles are not affected.">Remove</button>
+    </div>
+  {% endfor %}
+  <div class="pl-drop__hint">Set filters, then Save as a view.</div>
+</div>

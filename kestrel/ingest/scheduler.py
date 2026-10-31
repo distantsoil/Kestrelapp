@@ -119,6 +119,8 @@ async def enqueue_all_scrapes(
     *,
     model_override: dict | None = None,
     model_label: str | None = None,
+    online_approval: dict | None = None,
+    reconfirm_held: bool = False,
 ) -> int:
     """Enqueue a scrape for every enabled source on an enabled track, due or not: the operator
     pressed Scan now. Sources with a pending or leased scrape are skipped, as everywhere else.
@@ -140,12 +142,31 @@ async def enqueue_all_scrapes(
     ).scalars().all()
     enqueued = 0
     for src in sources:
-        if await _has_pending_scrape(session, src.id):
-            continue
         payload: dict = {"source_id": src.id}
         if model_override and src.kind not in SIGNAL_SOURCE_KINDS:
             payload["model_override"] = dict(model_override)
             payload["model_label"] = model_label or str(model_override.get("model") or "")
+        if online_approval is not None:
+            from kestrel.services.online_consent import read_approval
+
+            approval = read_approval(online_approval)
+            payload["online_approval"] = approval
+        if reconfirm_held:
+            # Only an explicit, server-validated action can replace a stale approval. A
+            # scheduler never passes this flag. The pending-state guard never edits a lease.
+            from kestrel.services.online_consent import APPROVAL_HOLD
+
+            changed = await session.execute(update(Task).where(
+                Task.type == "scrape", Task.status == "pending",
+                Task.last_error == APPROVAL_HOLD,
+                func.json_extract(Task.payload, "$.source_id") == src.id,
+            ).values(payload=payload, last_error=None, updated_at=iso(utcnow())))
+            await session.commit()
+            if changed.rowcount:
+                enqueued += changed.rowcount
+                continue
+        if await _has_pending_scrape(session, src.id):
+            continue
         await queue.enqueue("scrape", payload)
         enqueued += 1
     return enqueued

@@ -15,22 +15,11 @@ Every route re-renders `partials/opp_actions.html` with a result message, mirror
 kestrel/web/pages/prep.py: a write path must never turn an unexpected failure into a 500 (CLAUDE.md
 hard rules), so every DB/service call is wrapped and an inline message replaces a stack trace.
 
-Research and Find contacts touch `kestrel.research.company.research_org` and
-`kestrel.research.contacts.discover_contacts`. Both take excerpts already acquired (or acquire them
-internally); here `http=None` is passed to excerpt acquisition deliberately, which keeps this
-action to the DB-derived (already-ingested ATS postings) and operator-paste tiers rather than
-opening a new live-fetch surface -- `kestrel.research.excerpts.acquire_excerpts` documents `http`
-as optionally None ("fully offline"). Wiring the live company-page/EDGAR/SearXNG tiers is a
-separate, larger change (a rate-limited kestrel.ingest.http.HttpClient instance shared across
-requests) and is out of scope for wiring up the action buttons themselves. The LLM call itself
-(research_org's synthesis, discover_contacts' extraction) still runs for real, against whatever
-backend Settings points at."""
+Research and Find contacts enqueue durable task rows. Their worker owns public source fetching,
+validated model calls, progress, cancellation and atomic result storage (D-UI-167)."""
 
 from __future__ import annotations
 
-import html
-
-import httpx
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -53,12 +42,6 @@ from kestrel.db.models import (
     StatusEvent,
     VerdictOverride,
 )
-from kestrel.ingest.http import HttpClient
-from kestrel.llm.client import LLMClient
-from kestrel.research.company import research_org
-from kestrel.research.contacts import discover_contacts
-from kestrel.research.excerpts import acquire_excerpts
-from kestrel.services.org_research import run_org_research
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
@@ -252,17 +235,46 @@ async def add_to_list(session: AsyncSession, opp: Opportunity) -> tuple[Pursuit 
     status = PURSUIT_STATUS[opp.track][0]
     if not valid_pursuit_status(opp.track, status):
         return None, f"No valid initial pursuit status configured for track {opp.track}."
+    prior_labels = set(
+        (
+            await session.execute(
+                select(VerdictOverride.id).where(VerdictOverride.opportunity_id == opp.id)
+            )
+        ).scalars()
+    )
     pursuit = Pursuit(
         opportunity_id=opp.id, track=opp.track, status=status, last_activity_at=utcnow_iso()
     )
     session.add(pursuit)
     await session.flush()
     await record_add_label(session, opp, commit=False)
+    await session.flush()
+    from kestrel.services import pursuit_undo
+
+    labels = list(
+        set(
+            (
+                await session.execute(
+                    select(VerdictOverride.id).where(VerdictOverride.opportunity_id == opp.id)
+                )
+            ).scalars()
+        )
+        - prior_labels
+    )
+    token = await pursuit_undo.save_added(session, pursuit, labels)
+    session.info.setdefault("added_undo", {})[opp.id] = token
     await session.commit()
     return pursuit, f"Added to your {words(opp.track)['list']} ({_status_word(pursuit)})."
 
 
-async def remove_from_list(session: AsyncSession, opp: Opportunity) -> str:
+async def remove_from_list(
+    session: AsyncSession,
+    opp: Opportunity,
+    *,
+    commit: bool = True,
+    label_ids: list[int] | None = None,
+    clear_import_archive: bool = True,
+) -> str:
     """Undo an Add, at any stage, in ONE transaction (D-UI-75). The pursuit goes with its status
     history, outcome and offers, so a role added by mistake, or tracked as the wrong application,
     leaves nothing in the board, the funnel or the training signal. The labels the Add wrote go
@@ -279,20 +291,24 @@ async def remove_from_list(session: AsyncSession, opp: Opportunity) -> str:
     await session.execute(
         update(Notification).where(Notification.pursuit_id == pursuit.id).values(pursuit_id=None)
     )
-    await session.execute(
-        delete(VerdictOverride).where(
-            VerdictOverride.opportunity_id == opp.id, VerdictOverride.reason.in_(ADD_REASONS)
-        )
+    labels = delete(VerdictOverride).where(
+        VerdictOverride.opportunity_id == opp.id, VerdictOverride.reason.in_(ADD_REASONS)
     )
+    if label_ids is not None:
+        labels = labels.where(VerdictOverride.id.in_(label_ids))
+    await session.execute(labels)
     # Hidden as applied (the applied-history import) was part of the same mistake: unhide it, or
     # the role stays hidden and every re-post of it is hidden as applied (normalize.py).
-    if opp.archive_reason == "applied":
+    if clear_import_archive and opp.archive_reason == "applied":
         opp.archived_at = None
         opp.archive_reason = None
         if opp.stage_reason == "Imported applied history":
             opp.stage_reason = None
     await session.delete(pursuit)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return f"Removed from your {words(opp.track)['list']}."
 
 
@@ -314,9 +330,11 @@ async def _decision(
     headers = {"HX-Trigger": "pipelineRefresh"}
     ctx = await decision_context(session, opp_id)
     if ctx is None:
-        note = html.escape(error or "Opportunity not found.")
+        # The role is gone, so the page says so in a fixed sentence; the caller's `error` (which
+        # can come from a failure) is not echoed here (D-SEC-4).
         return HTMLResponse(
-            f'<div id="decision" class="decision"><div class="warnbox">{note}</div></div>{oob}',
+            '<div id="decision" class="decision"><div class="warnbox">Opportunity not found.'
+            f"</div></div>{oob}",
             headers=headers,
         )
     ctx.update(message=message, error=error)
@@ -484,101 +502,57 @@ async def tailor(request: Request, opp_id: int) -> HTMLResponse:
 
 
 # ============================================================================ 3. Research
+
+
+async def _online_refusal() -> str | None:
+    """Research and contacts run on the Tier 3 model. When that is an online model the click must
+    first show the dialog that names what is sent, which only the Role page has; this panel
+    refuses rather than send without it (checked here, not trusted from the page)."""
+    from kestrel.web.pages.role import online_route
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        route = await online_route(s, settings, "tier3")
+    if route is None:
+        return None
+    return ("Nothing was sent. This uses an online model, so it asks first. Open the role page "
+            "and use Research there.")
+
+
 @router.post("/opportunities/{opp_id}/research", response_class=HTMLResponse)
 async def research(request: Request, opp_id: int) -> HTMLResponse:
-    """Run P5 org research (kestrel.research.company.research_org) for this opportunity's org."""
-    message: str | None = None
-    error: str | None = None
+    return await _queue_research(request, opp_id, "company")
+
+
+async def _queue_research(request: Request, opp_id: int, kind: str) -> HTMLResponse:
+    from kestrel.research import jobs
+
+    error = await _online_refusal()
+    message = None
     async with sessionmaker()() as s:
-        try:
-            opp = await s.get(Opportunity, opp_id)
+        opp = await s.get(Opportunity, opp_id)
+        if error is None:
             if opp is None:
                 error = "Opportunity not found."
             elif opp.org_id is None:
                 error = "No organization is linked to this opportunity yet."
             else:
-                org = await s.get(Org, opp.org_id)
-                if org is None:
-                    error = "Organization record is missing."
-                else:
-                    # Shared with `kestrel research`: polite public-page client, model only via
-                    # research_org, commit included. `research_org` is passed by name so this
-                    # module's seam stays patchable.
-                    record = await run_org_research(s, org, researcher=research_org)
-                    if record.insufficient_sources:
-                        message = (
-                            f"Research recorded for {org.name}, but fewer than 2 sources were "
-                            "available: labeled insufficient, not a solid summary."
-                        )
-                    else:
-                        n = len(record.signals or [])
-                        message = f"Research complete for {org.name}: {n} signal(s) captured."
-        except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
-            log.warning(
-                "research_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
-            )
-            await s.rollback()
-            error = f"Research failed: {plain_error(exc)}"
+                try:
+                    settings = await load_settings_with_db(s)
+                    added = await jobs.enqueue(s, opp, kind, settings)
+                    message = ("Queued. Progress is on the Organization tab." if added
+                               else "Already queued. Progress is on the Organization tab.")
+                except ValueError as exc:
+                    error = str(exc)
         return await _render(request, s, opp_id, message=message, error=error)
 
 
 # ============================================================================ 4. Find contacts
+
+
 @router.post("/opportunities/{opp_id}/contacts", response_class=HTMLResponse)
 async def find_contacts(request: Request, opp_id: int) -> HTMLResponse:
-    """Discover contacts (P6, kestrel.research.contacts.discover_contacts) for this opportunity's
-    org. Drafts only (hard rule 1): nothing this creates is ever sent."""
-    message: str | None = None
-    error: str | None = None
-    async with sessionmaker()() as s:
-        try:
-            opp = await s.get(Opportunity, opp_id)
-            if opp is None:
-                error = "Opportunity not found."
-            elif opp.org_id is None:
-                error = "No organization is linked to this opportunity yet."
-            else:
-                org = await s.get(Org, opp.org_id)
-                if org is None:
-                    error = "Organization record is missing."
-                else:
-                    settings = await load_settings_with_db(s)
-                    # Same reasoning as Research: with no fetching client only the DB-derived ATS
-                    # tier contributes, so contact discovery would run against a single excerpt.
-                    async with (
-                        httpx.AsyncClient() as llm_http,
-                        HttpClient(
-                            user_agent=settings.ingest.user_agent,
-                            default_rate_per_sec=settings.ingest.default_rate_per_sec,
-                            timeout=settings.ingest.request_timeout_s,
-                            respect_robots=settings.ingest.respect_robots,
-                        ) as fetch_http,
-                    ):
-                        excerpts = await acquire_excerpts(s, fetch_http, org, settings=settings)
-                        if len(excerpts) == 0:
-                            message = (
-                                "No public sources found for this organization yet: add an open "
-                                "posting or a company URL so there is something to cite."
-                            )
-                            created = []
-                        else:
-                            client = LLMClient(settings, http=llm_http)
-                            created = await discover_contacts(
-                                s, client, org, excerpts, opportunity=opp
-                            )
-                    if len(excerpts) > 0:
-                        if not created:
-                            message = (
-                                "No contacts found (or none could be verified against a source)."
-                            )
-                        else:
-                            message = f"Found {len(created)} contact(s) for {org.name}."
-        except Exception as exc:  # a write path must never 500 (CLAUDE.md hard rules)
-            log.warning(
-                "find_contacts_failed", opp_id=opp_id, error_type=type(exc).__name__, error=str(exc)
-            )
-            await s.rollback()
-            error = f"Contact discovery failed: {plain_error(exc)}"
-        return await _render(request, s, opp_id, message=message, error=error)
+    return await _queue_research(request, opp_id, "contacts")
 
 
 # ============================================================================ 5. Prep pack

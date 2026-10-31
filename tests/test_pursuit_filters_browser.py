@@ -6,6 +6,7 @@ starts (tests/browser.py)."""
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -63,42 +64,37 @@ def test_applications_live_search_in_a_browser():
     asyncio.run(_seed())
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": 1680, "height": 900})
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(f"pageerror:{e}"))
 
         page.goto(f"{base}/pursuits?view=kanban")
-        cards = page.locator("#board .pcard")
+        cards = page.locator("#apps-board .ap-card:not([hidden])")
         count = page.get_by_test_id("filter-count")
         search = page.get_by_test_id("pursuit-search")
-        # the closed column shows by default; hiding it is the user's choice (#30)
-        expect(cards.locator("visible=true")).to_have_count(5)
-        expect(count).to_have_text("Showing 5 of 5")  # the count is what is on screen
+        # The Closed group is folded by default (D-UI-100): the count is what is on screen.
+        expect(cards).to_have_count(5)
+        expect(count).to_have_text("Showing 4 of 5")
         toggle = page.get_by_test_id("closed-toggle")
-        expect(toggle).to_have_text("Hide closed")
-        # each toggle waits for its save, not a fixed delay (the slower Windows runner, #14 CI)
-        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
-            toggle.click()
-        expect(cards.locator("visible=true")).to_have_count(4)
-        expect(toggle).to_have_text("Show 1 closed")
-        # the choice is remembered: a reload still has it hidden
-        page.reload()
-        expect(cards.locator("visible=true")).to_have_count(4)
-        with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
-            page.get_by_test_id("closed-toggle").click()
-        expect(cards.locator("visible=true")).to_have_count(5)
+        expect(toggle).to_contain_text("Closed · 1")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        expect(count).to_have_text("Showing 5 of 5")
+        toggle.click()
+        expect(count).to_have_text("Showing 4 of 5")
 
         # typing a company narrows to that one card
         search.fill("northwind")
-        expect(cards.locator("visible=true")).to_have_count(1)
-        expect(cards.locator("visible=true")).to_contain_text("Northwind Freight")
+        expect(cards).to_have_count(1)
+        expect(cards).to_contain_text("Northwind Freight")
         expect(count).to_have_text("Showing 1 of 5")
 
         # Escape clears the box and everything returns
         search.press("Escape")
         expect(search).to_have_value("")
-        expect(cards.locator("visible=true")).to_have_count(5)
-        expect(count).to_have_text("Showing 5 of 5")
+        expect(cards).to_have_count(5)
+        expect(count).to_have_text("Showing 4 of 5")
 
         # nonsense shows the empty state; Clear filters restores
         search.fill("zzqxnothing")
@@ -108,32 +104,34 @@ def test_applications_live_search_in_a_browser():
         page.get_by_test_id("clear-filters").click()
         expect(empty).to_be_hidden()
         expect(search).to_have_value("")
-        expect(cards.locator("visible=true")).to_have_count(5)
+        expect(cards).to_have_count(5)
 
-        # a search that matches a closed card opens the fold so the match can be seen
+        # a search that is looking for a closed card opens the fold so the match can be seen
         search.fill("hooli")
-        expect(cards.locator("visible=true")).to_have_count(1)
+        expect(page.locator(".ap-closedg")).to_have_class(re.compile("is-open"))
+        expect(cards).to_have_count(1)
+        expect(count).to_have_text("Showing 1 of 5")
         search.fill("")
-        expect(cards.locator("visible=true")).to_have_count(5)
+        expect(page.locator(".ap-closedg")).not_to_have_class(re.compile("is-open"))
 
-        # Show closed off drops the rejected card from the matches
-        page.get_by_test_id("show-closed").uncheck()
-        expect(cards.locator("visible=true")).to_have_count(4)
-        expect(count).to_have_text("Showing 4 of 5")
-        expect(page.locator("#board .pcard", has_text="Hooli")).to_be_hidden()
-        page.get_by_test_id("show-closed").check()
-        expect(count).to_have_text("Showing 5 of 5")
+        # a stage chip shows only that column
+        page.locator('[data-testid="stage-chip"][data-stage="applied"]').click()
+        expect(cards).to_have_count(2)
+        expect(page.locator('.ap-col[data-col="to_apply"]')).to_be_hidden()
+        page.locator('[data-testid="stage-chip"][data-stage="all"]').click()
+        expect(cards).to_have_count(5)
 
-        # the query follows a switch to the table
+        # the query follows a switch to the table, in place
         search.fill("globex")
-        expect(cards.locator("visible=true")).to_have_count(1)
-        page.get_by_role("link", name="Table").click()
-        page.wait_for_url("**view=table**")
-        assert "q=globex" in page.url
+        expect(cards).to_have_count(1)
+        page.get_by_test_id("view-table").click()
+        page.wait_for_selector('[data-testid="apps-table"]')
+        # The URL is pushed just after the swap, so wait for it rather than read it at once.
+        expect(page).to_have_url(re.compile(r"q=globex.*view=table|view=table.*q=globex"))
         expect(page.get_by_test_id("pursuit-search")).to_have_value("globex")
-        rows = page.locator("#board tr[data-search]")
-        expect(rows.locator("visible=true")).to_have_count(1)
-        expect(rows.locator("visible=true")).to_contain_text("Globex Corp")
+        rows = page.locator("#apps-board tr[data-search]:not([hidden])")
+        expect(rows).to_have_count(1)
+        expect(rows).to_contain_text("Globex Corp")
 
         browser.close()
     assert errors == [], f"JS errors on page: {errors}"
@@ -200,50 +198,49 @@ def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
     asyncio.run(_seed_aged())
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": 1680, "height": 900})
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(f"pageerror:{e}"))
 
         page.goto(f"{base}/pursuits?view=kanban")
-        cards = page.locator("#board .pcard")
+        cards = page.locator("#apps-board .ap-card:not([hidden])")
         count = page.get_by_test_id("filter-count")
-        expect(cards.locator("visible=true")).to_have_count(8)
+        expect(cards).to_have_count(8)
+        page.get_by_test_id("more-filters").click()
 
         # the date range hides cards whose last activity is older than the range
-        # Each change saves on its own; wait for this save too, or the 7-day wait below can match
-        # this slower response and the reload reads 30.
         with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
             page.get_by_test_id("range-select").select_option("30")
-        expect(cards.locator("visible=true")).to_have_count(6)
+        expect(cards).to_have_count(6)
         expect(count).to_have_text("Showing 6 of 8")
         assert "range=30" in page.url
-        # Wait for the choice to be saved before leaving: on the slower Windows runner the reload
-        # beat the save and the page came back with the previous range (#14 CI).
+        # Wait for the choice to be saved before leaving (the slower Windows runner, #14 CI).
         with page.expect_response(
             lambda r: (
                 "/pursuits/prefs" in r.url and r.ok and "range=7" in (r.request.post_data or "")
             )
         ):
             page.get_by_test_id("range-select").select_option("7")
-        expect(cards.locator("visible=true")).to_have_count(5)
+        expect(cards).to_have_count(5)
 
         # the choice is the default next visit, with no query string
         page.goto(f"{base}/pursuits?view=kanban")
         expect(page.get_by_test_id("range-select")).to_have_value("7")
-        expect(page.locator("#board .pcard").locator("visible=true")).to_have_count(5)
+        expect(page.locator("#apps-board .ap-card:not([hidden])")).to_have_count(5)
         # All time brings everything back (and is remembered)
+        page.get_by_test_id("more-filters").click()
         page.get_by_test_id("range-select").select_option("0")
-        expect(cards.locator("visible=true")).to_have_count(8)
+        expect(cards).to_have_count(8)
 
         # a per-column cap shows the first N with a Show all for the rest
         page.get_by_test_id("cap-select").select_option("5")
-        applied = page.locator('#board .pcard[data-col="applied"]')
-        expect(applied.locator("visible=true")).to_have_count(5)
-        more = page.locator('#board [data-colmore][data-col="applied"]')
+        applied = page.locator('#apps-board .ap-card[data-col="applied"]:not([hidden])')
+        expect(applied).to_have_count(5)
+        more = page.locator('#apps-board [data-colmore][data-col="applied"]')
         expect(more).to_be_visible()
         expect(more).to_have_text("Show all 7")
         more.click()
-        expect(applied.locator("visible=true")).to_have_count(7)
+        expect(applied).to_have_count(7)
         expect(more).to_have_text("Show fewer")
 
         browser.close()
@@ -252,8 +249,7 @@ def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
 
 def test_an_open_offer_is_never_folded_away_as_closed():
     # An offer sits in the employment "closed" column but is not a closed status (#30 review):
-    # the fold keys on data-closed, so the offer stays visible and the button counts 1 closed
-    # once the user hides closed (shown by default).
+    # it stays in the column itself while only rejected, withdrawn and ghosted fold.
     from playwright.sync_api import expect, sync_playwright
 
     from kestrel.web.serve import running_server
@@ -269,13 +265,11 @@ def test_an_open_offer_is_never_folded_away_as_closed():
     )
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": 1680, "height": 900})
         page.goto(f"{base}/pursuits?view=kanban")
-        cards = page.locator("#board .pcard")
-        expect(cards.locator("visible=true")).to_have_count(3)
-        page.get_by_test_id("closed-toggle").click()
-        expect(cards.locator("visible=true")).to_have_count(2)
-        expect(page.locator("#board .pcard", has_text="Acme")).to_be_visible()
-        expect(page.locator("#board .pcard", has_text="Hooli")).to_be_hidden()
-        expect(page.get_by_test_id("closed-toggle")).to_have_text("Show 1 closed")
+        expect(page.locator("#apps-board .ap-card:not([hidden])")).to_have_count(3)
+        expect(page.locator(".ap-closedg .ap-card")).to_have_count(1)
+        expect(page.locator(".ap-closedg .ap-card", has_text="Hooli")).to_have_count(1)
+        expect(page.locator(".ap-cards .ap-card", has_text="Acme").first).to_be_visible()
+        expect(page.get_by_test_id("closed-toggle")).to_contain_text("Closed · 1")
         browser.close()

@@ -1,0 +1,110 @@
+{# Interview prep body (D-UI-121): the tabs and the pane under them, with the help column beside.
+   A tab swaps this whole body; the cards inside it change on their own (pp_parts.html). #}
+{% import "ui/macros.html" as ui %}
+{% import "partials/pp_icons.html" as i %}
+<div class="pp-shell">
+{#- The tabs and the four readiness tiles span the full width; the help column starts level with
+    the first content cards below them (prep-mockup-locked.html, .ready outside .pgrid). #}
+{#- The tabs always stay, with or without a role (owner, 2026-10-30, D-UI-221): a tab with no
+    role to show says so under them, and the way back to the story bank is never gone. #}
+{%- include "partials/pp_tabs.html" %}
+{%- if tab == 'pack' and opp is not none and has_pack %}{% include "partials/pp_ready.html" %}{% endif %}
+<div class="k-layout" id="pp-layout" data-tab="{{ tab }}" data-opp="{{ opp_id or '' }}" data-testid="pp-layout">
+  <div class="k-layout__main">
+    <div class="pp-pane" id="pp-pane" data-tab="{{ tab }}">
+      {%- if opp is none and tab != 'bank' %}
+        {%- if opp_id is none and not roles %}
+        {{ ui.empty_state('No interview is booked yet', 'When an application moves to Interviewing, its prep pack and practice appear here. Your story bank is open now.', 'prep', 'Open Applications', '/pursuits') }}
+        {%- else %}
+        <div class="pp-warn" data-testid="pp-no-role">No such role. Nothing to prep.</div>
+        {%- endif %}
+      {%- elif tab == 'pack' %}{% include "partials/pp_pack.html" %}
+      {%- elif tab == 'practice' %}{% include "partials/pp_practice.html" %}
+      {%- else %}{% include "partials/pp_bank.html" %}
+      {%- endif %}
+    </div>
+  </div>
+  {%- if opp is not none or tab == 'bank' %}
+  {% call ui.help_column() %}
+    {%- if tab == 'pack' %}
+      {{ ui.help_card('How the pack is built', ['Starts from the role and what it asks for.', 'Adds what Kestrel found about the company.', 'Matches each question to one of your stories.'], 'info', 'wand', 'pp-pk1-fly') }}
+      {{ ui.help_card('Your words only', ['Stories are written by you.', 'Kestrel picks one; it never rewrites it.', 'An edit you make always sticks.'], 'good', 'key', 'pp-pk2-fly') }}
+      {{ ui.help_card('Questions to ask them', ['Built from what research could not find.', 'Tick the ones to include in the PDF.', 'Add your own at the bottom.'], 'info', 'info', 'pp-pk3-fly') }}
+      {{ ui.help_card('After the interview', ['Write down what was asked while you remember.', 'Debrief capture stays on the role page.', 'Your notes here stay on this computer.'], 'warn', 'clock', 'pp-pk4-fly') }}
+    {%- elif tab == 'practice' %}
+      {% if route is defined and route.online %}
+      {{ ui.help_card('Practice uses an online model', ['Set in Models for the full review.', 'Kestrel asks before each session.', 'Nothing is sent to the company.'], 'warn', 'lock', 'pp-pr1-fly') }}
+      {% else %}
+      {{ ui.help_card('Practice stays private', ['Runs on your computer by default.', 'Online asks first and lists what is sent.', 'Nothing is sent to the company.'], 'good', 'shield', 'pp-pr1-fly') }}
+      {% endif %}
+      {{ ui.help_card('What feedback checks', ['Structure: situation, action, result.', 'Specific numbers and length.', 'Whether you answered the question.'], 'info', 'info', 'pp-pr2-fly') }}
+      {{ ui.help_card('Getting better', ['Try the same question twice.', 'Aim for two minutes out loud.', 'A trend needs at least 5 sessions.'], 'warn', 'up', 'pp-pr3-fly') }}
+    {%- else %}
+      {{ ui.help_card('Why 8 to 12 stories', ['A few strong stories beat many thin ones.', 'Each story can answer several questions.', 'Gaps tell you what to write next.'], 'info', 'info', 'pp-bk1-fly') }}
+      {{ ui.help_card('Your words only', ['Saved stories are never overwritten.', 'New sketches become drafts to review.', 'Delete one and its links go with it.'], 'good', 'key', 'pp-bk2-fly') }}
+      {{ ui.help_card('Similar stories', ['Kestrel spots near-duplicates.', 'You choose what to keep.', 'Keep separate and it will not ask again.'], 'warn', 'alert', 'pp-bk3-fly') }}
+    {%- endif %}
+  {% endcall %}
+  {%- endif %}
+</div>
+</div>
+{# The flyouts belong to the body, so a tab brings its own. #}
+{% call ui.flyout('pp-how-fly', 'How ' ~ page_title ~ ' works', help_href='/help') %}
+  <h4>The short version</h4>
+  <p>Kestrel builds one pack per interview: the likely questions, which of your stories fits each, the gaps to handle, and questions to ask.</p>
+  <h4>What you do</h4>
+  <ul><li>Fix questions marked No story yet.</li><li>Tick the questions you want to ask.</li><li>Practice, then download the PDF.</li></ul>
+  <h4>What it never does</h4>
+  <p>It never contacts the company or anyone on the panel, and never rewrites your stories.</p>
+{% endcall %}
+{%- if tab == 'pack' %}
+{% call ui.flyout('pp-pk1-fly', 'How the pack is built', help_href='/help') %}
+  <h4>What goes in</h4><p>The posting, the gaps Kestrel found when it rated the role, and public information about the company. Nothing from other applications.</p>
+  <h4>How a question gets a story</h4><p>Kestrel compares each likely question with your saved stories and picks the closest one. It never writes a story for you. If nothing fits, the question says No story yet.</p>
+  <h4>How to use it</h4><ul><li>Fix the questions marked No story yet first.</li><li>Read the pack the morning of the interview.</li><li>Tick the questions you want in the PDF.</li></ul>
+{% endcall %}
+{% call ui.flyout('pp-pk2-fly', 'Your words only', help_href='/help') %}
+  <h4>Why this matters</h4><p>Interviewers can tell when an answer is not yours. Every story in the pack is the text you saved, character for character.</p>
+  <h4>If you swap a story</h4><p>Pick another one from your bank or write a new one. The choice is for that question on this role, and a rebuilt pack keeps it.</p>
+  <h4>If a number is wrong</h4><p>Edit the story. Your version replaces the old one everywhere it is used.</p>
+{% endcall %}
+{% call ui.flyout('pp-pk3-fly', 'Questions to ask them', help_href='/help') %}
+  <h4>Why they are specific</h4><p>Each question comes from something Kestrel could not find out about the company, so it is a real question and not a generic one.</p>
+  <h4>How many</h4><p>Three or four is plenty. Asking fewer, better questions reads as preparation.</p>
+{% endcall %}
+{% call ui.flyout('pp-pk4-fly', 'After the interview', help_href='/help') %}
+  <h4>The debrief</h4><p>After the date passes, open the role page to note what was asked, who was in the room and what happens next. That capture stays there.</p>
+  <h4>Your notes</h4><p>What you write in Your notes is saved on this computer. Build stories can read it, and it is never sent anywhere.</p>
+{% endcall %}
+{%- elif tab == 'practice' %}
+{% call ui.flyout('pp-pr1-fly', 'Practice and privacy', help_href='/help') %}
+  {%- if route is defined and route.online %}
+  <h4>What an online model sees</h4><p>{{ route.practice_sends[:1]|upper }}{{ route.practice_sends[1:] }}. Never your contacts or other applications.</p>
+  <h4>Where this is set</h4><p>The full-review model in Models is an online one ({{ route.model }}). Kestrel asks before each practice session and states what is sent.</p>
+  {%- else %}
+  <h4>What an online model would see</h4><p>{{ route.practice_sends[:1]|upper if route is defined else 'Each' }}{{ route.practice_sends[1:] if route is defined else ' question and your typed answer' }}. Never your contacts or other applications. Nothing is sent until you confirm.</p>
+  <h4>What it costs</h4><p>You pay your provider directly. Kestrel shows the cost before it asks for your yes.</p>
+  <h4>Switching back</h4><p>One click returns to your computer. Nothing more is sent.</p>
+  {%- endif %}
+{% endcall %}
+{% call ui.flyout('pp-pr2-fly', 'What feedback checks', help_href='/help') %}
+  <h4>The claim check</h4><p>Kestrel flags anything you say that is not in your resume or stories. If it is true, add it as a story so Kestrel can back it up. If not, leave it out on the day.</p>
+  <h4>How to read the bars</h4><p>Bars are out of 5. Under 3.5 is worth a second try. They show how this answer scored, not how you compare with other people.</p>
+{% endcall %}
+{% call ui.flyout('pp-pr3-fly', 'Getting better', help_href='/help') %}
+  <h4>Why 5</h4><p>Fewer sessions say more about the question you drew than about you, so Kestrel says there are too few until there are five.</p>
+  <h4>A good routine</h4><ul><li>Three questions a day for three days.</li><li>Say the answer out loud, then type it.</li><li>Redo the one with the lowest bar.</li></ul>
+{% endcall %}
+{%- elif tab == 'bank' %}
+{% call ui.flyout('pp-bk1-fly', 'Why 8 to 12 stories', help_href='/help') %}
+  <h4>Coverage</h4><p>The tiles show eight common themes. No story yet means a question on that theme could catch you out.</p>
+  <h4>Where stories come from</h4><p>Kestrel drafts sketches while it rates roles. You turn the ones you like into your own words here.</p>
+{% endcall %}
+{% call ui.flyout('pp-bk2-fly', 'Your words only', help_href='/help') %}
+  <h4>What Kestrel changes</h4><p>Nothing in a story you have saved. It can attach a new use to it, and you decide.</p>
+{% endcall %}
+{% call ui.flyout('pp-bk3-fly', 'Similar stories', help_href='/help') %}
+  <h4>How a proposal is made</h4><p>Kestrel compares what each sketch says, not the titles. Two sketches about the same project look alike even when named differently.</p>
+  <h4>Reviewing</h4><p>You see the proposed story and write the final version yourself. Keep separate removes the proposal and Kestrel does not offer it again.</p>
+{% endcall %}
+{%- endif %}

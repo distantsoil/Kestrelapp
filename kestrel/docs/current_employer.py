@@ -13,10 +13,14 @@ role editor, the import opt-in, the Confirm button) and the one reader that turn
 * The map is the union of every document's CURRENT marks. Unticking a role removes the name
   unless another document still marks it (the editor says so).
 * Fail closed: with nothing marked anywhere, the newest open-ended role of each document (no end
-  date, or Present/Current/Now) is treated as current, shown as the suggested text, until the
+  date, Present/Current/Now, or a date that has not passed yet) is treated as current, shown as
+  the suggested text, until the
   operator confirms or changes it."""
 
 from __future__ import annotations
+
+import datetime as dt
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,9 +35,41 @@ _OPEN_END = frozenset({"", "present", "current", "now"})
 _PLACEHOLDER_MAX = 200
 
 
-def is_open_ended(end_date: str | None) -> bool:
-    """True for an empty end date or "Present", "Current", "Now" in any case."""
-    return (end_date or "").strip().casefold() in _OPEN_END
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+_YEAR_ONLY = re.compile(r"^(\d{4})$")
+_YEAR_MONTH = re.compile(r"^(\d{4})[-/.](\d{1,2})$")
+_MONTH_YEAR_NUM = re.compile(r"^(\d{1,2})[-/.](\d{4})$")
+_MONTH_YEAR_WORD = re.compile(r"^([a-z]{3,9})\.?,?\s+(\d{4})$")
+
+
+def _period_end(text: str) -> dt.date | None:
+    """The last day of the month (or year) a resume end date names, or None when unreadable."""
+    t = text.strip().casefold()
+    year = month = None
+    if m := _YEAR_ONLY.match(t):
+        year, month = int(m[1]), 12
+    elif m := _YEAR_MONTH.match(t):
+        year, month = int(m[1]), int(m[2])
+    elif m := _MONTH_YEAR_NUM.match(t):
+        year, month = int(m[2]), int(m[1])
+    elif m := _MONTH_YEAR_WORD.match(t):
+        year, month = int(m[2]), _MONTHS.get(m[1][:3], 0)
+    if year is None or not 1 <= (month or 0) <= 12 or not 1900 <= year <= 2999:
+        return None
+    nxt = dt.date(year + (month == 12), month % 12 + 1, 1)
+    return nxt - dt.timedelta(days=1)
+
+
+def is_open_ended(end_date: str | None, *, today: dt.date | None = None) -> bool:
+    """True for an empty end date, "Present", "Current", "Now" in any case, or a date that has
+    not ended yet ("Dec 2027", "2027", "12/2027"; the month in progress counts). An end date
+    that cannot be read is NOT current, so an odd string never hides an employer by accident."""
+    text = (end_date or "").strip()
+    if text.casefold() in _OPEN_END:
+        return True
+    end = _period_end(text)
+    return end is not None and end >= (today or dt.date.today())
 
 
 _HINTS: dict[tuple, str] = {}

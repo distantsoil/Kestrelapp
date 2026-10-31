@@ -44,20 +44,11 @@
       {% endif %}
     </div>
 
-    {# 3. Research #}
+    {# 3 and 4. Research and Find contacts moved to the Role page's Organization tab: they can use
+       an online model, so they ask first there (what is sent, the model, confidential mode). #}
     <div>
-      <button class="btn" hx-post="/opportunities/{{ opp.id }}/research"
-              hx-target="#opp-actions" hx-swap="outerHTML"
-              data-busy-text="Researching the organization…">Research</button>
-      <div class="muted">Org research from already-known sources.</div>
-    </div>
-
-    {# 4. Find contacts #}
-    <div>
-      <button class="btn" hx-post="/opportunities/{{ opp.id }}/contacts"
-              hx-target="#opp-actions" hx-swap="outerHTML"
-              data-busy-text="Looking for public contacts and warm paths…">Find contacts</button>
-      <div class="muted">Draft-only: nothing here is ever sent.</div>
+      <a class="btn" href="/opportunities/{{ opp.id }}/organization" data-testid="research-on-role-page">Research and contacts</a>
+      <div class="muted">On the role page, which asks before anything goes to an online model. Draft-only: nothing here is ever sent.</div>
     </div>
 
     {# 5. Interview prep: the always-visible button is in the decision panel (D-UI-55); a pack
@@ -74,7 +65,7 @@
       {% if opp.archived_at %}
         <button class="btn" hx-post="/opportunities/{{ opp.id }}/unarchive"
                 hx-target="#opp-actions" hx-swap="outerHTML">Unhide</button>
-        <div class="muted">hidden {{ opp.archived_at }}{% if opp.archive_reason %} &middot; {{ (archive_reasons or {}).get(opp.archive_reason, opp.archive_reason)|lower }}{% endif %}{% if opp.stage_reason and opp.stage_reason.startswith('Re-post') %} &middot; {{ opp.stage_reason|lower }}; Unhide if this is a different role{% endif %}</div>
+        <div class="muted">hidden {{ date_display(opp.archived_at, 'raw') }}{% if opp.archive_reason %} &middot; {{ (archive_reasons or {}).get(opp.archive_reason, opp.archive_reason)|lower }}{% endif %}{% if opp.stage_reason and opp.stage_reason.startswith('Re-post') %} &middot; {{ opp.stage_reason|lower }}; Unhide if this is a different role{% endif %}</div>
       {% else %}
         <form hx-post="/opportunities/{{ opp.id }}/archive" hx-target="#opp-actions" hx-swap="outerHTML"
               class="row" style="gap:6px">

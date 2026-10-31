@@ -80,7 +80,7 @@ Non-negotiable. Every downstream decision defers to these.
 | Templating | Jinja2, server-rendered | No SPA build toolchain |
 | Interactivity | HTMX 2.x + Alpine.js 3.x, **vendored locally** | Must work offline inside a packaged app. Do not use CDNs |
 | Styling | Tailwind CSS, **prebuilt stylesheet vendored** | Play CDN needs network. Generate once at build time, commit the CSS |
-| Database | SQLite WAL, SQLAlchemy 2.x async (`aiosqlite`) + Alembic | Alembic runs a sync engine against the same file |
+| Database | SQLite WAL, SQLAlchemy 2.x async (`aiosqlite`) + Alembic | Every connection uses `synchronous=NORMAL`; Alembic runs a sync engine against the same file (D-UI-174) |
 | Queue | DB-backed `task` table, in-process async worker | Restart-safe, inspectable with SQL |
 | Rule expressions | `simpleeval` | Tier 0 `when:` clauses. Sandboxed, never `eval()`. **No generator expressions; see §6.1** |
 | PDF verification | `pypdf` | Phase gates assert page count, text layer, and empty metadata |
@@ -98,7 +98,7 @@ Non-negotiable. Every downstream decision defers to these.
 | Token counting | `tiktoken` with a **vendored** `cl100k_base` encoding file | First use otherwise downloads from Azure blob storage, which breaks the offline requirement. Ship the file and set `TIKTOKEN_CACHE_DIR` |
 | Config | `pydantic-settings`, `.env` + YAML + DB overrides | |
 | Logging | `structlog`, rotating JSON lines | |
-| Tests | `pytest`, `pytest-asyncio`, `respx`, `playwright` | |
+| Tests | `pytest`, `pytest-asyncio`, `pytest-xdist`, `respx`, `playwright` | Isolated processes, temporary per-test data and ports; serial parity required (D-UI-172) |
 | Dependency mgmt | `uv` | Fast and Windows-clean |
 
 **Explicitly excluded:** React/Vue/Svelte, Node build tooling, Electron, Tauri, Rust, Redis,
@@ -186,7 +186,7 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | id | int pk | |
 | track | enum | `employment` \| `consulting` |
 | is_active | bool | both may be active |
-| full_name, email, phone, location | text | |
+| first_name, last_name, email, phone, location | text | `first_name` is required and used to greet the operator; `last_name` may be empty. `full_name` is derived (`first_name last_name`, trimmed) and is what a resume header prints. A migration (0023) splits an existing `full_name` at its first space and keeps the original text (D-UI-117) |
 | headline | text | |
 | narrative | text | 300-600 words, first person, track-specific framing |
 | work_auth | text | |
@@ -194,8 +194,8 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 | geo_rules | json | see §6.1 |
 | must_have, must_avoid | json | weighted statements |
 | proof_points | json | `{key, claim, evidence, metric}` — the only achievements any prompt may cite |
-| employment_terms | json | employment track: `target_titles`, `anti_titles`, `seniority_floor`, `comp_floor_usd`, `comp_target_usd`, `excluded_employment_types` |
-| consulting_terms | json | consulting track: `day_rate_floor`, `day_rate_target`, `min_engagement_days`, `max_concurrent`, `service_lines`, `target_org_size`, `target_sectors`, `excluded_sectors`, `travel_tolerance` |
+| employment_terms | json | employment track: `target_titles`, `anti_titles`, `seniority_floor`, `comp_floor_usd`, `comp_target_usd`, `comp_floor_margin_pct` (0, 2, 5, 10 or 15; default 5; 0 = exact; the near-floor margin, D-RULES-2), `excluded_employment_types` |
+| consulting_terms | json | consulting track: `day_rate_floor`, `day_rate_floor_margin_pct` (same meaning as the employment margin), `day_rate_target`, `min_engagement_days`, `max_concurrent`, `service_lines`, `target_org_size`, `target_sectors`, `excluded_sectors`, `travel_tolerance` |
 | updated_at | ts | |
 
 **`title_suggestion`** (P15, D-TTL-3) — job titles the model proposes for `employment_terms.target_titles`,
@@ -352,8 +352,10 @@ application, a consulting pursuit is a business-development thread.
 `lease_until`, `worker_id`, `last_error`, timestamps.
 
 Task types: `scrape`, `normalize`, `embed`, `t1`, `t2`, `t3`, `doc_select`, `render`,
-`research`, `contacts`, `liveness`, `calibrate`, `train_reranker`, `consolidate_stories`,
-`prep_pack`, `negotiation`, `trigger_classify`, `pursuit_sweep`.
+`research`, `org_summary`, `contacts`, `liveness`, `calibrate`, `train_reranker`,
+`consolidate_stories`, `prep_pack`, `negotiation`, `follow_up`, `trigger_classify`,
+`pursuit_sweep`, `bench`.
+(`org_summary` is the company summary of `SPEC-MODULES.md` §2.1; `bench` is the Model check run.)
 
 **`embed` is enqueued by `normalize`, unconditionally, for every opportunity.** Two separate
 subsystems depend on vectors existing: the reranker's PCA features
@@ -367,12 +369,38 @@ notifications possible: it finds pursuits with a `next_action_at` due today and 
 **`run`** — a named batch. `id`, `name`, `track`, `started_at`, `finished_at`, `status`
 (`running`/`stopping`/`done`/`failed`), `counts` json, `notes`.
 
+**`notification`** — `id`, `kind`, `severity`, `title`, `body`, `opportunity_id`, `pursuit_id`,
+`track`, `created_at`, `read_at`, `dismissed_at`, `resolved_at`, `delivered_channels` json. The
+bell counts rows with `read_at` null and `dismissed_at` null; the Dismissed tab shows rows with
+`dismissed_at` set; a problem kind stays under Needs attention while `resolved_at` is null; a
+dismissed row is deleted 30 days after `dismissed_at` (D-UI-94). `SPEC-INTERFACES.md` §6.
+
 **`setting`** — key/value UI overrides.
 **Precedence, highest first:** `setting` row → environment variable → YAML → code default.
 Re-read on every request and every task lease, so a UI change takes effect on the next unit of
 work with no restart. Only keys declared in the typed settings model are overridable.
 
 **`saved_view`** — `id`, `name`, `track`, `filters` json, `sort` json, `is_default`.
+
+**State the interface owns (D-UI-92 to D-UI-129).** Where each piece of overhaul state lives:
+
+| State | Storage |
+|---|---|
+| Save for later | `opportunity.saved_at` (nullable ts); the Saved chip lists rows where it is set |
+| Not for me and its reason | The existing hidden state of the role, plus a `label` (`source` `manual`, `dimensions` for role fit, comp and logistics, or career direction, `rationale` the chosen reason); the role stays recoverable under Hidden |
+| Company hidden | `org.hidden_at` (nullable ts); roles of a hidden org are left out of Pipeline and Today, never deleted |
+| Scene, touches, avatar | `setting` rows `ui.scene`, `ui.scene_daily` (default true), `ui.scene_rotation`, `ui.scene_animate`, `ui.touches_enabled`, `ui.touches_off` (single touches), `ui.touch_groups_off` (a whole group: `seasons`, `civic` or `lights`), `ui.avatar` (`initial`, six marks or `photo`; the photo file lives in the data folder). Values are validated in `kestrel/ui_settings.py`; a stored value that no longer validates reads as its default |
+| Appearance and window | `ui.theme`, `ui.scheme`, `ui.text_size`, `ui.reduce_motion`, `ui.classic_nav`, `ui.close_to_tray` |
+| Region | `region.date_format` (`MM/DD/YYYY` default, `MM/DD/YY`, `DD/MM/YYYY`, `DD/MM/YY`, `YYYY-MM-DD`, `Mon D, YYYY`), `region.time_format` (`12h` default, `24h`) (country and currency are fixed: US, USD) |
+| Notification sound | `notify.sound` (default on), `notify.sound_name` (`chime` default, `soft_click`, `bell`), `notify.sound_volume` (0 to 1, clamped), `notify.quiet_hours` (`{enabled, start, end}`, `HH:MM`, default 21:00 to 07:00, off) |
+| Score cutoffs | `thresholds.apply`, `thresholds.consider` |
+| Onboarding | `onboarding.state` (step, visited, skipped, completed) |
+| Contacts import | `contact_import`, `connection_position`, and `contact.source` = `linkedin_import` (SPEC-MODULES.md §2.3) |
+| Company summary | `org_summary` (SPEC-MODULES.md §2.1) |
+| Near-floor margin | `profile.employment_terms.comp_floor_margin_pct`, `consulting_terms.day_rate_floor_margin_pct` (§4.1) |
+
+Key names are the contract for the build; the exact `ui.*` spellings may be adjusted in the code
+with a matching spec edit.
 
 Tables belonging to specific modules (documents, contacts, research, stories, offers, labels,
 overrides, models) are defined in `SPEC-MODULES.md`.
@@ -439,6 +467,11 @@ Guardrails, all of which must be enforced rather than discovered:
 | **SmartRecruiters** | `GET https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100&offset=0` | 200 |
 | **Paylocity Recruiting** | `GET https://recruiting.paylocity.com/recruiting/jobs/All/{id}` (JSON in `window.pageData`) | 200, HTML (verified 2026-10-21) |
 | **Workable** | `POST https://apply.workable.com/api/v3/accounts/{slug}/jobs` body `{}` | 200, `{results, total}` (verified 2026-10-21 from the maintainer's network) |
+| **Recruitee** | `GET https://{slug}.recruitee.com/api/offers/` | 200, `{offers}` with full descriptions (verified 2026-10-29) |
+| **Careers page** (generic) | `GET {the pasted careers page}`, then at most 25 job pages | 200 HTML with schema.org `JobPosting` JSON-LD (job page shape verified 2026-10-29 on one public page; list, `@graph` and stub shapes from schema.org's documentation) |
+| **Teamtailor** | `GET https://{domain}/jobs.json` (JSON Feed; fallback `/jobs.rss`) | 200, `application/feed+json`, full descriptions (verified 2026-10-29) |
+| **Personio** | `GET https://{slug}.jobs.personio.de/xml` (also `.jobs.personio.com`) | 200, `text/xml`, `<workzag-jobs>` (verified 2026-10-29) |
+| **Breezy HR** | `GET https://{slug}.breezy.hr/json` (list) and `GET https://{slug}.breezy.hr/p/{friendly_id}` (description) | 200 (verified 2026-10-29) |
 | **ADP Workforce Now** | `GET https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions?cid={cid}&$top=20&$skip=1` | 200, no auth (verified 2026-10-21) |
 | **Rippling** | `GET https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | 200, bare array (verified 2026-10-21) |
 
@@ -457,16 +490,105 @@ use APIs the adapters do not call. A board already among the sources, in any sta
 added again, so one the operator turned off stays off. At most 40 found boards per track. A
 discovery failure is logged and never changes the run's status.
 Greenhouse short links (`grnh.se`) are followed with one request each, redirects off, at most 20
-per run. A role from a found board is scored at once when its level is unknown or at or above the
-floor and its title shares a field word with the target titles or with the titles of at least two
-of the operator's pursuits (D-SRC-8). Any other role from a found board waits in a background
-lane: stored, never rejected, and scored only when no other work is waiting, up to
-`pipeline.lane_daily_cap` (200) a day. "Score everything now" frees the whole lane once, after a
-confirmation that states the count, the time and, on an online model, the cost (D-SRC-9).
-Precision is measured, not assumed (D-SRC-13): `python -m kestrel.evals.smart_filter_report`
+per run. All fetched roles, from searches and company boards alike, pass the existing smart
+filter before storage (D-SRC-13, superseding D-SRC-8 and D-SRC-12): a rejected title is skipped
+and counted as `dropped_unrelated_title` on its scrape run. The matching rule is unchanged.
+Hand-pasted roles bypass this filter. The background lane remains only for previously stored
+rows. Before release and scoring, those rows are rechecked against the current country rule and
+smart filter; clear mismatches become `t0_reject` with an explanation, without a model call.
+Survivors score only on local tiers, when idle up to `pipeline.lane_daily_cap` (200) a day, or
+through "Score everything now" after confirmation. Hosted mode or an external scoring tier
+holds the surviving backlog, even after confirmation; model overrides cannot bypass this.
+Historical precision is measured, not assumed: `python -m kestrel.evals.smart_filter_report`
 reads the database (SELECT only) and reports per lane the roles, scored, fits and not-fits, the
 fast lane's precision (fits over scored roles) and the lane miss rate (fits that sat in the
 background lane over all fits). A figure from fewer than five observations prints as insufficient.
+
+**USAJobs (US federal jobs; D-SRC-15).** A search board with its own adapter (`usajobs`), added from
+the job-board sheet (group "Official public access") or the USAJobs card on the Sources page. It
+asks `GET https://data.usajobs.gov/api/search` with the user's own free key (`Authorization-Key`)
+and the email they requested it with (`User-Agent`, which USAJobs requires). The key is saved in the
+app and stored in `.env` as `USAJOBS_API_KEY` exactly as an online-model key is; the email is an
+ordinary setting (`sources.usajobs_email`) copied into each USAJobs source as `contact_email`. Neither
+the key nor any secret is in a config row, the database, a log or diagnostics. Search terms are the
+source's `keyword`, else the employment profile's target titles (up to 5, one search each) with an
+optional `location`; a place of "Remote" asks for remote roles only. Each search reads up to
+`max_pages` pages (default 3) of `results_per_page` (default 100, at most 500) posted in the last
+`date_posted_days` (default 7); a run makes at most 12 requests at 2 a second, robots.txt checked.
+Mapping: title, agency as organization, the apply link (`ApplyURI`, else the announcement), one
+place or the display text ("Multiple Locations"), pay with its interval (`PA` year, `PH` hour,
+`PM` month, `PW` week, `PD` day; unpaid or fee-basis roles carry none), the posting date, the
+closing date (in the description and the raw record), and the summary, duties, qualifications,
+requirements, education and benefits. `RemoteIndicator` true is remote, `TeleworkEligible` true is
+hybrid, both explicitly false is on-site, anything else stays unknown. A missing key or email is a
+`partial` run with the sentence "USAJobs needs your API key and email" (no request is made, no
+failure counted); a 429 or 5xx is `partial` and keeps the pages already read; a 401 or 403 is a
+failed attempt that says the key was not accepted. Every role goes through the same ingest path as
+any other source, so the D-SRC-13 area and title drop applies. Kestrel never applies: the role links
+to the official announcement, and it is described as not run or endorsed by OPM.
+
+**Adzuna (US job ads; D-SRC-15).** A search board with its own adapter (`adzuna`), added from the
+job-board sheet (group "Official public access") or the Adzuna card on the Sources page. It asks
+`GET https://api.adzuna.com/v1/api/jobs/us/search/{page}` (country fixed to `us`) with the user's own
+free `app_id` and `app_key` as query parameters. Both are saved in the app and stored in `.env` as
+`ADZUNA_APP_ID_KEY` and `ADZUNA_APP_KEY`, as an online-model key is; neither is in a config row, the
+database, a log or diagnostics (the log file masks credential-like query values). Search terms are
+the source's `keyword`, else the employment profile's target titles (up to 5, one search each) with
+an optional `location` (a place of "Remote" adds the word to the search; Adzuna has no remote
+filter). Budget: the free key allows about 250 calls a day, so a check reads at most `max_pages`
+pages (default 2, at most 5) of 50 ads posted in the last `date_posted_days` (default 7), and at
+most 8 requests in all, at 1 a second, never retried on a 429; the card says so. The robots check is
+skipped for this API call (D-SRC-15). Mapping: title, company, `location.display_name` (else the
+area as "City, State"), the redirect URL as the posting link, `created`, contract time and type, and
+`salary_min`/`salary_max` as annual USD pay only when `salary_is_predicted` is 0 (a predicted salary
+stays in the raw record). Adzuna sends a description snippet only, so the body ends with the
+sentence "Adzuna supplies only the start of this posting. Open the original posting for the full
+text." and `raw.description_partial` is true. A missing key is a `partial` run with the sentence
+"Adzuna needs your app ID and app key"; a 429 or 5xx is `partial` and keeps the pages already read;
+a 401 or 403 is a failed attempt that says the keys were not accepted. Every role goes through the
+same ingest path, so the D-SRC-13 drop applies. Credit: the source is named "<search> on Adzuna" and
+the Posting tab links to the Adzuna page, where the user applies.
+
+**Remote boards: Himalayas and We Work Remotely (D-SRC-15).** Two keyless job-feed adapters
+(`himalayas`, `weworkremotely`), added from the job-board sheet (group "Remote jobs"). The existing
+`rss` kind is a consulting signal source and is not reused. Himalayas asks
+`GET https://himalayas.app/jobs/api/search?q=<keyword>&country=US&sort=recent&page=N` (20 a page; the
+source's `keyword`, else the profile's target titles; `max_pages` default 3; at most 12 requests, 1
+a second, robots.txt checked); its terms require that Apply uses the API's `applicationLink`
+(`apply_url`) and that Himalayas is credited with a link, and that expired jobs are dropped
+(`expiryDate`). We Work Remotely reads its public feed `https://weworkremotely.com/remote-jobs.rss`
+once a check (or one category feed, `category` such as `remote-programming-jobs`); a role the
+board limits to another region ("Europe Only") is not passed on, anything unclear is kept, an
+expired role is dropped, and each role links to its page on the board. Both mark roles remote, map
+the place as "United States", "Remote (worldwide)" or the board's own words, and run through the
+D-SRC-13 drop. A 429, 5xx or (for We Work Remotely) its 403 bot check is a `partial` run that keeps
+what was read. Credit: the source is named after the board and the Posting tab links to it. Remotive
+is not built (D-SRC-15: its robots.txt disallows its API path and its terms could not be read).
+
+**Careers page (`careers_page`; B4, D-SRC-15, D-UI-102).** The operator pastes any employer's careers
+page link on the Sources sheet. Many employers (and sites on iCIMS, Taleo, Paycor, UKG or a custom
+build) embed each opening as schema.org `JobPosting` JSON-LD for search engines, and Kestrel reads
+only that, with `html.parser` and `json` (never a regular expression over the page): a single
+object, a list, an `@graph` container, or items inside an `ItemList`; a block that is not valid
+JSON is skipped. Mapped: title, hiringOrganization (name, `sameAs`), jobLocation (locality, region,
+country), `jobLocationType` `TELECOMMUTE` (remote; the place falls back to
+`applicantLocationRequirements`), baseSalary (`minValue`/`maxValue`/`value`, currency and
+`unitText` hour, day, month, year; a weekly figure is stated per year), datePosted, description
+(HTML), employmentType, identifier and url. A role whose `validThrough` date has passed is skipped.
+The run, through the shared client (descriptive User-Agent, 1 request a second, robots.txt checked,
+public addresses only, 2 MB a page, the same guarded fetch as the link check): (1) a link that is a
+hiring system Kestrel already reads (`board_discovery.board_from_url`, or markup that
+`board_from_markup` recognizes) is read by that system's adapter instead; (2) otherwise every
+JobPosting on the page is mapped, and a posting that is only a stub (no description) with its own
+page on the same site is read from that page; (3) a page with no JobPosting but links to job pages
+(a path segment such as `/job/`, `/jobs/` or `/position/` with something after it, or a job id in
+the query) is followed one level, at most 25 job pages a run, and the run says when links were left
+for later; (4) a page that yields nothing is a `partial` run with "This page lists its jobs with
+JavaScript, which Kestrel cannot read yet.", never a silent zero. A 429 is partial, a 404 or a
+robots.txt refusal is a failed run with a plain sentence. Every role then goes through the D-SRC-13
+area and title drop like any other source. The company page is the most direct copy of a posting
+(dedup rank 0). A page that renders its list in the browser with no JobPosting in its HTML is not
+readable; the card says so.
 
 **RemoteRocketship (optional, paid, discovery only; D-SRC-14).** For people who already pay for
 RemoteRocketship API access, a `remoterocketship` source asks its jobs API for postings and keeps
@@ -474,7 +596,7 @@ RemoteRocketship API access, a `remoterocketship` source asks its jobs API for p
 or copy of the reply, and holds the reply in memory for the run only (their terms limit caching to
 24 hours and forbid archiving). Each link goes the way a JobSpy posting link goes (D-SRC-7): a
 recognized company board (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP,
-Paylocity, Workable) becomes a found board read by its own adapter; any other link is read from the
+Paylocity, Workable, Recruitee, Teamtailor, Personio, Breezy HR) becomes a found board read by its own adapter; any other link is read from the
 employer's public page (schema.org `JobPosting` data, robots.txt checked, one polite request, at
 most 20 pages a run). A link nothing can read is dropped and counted in the run ("N links could
 not be read from the employer"). Off by default; the key is `REMOTEROCKETSHIP_API_KEY` (or the
@@ -629,7 +751,7 @@ material for ghost-job detection (`SPEC-MODULES.md` §6).
 
 ### 5.6 Applied-history import
 
-The operator arrives with applications already made elsewhere. Settings > Applied takes that
+The operator arrives with applications already made elsewhere. Settings > Your data > Import past applications takes that
 history as a CSV or a Markdown table, shows a review pane, and on confirm writes one
 opportunity plus one pursuit per row. Nothing is written before the confirm.
 
@@ -672,7 +794,7 @@ written with `archived_at` set, `archive_reason = "applied"` and `stage_reason =
 pursuit #<id>"`. It is counted in the scrape run as `suppressed`, visible under the Hidden chip,
 and Unhide puts it back like any hidden row. With `allow_reposts` on, the new row surfaces as
 usual: this is for aggregators that re-list the same title (Jobgether, for one) where the
-operator wants to see each listing. The pursuit's detail and the Applied tab both carry the
+operator wants to see each listing. The pursuit's detail and the Applications page both carry the
 toggle. The suppression applies to every applied pursuit, imported or not.
 
 ---
@@ -687,8 +809,17 @@ Microseconds. Target: eliminate 60-80% of raw ingest. Rules live in
 `kestrel/resources/config/filters.yml`, keyed by track, so they are tunable without a code
 change. Every rejection records the rule that fired.
 
+**Ingest skip accounting (D-SRC-13).** Each scrape run records `dropped_outside_area`
+and `dropped_unrelated_title` in its counts. The Runs history drawer and full run detail
+sum those counts across the searches in the run's existing time window and, when either
+is positive, show one muted summary: "Skipped 42: 30 outside your area, 12 unrelated titles".
+Zero or missing counts show no summary. The summary uses all matching searches, including
+those beyond the source list's display limit. Diagnostics exports both counts on each
+scrape-run row, with missing counts exported as zero. This accounting does not change
+location or title filtering, including the rule that genuine ambiguity is kept.
+
 A rejection is not final when the inputs change. A profile save that changes what the rules read
-(target or excluded titles, seniority floor, pay floor, geography, sponsorship) queues one
+(target or excluded titles, seniority floor, pay floor, pay margin, geography, sponsorship) queues one
 resumable, rules-only `t0_recheck` task per track. It re-runs the rules on roles set aside by
 Tier 0 and returns the ones that now pass to `new`. A role the operator scored anyway, labeled,
 put in a pursuit or hid is never touched (D-RULES-1).
@@ -708,7 +839,7 @@ put in a pursuit or hid is never touched (D-RULES-1).
 employment:
   hard_blockers:
     - id: comp_floor
-      when: "comp_max_below(opp, profile.employment_terms.comp_floor_usd)"
+      when: "comp_max_below(opp, margin_floor(profile.employment_terms.comp_floor_usd, profile.employment_terms.comp_floor_margin_pct))"
       reason: "Comp ceiling below floor"
     - id: sponsorship
       when: "profile.requires_sponsorship and regex(opp.description_md, '(?i)(cannot|unable to|will not) (provide|offer) (visa )?sponsor')"
@@ -735,6 +866,7 @@ employment:
     - { id: direct_ats,        when: "source_kind_in(source, ['greenhouse','lever','ashby','workday','smartrecruiters'])", weight: +0.8 }
     - { id: fresh,             when: "age_days(opp.date_posted) <= 3", weight: +0.5 }
     - { id: must_have_hit,     when: "desc_contains_any(opp, profile.must_have)", weight: +0.5 }
+    - { id: near_floor,        when: "comp_near_floor(opp, profile.employment_terms.comp_floor_usd, profile.employment_terms.comp_floor_margin_pct)", weight: 0.0 }
     - { id: comp_unknown,      when: "opp.comp_source == 'none'", weight: -0.3 }
     - { id: must_avoid_hit,    when: "desc_contains_any(opp, profile.must_avoid)", weight: -1.0 }
     - { id: staffing_agency,   when: "regex(opp.description_md, '(?i)(staffing|recruiting|talent) (agency|partner|solutions)|our client is seeking')", weight: -1.0 }
@@ -744,7 +876,7 @@ employment:
 consulting:
   hard_blockers:
     - id: rate_floor
-      when: "comp_max_below(opp, profile.consulting_terms.day_rate_floor)"
+      when: "comp_max_below(opp, margin_floor(profile.consulting_terms.day_rate_floor, profile.consulting_terms.day_rate_floor_margin_pct))"
       reason: "Day rate below floor"
     - id: too_short
       when: "trigger_int_below(opp, 'engagement_days', profile.consulting_terms.min_engagement_days)"
@@ -765,9 +897,47 @@ consulting:
     - { id: recent_trigger,   when: "age_days(opp.event_date) <= 30", weight: +1.2 }
     - { id: multi_signal,     when: "org_signal_count(org, 90) >= 2", weight: +1.5 }
     - { id: no_url,           when: "opp.url is None", weight: -0.2 }
+    - { id: near_floor,       when: "comp_near_floor(opp, profile.consulting_terms.day_rate_floor, profile.consulting_terms.day_rate_floor_margin_pct)", weight: 0.0 }
 ```
 
+**The near-floor margin (D-RULES-2).** A
+profile sets `comp_floor_margin_pct` (employment) or `day_rate_floor_margin_pct` (consulting) to
+0 (Exact), 2, 5, 10 or 15, default 5 (the Profile control "Keep near-floor roles", `SPEC-INTERFACES.md` §2.1). The
+`comp_floor` and `rate_floor` blockers then fire only when the ceiling is below the floor lowered
+by that percentage, so a role that tops out a little under the floor passes Tier 0 and reaches the
+models. A passing role inside the margin matches the zero-weight `near_floor` soft signal; the
+signal is a label, it changes no score, and the interface shows "Just under your pay floor" (a
+rate: "Just under your rate floor") on cards, in the pay box and on the role page, so the operator
+decides with the gap in view. A role with no posted pay is unaffected: it was already kept
+(`comp_max_below` is False when `comp_max` is None). With the margin at 0 (Exact) both rules behave
+exactly as before. The helpers are null-safe and contain no comprehension, so the AST guard is
+untouched. Changing the margin queues the same `t0_recheck` as changing the floor. This is hard
+rule 4 applied to pay: a small gap is uncertainty, and uncertainty escalates.
+
 `geo_rules` on the profile:
+
+**Country screening at ingest (D-SRC-13).** Before storing a fetched role, parse its location.
+When its country is known and outside the source track's profile `remote_country_allowlist`,
+drop it with reason `outside_area` and increment `dropped_outside_area` in the scrape run's
+counts. Store no opportunity or related rows for a dropped posting. An absent or empty country
+list applies no country restriction. Unknown, blank, vague and counted locations such as
+"Remote" and "2 Locations" are kept (hard rule 4), as are countries in the list. This screening
+does not decide work mode: "New York - Remote" is kept for a US search, with remote or hybrid
+fit left to scoring. Hand-pasted roles bypass this screening because the operator chose them.
+Existing stored roles are not removed by this ingest screen; a fetched posting it drops does
+not update an existing row either.
+
+**Title screening at ingest (D-SRC-13).** Build `smart_filter.build_context` once per source run
+and track from the profile's target titles, their phrasings, seniority floor and words learned
+from at least two pursuits. If the unchanged `smart_filter.keep(title, context)` returns false,
+skip the posting before storage and increment `dropped_unrelated_title` on the scrape run.
+The country check runs first, so a posting skipped for both reasons is counted outside the area
+only. Every fetched source uses this screen; manual paste bypasses it. Titles the filter cannot
+judge keep its existing treatment: blank titles, no field words and nothing to compare against
+are retained, and unknown seniority never fails the floor test. Tier 0 creates no new lane tasks.
+Existing lane rows are rechecked before release and before scoring, rejected with an
+`outside_area` or `unrelated_title` stage reason on a clear mismatch, and otherwise remain
+local-only through Tier 2. Normal Tier 0 rules and explicit operator overrides remain available.
 
 ```yaml
 geo_rules:
@@ -782,6 +952,13 @@ geo_rules:
   relocation_acceptable: false
   travel_days_per_month_max: 6         # consulting track
 ```
+
+Location parsing recognizes all ISO 3166-1 countries from a vendored package table of alpha-2,
+alpha-3 and three-digit numeric codes, English short names and common alternative names. A country
+can stand alone or end a comma-separated location; US remote phrases also resolve to US. For a
+two-letter code shared with a US state, uppercase `City, XX` means the state; `City, Region, XX`
+or a lowercase code means the country. Full US state names retain their existing meaning.
+Foreign locations keep the first part as the city and leave state empty (D-SRC-13, step 1).
 
 **`geo_allows` uses name matching, not distance.** A radius in miles would require geocoding,
 and no geocoder, no offline place dataset, and no network dependency belongs in this stack. The
@@ -798,9 +975,16 @@ alias list is explicit and the operator edits it. Logic, in order:
 3. Parsed `city` matches any alias in any `onsite_metros` entry, case-insensitive → allow.
 4. `location_raw` contains any alias as a substring → allow. This catches the many postings whose
    location string never parses cleanly.
-5. `remote_type == "unknown"` and nothing matched → **allow**, and record `geo_uncertain`. Tier 0
-   biases toward false positives; an unparseable location is not evidence of a bad location.
-6. Otherwise → deny.
+5. `remote_type == "unknown"`, nothing matched, the posting **names a specific place** (a parsed
+   state, or a city that is not a vague phrase such as "Multiple locations" or "United States"),
+   and its title, location and description never mention remote or hybrid work → **deny**: a
+   posting that names one place and never offers remote work is on-site there (owner ruling
+   D-RULES-9, 2026-10-27). The role stays findable under the rules' set-aside list with the reason
+   and one click to restore, so a rare remote role that names only a home state is not lost.
+6. `remote_type == "unknown"` and nothing matched otherwise → **allow**, and record
+   `geo_uncertain`. Tier 0 biases toward false positives; an unparseable location is not evidence
+   of a bad location.
+7. Otherwise → deny.
 
 **Expression evaluation.** `simpleeval`, never `eval()`. The evaluator is constructed once.
 
@@ -824,6 +1008,8 @@ trips a staleness rule) rather than raising.
 | `value_in(value, list)` | bool, None-safe membership |
 | `source_kind_in(source, list)` | bool |
 | `comp_max_below(opp, n)` | bool, False when `comp_max` is None |
+| `margin_floor(n, pct)` | the floor lowered by `pct` percent (`n * (1 - pct/100)`); returns `n` when `pct` is None or 0 and returns None when `n` is None, so the rule then has nothing to check and the role passes |
+| `comp_near_floor(opp, n, pct)` | bool, True when `comp_max` is below `n` but at or above `margin_floor(n, pct)`; False when `comp_max`, `n` or `pct` is None or `pct` is 0 |
 | `comp_max_at_least(opp, n)` | bool, False when `comp_max` is None |
 | `trigger_int_below(opp, key, n)` | bool, False when the key is absent |
 | `org_signal_count(org, days)` | int |
@@ -946,13 +1132,20 @@ pay directly; Kestrel ships no key and no proxy. The shipped external backends a
 
 Any OpenAI-compatible chat-completions server can be added as `provider: generic`. Rules:
 
+- Settings > This computer offers Other with a base URL and key. Both are stored only in
+  the data home's `.env` (`OTHER_SERVICE_URL_SECRET`, `OTHER_SERVICE_API_KEY`), never in YAML,
+  setting rows, backups or logs. The URL must be HTTPS (HTTP is allowed only for loopback),
+  without credentials, a query or a fragment. Test lists models and writes nothing. Save makes
+  a generic external backend available to the existing Models connection and consent flow;
+  it does not enable Hosted mode, acknowledge a disclosure or assign a model.
+
 - The `frontier` **tier** names exactly one external backend and is reachable only through the
   per-item preview-and-confirm escalation. The worker never passes `allow_external`.
 - **Hosted mode** (`llm.hosted_mode`, off by default) is the only other way an external backend
   is ever used. Any tier (`tier1`, `tier2`, `docsel`; never `embed`, which runs on Ollama or
   in-process, §8.1.1) may name an external backend, but the client refuses the call
   (`ExternalBackendError`) until the operator has turned Hosted mode on **and** accepted the
-  disclosure under Settings > Hosted, which writes `enabled: true`, `acknowledged_at` and
+  disclosure when the operator chooses Online or Both under Settings > This computer, which writes `enabled: true`, `acknowledged_at` and
   `acknowledged_terms` (the Tier 1 head, the Tier 2 ceiling and the per-tier "sends" lines as
   accepted). A bare `enabled: true` in YAML without the acknowledgement does nothing, and an
   acknowledgement whose terms differ from the current disclosure is void: hosted sends stop
@@ -985,7 +1178,7 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
   - Turning Hosted mode off keeps the per-tier choices and stops using them.
   - **Two tier sets and a switch.** `llm.tiers` is the local set (the hardware profile's
     derived models) and `llm.hosted_tiers` the hosted assignments, same shape, written by
-    Settings > Hosted and `kestrel setup --hosted` as `llm.hosted_tiers.<tier>.backend` and
+    Settings > This computer, Models and `kestrel setup --hosted` as `llm.hosted_tiers.<tier>.backend` and
     `.model`. `llm.mode` (`local`, the default, or `hosted`) is the standing choice: under
     `hosted`, settings resolution overlays each assigned tier onto `llm.tiers` (backend and
     model; the local tier's other fields survive except `max_tokens`, which takes the hosted
@@ -998,7 +1191,7 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
     `pending_run_mode` row the serve loop consumes on exactly one cycle. Each `run` row records
     its `mode`; each evaluation already records its model. The `frontier` tier is hosted in both
     modes and stays in `llm.tiers`.
-- Keys live only in `<data home>/.env`, entered from **Settings > Hosted (BYOK)** or
+- Keys live only in `<data home>/.env`, entered from **Settings > This computer** or **Models** (the same key store; D-UI-106) or
   `kestrel provider set-key`. Never in YAML, never in a backup, never echoed, never logged.
 - Before a model is offered for Tier 3 the provider is asked which models can honor a JSON schema
   (`supported_parameters` on OpenRouter, `supported_protocols` on OpenModel); a model whose
@@ -1053,10 +1246,16 @@ scheduler), never from a one-shot CLI run.
 ### 6.6 Concurrency and the model-thrash trap
 
 - `settings.concurrency.tier1` and `.tier2` (defaults 4 and 2) parallel requests.
-  `OLLAMA_NUM_PARALLEL` must be at least the maximum, or requests serialize regardless.
+  Each concurrency setting, including `embed` (default 4), is a whole number from 1 to 16,
+  validated at load from every configuration source. Models saves Tier 1 and Tier 2 together
+  only after both values pass validation. These limits bound requests, not a guarantee of
+  available memory; start low on smaller computers.
+  `OLLAMA_NUM_PARALLEL` must be at least the maximum, including `embed`, or requests queue.
+  Set it in Ollama's environment and restart Ollama. Kestrel cannot verify another process's
+  environment.
 - **Never interleave tiers that use different models.** With 16GB of VRAM, alternating a 14B and
   an 8B forces Ollama to unload and reload weights on every task. The worker **drains all pending
-  tasks for one tier before starting another**, unless the models are identical. Set
+  tasks for one tier before starting another**, even when the models are identical. Set
   `OLLAMA_KEEP_ALIVE` generously (2h).
 - A run reports live per-tier counts, throughput, elapsed, and an ETA extrapolated from the
   trailing 20 completions.
@@ -1114,6 +1313,15 @@ alike, and it is the primary input to the active-learning queue.
 | ≥ 4.0 | `apply` (employment) / `pursue` (consulting) | Shortlist. Auto-queue document selection. |
 | 3.0 - 3.99 | `consider` | Review queue. No automatic work. |
 | < 3.0 | `pass` | Archived, still searchable |
+
+The two cutoffs are `thresholds.apply` (default 4.0, shown to the operator as **Strong match**) and
+`thresholds.consider` (default 3.0, shown as **Worth a look**). They are editable in Settings >
+Which roles you see (D-UI-107): each is 0.0 to 5.0 in steps of 0.1, `consider` must be lower than
+`apply`, and Restore defaults returns 4.0 and 3.0. The "new strong match" notification uses the
+`apply` cutoff rather than a separate `notify.high_score` setting, which the interface no longer
+exposes. A change applies to new evaluations and to how existing ones are grouped; stored scores
+are never rewritten. (The earlier code read threshold keys that did not exist; the cutoffs are
+read from `thresholds` and fixed under D-UI-107.)
 
 Overrides, applied system-side after the model responds:
 
@@ -1187,7 +1395,7 @@ llm:
     docsel:  { backend: local, model: "kestrel-docsel", temperature: 0.0, max_tokens: 1500 }
     trigger: { backend: local, model: "kestrel-tier1", temperature: 0.0, max_tokens: 600 }
     frontier: { backend: frontier, model: "anthropic/claude-sonnet-4.6", temperature: 0.3, max_tokens: 6000, timeout_s: 300 }  # §6.4 escalation only
-  hosted_mode:                             # §6.4: off by default; Settings > Hosted writes enabled + acknowledged_at
+  hosted_mode:                             # §6.4: off by default; choosing Online or Both under Settings > This computer writes enabled + acknowledged_at
     enabled: false
     acknowledged_at: null                  # ISO timestamp of the accepted disclosure; required for any hosted tier to be used
     redact_confidential: true              # redact the current employer before a hosted send; refuse when there is no map
@@ -1239,7 +1447,7 @@ engines, chosen by the backend `llm.tiers.embed.backend` names:
 
 The **`hosted_only` profile** (models.yml `embed_backend: inprocess`) writes `llm.tiers.embed`
 to the in-process engine when hosted setup completes (`kestrel setup --hosted` or Connect under
-Settings > Hosted with that profile active), so a BYOK install needs nothing local beyond Kestrel.
+Settings > This computer with that profile active), so a BYOK install needs nothing local beyond Kestrel.
 It is written to the local tier set, never `hosted_tiers`: the engine serves both modes.
 
 **Packaging.** The model files are never committed and never downloaded at run time.
@@ -1314,7 +1522,7 @@ a 16GB-VRAM NVIDIA GPU, 64GB system RAM.
   sweet spot for tier 2.
 - **MoE alternative:** a 30B-A3B class model at Q4 is around 18GB and will partially offload,
   but with ~3B active parameters per token the penalty is far smaller than for a dense model of
-  the same size, and the 7950X3D handles the CPU-side layers well. Benchmark it; it may beat the
+  the same size, and a modern multi-core CPU handles the CPU-side layers well. Benchmark it; it may beat the
   dense 14B at similar speed.
 - **Avoid dense models above ~20B** at usable quantization. The offload penalty dominates a
   multi-hundred-item run.
@@ -1329,7 +1537,7 @@ nothing detected) is recommended `hosted_only`: a Tier 2 evaluation on a CPU tak
 job, and a hosted provider under the operator's own key uses no local memory. The reason is
 stated plainly and specifically (for example "Apple silicon with 8 GB unified memory: too little
 to run the models alongside the OS"). Local profiles stay available to choose; only the default
-changes. When Hosted is recommended and the operator chooses Local or Both, the Setup page shows
+changes. When Hosted is recommended and the operator chooses Local or Both, onboarding step 2 and Settings > This computer show
 a prominent warning that leads with the decision (D-SETUP-7).
 
 **Ollama only when a tier uses it (D-SETUP-8).** Ollama is needed iff a tier in the effective
@@ -1440,8 +1648,13 @@ one-shot probe per model asserting no thinking span survives.
 
 ### 8.6 Benchmark harness
 
-`kestrel bench`, also a UI page. Accepts `--models` and `--prompt-version` so exactly one
-variable changes per comparison. Reports per model and per track:
+`kestrel bench`, and the **Model check** page, which queues the same run as a background task of
+type `bench` so it never blocks the web and worker loop and never needs the command line
+(D-UI-105; D-DRIFT-11 reverses the Bench line of D-DRIFT-6). The task is a `task` row, resumable,
+with progress and Cancel, and each finished check is stored so earlier checks can be listed on the
+page (the storage shape is the build's to choose). Accepts
+`--models` and `--prompt-version` so exactly one variable changes per comparison. Reports per
+model and per track:
 
 - First-attempt JSON validity rate (a target above 98%; the code measures and reports it but does
   not enforce it)
@@ -1472,7 +1685,14 @@ is an empirical question and this is how it gets answered.
   `%LOCALAPPDATA%\Kestrel\config\profile.yml`), the data directory, logs, and `.env` are never
   committed. The shipped example profile (`profile.example.yml`) is fictional.
 - Contact records hold only publicly listed business contact information. No personal addresses,
-  no personal phone numbers, no inferred emails.
+  no personal phone numbers, no inferred emails. The one other thing Kestrel stores about people is
+  the operator's own LinkedIn connections file, which they download themselves and import by hand:
+  name, company, position and connected date only, email addresses dropped at import, kept only on
+  this computer (`SPEC-MODULES.md` §2.3, D-UI-115).
+- The operator's profile photo (the avatar, D-UI-112) stays on this computer and never reaches a
+  resume, an export or a diagnostics file. A diagnostics file (D-UI-114) holds the app version,
+  recent logs, settings without keys and health check results; it is made only on request, never
+  holds the profile, resumes, keys, roles or applications, and is never sent by Kestrel.
 - **Local backup:** a `kestrel backup` command and a UI button produce a single timestamped zip
   of the database, config, and generated documents. Restore from the setup window.
 
@@ -1686,6 +1906,114 @@ The public posting page is `https://apply.workable.com/{slug}/j/{shortcode}/`; t
 has no description, so each posting needs a detail request. The body is `description`,
 `requirements` and `benefits` joined in that order (blank sections skipped). The location text is
 built from `city`, `region` and `country`, dropping empty parts.
+
+### Recruitee
+
+`GET https://{slug}.recruitee.com/api/offers/` → `200` `{"offers": [...]}`, no auth, no pagination, and every offer carries its full HTML `description` and `requirements`, so a board is one request. Verified 2026-10-29 against one public board (24 offers, about 700 KB). An unknown `{slug}` answers `404` `{"error": "Not Found"}`. `{slug}.recruitee.com/robots.txt` redirects to the company's own careers domain, whose file allows everything; the shared client follows it.
+
+Per offer: `id` (integer), `guid`, `slug`, `title`, `status` (`published`), `description` and `requirements` (HTML), `location` (one display string, "Amsterdam, Noord-Holland, Netherlands"), `locations[]` (`city`, `state`, `country`, `country_code`), `city`, `country`, `remote`, `hybrid`, `on_site` (booleans), `employment_type_code` (`fulltime_permanent`), `department`, `tags`, `published_at` and `created_at` (`2026-10-28 13:21:58 UTC`), `careers_url` and `careers_apply_url` (on the company's own domain when it has one), `salary` (`{min, max, period, currency}`, all null when not shown), `company_name`, `mailbox_email` (an employer mailbox, never stored by Kestrel), `open_questions` (the application form, not read).
+
+**Gotchas:** custom careers domains are common, but the API stays on `{slug}.recruitee.com`, so the slug is the only thing needed; a pasted link on `{slug}.recruitee.com` is recognized by its host, and a careers page on another domain by markup that names `{slug}.recruitee.com` (the API address, an `/o/` link or the widget). A role open in several places has several `locations[]` entries, joined with "; ". The `salary.period` values are mapped when they are `hour`, `day`, `month` or `year`; the salary shape is from Recruitee's public documentation and the live board showed no pay, so it is **documented, not verified live**.
+
+### Teamtailor
+
+`GET https://{domain}/jobs.json` → `200` `application/feed+json`, a JSON Feed 1.1 document `{"version", "title", "home_page_url", "feed_url", "items": [...]}`, no auth. `{domain}` is the career site's own host (`{name}.teamtailor.com` or the employer's own career domain); Teamtailor has no shared API host. Verified 2026-10-29 against one public site (15 roles, about 220 KB, one document, no `next_url`). `GET https://{domain}/jobs.rss` → `200` RSS 2.0 with the same roles. A site that has the feeds off answers `404` (an empty `application/json` body for `jobs.json`, an HTML page for `jobs.rss`); some sites behind a firewall answer `403`. `robots.txt` on the verified site disallows only `/app/`, `/messages/`, `/messenger/`, `/facebook/tab/` and `/jobs/internal/`.
+
+Per JSON item: `id` (a UUID), `title`, `url`, `date_published` (ISO with offset), `content_html` (the full description), and `_jobposting`, a schema.org `JobPosting` with `identifier.value` (the numeric job id), `hiringOrganization.name`, `datePosted` and `jobLocation[]` (`address.addressLocality`, `addressCountry` as an ISO code, `addressRegion` as a Teamtailor region such as "North America", `streetAddress`, `postalCode`). Per RSS item: `title`, `description` (HTML), `pubDate` (RFC 2822), `link`, `guid` (the same UUID), `remoteStatus` (`none`, `hybrid` or `remote`), and in the `https://teamtailor.com/locations` namespace `location` (`name`, `address`, `zip`, `city`, `country` as a name), `department`, `role`, `division`.
+
+**Gotchas:** the JSON feed has no remote flag (the RSS does), so remote stays unknown unless `jobLocationType` is `TELECOMMUTE`. `addressCountry` is an ISO code, and a bare `CA` would read as California, so Kestrel turns it into the country's name. A site with both feeds off is a `partial` run with a plain sentence, never a failure. The domain is operator-supplied, so every request is the guarded kind (public addresses only, robots.txt checked, 2 MB cap). A career site on the employer's own domain is recognized from the page loading Teamtailor's `assets-aws.teamtailor-cdn.com/assets/careersite-*.js`.
+
+### Personio
+
+`GET https://{slug}.jobs.personio.de/xml` → `200` `text/xml`, a `<workzag-jobs>` root with one `<position>` per role, no auth. Accounts on the other domain use `https://{slug}.jobs.personio.com/xml` (also `200`). Verified 2026-10-29 against Personio's own public demo board (4 positions) and one company board (2 positions). An unknown `{slug}` answers `404` with an HTML page. The `robots.txt` of the company board checked allows everything.
+
+Per `<position>`: `id`, `name`, `office` (a place name with no country, "München", "Remote", "Frankfurt am Main (hybrid)"), `subcompany` (optional), `department` (optional), `recruitingCategory`, `jobDescriptions/jobDescription[]` (`name`, `value` as HTML in CDATA), `employmentType` (`permanent`, `intern`), `seniority`, `schedule` (`full-time`, `part-time`, `full-or-part-time`), `yearsOfExperience`, `occupation`, `occupationCategory`, `createdAt` (ISO), and optionally `salaryInformation` (`min`, `max`, `currencyCode`, `currencySymbol`, `type` yearly). The documented `additionalOffices/office` list was not on any board seen. The feed names no employer.
+
+Detail: `GET https://{slug}.jobs.personio.de/job/{id}` → `200` HTML with one schema.org `JobPosting` in `<script type="application/ld+json">`: `title`, `description` (HTML), `hiringOrganization.name`, `jobLocation.address` (`addressLocality`, `addressRegion`, `addressCountry` as an ISO code), `datePosted` (a date), `employmentType`.
+
+**Gotchas:** descriptions are often empty in the feed (`<jobDescriptions/>` or blank values; the demo board has them, a real board often does not), so the job page is read for those roles, 2 seconds apart, up to `max_results` pages a run (default 100). Roles past the cap are kept without a description and the run is `partial` with a sentence saying how many. The page's place and country replace the feed's bare office name, because only the page has a country. Personio rate-limits hard: a 429 on the list stops the run, and on a page it stops reading pages and keeps the rest. Positions are read with ElementTree after any DOCTYPE or ENTITY declaration is refused.
+
+### Breezy HR
+
+`GET https://{slug}.breezy.hr/json` → `200` `application/json`, a bare array of positions, no auth, no pagination, **no description**. Verified 2026-10-29 against Breezy's own public trial board (3 positions, placeholder data). An unknown `{slug}` answers `404` with an HTML page; a board with no openings answers `[]` (`acme.breezy.hr` did). `breezy.breezy.hr/robots.txt` disallows only `/css`, `/fonts`, `/stylesheets` and `/javascripts` (and AhrefsBot).
+
+Per position: `id` (also the `friendly_id` prefix), `friendly_id` ("98323abf2296-employee-12"), `name` (the title), `url` (`https://{slug}.breezy.hr/p/{friendly_id}`), `published_date` (ISO), `type` (`{id, name}`: `fullTime`, `contract`, `other`), `location` (`{country: {name, id}, state: {id, name}, city, primary, is_remote, name}`; `name` is "Chaos, FL" with no country), `locations[]` (empty for a one-place role, else every place), `department`, `salary` (display text, "$1 – $5 / year"), `company` (`{name, logo_url, friendly_id, isMultipleLocationsEnabled}`).
+
+Detail: `GET https://{slug}.breezy.hr/p/{friendly_id}` → `200` HTML; the description is the page's `<div class="description">`. The verified page carried no `ld+json`; a schema.org JobPosting in one is read as the fallback.
+
+**Gotchas:** the description needs one page request per role, so Kestrel reads at most `max_results` pages a run (default 100), one a second; roles past the cap are kept without a description and the run is `partial` with a sentence saying how many. The page address is built from `friendly_id` on `{slug}.breezy.hr`, never taken from the payload. The place is built from city, state name and country name, because the payload's own `name` has no country. `is_remote` is an explicit boolean (`null` on most rows) and is the only thing that sets the remote flag. `salary` is display text and is not parsed into numbers.
+
+### USAJobs (search API; keyed)
+
+`GET https://data.usajobs.gov/api/search?Keyword=..&LocationName=..&RemoteIndicator=True&DatePosted=N
+&ResultsPerPage=<=500&Page=N&WhoMayApply=Public&Fields=Full` with headers `Authorization-Key: <key>`
+and `User-Agent: <the email the key was requested with>` (host is always `data.usajobs.gov`).
+Source: developer.usajobs.gov (Search API reference, authentication and rate-limiting guides).
+**Shape documented, not yet verified live** (no key in the build environment); the fixture
+`tests/fixtures/usajobs_search.json` is synthetic from the documented shape.
+
+`200` reply: `{"LanguageCode", "SearchParameters", "SearchResult": {"SearchResultCount",
+"SearchResultCountAll", "SearchResultItems": [...], "UserArea": {"NumberOfPages" (a string),
+"IsRadialSearch"}}}`. Per item: `MatchedObjectId` (a string), `RelevanceRank`, and
+`MatchedObjectDescriptor` with `PositionID`, `PositionTitle`, `PositionURI`, `ApplyURI` (a list),
+`PositionLocationDisplay`, `PositionLocation[]` (`LocationName`, `CountryCode`,
+`CountrySubDivisionCode`, `CityName`), `OrganizationName`, `DepartmentName`, `PositionSchedule[]`,
+`QualificationSummary`, `PositionRemuneration[]` (`MinimumRange` and `MaximumRange` as strings,
+`RateIntervalCode`, `Description`), `PositionStartDate`, `PositionEndDate`, `PublicationStartDate`,
+`ApplicationCloseDate`, and `UserArea.Details` (`JobSummary`, `MajorDuties`, `Requirements`,
+`Education`, `Benefits`, `HowToApply`, `RemoteIndicator`, `TeleworkEligible`, ...). Fields the
+reference lists with a different type than a sample shows (`MajorDuties` as text or a list) are
+read as either. Limits: 500 rows a page, 10,000 rows a query; the rate limit is not published.
+Terms (developer.usajobs.gov/guides/terms-of-service): public data may be stored and used, source
+attribution and a link to the official announcement are encouraged, an unofficial product should say
+it is not run or endorsed by OPM, credentials must not be shared, and applications follow the
+official announcement. `robots.txt` was not readable from the build environment (the edge answered
+403); the adapter checks it and fails open when none is served.
+
+### Adzuna (search API; keyed)
+
+`GET https://api.adzuna.com/v1/api/jobs/us/search/{page}?app_id=..&app_key=..&results_per_page=<=50
+&what=..&where=..&max_days_old=N&sort_by=date&content-type=application/json`. Source:
+developer.adzuna.com (Overview, Search ads, Terms of Service), read 2026-10-29. **Shape documented,
+not yet verified live** (no key in the build environment; an unkeyed request answers 401); the
+fixture `tests/fixtures/adzuna_search.json` is synthetic from the documented shape.
+
+`200` reply: `{"__CLASS__", "count", "mean", "results": [...]}`. Per ad: `id` (a string), `title`,
+`description` (a snippet: "we currently only provide a snipped of the job description"), `created`
+(ISO), `redirect_url`, `location` (`display_name`, `area` as country, state, county, city),
+`company.display_name`, `category` (`label`, `tag`), `salary_min`, `salary_max`,
+`salary_is_predicted` ("0" or "1", number or string), `contract_time` (`full_time`, `part_time`),
+`contract_type` (`permanent`, `contract`), `latitude`, `longitude`. Terms: "Personal job search" is
+a permitted use; each displayed advert is labeled "Adzuna" linked to Adzuna; do not contact content
+providers through Adzuna. `api.adzuna.com/robots.txt` is `Disallow: /`.
+
+### Himalayas (search API; no key)
+
+`GET https://himalayas.app/jobs/api/search?q=..&country=US&sort=recent&page=N` (20 a page; the browse
+feed `/jobs/api` pages by `nextCursor`). Source: himalayas.app/docs/remote-jobs-api and
+himalayas.app/terms (clauses 30A and 113). **Verified live 2026-10-29** from the build environment
+(200, no key; the fixture `tests/fixtures/himalayas_search.json` is a trimmed capture with three
+edited copies). Reply: `{comments, updatedAt, offset, limit, totalCount, jobs[]}` (`nextCursor` on
+the browse feed only). Per job: `title`, `excerpt`, `companyName`, `companySlug`, `companyLogo`,
+`employmentType`, `minSalary`, `maxSalary` (numbers or null), `salaryPeriod` (hourly, weekly,
+fortnightly, monthly, annual), `currency`, `seniority[]`, `locationRestrictions[]` (empty means
+worldwide), `timezoneRestrictions[]`, `categories[]`, `parentCategories[]`, `description` (HTML),
+`pubDate` and `expiryDate` (Unix seconds), `applicationLink`, `guid` (the job's Himalayas URL). Terms
+for API users: Apply must use `applicationLink`; name Himalayas with a visible link; show jobs only in
+your own app; cache and drop expired jobs; stay within request limits (an anonymous caller shares one
+public allowance; the data refreshes every 24 hours). Job pages are protected against automation:
+only the API is requested. `robots.txt` disallows only paging query strings on site pages.
+
+### We Work Remotely (RSS; no key)
+
+`GET https://weworkremotely.com/remote-jobs.rss` (about 100 recent jobs; category feeds at
+`/categories/remote-<name>-jobs.rss`). **Verified live 2026-10-29** (200 for the feed and
+`robots.txt`, which allows the feeds; every other page answers a 403 bot check, so the terms are
+unconfirmed). Fixture: `tests/fixtures/weworkremotely_feed.rss`, trimmed capture plus three edited
+items. RSS 2.0 items hold `title` ("Company: Job title"), `region` ("Anywhere in the World", "North
+America Only", ...), `country` and `state` (the employer's base, may carry a flag emoji), `skills`,
+`category`, `type` ("Full-Time", "Contract"), `description` (HTML, escaped), `pubDate`,
+`expires_at`, `guid` and `link`.
 
 ### RemoteRocketship (paid API; discovery only)
 

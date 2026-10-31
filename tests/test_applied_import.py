@@ -245,7 +245,7 @@ def test_settings_has_an_applied_tab_with_instructions(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = _fresh_app()
     page = client.get("/settings").text
-    assert ">Applied</button>" in page and 'hx-get="/settings/applied"' in page
+    assert 'data-testid="st-imp"' in page and "Import past applications" in page
     panel = client.get("/settings/applied").text
     assert "How to format the file" in panel and 'data-testid="applied-form"' in panel
     assert "no response" in panel and '<td class="mono">applied</td>' in panel
@@ -287,7 +287,12 @@ def test_review_then_import_through_the_form(monkeypatch):
     ).text
     assert "<b>0</b> new pursuit" in skipped and "row 4" in skipped
     board = client.get("/pursuits?view=table").text
-    assert "VP Information Technology" in board and 'name="allow" value="on" checked' in board
+    assert "VP Information Technology" in board
+    # The re-post choice lives in each card's panel (D-UI-100).
+    ids = re.findall(r'class="ap-row"[^>]*data-id="(\d+)"', board)
+    assert any(
+        'name="allow" value="on" checked' in client.get(f"/pursuits/{i}/panel").text for i in ids
+    )
     # The hidden rows are reachable, with their reason, and absent from the active list.
     hidden = client.get("/opportunities?hidden=1").text
     assert "Acme Corp" in hidden
@@ -315,10 +320,12 @@ def test_pursuit_repost_toggle_round_trips(monkeypatch):
     client = _fresh_app()
     client.post("/settings/applied/import", data={"text": TRACKER_CSV, "include_1": "on"})
     board = client.get("/pursuits?view=table").text
-    assert 'name="allow" value="on" checked' not in board and "/reposts" in board
-    pid = int(re.search(r"/pursuits/(\d+)/reposts", board).group(1))
+    pid = int(re.search(r'class="ap-row"[^>]*data-id="(\d+)"', board).group(1))
+    panel = lambda: client.get(f"/pursuits/{pid}/panel").text  # noqa: E731
+    assert 'name="allow" value="on" checked' not in panel()
+    assert f"/pursuits/{pid}/reposts" in panel()
     assert client.post(f"/pursuits/{pid}/reposts", data={"allow": "on"}).status_code == 204
-    assert 'name="allow" value="on" checked' in client.get("/pursuits?view=table").text
+    assert 'name="allow" value="on" checked' in panel()
     assert client.post(f"/pursuits/{pid}/reposts", data={}).status_code == 204
-    assert 'name="allow" value="on" checked' not in client.get("/pursuits?view=table").text
+    assert 'name="allow" value="on" checked' not in panel()
     assert client.post("/pursuits/999999/reposts", data={"allow": "on"}).status_code == 404

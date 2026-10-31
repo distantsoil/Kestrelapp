@@ -1,5 +1,6 @@
-<!doctype html>
-<html lang="en" data-scheme="{{ ui_scheme() }}" x-data="chrome()">
+{# Settings > Preferences reach every page here, once: text size and Reduce motion as
+   attributes on <html> (components.css reads them), the avatar in the top bar below. #}{% set prefs = ui_prefs() %}<!doctype html>
+<html lang="en"{% if desktop_window(request) %} data-k-desktop="1"{% endif %} data-scheme="{{ ui_scheme() }}" data-text-size="{{ prefs.text_size }}" data-reduce-motion="{{ '1' if prefs.reduce_motion else '0' }}" data-k-nav="{{ '0' if prefs.classic_nav else '1' }}" x-data="kChrome()">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,35 +8,156 @@
   {# Theme and scheme before first paint. The server renders data-scheme from the stored setting;
      this browser's own choice (localStorage) wins over it, and the theme is per browser only. #}
   <script>
+    // Inside the desktop window there is no service worker: a page it controls loses WebView2's
+    // bridge (window.chrome.webview), so the window controls cannot reach the shell, and
+    // WebView2 turned link navigations into Save As downloads (Windows hardware check, round 3).
+    // Remove one an earlier run left in the window's profile, then reload once, uncontrolled.
+    (function () {
+      if (document.documentElement.getAttribute('data-k-desktop') !== '1') return;
+      if (!('serviceWorker' in navigator)) return;
+      navigator.serviceWorker.getRegistrations().then(function (regs) {
+        return Promise.all(regs.map(function (r) { return r.unregister(); }));
+      }).then(function () {
+        if (!navigator.serviceWorker.controller) return;
+        try {
+          if (sessionStorage.getItem('kestrel-sw-cleared')) return;
+          sessionStorage.setItem('kestrel-sw-cleared', '1');
+        } catch (e) { return; }
+        location.reload();
+      }).catch(function () {});
+    })();
+  </script>
+  <script>
     (function () {
       try {
         var t = localStorage.getItem('kestrel-theme');
         if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
         var s = localStorage.getItem('kestrel-scheme');
-        if (s === 'indigo' || s === 'teal') document.documentElement.setAttribute('data-scheme', s);
+        if (s === 'indigo' || s === 'teal' || s === 'plum' || s === 'graphite' || s === 'contrast') document.documentElement.setAttribute('data-scheme', s);
       } catch (e) {}
+      // Motion before first paint (D-UI-187): the launch entrance once per launch
+      // (the desktop app asks with #k-intro; a browser gets it on its first page of the
+      // session), and the page arrival on every other in-app page change.
+      try {
+        var h = document.documentElement;
+        var launched = sessionStorage.getItem('kestrel-launched');
+        if (location.hash === '#k-intro' || !launched) {
+          h.classList.add('k-intro');
+          sessionStorage.setItem('kestrel-launched', '1');
+          if (location.hash === '#k-intro') history.replaceState(null, '', location.pathname + location.search);
+        } else if (document.referrer && document.referrer.indexOf(location.origin + '/') === 0) {
+          h.classList.add('k-page-in');
+          // Leaving Today settles the hero band into the slim one (D-UI-199).
+          var from = document.referrer.slice(location.origin.length).split(/[?#]/)[0];
+          if (from === '/' && location.pathname !== '/') h.classList.add('k-from-today');
+        }
+      } catch (e) {}
+      // Settings > Preferences > Reduce motion also skips the page cross-fade (D-UI-201); the
+      // OS setting already turns it off in CSS.
+      window.addEventListener('pagereveal', function (e) {
+        if (e.viewTransition && document.documentElement.getAttribute('data-reduce-motion') === '1') {
+          e.viewTransition.skipTransition();
+        }
+        // The page-change recorder (D-UI-204), desktop window only: one log line per change.
+        try {
+          if (document.documentElement.getAttribute('data-k-desktop') !== '1') return;
+          var nav = performance.getEntriesByType('navigation')[0] || {};
+          var from = document.referrer.indexOf(location.origin) === 0
+            ? document.referrer.slice(location.origin.length).split(/[?#]/)[0] : '';
+          var rec = { to: location.pathname, came_from: from, vt: !!e.viewTransition,
+            ttfb_ms: nav.responseStart || 0, reveal_ms: performance.now(), hidden: document.hidden };
+          try {  // the page left behind recorded its side as it went (pageswap below)
+            var out = JSON.parse(sessionStorage.getItem('kestrel-swap') || 'null');
+            sessionStorage.removeItem('kestrel-swap');
+            if (out && out.to === location.pathname) {
+              rec.out_vt = out.vt; rec.out_anims = out.anims; rec.out_htmx = out.htmx;
+              rec.out_busy_ms = out.busy;
+            }
+          } catch (err) { /* storage off: the new page's side alone */ }
+          var body = JSON.stringify(rec);
+          navigator.sendBeacon('/api/diag/page', new Blob([body], { type: 'application/json' }));
+        } catch (err) { /* diagnostics never get in the way */ }
+      });
+      // The outgoing side of the same record (D-UI-209): Chromium decides here whether the page
+      // being left gets a transition, so note what this page was doing when it decided.
+      if (document.documentElement.getAttribute('data-k-desktop') === '1') {
+        var busy = [];
+        try {
+          new PerformanceObserver(function (l) {
+            var now = performance.now();
+            busy = busy.filter(function (t) { return t[0] + t[1] > now - 1000; });  // last second
+            l.getEntries().forEach(function (t) { busy.push([t.startTime, t.duration]); });
+          }).observe({ type: 'longtask', buffered: true });
+        } catch (err) { /* no long-task timing here */ }
+        window.addEventListener('pageswap', function (e) {
+          try {
+            var act = e.activation && e.activation.entry;
+            var to = act && act.url ? new URL(act.url).pathname : '';
+            var now = performance.now(), ms = 0;
+            busy.forEach(function (t) { if (t[0] + t[1] > now - 1000) ms += t[1]; });
+            sessionStorage.setItem('kestrel-swap', JSON.stringify({
+              to: to, vt: !!e.viewTransition, busy: Math.round(ms),
+              anims: document.getAnimations ? document.getAnimations().length : 0,
+              htmx: document.querySelectorAll('.htmx-request').length }));
+          } catch (err) { /* diagnostics never get in the way */ }
+        });
+      }
     })();
   </script>
-  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="manifest" href="{{ static_url('manifest.webmanifest') }}">
   {# Declared explicitly: static is mounted at /static, so a browser's automatic request for
      /favicon.ico at the site root would 404 and the tab would stay blank. #}
-  <link rel="icon" href="/static/favicon.ico" sizes="32x32">
-  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/static/icon-512.png">
+  <link rel="icon" href="{{ static_url('favicon.ico') }}" sizes="32x32">
+  <link rel="icon" href="{{ static_url('icon.svg') }}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{{ static_url('icon-512.png') }}">
   <meta name="theme-color" content="#4F5BD5">
-  <link rel="stylesheet" href="/static/css/kestrel.css">
-  <script src="/static/js/htmx.min.js" defer></script>
-  <script src="/static/js/alpine.min.js" defer></script>
+  {# Stylesheets, in this order: the legacy sheet, then the design system. tokens.css wins on
+     every name both define (higher selector specificity, later in source), so every page reads
+     the new --paper, --ink, --line and --bg. A converted screen overrides legacy_css with
+     nothing. #}
+  {% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/kestrel.css') }}">{% endblock %}
+  {# The interface face (D-UI-127), fetched with the stylesheets so text paints in it at once. #}
+  <link rel="preload" href="{{ static_url('fonts/manrope/manrope-latin-wght-normal.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static_url('css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/components.css') }}">
+  {# A converted screen adds its own sheet and script here (token colors only). #}
+  {% block head_extra %}{% endblock %}
+  <script src="{{ static_url('js/htmx.min.js') }}" defer></script>
+  {# Scenes and seasonal touches register on window, the band renderer draws them, then the UI
+     runtime (theme, toasts, flyouts, slide-overs, modals). Deferred scripts run in order. #}
+  <script src="{{ static_url('js/scenes/scenes-base.js') }}" defer></script>
+  <script src="{{ static_url('js/scenes/scenes-a.js') }}" defer></script>
+  <script src="{{ static_url('js/scenes/scenes-b.js') }}" defer></script>
+  <script src="{{ static_url('js/scenes/seasons-a.js') }}" defer></script>
+  <script src="{{ static_url('js/scenes/seasons-b.js') }}" defer></script>
+  <script src="{{ static_url('js/scenes/scene-band.js') }}" defer></script>
+  <script src="{{ static_url('js/kestrel-ui.js') }}" defer></script>
+  <script src="{{ static_url('js/palette.js') }}" defer></script>
+  {# A page on the lifecycle (D-UI-210) loads its script here, after kestrel-ui.js, so the script
+     can call KUI.page.define as it runs; it still runs before Alpine, as head_extra's did. #}
+  {% block page_scripts %}{% endblock %}
+  <script src="{{ static_url('js/alpine.min.js') }}" defer></script>
+  <script>
+    // The page's start (D-UI-210): every deferred script above, page scripts included, has run
+    // (definitions first) before DOMContentLoaded, so the page the content root names in its
+    // data-k-page attribute mounts here, once. This listener is added while the head is parsed,
+    // ahead of htmx's own start, so the page hears htmx's first load events as it did when page
+    // scripts started themselves.
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.KUI && window.KUI.page) window.KUI.page.start();
+    });
+  </script>
   <script>
     // Busy feedback for every htmx request (kestrel.css body.busy): counted, so overlapping
     // requests keep the cursor until the last one answers, and a failed send clears it too.
     (function () {
       var inflight = 0;
       function on(name, fn) { document.addEventListener(name, fn); }
-      // A polled partial (hx-trigger="every ...") is not a click: it never shows the cursor.
+      // A polled or self-loading partial (hx-trigger "every", "load", "revealed") is not a click:
+      // it never shows the cursor or the bar, so a page change does not flash a loading bar.
       // Nor is a long request that shows its own status (data-no-busy, e.g. the import): there a
       // spinning cursor for a minute reads as a hang.
-      function polled(evt) { var el = evt.detail && evt.detail.elt; if (el && el.closest && el.closest('[data-no-busy], [data-busy-text]')) return true; var t = el && el.getAttribute && el.getAttribute('hx-trigger'); return !!(t && t.indexOf('every') >= 0); }
+      function polled(evt) { var el = evt.detail && evt.detail.elt; if (el && el.closest && el.closest('[data-no-busy], [data-busy-text]')) return true; var t = el && el.getAttribute && el.getAttribute('hx-trigger'); return !!(t && /\b(every|load|revealed|intersect)\b/.test(t)); }
       // An element with data-busy-text (a model call, a PDF render) gets a spinner and that text
       // beside it for as long as its request is open, instead of the cursor (D-UI-20).
       function host(evt) { var el = evt.detail && evt.detail.elt; return el && el.closest && el.closest('[data-busy-text]'); }
@@ -72,38 +194,20 @@
   </script>
 </head>
 <body>
+{% from "ui/macros.html" import toast_region, icon as kicon %}
 {% set cur = active_track(request) %}
 {% set p = request.url.path %}
-{% set icons = {
-  'today': '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
-  'pipeline': '<path d="M4 6h16M4 12h16M4 18h10"/>',
-  'pursuits': '<path d="M5 21V4h12l-2 4 2 4H5"/>',
-  'documents': '<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5"/>',
-  'interview': '<path d="M4 4h16v12H8l-4 4z"/>',
-  'offers': '<path d="M3 12l9-9h9v9l-9 9z"/><circle cx="16" cy="8" r="1.5"/>',
-  'calibrate': '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
-  'analytics': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-  'bench': '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/>',
-  'setup': '<path d="M12 2l3 5h5l-4 4 1.5 6L12 14l-5.5 3L8 11 4 7h5z"/>',
-  'sources': '<path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.5"/>',
-  'models': '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
-  'runs': '<path d="M6 4l14 8-14 8z"/>',
-  'settings': '<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5"/><circle cx="12" cy="12" r="7"/>',
-  'help': '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
-  'about': '<circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>',
-  'more': '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'
-} %}
-{% macro icon(name) -%}
-<svg class="ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ icons[name]|safe }}</svg>
-{%- endmacro %}
+{% set k_desktop = desktop_can_quit() %}
+{# The sidebar nav (D-UI-91): Work, Learn and Setup, then a spacer, then Help and About at the
+   foot. The icon set is the mockups' (ui/macros.html ICONS). Count badges arrive as out-of-band
+   swaps into the #nav-count-* spans (/status/counts). #}
 {% macro navlinks(path, counts=True, track='') %}
 {% for group, items in nav_groups %}
-  <div class="navgroup">
-    {% if group %}<div class="lbl">{{ group }}</div>{% endif %}
-    {% for it in items %}
-    <a href="{{ it.href }}" class="{% if nav_active(it, path) %}active{% endif %}" title="{{ it.label_for(track) }}"{% if nav_active(it, path) %} aria-current="page"{% endif %}>{{ icon(it.icon) }}{% if counts and it.count == 'unrated' %}<span class="ring" id="nav-ring" title="A run is active" hidden></span>{% endif %}{% if counts and it.count %}<span class="n" id="nav-count-{{ it.count }}"{% if it.count == 'unrated' %} title="Roles not yet rated"{% endif %}></span>{% endif %}{{ it.label_for(track) }}</a>
-    {% endfor %}
-  </div>
+  {% if group %}<div class="k-sec">{{ group }}</div>{% else %}<div class="k-spacer" aria-hidden="true"></div>{% endif %}
+  {% for it in items %}
+  {% set on = nav_active(it, path) %}
+  <a href="{{ it.href }}" class="{% if on %}active{% endif %}" title="{{ it.label_for(track) }}"{% if on %} aria-current="page"{% endif %}>{{ kicon(it.icon) }}{% if counts and it.count == 'unrated' %}<span class="ring" id="nav-ring" title="A run is active" hidden></span>{% endif %}{% if counts and it.count %}<span class="n" id="nav-count-{{ it.count }}"{% if it.count == 'unrated' %} title="Roles not yet rated"{% endif %}></span>{% endif %}{{ it.label_for(track) }}</a>
+  {% endfor %}
 {% endfor %}
 {% endmacro %}
 {% macro trackswitch(track, badges=True) %}
@@ -114,7 +218,7 @@
 {% if enabled_tracks()|length > 1 %}
 <div class="track-switch" role="tablist" aria-label="Track" data-track="{{ track }}">
   {% for t in enabled_tracks() %}
-  <a href="?track={{ t }}" role="tab" @click="setTrack('{{ t }}')" data-tab-track="{{ t }}"
+  <a href="?track={{ t }}" role="tab" @click="setTrack('{{ t }}')" data-tab-track="{{ t }}" data-k-reload
      aria-selected="{{ 'true' if track == t else 'false' }}"
      class="{% if track == t %}active{% endif %}">{{ words(t).track_name }}{% if badges %}<span class="n" id="nav-count-track-{{ t }}" title="Waiting for you on this track"></span>{% endif %}</a>
   {% endfor %}
@@ -122,66 +226,100 @@
 {% endif %}
 {% endmacro %}
 
-<div class="shell">
+{% if k_desktop %}{% include "partials/window_edges.html" %}{% endif %}
+<div class="k-win" id="kwin">
   <aside class="side" id="sidebar">
-    <a class="brand" href="/" title="Kestrel"><img class="mark" src="/static/icon.svg" alt="" width="22" height="22"><span class="word">Kestrel</span></a>
+    {% if k_desktop %}{% include "partials/window_controls.html" %}{% endif %}
+    <a class="k-brand" href="/" title="Kestrel"><span class="k-brand__mark"><img src="{{ static_url('icon.svg') }}" alt="" width="30" height="30"></span><span class="k-brand__word">Kestrel</span></a>
     {{ trackswitch(cur) }}
     <nav class="mainnav" aria-label="Main">
       {{ navlinks(p, track=cur) }}
     </nav>
-    {# Count badges arrive as out-of-band swaps into the #nav-count-* spans above. #}
     <div hidden hx-get="/status/counts" hx-trigger="load, every 30s" hx-swap="none"></div>
-    <div class="rail" id="rail" hx-get="/status/rail" hx-trigger="load, every 10s" hx-swap="innerHTML">
-      <span class="line"><span class="dot idle"></span><span class="txt">Checking status</span></span>
+    {# The two-line status readout (D-UI-91), polled from /status/rail. #}
+    <div class="k-sstat" id="rail" data-testid="status-readout" hx-get="/status/rail" hx-trigger="load, every 10s" hx-swap="innerHTML">
+      <span class="k-sstat__l"><span class="k-dot k-dot--idle"></span><span>Checking status</span></span>
     </div>
+    {# The sidebar stays put across page changes (owner report 2026-10-26): before first paint,
+       repaint the counts and the readout this window last showed (kestrel-ui.js keeps them in
+       sessionStorage); the polls above then refresh them. Counts are text only; the readout is
+       this app's own markup, parsed with DOMParser rather than assigned as HTML. #}
+    <script>
+      (function () {
+        try {
+          var c = JSON.parse(sessionStorage.getItem('kestrel-side-counts') || '{}');
+          Object.keys(c).forEach(function (id) {
+            var el = /^nav-count-[a-z0-9-]+$/.test(id) && document.getElementById(id);
+            if (el) el.textContent = String(c[id]);
+          });
+          var ring = document.getElementById('nav-ring');
+          if (ring && c['nav-ring'] === '1') ring.hidden = false;
+          var r = sessionStorage.getItem('kestrel-side-rail');
+          var rail = document.getElementById('rail');
+          if (r && rail) {
+            var body = new DOMParser().parseFromString(r, 'text/html').body;
+            if (!body.querySelector('script')) rail.replaceChildren.apply(rail, Array.prototype.slice.call(body.childNodes));
+          }
+        } catch (e) {}
+      })();
+    </script>
   </aside>
 
-  <div class="main">
-    <header class="topbar">
-      <div class="title">{% block pagetitle %}{{ nav_title(p, cur) }}{% endblock %}</div>
-      <span class="spacer"></span>
-      <button class="search" type="button" @click="openPalette()" title="Command palette (Ctrl+K)">
-        <span class="search-text">Search or jump to</span><kbd>⌘K</kbd></button>
-      <div class="bell" x-data="{ open: false }">
-        <button class="btn ghost" @click="open = !open" title="Notifications"
+  <div class="k-main" id="main">
+    {# The top row (D-UI-91): no fixed band. It sits in the page and scrolls with it; the empty
+       space around the controls is the window's drag region in the desktop app (D-UI-88). #}
+    {# Update banner (D-UPD-3, D-UI-218: above the search row, as in the surfaces mockup): empty unless a newer version is known; the dialog lands in #update-modal. #}
+    <div id="update-banner" hx-get="/updates/banner" hx-trigger="load, every 300s, updates-changed from:body"
+         hx-swap="innerHTML"></div>
+    <header class="k-tools" data-k-drag>
+      <span class="k-tools__gap pywebview-drag-region" data-k-drag aria-hidden="true"></span>
+      <button class="k-search" type="button" @click="openPalette()" title="Search or jump to" data-testid="search">
+        {{ kicon('search') }}<span class="k-search__text">Search or jump to...</span><kbd data-k-kbd>Ctrl K</kbd></button>
+      <span class="k-tools__gap pywebview-drag-region" data-k-drag aria-hidden="true"></span>
+      <div class="k-bellwrap" x-data="bellPanel()" @keydown.escape.window="close()">
+        <button class="k-icon k-bell" type="button" data-k-tip="Notifications" aria-label="Notifications"
+                aria-haspopup="dialog" :aria-expanded="open ? 'true' : 'false'" @click="toggle()"
+                data-testid="bell" x-ref="bell"
                 hx-get="/notifications/bell" hx-trigger="load, every 20s" hx-target="#bellcount"
-                hx-swap="innerHTML">🔔<span id="bellcount" class="badge"></span></button>
-        <div class="dropdown" x-show="open" @click.outside="open = false" x-cloak
-             hx-get="/notifications/list" hx-trigger="intersect once">Loading…</div>
-      </div>
-      <div class="menu-wrap" x-data="{ open: false }">
-        <button class="btn ghost" @click="open = !open" title="Appearance: theme and scheme">◑</button>
-        <div class="menu" x-show="open" @click.outside="open = false" x-cloak role="menu">
-          <div class="lbl">Theme</div>
-          <button type="button" :class="{ on: theme === 'light' }" @click="theme = 'light'">Light</button>
-          <button type="button" :class="{ on: theme === 'dark' }" @click="theme = 'dark'">Dark</button>
-          <button type="button" :class="{ on: theme === 'auto' }" @click="theme = 'auto'">System</button>
-          <div class="lbl">Scheme</div>
-          <button type="button" :class="{ on: scheme === 'indigo' }" @click="scheme = 'indigo'">Indigo</button>
-          <button type="button" :class="{ on: scheme === 'teal' }" @click="scheme = 'teal'">Teal</button>
-          <a class="menu-link" href="/settings#appearance">Save as the default under Settings</a>
+                hx-swap="innerHTML">{{ kicon('bell') }}<span id="bellcount" class="k-icon__n"></span></button>
+        {# The click-outside layer stays in the top row's own layer, just under the panel; on
+           <body> it sat above the whole top row, panel included (owner round 15). #}
+        <div class="k-nscrim" x-show="open" x-cloak @click="close()"></div>
+        <div class="k-npanel" x-show="open" x-cloak role="dialog" aria-label="Notifications"
+             x-transition:enter="is-enter" x-transition:enter-start="is-from"
+             x-transition:leave="is-enter" x-transition:leave-end="is-from" data-testid="npanel">
+          <div class="k-npanel__head"><h3>Notifications</h3>
+            <button type="button" class="k-link" hx-post="/notifications/read-all" hx-target="#k-np-body" hx-swap="innerHTML"
+                    hx-vals='js:{tab: (document.getElementById("sf-np") || {dataset: {}}).dataset.tab || "all"}' data-testid="notif-read-all">Mark all as read</button>
+            <button type="button" class="k-iconbtn" aria-label="Close" @click="close()">{{ kicon('x') }}</button></div>
+          <div class="k-npanel__body" id="k-np-body" hx-get="/notifications/list" hx-trigger="intersect once">Loading</div>
+          <div class="k-npanel__foot">Problems stay in Needs attention until they are fixed.</div>
         </div>
       </div>
-      {% if desktop_can_quit() %}
-      {# Closing the window keeps Kestrel in the tray; this ends it (D-UI-27). #}
-      <button class="btn ghost" type="button" title="Quit Kestrel: stop searching and close"
-              data-testid="quit-app"
-              aria-haspopup="dialog" onclick="window.kestrelQuit && window.kestrelQuit.open(this)">⏻</button>
+      <button class="k-icon" type="button" @click="toggleTheme()" data-testid="theme-toggle"
+              :data-k-tip="dark ? 'Switch to light' : 'Switch to dark'" :aria-label="dark ? 'Switch to light' : 'Switch to dark'"
+              data-k-tip="Light or dark" aria-label="Light or dark"><span x-show="!dark">{{ kicon('moon') }}</span><span x-show="dark" x-cloak>{{ kicon('sun') }}</span></button>
+      {# Account slot: Profile is where the operator's own details live (no sign-in exists). #}
+      {% include "partials/topbar_avatar.html" %}
+      {% if k_desktop %}
+      {# The power button (D-UI-197, owner exception to the mockups): in the desktop window and in
+         the browser fallback it opens the same Quit dialog as the palette's Quit entry. #}
+      <button class="k-icon" type="button" data-k-tip="Quit Kestrel"
+              aria-label="Quit Kestrel" data-testid="quit-app"
+              aria-haspopup="dialog" onclick="window.kestrelQuit && window.kestrelQuit.open(this)"><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></button>
       {% endif %}
     </header>
-    <main class="container">
-      {# Update banner (D-UPD-3): empty unless a newer version is known; the dialog lands in #update-modal. #}
-      <div id="update-banner" hx-get="/updates/banner" hx-trigger="load, every 300s, updates-changed from:body"
-           hx-swap="innerHTML"></div>
+    {# The page's name for its lifecycle (D-UI-210): a page template fills the page_name block
+       ("today") and its script defines the same name with KUI.page.define. #}
+    <main class="container" data-k-page="{% block page_name %}page{% endblock %}">
       <div id="update-modal"></div>
-      {# One-time local announcement (WP-22): fixed text from kestrel/web/announcements.py. #}
-      <div id="announcement-slot" hx-get="/announcements" hx-trigger="load" hx-swap="innerHTML"></div>
+      {# One-time local announcement (WP-22, D-UI-157): Today only. Today puts the slot in its own
+         content (templates/dashboard.html); no other page carries it. #}
       {# A one-line notice carried by a redirect (?msg=<code>), e.g. a refused or partial reset.
          The URL carries a code only; the sentence is looked up (kestrel/web/flash.py), so an
          unknown code shows nothing (WP-08, #21). #}
       {% set flash = flash_text(request.query_params.get('msg')) if request is defined else None %}
       {% if flash %}<div class="warnbox" role="status" data-testid="flash" style="margin-bottom:.8rem">{{ flash }}</div>{% endif %}
-      {% include "partials/guide_strip.html" %}
       {% block content %}{% endblock %}
     </main>
   </div>
@@ -190,9 +328,9 @@
 {# Phone: bottom bar with the first three Work pages; More opens a sheet with the rest. #}
 <nav class="bottombar" aria-label="Main (phone)">
   {% for group, items in nav_groups %}{% for it in items %}{% if it.href in bottom_bar %}
-  <a href="{{ it.href }}" class="{% if nav_active(it, p) %}active{% endif %}">{{ icon(it.icon) }}<span>{{ it.label_for(cur) }}</span></a>
+  <a href="{{ it.href }}" class="{% if nav_active(it, p) %}active{% endif %}">{{ kicon(it.icon) }}<span>{{ it.label_for(cur) }}</span></a>
   {% endif %}{% endfor %}{% endfor %}
-  <button type="button" @click="more = true" :class="{ active: more }">{{ icon('more') }}<span>More</span></button>
+  <button type="button" @click="more = true" :class="{ active: more }">{{ kicon('more') }}<span>More</span></button>
 </nav>
 <div class="sheet-backdrop" x-show="more" x-cloak @click="more = false"></div>
 <div class="sheet" x-show="more" x-cloak @keydown.escape.window="more = false">
@@ -203,23 +341,45 @@
   </nav>
 </div>
 
-<div class="palette-backdrop" x-show="palette" x-cloak @click="palette = false"
-     @keydown.escape.window="palette = false"></div>
-<div class="palette" x-show="palette" x-cloak>
-  <input type="text" x-model="q" x-ref="pq" placeholder="Go to…"
-         @keydown.enter="go()" @keydown.down.prevent="idx = Math.min(idx + 1, filtered().length - 1)"
-         @keydown.up.prevent="idx = Math.max(idx - 1, 0)" @input="idx = 0">
-  <ul>
-    <template x-for="(item, i) in filtered()" :key="item.href">
-      <li :class="{ sel: i === idx }" @click="location.href = item.href"
-          @mouseenter="idx = i"><span x-text="item.label"></span>
-        <span class="mono muted" x-text="item.href"></span></li>
-    </template>
-  </ul>
+{# The command palette (D-UI-91; surfaces-mockup-locked.html :771-775). static/js/palette.js
+   builds the groups; roles and companies come from /palette/search. #}
+<div class="k-pal-ov" x-show="palette" x-cloak @click.self="palette = false"
+     @keydown.escape.window="palette = false" data-testid="palette"
+     x-transition:enter="is-enter" x-transition:enter-start="is-from"
+     x-transition:leave="is-enter" x-transition:leave-end="is-from">
+  <div class="k-pal" role="dialog" aria-modal="true" aria-label="Search or jump to">
+    <div class="k-pal__in">{{ kicon('search') }}<input type="text" x-model="q" x-ref="pq"
+         placeholder="Search roles, companies, settings, or type a command" autocomplete="off"
+         spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palette-list"
+         aria-label="Search roles, companies, settings, or type a command"
+         :aria-activedescendant="view.count ? 'palette-opt-' + idx : null"
+         @keydown.enter.prevent="go(view.items[idx])" @keydown.tab.prevent
+         @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @input="idx = 0; search()"><span class="k-pal__kbd">Esc</span></div>
+    <div class="k-pal__res" id="palette-list" role="listbox" aria-label="Results" x-ref="pres">
+      <template x-for="(row, r) in view.rows" :key="r + ':' + (row.h || row.item.t)">
+        <div :class="row.h ? 'k-pal__gh' : ('k-pal__it' + (row.n === idx ? ' is-sel' : ''))"
+             :role="row.h ? 'presentation' : 'option'" :id="row.h ? null : 'palette-opt-' + row.n"
+             :aria-selected="row.h ? null : (row.n === idx ? 'true' : 'false')"
+             @mousemove="if (!row.h) idx = row.n" @click="if (!row.h) go(row.item)">
+          <template x-if="row.h"><span x-text="row.h"></span></template>
+          <template x-if="!row.h"><span class="k-pal__row">
+            <span class="k-pal__ic" x-html="icon(row.item.ic)"></span>
+            <span class="k-pal__tx"><b x-html="hl(row.item.t)"></b><span x-text="row.item.s"></span></span>
+            <span class="k-pal__tag" x-text="row.recent ? (row.item.g || '').replace(/s$/, '') : ''"></span>
+            <span class="k-pal__kbd k-pal__enter">Enter</span></span></template>
+        </div>
+      </template>
+      <div class="k-pal__empty" x-show="!view.count && q.trim()" data-testid="palette-empty">
+        {{ kicon('search', 'k-ic--lg') }}<b>No matches</b>
+        <span x-text="'Nothing matches \u201c' + q.trim() + '\u201d. Try a role title, a company, or a command like \u201crun a search\u201d.'"></span>
+      </div>
+    </div>
+    <div class="k-pal__hints"><span><span class="k-pal__kbd">&uarr;</span><span class="k-pal__kbd">&darr;</span> to move</span><span><span class="k-pal__kbd">Enter</span> to open</span><span><span class="k-pal__kbd">Esc</span> to close</span><span class="k-pal__count" x-text="view.count ? view.count + (view.count === 1 ? ' result' : ' results') : ''"></span></div>
+  </div>
 </div>
 
 <script>
-  function chrome() {
+  function kChrome() {
     return {
       theme: localStorage.getItem('kestrel-theme') || 'auto',
       scheme: (function () {
@@ -228,31 +388,68 @@
         if (s === 'indigo' || s === 'teal') return s;
         return document.documentElement.getAttribute('data-scheme') || 'indigo';
       })(),
-      palette: false, q: '', idx: 0, more: false,
-      pages: [
-        {% for group, items in nav_groups %}{% for it in items %}
-        {label: {{ it.label_for(cur)|tojson }}, href: {{ it.href|tojson }}},
-        {% endfor %}{% endfor %}
-        {label: 'Failed scoring', href: '/quarantine'}, {label: 'Backup', href: '/backup'},
+      palette: false, opener: null, q: '', idx: 0, more: false,
+      view: { rows: [], items: [], count: 0 }, found: { roles: [], companies: [] }, timer: null,
+      // Actions: what the palette may run (D-UI-91); every nav page is an "Open" action.
+      actions: [
+        {id: 'run', g: 'Actions', t: 'Run a search now', s: 'Look for new roles right away', ic: 'search', href: '/scan/choose?page=1', suggest: true, k: 'scan search run now find'},
+        {id: 'cal', g: 'Actions', t: 'Open Calibrate', s: 'Teach Kestrel what a good fit means to you', ic: 'calibrate', href: '/calibrate', suggest: true, k: 'calibrate teach learn'},
+        {id: 'dark', g: 'Actions', t: 'Turn on dark mode', s: 'Switch the look of Kestrel', ic: 'moon', k: 'dark light theme mode'},
+        {id: 'pause', g: 'Actions', t: 'Pause searching', s: 'Stop scheduled searches until you resume', ic: 'pause', k: 'pause stop worker searching'},
+        {% if k_desktop %}{id: 'quit', g: 'Actions', t: 'Quit Kestrel', s: 'Stop searching and close', ic: 'quit', k: 'quit exit close'},{% endif %}
       ],
+      pages: [
+        {% for group, items in nav_groups %}{% for it in items %}{% if it.href != '/calibrate' %}
+        {g: 'Actions', t: {{ ('Open ' ~ it.label_for(cur))|tojson }}, s: {{ ('Go to ' ~ it.label_for(cur))|tojson }}, ic: 'open', href: {{ it.href|tojson }}},
+        {% endif %}{% endfor %}{% endfor %}
+      ],
+      dark: false,
       init() {
-        this.$watch('theme', v => {
-          localStorage.setItem('kestrel-theme', v);
-          if (v === 'auto') document.documentElement.removeAttribute('data-theme');
-          else document.documentElement.setAttribute('data-theme', v);
-        });
+        // One source for appearance writes: KUI (kestrel-ui.js) owns storage and the attribute.
+        this.$watch('theme', v => { window.KUI.setTheme(v); this.dark = this.isDark(); });
+        this.dark = this.isDark();
+        if (window.matchMedia) {
+          const mq = window.matchMedia('(prefers-color-scheme: dark)');
+          if (mq.addEventListener) mq.addEventListener('change', () => { this.dark = this.isDark(); });
+        }
+        // The search field's shortcut follows the operating system (D-UI-91): Cmd K on a Mac.
+        const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+        document.querySelectorAll('[data-k-kbd]').forEach(k => { k.textContent = mac ? '\u2318K' : 'Ctrl K'; });
         if (this.theme !== 'auto') document.documentElement.setAttribute('data-theme', this.theme);
-        this.$watch('scheme', v => {
-          try { localStorage.setItem('kestrel-scheme', v); } catch (e) {}
-          document.documentElement.setAttribute('data-scheme', v);
+        this.$watch('scheme', v => { window.KUI.setScheme(v); });
+        // The palette is modal: Tab stays in its field, and closing returns focus to the opener.
+        this.$watch('palette', v => {
+          if (!v && this.opener && this.opener.focus && document.contains(this.opener)) {
+            this.opener.focus();
+          }
+          if (!v) this.opener = null;
         });
         document.documentElement.setAttribute('data-scheme', this.scheme);
-        if ('serviceWorker' in navigator) {
+        // The browser and LAN modes keep the offline cache; the desktop window never registers it.
+        if ('serviceWorker' in navigator && document.documentElement.getAttribute('data-k-desktop') !== '1') {
           navigator.serviceWorker.register('/sw.js').catch(() => {});
         }
         window.addEventListener('keydown', (e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); this.openPalette(); }
+          if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); this.openPalette(); }
         });
+        // Keys typed between Ctrl+K and the search box taking focus belong to the search, not to
+        // whatever had focus before (a fast typist lost the first word).
+        // They never reach the page behind it either (its j/k, "/" and Space shortcuts).
+        window.addEventListener('keydown', (e) => {
+          const pq = this.$refs.pq;
+          if (!this.palette || !pq || document.activeElement === pq) return;
+          const key = String(e.key || '');
+          const altGr = e.getModifierState && e.getModifierState('AltGraph');
+          if (key === 'Enter' || key === 'ArrowDown' || key === 'ArrowUp') {
+            e.preventDefault(); e.stopImmediatePropagation();
+            if (key === 'Enter') this.go(this.view.items[this.idx]);
+            else this.move(key === 'ArrowDown' ? 1 : -1);
+            return;
+          }
+          if (key.length !== 1 || e.metaKey || ((e.ctrlKey || e.altKey) && !altGr)) return;
+          e.preventDefault(); e.stopImmediatePropagation();
+          this.q += key; this.idx = 0; this.search();
+        }, true);
         // Persist the track tab across pages (D-UI-57): localStorage as before, plus a cookie the
         // server reads, so a page opened without ?track= (Today at /, a bookmark) shows the
         // remembered tab. With one track in use (consulting switched off, D-UI-28) a stored
@@ -272,22 +469,102 @@
           }
         }
       },
+      isDark() {
+        const t = document.documentElement.getAttribute('data-theme');
+        if (t === 'dark' || t === 'light') return t === 'dark';
+        return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      },
+      // One click toggles light and dark (the moon button); Settings > Preferences keeps
+      // System and the color schemes.
+      toggleTheme() { this.theme = this.isDark() ? 'light' : 'dark'; },
       openPalette() {
+        this.opener = document.activeElement;
+        this.q = ''; this.idx = 0; this.found = { roles: [], companies: [] };
         this.palette = true; this.more = false;
-        this.$nextTick(() => this.$refs.pq && this.$refs.pq.focus());
+        this.render();
+        this.$nextTick(() => {
+          const pq = this.$refs.pq;
+          if (!pq) return;
+          pq.focus();
+          pq.setSelectionRange(pq.value.length, pq.value.length);  // after any early keys
+        });
+      },
+      recent() {
+        try { return JSON.parse(localStorage.getItem('kestrel-palette-recent') || '[]') || []; }
+        catch (e) { return []; }
+      },
+      remember(item) {
+        const keep = {g: item.g, t: item.t, s: item.s, ic: item.ic, href: item.href, id: item.id};
+        const list = [keep].concat(this.recent().filter(r => r.t !== item.t)).slice(0, 4);
+        try { localStorage.setItem('kestrel-palette-recent', JSON.stringify(list)); } catch (e) {}
+      },
+      render() {
+        this.view = window.KPalette.results(this.q, {actions: this.actions, pages: this.pages,
+          roles: this.found.roles, companies: this.found.companies, recent: this.recent(),
+          dark: this.isDark()});
+        if (this.idx >= this.view.count) this.idx = 0;
+      },
+      search() {
+        this.render();
+        clearTimeout(this.timer);
+        const q = this.q.trim();
+        if (q.length < 2) { this.found = { roles: [], companies: [] }; this.render(); return; }
+        this.timer = setTimeout(() => {
+          fetch('/palette/search?q=' + encodeURIComponent(q), {credentials: 'same-origin'})
+            .then(r => r.ok ? r.json() : {roles: [], companies: []})
+            .then(d => { if (this.q.trim() === q) { this.found = d; this.render(); } })
+            .catch(() => {});
+        }, 120);
+      },
+      move(d) {
+        const n = this.view.count;
+        if (!n) return;
+        this.idx = (this.idx + d + n) % n;
+        this.$nextTick(() => {
+          const el = document.getElementById('palette-opt-' + this.idx);
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+        });
+      },
+      hl(t) { return window.KPalette.highlight(t, this.q); },
+      icon(name) { return window.KPalette.icon(name); },
+      go(item) {
+        if (!item) return;
+        this.remember(item);
+        this.palette = false;
+        if (item.id === 'dark') {
+          const was = this.isDark();
+          this.toggleTheme();
+          if (window.KUI) window.KUI.toast(was ? 'Dark mode turned off' : 'Dark mode turned on');
+          return;
+        }
+        if (item.id === 'pause') {
+          fetch('/api/worker/pause', {method: 'POST', credentials: 'same-origin'})
+            .then(r => { if (window.KUI) window.KUI.toast(r.ok ? 'Searching paused. Resume it on Runs.' : 'Could not pause. Nothing changed.', {tone: r.ok ? '' : 'warn'}); })
+            .catch(() => {});
+          return;
+        }
+        {% if k_desktop %}if (item.id === 'quit') { if (window.kestrelQuit) window.kestrelQuit.open(); return; }{% endif %}
+        if (item.href) {
+          if (window.kLeaveGuard && !window.kLeaveGuard()) return;
+          if (window.KUI && window.KUI.go) window.KUI.go(item.href, {guarded: true}); else location.href = item.href;
+        }
       },
       setTrack(v) {
         try { localStorage.setItem('kestrel-track', v); } catch (e) {}
         document.cookie = 'kestrel-track=' + v + '; path=/; max-age=31536000; samesite=lax';
       },
-      filtered() {
-        const q = this.q.toLowerCase();
-        return this.pages.filter(p => p.label.toLowerCase().includes(q));
-      },
-      go() { const f = this.filtered(); if (f[this.idx]) location.href = f[this.idx].href; },
+    };
+  }
+  // The bell panel: opens under the bell over a scrim.
+  function bellPanel() {
+    return {
+      open: false,
+      toggle() { this.open ? this.close() : (this.open = true); },
+      close() { if (this.open) { this.open = false; if (this.$refs.bell) this.$refs.bell.focus(); } },
     };
   }
 </script>
+{{ toast_region() }}
 {% include "partials/toast.html" %}
 {% include "partials/quit_confirm.html" %}
 </body>

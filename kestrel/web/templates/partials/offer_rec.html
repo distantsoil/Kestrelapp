@@ -1,0 +1,2 @@
+{# Record an offer, in the header. The empty state has its own button, so this hides then. #}
+<button type="button" id="of-rec" class="k-btn k-btn--primary k-btn--sm" data-testid="of-record" hx-get="/offers/new" hx-target="#of-dialog" hx-swap="innerHTML"{% if oob %} hx-swap-oob="outerHTML"{% endif %}{% if empty %} hidden{% endif %}>+ Record an offer</button>

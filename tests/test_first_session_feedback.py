@@ -209,9 +209,36 @@ def test_window_opens_large_but_not_maximized_with_a_minimum_size():
     # #26: pywebview blocks text selection app-wide unless asked, so the LAN secret and join link
     # (and every id, error and path on a page) could not be selected or copied.
     assert "text_select=True" in call
-    assert _initial_size((1920, 1080)) == (1600, 932)
-    assert _initial_size((1280, 720)) == (1152, 640)  # never below the minimum
-    assert _initial_size((3840, 2160)) == (1600, 1000)
+    # D-UI-87: one fixed design size (about 1680x1000), never a share of the screen, clamped to
+    # the usable area (the screen less the taskbar or dock and a margin), 960x640 at least.
+    assert "frameless=True" in call  # D-UI-88: no OS title bar
+    assert _initial_size((3440, 1440)) == (1680, 1000)  # an ultrawide gets the same window
+    assert _initial_size((3840, 2160)) == (1680, 1000)
+    assert _initial_size((1920, 1080)) == (1680, 992)  # 1080 less the taskbar and a margin
+    assert _initial_size((1366, 768)) == (1326, 680)  # a small laptop: the usable area
+    assert _initial_size((1280, 720)) == (1240, 640)  # never below the minimum
+    assert _initial_size((800, 600)) == (960, 640)
+    # With the work area known (the screen less its taskbar), 40 px is kept clear on each side:
+    # a 1920x1080 display with a 40 px taskbar gets the full design size.
+    assert _initial_size((1920, 1080), work=(1920, 1040)) == (1680, 1000)
+    assert _initial_size((1920, 1080), work=(1920, 1032)) == (1680, 992)  # a 48 px taskbar
+    assert _initial_size((1366, 768), work=(1366, 728)) == (1326, 688)
+    # A short screen never narrows the window: each side is clamped on its own.
+    assert _initial_size((3440, 900), work=(3440, 860))[0] == 1680
+    for screen in ((1920, 1080), (2560, 1600), (3440, 1440)):
+        w, h = _initial_size(screen)
+        assert w <= 1710 and h <= 1107  # never larger than a 15-inch laptop's default
+    import sys
+
+    saved = sys.modules.get("webview")
+    sys.modules["webview"] = None  # no backend at all: the size is unknown
+    try:
+        assert _initial_size() == (1440, 900)
+    finally:
+        if saved is None:
+            del sys.modules["webview"]
+        else:
+            sys.modules["webview"] = saved
 
 
 # ------------------------------------------------------------------------- import stages/retry

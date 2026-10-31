@@ -1,0 +1,36 @@
+{# The page-failed screen (D-UI-152): calm wording, Try again, and the plain details behind
+   "Show details" for a bug report. Context: `details` (plain text, built by web/error_page.py,
+   never an exception's own text) and `retry_href`. Styles: static/css/pages/surfaces.css. #}
+{% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
+{% block title %}Kestrel could not load this page{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">{% endblock %}
+{# The page lifecycle (D-UI-210): js/error.js defines the page's two buttons. A page script file,
+   not an inline one, so an in-place page change loads it like every other page's script. #}
+{% block page_name %}error{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/error.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div class="sf-err-wrap">
+  <div class="sf-err" role="alert" data-testid="error-page">
+    <div class="sf-head">
+      <span class="sf-ic sf-ic--bad" aria-hidden="true">{{ ui.icon('alert') }}</span>
+      <h1 class="sf-err-title">Kestrel couldn’t load this page</h1>
+    </div>
+    <div class="sf-body">
+      <span>Your roles and settings are safe on this computer. Try again, and if it keeps happening, the details can help you get an answer.</span>
+      <div class="sf-err-actions">
+        <a class="k-btn k-btn--primary" href="{{ retry_href }}" data-testid="error-retry">Try again</a>
+        <button type="button" class="k-btn" id="sf-show-details" aria-expanded="false" aria-controls="sf-details" data-testid="error-details-toggle">Show details</button>
+      </div>
+      <div class="sf-details" id="sf-details" hidden>
+        <pre class="sf-code" id="sf-code" data-testid="error-details">{{ details }}</pre>
+        <div class="k-row">
+          <button type="button" class="k-btn k-btn--sm" id="sf-copy" data-testid="error-copy">Copy details</button>
+          <a class="sf-a sf-t" href="/about#diagnostics">Save diagnostics in About</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

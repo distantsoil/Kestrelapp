@@ -1,0 +1,24 @@
+{# Keep near-floor roles (D-RULES-2): one control for the pay floor and the day-rate floor. The
+   caller sets margin_name (the form field), margin_value (a stop, as text), margin_what ("pay
+   floor" or "day-rate floor") and margin_id. The locked mockup's switch (owner ruling D-UI-200):
+   off saves Exact (0); on shows the 2, 5, 10 and 15 percent stops, 5 when first turned on. The
+   hidden input carries the stop, so the form posts one field either way. #}
+{% import "ui/macros.html" as ui %}
+{% set on = margin_value != '0' %}
+<div class="pf-margin" data-testid="near-floor" data-pf-margin>
+  <div class="pf-margin__row">
+    <label class="k-switch pf-margin__sw" for="{{ margin_id }}-on"><input type="checkbox" role="switch" id="{{ margin_id }}-on" data-pf-margin-on{% if on %} checked{% endif %} aria-describedby="{{ margin_id }}-hint"><span class="k-switch__track" aria-hidden="true"></span></label>
+    <div class="k-grow">
+      <span class="pf-margin__title" id="{{ margin_id }}-l">Keep near-floor roles</span>
+      <small class="pf-hint" id="{{ margin_id }}-hint" data-testid="near-floor-hint" data-pf-margin-hint data-what="{{ margin_what }}">
+        <span data-pf-margin-text>{% if not on %}Off: a role whose posted pay tops out below your {{ margin_what }} is set aside.{% else %}Roles within {{ margin_value }}% below your {{ margin_what }} stay in, marked "Just under your pay floor".{% endif %}</span>
+        A role with no posted pay is always kept.</small>
+    </div>
+  </div>
+  <div class="pf-margin__fold{% if on %} is-open{% endif %}" data-pf-margin-fold><div>
+    <div class="k-seg" role="group" data-k-seg aria-labelledby="{{ margin_id }}-l">
+      <input type="hidden" name="{{ margin_name }}" value="{{ margin_value }}" data-pf-margin-value>
+      {% for value, label in margin_options if value != '0' %}<button type="button" value="{{ value }}" class="{% if margin_value == value %}is-on{% endif %}" aria-pressed="{{ 'true' if margin_value == value else 'false' }}"{% if not on %} tabindex="-1"{% endif %}>{{ label }}</button>{% endfor %}
+    </div>
+  </div></div>
+</div>

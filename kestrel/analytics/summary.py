@@ -37,6 +37,12 @@ class AnalyticsSummary:
     # True when there is enough data for a narrative and the model has not been asked for one
     # yet: the page offers to write it rather than paying for it on every visit (D-UI-19).
     narrative_pending: bool = False
+    # True only when the model's own answer passed validation (an empty one_thing_to_change is
+    # still a real answer). A code-built fallback is False.
+    from_model: bool = False
+    # True when the send was refused before it left (confidential mode on, no current employer
+    # chosen to redact with): nothing went to the model, which is not "no usable answer".
+    held: bool = False
 
     @property
     def not_discriminating(self) -> bool:
@@ -76,7 +82,7 @@ def _fallback_md(metrics: dict, discriminating: bool | None, insufficient: bool)
 
 
 async def honest_summary(
-    session: AsyncSession, client: Any, track: str
+    session: AsyncSession, client: Any, track: str, *, period: dict | None = None
 ) -> AnalyticsSummary:
     """Assemble the metrics, compute the discrimination and insufficient-data verdicts in code, and
     ask P12 for the narrative. The code-computed verdicts are authoritative and returned regardless
@@ -87,6 +93,8 @@ async def honest_summary(
     cost the operator ten seconds and a billed call on an empty install), and with `client`
     None the page shows the verdicts at once and offers the narrative on demand (D-UI-19)."""
     metrics = await collect_metrics(session, track)
+    if period:  # the page's date range and its counts, so the narrative names the same period
+        metrics["period"] = period
     svo = metrics["score_vs_outcome"]
     discriminating = svo["discriminating"]
     insufficient = svo["n_outcomes"] < _MIN_OUTCOMES
@@ -104,7 +112,7 @@ async def honest_summary(
     messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
     # Through the Hosted mode plan (D-PRIV-1): on an online tier the confidential employer is
     # redacted before the send, or the send is refused when nothing is marked.
-    from kestrel.pipeline._shared import run_prompt_hosted
+    from kestrel.pipeline._shared import HOSTED_REFUSAL, run_prompt_hosted
 
     result = await run_prompt_hosted(
         session, client, spec, messages, quarantine_tier=2,
@@ -118,6 +126,7 @@ async def honest_summary(
             insufficient_data=insufficient,
             summary_md=_fallback_md(metrics, discriminating, insufficient),
             headline_finding=_fallback_md(metrics, discriminating, insufficient),
+            held=result.error == HOSTED_REFUSAL,
         )
 
     v = result.value
@@ -138,4 +147,5 @@ async def honest_summary(
         one_thing_to_change=v.one_thing_to_change,
         evidence_for_it=v.evidence_for_it,
         sample_size_warnings=list(v.sample_size_warnings),
+        from_model=True,
     )

@@ -1,0 +1,107 @@
+{# The Story bank tab: theme coverage, proposals to review, and the operator's own stories. The
+   sheet edits a story with its words as written. Kestrel suggests and selects; it never writes a
+   story for the operator. #}
+{% import "ui/macros.html" as ui %}
+{% import "partials/pp_icons.html" as i %}
+{% import "partials/online_ask.html" as online_ask %}
+<div class="pp-bankgrid" id="pp-bank"{% if oob %} hx-swap-oob="true"{% endif %}{% if building %} hx-get="{{ base }}?tab=bank" hx-trigger="every 5s" hx-target="#pp-body" hx-swap="innerHTML"{% endif %} data-testid="pp-bank">
+  <section class="k-card" data-testid="story-tools">
+    <div class="pp-tools">
+      <button type="button" class="k-btn k-btn--primary k-btn--sm" hx-get="/stories/sheet?from=bank{% if opp_id %}&opp={{ opp_id }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="add-story">+ Add a story</button>
+      <form hx-post="/stories/build" hx-swap="none">
+      {{ online_ask.ask(build_route, 'build', 'build drafts') }}
+      <button type="submit" class="k-btn k-btn--sm" {% if building %}disabled{% endif %} data-testid="build-stories"><b>Build stories</b></button>
+      <span class="pp-btnsub" data-testid="build-reads">Builds drafts from your notes on {{ notes_count }} {{ 'role' if notes_count == 1 else 'roles' }} and the interview questions Kestrel drafted when it scored each role.</span>
+      </form>
+    </div>
+    <p class="k-muted pp-status" data-testid="build-status">
+      {%- if building %}Building now. This page updates when it finishes.
+      {%- elif build_failed %}<span data-testid="build-failed">Last build failed: {{ build_failed }} {% if not (build_route and build_route.online) %}· <button class="k-btn k-btn--sm" type="button" hx-post="/stories/build" hx-swap="none">Try again</button>{% else %}· Press Build stories and confirm the send to try again.{% endif %}</span>
+      {%- elif last_build and last_build.ok %}Last build: {{ last_build.created }} new draft{{ "" if last_build.created == 1 else "s" }}, {{ last_build.attached }} matched to a story you already have, from {{ last_build.sketches }} note or sketch{{ "" if last_build.sketches == 1 else "es" }}.{% if last_build.sketches == 0 %} Nothing new to build from: save notes on a prep page, or score more roles.{% endif %}
+      {%- elif last_build %}Last build did not finish: {{ last_build.error }}
+      {%- else %}Your interview stories, in your own words. A draft is yours once you save it; nothing rewrites it after that. Dismiss a draft you do not want and Build will not propose it again.{% endif %}
+    </p>
+  </section>
+
+  {%- if not total_stories %}
+  <section class="k-card pp-empty" data-testid="pp-bank-empty">
+    <div>
+      <span class="pp-empty__badge">{{ i.pi('book', 'k-ic--lg') }}</span>
+      <h3>No stories yet</h3>
+      <p class="k-muted">Add one yourself, or build drafts from your notes and the questions Kestrel drafted for each scored role. A build usually takes a few minutes on your computer.</p>
+    </div>
+  </section>
+  {%- endif %}
+
+  <section class="k-card" data-testid="pp-coverage">
+    <header class="k-sec-head"><span class="k-badge">{{ i.pi('book') }}</span><div class="k-grow"><h3>Coverage of common questions</h3></div>
+      <span class="k-muted pp-cov" data-testid="pp-cov">{{ covered }} of {{ tiles|length }} themes covered · aim for {{ target }} stories</span></header>
+    <div class="pp-themes">
+      {%- for t in tiles %}
+      {%- if t.state == 'ok' %}
+      <div class="pp-th is-ok" data-testid="pp-theme"><b>{{ t.name }}</b><span class="pp-th__st">{{ i.pi('check', 'k-ic--sm') }}{{ t.label }}</span></div>
+      {%- else %}
+      <button type="button" class="pp-th is-{{ t.state }}" hx-get="/stories/sheet?from=bank&theme={{ t.key }}{% if opp_id %}&opp={{ opp_id }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-theme"><b>{{ t.name }}</b><span class="pp-th__st">{{ i.pi('alert', 'k-ic--sm') }}{{ t.label }}</span>{% if t.state == 'none' %}<span class="pp-storyln">+ Add a story</span>{% endif %}</button>
+      {%- endif %}
+      {%- endfor %}
+    </div>
+    {%- if gap_first %}<p class="pp-sub">Knowing you have no {{ gap_first|lower }} story now is better than finding out in the room.</p>{% endif %}
+    <p class="pp-sub">{{ total_stories }} {{ 'story' if total_stories == 1 else 'stories' }} in the bank, against {{ target }}.{% if total_stories < 8 %} Treat coverage as provisional until the bank fills out.{% endif %}</p>
+  </section>
+
+  {%- if drafts %}
+  <section class="k-card pp-merge" data-testid="pp-merge">
+    <header class="k-sec-head"><span class="k-badge">{{ i.pi('merge') }}</span><div class="k-grow"><h3>Kestrel found similar stories</h3></div><span class="k-pill k-pill--info">{{ drafts|length }} to review</span></header>
+    {%- for d in drafts %}
+    <div class="pp-prop" id="story-{{ d.id }}" data-testid="pp-proposal">
+      <p class="pp-body">Kestrel put these role write-ups together as one story. Review it in your own words?</p>
+      <div class="pp-sk"><b>{{ d.title }}</b>{% if d.situation or d.action %} · {{ (d.situation or d.action)[:120] }}{% endif %}</div>
+      <div class="pp-prop__btns">
+        <button type="button" class="k-btn k-btn--sm k-btn--primary" hx-get="/stories/sheet?from=bank&story={{ d.id }}{% if opp_id %}&opp={{ opp_id }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-merge-go">Review and merge</button>
+        <button type="button" class="k-btn k-btn--sm" hx-post="/stories/{{ d.id }}/dismiss" hx-vals='{"from": "bank"{% if opp_id %}, "opp": "{{ opp_id }}"{% endif %}}' hx-swap="none" data-testid="dismiss-story" title="Remove this draft. Build stories will not propose it again.">Keep separate</button>
+      </div>
+    </div>
+    {%- endfor %}
+  </section>
+  {%- endif %}
+
+  <div class="pp-listhead"><b>Your stories</b><span class="pp-sub">{{ mine|length }} {{ 'story' if mine|length == 1 else 'stories' }}</span></div>
+  <div class="pp-slist">
+    {%- for s in mine %}
+    <div class="pp-scard" id="story-{{ s.id }}" data-testid="pp-story-card">
+      <button type="button" class="pp-scard__open" hx-get="/stories/sheet?from=bank&story={{ s.id }}{% if opp_id %}&opp={{ opp_id }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" aria-label="Edit {{ s.title }}">
+        <b>{{ s.title }}</b><p>{{ s.situation }} {{ s.action }}</p></button>
+      <div class="pp-scard__meta">{% for th in s.themes %}<span class="k-tag">{{ th.replace('_', ' ') }}</span>{% endfor %}{% if not s.themes %}<span class="k-muted">no themes tagged</span>{% endif %}<span class="pp-scard__used">Used in {{ s.used }} {{ 'role' if s.used == 1 else 'roles' }}</span></div>
+    </div>
+    {%- else %}
+    <p class="k-muted" data-testid="pp-nostories">Stories you save appear here.</p>
+    {%- endfor %}
+  </div>
+
+  <section class="k-card" id="your-notes" data-testid="your-notes">
+    <header class="k-sec-head"><span class="k-badge k-badge--good">{{ i.pi('note') }}</span><div class="k-grow"><h3>Your notes</h3></div></header>
+    {%- if notes_list %}
+    <ul class="pp-notes-list">
+      {%- for n in notes_list %}
+      <li><a href="/prep/{{ n.opportunity_id }}#prep-notes" data-testid="note-link">{{ n.title }}{% if n.org %} at {{ n.org }}{% endif %}</a>
+        <span class="k-muted">saved {{ n.saved_at }}</span>
+        {%- if n.preview %}<div class="k-muted">{{ n.preview }}</div>{% endif %}</li>
+      {%- endfor %}
+    </ul>
+    {%- else %}
+    <p class="k-muted" data-testid="no-notes">No notes yet. Open a role's interview prep and write what you want to remember or say. Build stories reads those notes.</p>
+    {%- endif %}
+    <form method="get" action="/stories/notes/add" class="pp-addnotes" data-testid="add-notes">
+      {%- if note_choices %}
+      <label for="notes-role">Add notes for a role</label>
+      <select id="notes-role" name="opportunity_id" class="k-select" required>
+        <option value="">Pick a role from your shortlist or applications</option>
+        {%- for c in note_choices %}<option value="{{ c.id }}">{{ c.label }}{% if c.org %} at {{ c.org }}{% endif %}</option>{% endfor %}
+      </select>
+      <button class="k-btn k-btn--sm" type="submit">Add notes</button>
+      {%- else %}
+      <span class="k-muted">Add a role to your shortlist to write notes for its interview.</span>
+      {%- endif %}
+    </form>
+  </section>
+</div>

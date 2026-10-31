@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from importlib.metadata import distributions
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 import yaml
@@ -50,6 +51,7 @@ SECRET_KEY_WORDS: tuple[str, ...] = ("key", "secret", "token", "password")
 KEEP_KEYS: frozenset[str] = frozenset({"api_key_env"})
 LOG_TAIL_LINES = 2000
 QUARANTINE_ROWS = 20
+ROLE_ROWS = 500  # roles.json: the newest roles by ID (owner round 14)
 RAW_RESPONSE_CHARS = 500
 RUN_ROWS = 5
 SCRAPE_RUN_ROWS = 10
@@ -80,7 +82,8 @@ CONTENTS: tuple[tuple[str, str], ...] = (
     (
         "settings.redacted.yml",
         "the effective settings with every key, secret, token and password value replaced by "
-        "<redacted>, and the names of the environment variables that are set (never values)",
+        "<redacted>, backend addresses hidden, and the names of the environment variables that "
+        "are set (never values)",
     ),
     (
         "logs/",
@@ -92,6 +95,14 @@ CONTENTS: tuple[tuple[str, str], ...] = (
         f"the last {QUARANTINE_ROWS} quarantine rows: tier, model, error, time, and the raw model "
         f"response cut to {RAW_RESPONSE_CHARS} characters; raw model output may quote the posting, "
         "so delete this file from the zip if you would rather not share it",
+    ),
+    (
+        "roles.json",
+        f"the newest {ROLE_ROWS} roles by role ID (the ID shows under Show details on a role's "
+        "Evaluation tab): title, organization, the location as posted and as Kestrel read it, the "
+        "remote type, the stage and the rule that set it aside, the posting's site, and each "
+        "scoring pass (tier, model, prompt version, verdict, scores, the five dimension scores and "
+        "the warning signs). Never the posting text, your profile, your resume or your notes",
     ),
     ("packages.txt", "installed Python packages and their versions"),
 )
@@ -151,7 +162,8 @@ def saved_secret_values() -> list[str]:
 
 
 def make_scrubber(
-    redaction: Mapping[str, str] | None, secrets: Iterable[str] = ()
+    redaction: Mapping[str, str] | None, secrets: Iterable[str] = (), *,
+    addresses: Iterable[str] = (),
 ) -> Scrubber:
     """Token masking always, plus every saved key value whatever its shape (a key that matches
     no token pattern must still never ride out in a log line); employer redaction when
@@ -161,6 +173,11 @@ def make_scrubber(
     mapping = (redaction if isinstance(redaction, EmployerMap)
                else from_pairs(dict(redaction or {}).items()))
     raw = {v for v in secrets if v and len(v) >= MIN_SECRET_CHARS}
+    addresses = set(addresses)
+    short_hosts = {
+        value for value in addresses if value and len(value) < MIN_SECRET_CHARS
+    }
+    raw.update(value for value in addresses if len(value) >= MIN_SECRET_CHARS)
     # App events reach the log as JSON, which escapes `"` and `\`. A key containing either would
     # appear in its escaped form and slip past an exact match on the raw value, so both are masked.
     escaped = {json.dumps(v, ensure_ascii=False)[1:-1] for v in raw}
@@ -170,6 +187,8 @@ def make_scrubber(
         out = text
         for v in values:
             out = out.replace(v, REDACTED)
+        for host in short_hosts:
+            out = re.sub(r"(?<![\w.-])" + re.escape(host) + r"(?![\w.-])", REDACTED, out)
         return mask_tokens(redact_text(out, mapping, enabled=bool(mapping)) or "")
 
     return scrub
@@ -419,21 +438,33 @@ def recent_scrape_runs(conn: sqlite3.Connection, scrub: Scrubber) -> list[dict[s
         ).fetchall()
     except sqlite3.Error as exc:
         return f"unavailable: {exc}"
-    return [
-        {
+    out = []
+    for r in rows:
+        loaded = _loads(r["counts"])
+        counts = loaded if isinstance(loaded, dict) else {}
+        out.append({
             "id": r["id"],
             "source_kind": r["kind"],
             "status": r["status"],
-            "counts": _loads(r["counts"]),
+            "counts": counts,
+            "dropped_outside_area": counts.get("dropped_outside_area", 0),
+            "dropped_unrelated_title": counts.get("dropped_unrelated_title", 0),
             "started_at": r["started_at"],
             "finished_at": r["finished_at"],
             "error": scrub(r["error"]) if r["error"] else None,
-        }
-        for r in rows
-    ]
+        })
+    return out
 
 
-def quarantine_rows(conn: sqlite3.Connection | None, scrub: Scrubber) -> dict[str, Any]:
+WITHHELD = "withheld: Kestrel could not confirm your current employer would be hidden"
+
+
+def quarantine_rows(
+    conn: sqlite3.Connection | None, scrub: Scrubber, *, conservative: bool = False
+) -> dict[str, Any]:
+    """The newest quarantine rows. `conservative` leaves out every excerpt of model output (the
+    raw response and the error text, either of which can quote a posting) and keeps the
+    counts, tier, model and time: used when confidential mode cannot be honored."""
     if conn is None:
         return {"note": "database not initialized", "rows": []}
     try:
@@ -452,17 +483,79 @@ def quarantine_rows(conn: sqlite3.Connection | None, scrub: Scrubber) -> dict[st
                 "opportunity_id": r["opportunity_id"],
                 "tier": r["tier"],
                 "model": r["model"],
-                "error": scrub(r["error"]) if r["error"] else None,
+                "error": (WITHHELD if conservative else scrub(r["error"])) if r["error"] else None,
                 "attempts": r["attempts"],
                 "created_at": r["created_at"],
-                "raw_response": scrub(raw[:RAW_RESPONSE_CHARS]),
+                "raw_response": WITHHELD if conservative else scrub(raw[:RAW_RESPONSE_CHARS]),
                 "raw_response_truncated": len(raw) > RAW_RESPONSE_CHARS,
             }
         )
-    return {
-        "note": f"last {QUARANTINE_ROWS} rows; raw_response cut to {RAW_RESPONSE_CHARS} characters",
-        "rows": out,
-    }
+    note = f"last {QUARANTINE_ROWS} rows; raw_response cut to {RAW_RESPONSE_CHARS} characters"
+    if conservative:
+        note = f"last {QUARANTINE_ROWS} rows; excerpts {WITHHELD}"
+    return {"note": note, "rows": out}
+
+
+def role_rows(
+    conn: sqlite3.Connection | None, scrub: Scrubber, *, conservative: bool = False
+) -> dict[str, Any]:
+    """The newest roles with what the filters and each scoring pass decided, so a role ID the
+    operator reads off its Evaluation tab can be looked up (owner round 14). Posting text, the
+    model's prose and anything about the operator stay out. `conservative` (confidential mode
+    that cannot be honored) withholds titles and organizations."""
+    if conn is None:
+        return {"note": "database not initialized", "rows": []}
+    from urllib.parse import urlparse
+
+    try:
+        opps = conn.execute(
+            "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "
+            "stage_reason, url, first_seen_at, date_posted FROM opportunity "
+            f"ORDER BY id DESC LIMIT {ROLE_ROWS}"
+        ).fetchall()
+        ids = [r["id"] for r in opps]
+        evs: dict[int, list[dict[str, Any]]] = {}
+        if ids:
+            marks = ",".join("?" * len(ids))
+            for e in conn.execute(
+                "SELECT opportunity_id, tier, model, prompt_version, verdict, score, "
+                "weighted_score, needs_review, dimensions, legitimacy, created_at "
+                f"FROM evaluation WHERE opportunity_id IN ({marks}) ORDER BY id", ids
+            ).fetchall():
+                legit = _loads(e["legitimacy"]) or {}
+                signals = legit.get("signals") if isinstance(legit, dict) else None
+                dims = _loads(e["dimensions"])
+                evs.setdefault(e["opportunity_id"], []).append({
+                    "tier": e["tier"], "model": e["model"], "prompt": e["prompt_version"],
+                    "verdict": e["verdict"], "score": e["score"],
+                    "weighted_score": e["weighted_score"], "needs_review": bool(e["needs_review"]),
+                    "dimensions": {k: v.get("score") if isinstance(v, dict) else v
+                                   for k, v in dims.items()} if isinstance(dims, dict) else None,
+                    "signals": [s.get("kind") if isinstance(s, dict) else s
+                                for s in signals] if isinstance(signals, list) else None,
+                    "created_at": e["created_at"],
+                })
+    except sqlite3.Error as exc:
+        return {"note": f"unavailable: {exc}", "rows": []}
+    out = []
+    for r in opps:
+        out.append({
+            "id": r["id"],
+            "title": WITHHELD if conservative else scrub(r["title"] or ""),
+            "org": WITHHELD if conservative else scrub(r["org_name"] or ""),
+            "location_raw": r["location_raw"], "country": r["country"], "state": r["state"],
+            "city": r["city"], "remote_type": r["remote_type"], "stage": r["stage"],
+            # A site name ("acme.wd5.myworkdayjobs.com") or a set-aside reason can name the
+            # employer: scrubbed, and withheld with the title when confidential mode cannot be
+            # honored (round 14 review).
+            "stage_reason": (WITHHELD if conservative else scrub(r["stage_reason"]))
+            if r["stage_reason"] else None,
+            "site": (WITHHELD if conservative else scrub(urlparse(r["url"]).hostname or ""))
+            if r["url"] else None,
+            "first_seen_at": r["first_seen_at"], "date_posted": r["date_posted"],
+            "evaluations": evs.get(r["id"], []),
+        })
+    return {"note": f"newest {ROLE_ROWS} roles by ID; no posting text", "rows": out}
 
 
 def summary(settings: Settings, scrub: Scrubber) -> dict[str, Any]:
@@ -560,12 +653,46 @@ def environment_names(settings: Settings) -> dict[str, Any]:
     }
 
 
-def redacted_settings_yaml(settings: Settings) -> str:
+def redacted_settings_yaml(
+    settings: Settings, *, scrub: Scrubber | None = None, key_scrub: Scrubber | None = None,
+) -> str:
     doc = {
         "settings": redact_tree(settings.model_dump(mode="json")),
         "environment": environment_names(settings),
     }
-    return yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    scrub = scrub or make_scrubber(None, addresses=_backend_addresses(settings))
+    return yaml.safe_dump(
+        _scrub_values(doc, scrub, key_scrub or make_scrubber(None)),
+        sort_keys=False, allow_unicode=True, default_flow_style=False,
+    )
+
+
+def _scrub_values(value: Any, scrub: Scrubber, key_scrub: Scrubber) -> Any:
+    if isinstance(value, dict):
+        return {
+            key_scrub(key) if isinstance(key, str) else key: _scrub_values(item, scrub, key_scrub)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_values(item, scrub, key_scrub) for item in value]
+    return scrub(value) if isinstance(value, str) else value
+
+
+def _backend_addresses(settings: Settings) -> set[str]:
+    """Endpoint addresses and hosts are private regardless of where they were configured."""
+    values = set()
+    for backend in settings.llm.backends.values():
+        address = backend.base_url
+        if not address:
+            continue
+        values.add(address)
+        try:
+            host = urlsplit(address).hostname
+        except ValueError:
+            continue
+        if host:
+            values.add(host)
+    return values
 
 
 def log_tails(scrub: Scrubber) -> list[tuple[str, str]]:
@@ -602,18 +729,26 @@ def packages_text() -> str:
 
 # ------------------------------------------------------------------------------------- build
 def build_bundle(
-    settings: Settings, *, out_dir: str | Path, redaction: Mapping[str, str] | None = None
+    settings: Settings,
+    *,
+    out_dir: str | Path,
+    redaction: Mapping[str, str] | None = None,
+    conservative: bool = False,
 ) -> Path:
     """Write the zip under `out_dir` and return its path. `redaction` is the confidential-mode
     map (web/redact.redaction_map) when that mode is on; the caller resolves it on the event loop
-    and this function runs in a thread."""
+    and this function runs in a thread. `conservative` drops the quarantine excerpts (see
+    quarantine_rows) for a caller that cannot guarantee the employer is hidden."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     archive = _unique_archive(out)
-    scrub = make_scrubber(redaction, saved_secret_values())
+    secrets = saved_secret_values()
+    key_scrub = make_scrubber(redaction, secrets)
+    scrub = make_scrubber(redaction, secrets, addresses=_backend_addresses(settings))
     conn = _connect()
     try:
-        quarantine = quarantine_rows(conn, scrub)
+        quarantine = quarantine_rows(conn, scrub, conservative=conservative)
+        roles = role_rows(conn, scrub, conservative=conservative)
     finally:
         if conn is not None:
             conn.close()
@@ -624,12 +759,17 @@ def build_bundle(
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("README.txt", readme_text())
-            z.writestr("summary.json", scrub(_json(summary(settings, scrub))))
-            z.writestr("doctor.json", scrub(_json(doctor_rows())))
-            z.writestr("settings.redacted.yml", scrub(redacted_settings_yaml(settings)))
+            z.writestr("summary.json", _json(
+                _scrub_values(summary(settings, scrub), scrub, key_scrub),
+            ))
+            z.writestr("doctor.json", _json(_scrub_values(doctor_rows(), scrub, key_scrub)))
+            z.writestr("settings.redacted.yml", redacted_settings_yaml(
+                settings, scrub=scrub, key_scrub=key_scrub,
+            ))
             for name, text in log_tails(scrub):
                 z.writestr(name, text)
-            z.writestr("quarantine.json", scrub(_json(quarantine)))
+            z.writestr("quarantine.json", _json(_scrub_values(quarantine, scrub, key_scrub)))
+            z.writestr("roles.json", _json(_scrub_values(roles, scrub, key_scrub)))
             z.writestr("packages.txt", packages_text())
         os.replace(part, archive)
         finished = True
@@ -653,13 +793,15 @@ def _unique_archive(out: Path) -> Path:
 
 
 def build_bundle_to_temp(
-    settings: Settings, *, redaction: Mapping[str, str] | None = None
+    settings: Settings, *, redaction: Mapping[str, str] | None = None, conservative: bool = False
 ) -> Path:
     """The same zip in a private temp directory for the web route to stream and then discard
     through `discard_bundle`; a failure during the build removes the directory itself."""
     staging = Path(tempfile.mkdtemp(prefix=_TEMP_PREFIX))
     try:
-        return build_bundle(settings, out_dir=staging, redaction=redaction)
+        return build_bundle(
+            settings, out_dir=staging, redaction=redaction, conservative=conservative
+        )
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise

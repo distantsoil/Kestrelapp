@@ -1,65 +1,83 @@
-<div id="runs-live" hx-get="/runs" hx-trigger="every 5s, run-refresh from:body" hx-swap="outerHTML">
-  {% set t1 = activity.tasks.get('t1', {}) %}
-  {% set t2 = activity.tasks.get('t2', {}) %}
-  {% set em = activity.tasks.get('embed', {}) %}
-  {% set sr = activity.tasks.get('scrape', {}) %}
-  {% for note in credit_notices or [] %}<div class="warnbox" role="status" data-testid="credit-notice" style="margin-bottom:.8rem">{{ note }}</div>{% endfor %}
-  <div class="grid2">
-    <div class="panel">
-      <h2>Live queue</h2>
-      <table>
-        <thead><tr><th>Step</th><th class="num">Pending</th><th class="num">Leased</th><th class="num">Done</th></tr></thead>
-        <tbody>
-          <tr><td>Scan</td><td class="num mono">{{ sr.get('pending',0) }}</td><td class="num mono">{{ sr.get('leased',0) }}</td><td class="num mono">{{ sr.get('done',0) }}</td></tr>
-          <tr><td title="Tier 1">Quick screen</td><td class="num mono">{{ t1.get('pending',0) }}</td><td class="num mono">{{ t1.get('leased',0) }}</td><td class="num mono">{{ t1.get('done',0) }}</td></tr>
-          <tr><td title="Tier 2">Full review</td><td class="num mono">{{ t2.get('pending',0) }}</td><td class="num mono">{{ t2.get('leased',0) }}</td><td class="num mono">{{ t2.get('done',0) }}</td></tr>
-          <tr><td title="Embed">Indexing</td><td class="num mono">{{ em.get('pending',0) }}</td><td class="num mono">{{ em.get('leased',0) }}</td><td class="num mono">{{ em.get('done',0) }}</td></tr>
-        </tbody>
-      </table>
-      <p class="muted" style="margin-top:8px">Failed scoring: {{ activity.quarantined }}{% if activity.quarantined %} (parked, not part of the queue; <a href="/quarantine">review</a> only if you want them retried){% endif %}</p>
-    </div>
-    <div class="panel" data-testid="latest-run">
-      <h2>Latest run</h2>
-      {% include "partials/run_live_panel.html" %}
-      {% if run_model %}<p class="muted" data-testid="run-model">Scoring on {{ run_model }}</p>{% endif %}
-      {% set r = activity.latest_run %}
-      {% if r %}
-        {% set c = r.counts or {} %}
-        {% if r.status == 'running' %}
-          <p><b>Running</b> <span class="badge">#{{ r.id }}</span>{% if r.mode %} <span class="badge">{{ r.mode }}</span>{% endif %} <span class="muted">{{ r.name }}{% if r.track %} · {{ r.track }}{% endif %}</span></p>
-          <p class="muted">started {{ r.started_at }}. These totals update as each stage finishes.</p>
-        {% else %}
-          <p><b>{{ r.name }}</b> <span class="badge">{{ r.status }}</span>{% if r.mode %} <span class="badge">{{ r.mode }}</span>{% endif %} {% if r.track %}· {{ r.track }}{% endif %}</p>
-          <p class="muted">started {{ r.started_at }}{% if r.finished_at %} · finished {{ r.finished_at }}{% endif %}</p>
-        {% endif %}
-        {% if c.get('scrape') %}
-          {% set sc = c.get('scrape') %}
-          <p>Scan: {{ sc.get('completed',0) }} search{{ 'es' if sc.get('completed',0) != 1 }}, {{ sc.get('new',0) }} new{% if sc.get('errors') %}, {{ sc.get('errors') }} failed{% endif %}</p>
-        {% endif %}
-        {% if c.get('tier1') or c.get('tier2') %}
-          {% set c1 = c.get('tier1', {}) %}{% set c2 = c.get('tier2', {}) %}
-          <p><span title="Tier 1">Quick screen</span>: {{ c1.get('completed',0) }} done, {{ c1.get('per_minute',0) }}/min · <span title="Tier 2">Full review</span>: {{ c2.get('completed',0) }} done, {{ c2.get('per_minute',0) }}/min</p>
-        {% endif %}
-        {% if c.get('tier0') %}{% set c0 = c.get('tier0') %}<p class="muted"><span title="Tier 0">Rules check</span>: {{ c0.get('seen', 0) }} checked, {{ c0.get('reject', 0) }} set aside</p>{% endif %}
-        {% if r.notes %}<p class="muted">{{ r.notes }}</p>{% endif %}
-      {% else %}<p class="muted">No runs yet. A run is recorded when the worker has something to scan or score.</p>{% endif %}
+{# The live card (D-UI-58) and Latest run. Elements carrying data-live / data-w / data-state are
+   what runs.js updates in place; nothing else is re-created while the run keeps going. #}
+{% import "ui/macros.html" as ui %}
+{% macro glyph(kind) -%}
+{%- if kind == 'pause' -%}<svg class="k-ic k-ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+{%- else -%}<svg class="k-ic k-ic--sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>{%- endif -%}
+{%- endmacro %}
+<div class="rn-ctx" data-live="notes">{% for note in credit_notices or [] %}<div class="rn-note is-warn" role="status" data-testid="credit-notice">{{ note }}</div>{% endfor %}</div>
+{% if state in ('active', 'paused') %}
+<div class="rn-live-in" data-testid="run-live" data-run="{{ state }}">
+  <div class="rn-top">
+    {% if state == 'active' %}<span class="k-dot k-dot--live rn-bigdot" aria-hidden="true"></span>{% else %}<span class="k-badge k-badge--muted">{{ glyph('pause') }}</span>{% endif %}
+    <div class="k-grow"><h3>{{ 'Running now' if state == 'active' else 'Paused' }}</h3>
+      <div class="rn-step" data-live="step" data-testid="run-step">{% if state == 'active' %}{{ v.step or 'Starting' }}{% else %}{{ v.headline }}. Nothing new starts until you resume.{% endif %}</div></div>
+    <div class="rn-acts" data-testid="rn-acts">
+      <span class="rn-acts__main">
+        {% if state == 'active' %}<button type="button" class="k-btn k-btn--sm" data-testid="run-pause" hx-post="/runs/pause" hx-swap="none">{{ glyph('pause') }}Pause</button>
+        {% else %}<button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="run-resume" hx-post="/runs/resume" hx-swap="none">{{ ui.icon('play', 'k-ic--sm') }}Resume</button>{% endif %}
+        {% if v.run_id %}<button type="button" class="k-btn k-btn--sm" data-rn-stop data-testid="run-stop">{{ glyph('stop') }}Stop</button>{% endif %}
+      </span>
+      <span class="rn-acts__ask" hidden><span class="rn-cfm">Stop this run? Everything done so far is kept, and Run now or Resume picks up the rest.</span>
+        <button type="button" class="k-btn k-btn--sm" hx-post="/runs/stop" hx-swap="none" data-testid="run-stop-yes">Stop</button>
+        <button type="button" class="k-btn k-btn--primary k-btn--sm" data-rn-keep>Keep running</button></span>
     </div>
   </div>
-  <div class="panel" data-testid="recent-scans" style="margin-top:1rem">
-    <h2>Recent scans</h2>
-    <table>
-      <thead><tr><th>Search</th><th>Status</th><th>Started</th><th>Finished</th><th class="num">New</th></tr></thead>
-      <tbody>
-        {% for sc in scans or [] %}
-        <tr>
-          <td>{{ sc.source }}</td>
-          <td><span class="badge">{{ sc.status }}</span>{% if sc.error %} <small class="muted">{{ sc.error }}</small>{% endif %}{% if sc.model %} <small class="muted" data-testid="scan-model">on {{ sc.model }}</small>{% endif %}</td>
-          <td class="mono"><small>{{ sc.started_at }}</small></td>
-          <td class="mono"><small>{{ sc.finished_at or '–' }}</small></td>
-          <td class="num mono">{{ sc.new }}</td>
-        </tr>
-        {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No scans yet.</td></tr>{% endfor %}
-      </tbody>
-    </table>
+  <div class="rn-stages" role="list">
+    {% for t in tiles %}
+    <div class="rn-stg" role="listitem" data-bar="{{ t.key }}" data-live-key="{{ t.key }}" data-state="{{ t.state }}">
+      <div class="rn-stg__nm">{{ ui.icon(t.icon, 'k-ic--sm') }}<span>{{ t.label }}</span>{% if t.online %}<span class="rn-cloud" title="Runs on your online model">{{ ui.icon('cloud', 'k-ic--sm') }}Online</span>{% endif %}</div>
+      <div class="rn-bar" role="img" aria-label="{{ t.label }}: {{ t.done }} of {{ t.total }}"><i class="is-ok" data-w="{{ t.good_pct }}" style="width:{{ t.good_pct }}%"></i><i class="is-bad" data-w="{{ t.bad_pct }}" style="width:{{ t.bad_pct }}%"></i></div>
+      <div class="rn-stg__ct" data-live="ct-{{ t.key }}">{{ t.caption }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="rn-ctx" data-live="online">
+  {% if online_run %}
+  <div class="rn-online" data-testid="rn-online">{{ ui.icon('cloud', 'k-ic--sm') }}<span>Online: {{ model.provider or 'your provider' }}{% if model.model %} · {{ model.model }}{% endif %}</span>{% if model.both %}<span class="k-muted">Quick screen on this computer</span>{% endif %}</div>
+  <div class="rn-spend" data-testid="rn-spend"><span>This run so far: <b>{{ model.spend or 'Not recorded' }}</b></span>{% if model.estimate %}<span>To finish: <b>{{ model.estimate }}</b></span>{% endif %}{% if model.credit %}<span class="k-muted">{{ model.credit }}</span>{% endif %}{% if model.left %}<span class="k-muted">{{ model.left }}</span>{% endif %}</div>
+  {% endif %}
+  {% if run_model %}<p class="k-muted rn-small" data-testid="run-model">Scoring on {{ run_model }}</p>{% endif %}
+  </div>
+  <div class="rn-feedrow">
+    <div class="rn-feedwrap"><div class="rn-eyebrow">Latest</div>
+      <ul class="rn-feed" data-feed data-testid="run-events">
+        {% for e in events[:6] %}<li class="is-{{ e.tone }}" data-k="{{ e.key }}"><span class="rn-feed__at">{{ e.hhmm or '' }}</span><span>{{ e.text }}</span></li>{% else %}<li class="is-idle" data-k="none"><span class="rn-feed__at"></span><span>Nothing has happened yet.</span></li>{% endfor %}
+      </ul></div>
+    <div class="rn-alive{{ ' is-stale' if v.stalled }}" data-live="alive" data-testid="{{ 'run-stall' if v.stalled else 'run-activity' }}">
+      {% if state == 'paused' %}Paused by you
+      {% elif v.stalled %}{{ ui.icon('alert', 'k-ic--sm') }}No activity for {{ v.stalled_minutes }} {{ 'minute' if v.stalled_minutes == 1 else 'minutes' }} · <a class="k-link" href="/about#diagnostics">Diagnostics</a>
+      {% else %}<span class="k-dot k-dot--live" aria-hidden="true"></span>Last activity {{ v.last_activity_words }}{% endif %}
+    </div>
   </div>
 </div>
+{% elif v.has_run %}
+{% set row = latest %}
+<div class="rn-live-in" data-testid="run-live" data-run="idle">
+  <div class="rn-top">
+    <span class="k-badge k-badge--lg {{ 'k-badge--good' if row and row.status.key == 'finished' else 'k-badge--warn' if row and row.status.key in ('partial','failed') else 'k-badge--muted' }}">{{ ui.icon('check' if row and row.status.key == 'finished' else 'alert', '') }}</span>
+    <div class="k-grow"><h3>Latest run {% if row %}<span class="k-pill{{ ' k-pill--' ~ row.status.tone if row.status.tone }}">{{ row.status.label }}</span>{% endif %}</h3>
+      <div class="rn-sub" data-testid="run-step">{% if row %}{{ row.day }} at {{ row.at }}{% else %}{{ v.when or 'Recently' }}{% endif %}{% if row and row.mode.label %} · {{ row.mode.label }}{% endif %}{% if model.model %}, {{ model.model }}{% endif %}</div></div>
+    {% if v.run_id %}<button type="button" class="k-btn k-btn--sm" data-k-slideover="#rn-drawer" hx-get="/runs/{{ v.run_id }}/drawer" hx-target="#rn-drawer-body" hx-swap="innerHTML" data-testid="rn-view-run">View run details</button>{% endif %}
+  </div>
+  <div class="rn-tiles">
+    <div class="rn-tile"><span class="k-badge">{{ ui.icon('search') }}</span><div><b>{{ v.found_new }}</b><span>found</span></div></div>
+    <div class="rn-tile"><span class="k-badge k-badge--good">{{ ui.icon('star') }}</span><div><b>{{ v.rated }}</b><span>rated</span></div></div>
+    <div class="rn-tile"><span class="k-badge {{ 'k-badge--bad' if v.failed else 'k-badge--muted' }}">{{ ui.icon('alert') }}</span><div><b>{{ v.failed }}</b><span>failed</span></div></div>
+    <div class="rn-tile"><span class="k-badge {{ 'k-badge--warn' if waiting_total else 'k-badge--muted' }}">{{ ui.icon('clock') }}</span><div><b>{{ waiting_total }}</b><span>waiting for another try</span></div></div>
+  </div>
+  <div class="rn-minis{{ ' rn-minis--4' if model.online }}">
+    <div class="rn-mini"><span class="k-badge">{{ ui.icon('clock') }}</span><div><span class="rn-mini__k">Duration</span><b>{{ row.duration if row and row.duration else 'n/a' }}</b></div></div>
+    <div class="rn-mini"><span class="k-badge">{{ ui.icon('cpu') }}</span><div><span class="rn-mini__k">Model</span><b>{{ model.title }}</b>{% if model.model %}<span class="rn-mini__s">{{ model.model }}</span>{% endif %}</div></div>
+    <div class="rn-mini"><span class="k-badge">{{ ui.icon('sources') }}</span><div><span class="rn-mini__k">Sources</span><b>{{ sources_checked }}</b><span class="rn-mini__s">{{ 'checked' if sources_checked else 'none recorded' }}</span></div></div>
+    {% if model.online %}<div class="rn-mini"><span class="k-badge">{{ ui.icon('cloud') }}</span><div><span class="rn-mini__k">Online cost</span><b>{{ model.spend or 'Not recorded' }}</b><span class="rn-mini__s">{{ model.left or model.credit or 'Credit left not shown' }}</span></div></div>{% endif %}
+  </div>
+  <p class="k-muted rn-small">New matches are on <a class="k-link" href="/">Today</a>.{% if v.problem_note %} {{ v.problem_note }}{% endif %}</p>
+  {% if run_model %}<p class="k-muted rn-small" data-testid="run-model">Scoring on {{ run_model }}</p>{% endif %}
+</div>
+{% else %}
+<div class="rn-live-in" data-testid="run-live" data-run="none">
+  <div class="rn-top"><span class="k-badge k-badge--muted k-badge--lg">{{ ui.icon('runs') }}</span>
+    <div class="k-grow"><h3>No runs yet</h3><div class="rn-sub">A run is recorded when the worker has something to scan or score.</div></div></div>
+</div>
+{% endif %}

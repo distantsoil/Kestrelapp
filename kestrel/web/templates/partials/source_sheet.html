@@ -1,0 +1,115 @@
+{# The Add a source sheet (D-UI-102): a tile per type, then the steps for the one chosen. A modal
+   on the shared design system. LinkedIn is not offered; the footer line points at the reasons.
+   Loaded into #src-sheet-slot; sources.js opens it. A refusal comes back as this same sheet. #}
+{% import "ui/macros.html" as ui %}
+{% set values = values or {} %}
+{% set titles = {'boards': 'Add a job board search', 'ats': 'Add a company', 'name': 'Add a company by name', 'feeds': ('Add a company news feed' if track == 'consulting' else 'Add a job feed'), 'gov': 'Add a bid search', 'sig': 'Watch a company'} %}
+<div class="k-modal src-sheet" id="src-sheet" role="dialog" aria-modal="true" aria-labelledby="src-sheet-t" aria-hidden="true" data-testid="add-sheet" data-kind="{{ kind }}">
+  <div class="k-modal__head src-sheet__head">
+    {% if kind %}<button type="button" class="k-iconbtn" hx-get="/sources/add" hx-target="#src-sheet-slot" hx-swap="innerHTML" aria-label="Back">{{ ui.icon('arrow', 'k-ic--sm') }}</button>{% endif %}
+    <div class="k-grow"><h2 id="src-sheet-t">{{ titles.get(kind, 'Add a source') }}</h2>
+      {% if not kind %}<p class="src-sub">What should Kestrel watch? Kestrel also adds some by itself. <button type="button" class="k-link" data-k-flyout="#src-origin-fly">How?</button></p>{% endif %}</div>
+    <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ ui.icon('x') }}</button>
+  </div>
+  <div class="k-modal__body src-sheet__body">
+  {% if not kind %}
+    <div class="src-types">
+      {%- for key, title, line in types %}
+      <button type="button" class="src-type" hx-get="/sources/add/{{ key }}" hx-target="#src-sheet-slot" hx-swap="innerHTML" data-testid="type-{{ key }}">
+        <span class="k-badge">{{ ui.icon({'boards': 'compass', 'ats': 'folder', 'name': 'sources', 'gov': 'shield', 'sig': 'sources', 'feeds': 'sources'}.get(key, 'sources')) }}</span>
+        <span><b>{{ title }}</b><span class="src-sub">{{ line }}</span></span>
+      </button>
+      {%- endfor %}
+      <a class="src-type" href="{{ paste_href }}" data-testid="type-paste">
+        <span class="k-badge">{{ ui.icon('profile') }}</span>
+        <span><b>One posting</b><span class="src-sub">Paste a single role instead. It goes to {{ paste_label }}.</span></span>
+      </a>
+    </div>
+    <p class="src-sub src-sheet__foot">Some sites can’t be read. <button type="button" class="k-link" data-k-flyout="#src-limits-fly">Which ones, and why?</button></p>
+  {% else %}
+    {% if error %}<div class="src-msg is-bad" role="alert" data-testid="add-error">{{ ui.icon('alert') }}<div>{{ error }}</div></div>{% endif %}
+    <form id="src-add-form" class="src-sheet__form" hx-post="/sources/add/{{ kind }}" hx-target="#src-sheet-slot" hx-swap="innerHTML" autocomplete="off">
+    {% if kind == 'boards' %}
+      <p class="src-intro">Kestrel runs this search on every check and adds new matches to Pipeline. Tip: one job title per search.</p>
+      <ol class="src-steps"><li>Type one job title.</li><li>Type a place, or Remote.</li><li>Pick one or more boards. Indeed and Glassdoor work best.</li></ol>
+      <div class="k-field"><label for="sh-title">Job title or keywords</label><input id="sh-title" class="k-input" name="title" value="{{ values.get('title', '') }}" required></div>
+      <div class="k-field"><label for="sh-place">Place</label><input id="sh-place" class="k-input" name="place" value="{{ values.get('place', '') }}"><small>A city and state, or Remote.</small></div>
+      <fieldset class="src-boards" data-testid="board-pick"><legend>Boards</legend>
+        <div class="src-bdg"><div class="src-bdgl">Work well</div><div class="src-bdrow">
+        {%- for site, label, why in boards if not why %}
+        <label class="src-bd" data-why=""><input type="checkbox" name="board_{{ site }}" value="1" data-board="{{ site }}"{% if values.get('board_' ~ site) or (not values and site in ('indeed', 'glassdoor')) %} checked{% endif %}><span>{{ label }}</span></label>
+        {%- endfor %}</div></div>
+        <div class="src-bdg"><div class="src-bdgl">Official public access</div><div class="src-bdrow">
+        <label class="src-bd" data-why="" data-testid="board-usajobs"><input type="checkbox" name="board_usajobs" value="1" data-board="usajobs" data-src-key-panel="#src-usajobs"{% if values.get('board_usajobs') %} checked{% endif %}><span>{{ usajobs_board[1] }}<small>{{ usajobs_board[2] }}</small></span></label>
+        <label class="src-bd" data-why="" data-testid="board-adzuna"><input type="checkbox" name="board_adzuna" value="1" data-board="adzuna" data-src-key-panel="#src-adzuna"{% if values.get('board_adzuna') %} checked{% endif %}><span>{{ adzuna_board[1] }}</span></label></div></div>
+        <div class="src-bdg"><div class="src-bdgl">Remote jobs</div><div class="src-bdrow">
+        {%- for name, label, note in remote_boards %}
+        <label class="src-bd" data-why="" data-testid="board-{{ name }}"><input type="checkbox" name="board_{{ name }}" value="1" data-board="{{ name }}"{% if values.get('board_' ~ name) %} checked{% endif %}><span>{{ label }}<small>{{ note }}</small></span></label>
+        {%- endfor %}</div></div>
+        <div class="src-bdg"><div class="src-bdgl">Limited</div><div class="src-bdrow">
+        {%- for site, label, why in boards if why %}
+        <label class="src-bd is-limited" data-why="{{ why }}"><input type="checkbox" name="board_{{ site }}" value="1" data-board="{{ site }}"{% if values.get('board_' ~ site) %} checked{% endif %}><span>{{ label }}<small>Limited</small></span></label>
+        {%- endfor %}
+        <span class="src-bd is-no" title="{{ dice[1] }}" data-testid="board-dice"><span>{{ dice[0] }}<small>Cannot be added</small></span></span></div></div>
+      </fieldset>
+      <div class="src-keypanel" id="src-usajobs" data-testid="usajobs-panel"{% if not values.get('board_usajobs') %} hidden{% endif %}>
+        <p class="src-intro">USAJobs needs a free key of your own. <a class="k-link" href="{{ usajobs_signup }}" target="_blank" rel="noopener noreferrer" data-testid="usajobs-signup">Get a free USAJobs key</a>, then paste it here with the email address you used.</p>
+        <div class="k-field"><label for="sh-ujkey">USAJobs API key</label><input id="sh-ujkey" class="k-input" type="password" name="usajobs_key" autocomplete="off" placeholder="{{ 'Key saved: ' ~ (usajobs.masked if usajobs else '') if usajobs and usajobs.present else 'Paste your key' }}"></div>
+        <div class="k-field"><label for="sh-ujmail">Email you used to get the key</label><input id="sh-ujmail" class="k-input" type="email" name="usajobs_email" autocomplete="off" value="{{ values.get('usajobs_email') or (usajobs.email if usajobs else '') }}" placeholder="you@example.com"></div>
+        <small data-testid="usajobs-sent">{{ usajobs_sent }}</small>
+      </div>
+      <div class="src-keypanel" id="src-adzuna" data-testid="adzuna-panel"{% if not values.get('board_adzuna') %} hidden{% endif %}>
+        <p class="src-intro">Adzuna needs a free app ID and app key of your own. <a class="k-link" href="{{ adzuna_signup }}" target="_blank" rel="noopener noreferrer" data-testid="adzuna-signup">Get a free Adzuna key</a>, then paste both here. A check uses up to 8 of your free calls (about 250 a day).</p>
+        <div class="k-field"><label for="sh-azid">Adzuna app ID</label><input id="sh-azid" class="k-input" type="password" name="adzuna_id" autocomplete="off" placeholder="{{ 'App ID saved' if adzuna and adzuna.id_present else 'Paste your app ID' }}"></div>
+        <div class="k-field"><label for="sh-azkey">Adzuna app key</label><input id="sh-azkey" class="k-input" type="password" name="adzuna_key" autocomplete="off" placeholder="{{ 'Key saved: ' ~ adzuna.masked if adzuna and adzuna.key_present else 'Paste your app key' }}"></div>
+        <small data-testid="adzuna-sent">{{ adzuna_sent }}</small>
+      </div>
+      <div id="src-bdmsg" role="status" data-testid="board-note"></div>
+      <fieldset class="src-indeed" id="src-indeed"><legend>Indeed allows one extra filter per search</legend>
+        {% set f = values.get('indeed_filter', 'hours') %}
+        <label><input type="radio" name="indeed_filter" value="hours"{{ ' checked' if f == 'hours' }}> Posted within <span class="k-select"><select class="k-input" name="hours_days"><option value="1">a day</option><option value="3" selected>3 days</option><option value="7">a week</option></select></span></label>
+        <label><input type="radio" name="indeed_filter" value="type"{{ ' checked' if f == 'type' }}> Job type <span class="k-select"><select class="k-input" name="job_type"><option value="fulltime">Full time</option><option value="parttime">Part time</option><option value="contract">Contract</option></select></span></label>
+        <label><input type="radio" name="indeed_filter" value="remote"{{ ' checked' if f == 'remote' }}> Remote only</label>
+        <label><input type="radio" name="indeed_filter" value="easy"{{ ' checked' if f == 'easy' }}> Easy apply only</label>
+        <label><input type="radio" name="indeed_filter" value="none"{{ ' checked' if f == 'none' }}> No extra filter</label>
+        <small>Need two? Add a second search.</small>
+      </fieldset>
+    {% elif kind == 'ats' %}
+      <p class="src-intro"><b>Paste any careers page link. Kestrel reads most of them.</b> It reads the company’s own job list directly, so you see roles that may not be on job boards.</p>
+      <ol class="src-steps"><li>Open the company’s careers page.</li><li>Click any job.</li><li>Copy the address from your browser and paste it here.</li></ol>
+      <div class="k-field"><label for="sh-url">Job link or careers page link</label><input id="sh-url" class="k-input" type="url" name="url" placeholder="https://" value="{{ values.get('url', '') }}" data-src-check-input></div>
+      <div class="k-field"><label>For example</label><div class="src-plats" data-testid="platforms">{% for p in supported.replace(' and ', ', ').split(', ') %}<span class="src-plat" data-p="{{ p }}">{{ p }}</span>{% endfor %}<span class="src-plat src-plat--more">and most other careers pages</span></div></div>
+      <div id="src-check" data-testid="check-result" aria-live="polite"></div>
+    {% elif kind == 'name' %}
+      <p class="src-intro">Type a company name. Kestrel tries the usual job board addresses for it, a few polite requests, and shows what it finds.</p>
+      <ol class="src-steps"><li>Type the company name.</li><li>Choose Find it.</li><li>Check the match and add it.</li></ol>
+      <div class="k-field"><label for="sh-q">Company name</label><input id="sh-q" class="k-input" name="q" placeholder="Summit Outdoor Co." value="{{ values.get('q', '') }}" data-src-check-input></div>
+      <div id="src-check" data-testid="check-result" aria-live="polite"></div>
+    {% elif kind == 'feeds' %}
+      {% if track == 'consulting' %}<p class="src-intro">A feed (RSS or Atom) is a list of new items that a site publishes for apps to read. Company newsrooms often offer one. Each new item is read for signs a company will need help.</p>{% else %}<p class="src-intro">A feed (RSS or Atom) is a list of new postings that a site publishes for apps to read. Some job sites and newsletters offer one.</p>{% endif %}
+      <ol class="src-steps"><li>Look for “RSS” or a feed icon on the site.</li><li>Copy that link.</li><li>Paste it here and check it.</li></ol>
+      <div class="k-field"><label for="sh-furl">Feed link</label><input id="sh-furl" class="k-input" type="url" name="url" placeholder="https://" value="{{ values.get('url', '') }}" data-src-check-input></div>
+      {% if track == 'consulting' %}<div class="k-field"><label for="sh-fname">Name in your list</label><input id="sh-fname" class="k-input" name="name" value="{{ values.get('name', '') }}" placeholder="Company news"></div>{% endif %}
+      <div id="src-check" data-testid="check-result" aria-live="polite"></div>
+    {% elif kind == 'gov' %}
+      <p class="src-intro">Searches SAM.gov, where US government agencies post requests for proposals. Public listings only. It needs your own free key, saved under Sources that need your own key.</p>
+      <ol class="src-steps"><li>Type the industry codes (NAICS) for the work you do.</li><li>Kestrel checks daily and adds new bids to Pipeline.</li></ol>
+      <div class="k-field"><label for="sh-naics">Industry codes</label><input id="sh-naics" class="k-input" name="naics" value="{{ values.get('naics', '541512, 541611, 541519') }}"><small>Separate codes with commas.</small></div>
+      <div class="k-field"><label for="sh-gname">Name in your list</label><input id="sh-gname" class="k-input" name="name" value="{{ values.get('name', '') }}" placeholder="Federal opportunities"></div>
+    {% elif kind == 'sig' %}
+      <p class="src-intro">Kestrel watches public SEC filings for the company, looking for signs it may need help, like a new leader or an acquisition.</p>
+      <ol class="src-steps"><li>Type the company name.</li><li>New signals appear in Pipeline under Signals.</li></ol>
+      <div class="k-field"><label for="sh-co">Company</label><input id="sh-co" class="k-input" name="company" value="{{ values.get('company', '') }}" placeholder="Company name" required></div>
+      <div class="src-msg is-info">{{ ui.icon('sources') }}<div>Kestrel identifies itself to the SEC as it requires, and never contacts the company.</div></div>
+    {% endif %}
+    </form>
+  {% endif %}
+  </div>
+  <div class="k-modal__foot">
+    <button type="button" class="k-btn k-btn--sm" data-k-close>Cancel</button>
+    {% if kind in ('ats', 'name', 'feeds') %}
+    <button type="button" class="k-btn k-btn--sm" id="src-check-go" hx-post="/sources/check/{{ {'ats': 'link', 'name': 'company', 'feeds': 'feed'}[kind] }}" hx-include="#src-add-form [data-src-check-input]" hx-target="#src-check" hx-swap="innerHTML" data-busy-text="{{ 'Looking…' if kind == 'name' else 'Checking…' }}" data-testid="check-go">{{ 'Find it' if kind == 'name' else 'Check it' }}</button>
+    {% endif %}
+    {% if kind %}<button type="submit" form="src-add-form" class="k-btn k-btn--primary k-btn--sm" id="src-add-go" data-testid="add-go"{% if kind in ('ats', 'name', 'feeds') %} disabled{% endif %}>Add source</button>{% endif %}
+  </div>
+</div>

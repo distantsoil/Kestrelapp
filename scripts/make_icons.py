@@ -9,6 +9,8 @@ operator actually approved, which is why this rasterizes instead.
 
 Outputs:
   packaging/kestrel.ico            the installer and exe icon (256/128/64/48/32/16)
+  kestrel/resources/icons/kestrel.ico  the same bytes, shipped as package data: the Windows
+                                   notification IconUri (shell.register_notification_icon)
   packaging/kestrel.icns           the macOS app bundle icon (16 through 512, with @2x variants)
   kestrel/resources/icons/tray-*.png   the three tray states
   kestrel/web/static/icon-512.png  PWA install icon, and the AppImage's desktop icon
@@ -163,6 +165,10 @@ def build() -> int:
     base = _image(dark[max(ICO_SIZES)])
     base.save(ico_path, format="ICO", sizes=[(s, s) for s in ICO_SIZES])
     print(f"  {ico_path.relative_to(ROOT)}  {', '.join(str(s) for s in ICO_SIZES)}")
+    shipped_ico = ROOT / "kestrel" / "resources" / "icons" / "kestrel.ico"
+    shipped_ico.parent.mkdir(parents=True, exist_ok=True)
+    shipped_ico.write_bytes(ico_path.read_bytes())
+    print(f"  {shipped_ico.relative_to(ROOT)}  (copy)")
 
     # --- the macOS app icon --------------------------------------------------------------
     icns_path = ROOT / "packaging" / "kestrel.icns"

@@ -46,7 +46,7 @@ class RssSignalSource:
         signals: list[RawSignal] = []
         for url in config["feeds"]:
             try:
-                text = await client.get_text(url, rate_per_sec=rate)
+                text = await client.get_text(url, rate_per_sec=rate, public_only=True)
                 # stdlib ElementTree expands internal entities and has no XXE/billion-laughs
                 # hardening (defusedxml is not available). Refuse any feed that declares a DOCTYPE
                 # or ENTITY rather than risk resource exhaustion on a malicious/compromised feed.

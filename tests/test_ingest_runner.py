@@ -10,6 +10,7 @@ import respx
 from httpx import Response
 from sqlalchemy import func, select
 
+from kestrel import paths
 from kestrel.db.models import CompObservation, Notification, Opportunity, ScrapeRun, Source, Task
 from kestrel.ingest.http import HttpClient
 from kestrel.ingest.runner import run_source
@@ -18,6 +19,11 @@ _GH = json.loads((Path(__file__).parent / "fixtures" / "greenhouse.json").read_t
 
 
 async def _mk_source(sm, **kw) -> int:
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("profile.yml").write_text(
+        "employment:\n  employment_terms:\n    target_titles: [VP of IT, Sales Director]\n",
+        encoding="utf-8",
+    )
     fields = {"track": "employment", "kind": "greenhouse", "name": "s"}
     fields["config"] = {}
     fields["enabled"] = True

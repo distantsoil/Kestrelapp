@@ -28,7 +28,9 @@ def _repair_streams() -> None:
 def cli_args(argv: list[str]) -> list[str]:
     """The arguments that mean "run the CLI, not the window". Finder on older macOS launched apps
     with a `-psn_<n>` process-serial-number argument; that is a launch artifact, never a command."""
-    return [a for a in argv[1:] if not a.startswith("-psn_")]
+    # `--tray` is how the start-with-my-computer entry launches the app (kestrel.services.
+    # autostart): open quietly in the tray. It is a launch option, never a command.
+    return [a for a in argv[1:] if not a.startswith("-psn_") and a != "--tray"]
 
 
 def main() -> None:
@@ -49,7 +51,25 @@ def main() -> None:
 
     # run_desktop returns non-zero when the server never became healthy (the mutex is released and
     # the process must end); a dropped return code would leave a process the operator cannot see.
-    sys.exit(run_desktop())
+    end_process(run_desktop())
+
+
+def end_process(code: int) -> None:
+    """End the desktop process as soon as run_desktop has finished its shutdown (the server has
+    stopped, leases are released, runtime.json is gone). A plain exit waited 13 to 16 s more on
+    Windows for library threads and the WebView2 host to wind down (hardware check, round 3),
+    and D-UI-90 allows one to two seconds. Logs and the standard streams are flushed first."""
+    import logging
+    import os
+
+    logging.shutdown()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(int(code or 0))
 
 
 if __name__ == "__main__":

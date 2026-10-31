@@ -1,106 +1,81 @@
-{# Shared pieces of the Sources page (D-SRC-3). #}
+{# Pieces of the Sources page (D-UI-102). Built on the shared design system: ui/macros.html for
+   icons, tokens for every color. Imported under `ui`: base.html defines its own `icon`. #}
+{% import "ui/macros.html" as ui %}
 
-{# Run now (D-UI-72): opens the small dialog (usual models, or one model for this run only).
-   The form is a plain GET to the dialog page without script; with htmx it loads the dialog into
-   the slot beside it. Signal kinds (SEC, SAM.gov and the like) have no one-run model and run at
-   once on the usual models. #}
-{% macro run_now(src, signal_kinds) -%}
-  {% if src.kind in signal_kinds %}
-  <form method="post" action="/sources/{{ src.id }}/run-now" hx-post="/sources/{{ src.id }}/run-now"
-        hx-target="#sources-panel" hx-swap="outerHTML" data-busy-text="Running this search…" style="margin:0">
-    <button class="btn" type="submit" data-testid="run-now">Run now</button>
-  </form>
-  {% else %}
-  <span class="score-again" data-testid="run-now-control">
-    <form method="get" action="/sources/{{ src.id }}/run-now/choose" hx-get="/sources/{{ src.id }}/run-now/choose"
-          hx-target="next .score-again-slot" hx-swap="innerHTML" style="margin:0">
-      <input type="hidden" name="page" value="1">
-      <button class="btn score-again-btn" type="submit" aria-haspopup="dialog" data-testid="run-now">Run now</button>
-    </form>
-    <span class="score-again-slot"></span>
-  </span>
-  {% endif %}
+{# Two letters of the company name, on one of six token colors picked from the name. #}
+{% macro mono(name) -%}
+{%- set letters = ((name or '?').split() | map('first') | list)[:2] | join('') | upper -%}
+<span class="src-mono src-mono--{{ ((name or '?') | length) % 6 }}" aria-hidden="true">{{ letters }}</span>
 {%- endmacro %}
 
-{% macro health(src, run, run_message, site_lines=none) -%}
-  {% if src.kind == 'jobspy' and (src.config or {}).get('no_boards') %}
-    <div class="warnbox" style="font-size:.78rem; padding:.3rem .5rem" data-testid="no-boards">
-      Off: this search named only LinkedIn, which Kestrel does not search, so it has no job
-      boards left.
-      <button class="btn" hx-post="/sources/{{ src.id }}/default-boards"
-              hx-target="#sources-panel" hx-swap="outerHTML">Use Kestrel's default boards</button>
-    </div>
-  {% elif src.health %}
-    <span class="mono muted">{{ src.health }}</span>
-  {% elif src.consecutive_failures >= 3 %}
-    <span class="pill gap">off after 3 failures</span>
-  {% elif src.consecutive_failures > 0 %}
-    <span class="pill gap">{{ src.consecutive_failures }} failures in a row</span>
-  {% elif run %}
-    <span class="pill {{ 'covered' if run.status == 'ok' else 'gap' }}">{{ run.status }}</span>
-    {% if run.counts %}<div class="muted mono" style="font-size:.75rem">{{ run.counts | run_counts }}</div>{% endif %}
-    {% if (run.counts or {}).get('unreadable') %}
-      <div class="muted" style="font-size:.75rem" data-testid="unreadable-links">{{ run.counts.unreadable }} {{ 'link' if run.counts.unreadable == 1 else 'links' }} could not be read.</div>
-    {% endif %}
-    {% if site_lines %}
-      <div class="muted" style="font-size:.75rem" data-testid="site-counts">
-        {% for site in site_lines %}{{ site.label }} {{ site.count }}{{ ", " if not loop.last }}{% endfor %}
-      </div>
-      {% for site in site_lines if site.count == 0 %}
-        <div class="warnbox" style="margin-top:.3rem; font-size:.78rem; padding:.3rem .5rem" data-testid="site-empty">{{ site.label }} found nothing this run.</div>
-      {% endfor %}
-    {% endif %}
-    {% if run.counts | run_model_label %}<div class="muted" style="font-size:.75rem" data-testid="run-model-used">on {{ run.counts | run_model_label }}</div>{% endif %}
-  {% else %}
-    <span class="muted">no runs yet</span>
-  {% endif %}
-  {% if run and run.error %}
-    <div class="warnbox" style="margin-top:.3rem; font-size:.78rem; padding:.3rem .5rem">{{ run.error }}</div>
-  {% endif %}
-  {% if run_message and run_message.id == src.id %}
-    <div class="pill covered" style="margin-top:.3rem">{{ run_message.text }}</div>
-  {% endif %}
+{% macro badge(v) -%}
+{%- if v.group in ('ats', 'sig') %}{{ mono(v.name) }}{% else %}<span class="src-ic">{{ ui.icon(({'boards': 'compass', 'gov': 'shield', 'feeds': 'sources'}).get(v.group, 'sources')) }}</span>{% endif -%}
 {%- endmacro %}
 
-{% macro last_run(src) -%}
-  {% if src.last_run_at %}<span class="mono">{{ src.last_run_at[:16]|replace('T', ' ') }}</span>{% else %}<span class="muted">never</span>{% endif %}
+{# Ten checks as bars: g healthy, w slowed or partly done, b failed, m not yet run. #}
+{% macro spark(chars) -%}
+<span class="src-spark" role="img" aria-label="Last 10 checks" title="Last 10 checks">{% for c in chars %}<i class="{{ c if c != 'g' else '' }}" style="height:{{ 6 if c == 'm' else (16 if c == 'g' else 20) }}px"></i>{% endfor %}</span>
 {%- endmacro %}
 
+{% macro health_pill(v) -%}
+<span class="k-pill{% if v.tone %} k-pill--{{ v.tone }}{% endif %}"><span class="k-dot{% if v.health == 'w' %} k-dot--warn{% elif v.health == 'b' %} k-dot--bad{% elif v.health in ('m', 'n') %} k-dot--idle{% endif %}"></span>{{ v.health_label }}</span>
+{%- endmacro %}
+
+{# One row. The row is data for the filters (search text, group, health, origin); the switch and
+   Details are the two controls. Everything else on it is text. #}
+{% macro row(v, paused=False) -%}
+{%- set issue = v.reason and v.health != 'g' -%}
+<div class="src-row is-{{ v.health }}{{ ' is-off' if not v.enabled }}" id="src-row-{{ v.id }}" data-id="{{ v.id }}" data-group="{{ v.group }}" data-health="{{ v.health if v.enabled else '' }}" data-origin="{{ v.origin }}" data-search="{{ v.search_text }}" data-testid="source-row">
+  {{ badge(v) }}
+  <div class="src-rn">
+    <div class="src-nm">{{ v.name }}<span class="src-tag src-tag--{{ v.origin }}" data-testid="origin-tag">{{ v.origin_label }}</span></div>
+    <div class="src-ty{% if issue %} is-issue is-{{ v.health }}{% endif %}"{% if issue %} title="{{ v.reason }}"{% endif %} data-testid="{{ 'source-reason' if issue else 'source-type' }}">{{ v.reason if issue else v.type_line }}</div>
+  </div>
+  <label class="k-switch src-sw"><input type="checkbox" role="switch" aria-label="{{ 'Turn off' if v.enabled else 'Turn on' }} {{ v.name }}" data-src-toggle="{{ v.id }}" data-testid="source-switch"{{ ' checked' if v.enabled }}><span class="k-switch__track" aria-hidden="true"></span></label>
+  {{ health_pill(v) }}
+  <span class="src-rl">{{ v.last }}</span>
+  <span class="src-rc">{% if v.enabled and v.open_n is not none %}{{ v.open_n }} open{% if v.new_n %}, <b>{{ v.new_n }} new</b>{% endif %}{% endif %}</span>
+  {{ spark(v.spark) }}
+  <button type="button" class="k-btn k-btn--sm src-det" data-src-open="{{ v.id }}" aria-label="Details for {{ v.name }}" data-testid="source-details">Details {{ ui.icon('chev', 'k-ic--sm') }}</button>
+</div>
+{%- endmacro %}
+
+{# A group: a header (collapse, icon, title and count, the add link) and its rows. #}
+{% macro group(key, title, note, icon_name, views, add_label=none, open=True, tone='') -%}
+<section class="src-grp{{ ' is-open' if open }}" data-g="{{ key }}" data-testid="group-{{ key }}">
+  <div class="src-grph">
+    <button type="button" class="src-gtog" data-src-collapse="{{ key }}" aria-expanded="{{ 'true' if open else 'false' }}" aria-label="Show or hide {{ title }}">{{ ui.icon('chev') }}</button>
+    <span class="k-badge{{ ' k-badge--muted' if key == 'paused' }}">{{ ui.icon(icon_name) }}</span>
+    <div class="src-gtx"><h3>{{ title }} <span class="src-cnt" data-testid="group-count">{{ views | length }}</span></h3><div class="src-sub">{{ note }}</div></div>
+    {% if add_label %}<button type="button" class="k-link src-gadd" data-src-add="{{ key if key != 'sig' else 'sig' }}">+ {{ add_label }}</button>{% endif %}
+  </div>
+  <div class="src-gbody"><div class="src-gin">
+    {% if caller is defined %}{{ caller() }}{% endif %}
+    {% if views %}<div class="src-rows">{% for v in views %}{{ row(v) }}{% endfor %}</div>
+    {% else %}<div class="src-empty">{{ 'Nothing paused.' if key == 'paused' else 'Nothing here yet.' }}</div>{% endif %}
+  </div></div>
+</section>
+{%- endmacro %}
+
+{# The settings editor shown under Show details in the drawer (the JSON the checks read, validated
+   before anything is saved). Posts to the drawer. #}
 {% macro edit_form(src, vals, tracks, kinds, config_text) -%}
-<form hx-post="/sources/{{ src.id }}" hx-target="#sources-panel" hx-swap="outerHTML">
-  <div class="formgrid">
-    <label>Name</label>
-    <input type="text" name="name" value="{{ vals.name if vals else src.name }}" required>
-
-    <label>Track</label>
-    <select name="track">
-      {% for t in tracks %}
-      <option value="{{ t }}"
-        {% if (vals.track if vals else src.track) == t %}selected{% endif %}>{{ t }}</option>
-      {% endfor %}
-    </select>
-
-    <label>Kind</label>
-    <select name="kind">
-      {% for k in kinds %}
-      <option value="{{ k }}"
-        {% if (vals.kind if vals else src.kind) == k %}selected{% endif %}>{{ k }}</option>
-      {% endfor %}
-    </select>
-
-    <label>Cadence (hours)</label>
-    <input type="number" name="cadence_hours" min="1"
-           value="{{ vals.cadence_hours if vals else src.cadence_hours }}">
-
-    <label>Config (JSON)</label>
-    <textarea name="config" rows="4" class="mono">{{ vals.config if vals else config_text.get(src.id, '{}') }}</textarea>
-
-    <label>Enabled</label>
-    <input type="checkbox" name="enabled" value="1"
-           {% if (vals.enabled if vals else src.enabled) %}checked{% endif %}>
+<form hx-post="/sources/{{ src.id }}" hx-target="#src-drawer-slot" hx-swap="innerHTML" class="src-edit" data-testid="edit-form">
+  <input type="hidden" name="drawer" value="1">
+  <div class="k-field"><label for="ed-name">Name</label>
+    <input id="ed-name" class="k-input" type="text" name="name" value="{{ vals.name if vals else src.name }}" required></div>
+  <div class="src-edit__pair">
+    <div class="k-field"><label for="ed-track">Track</label>
+      <span class="k-select"><select id="ed-track" name="track">{% for t in tracks %}<option value="{{ t }}"{% if (vals.track if vals else src.track) == t %} selected{% endif %}>{{ t }}</option>{% endfor %}</select></span></div>
+    <div class="k-field"><label for="ed-kind">Kind</label>
+      <span class="k-select"><select id="ed-kind" name="kind">{% for k in kinds %}<option value="{{ k }}"{% if (vals.kind if vals else src.kind) == k %} selected{% endif %}>{{ k }}</option>{% endfor %}</select></span></div>
   </div>
-  <div style="display:flex; gap:.4rem; margin-top:.4rem">
-    <button class="btn primary" type="submit">Save</button>
-  </div>
+  <div class="k-field"><label for="ed-cad">Check every (hours)</label>
+    <input id="ed-cad" class="k-input" type="number" name="cadence_hours" min="1" value="{{ vals.cadence_hours if vals else src.cadence_hours }}"></div>
+  <div class="k-field"><label for="ed-cfg">Settings (JSON)</label>
+    <textarea id="ed-cfg" class="k-input src-mono-area" name="config" rows="5">{{ vals.config if vals else config_text.get(src.id, '{}') }}</textarea>
+    <small>Editing makes this source your own: it no longer follows your profile.</small></div>
+  <label class="src-check"><input type="checkbox" name="enabled" value="1"{% if (vals.enabled if vals else src.enabled) %} checked{% endif %}> On</label>
+  <div><button class="k-btn k-btn--primary k-btn--sm" type="submit">Save</button></div>
 </form>
 {%- endmacro %}

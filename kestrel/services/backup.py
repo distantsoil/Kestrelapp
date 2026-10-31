@@ -76,6 +76,56 @@ class InvalidBackupError(UserFacingError, ValueError):
     write to the real data directory, so refusing it leaves nothing touched."""
 
 
+# Every sentence restore_backup refuses with, as a closed list (D-SEC-4). The Settings restore
+# page shows one of these, or a fallback, picked by kestrel.web.errors.authored_error; it never
+# copies the exception's text. Anything that varies (an entry name, a size, the missing tables)
+# goes to the log where it is refused, because an archive's own names reach the page otherwise.
+NOT_A_ZIP = "Not a valid zip file."
+NO_DATABASE = "This does not look like a Kestrel backup (no kestrel.db found in the archive)."
+UNSAFE_ENTRY = "Refusing an unsafe path entry in the backup."
+TOO_MANY_ENTRIES = (
+    "This archive has more entries than a Kestrel backup can have; it is not one of ours."
+)
+OVERSIZED_ENTRY = "Refusing an oversized entry in the backup."
+OVERSIZED_TOTAL = (
+    "This backup unpacks to more bytes than a Kestrel backup can be. It is not one of ours."
+)
+ENTRY_UNREADABLE = "Could not read a file from the backup."
+DB_NOT_OPENED = "The kestrel.db inside this backup could not be opened as a database."
+DB_NOT_USABLE = (
+    "The kestrel.db inside this backup is not a usable SQLite database, so "
+    "restoring it would destroy the current one. Your database is unchanged."
+)
+DB_FAILED_CHECK = (
+    "The kestrel.db inside this backup failed SQLite's integrity check, so it was not "
+    "restored. Your database has not been touched."
+)
+DB_NOT_READABLE = (
+    "The kestrel.db inside this backup is not a readable database, so it was not restored. "
+    "Your database has not been touched."
+)
+NEWER_BACKUP = (
+    "This backup was made by a newer version of Kestrel, so this version cannot open it. "
+    "Update Kestrel, then restore it again. Your database has not been touched."
+)
+NOT_KESTREL_DB = (
+    "The kestrel.db inside this backup is not a Kestrel database, so it was not restored. "
+    "Your database has not been touched."
+)
+PAGE_SIZE_DIFFERS = (
+    "The kestrel.db inside this backup uses a different page size from this one, so it cannot "
+    "be restored in place. Nothing was changed."
+)
+BACKUP_NOT_FOUND = "The backup file was not found."
+BACKUP_REFUSALS: tuple[str, ...] = (
+    NOT_A_ZIP, NO_DATABASE, UNSAFE_ENTRY, TOO_MANY_ENTRIES, OVERSIZED_ENTRY, OVERSIZED_TOTAL,
+    ENTRY_UNREADABLE, DB_NOT_OPENED, DB_NOT_USABLE, DB_FAILED_CHECK, DB_NOT_READABLE,
+    NEWER_BACKUP, NOT_KESTREL_DB, PAGE_SIZE_DIFFERS, BACKUP_NOT_FOUND,
+)
+# Said for a refusal that is not on the list (never the exception's text).
+RESTORE_FALLBACK = "This file could not be restored as a Kestrel backup. Nothing was changed."
+
+
 @dataclass
 class RestoreResult:
     db_restored: bool = False
@@ -231,6 +281,27 @@ class InvalidProfileError(UserFacingError, ValueError):
     change to the real profile.yml, so a refused import leaves the previous profile in place."""
 
 
+# The sentences import_profile refuses with, a closed list for the same reason as BACKUP_REFUSALS.
+# `{line}` stands for one whole number, the YAML line (kestrel.web.errors.authored_error).
+PROFILE_NOT_UTF8 = "The file is not UTF-8 text; profile.yml must be YAML."
+PROFILE_NOT_YAML = "The file is not valid YAML."
+PROFILE_NOT_YAML_AT = "The file is not valid YAML (line {line})."
+PROFILE_NOT_A_MAPPING = "profile.yml must be a YAML mapping with track blocks."
+PROFILE_NO_TRACK = (
+    "No track block found; profile.yml needs an 'employment:' or 'consulting:' mapping "
+    "(see profile.example.yml)."
+)
+PROFILE_NOT_LOADED = (
+    "The profile parsed but the loader could not build a track from it; the previous "
+    "profile.yml was kept."
+)
+PROFILE_REFUSALS: tuple[str, ...] = (
+    PROFILE_NOT_UTF8, PROFILE_NOT_YAML, PROFILE_NOT_YAML_AT, PROFILE_NOT_A_MAPPING,
+    PROFILE_NO_TRACK, PROFILE_NOT_LOADED,
+)
+PROFILE_FALLBACK = "This file could not be imported as a profile. Your profile was not changed."
+
+
 @dataclass
 class ProfileImportResult:
     path: Path
@@ -269,20 +340,17 @@ def import_profile(data: bytes) -> ProfileImportResult:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise InvalidProfileError("The file is not UTF-8 text; profile.yml must be YAML.") from exc
+        raise InvalidProfileError(PROFILE_NOT_UTF8) from exc
     try:
         parsed = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         log.info("profile_upload_invalid_yaml", error=str(exc))
         raise InvalidProfileError(f"The file is not valid YAML{yaml_where(exc)}.") from exc
     if not isinstance(parsed, dict):
-        raise InvalidProfileError("profile.yml must be a YAML mapping with track blocks.")
+        raise InvalidProfileError(PROFILE_NOT_A_MAPPING)
     present = [t for t in TRACKS if isinstance(parsed.get(t), dict)]
     if not present:
-        raise InvalidProfileError(
-            "No track block found; profile.yml needs an 'employment:' or 'consulting:' mapping "
-            "(see profile.example.yml)."
-        )
+        raise InvalidProfileError(PROFILE_NO_TRACK)
 
     paths.ensure_dirs()
     target = profile_path()
@@ -307,10 +375,7 @@ def import_profile(data: bytes) -> ProfileImportResult:
             shutil.copy2(bak, target)
         else:
             target.unlink(missing_ok=True)
-        raise InvalidProfileError(
-            "The profile parsed but the loader could not build a track from it; the previous "
-            "profile.yml was kept."
-        )
+        raise InvalidProfileError(PROFILE_NOT_LOADED)
     return ProfileImportResult(
         path=target, tracks=loaded, previous_backup=bak if had_previous else None
     )
@@ -332,13 +397,11 @@ def _stage_backup(src: Path, staging: Path) -> None:
     try:
         zf = zipfile.ZipFile(src)
     except zipfile.BadZipFile as exc:
-        raise InvalidBackupError("Not a valid zip file.") from exc
+        raise InvalidBackupError(NOT_A_ZIP) from exc
     with zf:
         names = set(zf.namelist())
         if DB_NAME not in names:
-            raise InvalidBackupError(
-                "This does not look like a Kestrel backup (no kestrel.db found in the archive)."
-            )
+            raise InvalidBackupError(NO_DATABASE)
         members = [
             info
             for info in zf.infolist()
@@ -351,29 +414,25 @@ def _stage_backup(src: Path, staging: Path) -> None:
         ]
         for info in members:
             if not _is_safe_member(info.filename):
-                raise InvalidBackupError(
-                    f"Refusing an unsafe path entry in the backup: {info.filename}"
-                )
+                log.warning("restore_refused", why="unsafe_entry", entry=info.filename)
+                raise InvalidBackupError(UNSAFE_ENTRY)
         # Caps BEFORE extracting anything: zipfile reports sizes in the central directory, so a
         # decompression bomb is refused without writing a byte to the staging directory.
         if len(members) > MAX_ARCHIVE_MEMBERS:
-            raise InvalidBackupError(
-                "This archive has more entries than a Kestrel backup can have; "
-                "it is not one of ours."
-            )
+            log.warning("restore_refused", why="too_many_entries", entries=len(members))
+            raise InvalidBackupError(TOO_MANY_ENTRIES)
         total = 0
         for info in members:
             if info.file_size > MAX_MEMBER_BYTES:
-                raise InvalidBackupError(
-                    f"Refusing an oversized entry in the backup: {info.filename} "
-                    f"({info.file_size:,} bytes unpacked)"
+                log.warning(
+                    "restore_refused", why="oversized_entry", entry=info.filename,
+                    bytes=info.file_size,
                 )
+                raise InvalidBackupError(OVERSIZED_ENTRY)
             total += info.file_size
         if total > MAX_TOTAL_BYTES:
-            raise InvalidBackupError(
-                f"This backup unpacks to {total:,} bytes, more than a Kestrel backup can be. "
-                "It is not one of ours."
-            )
+            log.warning("restore_refused", why="oversized_total", bytes=total)
+            raise InvalidBackupError(OVERSIZED_TOTAL)
         for info in members:
             dest = staging / info.filename
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -390,9 +449,7 @@ def _stage_backup(src: Path, staging: Path) -> None:
                     error_type=type(exc).__name__,
                     error=str(exc),
                 )
-                raise InvalidBackupError(
-                    f"Could not read {info.filename} from the backup ({type(exc).__name__})."
-                ) from exc
+                raise InvalidBackupError(ENTRY_UNREADABLE) from exc
 
     _validate_staged_db(staging / DB_NAME)
 
@@ -409,32 +466,21 @@ def _validate_staged_db(staged: Path) -> None:
     try:
         con = sqlite3.connect(f"file:{staged.as_posix()}?mode=ro", uri=True)
     except sqlite3.Error as exc:
-        raise InvalidBackupError(
-            "The kestrel.db inside this backup could not be opened as a database."
-        ) from exc
+        raise InvalidBackupError(DB_NOT_OPENED) from exc
     try:
         try:
             row = con.execute("PRAGMA integrity_check").fetchone()
         except sqlite3.DatabaseError as exc:
-            raise InvalidBackupError(
-                "The kestrel.db inside this backup is not a usable SQLite database, so "
-                "restoring it would destroy the current one. Your database is unchanged."
-            ) from exc
+            raise InvalidBackupError(DB_NOT_USABLE) from exc
         if not row or row[0] != "ok":
-            raise InvalidBackupError(
-                "The kestrel.db inside this backup failed SQLite's integrity check, so it was not "
-                "restored. Your database has not been touched."
-            )
+            raise InvalidBackupError(DB_FAILED_CHECK)
         names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         revision = None
         if "alembic_version" in names:
             row = con.execute("SELECT version_num FROM alembic_version").fetchone()
             revision = row[0] if row else None
     except sqlite3.DatabaseError as exc:
-        raise InvalidBackupError(
-            "The kestrel.db inside this backup is not a readable database, so it was not restored. "
-            "Your database has not been touched."
-        ) from exc
+        raise InvalidBackupError(DB_NOT_READABLE) from exc
     finally:
         con.close()
     # A backup made by a NEWER Kestrel is stamped with a revision this build does not know. It would
@@ -445,16 +491,11 @@ def _validate_staged_db(staged: Path) -> None:
 
     known = migrate.known_revisions()
     if revision is not None and known is not None and revision not in known:
-        raise InvalidBackupError(
-            "This backup was made by a newer version of Kestrel, so this version cannot open it. "
-            "Update Kestrel, then restore it again. Your database has not been touched."
-        )
+        raise InvalidBackupError(NEWER_BACKUP)
     missing = sorted(_REQUIRED_TABLES - names)
     if missing:
-        raise InvalidBackupError(
-            "The kestrel.db inside this backup is not a Kestrel database (missing tables: "
-            f"{', '.join(missing)}), so it was not restored. Your database has not been touched."
-        )
+        log.warning("restore_refused", why="missing_tables", tables=missing)
+        raise InvalidBackupError(NOT_KESTREL_DB)
 
 
 def _backup_current_db(db: Path) -> Path | None:
@@ -507,10 +548,10 @@ def _write_into_live(staged: Path, db: Path) -> None:
                 # A WAL database cannot change page size while other connections are open, and
                 # the backup would fail part way. Every Kestrel database uses SQLite's default, so
                 # this only refuses a database that did not come from Kestrel.
-                raise InvalidBackupError(
-                    f"The kestrel.db inside this backup uses a {src_page}-byte page size and this "
-                    f"one uses {dst_page}, so it cannot be restored in place. Nothing was changed."
+                log.warning(
+                    "restore_refused", why="page_size", backup_page=src_page, this_page=dst_page
                 )
+                raise InvalidBackupError(PAGE_SIZE_DIFFERS)
             source.backup(target)
             # Best effort: fold the restored pages back into the main file now. PASSIVE never waits
             # on a reader, so an open read transaction elsewhere cannot stall the restore.
@@ -583,7 +624,7 @@ def restore_backup(path: str | Path) -> RestoreResult:
     if not src.is_file():
         # The message reaches a page; the path goes to the log only (D-SEC-1).
         log.warning("restore_backup_missing", path=str(src))
-        raise InvalidBackupError("The backup file was not found.")
+        raise InvalidBackupError(BACKUP_NOT_FOUND)
 
     with tempfile.TemporaryDirectory(prefix="kestrel-restore-") as tmp_str:
         staging = Path(tmp_str)

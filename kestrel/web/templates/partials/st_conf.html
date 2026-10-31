@@ -1,0 +1,41 @@
+{# Confidential mode (D-PRIV-1, D-UI-106): the switch, "Hide <employer> as <label>", a preview and
+   what it applies to. The employer is the one marked "This is my current employer" on Documents.
+   Backups keep the real data so a restore is complete. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-conf" data-testid="st-conf">
+  <form id="st-conf-form" hx-post="/settings/privacy/confidential" hx-target="#st-conf" hx-swap="outerHTML" hx-trigger="change, st-conf-edit" hx-include="#st-conf-form">
+    {% call st.head('Confidential mode', 'eyeoff') %}
+      <label class="k-switch st-sw"><input type="checkbox" role="switch" name="conf_mode" value="on" {% if conf_on %}checked{% endif %} aria-label="Confidential mode" data-testid="st-conf-switch" onchange="this.form.querySelector('[name=changed]').value='mode'"><span class="k-switch__track" aria-hidden="true"></span></label>
+    {% endcall %}
+    <input type="hidden" name="changed" value="">
+    <p class="st-sub">Hides your current employer in everything Kestrel shows or creates.</p>
+    <div class="st-hid">
+      <label for="st-conf-employer">Hide</label><input class="k-input" id="st-conf-employer" name="conf_employer" value="{{ conf_employer }}" maxlength="200" autocomplete="off"{% if not conf_on %} disabled{% endif %} data-testid="st-conf-employer">
+      <label for="st-conf-shown">as</label><input class="k-input" id="st-conf-shown" name="conf_shown" value="{{ conf_shown }}" maxlength="200" autocomplete="off"{% if not conf_on %} disabled{% endif %} data-testid="st-conf-shown">
+    </div>
+    <div class="st-pv">{{ st.sic('eye') }}<small>PREVIEW</small><span data-testid="st-conf-preview">Your current role at <b>{% if conf_on %}{{ conf_shown or '(no label)' }}{% else %}{{ conf_employer or '(no employer)' }}{% endif %}</b></span></div>
+    <div class="st-apl{% if not conf_on %} is-idle{% endif %}"><span class="st-dsm">Applies to</span>
+      <span class="k-pill k-pill--info">{{ st.sic('file', 'k-ic--sm') }}Resumes</span>
+      <span class="k-pill k-pill--info">{{ st.sic('list', 'k-ic--sm') }}Lists</span>
+      <span class="k-pill k-pill--info">{{ st.sic('up', 'k-ic--sm') }}Exports</span></div>
+  </form>
+  {% if conf_inferred and conf_on %}
+  <div class="st-keep st-keep--warn" id="st-conf-confirm" data-testid="employer-inferred">
+    <span class="k-grow">Kestrel is hiding <b>{{ conf_employer }}</b> as <b>{{ conf_shown }}</b> because it looks like your current job. Confirm or change.</span>
+    <form hx-post="/documents/section/{{ conf_section_id }}/confirm-current" hx-target="#st-conf-confirm" hx-swap="innerHTML">
+      <input type="hidden" name="shown_as" value="{{ conf_shown }}"><button class="k-btn k-btn--sm" type="submit">Confirm</button></form>
+    <a class="k-btn k-btn--sm" href="{{ conf_href }}">Change</a>
+  </div>
+  {% endif %}
+  {% if conf_problem %}<p class="st-note st-note--bad" role="alert" data-testid="conf-problem">{{ conf_problem }}</p>{% endif %}
+  {% if conf_note and not conf_problem %}<p class="st-note" role="status" data-testid="conf-saved">{{ conf_note }}</p>{% endif %}
+  {% if conf_on and conf_inert %}
+  <p class="st-note st-note--bad employer-line" data-testid="employer-choose">Confidential mode is on but redacting nothing: Kestrel found no current role to hide, so documents show every employer's real name, and nothing goes to an online model until you choose one.
+    <a class="k-btn k-btn--sm" href="{{ conf_choose }}">Choose your current employer</a></p>
+  {% elif not conf_employer %}
+  <p class="st-dsm" data-testid="conf-employer-empty">Your current employer comes from the role you mark as current on <a class="k-link" href="{{ conf_choose }}">Documents</a>. Kestrel also treats a newest role with no end date, Present, or a date that has not passed as current. Importing a resume does not fill it unless you tick the offer on the import screen.</p>
+  {% elif conf_on %}
+  <p class="st-dsm" data-testid="employer-hiding">Hiding <b>{{ conf_employer }}</b> as <b>{{ conf_shown }}</b>. <a class="k-link" href="{{ conf_href }}">Change on Documents</a></p>
+  {% endif %}
+  {{ st.det('Confidential mode replaces the names you list for your current employer with your label in list views, the JSON API, the MCP tools and generated documents, and with a random stand-in code in anything sent to an online model, suggested wordings included.\nNames match exactly as listed, with that capitalization; other employers show as written, and your editors always show your real text.\nWith nothing marked, Kestrel hides every role that has no end date until you confirm or change it. Importing a resume to an online model always asks first, because the resume may name an employer you have not marked yet.') }}
+</section>

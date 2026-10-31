@@ -139,7 +139,7 @@ def test_signals_schema_carries_max_items_except_to_the_claude_api():
 
 # ------------------------------------------------------------------------- (b) the prompt
 def test_triage_prompts_ask_for_a_short_reason_and_each_signal_once():
-    for version in ("triage/v1", "triage_consulting/v1"):
+    for version in ("triage/v2", "triage_consulting/v2"):
         system = load_prompt(version).system
         assert "reason under 20 words" in system and "List each signal once" in system
         assert "—" not in system

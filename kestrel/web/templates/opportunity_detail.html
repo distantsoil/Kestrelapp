@@ -1,129 +1,22 @@
+{# The Role page (D-UI-150, SPEC-INTERFACES 2.1 /opportunities/{id}). Built on the shared design
+   system (ui/macros.html, tokens, components); page styles in static/css/pages/role.css and
+   behavior in static/js/role.js. The body (partials/role_body.html) is what Previous and Next
+   slide; the pane under the tabs is what a tab slides. Nothing on this page applies, sends or
+   submits anything for the operator (hard rule 1). #}
 {% extends "base.html" %}
 {% block title %}{{ title_display }} · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/pages/role.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): role.js defines the page "role"; base.html mounts it. #}
+{% block page_name %}role{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/role.js') }}" defer></script>{% endblock %}
 {% block content %}
-{# docs/UI_PROPOSAL.html Screen 3, reworded by D-UI-45: header with the fit word, a one-line fact
-   row, five tabs, then the evaluation (or the chosen tab) on the left and, on the right, the
-   decision panel shared with the drawer (Fit / Why / Watch, Add to my list, Not for me, Disagree
-   with the fit?, and the follow-ups once it is on your list), Documents and More actions. Every org mention on this page
-   is the redacted copy the route built (confidential mode is "everywhere"). #}
-{# Page rules are scoped under #opportunity and use only ids, elements, data attributes and the
-   shell's own classes: the stylesheet is the single source of class rules (tests/test_ui_shell). #}
-<style>
-  #opportunity .bar { align-items: center; }
-  #opportunity .bar > a:first-child { font-size: var(--fs-sm); }
-  #opportunity .bar h1 { min-width: 0; }
-  #opportunity .bar .pill { font-size: 12px; }
-  #opportunity [data-facts] { font-size: var(--fs-sm); color: var(--muted); margin: -6px 0 12px; }
-  #opportunity [data-facts] span + span::before { content: " · "; }
-  #opportunity > .grid2 { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
-  #opportunity > .grid2 > div:last-child { display: grid; gap: 12px; align-content: start; }
-  #opportunity [data-scores] { display: flex; gap: 20px; align-items: center; margin: 4px 0 12px; flex-wrap: wrap; }
-  #opportunity [data-scores] > .quiet { font-size: var(--fs-sm); max-width: 40ch; }
-  #opportunity .dimrow > small { grid-column: 1 / -1; font-size: var(--fs-xs); margin: -2px 0 2px; }
-  #opportunity .block { margin: 14px 0 0; font-size: var(--fs-md); }
-  #opportunity .block > b { display: block; font-size: var(--fs-sm); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
-  #opportunity .block ul { margin: 4px 0 0; padding-left: 18px; }
-  #opportunity .block .kv { margin-top: 4px; }
-  #tab-history .list > .it { grid-template-columns: 96px minmax(0, 1fr) auto; }
-  #tab-history .list > .it > .mono:first-child { font-size: var(--fs-xs); }
-  #opportunity .override { border: 0; background: transparent; padding: 0; }
-  #opportunity .card > p.quiet { margin: 0 0 8px; font-size: var(--fs-sm); }
-  #opportunity #t3-escalate:empty { display: none; }
-  #opportunity details.card > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--muted); }
-  #opportunity details.card #opp-actions h2 { display: none; }
-  #opportunity .tabs button { font: inherit; font-size: var(--fs-md); }
-  @media (max-width: 900px) {
-    #opportunity > .grid2 { grid-template-columns: minmax(0, 1fr); }
-  }
-  @media (max-width: 700px) {
-    #opportunity .bar h1 { font-size: var(--fs-lg); flex-basis: 100%; }
-    #opportunity .bar > span.row { flex-basis: 100%; gap: 6px; }
-    #tab-history .list > .it { grid-template-columns: minmax(0, 1fr) auto; }
-    #tab-history .list > .it > .mono:first-child { grid-column: 1 / -1; }
-  }
-</style>
-
-<div id="opportunity" x-data="oppPage({{ opp.id }})">
-  <div class="bar">
-    <a class="quiet" href="/opportunities">Pipeline ›</a>
-    <h1>{{ title_display }}</h1>
-    <span class="pill {{ fit.tone }}" data-testid="verdict-pill" data-fit="{{ fit.word }}">{{ fit.word }}</span>
-    {% if opp.archived_at %}<span class="pill grey">hidden</span>{% endif %}
-  </div>
-  {% if not tailor_master %}
-    <div class="quiet" data-facts style="margin-top:-8px">{{ tailor_label }} is unavailable: no active document master for the {{ opp.track }} track. Import or build one under <a href="/documents">Profile &gt; Documents</a>.</div>
-  {% endif %}
-  <div class="quiet" data-facts data-testid="facts">{% for f in facts %}<span>{{ f }}</span>{% endfor %}</div>
-
-  <div class="tabs" role="tablist">
-    {% for t in tabs %}
-      <button type="button" role="tab" :class="{ on: tab === '{{ t }}' }" :aria-selected="tab === '{{ t }}'"
-              hx-get="/opportunities/{{ opp.id }}/tab/{{ t }}" hx-target="#tabpane" hx-swap="innerHTML"
-              hx-trigger="click" @click="pick('{{ t }}')">{{ t|capitalize }}</button>
-    {% endfor %}
-  </div>
-
-  <div class="grid2">
-    <div id="tabpane" role="tabpanel">
-      {% include "partials/opp_tab_evaluation.html" %}
-    </div>
-
-    <div>
-      <div class="card" id="your-call">
-        <h3>Your decision</h3>
-        {% if mine %}
-          <p class="quiet" data-testid="your-word">You said <b>{{ mine }}</b>{% if mine == fit.word %}, the same as the fit{% else %}; the fit says {{ fit.word }}{% endif %}.</p>
-        {% endif %}
-        {% include "partials/opp_decision.html" %}
-      </div>
-
-      <div class="card" id="documents-card">
-        <h3>Documents</h3>
-        <dl class="kv">
-          <dt>{{ words(opp.track).doc_title }}</dt>
-          <dd>{% if renders %}{{ renders|length }} render{{ '' if renders|length == 1 else 's' }} for this role, latest {{ (renders[0].render.created_at or '')[:10] }}{% elif tailor_master %}Not tailored yet · {{ tailor_master.name }}{% else %}No active master for the {{ opp.track }} track{% endif %}</dd>
-          <dt>Cover letter</dt>
-          <dd>{% if pursuit and pursuit.cover_letter_id %}<a href="/renders/{{ pursuit.cover_letter_id }}">Draft #{{ pursuit.cover_letter_id }}</a>{% else %}No draft yet{% endif %}</dd>
-        </dl>
-        <p style="margin:8px 0 0">
-          {% if tailor_master %}
-            <a class="btn" href="{{ tailor_href }}">{{ tailor_label }}</a>
-          {% endif %}
-          <button type="button" class="btn quiet" @click="pick('documents')"
-                  hx-get="/opportunities/{{ opp.id }}/tab/documents" hx-target="#tabpane" hx-swap="innerHTML">Open documents tab</button>
-        </p>
-      </div>
-
-      {% if pursuit %}{% set opp_id = opp.id %}{% include "partials/opp_questions.html" %}{% endif %}
-
-      {# The remaining actions (Research, Find contacts, Prep pack, Archive) keep their partial. #}
-      <details class="card">
-        <summary>More actions</summary>
-        {% include "partials/opp_actions.html" %}
-      </details>
-    </div>
-  </div>
-</div>
-
-<script>
-  function oppPage(id) {
-    return {
-      tab: 'evaluation',
-      init() {
-        // The tab lives in the URL hash so a reload keeps it. Evaluation is already rendered.
-        var h = (location.hash || '').slice(1);
-        var tabs = {{ tabs|list|tojson }};
-        if (h && h !== 'evaluation' && tabs.indexOf(h) >= 0) {
-          this.tab = h;
-          htmx.ajax('GET', '/opportunities/' + id + '/tab/' + h, { target: '#tabpane', swap: 'innerHTML' });
-        }
-      },
-      pick(t) {
-        this.tab = t;
-        if (history.replaceState) history.replaceState(null, '', '#' + t);
-        else location.hash = t;
-      },
-    };
-  }
-</script>
+<div class="rl-wrap"><div class="rl-page" id="role" data-opp="{{ opp.id }}">
+  {% include "partials/role_body.html" %}
+  {# Where the dialogs the actions load are placed (Deeper read, the online ask, a preview). #}
+  <div id="rl-dialog"></div>
+</div></div>
 {% endblock %}

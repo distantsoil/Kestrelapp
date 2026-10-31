@@ -1,0 +1,516 @@
+{
+  "LanguageCode": "EN",
+  "SearchParameters": {
+    "LocationName": "",
+    "Keyword": "analyst",
+    "ResultsPerPage": "25",
+    "Page": "1"
+  },
+  "SearchResult": {
+    "SearchResultCount": 5,
+    "SearchResultCountAll": 5,
+    "SearchResultItems": [
+      {
+        "MatchedObjectId": "800000001",
+        "MatchedObjectDescriptor": {
+          "PositionID": "ZZ-26-0001",
+          "PositionTitle": "Management and Program Analyst",
+          "PositionURI": "https://www.usajobs.gov/job/800000001",
+          "ApplyURI": [
+            "https://www.usajobs.gov/job/800000001"
+          ],
+          "PositionLocationDisplay": "Austin, Texas",
+          "PositionLocation": [
+            {
+              "LocationName": "Austin, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "Austin, Texas",
+              "Longitude": -97.74,
+              "Latitude": 30.27
+            }
+          ],
+          "OrganizationName": "Office of Example Programs",
+          "DepartmentName": "Department of Example Affairs",
+          "JobCategory": [
+            {
+              "Name": "Management And Program Analysis",
+              "Code": "0343"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "GS"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "Full-time",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "Permanent",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "One year of specialized experience at the next lower grade.",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "85000.00",
+              "MaximumRange": "110000.00",
+              "RateIntervalCode": "PA",
+              "Description": "Per Year"
+            }
+          ],
+          "PositionStartDate": "2026-10-20",
+          "PositionEndDate": "2026-11-14",
+          "PublicationStartDate": "2026-10-20",
+          "ApplicationCloseDate": "2026-11-14",
+          "PositionFormattedDescription": [
+            {
+              "Content": "<p>Placeholder</p>",
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Teaser"
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "Analyze program operations and recommend improvements.",
+              "MajorDuties": [
+                "Review program data and prepare reports.",
+                "Advise managers on process changes."
+              ],
+              "Education": "A bachelor's degree or equivalent experience.",
+              "Requirements": "You must be a U.S. citizen. A one-year probationary period may apply.",
+              "Evaluations": "Applicants are rated on the listed competencies.",
+              "HowToApply": "Apply online through the official announcement.",
+              "WhatToExpectNext": "You will receive an email when the review is complete.",
+              "RequiredDocuments": "Resume and transcripts.",
+              "Benefits": "Health insurance, retirement plan and paid leave.",
+              "BenefitsUrl": "https://www.usajobs.gov/Help/working-in-government/benefits/",
+              "OtherInformation": "",
+              "KeyRequirements": [
+                "Background check"
+              ],
+              "WhoMayApply": {
+                "Name": "",
+                "Code": "15317"
+              },
+              "LowGrade": "11",
+              "HighGrade": "12",
+              "SubAgencyName": "Office of Example Programs",
+              "OrganizationCodes": "XX00",
+              "RemoteIndicator": false,
+              "TeleworkEligible": true
+            },
+            "IsRadialSearch": false
+          }
+        },
+        "RelevanceRank": 0.0
+      },
+      {
+        "MatchedObjectId": "800000002",
+        "MatchedObjectDescriptor": {
+          "PositionID": "ZZ-26-0002",
+          "PositionTitle": "Data Analyst (Remote)",
+          "PositionURI": "https://www.usajobs.gov/job/800000002",
+          "ApplyURI": [
+            "https://www.usajobs.gov/job/800000002"
+          ],
+          "PositionLocationDisplay": "Anywhere in the U.S. (remote job)",
+          "PositionLocation": [
+            {
+              "LocationName": "Anywhere in the U.S. (remote job)",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "",
+              "CityName": "Anywhere in the U.S. (remote job)",
+              "Longitude": -97.74,
+              "Latitude": 30.27
+            }
+          ],
+          "OrganizationName": "Example Statistics Bureau",
+          "DepartmentName": "Department of Example Commerce",
+          "JobCategory": [
+            {
+              "Name": "Management And Program Analysis",
+              "Code": "0343"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "GS"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "Full-time",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "Permanent",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "Specialized experience with data tools.",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "98000.00",
+              "MaximumRange": "127000.00",
+              "RateIntervalCode": "PA",
+              "Description": "Per Year"
+            }
+          ],
+          "PositionStartDate": "2026-10-22",
+          "PositionEndDate": "2026-11-20",
+          "PublicationStartDate": "2026-10-22",
+          "ApplicationCloseDate": "2026-11-20",
+          "PositionFormattedDescription": [
+            {
+              "Content": "<p>Placeholder</p>",
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Teaser"
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "Build and maintain statistical reports.",
+              "MajorDuties": "Prepare data extracts and quality checks.",
+              "Education": "Coursework in statistics or a related field.",
+              "Requirements": "U.S. citizenship required.",
+              "Evaluations": "Applicants are rated on the listed competencies.",
+              "HowToApply": "Apply online through the official announcement.",
+              "WhatToExpectNext": "You will receive an email when the review is complete.",
+              "RequiredDocuments": "Resume and transcripts.",
+              "Benefits": "Federal benefits package.",
+              "BenefitsUrl": "https://www.usajobs.gov/Help/working-in-government/benefits/",
+              "OtherInformation": "",
+              "KeyRequirements": [
+                "Background check"
+              ],
+              "WhoMayApply": {
+                "Name": "",
+                "Code": "15317"
+              },
+              "LowGrade": "11",
+              "HighGrade": "12",
+              "SubAgencyName": "Example Statistics Bureau",
+              "OrganizationCodes": "XX00",
+              "RemoteIndicator": true,
+              "TeleworkEligible": false
+            },
+            "IsRadialSearch": false
+          }
+        },
+        "RelevanceRank": 0.0
+      },
+      {
+        "MatchedObjectId": "800000003",
+        "MatchedObjectDescriptor": {
+          "PositionID": "ZZ-26-0003",
+          "PositionTitle": "Program Analyst",
+          "PositionURI": "https://www.usajobs.gov/job/800000003",
+          "ApplyURI": [
+            "https://www.usajobs.gov/job/800000003"
+          ],
+          "PositionLocationDisplay": "Frankfurt, Germany",
+          "PositionLocation": [
+            {
+              "LocationName": "Frankfurt, Germany",
+              "CountryCode": "Germany",
+              "CountrySubDivisionCode": "",
+              "CityName": "Frankfurt, Germany",
+              "Longitude": -97.74,
+              "Latitude": 30.27
+            }
+          ],
+          "OrganizationName": "Example Overseas Office",
+          "DepartmentName": "Department of Example Defense",
+          "JobCategory": [
+            {
+              "Name": "Management And Program Analysis",
+              "Code": "0343"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "GS"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "Full-time",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "Permanent",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "70000.00",
+              "MaximumRange": "90000.00",
+              "RateIntervalCode": "PA",
+              "Description": "Per Year"
+            }
+          ],
+          "PositionStartDate": "2026-10-21",
+          "PositionEndDate": "2026-11-18",
+          "PublicationStartDate": "2026-10-21",
+          "ApplicationCloseDate": "2026-11-18",
+          "PositionFormattedDescription": [
+            {
+              "Content": "<p>Placeholder</p>",
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Teaser"
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "Support program planning at an overseas site.",
+              "MajorDuties": "Track program milestones.",
+              "Education": "",
+              "Requirements": "",
+              "Evaluations": "Applicants are rated on the listed competencies.",
+              "HowToApply": "Apply online through the official announcement.",
+              "WhatToExpectNext": "You will receive an email when the review is complete.",
+              "RequiredDocuments": "Resume and transcripts.",
+              "Benefits": "",
+              "BenefitsUrl": "https://www.usajobs.gov/Help/working-in-government/benefits/",
+              "OtherInformation": "",
+              "KeyRequirements": [
+                "Background check"
+              ],
+              "WhoMayApply": {
+                "Name": "",
+                "Code": "15317"
+              },
+              "LowGrade": "11",
+              "HighGrade": "12",
+              "SubAgencyName": "Example Overseas Office",
+              "OrganizationCodes": "XX00",
+              "RemoteIndicator": null,
+              "TeleworkEligible": null
+            },
+            "IsRadialSearch": false
+          }
+        },
+        "RelevanceRank": 0.0
+      },
+      {
+        "MatchedObjectId": "800000004",
+        "MatchedObjectDescriptor": {
+          "PositionID": "ZZ-26-0004",
+          "PositionTitle": "Forestry Technician",
+          "PositionURI": "https://www.usajobs.gov/job/800000004",
+          "ApplyURI": [
+            "https://www.usajobs.gov/job/800000004"
+          ],
+          "PositionLocationDisplay": "Multiple Locations",
+          "PositionLocation": [
+            {
+              "LocationName": "Boise, Idaho",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Idaho",
+              "CityName": "Boise, Idaho",
+              "Longitude": -97.74,
+              "Latitude": 30.27
+            },
+            {
+              "LocationName": "Missoula, Montana",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Montana",
+              "CityName": "Missoula, Montana",
+              "Longitude": -97.74,
+              "Latitude": 30.27
+            }
+          ],
+          "OrganizationName": "Example Land Service",
+          "DepartmentName": "Department of Example Resources",
+          "JobCategory": [
+            {
+              "Name": "Management And Program Analysis",
+              "Code": "0343"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "GS"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "Full-time",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "Permanent",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "19.50",
+              "MaximumRange": "24.10",
+              "RateIntervalCode": "PH",
+              "Description": "Per Hour"
+            }
+          ],
+          "PositionStartDate": "2026-10-23",
+          "PositionEndDate": "2026-11-10",
+          "PublicationStartDate": "2026-10-23",
+          "ApplicationCloseDate": "2026-11-10",
+          "PositionFormattedDescription": [
+            {
+              "Content": "<p>Placeholder</p>",
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Teaser"
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "Seasonal field work.",
+              "MajorDuties": "Assist with field surveys.",
+              "Education": "",
+              "Requirements": "",
+              "Evaluations": "Applicants are rated on the listed competencies.",
+              "HowToApply": "Apply online through the official announcement.",
+              "WhatToExpectNext": "You will receive an email when the review is complete.",
+              "RequiredDocuments": "Resume and transcripts.",
+              "Benefits": "",
+              "BenefitsUrl": "https://www.usajobs.gov/Help/working-in-government/benefits/",
+              "OtherInformation": "",
+              "KeyRequirements": [
+                "Background check"
+              ],
+              "WhoMayApply": {
+                "Name": "",
+                "Code": "15317"
+              },
+              "LowGrade": "11",
+              "HighGrade": "12",
+              "SubAgencyName": "Example Land Service",
+              "OrganizationCodes": "XX00",
+              "RemoteIndicator": false,
+              "TeleworkEligible": false
+            },
+            "IsRadialSearch": false
+          }
+        },
+        "RelevanceRank": 0.0
+      },
+      {
+        "MatchedObjectId": "800000005",
+        "MatchedObjectDescriptor": {
+          "PositionID": "ZZ-26-0005",
+          "PositionTitle": "Management Analyst",
+          "PositionURI": "https://www.usajobs.gov/job/800000005",
+          "ApplyURI": [
+            "https://apply.example.gov/announcement/800000005"
+          ],
+          "PositionLocationDisplay": "Washington, District of Columbia",
+          "PositionLocation": [
+            {
+              "LocationName": "Washington, District of Columbia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "District of Columbia",
+              "CityName": "Washington, District of Columbia",
+              "Longitude": -97.74,
+              "Latitude": 30.27
+            }
+          ],
+          "OrganizationName": "Example Review Board",
+          "DepartmentName": "Independent Agency",
+          "JobCategory": [
+            {
+              "Name": "Management And Program Analysis",
+              "Code": "0343"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "GS"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "Full-time",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "Permanent",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "0.00",
+              "MaximumRange": "0.00",
+              "RateIntervalCode": "WC",
+              "Description": "Without Compensation"
+            }
+          ],
+          "PositionStartDate": "2026-10-24",
+          "PositionEndDate": "2026-11-24",
+          "PublicationStartDate": "2026-10-24",
+          "ApplicationCloseDate": "2026-11-24",
+          "PositionFormattedDescription": [
+            {
+              "Content": "<p>Placeholder</p>",
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Teaser"
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "Volunteer analyst role.",
+              "MajorDuties": "Assist with reviews.",
+              "Education": "",
+              "Requirements": "",
+              "Evaluations": "Applicants are rated on the listed competencies.",
+              "HowToApply": "Apply online through the official announcement.",
+              "WhatToExpectNext": "You will receive an email when the review is complete.",
+              "RequiredDocuments": "Resume and transcripts.",
+              "Benefits": "",
+              "BenefitsUrl": "https://www.usajobs.gov/Help/working-in-government/benefits/",
+              "OtherInformation": "",
+              "KeyRequirements": [
+                "Background check"
+              ],
+              "WhoMayApply": {
+                "Name": "",
+                "Code": "15317"
+              },
+              "LowGrade": "11",
+              "HighGrade": "12",
+              "SubAgencyName": "Example Review Board",
+              "OrganizationCodes": "XX00",
+              "RemoteIndicator": null,
+              "TeleworkEligible": null
+            },
+            "IsRadialSearch": false
+          }
+        },
+        "RelevanceRank": 0.0
+      }
+    ],
+    "UserArea": {
+      "Refiners": {},
+      "NumberOfPages": "1",
+      "IsRadialSearch": false
+    }
+  }
+}

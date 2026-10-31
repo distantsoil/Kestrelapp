@@ -1,10 +1,67 @@
+{# Needs another try (D-UI-104, SPEC-INTERFACES 2.1 /quarantine). Built on the shared design
+   system: ui/macros.html for the band, help cards and flyouts, tokens for every color. The card
+   (partials/retry_card.html) filters in place; each row swaps itself. #}
 {% extends "base.html" %}
-{% block title %}Failed scoring · Kestrel{% endblock %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
+{% block title %}Needs another try · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/retry.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): retry.js defines the page "needs-try"; base.html mounts it. #}
+{% block page_name %}needs-try{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/retry.js') }}" defer></script>{% endblock %}
 {% block content %}
-<h1>Failed scoring</h1>
-<p class="muted">These postings got a reply the model could not finish or that did not match the
-  expected shape. Nothing is lost: the raw reply is kept, and Retry lets you score the posting again
-  with the same model or another one.</p>
-{% if outcome %}<div class="{{ 'okbox' if outcome.ok else 'warnbox' }}" role="status" data-testid="retry-note" style="margin-bottom:.8rem">{{ outcome.text }}</div>{% endif %}
-{% include "partials/quarantine_list.html" %}
+<div class="rt-wrap"><div class="rt-page">
+  {# The breadcrumb and the lede sit in the band beside the art, as in the mockup. #}
+  {% set crumb %}<nav class="rt-crumb" aria-label="Breadcrumb"><a href="/runs">Runs</a> › <span>Needs another try</span></nav>{% endset %}
+  {% set lede %}<p class="rt-lede">Some roles couldn’t be scored. Nothing was dropped; they wait here.</p>{% endset %}
+  {% call ui.scene_band('Needs another try', crumb=crumb, lede=lede) %}
+    <span id="rt-count" class="k-pill {{ 'k-pill--warn' if waiting else 'k-pill--good' }}" data-testid="rt-count">{% if waiting %}{{ waiting }} {{ 'role' if waiting == 1 else 'roles' }} waiting{% else %}All clear{% endif %}</span>
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#rt-why-fly" aria-controls="rt-why-fly" aria-expanded="false" data-testid="rt-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+  {% endcall %}
+  <div class="k-layout">
+    <div class="k-layout__main">
+      {% include "partials/retry_card.html" %}
+    </div>
+    {% call ui.help_column() %}
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge k-badge--warn">{{ ui.icon('alert') }}</span><h3>Why this happens</h3></div>
+        <p class="k-hcard__p">The AI sometimes gives an answer Kestrel can’t read, runs out of time, or an online service says no. Kestrel already tried once more by itself.</p>{{ ui.flyout_trigger('rt-why-fly') }}</article>
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('shield') }}</span><h3>Nothing is lost</h3></div>
+        <p class="k-hcard__p">Every role here is still in Pipeline, just without a score. Quitting Kestrel changes nothing.</p>{{ ui.flyout_trigger('rt-safe-fly') }}</article>
+      <article class="k-hcard k-hcard--plain"><div class="k-hcard__head"><span class="k-badge">{{ ui.icon('models') }}</span><h3>Trying a different model</h3></div>
+        <p class="k-hcard__p">Another model often reads what the first could not. On your computer it is free. Online asks first.</p>{{ ui.flyout_trigger('rt-model-fly') }}</article>
+    {% endcall %}
+  </div>
+  {# Where the actions put their dialog (Score it anyway, the online ask). #}
+  <div id="rt-dialog"></div>
+  {% call ui.flyout('rt-why-fly', 'Why roles land here', help_href='/help') %}
+    <h4>What happened</h4>
+    <p>Kestrel asks an AI to read each role. Now and then the answer comes back in a shape Kestrel can’t read, takes too long, or an online service turns the request down. Kestrel always tries once more by itself first.</p>
+    <h4>The three steps</h4>
+    <p><b>Quick sort</b> is a fast first look that keeps likely roles. <b>Fit score</b> rates each kept role against your profile. <b>Deep read</b> is the long look you ask for on one role.</p>
+    <h4>What to do</h4>
+    <p>Press Try again. Most roles go through the second time. If the same role keeps failing, try a different model.</p>
+  {% endcall %}
+  {% call ui.flyout('rt-safe-fly', 'Nothing is lost', help_href='/help') %}
+    <h4>Where the roles are</h4>
+    <p>Every role here is still in Pipeline. It just has no score yet. Closing Kestrel or restarting your computer changes nothing, the list is saved as it goes.</p>
+    <h4>When a role leaves this list</h4>
+    <p>It leaves when it gets a score, or when you press Remove. Remove only takes it off this list. The role stays in Pipeline, marked as not scored, and Undo brings it back here.</p>
+    <h4>Score it anyway</h4>
+    <p>Skips your rules, such as place and pay limits, so a role you would normally set aside may be scored. Use it for a role you already want to look at.</p>
+  {% endcall %}
+  {% call ui.flyout('rt-model-fly', 'Trying a different model', help_href='/help') %}
+    <h4>Why it helps</h4>
+    <p>Each model reads in its own way. A role one model can’t answer is often easy for another.</p>
+    <h4>On your computer</h4>
+    <p>Free. A smaller model is quicker but less careful. Kestrel says so before you pick.</p>
+    <h4>Online</h4>
+    <p>Uses your own credit and sends the role posting and a short summary of your profile to the service. Kestrel shows exactly what, and the cost, and waits for your yes. Your name and contact details are never sent.</p>
+    <h4>If the key was refused</h4>
+    <p>Open Models and check the key for that service. Until then, pick a model on your computer.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

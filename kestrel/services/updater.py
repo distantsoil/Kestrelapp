@@ -45,7 +45,7 @@ FIRST_CHECK_DELAY_SECONDS = 60
 MAX_RELEASES_IN_FEED = 10
 
 # The complete set of request headers the checker may send (besides If-None-Match when an ETag
-# is cached). A test pins this; adding to it needs a DECISIONS entry.
+# is cached). A test pins this; adding to it needs a decision log entry.
 BASE_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
 _RETRY_BACKOFF_SECONDS = 1.0

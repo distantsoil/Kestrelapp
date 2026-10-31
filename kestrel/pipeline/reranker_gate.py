@@ -29,6 +29,8 @@ async def try_reranker_tier1(
     *,
     t2_extra: dict | None = None,
 ) -> HandlerOutcome | None:
+    if not settings.learning.build_model:
+        return None  # switched off in Settings > Scoring and learning: the model reads
     model = current_model(settings)
     loaded = await load_active_reranker(session, opp.track, embed_model=model)
     if loaded is None:

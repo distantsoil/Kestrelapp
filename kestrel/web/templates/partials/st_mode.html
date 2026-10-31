@@ -1,0 +1,79 @@
+{# How should Kestrel run? (D-UI-106). Three cards, the online key entry that opens under them
+   when Online or Both is chosen, and where each step runs. Swaps itself on a choice. Nothing is
+   sent anywhere from here: an online call is only made after the person approves what is sent,
+   on the page that sends it. A local tier keeps its "stays private" wording; nothing here says
+   that of an online one. #}
+{% import "partials/st_macros.html" as st with context %}
+{% import "ui/macros.html" as ui %}
+<section class="k-card st-card" id="st-mode" data-testid="st-mode">
+  {{ st.head('How should Kestrel run?', 'laptop') }}
+  <div class="st-modes" role="radiogroup" aria-label="How should Kestrel run?">
+    {% for key, value, name, icon, lines in modes %}
+    <button type="button" class="st-mc{% if choice == value %} is-on{% endif %}" role="radio"
+            aria-checked="{{ 'true' if choice == value else 'false' }}" data-testid="st-mode-{{ key }}"
+            hx-post="/settings/computer/mode" hx-vals='{"mode": "{{ key }}"}' hx-target="#st-mode" hx-swap="outerHTML">
+      <span class="st-mc__t">{{ st.sic(icon) }}<b>{{ name }}</b><span class="st-radio" aria-hidden="true"></span></span>
+      <span class="st-mc__rec">{% if key == 'local' %}<span class="k-pill k-pill--info st-rec" id="st-rec-local" hidden>Recommended</span>{% elif key == 'online' %}<span class="k-pill k-pill--info st-rec" id="st-rec-online" hidden>Recommended</span>{% endif %}</span>
+      <ul class="st-mc__l">{% for l in lines %}<li>{{ st.sic('check', 'k-ic--sm') }}{{ l }}</li>{% endfor %}</ul>
+    </button>
+    {% endfor %}
+  </div>
+  {% if mode_message %}<p class="st-note st-note--{{ 'good' if mode_ok else 'bad' }}" role="status">{{ mode_message }}</p>{% endif %}
+
+  <div class="st-fold{% if choice != 'local' %} is-on{% endif %}" id="st-online"{% if choice == 'local' %} inert aria-hidden="true"{% endif %}>
+    <div class="st-pan">
+      <div class="st-kind">Online model</div>
+      <div class="st-tiles" role="radiogroup" aria-label="Online service">
+        {% for p in providers %}
+        <button type="button" class="st-tile{% if p.id == selected %} is-on{% endif %}" role="radio" aria-checked="{{ 'true' if p.id == selected else 'false' }}" data-st-svc="{{ p.id }}" data-prefix="{{ p.prefix }}" data-testid="st-svc-{{ p.id }}"><span class="st-mono" aria-hidden="true">{{ p.mono }}</span><span class="st-svc-label">{{ p.label }}</span>{% if p.saved %}<span class="st-tilesaved" title="A key is saved">{{ st.sic('check', 'k-ic--sm') }}</span>{% endif %}</button>
+        {% endfor %}
+      </div>
+      <p class="st-note" id="st-svc-hint"{% if selected != 'other' %} hidden{% endif %}>Works with services that use the OpenAI format. Test asks for the model list using only your key. It sends no profile or role text and saves nothing.</p>
+      <form id="st-keyform" autocomplete="off" hx-post="/settings/computer/key" hx-target="#st-mode" hx-swap="outerHTML">
+        <input type="hidden" name="provider" id="st-provider" value="{{ selected }}">
+        <div class="st-service-url k-field" id="st-other-fields"{% if selected != 'other' %} hidden{% endif %}>
+          <label for="st-base-url">Service address</label>
+          <input class="k-input" id="st-base-url" name="base_url" type="url" value="{{ other_url }}" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" data-testid="st-base-url" aria-describedby="st-address-note">
+          <p class="st-note" id="st-address-note">Use the base API address supplied by your service. HTTPS is required unless the service runs on this computer.</p>
+        </div>
+        <div class="st-keyrow">
+        <label class="st-keylab" for="st-key">Key</label>
+        <input class="k-input" id="st-key" name="api_key" type="password" autocomplete="off" spellcheck="false" aria-label="Online model key" placeholder="Paste your key here" data-testid="st-key">
+        <button type="button" class="k-btn k-btn--sm" id="st-key-show" data-testid="st-key-show">Show</button>
+        <button type="submit" name="op" value="test" class="k-btn k-btn--sm" data-testid="st-key-test">{{ 'Test connection' if selected == 'other' else 'Test key' }}</button>
+        <button type="submit" name="op" value="save" class="k-btn k-btn--sm k-btn--primary" data-testid="st-key-save">{{ 'Save' if selected == 'other' else 'Save key' }}</button>
+        </div>
+      </form>
+      <div class="st-res" id="st-keyres" aria-live="polite" data-testid="st-keyres">{% include "partials/st_keyres.html" %}</div>
+      <div class="st-free" id="st-free" data-testid="st-free"{% if selected != 'openrouter' %} hidden{% endif %}>
+        <form id="st-freeform" autocomplete="off" hx-post="/settings/computer/free" hx-target="#st-mode" hx-swap="outerHTML">
+          {{ ui.switch('free_only', 'Free models only', free_on, 'st-free-sw', {'data-testid': 'st-free-switch', 'value': 'on'}) }}
+          <p class="st-note">OpenRouter only. Kestrel picks every step's model from the ones priced at zero.</p>
+          <div class="st-fold st-flat{% if free_on %} is-on{% endif %}" id="st-free-fold"{% if not free_on %} inert aria-hidden="true"{% endif %}>
+            <div class="st-free__pan">
+              <p class="st-note"><b>Free models may train on what Kestrel sends.</b> Almost every free model is offered only by providers that keep or train on prompts, so Kestrel blocks them unless you allow it. Role text and resume lines a step needs would go to them, and you still approve each send.</p>
+              <label class="st-free__check" data-testid="allow-training"><input type="checkbox" name="allow_training" value="on" data-testid="st-free-train"{% if free_train %} checked{% endif %}> Allow models that may train on what I send</label>
+            </div>
+          </div>
+          <div class="st-free__act"><button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-free-save">Apply</button></div>
+        </form>
+        <p class="st-note{% if free_message %} st-note--{{ 'good' if free_ok else 'bad' }}{% endif %}" id="st-free-res" role="status" aria-live="polite" data-testid="st-free-result">{{ free_message }}</p>
+      </div>
+      <p class="st-note">Service addresses and keys stay on this computer and are never in backups. Choose models and approve what is sent on <a class="k-link" href="/models">Models</a>.</p>
+      <p class="st-dsm" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
+      <details class="st-det"><summary>Show details</summary><pre>Other uses the OpenAI chat completions format. The service address and key live only in .env.
+Saved keys: {{ provider_names|join(', ') or 'none yet' }}</pre></details>
+      <div class="st-kind st-kind--gap">Where each step runs</div>
+      <div class="st-strip">
+        {% for name, what in steps %}
+        {% set online = choice == 'hosted' or loop.index == 3 %}
+        <div class="st-step"><b>{{ name }}</b><span class="st-dsm">{{ what }}</span>
+          <span class="st-run"><small>Runs on</small>
+            <span class="k-pill {{ 'k-pill--info' if online else 'k-pill--good' }}">{{ st.sic('cloud' if online else 'laptop', 'k-ic--sm') }}{% if online %}{{ 'Online, asks first' if choice == 'both' else 'Online' }}{% else %}This computer{% endif %}</span></span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="st-note" id="st-online-note" data-testid="st-online-note">{% if online_problem %}Online starts once this is done: {{ online_problem }}. Add a key above, then approve what is sent on Models.{% endif %}</p>
+    </div>
+  </div>
+</section>

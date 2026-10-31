@@ -1,0 +1,20 @@
+{# A few icons this screen needs that the shared set does not carry (the locked mockup's paths).
+   Everything else comes from ui/macros.html. #}
+{% import "ui/macros.html" as ui %}
+{% set EXTRA = {
+  'mic': '<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  'book': '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>',
+  'users': '<circle cx="9" cy="8" r="3.5"/><path d="M2 21a7 7 0 0 1 14 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.5a5 5 0 0 1 6 5"/>',
+  'ask': '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  'note': '<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  'down': '<path d="M6 9l6 6 6-6"/>',
+  'lead': '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+  'target': '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+  'merge': '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8 7l8 4M8 17l8-4"/>',
+  'brief': '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>',
+  'layers': '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  'hand': '<path d="M7 11V6a1.5 1.5 0 0 1 3 0v5M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10V6a1.5 1.5 0 0 1 3 0v6l1-1.5a1.5 1.5 0 0 1 2.4 1.7L16 18a5 5 0 0 1-4.5 3H11a5 5 0 0 1-4-2l-3-4.5a1.5 1.5 0 0 1 2.4-1.7L7 14"/>'
+} %}
+{% macro pi(name, cls='') -%}
+{%- if name in EXTRA -%}<svg class="k-ic {{ cls }}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{{ EXTRA[name]|safe }}</svg>{%- else -%}{{ ui.icon(name, cls) }}{%- endif -%}
+{%- endmacro %}

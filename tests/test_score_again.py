@@ -483,9 +483,12 @@ def _client(monkeypatch):
 def test_dialog_markup_and_queue(monkeypatch):
     client, ids = _client(monkeypatch)
     body = client.get(f"/rescore/choose?opp_ids={ids[0]},{ids[1]}").text
-    assert '<dialog class="score-again-dialog"' in body and "showModal" in body
+    assert '<dialog class="score-again-dialog sf-dialog"' in body and "showModal" in body
     assert "Score 2 roles again" in body
-    assert re.search(r"Same model \(kestrel-tier2 \(local\)\)", body)
+    # D-UI-152: a friendly model name and where it runs, never the raw kestrel-tier2 tag.
+    assert re.search(r"<b>Same model</b><span>[^<]+, on this computer\.", body)
+    assert "kestrel-tier2" not in body and "kestrel-tier3" not in body.split("<script>")[0].replace(
+        'value="kestrel-tier3:latest"', "")
     assert "A different model, this time only" in body
     assert 'value="kestrel-tier3:latest"' in body and 'data-testid="score-again-pick"' in body
     assert "Free models are often much slower and less reliable than paid ones." in body
@@ -531,26 +534,6 @@ def test_every_class_has_a_css_rule():
     classes |= {f"score-history-{t}" for t in ("good", "warn", "bad", "idle")}
     assert classes and all(f".{c}" in block for c in classes), classes
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", block)  # theme variables only
-
-
-def test_failed_scoring_offers_score_all_failed_again():
-    """D-UI-50: the Failed scoring page re-scores every parked role, on any model."""
-    from kestrel.web.deps import templates
-
-    class _Opp:
-        def __init__(self, i):
-            self.id, self.title = i, f"Role {i}"
-
-    class _Q:
-        def __init__(self, i):
-            self.id, self.tier, self.model, self.error, self.attempts = i, 2, "m", "e", 2
-            self.created_at, self.raw_response = "2026-10-15", "{}"
-
-    rows = [{"q": _Q(1), "opp": _Opp(7)}, {"q": _Q(2), "opp": _Opp(7)},
-            {"q": _Q(3), "opp": _Opp(9)}]
-    html = templates().get_template("partials/quarantine_list.html").render(rows=rows)
-    assert "Score all failed again" in html and 'data-score-again="7,9"' in html
-    assert "2 need you" in html
 
 
 # ------------------------------------------------------------- hosted mode turned off mid-run

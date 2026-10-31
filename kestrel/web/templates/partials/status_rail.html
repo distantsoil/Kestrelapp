@@ -1,23 +1,19 @@
-{# Sidebar status rail (docs/UI_PROPOSAL.html): four rows, one state dot each. Rendered by
-   /status/rail from routes_control._status_payload and polled by HTMX every 10 s. #}
-<a class="line" data-rail="worker" href="/runs" title="Worker state and the last cycle">
-  <span class="dot {{ worker.state }}"></span><span class="txt">{{ worker.label }}</span></a>
-<a class="line" data-rail="model" href="/models" title="The model Ollama has loaded right now">
-  <span class="dot {{ model.state if model else 'idle' }}"></span><span class="txt">{{ model.label if model else 'local mode' }}</span></a>
-<a class="line" data-rail="scan" href="/sources" title="Last source scan and new opportunities">
-  <span class="dot {{ scan.state }}"></span><span class="txt">{{ scan.label }}</span></a>
-<a class="line" data-rail="hosted" href="/settings" title="Your online model key and whether it is ready">
-  <span class="dot {{ hosted.state }}"></span><span class="txt">{{ hosted.label }}</span></a>
-{% if balance %}<a class="line" data-rail="balance" href="/settings#hosted" title="{{ balance.note or 'This month\'s spend on deeper reads' }}">
-  <span class="dot {{ balance.state }}"></span><span class="txt">{{ balance.label }}</span></a>{% endif %}
-{% for note in credit or [] %}<a class="line" data-rail="credit" href="/settings#hosted" title="Your online model key is out of credit">
-  <span class="dot warn"></span><span class="txt">{{ note }}</span></a>{% endfor %}
-{% if worker.open_failed %}<a class="line" data-rail="failed" href="/quarantine" title="Roles the model could not finish">
-  <span class="dot warn"></span><span class="txt">{{ worker.open_failed }} {{ 'role' if worker.open_failed == 1 else 'roles' }} failed scoring</span></a>{% endif %}
-{% if pending_mode %}<span class="line" data-rail="pending"><span class="dot idle"></span><span class="txt">Next cycle: {{ pending_mode }}</span></span>{% endif %}
+{# The sidebar's two-line status readout (D-UI-91; today-mockup-locked.html :653-676). Rendered by
+   /status/rail from routes_control.readout() and polled by HTMX every 10 s. Line one: the
+   activity (Problem links to where it is fixed; Working pulses). Line two: the AI in use, with
+   the balance where the provider reports one. Each line ellipsizes, never wraps. #}
+{% set st = readout.state %}{% set en = readout.engine %}
+<div class="k-sstat__l" data-rail="state" title="{{ st.title }}">
+  <span class="k-dot k-dot--{{ st.dot }}"></span>
+  <span><b{% if st.dot == 'bad' %} class="k-sstat__bad"{% endif %}>{{ st.word }}</b> · {% if st.href %}<a href="{{ st.href }}" data-rail="{{ st.rail }}">{{ st.text }}</a>{% else %}<span data-rail="{{ st.rail }}">{{ st.text }}</span>{% endif %}</span>
+</div>
+<div class="k-sstat__l" data-rail="{{ en.rail }}" title="{{ en.title }}">
+  <span class="k-dot{% if en.dot != 'good' %} k-dot--{{ en.dot }}{% endif %}"></span>
+  <span>{% if en.href %}<a class="k-sstat__quiet" href="{{ en.href }}">{{ en.text }}</a>{% else %}{{ en.text }}{% endif %}{% if en.balance %} · <span data-rail="balance"{% if en.balance.state == 'warn' %} class="k-sstat__warn"{% endif %}>{{ en.balance.label }}</span>{% endif %}</span>
+</div>
 {# Out-of-band: the scan signal the toast container reads (D-UI-36). #}
-{% set st = scan_state or {} %}
-<div id="scan-signal" hx-swap-oob="true" hidden data-ready="1" data-scanning="{{ 1 if st.scanning else 0 }}"
-     data-remaining="{{ st.remaining or 0 }}" data-event="{{ st.event if st.event is not none else 'none' }}"
-     data-new="{{ st.new if st.new is not none else 0 }}" data-errors="{{ st.errors or 0 }}"
-     data-scoring="{{ st.scoring or 0 }}"></div>
+{% set sst = scan_state or {} %}
+<div id="scan-signal" hx-swap-oob="true" hidden data-ready="1" data-scanning="{{ 1 if sst.scanning else 0 }}"
+     data-remaining="{{ sst.remaining or 0 }}" data-event="{{ sst.event if sst.event is not none else 'none' }}"
+     data-new="{{ sst.new if sst.new is not none else 0 }}" data-errors="{{ sst.errors or 0 }}"
+     data-scoring="{{ sst.scoring or 0 }}"></div>

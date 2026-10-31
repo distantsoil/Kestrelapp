@@ -1,0 +1,86 @@
+{# The practice conversation: past answers with their feedback, then the question waiting. One
+   question at a time; the answer is typed. A finished session opens read-only. #}
+{% import "ui/macros.html" as ui %}
+{% import "partials/pp_icons.html" as i %}
+{% macro feedback(t, mid, opp, i) -%}
+{%- set sc = t.scores or {} %}
+<section class="k-card pp-crit" data-testid="pp-feedback">
+  <header class="k-sec-head"><span class="k-badge">{{ i.pi('target') }}</span><div class="k-grow"><h3>Feedback</h3></div>
+    <span class="pp-sub pp-ranon">{{ 'Online model' if t.ran_on == 'online' else ('On your computer' if t.ran_on == 'computer' else '') }}</span></header>
+  <div class="pp-rub">
+    {%- for key, label in (('structure', 'Structure'), ('specificity', 'Specific numbers'), ('relevance', 'Answered it'), ('length', 'Length')) %}
+    {%- set v = sc.get(key) %}
+    {%- if v is number %}
+    <span>{{ label }}</span><span class="pp-rub__tr"><i class="{{ 'is-mid' if v < 3.5 }}" style="width: {{ (v / 5 * 100)|round(1) }}%"></i></span><b>{{ '%.1f'|format(v) }}</b>
+    {%- endif %}
+    {%- endfor %}
+  </div>
+  {%- if t.critique %}
+  <p class="pp-body">{{ t.critique.worked_well }}</p>
+  {%- if t.critique.improvements %}<ul class="pp-impr">{% for imp in t.critique.improvements %}<li>{{ imp }}</li>{% endfor %}</ul>{% endif %}
+  {%- endif %}
+  {%- for c in (t.unsupported_claims or []) %}
+  {%- if loop.index0 not in (t.claims_seen or []) %}
+  <div class="pp-flag" data-testid="pp-claim">{{ i.pi('alert') }}<div><b>"{{ c }}"</b> is not in your resume or stories. If it is true, add it so Kestrel can back it up. If not, leave it out on the day.
+    <div class="pp-flag__btns">
+      <button type="button" class="k-btn k-btn--sm" hx-get="/stories/sheet?from=practice&opp={{ opp.id }}&claim={{ c|urlencode }}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-claim-add">Add it as a story</button>
+      <button type="button" class="k-btn k-btn--sm" hx-post="/mock/session/{{ mid }}/claim" hx-vals='{"turn": "{{ t._i }}", "claim": "{{ loop.index0 }}"}' hx-target="closest .pp-flag" hx-swap="delete" data-testid="pp-claim-ok">Got it</button>
+    </div></div></div>
+  {%- endif %}
+  {%- endfor %}
+</section>
+{%- endmacro %}
+<div class="pp-chat" id="pp-chat"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-chat">
+  {%- if error %}<div class="pp-warn" role="alert" data-testid="pp-error">{{ error }}</div>{% endif %}
+  {%- set mid = (review.id if review is defined and review else (active.id if active else 0)) %}
+  {%- for t in turns %}
+  <div class="pp-bub pp-bub--q"><small>Question {{ loop.index }}</small>{{ t.question }}</div>
+  <div class="pp-bub pp-bub--a">{{ t.answer }}</div>
+  {{ feedback(t, mid, opp, i) }}
+  {%- endfor %}
+  {%- if review is defined and review %}
+  <p class="pp-sub">{{ review.mode.replace('_', ' ')|capitalize }} · {{ review.started_at | iso_to_local }} · {{ review.question_count }} {{ 'answer' if review.question_count == 1 else 'answers' }}. This session is finished.</p>
+  <a class="k-btn k-btn--sm" href="{{ base }}?tab=practice" hx-get="{{ base }}?tab=practice" hx-target="#pp-body" hx-push-url="true">Back to practice</a>
+  {%- elif active %}
+    {%- if just_answered %}
+    <div class="pp-acts" id="pp-acts">
+      <button type="button" class="k-btn k-btn--primary" data-pp-next data-testid="pp-next">Next question {{ i.pi('arrow', 'k-ic--sm') }}</button>
+      <button type="button" class="k-btn" hx-post="/mock/session/{{ active.id }}/end" hx-swap="none" data-busy-text="Saving the session." data-testid="pp-end">End session</button>
+    </div>
+    {%- endif %}
+    {%- if pending %}
+    <div id="pp-ask-block"{% if just_answered %} hidden{% endif %}>
+      <div class="pp-bub pp-bub--q" data-testid="pp-pending"><small>Question {{ (active.question_count or 0) + 1 }}{% if q_total and (active.question_count or 0) + 1 <= q_total %} of {{ q_total }}{% endif %}</small><span class="pp-qtext">{{ pending }}</span></div>
+      <form class="pp-ansbox" hx-post="/mock/session/{{ active.id }}/answer" hx-include="#pp-route" hx-swap="none" hx-disabled-elt="find button" data-busy-text="Reviewing your answer {{ 'with the online model' if route.online else 'on your computer' }}." data-testid="pp-answer-form">
+        <textarea name="answer" id="pp-ans" rows="4" required placeholder="Type your answer as you would say it. Aim for two minutes out loud." aria-label="Your answer"></textarea>
+        <div class="pp-hint" id="pp-hint" hidden data-testid="pp-hint">
+          {%- if hint.story %}Your matching story: <b>{{ hint.story.title }}</b>.{% if hint.story.result %} Start with what you did, then the result: {{ hint.story.result }}{% endif %}
+          {%- else %}No story is matched to this question yet. Think of a time you handled something similar, and add it as a story from the Prep pack tab.{% endif %}
+        </div>
+        <div class="pp-ansrow">
+          <span class="pp-sub" id="pp-wc">0 words</span>
+          <div class="pp-ansbtns">
+            <button type="button" class="k-btn k-btn--sm" data-pp-hint data-testid="pp-hint-btn">Show a hint</button>
+            <button type="button" class="k-btn k-btn--sm" hx-post="/mock/session/{{ active.id }}/skip" hx-swap="none" data-testid="pp-skip">Skip</button>
+            <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="pp-send">Get feedback</button>
+          </div>
+        </div>
+      </form>
+      {%- if not just_answered and turns %}
+      <button type="button" class="k-btn k-btn--sm" hx-post="/mock/session/{{ active.id }}/end" hx-swap="none" data-busy-text="Saving the session." data-testid="pp-end">End session</button>
+      {%- endif %}
+    </div>
+    {%- endif %}
+  {%- else %}
+  <section class="k-card pp-start" data-testid="pp-start">
+    <h3>{{ 'Practice a discovery call' if con else 'Practice answering' }}</h3>
+    <p class="k-muted">Pick a mode above. Questions come one at a time from this role's likely questions, and you answer in your own words. Your answers stay on this computer{% if route.online %} except what is listed when you confirm{% endif %}.</p>
+    {%- if focus_q %}<p class="pp-body" data-testid="pp-focus">Starting with: <b>{{ focus_q }}</b></p>{% endif %}
+    <form hx-post="/mock/{{ opp_id }}/start" hx-include="#pp-route" hx-swap="none" hx-disabled-elt="find button" data-busy-text="Getting the first question.">
+      <input type="hidden" name="mode" id="pp-mode" value="{{ modes[0].key if modes else '' }}">
+      {%- if focus_q %}<input type="hidden" name="qh" value="{{ focus_qh }}">{% endif %}
+      <button type="submit" class="k-btn k-btn--primary" data-testid="pp-begin">Start practice</button>
+    </form>
+  </section>
+  {%- endif %}
+</div>

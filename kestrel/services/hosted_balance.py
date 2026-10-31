@@ -225,3 +225,16 @@ async def rail_row(session: AsyncSession, settings: Settings) -> dict[str, str] 
         _key_value(b) for b in prov.external_backends(settings).values()
     )
     return await local_spend(session) if has_key else None
+
+
+async def credit_left(session: AsyncSession, settings: Settings) -> str | None:
+    """"$4.20 left on your key's limit" when the provider reports a limit for the key, else None
+    (an uncapped key has no credit to be left: nothing is invented). Same eligibility, cache and
+    opt-in as the rail line, so it never adds a request."""
+    eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
+    if eligible is None:
+        return None
+    reading = await _reading(*eligible)
+    if not reading.ok or reading.remaining is None:
+        return None
+    return f"{usd(reading.remaining)} left on your key's limit"

@@ -1,0 +1,33 @@
+{# Applications needing action (Leads needing action in Consulting) (D-UI-92, D-UI-156):
+   follow-ups and interviews coming up (Consulting: proposal due, follow-up, call), from the same
+   query as the Applications rail, with the verbs Applications uses. There is no Draft follow-up
+   (D-UI-148). #}
+{% import "ui/macros.html" as ui %}
+<section class="k-card k-card--info td-panel" id="td-apps" data-testid="td-apps"
+         hx-get="/today/applications?track={{ track }}" hx-trigger="td-refresh from:body, kestrel:undone from:document" hx-swap="outerHTML" data-no-busy>
+  <header class="k-sec-head">
+    <span class="k-badge">{{ ui.icon('profile') }}</span>
+    <div class="k-grow"><h3>{{ 'Leads' if consulting else 'Applications' }} needing action <span class="td-count" data-testid="ap-count">{{ apps.n }}</span></h3>
+      <p>{% if consulting %}Proposals, follow-ups and calls coming up.{% else %}Follow-ups and interviews coming up.{% endif %}</p></div>
+    <a class="k-link" href="/pursuits?track={{ track }}">View all</a>
+  </header>
+  <div class="td-list" data-testid="ap-list">
+    {% for a in apps.rows %}
+    <div class="td-item" data-pursuit="{{ a.pursuit_id }}" data-testid="ap-row">
+      <div class="k-grow"><a class="td-item__t" href="/pursuits?track={{ track }}">{{ a.title }}</a><div class="td-o">{{ a.org }}</div></div>
+      <span class="k-pill">{{ a.kind }}</span>
+      <span class="td-when{% if a.urgent %} td-when--due{% endif %}" data-testid="ap-when">{{ a.when }}</span>
+      {% if a.verb == 'prepare' %}<a class="k-btn k-btn--sm" href="/prep/{{ a.opp_id }}?auto=1" data-testid="ap-prepare">Prepare</a>
+      {% elif a.verb == 'follow' %}<button type="button" class="k-btn k-btn--sm" data-testid="ap-follow"
+              hx-post="/today/applications/{{ a.pursuit_id }}/follow-again" hx-swap="none">Follow up again</button>
+      {% else %}<a class="k-btn k-btn--sm" href="/pursuits?track={{ track }}" data-testid="ap-open">Open</a>{% endif %}
+    </div>
+    {% else %}
+    <p class="td-quiet" data-testid="ap-empty">Nothing is due this week.</p>
+    {% endfor %}
+  </div>
+  {# A switched-off track stops scanning and scoring; its open work is never hidden (R2). #}
+  {% for o in off_tracks or [] %}
+  <p class="td-quiet td-off" data-testid="act-off-track" data-track="{{ o.track }}">{{ o.name }} (switched off): {{ o.apply }} to act on · {{ o.follow_up }} {{ 'follow-up' if o.follow_up == 1 else 'follow-ups' }} due · <a class="k-link" href="/pursuits?track={{ o.track }}">Open {{ words(o.track).board }}</a></p>
+  {% endfor %}
+</section>

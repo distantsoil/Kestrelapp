@@ -51,11 +51,23 @@ async def build_pending(session: AsyncSession) -> bool:
     return bool(n)
 
 
-async def request_build(session: AsyncSession) -> bool:
-    """Queue one build unless one is already waiting or running. Commits. True when queued."""
+TIER = "tier2"  # prompt story_consolidate/v1 runs on this tier
+BUILD_SENDS = "your interview notes and the interview sketches saved with each scored role"
+
+
+async def request_build(session: AsyncSession, *, consent: dict | None = None) -> bool:
+    """Queue one build unless one is already waiting or running. Commits. True when queued.
+    `consent` is the operator's confirmation of an online send
+    (kestrel.services.online_consent.consent_payload). With Tier 2 online and no confirmation for
+    the model configured now, nothing is queued: a build never goes online without a click."""
+    from kestrel.services.online_consent import held_for_consent
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    if held_for_consent(await load_settings_with_db(session), TIER, consent):
+        return False
     if await build_pending(session):
         return False
-    session.add(Task(type=TASK_TYPE, payload={}, max_attempts=MAX_ATTEMPTS))
+    session.add(Task(type=TASK_TYPE, payload=dict(consent or {}), max_attempts=MAX_ATTEMPTS))
     await session.commit()
     return True
 
@@ -103,6 +115,7 @@ async def drain_story_builds(
     shows the reason and Try again); it never raises into the caller's worker cycle."""
     from kestrel.interview.stories import consolidate_stories
     from kestrel.queue.queue import TaskQueue
+    from kestrel.services.online_consent import held_at_run_time
 
     queue = TaskQueue(sm)
     wid = "pipeline-stories"
@@ -111,6 +124,15 @@ async def drain_story_builds(
         task = await queue.lease(wid, types=[TASK_TYPE], lease_seconds=LEASE_S)
         if task is None:
             break
+        if await held_at_run_time(sm, settings, TIER, task.payload):
+            # Tier 2 went online after this was queued: it needs a fresh click, never a send.
+            await _record(sm, {
+                "at": utcnow_iso(), "ok": False,
+                "error": "held because Tier 2 now uses an online model. Press Build stories "
+                         "and confirm the send.",
+            })
+            await queue.complete(task.id, worker_id=wid)
+            continue
         beat = asyncio.create_task(_renew(queue, task.id, wid))
         try:
             async with sm() as s:

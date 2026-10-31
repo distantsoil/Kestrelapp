@@ -121,7 +121,8 @@ if ($env:WINDOWS_CERT_PFX_BASE64 -and $env:WINDOWS_CERT_PASSWORD) {
 function Find-Iscc {
     $cmd = Get-Command iscc.exe -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-    foreach ($p in @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
+    # winget installs per user by default (LOCALAPPDATA\Programs); an admin install uses Program Files.
+    foreach ($p in @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
         if (Test-Path $p) { return $p }
     }
     return $null

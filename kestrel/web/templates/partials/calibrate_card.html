@@ -1,0 +1,84 @@
+{# The rating card: one role, the posting on the left, Kestrel's reading on the right once the
+   operator has answered. Kestrel's score is NOT in this markup until then (it arrives from
+   /calibrate/reveal), so it cannot anchor the answer. The wrapper #cal-card is the swap target. #}
+{% import "ui/macros.html" as ui %}
+<div id="cal-card" class="cal-cardwrap" data-testid="cal-card"{% if revisit %} data-change="1"{% endif %} data-since="{{ since }}" data-skip="{{ skip }}">
+{% if card %}
+  {% set opp = card.opp %}
+  <section class="k-card cal-q is-in" aria-label="Rate this role" data-testid="calitem-{{ opp.id }}">
+    {% if revisit %}
+    <div class="cal-rev" data-testid="cal-revisit">{{ ui.icon('clock', 'k-ic--sm') }}<span>Changing an earlier rating. You said <b>{{ cv.SCORE_WORDS[card.previous] }}</b>.</span>
+      <button type="button" class="k-link" hx-get="/calibrate/card" hx-vals='{{ {"since": since, "skip": skip}|tojson }}' hx-target="#cal-card" hx-swap="outerHTML" data-testid="cal-revisit-cancel">Cancel</button></div>
+    {% endif %}
+    <header class="cal-qhead">
+      <span class="cal-mono cal-mono--{{ ((card.org or '')|length) % 4 }}" aria-hidden="true">{{ ((card.org or opp.title or '?')[:1])|upper }}</span>
+      <div class="cal-qtitle">
+        <h2>{{ opp.title or '(untitled)' }}</h2>
+        <div class="cal-sm cal-dsm">{{ card.org }}{% if card.org %} · {% endif %}{{ card.place }} · {{ card.pay }}</div>
+      </div>
+      {% if not revisit %}<span class="cal-sm cal-dsm cal-nowrap">{{ queue.done + 1 }} of {{ queue.total }}</span>{% endif %}
+      <button type="button" class="k-btn k-btn--sm" data-k-flyout="#cal-post-fly" aria-controls="cal-post-fly" aria-expanded="false" data-testid="cal-more">More details</button>
+    </header>
+    <div class="cal-qbody">
+      <div class="cal-qdesc" data-testid="cal-posting">
+        <h5>The posting</h5>
+        <p class="cal-text">{{ card.excerpt }}</p>
+        <h5>Pay and place</h5>
+        <p>{{ card.pay }} · {{ card.place }}</p>
+      </div>
+      <div class="cal-qeval">
+        {% if card.why %}<div class="cal-why">{{ ui.icon('help', 'k-ic--sm') }}<div><b>Why Kestrel is asking:</b> {{ card.why }}</div></div>{% endif %}
+        <div id="cal-eval" class="cal-evalarea" data-testid="cal-eval" aria-live="polite">
+          {% if card.previous %}{% set said = card.previous %}{% set said_word = cv.SCORE_WORDS[said] %}{% set dims = card.dims %}{% set kestrel = card.kestrel %}{% set read = card.read %}{% include "partials/calibrate_reveal_eval.html" %}
+          {% else %}
+          <div class="cal-veil" data-testid="cal-veil"><span class="cal-vring" aria-hidden="true"></span><div><b>Your call first</b><div class="cal-sm cal-dsm">Say how well this role matches you, then see what Kestrel thought. Seeing its score first tends to pull yours toward it.</div></div></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <form id="cal-form" class="cal-act" hx-post="/calibrate/rate" hx-target="#cal-card" hx-swap="outerHTML swap:300ms" hx-disabled-elt="#cal-save, #cal-skip" data-previous="{{ card.previous or '' }}">
+      <input type="hidden" name="opportunity_id" value="{{ opp.id }}">
+      <input type="hidden" name="score" value="{{ card.previous or '' }}">
+      <input type="hidden" name="since" value="{{ since }}">
+      <input type="hidden" name="skip" value="{{ skip }}">
+      {% if revisit %}<input type="hidden" name="change" value="1">{% endif %}
+      <span class="cal-pq">Good match?</span>
+      <div class="cal-pick" role="group" aria-label="Good match?" id="cal-pick">
+        {% for n, w in cv.SCORE_WORDS.items() %}
+        <button type="button" class="cal-pickbtn{{ ' is-on' if card.previous == n else '' }}" data-n="{{ n }}" aria-pressed="{{ 'true' if card.previous == n else 'false' }}" title="Key {{ n }}"
+                hx-get="/calibrate/reveal" hx-vals='{"score": {{ n }}}' hx-include="#cal-form [name=opportunity_id]" hx-target="#cal-eval" hx-swap="innerHTML" hx-sync="#cal-pick:replace" data-testid="pick-{{ n }}">{{ w }}</button>
+        {% endfor %}
+      </div>
+      <button type="button" class="k-btn k-btn--sm" id="cal-whybtn" aria-expanded="false" aria-controls="cal-why-panel" data-testid="cal-tell"{% if not card.previous %} hidden{% endif %}>Tell Kestrel why <kbd class="cal-kbd">O</kbd></button>
+      <span class="cal-grow"></span>
+      {% if not revisit %}<button type="button" class="k-btn k-btn--sm" id="cal-skip" hx-post="/calibrate/skip" hx-target="#cal-card" hx-swap="outerHTML swap:300ms" data-testid="cal-skip">Skip <kbd class="cal-kbd">S</kbd></button>{% endif %}
+      <button type="submit" class="k-btn k-btn--primary k-btn--sm" id="cal-save" data-testid="cal-save"{% if not card.previous %} disabled{% endif %}><span id="cal-savel">Save, nothing to add</span> <kbd class="cal-kbd cal-kbd--on">Enter</kbd></button>
+      <div class="cal-whypanel" id="cal-why-panel" aria-hidden="true">
+        <div><div id="cal-why-body" class="cal-whybody">{% if card.previous %}{% include "partials/calibrate_why_body.html" %}{% endif %}</div></div>
+      </div>
+    </form>
+  </section>
+  {% call ui.flyout('cal-post-fly', opp.title or 'Full posting', eyebrow='Full posting') %}
+    <p class="cal-sm cal-dsm">{{ card.org }}{% if card.org %} · {% endif %}{{ card.place }} · {{ card.pay }}</p>
+    <div class="cal-fulltext" data-testid="cal-fulltext">{{ card.text }}</div>
+    <p class="cal-sm cal-dsm">Shown as the employer wrote it.</p>
+    {% if opp.url and opp.url.lower().startswith(('http://', 'https://')) %}<p><a class="k-btn k-btn--sm" href="{{ opp.url }}" target="_blank" rel="noopener noreferrer" data-testid="cal-original">Open original posting {{ ui.icon('arrow', 'k-ic--sm') }}</a></p>{% endif %}
+  {% endcall %}
+{% else %}
+  <section class="k-card cal-done" data-testid="cal-done">
+    <span class="k-badge k-badge--good cal-done__ic">{{ ui.icon('check') }}</span>
+    {% if queue.done %}
+    <h2>All {{ queue.done }} rated.</h2>
+    <p class="cal-dsm">{{ done_line }}</p>
+    {% else %}
+    <h2>Nothing to rate right now.</h2>
+    {% endif %}
+    <p class="cal-dsm">{% if queue.more_unsure %}Kestrel has more roles it is unsure about.{% else %}Kestrel is not unsure about anything right now. It finds more after the next run.{% endif %}</p>
+    <div class="cal-btns cal-btns--center">
+      {% if queue.more_unsure %}<a class="k-btn k-btn--primary k-btn--sm" href="/calibrate?track={{ track }}" data-testid="cal-keep-going">Keep going</a>{% endif %}
+      {% if history.total %}<button type="button" class="k-btn k-btn--sm" data-cal-scroll="#cal-history">Change an earlier rating</button>{% endif %}
+      <a class="k-btn k-btn--sm" href="/opportunities">Back to Pipeline</a>
+    </div>
+  </section>
+{% endif %}
+</div>

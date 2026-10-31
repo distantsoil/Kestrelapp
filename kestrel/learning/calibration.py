@@ -17,6 +17,7 @@ from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Calibration, Setting
 from kestrel.learning.capture import LabeledExample, labeled_examples
+from kestrel.services import pursuit_undo
 
 _DIMS = {
     "employment": ["role_fit", "domain_match", "company_context", "comp_logistics", "trajectory"],
@@ -118,6 +119,8 @@ async def propose_calibration(
 ) -> Calibration | None:
     """Fit and STORE a calibration proposal (status 'proposed'), or None if there are too few
     labeled examples or too few with usable dimensions. Never applies the weights."""
+    if not settings.learning.tune_weights:
+        return None  # switched off in Settings > Scoring and learning
     keys = dimension_keys(track)
     examples = await labeled_examples(session, track)
     if len(examples) < settings.learning.min_labels_for_calibration:
@@ -152,13 +155,21 @@ async def accept_calibration(session: AsyncSession, calibration_id: int) -> bool
     cal = await session.get(Calibration, calibration_id)
     if cal is None or cal.status != "proposed":
         return False
+    before = {}
     for key, value in (cal.proposed_weights or {}).items():
         setting_key = f"scoring.weights.{cal.track}.{key}"
         existing = await session.get(Setting, setting_key)
+        before[key] = existing.value if existing is not None else None
         if existing is None:
             session.add(Setting(key=setting_key, value=value))
         else:
             existing.value = value
+    undo_key = pursuit_undo.PREFIX + f"calibration.{cal.id}"
+    old = await session.get(Setting, undo_key)
+    if old is not None:
+        await session.delete(old)
+        await session.flush()
+    session.add(Setting(key=undo_key, value={"kind": "calibration", "before": before}))
     cal.status = "accepted"
     cal.decided_at = utcnow_iso()
     await session.commit()
@@ -171,6 +182,37 @@ async def reject_calibration(session: AsyncSession, calibration_id: int) -> bool
         return False
     cal.status = "rejected"
     cal.decided_at = utcnow_iso()
+    await session.commit()
+    return True
+
+
+async def undo_calibration(session: AsyncSession, calibration_id: int) -> bool:
+    """Take back an accept or a reject: the proposal is waiting again. An accepted one also puts
+    the weights it replaced back in use (the previous values, written as setting rows)."""
+    cal = await session.get(Calibration, calibration_id)
+    if cal is None or cal.status not in ("accepted", "rejected"):
+        return False
+    if cal.status == "accepted":
+        for key, value in (cal.proposed_weights or {}).items():
+            existing = await session.get(Setting, f"scoring.weights.{cal.track}.{key}")
+            if existing is None or existing.value != value:
+                return False
+        saved = await session.get(Setting, pursuit_undo.PREFIX + f"calibration.{cal.id}")
+        if saved is None:
+            return False
+        for key, value in saved.value["before"].items():
+            setting_key = f"scoring.weights.{cal.track}.{key}"
+            existing = await session.get(Setting, setting_key)
+            if value is None:
+                if existing is not None:
+                    await session.delete(existing)
+            elif existing is None:
+                session.add(Setting(key=setting_key, value=value))
+            else:
+                existing.value = value
+        await session.delete(saved)
+    cal.status = "proposed"
+    cal.decided_at = None
     await session.commit()
     return True
 

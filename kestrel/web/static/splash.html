@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kestrel</title>
+<!-- The loading window (D-UI-89, SPEC-INTERFACES 1.8; the private overhaul notes
+     launch-mockup-locked.html). A local page: the desktop shell loads it before any server
+     exists, inlining tokens.css and the mark where the markers below sit, and drives it through
+     window.KSplash (say, fail, busy, ready). Theme tokens only; the OS light or dark preference
+     applies. Its buttons call the shell's JS API (Try again, Open logs folder, Quit). -->
+<style>/*K-TOKENS*/</style>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.5 var(--font);color:var(--ink);background:var(--bg);overflow:hidden}
+button{font:inherit;cursor:pointer;color:inherit}
+.k-splash{position:fixed;inset:0;display:grid;place-items:center;
+  background:linear-gradient(180deg,var(--sky-top) 0,var(--sky-bot) 100%);transition:opacity .45s ease}
+.k-splash.is-out{opacity:0}
+.k-drag{position:fixed;left:0;right:0;top:0;height:44px;z-index:2}
+.sp{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;max-width:440px;
+  padding:0 24px;margin-top:-60px;position:relative;z-index:1}
+.mark{width:72px;height:72px;display:block}
+.sp.is-hover .mark{animation:hov 2.4s ease-in-out infinite}
+@keyframes hov{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+.name{font-size:26px;font-weight:800;letter-spacing:-.01em}
+.status{min-height:24px;color:var(--muted);font-size:15px;transition:opacity .25s}
+.status.is-swap{opacity:0}
+.bar{width:220px;height:4px;border-radius:4px;background:var(--line);overflow:hidden;position:relative}
+.bar i{position:absolute;top:0;bottom:0;left:0;width:0;background:var(--brand);border-radius:4px;transition:width .5s ease}
+.bar.is-indet i{width:38%;animation:slide 1.3s ease-in-out infinite}
+@keyframes slide{0%{left:-40%}100%{left:100%}}
+.note{font-size:13.5px;color:var(--muted);max-width:360px;min-height:20px;opacity:0;transition:opacity .4s}
+.note.is-on{opacity:1}
+.ridge{position:absolute;left:0;right:0;bottom:0;width:100%;height:120px;pointer-events:none}
+.prob{display:none;flex-direction:column;align-items:center;gap:12px;max-width:470px;text-align:center;
+  position:relative;z-index:1;padding:0 24px}
+.prob.is-on{display:flex}
+.pi{width:52px;height:52px;border-radius:14px;background:var(--bad-bg);color:var(--bad-ink);display:grid;place-items:center}
+.pi svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+.prob h2{margin:0;font-size:20px}
+.prob p{margin:0;color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+.btn{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:8px 14px;font-weight:700;
+  transition:background .15s,transform .1s}
+.btn:hover{background:var(--soft)}
+.btn:active{transform:scale(.97)}
+.btn.p{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.btn:disabled{opacity:.55;cursor:default}
+.btn:focus-visible,.link:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.link{border:0;background:none;color:var(--link-ink);font-weight:700;padding:2px}
+.det{display:none;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-radius:10px;
+  padding:10px 12px;font:12.5px/1.5 var(--mono);color:var(--muted);white-space:pre-wrap}
+.det.is-on{display:block}
+.wctl{position:fixed;top:10px;left:12px;z-index:5;display:flex;align-items:center;gap:2px}
+.wctl[hidden]{display:none}
+.wctl button{border:0;padding:0;display:grid;place-items:center;color:var(--ink);width:34px;height:26px;border-radius:6px;background:transparent}
+.wctl svg{width:11px;height:11px;stroke:currentColor;stroke-width:1.2;fill:none}
+.wctl button:hover{background:var(--line)}
+.wctl .c:hover{background:var(--wc-close);color:var(--wc-close-ink)}
+.wctl .n{order:1}.wctl .x{order:2}.wctl .c{order:3}
+.wctl button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="k-splash" id="splash">
+  <div class="k-drag pywebview-drag-region" data-k-drag aria-hidden="true"></div>
+  <div class="wctl" id="wctl" role="group" aria-label="Window controls" hidden><button class="c" type="button" data-wc="close" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6"/></svg></button><button class="n" type="button" data-wc="min" aria-label="Minimize"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5h7"/></svg></button><button class="x" type="button" data-wc="max" aria-label="Maximize"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5h7v7h-7z"/></svg></button></div>
+  <div class="sp is-hover" id="sp">
+    <img class="mark" src="/*K-MARK*/" alt="">
+    <div class="name">Kestrel</div>
+    <div class="status" id="status" role="status" aria-live="polite">Opening your data</div>
+    <div class="bar" id="bar"><i></i></div>
+    <div class="note" id="note"></div>
+  </div>
+  <div class="prob" id="prob" role="alert">
+    <div class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg></div>
+    <h2>Kestrel couldn't start</h2>
+    <p id="reason"></p>
+    <div class="row"><button class="btn p" id="retry" type="button">Try again</button><button class="btn" id="logs" type="button">Open logs folder</button><button class="btn" id="quit" type="button">Quit</button></div>
+    <button class="link" id="detBtn" type="button" aria-expanded="false" aria-controls="det">Show details</button>
+    <div class="det" id="det"></div>
+  </div>
+  <svg class="ridge" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true"><path d="M0 120V78l120-34 110 30 140-52 120 44 130-36 150 50 140-44 130 28 160-30V120z" fill="var(--m1)"/><path d="M0 120V96l150-26 160 30 170-38 150 34 190-28 170 30 210-22V120z" fill="var(--m2)"/><path d="M0 120v-12l220-14 240 12 260-16 240 14 240-10V120z" fill="var(--m3)"/></svg>
+</div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var noteTimer = null;
+  function api(name) {
+    var a = window.pywebview && window.pywebview.api;
+    if (a && typeof a[name] === 'function') a[name]();
+  }
+  function bar(pct) {
+    var b = $('bar');
+    if (pct === null || pct === undefined) { b.classList.add('is-indet'); b.firstElementChild.style.width = ''; }
+    else { b.classList.remove('is-indet'); b.firstElementChild.style.width = pct + '%'; }
+  }
+  function note(text) { $('note').textContent = text || ''; $('note').classList.toggle('is-on', !!text); }
+  function show(which) {
+    $('sp').style.display = which === 'prob' ? 'none' : '';
+    $('prob').classList.toggle('is-on', which === 'prob');
+  }
+  // One status line that cross-fades; pct null is the indeterminate bar. A later note (the
+  // "this can take a minute" line) shows after `noteAfterMs` unless the status moves on.
+  function say(text, pct, later, noteAfterMs) {
+    show('sp');
+    var s = $('status');
+    clearTimeout(noteTimer);
+    note('');
+    if (s.textContent !== text) {
+      s.classList.add('is-swap');
+      setTimeout(function () { s.textContent = text; s.classList.remove('is-swap'); }, 220);
+    }
+    bar(pct);
+    if (later) noteTimer = setTimeout(function () { note(later); }, noteAfterMs || 0);
+  }
+  function fail(reason, details) {
+    clearTimeout(noteTimer);
+    $('retry').disabled = false;
+    $('reason').textContent = reason || '';
+    $('det').textContent = details || '';
+    $('det').classList.remove('is-on');
+    $('detBtn').textContent = 'Show details';
+    $('detBtn').setAttribute('aria-expanded', 'false');
+    show('prob');
+    $('retry').focus();
+  }
+  function ready() { say('Ready', 100); setTimeout(function () { $('splash').classList.add('is-out'); }, 250); }
+  // One start at a time: the button is disabled until this attempt ends on the card again.
+  $('retry').addEventListener('click', function () {
+    if ($('retry').disabled) return;
+    $('retry').disabled = true;
+    say('Opening your data', 10);
+    api('splash_retry');
+  });
+  $('logs').addEventListener('click', function () { api('splash_open_logs'); });
+  $('quit').addEventListener('click', function () { api('splash_quit'); });
+  $('detBtn').addEventListener('click', function () {
+    var on = !$('det').classList.contains('is-on');
+    $('det').classList.toggle('is-on', on);
+    $('detBtn').textContent = on ? 'Hide details' : 'Show details';
+    $('detBtn').setAttribute('aria-expanded', on ? 'true' : 'false');
+  });
+  // The window controls, as on every page (Windows and Linux drawn; macOS keeps its own).
+  var os = '';
+  function frame() {
+    var a = window.pywebview && window.pywebview.api;
+    if (!a || typeof a.window_info !== 'function') return;
+    Promise.resolve(a.window_info()).then(function (info) {
+      os = (info && info.os) || 'win';
+      if (os !== 'mac') $('wctl').hidden = false;
+    });
+  }
+  window.addEventListener('pywebviewready', frame);
+  $('wctl').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-wc]');
+    if (!b) return;
+    var w = b.getAttribute('data-wc');
+    api(w === 'min' ? 'window_minimize' : w === 'max' ? 'window_toggle_maximize' : 'window_close');
+  });
+  // Windows hands the drag to its own move loop, which swallows the mouse-up: a second press on
+  // the same spot within the double-click time maximizes instead (as in kestrel-ui.js).
+  var lastDown = null;
+  document.addEventListener('mousedown', function (e) {
+    if (os !== 'win' || e.button !== 0 || !e.target.hasAttribute('data-k-drag')) return;
+    var now = Date.now();
+    if (lastDown && now - lastDown.t <= 500 && Math.abs(e.clientX - lastDown.x) <= 4 &&
+        Math.abs(e.clientY - lastDown.y) <= 4) {
+      lastDown = null; api('window_toggle_maximize'); return;
+    }
+    lastDown = { t: now, x: e.clientX, y: e.clientY };
+    api('window_start_drag');
+  });
+  document.addEventListener('dblclick', function (e) {
+    if (os !== 'win' && e.target.hasAttribute('data-k-drag')) api('window_toggle_maximize');
+  });
+  window.KSplash = { say: say, fail: fail, ready: ready, note: note };
+  bar(8);
+})();
+</script>
+</body>
+</html>

@@ -194,7 +194,7 @@ def test_tailor_lists_masters_for_the_opportunitys_track(
 
 
 # ============================================================================ 3. Research
-def test_research_success_renders_signal_count(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_research_queues_and_returns_without_fetching(monkeypatch: pytest.MonkeyPatch) -> None:
     ids = asyncio.run(_seed())
 
     async def fake_research_org(session, client, org, *, settings, http=None, operator_paste=None):
@@ -205,16 +205,15 @@ def test_research_success_renders_signal_count(monkeypatch: pytest.MonkeyPatch) 
         )
 
     monkeypatch.setattr(
-        "kestrel.web.pages.opportunity_actions.research_org", fake_research_org
+        "kestrel.research.jobs.research_org", fake_research_org
     )
     with _client(monkeypatch) as c:
         r = c.post(f"/opportunities/{ids['opp_id']}/research")
         assert r.status_code == 200
-        assert "Research complete" in r.text
-        assert "1 signal" in r.text
+        assert "Queued" in r.text and "Organization tab" in r.text
 
 
-def test_research_service_failure_renders_inline_error_not_500(
+def test_research_backend_failure_cannot_block_the_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ids = asyncio.run(_seed())
@@ -223,15 +222,14 @@ def test_research_service_failure_renders_inline_error_not_500(
         raise RuntimeError("model backend unreachable")
 
     monkeypatch.setattr(
-        "kestrel.web.pages.opportunity_actions.research_org", fake_research_org
+        "kestrel.research.jobs.research_org", fake_research_org
     )
     with _client(monkeypatch) as c:
         r = c.post(f"/opportunities/{ids['opp_id']}/research")
         assert r.status_code == 200
-        assert "Research failed" in r.text
-        assert "RuntimeError" in r.text  # the type, never the text
+        assert "Queued" in r.text
         assert "model backend unreachable" not in r.text
-        assert "the details are in the log" in r.text
+        assert "Research failed" not in r.text
 
 
 def test_research_without_a_linked_org_renders_inline_error(
@@ -243,7 +241,7 @@ def test_research_without_a_linked_org_renders_inline_error(
     async def unreachable(*args, **kwargs):
         raise AssertionError("research_org must not be called with no linked org")
 
-    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.research_org", unreachable)
+    monkeypatch.setattr("kestrel.research.jobs.research_org", unreachable)
     with _client(monkeypatch) as c:
         r = c.post(f"/opportunities/{ids2['opp_id']}/research")
         assert r.status_code == 200
@@ -266,7 +264,7 @@ async def _seed_no_org() -> dict[str, int]:
 
 
 # ============================================================================ 4. Find contacts
-def test_find_contacts_success_renders_count(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_find_contacts_queues_without_fetching(monkeypatch: pytest.MonkeyPatch) -> None:
     ids = asyncio.run(_seed())
 
     async def fake_discover_contacts(session, client, org, excerpts, *, opportunity=None,
@@ -274,15 +272,15 @@ def test_find_contacts_success_renders_count(monkeypatch: pytest.MonkeyPatch) ->
         return [Contact(org_id=org.id, name="Jane Doe", contact_type="hiring_manager")]
 
     monkeypatch.setattr(
-        "kestrel.web.pages.opportunity_actions.discover_contacts", fake_discover_contacts
+        "kestrel.research.jobs.discover_contacts", fake_discover_contacts
     )
     with _client(monkeypatch) as c:
         r = c.post(f"/opportunities/{ids['opp_id']}/contacts")
         assert r.status_code == 200
-        assert "Found 1 contact" in r.text
+        assert "Queued" in r.text and "Organization tab" in r.text
 
 
-def test_action_failure_logs_carry_the_opportunity_and_the_error_type(
+def test_requests_do_not_run_or_log_model_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import structlog
@@ -292,19 +290,15 @@ def test_action_failure_logs_carry_the_opportunity_and_the_error_type(
     async def boom(*args, **kwargs):
         raise RuntimeError("model backend unreachable")
 
-    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.research_org", boom)
-    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.discover_contacts", boom)
+    monkeypatch.setattr("kestrel.research.jobs.research_org", boom)
+    monkeypatch.setattr("kestrel.research.jobs.discover_contacts", boom)
     with _client(monkeypatch) as c, structlog.testing.capture_logs() as logs:
         c.post(f"/opportunities/{ids['opp_id']}/research")
         c.post(f"/opportunities/{ids['opp_id']}/contacts")
-    by_event = {e["event"]: e for e in logs}
-    for event in ("research_failed", "find_contacts_failed"):
-        assert by_event[event]["opp_id"] == ids["opp_id"]
-        assert by_event[event]["error_type"] == "RuntimeError"
-        assert by_event[event]["error"] == "model backend unreachable"
+    assert not any(e["event"] in ("research_failed", "find_contacts_failed") for e in logs)
 
 
-def test_find_contacts_service_failure_renders_inline_error_not_500(
+def test_contact_backend_failure_cannot_block_the_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ids = asyncio.run(_seed())
@@ -313,13 +307,12 @@ def test_find_contacts_service_failure_renders_inline_error_not_500(
         raise RuntimeError("quarantined: schema mismatch")
 
     monkeypatch.setattr(
-        "kestrel.web.pages.opportunity_actions.discover_contacts", fake_discover_contacts
+        "kestrel.research.jobs.discover_contacts", fake_discover_contacts
     )
     with _client(monkeypatch) as c:
         r = c.post(f"/opportunities/{ids['opp_id']}/contacts")
         assert r.status_code == 200
-        assert "Contact discovery failed" in r.text
-        assert "RuntimeError" in r.text
+        assert "Queued" in r.text
         assert "quarantined: schema mismatch" not in r.text
 
 
@@ -395,7 +388,10 @@ def test_detail_page_shows_document_masters_on_first_render(monkeypatch):
         r = c.get(f"/opportunities/{ids['opp_id']}")
     assert r.status_code == 200
     assert "No active document masters" not in r.text
-    assert "/renders/new?master_id=" in r.text
+    with _client(monkeypatch) as c:
+        c.post(f"/opportunities/{ids['opp_id']}/role/shortlist")
+        tab = c.get(f"/opportunities/{ids['opp_id']}/tab/documents")
+    assert "/renders/new?master_id=" in tab.text
 
 
 def test_detail_page_keeps_confidential_redaction_after_the_actions_merge(monkeypatch):
@@ -438,7 +434,7 @@ def test_archived_opportunities_leave_the_active_pipeline(monkeypatch):
     )
 
 
-def test_research_action_uses_the_shared_service_and_keeps_its_messages(
+def test_research_action_leaves_the_shared_service_to_the_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ids = asyncio.run(_seed())
@@ -452,14 +448,14 @@ def test_research_action_uses_the_shared_service_and_keeps_its_messages(
         seen.append(org.name)
         return await real(session, org, **kw)
 
-    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.run_org_research", spy)
+    monkeypatch.setattr("kestrel.services.org_research.run_org_research", spy)
 
     async def fake_research_org(session, client, org, *, settings, http=None, operator_paste=None):
         return OrgResearch(org_id=org.id, summary_md=None, signals=[], insufficient_sources=True)
 
-    monkeypatch.setattr("kestrel.web.pages.opportunity_actions.research_org", fake_research_org)
+    monkeypatch.setattr("kestrel.research.jobs.research_org", fake_research_org)
     with _client(monkeypatch) as c:
         r = c.post(f"/opportunities/{ids['opp_id']}/research")
         assert r.status_code == 200
-        assert "fewer than 2 sources" in r.text
-    assert seen == ["Beacon Robotics"]
+        assert "Queued" in r.text
+    assert seen == []

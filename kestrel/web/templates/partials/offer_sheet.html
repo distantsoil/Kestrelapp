@@ -1,0 +1,70 @@
+{# Record an offer, or edit one (D-UI-122). A sheet in the middle of the window; the fields are
+   grouped (the offer, pay, dates and terms; for consulting, the engagement, money, terms). It says
+   once that unknown amounts stay blank and that zero means zero. Nothing is sent. #}
+{% from "ui/macros.html" import icon %}
+{% macro field(label, name, value='', hint='', placeholder='', kind='text', mode='') -%}
+<label class="of-fld">{{ label }}<input class="k-input" type="{{ kind }}" name="{{ name }}" value="{{ value if value is not none else '' }}" placeholder="{{ placeholder }}"{% if mode %} inputmode="{{ mode }}"{% endif %} autocomplete="off">{% if hint %}<span class="of-hint">{{ hint }}</span>{% endif %}</label>
+{%- endmacro %}
+{% set o = row %}
+<div class="k-modal k-modal--sheet of-sheet" id="of-sheet" role="dialog" aria-modal="true" aria-labelledby="of-sheet-t" aria-hidden="true" data-k-static data-testid="of-sheet">
+  <form id="of-form" hx-post="{{ ('/offers/' ~ track ~ '/' ~ o.id ~ '/edit') if o else '/offers' }}" hx-target="#of-body" hx-swap="innerHTML"
+        hx-disabled-elt="find button[type=submit]" data-busy-text="Saving the offer.">
+    <div class="k-modal__head of-sheet__head"><div class="k-grow"><h2 id="of-sheet-t">{{ 'Edit offer' if o else 'Record an offer' }}</h2><p class="k-muted">Leave unknown amounts blank. Zero means zero.</p></div>
+      <button type="button" class="k-iconbtn" data-k-close aria-label="Close" data-testid="of-sheet-close">{{ icon('x') }}</button></div>
+    <div class="k-modal__body of-sb">
+      {%- if con %}
+      <section class="of-g"><h4>The engagement</h4><div class="of-f2">
+        {%- if o %}<div class="of-fld">Lead<b class="of-static">{{ label }}</b></div>
+        {%- else %}<label class="of-fld">Lead<select class="k-input" name="pursuit_id" required data-testid="of-pursuit">
+          {%- for p in pursuits %}<option value="{{ p.pursuit.id }}"{% if p.pursuit.id == pursuit_id %} selected{% endif %}>{{ p.org_name or 'Unknown org' }} · {{ p.title }}</option>{% endfor -%}
+        </select></label>{% endif %}
+        <label class="of-fld">Status<select class="k-input" name="status">{% for s in statuses %}<option value="{{ s }}"{% if o and o.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}</select></label>
+      </div></section>
+      <section class="of-g"><h4>Money</h4><div class="of-f3">
+        {{ field('Day rate', 'day_rate', o.day_rate if o else '', '', '650', mode='decimal') }}
+        {{ field('Days committed', 'days_committed', o.days_committed if o else '', '', '55', mode='numeric') }}
+        {{ field('Length in weeks', 'duration_weeks', o.duration_weeks if o else '', '', '12', mode='numeric') }}
+        {{ field('Payment terms', 'payment_terms', o.payment_terms if o else '', '', 'Net 30') }}
+        {{ field('Expenses', 'expenses', o.expenses if o else '', '', 'Covered') }}
+      </div></section>
+      <section class="of-g"><h4>Terms</h4><div class="of-f3">
+        {{ field('Renewal', 'renewal_terms', o.renewal_terms if o else '', '', 'Option to extend') }}
+        {{ field('Exclusivity', 'exclusivity', o.exclusivity if o else '', '', 'None') }}
+        {{ field('Who owns the work', 'ip_terms', o.ip_terms if o else '', '', 'Client owns deliverables') }}
+        {{ field('Notice period', 'notice_period', o.notice_period if o else '', '', '2 weeks') }}
+        {{ field('Decide by', 'deadline', day(o.deadline) if o else '', '', '', 'date') }}
+      </div></section>
+      {%- else %}
+      <section class="of-g"><h4>The offer</h4><div class="of-f3">
+        {%- if o %}<div class="of-fld">Application<b class="of-static">{{ label }}</b></div>
+        {%- else %}<label class="of-fld">Application<select class="k-input" name="pursuit_id" required data-testid="of-pursuit">
+          {%- for p in pursuits %}<option value="{{ p.pursuit.id }}"{% if p.pursuit.id == pursuit_id %} selected{% endif %}>{{ p.org_name or 'Unknown org' }} · {{ p.title }}</option>{% endfor -%}
+        </select></label>{% endif %}
+        <label class="of-fld">Status<select class="k-input" name="status">{% for s in statuses %}<option value="{{ s }}"{% if o and o.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}</select></label>
+        {{ field('Received', 'received_at', day(o.received_at) if o else '', '', '', 'date') }}
+      </div></section>
+      <section class="of-g"><h4>Pay</h4><div class="of-f3">
+        {{ field('Base salary', 'base', o.base if o else '', '', '150,000', mode='decimal') }}
+        {{ field('Bonus target %', 'bonus_target_pct', o.bonus_target_pct if o else '', '', '5', mode='decimal') }}
+        {{ field('Signing bonus', 'signing', o.signing if o else '', '', '10,000', mode='decimal') }}
+        {{ field('Equity value', 'equity_value_estimate', o.equity_value_estimate if o else '', 'Your estimate over 4 years', mode='decimal') }}
+        {{ field('Equity details', 'equity_description', o.equity_description if o else '', '', 'RSUs, 4 years') }}
+      </div></section>
+      <section class="of-g"><h4>Dates and terms</h4><div class="of-f3">
+        {{ field('Time off (days)', 'pto_days', o.pto_days if o else '', '', '22', mode='numeric') }}
+        {{ field('Start date', 'start_date', day(o.start_date) if o else '', '', '', 'date') }}
+        {{ field('Decide by', 'deadline', day(o.deadline) if o else '', '', '', 'date') }}
+        {{ field('Level or title', 'level_title', o.level_title if o else '', '', 'Manager') }}
+        {{ field('Reports to', 'reports_to', o.reports_to if o else '', '', 'COO') }}
+        {{ field('Where', 'location_policy', o.location_policy if o else '', '', 'Remote (US)') }}
+      </div></section>
+      {%- endif %}
+    </div>
+    <div class="k-modal__foot">
+      <span id="of-form-error" aria-live="assertive"></span>
+      <span class="k-grow"></span>
+      <button type="button" class="k-btn k-btn--sm" data-k-close>Cancel</button>
+      <button type="submit" class="k-btn k-btn--primary k-btn--sm" data-testid="of-save">Save offer</button>
+    </div>
+  </form>
+</div>

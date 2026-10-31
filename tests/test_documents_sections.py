@@ -450,9 +450,10 @@ def test_accent_is_saved_on_the_master_and_used_by_the_preview(monkeypatch):
     client, mid = _app(monkeypatch)
     html = client.get("/documents").text
     soup = BeautifulSoup(html, "html.parser")
-    opts = [o["value"] for o in soup.select("select#accent option")]
-    assert opts[0] == "" and "#1F3A5F" in opts and opts[-1] == "custom"
-    assert soup.select_one("input#accent_custom") is not None
+    swatches = [b["data-accent"] for b in soup.select("[data-pf-swatches] button.pf-swatch")]
+    assert swatches[0] == "" and "#1F3A5F" in swatches
+    assert soup.select_one("input#accent_custom[type=color]") is not None
+    assert soup.select_one("input#accent")["value"] == ""
 
     r = client.post(f"/documents/{mid}/accent", data={"accent": "#1F3A5F"})
     assert "Saved #1F3A5F." in r.text
@@ -466,8 +467,8 @@ def test_accent_is_saved_on_the_master_and_used_by_the_preview(monkeypatch):
                     data={"accent": "custom", "accent_custom": "#12ab9c"})
     assert "Saved #12AB9C." in r.text
     page = BeautifulSoup(client.get("/documents").text, "html.parser")
-    assert page.select_one("select#accent option[selected]")["value"] == "custom"
-    assert page.select_one("input#accent_custom")["value"] == "#12AB9C"
+    assert page.select_one("input#accent")["value"] == "custom"
+    assert page.select_one("input#accent_custom")["value"] == "#12ab9c"
 
     bad = client.post(f"/documents/{mid}/accent",
                       data={"accent": "custom", "accent_custom": "#12ab9<"})
@@ -499,7 +500,7 @@ def test_the_review_carries_an_accent_and_the_test_render_passes_it(monkeypatch)
     assert r.status_code == 303 and seen["accent"] == "#2A5D3B"
     rid = int(r.headers["location"].rsplit("/", 1)[1])
     page = client.get(f"/renders/{rid}").text
-    assert 'id="look-accent"' in page and "Custom (#2A5D3B)" in page
+    assert "#2A5D3B" in page  # the preview carries the accent the render was made with
     client.post(f"/renders/{rid}/look", data={"layout": "", "accent": "#7A1F2B"})
     (row,) = _rows(DocRender, id=rid)
     assert row.config["accent"] == "#7A1F2B"

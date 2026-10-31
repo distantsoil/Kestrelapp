@@ -1,0 +1,164 @@
+{
+ "__CLASS__": "Adzuna::API::Response::JobSearchResults",
+ "count": 5,
+ "mean": 58000.0,
+ "results": [
+  {
+   "__CLASS__": "Adzuna::API::Response::Job",
+   "id": "5000000001",
+   "title": "Program Analyst",
+   "description": "Analyze program data and report to leadership. You will work with the operations team to review budgets, track milestones and prepare monthly summaries for ...",
+   "created": "2026-10-27T14:03:11Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/5000000001?se=EXAMPLE&utm_medium=api&utm_source=example",
+   "location": {
+    "__CLASS__": "Adzuna::API::Response::Location",
+    "area": [
+     "US",
+     "Ohio",
+     "Franklin County",
+     "Columbus"
+    ],
+    "display_name": "Columbus, Ohio"
+   },
+   "category": {
+    "__CLASS__": "Adzuna::API::Response::Category",
+    "label": "Admin Jobs",
+    "tag": "admin-jobs"
+   },
+   "latitude": 39.96,
+   "longitude": -83.0,
+   "company": {
+    "__CLASS__": "Adzuna::API::Response::Company",
+    "display_name": "Harbor Point Analytics"
+   },
+   "salary_min": 62000.0,
+   "salary_max": 78000.0,
+   "salary_is_predicted": "0",
+   "contract_time": "full_time",
+   "contract_type": "permanent"
+  },
+  {
+   "__CLASS__": "Adzuna::API::Response::Job",
+   "id": "5000000002",
+   "title": "Data Analyst",
+   "description": "Build dashboards and answer questions from sales data. Strong SQL and a careful eye for detail wanted ...",
+   "created": "2026-10-27T14:03:11Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/5000000002?se=EXAMPLE&utm_medium=api&utm_source=example",
+   "location": {
+    "__CLASS__": "Adzuna::API::Response::Location",
+    "area": [
+     "US",
+     "Ohio",
+     "Cuyahoga County",
+     "Cleveland"
+    ],
+    "display_name": "Cleveland, Ohio"
+   },
+   "category": {
+    "__CLASS__": "Adzuna::API::Response::Category",
+    "label": "Admin Jobs",
+    "tag": "admin-jobs"
+   },
+   "latitude": 39.96,
+   "longitude": -83.0,
+   "company": {
+    "__CLASS__": "Adzuna::API::Response::Company",
+    "display_name": "Summit Outdoor Co."
+   },
+   "salary_min": 55000.0,
+   "salary_max": 70000.0,
+   "salary_is_predicted": "1",
+   "contract_time": "full_time"
+  },
+  {
+   "__CLASS__": "Adzuna::API::Response::Job",
+   "id": "5000000003",
+   "title": "Management Analyst",
+   "description": "Support managers with process reviews and staffing analysis. Part-time schedule, flexible hours ...",
+   "created": "2026-10-27T14:03:11Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/5000000003?se=EXAMPLE&utm_medium=api&utm_source=example",
+   "location": {
+    "__CLASS__": "Adzuna::API::Response::Location",
+    "area": [
+     "US",
+     "Ohio",
+     "Lucas County",
+     "Toledo"
+    ],
+    "display_name": "Toledo, Ohio"
+   },
+   "category": {
+    "__CLASS__": "Adzuna::API::Response::Category",
+    "label": "Admin Jobs",
+    "tag": "admin-jobs"
+   },
+   "latitude": 39.96,
+   "longitude": -83.0,
+   "company": {
+    "__CLASS__": "Adzuna::API::Response::Company",
+    "display_name": "Lakeside Services"
+   },
+   "contract_time": "part_time",
+   "contract_type": "contract"
+  },
+  {
+   "__CLASS__": "Adzuna::API::Response::Job",
+   "id": "5000000004",
+   "title": "Forestry Technician",
+   "description": "Maintain trails and assist with seasonal tree surveys in county parks ...",
+   "created": "2026-10-27T14:03:11Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/5000000004?se=EXAMPLE&utm_medium=api&utm_source=example",
+   "location": {
+    "__CLASS__": "Adzuna::API::Response::Location",
+    "area": [
+     "US",
+     "Ohio",
+     "Montgomery County",
+     "Dayton"
+    ],
+    "display_name": "Dayton, Ohio"
+   },
+   "category": {
+    "__CLASS__": "Adzuna::API::Response::Category",
+    "label": "Admin Jobs",
+    "tag": "admin-jobs"
+   },
+   "latitude": 39.96,
+   "longitude": -83.0,
+   "company": {
+    "__CLASS__": "Adzuna::API::Response::Company",
+    "display_name": "Evergreen Parks"
+   },
+   "salary_min": 38000.0,
+   "salary_max": 42000.0,
+   "salary_is_predicted": "0",
+   "contract_time": "full_time"
+  },
+  {
+   "__CLASS__": "Adzuna::API::Response::Job",
+   "id": "5000000005",
+   "title": "Operations Analyst",
+   "description": "Help the operations group improve scheduling and reporting across three sites ...",
+   "created": "2026-10-27T14:03:11Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/5000000005?se=EXAMPLE&utm_medium=api&utm_source=example",
+   "location": {
+    "__CLASS__": "Adzuna::API::Response::Location",
+    "area": [
+     "US",
+     "Ohio",
+     "Franklin County",
+     "Columbus"
+    ]
+   },
+   "category": {
+    "__CLASS__": "Adzuna::API::Response::Category",
+    "label": "Admin Jobs",
+    "tag": "admin-jobs"
+   },
+   "latitude": 39.96,
+   "longitude": -83.0,
+   "salary_max": 65000.0,
+   "salary_is_predicted": "0"
+  }
+ ]
+}

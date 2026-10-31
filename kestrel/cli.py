@@ -945,7 +945,7 @@ def bench(
     prompt_version: str = typer.Option(
         None,
         "--prompt-version",
-        help="Comma-separated prompt version(s) (e.g. evaluate/v1). Vary --models OR "
+        help="Comma-separated prompt version(s) (e.g. evaluate/v2). Vary --models OR "
         "--prompt-version, never both in the same run.",
     ),
 ) -> None:

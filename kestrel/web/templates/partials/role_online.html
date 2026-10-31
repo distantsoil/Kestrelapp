@@ -1,0 +1,29 @@
+{# The ask-first dialog for an action that would use an online model (Research, Contacts, Save and
+   re-score). Names the provider and model, exactly what is sent (the Hosted mode disclosure line
+   the operator accepted, never words written here) and what happens to the current employer.
+   Nothing is sent until the confirm button. static: a click outside does not close it. #}
+{% from "ui/macros.html" import modal %}
+{% set send_attrs = {'data-testid': 'rl-send', 'data-rl-confirm': '', 'hx-post': url, 'hx-include': '#rl-online-form', 'hx-swap': 'none'} %}
+{% call modal('rl-online', 'Use an online model to ' ~ action ~ '?', [
+  {'label': 'Cancel', 'close': True},
+  {'label': 'Send and continue', 'kind': 'primary', 'close': True, 'attrs': send_attrs}
+], static=True) %}
+  <p class="rl-quiet">{{ route.provider }}, using your own credit. To {{ action }} for {{ role }}, Kestrel would use <b>{{ route.model }}</b>.</p>
+  {% if route.scoring_routes %}<ul>{% for scoring in route.scoring_routes if scoring and scoring.online %}<li>{{ scoring.provider }}, using <b>{{ scoring.model }}</b> for scoring.</li>{% endfor %}</ul>{% endif %}
+  <div class="rl-send">
+    <b>What will be sent</b>
+    <ul><li data-testid="rl-sends">{{ route.sends[:1]|upper }}{{ route.sends[1:] }}.</li></ul>
+    {% if route.employer == 'hidden' %}<p data-testid="rl-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+    {% elif route.employer == 'held' %}<p data-testid="rl-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a>, then try again.</p>
+    {% else %}<p data-testid="rl-employer">Confidential mode is off, so the employer's name is not hidden.</p>{% endif %}
+    <p>{{ route.provider }} handles what it receives under its own terms, and Kestrel cannot recall it.{% if route.free %} This is a free model, and free models may use what they receive for training.{% endif %}</p>
+  </div>
+  <form id="rl-online-form">
+    <input type="hidden" name="confirmed" value="1">
+    <input type="hidden" name="model" value="{{ route.model }}">
+    <input type="hidden" name="dest" value="{{ route.dest }}">
+    {% if route.approval %}<input type="hidden" name="online_approval" value='{{ route.approval }}'>{% endif %}
+    <input type="hidden" name="kind" value="{{ kind }}">
+    {% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  </form>
+{% endcall %}

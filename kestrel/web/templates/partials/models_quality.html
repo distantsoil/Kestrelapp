@@ -1,0 +1,25 @@
+{% import "ui/macros.html" as ui %}
+{# Scoring quality (moved from Analytics): every figure beside its n; under five it says so. The
+   bar under the first row is the mockup's .qbar: readable first time, fixed after a retry (not
+   recorded yet, so no width), set aside. #}
+{% set q_total = quality.evaluations + quality.quarantine_n %}
+{% set q_ok = (quality.json_validity_rate * q_total)|round|int if quality.json_validity_rate is not none else 0 %}
+<section class="k-card mo-card" id="mo-quality" data-testid="mo-quality">
+  <header class="mo-head"><span class="k-badge">{{ ui.icon('check') }}</span>
+    <div class="k-grow"><h3>Scoring quality <span class="k-muted mo-sub">{{ quality.evaluations }} answers</span></h3></div></header>
+  {% if quality.insufficient %}
+    <p class="k-muted" data-testid="mo-quality-few">Too few answers yet ({{ quality.evaluations }}, at least 5 needed). Nothing here is solid until there are more.</p>
+  {% endif %}
+  <dl class="mo-kv">
+    <div><dt>Readable the first time</dt><dd>{% if quality.json_validity_rate is none %}None yet{% else %}{{ '%.0f'|format(quality.json_validity_rate * 100) }}% of {{ q_total }}{% endif %}</dd></div>
+    {% if q_total %}
+    <div class="mo-qbar" role="img" aria-label="Readable the first time {{ q_ok }}, set aside {{ quality.quarantine_n }}, of {{ q_total }}" data-testid="mo-quality-bar">
+      <i class="is-g" style="width: {{ '%.1f'|format(q_ok / q_total * 100) }}%"></i><i class="is-i" style="width: 0%"></i><i class="is-w" style="width: {{ '%.1f'|format(quality.quarantine_n / q_total * 100) }}%"></i></div>
+    {% endif %}
+    <div data-testid="mo-quality-retried"><dt>Fixed after one retry</dt><dd class="k-muted">Not recorded</dd></div>
+    <div><dt>Set aside for another try</dt><dd>{{ quality.quarantine_n }} <a class="k-link" href="/quarantine">See them</a></dd></div>
+  </dl>
+  {% if quality.override_rate is not none %}
+  <p class="k-muted mo-qnote">You changed Kestrel's score on {{ quality.override_n }} of your {{ quality.evaluations }} ratings. Calibrate uses those changes to tune scoring.</p>
+  {% endif %}
+</section>

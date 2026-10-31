@@ -1,0 +1,51 @@
+{# The Prep pack tab. No pack yet is its own state; with one, a readiness strip, the likely
+   questions and gaps on the left, and on the right the role, the questions to ask, who they may
+   meet and the operator's notes. #}
+{% import "ui/macros.html" as ui %}
+{% import "partials/pp_icons.html" as i %}
+{% set con_word = 'call prep' if con else 'prep pack' %}
+{%- if not has_pack %}
+<section class="k-card pp-empty"{% if auto_build %} hx-post="/prep/{{ opp.id }}/build" hx-trigger="load" hx-target="#pp-body" hx-swap="innerHTML" data-testid="prep-auto-build"{% endif %} data-testid="pp-nopack">
+  <div>
+    <span class="pp-empty__badge">{{ i.pi('book', 'k-ic--lg') }}</span>
+    <h3>No {{ con_word }} for this role yet</h3>
+    {%- if build_error %}<div class="pp-warn" role="alert" data-testid="pp-build-error">{{ build_error }}</div>{% endif %}
+    {%- if auto_build %}
+    <p class="k-muted"><span class="spin" aria-hidden="true"></span> Putting together your {{ con_word }}. This can take a minute.</p>
+    {%- else %}
+    <p class="k-muted">Kestrel builds it from the role, your stories and its research. It usually takes under a minute on your computer.</p>
+    <button type="button" class="k-btn k-btn--primary" hx-post="/prep/{{ opp.id }}/build" hx-target="#pp-body" hx-swap="innerHTML"
+            data-busy-text="Putting together your {{ con_word }}. This can take a minute." data-testid="pp-build">Build {{ con_word }}</button>
+    {%- endif %}
+  </div>
+</section>
+{% include "partials/pp_notes.html" %}
+{% include "partials/pp_qstate.html" %}
+{%- else %}
+{%- if build_error %}<div class="pp-warn" role="alert" data-testid="pp-build-error">{{ build_error }}</div>{% endif %}
+<div class="pp-grid">
+  <div class="pp-col">
+    {% include "partials/pp_questions.html" %}
+    <section class="k-card pp-gaps" data-testid="pp-gaps">
+      <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ i.pi('alert') }}</span><div class="k-grow"><h3>Gaps and how to handle them</h3></div></header>
+      {%- for g in gaps %}
+      <div class="pp-gap"><span class="pp-gap__m{% if g.fatal %} is-fatal{% endif %}" aria-hidden="true">{% if g.fatal %}{{ i.pi('alert', 'k-ic--sm') }}{% else %}{{ ui.icon('gap', 'k-ic--sm') }}{% endif %}</span>
+        <span><b>{{ g.requirement }}</b>{% if g.mitigation %}<span class="pp-sub">{{ g.mitigation }}</span>{% endif %}</span></div>
+      {%- else %}
+      <p class="k-muted">No gaps were found when Kestrel rated this role.</p>
+      {%- endfor %}
+    </section>
+  </div>
+  <div class="pp-col">
+    <section class="k-card" data-testid="pp-role">
+      <header class="k-sec-head"><span class="k-badge">{{ i.pi('brief') }}</span><div class="k-grow"><h3>The role in one line</h3></div></header>
+      <p class="pp-body">{{ summary }}</p>
+      <a class="k-link" href="/opportunities/{{ opp.id }}">Open full role {{ i.pi('arrow', 'k-ic--sm') }}</a>
+    </section>
+    {% include "partials/pp_ask.html" %}
+    {% include "partials/pp_people.html" %}
+    {% include "partials/pp_notes.html" %}
+  </div>
+</div>
+{% include "partials/pp_qstate.html" %}
+{%- endif %}

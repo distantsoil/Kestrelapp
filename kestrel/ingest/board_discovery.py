@@ -11,6 +11,7 @@ the operator turned off stays off. At most MAX_DISCOVERED found boards per track
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
@@ -41,6 +42,10 @@ PLATFORMS = {
     "adp": "ADP Workforce Now",
     "paylocity": "Paylocity",
     "workable": "Workable",
+    "recruitee": "Recruitee",
+    "teamtailor": "Teamtailor",
+    "personio": "Personio",
+    "breezy": "Breezy HR",
 }
 # The config key that names the company, per kind, and whether the platform treats it as case
 # sensitive (the Ashby and SmartRecruiters adapters pass it through unchanged).
@@ -49,6 +54,15 @@ _KEY = {
     "rippling": "slug", "adp": "cid",
     "paylocity": "board_id",
     "workable": "slug",
+    "recruitee": "slug",
+    "teamtailor": "domain",
+    "personio": "slug",
+    "breezy": "slug",
+}
+# Kinds whose source config carries the company's display name (the payload does not name it).
+_NAMED_BY_COMPANY_NAME = {
+    "ashby", "rippling", "adp", "paylocity", "workable", "recruitee", "teamtailor",
+    "personio", "breezy",
 }
 _CASE_SENSITIVE = {"ashby", "smartrecruiters"}  # adp cids are UUIDs: compared lowercased
 
@@ -58,6 +72,18 @@ _WORKDAY_HOST = re.compile(r"^([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com$")
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 _CC_ID = re.compile(r"^[A-Za-z0-9_]{1,40}$")
 _ADP_LANG = re.compile(r"^[a-z]{2}_[A-Z]{2}$")
+# Subdomains of a platform's own host that are never a company's board.
+_PLATFORM_HOSTS = {
+    "www", "api", "app", "careers", "career", "support", "help", "docs", "blog", "status", "cdn",
+    "assets", "d", "mail", "marketing", "partners", "static", "jobs", "learn", "get", "go",
+}
+# Teamtailor's own subdomains. Unlike the set above, "career" and "jobs" are not here: a company's
+# board can be career.teamtailor.com (Teamtailor's own is).
+_TEAMTAILOR_HOSTS = {
+    "www", "app", "api", "support", "help", "docs", "blog", "status", "cdn", "assets", "mail",
+    "marketing", "partners", "static", "developers", "integrations",
+}
+_HOST_LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _NOT_A_COMPANY = {"embed", "jobs", "job", "apply", "careers", "api", "v1", "posting-api"}
 
 
@@ -72,6 +98,8 @@ class BoardRef:
         if self.kind == "workday":
             c = self.config
             return ("workday", c["tenant"].lower(), c["dc"].lower(), c["site"].lower())
+        if self.kind == "personio":  # the .de and .com accounts are separate companies
+            return ("personio", self.config["slug"].lower(), self.config.get("tld", "de"))
         value = self.config[_KEY[self.kind]]
         return (self.kind, value if self.kind in _CASE_SENSITIVE else value.lower())
 
@@ -80,6 +108,66 @@ def _slug(value: str | None) -> str | None:
     if value and _SLUG.match(value) and value.lower() not in _NOT_A_COMPANY:
         return value
     return None
+
+
+def _company_label(host: str, suffix: str, reserved: set[str] | None = None) -> str | None:
+    """The one label in front of a platform's domain ({label}.recruitee.com), or None. A deeper
+    host (a.b.recruitee.com), the bare domain and the platform's own subdomains are not boards."""
+    if not host.endswith(suffix):
+        return None
+    label = host[: -len(suffix)]
+    skip = _PLATFORM_HOSTS if reserved is None else reserved
+    return label if _HOST_LABEL.match(label) and label not in skip else None
+
+
+# The script every Teamtailor career site loads (on the employer's own domain as well).
+_TEAMTAILOR_MARKER = re.compile(r"teamtailor-cdn\.com/assets/careersite", re.IGNORECASE)
+_BREEZY_HOSTS = {
+    "www", "app", "api", "support", "help", "docs", "blog", "status", "cdn", "assets", "static",
+    "marketing", "partners", "developers", "portal",
+}
+_PERSONIO_HOST = re.compile(r"^([a-z0-9][a-z0-9-]{0,62})\.jobs\.personio\.(de|com)$")
+_RECRUITEE_MARKER = re.compile(
+    r"(?:https?:)?//([a-z0-9][a-z0-9-]{0,62})\.recruitee\.com/(?:api/offers|o/|widget|careers)",
+    re.IGNORECASE,
+)
+
+
+def board_from_markup(html: str | None, page_url: str | None = None) -> BoardRef | None:
+    """The company board a careers page on its own domain is built on, read from markup already in
+    hand (no request here). Recruitee: the page's code or links name {slug}.recruitee.com (the API
+    address, an /o/ posting link or the widget). Teamtailor: the page loads Teamtailor's career
+    site script, so the board is the page's own host. Only the first board named counts, and the
+    platform's own subdomains do not."""
+    if not html:
+        return None
+    for m in _RECRUITEE_MARKER.finditer(html):
+        label = m.group(1).lower()
+        if label not in _PLATFORM_HOSTS:
+            return BoardRef("recruitee", {"slug": label})
+    host = _page_host(page_url)
+    if host and _TEAMTAILOR_MARKER.search(html):
+        return BoardRef("teamtailor", {"domain": host})
+    return None
+
+
+def _page_host(page_url: str | None) -> str | None:
+    try:
+        parts = urlsplit((page_url or "").strip())
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower().rstrip(".")
+    if parts.scheme in ("http", "https") and "." in host and not _literal_ip(host):
+        return host
+    return None
+
+
+def _literal_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
 
 
 def board_from_url(url: str | None) -> BoardRef | None:
@@ -115,6 +203,20 @@ def board_from_url(url: str | None) -> BoardRef | None:
     if host == "ats.rippling.com":
         slug = _slug(first)
         return BoardRef("rippling", {"slug": slug}) if slug else None
+    label = _company_label(host, ".recruitee.com")
+    if label:
+        return BoardRef("recruitee", {"slug": label})
+    if _company_label(host, ".teamtailor.com", _TEAMTAILOR_HOSTS):
+        return BoardRef("teamtailor", {"domain": host})
+    label = _company_label(host, ".breezy.hr", _BREEZY_HOSTS)
+    if label:
+        return BoardRef("breezy", {"slug": label})
+    personio = _PERSONIO_HOST.match(host)
+    if personio and personio.group(1) not in _PLATFORM_HOSTS:
+        config = {"slug": personio.group(1)}
+        if personio.group(2) == "com":
+            config["tld"] = "com"
+        return BoardRef("personio", config)
     if host == "apply.workable.com":
         slug = _slug(first)
         return BoardRef("workable", {"slug": slug}) if slug else None
@@ -157,7 +259,9 @@ async def resolve_short_link(url: str, http: HttpClient) -> BoardRef | None:
     """The board a grnh.se short link points at: one request with redirects off, then the
     Location header read like any other posting link. Any failure is None, never an error."""
     try:
-        r = await http.request("GET", url, follow_redirects=False, retries=1)
+        r = await http.request(
+            "GET", url, follow_redirects=False, retries=1, public_only=True
+        )
     except Exception as exc:  # network, robots, rate: a link that cannot be read is skipped
         log.debug("board_discovery.short_link_failed", error=type(exc).__name__)
         return None
@@ -219,7 +323,7 @@ async def discover_boards(
         config = dict(ref.config)
         if ref.kind == "workday":
             config["company"] = company
-        elif ref.kind in ("ashby", "rippling", "adp", "paylocity", "workable"):
+        elif ref.kind in _NAMED_BY_COMPANY_NAME:
             config["company_name"] = company
         session.add(Source(
             track=search.track, kind=ref.kind, name=f"{company} jobs ({PLATFORMS[ref.kind]})",

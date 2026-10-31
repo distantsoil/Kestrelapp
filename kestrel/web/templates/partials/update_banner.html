@@ -1,12 +1,20 @@
+{# The update banner (D-UPD-3, restyled D-UI-152): "Kestrel X is available. Get it from
+   kestrelapp.co". There is no self-update: the link opens the download page and the user
+   installs it. "Show details" says what the check sends (nothing about the user) and opens the
+   release notes. Later hides it until tomorrow. Included in the slot in base.html; the dialog
+   lands in #update-modal. Styles: static/css/pages/surfaces.css (.sf-bn). #}
+{% from "ui/macros.html" import icon %}
 {% if version %}
-<div class="warnbox" role="status" data-testid="update-banner"
-     style="margin-bottom:.8rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
-  <span>Kestrel {{ version }} is available.</span>
-  <span style="flex:1"></span>
-  <button class="btn primary" type="button" hx-get="/updates/details" hx-target="#update-modal"
-          hx-swap="innerHTML">What's new</button>
-  <a class="btn" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get the update</a>
-  <button class="btn ghost" type="button" hx-post="/updates/remind" hx-target="#update-banner"
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
+<div class="sf-bn" role="status" data-testid="update-banner">
+  <span class="sf-ic" aria-hidden="true">{{ icon('dl') }}</span>
+  <span class="sf-msg"><b>Kestrel {{ version }} is available.</b>{% if current %} You are on {{ current }}.{% endif %}
+    <a class="sf-a" href="#" role="button" aria-expanded="false" data-testid="update-details-toggle"
+       onclick="var m=document.getElementById('sf-upd-more');m.hidden=!m.hidden;this.setAttribute('aria-expanded',String(!m.hidden));return false">Show details</a></span>
+  <button class="k-btn k-btn--sm" type="button" hx-post="/updates/remind" hx-target="#update-banner"
           hx-swap="innerHTML">Later</button>
+  <a class="k-btn k-btn--sm k-btn--primary" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co {{ icon('ext', 'k-ic--sm') }}</a>
+  <div class="sf-more" id="sf-upd-more" hidden data-testid="update-more">Kestrel checks kestrelapp.co for a newer version. Nothing about you is sent.<br>You download and install the update yourself.
+    <a class="sf-a" href="#" hx-get="/updates/details" hx-target="#update-modal" hx-swap="innerHTML" data-testid="update-whats-new">See what is new</a></div>
 </div>
 {% endif %}

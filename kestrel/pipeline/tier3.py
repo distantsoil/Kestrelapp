@@ -43,7 +43,7 @@ from kestrel.web.redact import confidential
 
 log = structlog.get_logger()
 
-_VERSION = {"employment": "evaluate/v1", "consulting": "evaluate_consulting/v1"}
+_VERSION = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
 # The tier role for the hosted escalation. Separate from "tier3" (the LOCAL deep model used by cover
 # letters and local work) so nothing local is ever routed to the external backend.
 _FRONTIER_TIER = "frontier"
@@ -213,7 +213,8 @@ async def build_escalation_preview(
         # current employer unredacted to a hosted model.
         unavailable = (
             "confidential mode is on but no redaction map is configured (choose your current "
-            "employer under Settings, Core); refusing to transmit the employer unredacted"
+            "employer under Settings > Privacy and access); refusing to transmit the employer "
+            "unredacted"
         )
     elif backend.api_key_env and not _has_key(backend.api_key_env) and not backend.api_key:
         unavailable = (

@@ -63,7 +63,7 @@ def test_switch_is_off_by_default_and_shows_the_port_and_address():
     with _client() as c:
         page = c.get("/settings").text
         panel = c.get("/settings/mcp").text
-    assert 'hx-get="/settings/mcp"' in page
+    assert 'data-testid="st-mcp"' in page  # the card is part of Privacy and access
     assert 'data-on="0"' in panel and 'data-testid="mcp-status">Off<' in panel
     assert "http://127.0.0.1:9110/sse" in panel
     assert 'data-testid="mcp-secret-note"' not in panel  # loopback only: no secret needed
@@ -113,7 +113,7 @@ def test_bind_all_shows_the_shared_secret_note(monkeypatch):
     with _client() as c:
         panel = c.get("/settings/mcp").text
     note = panel.split('data-testid="mcp-secret-note"')[1].split("</p>")[0]
-    assert "X-Kestrel-Key" in note and "Generate the secret first" in note
+    assert "X-Kestrel-Key" in note and "Make the key first" in note
 
 
 def test_runtime_serves_with_the_host_guard_and_stops():

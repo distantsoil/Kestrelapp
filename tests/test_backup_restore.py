@@ -365,10 +365,10 @@ def test_web_restore_endpoint_never_500s_on_a_bad_upload(tmp_path):
         assert "Choose a backup" in r3.text
 
 
-def test_web_restore_escapes_the_archive_entry_name_in_its_error(tmp_path):
-    """A rejected entry name is quoted into the error message, and the uploader controls it.
-    Unescaped, a crafted archive executed markup in the app's own origin -- the one holding the
-    LAN shared secret and every mutating endpoint."""
+def test_web_restore_never_shows_the_archive_entry_name_in_its_error(tmp_path):
+    """A rejected entry name is the uploader's to choose. Quoted unescaped, a crafted archive
+    executed markup in the app's own origin -- the one holding the LAN shared secret and every
+    mutating endpoint. The refusal is now a fixed sentence (D-SEC-4); the name goes to the log."""
     evil = tmp_path / "evil.zip"
     with zipfile.ZipFile(evil, "w") as z:
         z.writestr("kestrel.db", b"x")
@@ -381,10 +381,9 @@ def test_web_restore_escapes_the_archive_entry_name_in_its_error(tmp_path):
             files={"backup_file": ("evil.zip", evil.read_bytes(), "application/zip")},
         )
     assert r.status_code == 200
-    # The name still READS as the operator typed it (the text is preserved), but no live tag
-    # survives: "<img" is neutralized, so the payload cannot execute in the app's origin.
-    assert "&lt;img src=x onerror=alert(1)&gt;" in r.text
-    assert "<img src=x" not in r.text
+    # The page says the fixed sentence and nothing of the name, escaped or not.
+    assert "Refusing an unsafe path entry in the backup." in r.text
+    assert "<img" not in r.text and "&lt;img" not in r.text and "onerror" not in r.text
 
 
 def test_a_missing_backup_file_is_reported_without_its_path(tmp_path):
@@ -399,8 +398,8 @@ def test_a_missing_backup_file_is_reported_without_its_path(tmp_path):
 
 
 def test_an_unreadable_backup_entry_is_reported_without_the_error_text(tmp_path, monkeypatch):
-    """An OSError while unpacking carries a staging path; the page gets the entry and the error
-    type only (D-SEC-1)."""
+    """An OSError while unpacking carries a staging path; the page gets a fixed sentence and the
+    log gets the entry and the error type (D-SEC-1, D-SEC-4)."""
     from kestrel.services import backup
 
     zpath = tmp_path / "b.zip"
@@ -414,4 +413,4 @@ def test_an_unreadable_backup_entry_is_reported_without_the_error_text(tmp_path,
     with pytest.raises(InvalidBackupError) as err:
         restore_backup(zpath)
     assert "secret-dir" not in str(err.value) and "Permission denied" not in str(err.value)
-    assert str(err.value) == "Could not read kestrel.db from the backup (PermissionError)."
+    assert str(err.value) == "Could not read a file from the backup."

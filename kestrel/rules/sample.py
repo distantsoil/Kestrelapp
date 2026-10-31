@@ -33,6 +33,13 @@ def _example_profile() -> SimpleNamespace:
     profile = dict(employment)
     profile["consulting_terms"] = consulting.get("consulting_terms", {})
     profile.setdefault("requires_sponsorship", False)
+    # The load-time guard evaluates the margin rules, which read these (D-RULES-2).
+    profile["employment_terms"] = {
+        "comp_floor_margin_pct": 5, **(profile.get("employment_terms") or {})
+    }
+    profile["consulting_terms"] = {
+        "day_rate_floor_margin_pct": 5, **(profile.get("consulting_terms") or {})
+    }
     return _ns(profile)
 
 

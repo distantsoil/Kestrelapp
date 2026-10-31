@@ -1,43 +1,68 @@
+{# Runs (D-UI-103, SPEC-INTERFACES 2.1 /runs). Built on the shared design system. The header
+   (band) and the live card are patched in place by static/js/runs.js from the same fragment
+   (partials/runs_fragment.html), so a poll never re-mounts what is on screen. #}
 {% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
 {% block title %}Runs · Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/pages/runs.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): runs.js defines the page "runs"; base.html mounts it. #}
+{% block page_name %}runs{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/runs.js') }}" defer></script>{% endblock %}
 {% block content %}
-<h1>Runs</h1>
-
-<div class="panel" style="padding:.8rem 1rem; margin-bottom:1rem">
-  <h2 style="margin-top:0">Run now</h2>
-  <p class="muted" style="margin:.2rem 0 .6rem">The worker is on <b>{{ mode }}</b> models (Settings > Hosted sets the standing choice). Pick the models for the next cycle only; later cycles return to the Settings choice.</p>
-  <form hx-post="/runs/now" hx-target="#run-now-msg" hx-swap="innerHTML" style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap"
-        data-busy-text="Starting the run…">
-    <label><input type="radio" name="mode" value="local" {% if settings_mode == 'local' %}checked{% endif %}> Local models</label>
-    <label title="{{ hosted_problem or 'Hosted models under your own key' }}"><input type="radio" name="mode" value="hosted" {% if settings_mode == 'hosted' %}checked{% endif %} {% if hosted_problem %}disabled{% endif %}> Hosted models{% if hosted_problem %} <span class="muted">(unavailable: {{ hosted_problem }})</span>{% endif %}</label>
-    <button class="btn" type="submit">Run now</button>
-    <span id="run-now-msg" class="muted">{% if pending_mode %}Queued: the next worker cycle runs on <b>{{ pending_mode }}</b> models.{% endif %}</span>
-  </form>
-</div>
-
-{% include "partials/run_schedule.html" %}
-
-{% include "partials/keep_awake.html" %}
-
-{% include "partials/runs_live.html" %}
-
-<div class="panel">
-  <h2>Recent runs</h2>
-  <table>
-    <thead><tr><th>#</th><th>Name</th><th>Track</th><th>Mode</th><th>Status</th><th>Started</th><th>Finished</th><th>Counts</th></tr></thead>
-    <tbody>
-      {% for r in runs %}
-      <tr>
-        <td class="mono"><a href="/runs/{{ r.id }}">{{ r.id }}</a></td>
-        <td><a href="/runs/{{ r.id }}">{{ r.name }}</a></td><td>{{ r.track or '-' }}</td>
-        <td>{% if r.mode %}<span class="badge">{{ r.mode }}</span>{% else %}<span class="muted">unknown</span>{% endif %}</td>
-        <td><span class="badge">{{ r.status }}</span></td>
-        <td class="mono"><small>{{ r.started_at }}</small></td>
-        <td class="mono"><small>{{ r.finished_at or '-' }}</small></td>
-        <td><small class="mono">{{ r.counts }}</small></td>
-      </tr>
-      {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:20px">No runs yet.</td></tr>{% endfor %}
-    </tbody>
-  </table>
-</div>
+<div class="rn-wrap"><div class="rn-page">
+  {% call ui.scene_band('Runs') %}
+    <span class="rn-hdr" data-region="header" data-sig="{{ state }}">{% include "partials/runs_header.html" %}</span>
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#rn-steps-fly" aria-controls="rn-steps-fly" aria-expanded="false" data-testid="rn-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+  {% endcall %}
+  {# The poller: it fetches the fragment; runs.js patches the regions. Never replaced. #}
+  <div id="runs-poll" hidden hx-get="/runs" hx-trigger="every 5s, run-refresh from:body" hx-swap="none" data-busy-text=""></div>
+  <div class="k-layout">
+    <div class="k-layout__main">
+      <section class="k-card rn-live" id="runs-live" data-testid="latest-run" data-region="live" data-sig="{{ live_sig }}">{% include "partials/runs_live.html" %}</section>
+      <section class="k-card rn-hist" id="runs-history" data-region="history" data-sig="{{ hist_sig }}">{% include "partials/runs_history_card.html" %}</section>
+    </div>
+    {% call ui.help_column() %}
+      {% include "partials/run_schedule.html" %}
+      <section class="k-card rn-nat" id="runs-nat" data-region="quar" data-sig="{{ quar_sig }}">{% include "partials/runs_nat.html" %}</section>
+      <article class="k-hcard k-hcard--plain">
+        <div class="k-hcard__head"><span class="k-badge">{{ ui.icon('pipeline') }}</span><h3>What a run does</h3></div>
+        <ol class="k-hcard__ol"><li>Searching your sources</li><li>Your rules set roles aside</li><li>A quick screen keeps likely ones</li><li>Rating scores each role</li><li>Deeper read, only when you ask</li></ol>
+        {{ ui.flyout_trigger('rn-steps-fly') }}
+      </article>
+      <article class="k-hcard k-hcard--plain">
+        <div class="k-hcard__head"><span class="k-badge"><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span><h3>Pause, Stop, and picking up</h3></div>
+        <p class="k-hcard__p">Pause holds the run. Stop ends it. Either way nothing is lost.</p>
+        {{ ui.flyout_trigger('rn-pause-fly') }}
+      </article>
+      <article class="k-hcard k-hcard--plain">
+        <div class="k-hcard__head"><span class="k-badge k-badge--warn">{{ ui.icon('alert') }}</span><h3>When something fails</h3></div>
+        <p class="k-hcard__p"><span class="k-pill k-pill--warn">Partial</span> a site asked us to wait. <span class="k-pill k-pill--warn">Needs another try</span> one role. <span class="k-pill k-pill--bad">Did not run</span> rare.</p>
+        {{ ui.flyout_trigger('rn-fail-fly') }}
+      </article>
+    {% endcall %}
+  </div>
+  <div id="rn-dialog"></div>
+  {% call ui.slide_over('rn-drawer', 'Run details', eyebrow='Past run') %}<div id="rn-drawer-body"><p class="k-muted">Loading…</p></div>{% endcall %}
+  {% call ui.flyout('rn-steps-fly', 'What a run does', help_href='/help') %}
+    <h4>Searching</h4><p>Every source that is on is checked once. A site that asks Kestrel to wait is tried again next run.</p>
+    <h4>Your rules</h4><p>Roles your rules rule out, like the wrong place or a title you never want, are set aside. They stay in Pipeline, marked as set aside.</p>
+    <h4>Quick screen</h4><p>A small, fast model reads each role and keeps the plausible ones. When it is not sure, it keeps the role, so nothing good is thrown away.</p>
+    <h4>Rating</h4><p>The main model scores each kept role against your profile. This is the slow step, about 10 to 30 seconds a role on most computers.</p>
+    <h4>Deeper read</h4><p>Only on a role you pick, from its page. If it uses an online model, Kestrel shows what it will send and asks first.</p>
+  {% endcall %}
+  {% call ui.flyout('rn-pause-fly', 'Pause, Stop, and picking up', help_href='/help') %}
+    <h4>Pause</h4><p>Holds the run between steps. Use it when you need the computer for something else. Resume carries on from the same role.</p>
+    <h4>Stop</h4><p>Ends the run. Everything finished so far is saved. The roles it did not reach wait, and Resume or Run now picks them up.</p>
+    <h4>Quitting Kestrel or a power cut</h4><p>Works the same way. Each step is saved as it finishes, so the next start carries on from there.</p>
+    <h4>When to use which</h4><p>Pause for a short break. Stop if the run is using the wrong settings, then start a new one with This run only.</p>
+  {% endcall %}
+  {% call ui.flyout('rn-fail-fly', 'When something fails', help_href='/help') %}
+    <h4>Partial</h4><p><b>What it means:</b> a site asked Kestrel to slow down. The rest of the run finished. <b>What to do:</b> nothing. That source is tried again next run. If one source is Partial every day, check it on Sources.</p>
+    <h4>Needs another try</h4><p><b>What it means:</b> the AI gave an answer Kestrel could not read, twice, for one role. <b>What to do:</b> press Try again. If the same model keeps failing, pick another one or an online model. The role stays in Pipeline meanwhile.</p>
+    <h4>Did not run</h4><p><b>What it means:</b> Kestrel could not reach the AI at all, for example the model app was closed. <b>What to do:</b> open Models and run the check. Nothing is lost; the run starts again once the AI is back.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

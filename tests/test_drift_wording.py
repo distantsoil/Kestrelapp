@@ -65,7 +65,8 @@ def test_a3_deeper_read_confirmation_wording_and_full_payload(monkeypatch):
         pre.decompose()
     text = visible.get_text(" ", strip=True)
     assert "frontier" not in text.lower(), text
-    assert "openrouter.ai" in text  # the service named, in the warning and the summary
+    # The service is named, in the warning and the summary: the host is a whole word of the text.
+    assert re.findall(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", text).count("openrouter.ai") >= 2
     assert "current employer redacted" not in text  # redaction needs an employer chosen
     assert "This sends the job posting and your profile to openrouter.ai, using the model" in text
     assert "Confidential redaction:" in text
@@ -114,16 +115,16 @@ def test_a4_mock_history_shows_a_local_date_not_raw_iso():
 @pytest.mark.usefixtures("machine")
 def test_a7_skipped_label_shows_only_while_setup_is_unfinished():
     c = _onboarding_app()
-    steps = ["welcome", "models", "tracks", "about", "resume", "employment"]
-    _jump("location", visited=steps, skipped=["employment"], completed=False)
+    steps = ["welcome", "models", "about", "resume"]
+    _jump("wants", visited=steps, skipped=["resume"], completed=False)
     unfinished = c.get("/onboarding").text
-    assert re.search(r'data-ob-step="employment" data-status="skipped"', unfinished)
-    assert "(skipped)" in unfinished
+    assert re.search(r'data-ob-step="resume" data-status="skipped"', unfinished)
+    assert ">Skipped<" in unfinished
 
-    _jump("location", visited=steps, skipped=["employment"], completed=True)
+    _jump("wants", visited=steps, skipped=["resume"], completed=True)
     finished = c.get("/onboarding").text
-    assert re.search(r'data-ob-step="employment" data-status="skipped"', finished)
-    assert "(skipped)" not in finished
+    assert re.search(r'data-ob-step="resume" data-status="skipped"', finished)
+    assert ">Skipped<" not in finished
 
 
 # --------------------------------------------------------------------------------------- A9
@@ -142,21 +143,19 @@ def test_a9_mock_interview_link_with_a_prep_pack():
     c = _client()
     link = re.compile(rf'<a[^>]*href="/mock/{opp_id}"[^>]*>\s*Mock interview\s*</a>')
     prep_page = c.get(f"/prep/{opp_id}").text
-    assert link.search(prep_page), "prep pack page has no Mock interview link"
-    # The role page loads its actions panel from /actions; that panel is where the link lives.
-    assert f'hx-get="/opportunities/{opp_id}/actions"' in c.get(f"/opportunities/{opp_id}").text
-    panel = c.get(f"/opportunities/{opp_id}/actions").text
+    assert f'href="/prep/{opp_id}?tab=practice"' in prep_page, "prep page has no Practice tab"
+    # The role page's More menu is where the Mock interview link lives once a prep pack exists.
+    panel = c.get(f"/opportunities/{opp_id}/role/side").text
     assert link.search(panel), "role page actions panel has no Mock interview link"
 
 
 # -------------------------------------------------------------------------------------- A13
-def test_a13_parked_scoring_chip_reads_couldnt_score():
+def test_a13_parked_scoring_chip_reads_needs_another_try_and_opens_needs_another_try():
     asyncio.run(_pipeline_seed())
     with _pipeline_client() as c:
         page = _pipeline_get(c, "/opportunities")
-    chip = re.search(r'<[^>]*data-chip="quarantined"[^>]*>.*?</(?:a|button)>', page, re.S)
+    chip = re.search(r'<a[^>]*data-chip="failed"[^>]*>.*?</a>', page, re.S)
     assert chip is not None
     label = htmllib.unescape(_visible_text(chip.group(0)))
-    assert "Couldn't score" in label
-    assert "Couldn&#39;t score" in chip.group(0) or "Couldn't score" in chip.group(0)
-    assert "Failed scoring (parked)" not in page
+    assert "Needs another try" in label and 'href="/quarantine"' in chip.group(0)
+    assert "Couldn't score" not in page and "Failed scoring (parked)" not in page

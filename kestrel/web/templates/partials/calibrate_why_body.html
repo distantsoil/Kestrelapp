@@ -1,0 +1,20 @@
+{# "Tell Kestrel why": optional reason chips and a nudge per score. Needs reasons and dims. Both
+   are optional; the form submits them as reason=... and nudge_<key>=-1|0|1 (calibrate.js). #}
+<div>
+  <div class="cal-k">What made the difference <span class="cal-opt">(optional)</span></div>
+  <div class="cal-chips">
+    {% for r in reasons %}<label class="cal-chip"><input type="checkbox" name="reason" value="{{ r }}"><span>{{ r }}</span></label>{% endfor %}
+  </div>
+</div>
+<div>
+  <div class="cal-k">Nudge a score <span class="cal-opt">(optional)</span></div>
+  {% for d in dims %}
+  <div class="cal-nud" data-base="{{ d.score }}" data-testid="nudge-{{ d.key }}">
+    <span>{{ d.name }}</span>
+    <button type="button" data-nd="-1" aria-label="Lower {{ d.name }}">&minus;</button>
+    <b>{{ d.score }}</b>
+    <button type="button" data-nd="1" aria-label="Raise {{ d.name }}">+</button>
+    <input type="hidden" name="nudge_{{ d.key }}" value="0">
+  </div>
+  {% endfor %}
+</div>

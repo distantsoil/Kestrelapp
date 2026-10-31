@@ -51,10 +51,7 @@
               hx-post="/opportunities/{{ opp.id }}/not-for-me" hx-target="#decision" hx-swap="outerHTML">{{ w.not_for_me }}</button>
     {% endif %}
     {# Research the company is there on every role, before any decision (D-UI-53). #}
-    <button class="btn" type="button" data-testid="research"
-            hx-post="/opportunities/{{ opp.id }}/research" hx-target="#decision-note" hx-swap="innerHTML"
-            hx-select="#opp-actions .panel, #opp-actions .warnbox"
-            data-busy-text="Researching the company…">Research the company</button>
+    <a class="btn" href="/opportunities/{{ opp.id }}/organization" data-testid="research">Research the company</a>
     {% with opp_ids = [opp.id], label = none %}{% include "partials/score_again.html" %}{% endwith %}
     {# Interview prep (D-UI-55): on every role, always visible. It opens the prep page, which
        builds the pack on first open. #}

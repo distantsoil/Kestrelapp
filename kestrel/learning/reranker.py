@@ -6,6 +6,7 @@ rather than silently scoring garbage. Drift over the last 50 post-training label
 
 from __future__ import annotations
 
+import asyncio
 import pickle
 from dataclasses import dataclass, field
 
@@ -232,6 +233,10 @@ def _split_labeled(rows: list[Row], *, holdout_frac: float = 0.25, seed: int = 0
 async def train_reranker(
     session: AsyncSession, track: str, settings: Settings, *, promoted_by: str = "auto"
 ) -> TrainResult:
+    if not settings.learning.build_model:
+        return TrainResult(
+            track, 0, promoted=False, reason="switched off in Settings > Scoring and learning"
+        )
     # fit the PCA on the corpus (all track embeddings)
     opp_ids = [
         o
@@ -244,7 +249,7 @@ async def train_reranker(
     emb_matrix = (
         np.vstack([v for v in emb_map.values() if v is not None]) if emb_map else np.empty((0, 0))
     )
-    fitted = fit_features(track, emb_matrix)
+    fitted = await asyncio.to_thread(fit_features, track, emb_matrix)
     rows = await build_rows(session, track, fitted, embed_model)
     # "labeled examples" that are actually USABLE (have an embedding, so they train/validate). The
     # promotion bar is on these, not on labels dropped for lack of an embedding (else the 200-label
@@ -263,10 +268,12 @@ async def train_reranker(
     train_rows, held = _split_labeled(rows)
     x_train = np.vstack([r.features for r in train_rows])
     y_train = np.asarray([r.target for r in train_rows])
-    model = HistGradientBoostingRegressor(random_state=0, max_iter=300).fit(x_train, y_train)
+    model = await asyncio.to_thread(
+        HistGradientBoostingRegressor(random_state=0, max_iter=300).fit, x_train, y_train,
+    )
 
     keep_cutoff = settings.thresholds.consider
-    metrics = _evaluate(model, held, keep_cutoff=keep_cutoff)
+    metrics = await asyncio.to_thread(_evaluate, model, held, keep_cutoff=keep_cutoff)
 
     # Every criterion must be POSITIVELY established on the held-out set. A None (not measurable)
     # fails, so a reranker never promotes by beating a non-existent LLM or on zero apply items.

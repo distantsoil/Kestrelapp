@@ -1,0 +1,37 @@
+{% import "ui/macros.html" as ui %}
+{# The online setup drawer body: pick a provider, paste a key, Test or Save. The key is never
+   echoed; the route shows only its last four characters. #}
+<div id="mo-online-form" data-testid="mo-online-form">
+  {% if on_message %}<p class="mo-msg {{ 'is-good' if on_ok else 'is-bad' }}" role="status" data-testid="mo-online-message">{{ on_message }}</p>{% endif %}
+  <form hx-post="/models/online/key" hx-target="#mo-online-body" hx-swap="innerHTML" autocomplete="off">
+    <div class="k-field"><label for="mo-provider">Provider</label>
+      <div class="k-select"><select id="mo-provider" name="provider" data-testid="mo-provider">
+        {% for p in on_providers %}<option value="{{ p.id }}"{% if p.id == on_selected %} selected{% endif %}>{{ p.label }}{% if p.saved %} (key saved){% endif %}</option>{% endfor %}
+      </select></div></div>
+    <div class="k-field"><label for="mo-key">Key</label>
+      <input id="mo-key" class="k-input mo-keyinput" type="password" name="api_key" placeholder="Paste your key here" autocomplete="off" spellcheck="false" data-testid="mo-key"></div>
+    <div class="mo-actions">
+      <button class="k-btn" type="submit" name="op" value="test" data-testid="mo-key-test">Test</button>
+      <button class="k-btn k-btn--primary" type="submit" name="op" value="save" data-testid="mo-key-save">Save</button>
+      <button class="k-btn k-btn--quiet" type="submit" name="op" value="remove" data-testid="mo-key-remove">Remove saved key</button>
+    </div>
+  </form>
+  <p class="k-muted mo-note">Stored only on this computer. Never in backups. <a class="k-link" href="/settings#computer">Set up another service in Settings</a>.</p>
+  {% if on_other %}
+  {% from "partials/hosted_disclosure.html" import disclosure_text with context %}
+  <details class="mo-note" data-testid="mo-other-connect" open>
+    <summary>Use Other service</summary>
+    <p class="k-muted">Service: {{ on_other.base_url }}. Connect checks the key and lists models, then picks defaults. You can change each model on this page. No profile or role text is sent by Connect.</p>
+    {{ disclosure_text(modern=true) }}
+    <form hx-post="/models/online/connect" hx-target="#mo-online-body" hx-swap="innerHTML">
+      <div class="k-field"><label><input type="checkbox" name="ack" value="on"> I understand what each hosted tier sends and that the provider's retention rules apply.</label></div>
+      <div class="k-field"><label><input type="checkbox" name="switch" value="on"> Switch Kestrel to online models now</label></div>
+      <button type="submit" class="k-btn k-btn--primary" data-testid="mo-other-approve">Connect Other service</button>
+    </form>
+  </details>
+  {% endif %}
+  <ul class="mo-keys">
+    {% for p in on_providers %}<li><span class="mo-badge-letter" aria-hidden="true">{{ p.mono }}</span><span class="k-grow">{{ p.label }}</span>{% if p.saved %}{{ ui.pill('Key saved', 'good') }}{% endif %}<a class="k-link" href="{{ p.console }}" target="_blank" rel="noopener">Get a key</a></li>{% endfor %}
+  </ul>
+</div>
+{% if oob %}{% include "partials/models_online_card.html" %}{% endif %}

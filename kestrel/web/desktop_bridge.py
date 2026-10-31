@@ -33,6 +33,36 @@ def can_quit() -> bool:
     return _quit_handler is not None
 
 
+_window_frame = False
+
+
+def set_window_frame(on: bool) -> None:
+    """The shell says the UI is in its own frameless window (D-UI-88). Then the window controls
+    in the sidebar close and quit, and the top row carries no Quit button (the locked mockups
+    have none: Quit is in the tray). In the browser fallback the Quit button stays, since a tab
+    has no window controls."""
+    global _window_frame
+    _window_frame = bool(on)
+
+
+def has_window_frame() -> bool:
+    return _window_frame
+
+
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def desktop_window(request) -> bool:
+    """Whether this page is for the desktop window: the shell's window is up and the request comes
+    from this computer. Decided on the server, so the page knows before pywebview is ready. A LAN
+    device is never "desktop"; a local browser tab beside the window may be, which only means it
+    skips the offline cache."""
+    if not _window_frame or request is None:
+        return False
+    client = getattr(request, "client", None)
+    return bool(client and client.host in _LOOPBACK)
+
+
 def request_quit() -> bool:
     """Run the shell's real quit on a short delay, so the HTTP answer reaches the window before
     the server starts its drain. Returns whether a handler exists."""
@@ -69,6 +99,33 @@ def request_reveal(path: Path) -> bool:
         return True
     except Exception as exc:  # a file-manager quirk must not fail the request
         log.warning("reveal_failed", path=str(path), error=f"{type(exc).__name__}: {exc}")
+        return False
+
+
+_folder_handler: Callable[[Path], None] | None = None
+
+
+def set_folder_handler(fn: Callable[[Path], None] | None) -> None:
+    """The shell registers a handler that opens a folder in the OS file manager (About's Open
+    buttons for the data and logs folders). A plain browser registers nothing."""
+    global _folder_handler
+    _folder_handler = fn
+
+
+def can_open_folder() -> bool:
+    return _folder_handler is not None
+
+
+def request_open_folder(path: Path) -> bool:
+    """Open the folder `path` in the file manager. Returns whether the shell took the request.
+    A local action on the operator's own folder. Never raises."""
+    if _folder_handler is None:
+        return False
+    try:
+        _folder_handler(path)
+        return True
+    except Exception as exc:  # a file-manager quirk must not fail the request
+        log.warning("open_folder_failed", path=str(path), error=f"{type(exc).__name__}: {exc}")
         return False
 
 

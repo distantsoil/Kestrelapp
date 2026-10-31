@@ -1,9 +1,18 @@
 /* The model picker combobox (D-UI-69). Progressive enhancement of the markup in
    templates/partials/model_picker.html: one text input, a listbox right under it, a hidden
-   input that carries the submitted value. Without script the <noscript> <select> submits. */
+   input that carries the submitted value. Without script the <noscript> <select> submits.
+
+   Shared by several pages and safe to load more than once (D-UI-210): the picker macro emits this
+   script after every picker, and a page swapped in place may emit it again. Only the first load
+   defines window.keCombo and its one htmx:load listener; every load, and every swap, then scans
+   for pickers not yet bound. A picker is bound once per element, tracked in a WeakSet rather than
+   by its markup, so a picker copied from saved HTML (data-ready and all) is still upgraded and a
+   second scan never doubles its listeners. The listeners live on the picker's own elements and
+   go when the picker does; the page lifecycle never has to unbind them. */
 (function () {
   "use strict";
   if (!window.keCombo) {
+    var bound = typeof WeakSet === "function" ? new WeakSet() : null;
     var visible = function (o) {
       return !o.hidden && !o.classList.contains("is-filtered");
     };
@@ -212,13 +221,22 @@
       }
     };
 
+    // scan() looks through the whole document; scan(el) only through el (and el itself).
     window.keCombo = {
-      scan: function () {
-        var roots = document.querySelectorAll("[data-combo]:not([data-ready])");
-        Array.prototype.forEach.call(roots, function (r) { new Combo(r); });
+      scan: function (scope) {
+        var host = scope && scope.querySelectorAll ? scope : document;
+        var roots = Array.prototype.slice.call(host.querySelectorAll("[data-combo]"));
+        if (host.matches && host.matches("[data-combo]")) { roots.unshift(host); }
+        roots.forEach(function (r) {
+          if (bound ? bound.has(r) : r.getAttribute("data-ready") === "1") { return; }
+          if (bound) { bound.add(r); }
+          new Combo(r);
+        });
       }
     };
-    document.addEventListener("htmx:load", function () { window.keCombo.scan(); });
+    document.addEventListener("htmx:load", function (e) {
+      window.keCombo.scan(e && e.target && e.target.querySelectorAll ? e.target : document);
+    });
   }
   window.keCombo.scan();
 })();

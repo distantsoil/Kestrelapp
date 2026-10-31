@@ -1,0 +1,109 @@
+{# Today's status strip and retry note (D-UI-92, D-UI-156). One wrapper (#td-top) that re-polls
+   itself, every 5 s while a search runs or roles are being rated and every 30 s otherwise, so the
+   live counts ("12 rated · 2 failed · 2 pending") change in place. Three clickable segments that
+   stack below about 1300 px:
+   1. Last run (its local time and outcome) cross-fading to Next run every few seconds, holding on
+      Last run while a problem exists; it carries Run now (the model dialog of D-UI-72) or, while
+      scanning, Pause or Resume.
+   2. New roles found, with the live counts.
+   3. The model: on this computer, the online model with the operator's own key, or both. The run
+      is global: one figure for every track.
+   The retry note follows, only when something needs it, never on the first-run Today. Styles:
+   static/css/pages/today.css. #}
+{% from "ui/macros.html" import icon %}
+{% set st = strip %}{% set r = st.run %}{% set w = words(track) %}
+{% set tq = '&tour=1' if tour else '' %}
+<div id="td-top" class="td-top" data-testid="td-top" data-k-morph data-state="{{ st.state }}"
+     hx-get="/today/strip?track={{ track }}{{ tq }}"
+     hx-trigger="every {{ '5s' if st.busy else '30s' }} [!document.querySelector('#td-top dialog:modal')], run-refresh[!document.querySelector('#td-top dialog:modal')] from:body, td-refresh[!document.querySelector('#td-top dialog:modal')] from:body"
+     hx-swap="outerHTML" data-no-busy>
+  <div class="td-strip" id="td-strip" data-testid="td-strip">
+    {# ------------------------------------------------------------------------ 1. last run #}
+    <div class="td-seg" data-seg="run">
+      <a class="td-seg__main" href="/runs" data-testid="seg-run">
+        <span class="k-badge{% if st.problem %} k-badge--warn{% endif %}" id="td-strip-icon">{% if st.state == 'last' and not st.problem and st.next %}<span class="td-ico-a">{{ icon('check') }}</span><span class="td-ico-b" hidden>{{ icon('clock') }}</span>{% else %}{{ icon('scan' if st.state in ('active', 'paused') else ('alert' if st.problem else ('clock' if st.state == 'none' else 'check'))) }}{% endif %}</span>
+        <span class="td-fader" id="td-fader" data-hold="{{ 1 if st.problem or not st.next or st.state != 'last' else 0 }}">
+        {% if st.state == 'active' %}
+          <span class="td-face">
+            <span class="td-k" data-testid="run-headline">{{ st.scanning_label }}</span>
+            <span class="td-bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ st.pct.done|round|int }}"><i class="td-bar__done" style="--w: {{ st.pct.done }}%"></i><i class="td-bar__now" style="--w: {{ st.pct.now }}%"></i></span>
+          </span>
+        {% elif st.state == 'paused' %}
+          <span class="td-face">
+            <span class="td-k" data-testid="run-headline">{{ r.headline }}</span>
+            <span class="td-v">Nothing new starts until you resume.</span>
+          </span>
+        {% elif st.state == 'none' %}
+          <span class="td-face">
+            <span class="td-k" data-testid="run-headline">No runs yet</span>
+            <span class="td-v">Press Run now to run the first search.</span>
+          </span>
+        {% else %}
+          <span class="td-face" id="td-face-last">
+            <span class="td-k td-k--row" data-testid="run-headline"><span class="td-kt">Last run: {{ st.when or 'time not recorded' }}</span>
+              {% if st.problem %}<span class="k-pill k-pill--bad" data-testid="run-status">{{ st.n_problems }} {{ 'problem' if st.n_problems == 1 else 'problems' }}</span>
+              {% elif r.status == 'interrupted' or r.searches_cut_off %}<span class="k-pill k-pill--warn" data-testid="run-status">Stopped early</span>
+              {% elif r.status == 'failed' %}<span class="k-pill k-pill--bad" data-testid="run-status">Did not finish</span>
+              {% elif r.status == 'running' %}<span class="k-pill" data-testid="run-status">Still running</span>
+              {% else %}<span class="k-pill k-pill--good" data-testid="run-status">{{ icon('check') }}Finished</span>{% endif %}
+            </span>
+            <span class="td-v" data-testid="run-detail">
+              {%- if st.failed -%}<span class="td-bad">{{ st.failed }} {{ 'role needs' if st.failed == 1 else 'roles need' }} another try</span>
+              {%- elif st.problem -%}<span class="td-bad">{{ r.problem_note or 'A source had a problem. It is tried again next run.' }}</span>
+              {%- else -%}All sources checked{%- endif -%}
+            </span>
+          </span>
+          {% if st.next %}
+          <span class="td-face is-hide" id="td-face-next" aria-hidden="true">
+            <span class="td-k">Next run: {{ st.next }}</span>
+            <span class="td-v" data-testid="run-next">{{ {'daily': 'Daily schedule', 'weekly': 'Weekly schedule'}.get(st.schedule_kind, 'Scheduled run') }}</span>
+          </span>
+          {% endif %}
+        {% endif %}
+        </span>
+      </a>
+      <span class="td-seg__act">
+        {% include "partials/scan_button.html" %}
+        {% if st.state == 'active' %}<button type="button" class="k-link td-linkbtn" data-testid="run-pause" data-td-refresh
+                hx-post="/api/worker/pause" hx-swap="none">Pause</button>
+        {% elif st.state == 'paused' %}<button type="button" class="k-link td-linkbtn" data-testid="run-resume" data-td-refresh
+                hx-post="/api/worker/resume" hx-swap="none">Resume</button>{% endif %}
+      </span>
+    </div>
+    {# ----------------------------------------------------------------- 2. new roles found #}
+    <div class="td-seg" data-seg="found">
+      <a class="td-seg__main" href="/opportunities?new_today=1" data-testid="seg-found">
+        <span class="k-badge">{{ icon('profile') }}</span>
+        <span class="k-grow">
+          {% if st.state == 'none' %}
+            <span class="td-k" id="td-found-k">No new {{ w.roles }} yet</span>
+            <span class="td-v" id="td-found-v">Run a search to find some.</span>
+          {% else %}
+            <span class="td-k" id="td-found-k" data-testid="found-title">{% if st.state == 'active' and r.stage != 'searching' %}Rating new {{ w.roles }}{% else %}{{ st.found }} new {{ w.role if st.found == 1 else w.roles }} found{% endif %}</span>
+            <span class="td-v" id="td-found-v" data-testid="found-counts">{{ st.rated }} rated{% if st.failed %} · <span class="td-bad">{{ st.failed }} failed</span>{% endif %} · {{ st.pending }} {{ 'waiting' if st.state == 'active' else 'pending' }}{% if st.state == 'active' and st.eta %} · about {{ st.eta }} {{ 'min' }} left{% endif %}</span>
+          {% endif %}
+        </span>
+        {{ icon('chev', 'td-chev') }}
+      </a>
+    </div>
+    {# ------------------------------------------------------------------------ 3. the model #}
+    <div class="td-seg" data-seg="model">
+      <a class="td-seg__main" href="/models" data-testid="seg-model">
+        <span class="k-badge">{{ icon('gpu') }}</span>
+        <span class="k-grow">
+          <span class="td-k" data-testid="model-title">{{ st.model.title }}</span>
+          <span class="td-v" data-testid="model-detail">{{ st.model.detail }}</span>
+        </span>
+        {{ icon('chev', 'td-chev') }}
+      </a>
+    </div>
+  </div>
+
+  {% if retry %}
+  <div class="td-retry" id="td-retry" data-testid="td-retry">
+    <span class="k-badge k-badge--warn">{{ icon('scan') }}</span>
+    <span class="k-grow"><b>{{ retry.n }} {{ w.role + ' needs' if retry.n == 1 else w.roles + ' need' }} another try.</b> The AI could not read its own answer. They are kept in Pipeline.</span>
+    <a class="k-link" href="/quarantine" data-testid="td-retry-review">Review</a>
+  </div>
+  {% endif %}
+</div>

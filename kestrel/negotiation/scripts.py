@@ -178,10 +178,13 @@ async def draft_scripts(
     walk_away: str,
     scenarios: list[str] | None = None,
     proof_points: list | None = None,
+    ask: str | None = None,
 ) -> ScriptResult | None:
     """Draft negotiation scripts for the pursuit's offer. `walk_away` is REQUIRED and supplied by
     the operator; it is passed to the model verbatim and echoed back unchanged. Each returned script
-    is grounded-checked and flagged if its justification rests on nothing supplied."""
+    is grounded-checked and flagged if its justification rests on nothing supplied. `ask` is the
+    figure the operator plans to ask for (also theirs); it is told to the model as a plain line of
+    the offer summary and never adjusted."""
     pursuit = await session.get(Pursuit, pursuit_id)
     if pursuit is None:
         return None
@@ -208,7 +211,8 @@ async def draft_scripts(
     spec = load_prompt("negotiate/v1")
     user = _render_user(
         spec.user,
-        offer_summary=_offer_summary(offer, track),
+        offer_summary=_offer_summary(offer, track)
+        + (f"; the operator plans to ask for {ask.strip()}" if ask and ask.strip() else ""),
         walk_away=walk_away,
         proof_points=proof_points,
         comp_summary=(benchmark.comp.summary() if benchmark else "insufficient data (n<5)"),

@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 import structlog
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -41,9 +41,11 @@ _PAGE_MODULES = (
     # one gets the dashboard plus a "Finish setup" banner (D-UI-30).
     "setup", "onboarding",
     "dashboard", "chrome", "documents", "profile", "pursuits", "renders", "orgs", "stories",
-    "prep", "mock", "offers", "sources", "settings", "analytics", "bench", "about",
-    "escalate", "opportunity_actions", "runs_detail", "models", "backup", "applied",
-    "rescore", "updates", "announcements",
+    "prep", "mock", "offers", "sources_ui", "sources", "settings", "analytics", "bench", "about",
+    "escalate", "opportunity_actions", "runs_page", "runs_detail", "needs_try", "models",
+    "backup", "applied", "rescore", "updates", "announcements", "pipeline", "role",
+    "settings_prefs", "settings_roles", "settings_learn", "settings_data",
+    "settings_computer", "settings_privacy",
 )
 
 # Worker pause is a process-wide flag the tray toggles via /api/worker/pause|resume. A paused
@@ -329,19 +331,23 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     and the next one does not see."""
     import httpx
 
+    from kestrel.bench.check import drain_checks
     from kestrel.config import HostedModeError, get_settings
     from kestrel.db.engine import get_sessionmaker
     from kestrel.intelligence.liveness import run_liveness_cycle
     from kestrel.interview.question_task import drain_interview_questions
     from kestrel.interview.story_task import drain_story_builds
     from kestrel.learning.reranker import check_drift
+    from kestrel.learning.training import run_cycle as train_sorting_models
     from kestrel.llm.client import LLMClient
     from kestrel.pipeline import recheck, runlog
     from kestrel.pipeline.tier0 import run_tier0_batch
     from kestrel.pipeline.tier1 import handle_t1
     from kestrel.pipeline.tier2 import handle_t2
     from kestrel.pipeline.worker import TierStats, Worker, held_types
-    from kestrel.services.setting_overrides import load_settings_with_db, take_run_mode
+    from kestrel.research.jobs import drain as drain_research
+    from kestrel.research.org_summary import drain_org_summaries, request_weekly
+    from kestrel.services.setting_overrides import load_settings_with_db, take_run_request
     from kestrel.services.title_suggest import drain_title_suggestions, maybe_request
 
     sm = get_sessionmaker()
@@ -381,13 +387,16 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # run (the acknowledgement or an assignment went away since it was queued) is
                 # logged and the stored mode is used instead.
                 async with sm() as s:
-                    requested = await take_run_mode(s)
+                    request = await take_run_request(s)
+                    requested = request.get("mode")
                     try:
                         settings = await load_settings_with_db(s, mode=requested)
                     except HostedModeError as exc:
                         log.warning("run_mode_unavailable", requested=requested, reason=str(exc))
                         settings = await load_settings_with_db(s)
-                worker.apply_settings(settings)
+                worker.apply_settings(
+                    settings, online_approval=request.get("online_approval")
+                )
                 _run_mode["mode"] = settings.llm.mode
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
@@ -431,6 +440,17 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     # newly applied roles; Tier 2 again, so it stays inside the same drain.
                     await maybe_request(sm)
                     await drain_title_suggestions(sm, client, settings, stop=stop)
+                    # Company summaries (P16): Tier 2 again, queued on page open, follow, Refresh.
+                    await request_weekly(sm)
+                    await drain_org_summaries(sm, client, settings, stop=stop)
+                    await drain_research(sm, stop=stop)
+                    from kestrel.services.follow_up import drain as drain_follow_ups
+
+                    await drain_follow_ups(sm, lambda cfg: LLMClient(cfg, http=http), stop=stop)
+                    # Model check (D-DRIFT-11): its own drained step, after every tier has
+                    # drained and never beside them, so it cannot swap models under the worker.
+                    await drain_checks(sm, settings, make_client=lambda s: LLMClient(s, http=http),
+                                       stop=stop)
                 # Drift is a rolling window over the last 50 labels; checking it every idle
                 # cycle (5 s) loaded both reranker pickles and every Org and Source row on the
                 # UI's event loop for nothing. Once per interval, or after any Tier 1 work.
@@ -440,6 +460,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                             await check_drift(s, track, settings)
                 if not is_paused():
                     await _maybe_run_liveness(sm, settings, run_liveness_cycle)
+                    await train_sorting_models(sm, stop=stop)
                 if is_paused() and cycle.run_id is not None and not stop.is_set():
                     carried = cycle  # paused mid-run: the run stays open until resumed
                 else:
@@ -470,17 +491,25 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 log.warning("cycle_run_close_failed", error=str(close_exc))
 
 
+DB_BUSY_MESSAGE = "Kestrel is busy saving something else. Nothing changed; try again in a moment."
+
+# D-UI-90: Quit stops in-flight tasks and exits in one to two seconds. A stopped task keeps its
+# row; its lease is released below, so it resumes at the next launch (hard rule 5). Quit never
+# waits on a running model call.
+WORKER_STOP_S = 1.0
+
+
 async def _graceful_worker_shutdown(task: asyncio.Task, stop: asyncio.Event) -> None:
-    """Stop the worker and RELEASE ITS LEASES (SPEC.md 1.3, FINDINGS F8). Signal the stop event so
-    the drain loop exits after its in-flight tasks finish, wait up to 30s for that, then release any
-    still-leased task back to pending so a restart resumes immediately rather than waiting for the
-    lease to expire. Runs on uvicorn's loop (where the DB sessions live), never a second loop."""
+    """Stop the worker and RELEASE ITS LEASES (SPEC.md 1.3, FINDINGS F8). Signal the stop event,
+    give the drain loop WORKER_STOP_S to exit on its own, cancel it otherwise, then release any
+    still-leased task back to pending so a restart resumes it immediately rather than waiting
+    for the lease to expire. Runs on uvicorn's loop (where the DB sessions live)."""
     from kestrel.db.engine import get_sessionmaker
     from kestrel.queue.queue import TaskQueue
 
-    stop.set()  # let the current drain finish its in-flight tasks and exit
+    stop.set()
     with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(task, timeout=30.0)
+        await asyncio.wait_for(asyncio.shield(task), timeout=WORKER_STOP_S)
     if not task.done():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -493,24 +522,49 @@ async def _graceful_worker_shutdown(task: asyncio.Task, stop: asyncio.Event) -> 
         log.warning("lease_release_failed", error=str(exc))
 
 
+_delivery_fallback_logged = False
+
+
+async def _delivery_settings(s):
+    """The settings one delivery cycle uses: the file plus the rows the Settings page saved. One
+    bad row (a hand-edited value that no longer validates) must not stop every alert for good, so
+    when the rows cannot be applied the cycle uses the settings file alone, the same as before
+    those rows existed, and says so once (not every minute) until the rows read again."""
+    global _delivery_fallback_logged
+    from kestrel.config import get_settings
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    try:
+        settings = await load_settings_with_db(s)
+    except (ValueError, TypeError) as exc:  # pydantic's ValidationError is a ValueError
+        if not _delivery_fallback_logged:
+            _delivery_fallback_logged = True
+            log.warning("delivery_settings_rows_unusable", error_type=type(exc).__name__,
+                        error=str(exc))
+        return get_settings()
+    _delivery_fallback_logged = False
+    return settings
+
+
 async def _delivery_loop(stop: asyncio.Event) -> None:
     """Push undelivered notifications on a cadence, batching to at most one per window (SPEC 6)."""
-    from kestrel.config import get_settings
     from kestrel.db.engine import get_sessionmaker
     from kestrel.services.delivery import deliver_pending
 
     sm = get_sessionmaker()
     while not stop.is_set():
         # Settings are read INSIDE the try: a bad settings.yml used to raise here, outside it, and
-        # end the loop for the life of the process with nothing logged.
+        # end the loop for the life of the process with nothing logged. They are read WITH the
+        # rows the Settings page saves (Computer notifications, the kinds, Quiet hours), which
+        # `get_settings()` alone never saw.
         wait_seconds = 60.0
         if is_paused():  # a restore or reset is replacing the rows this would mark delivered
             await _wait(stop, 5.0)
             continue
         try:
-            settings = get_settings()
-            wait_seconds = float(max(5, settings.notify.batch_seconds))
             async with sm() as s:
+                settings = await _delivery_settings(s)
+                wait_seconds = float(max(5, settings.notify.batch_seconds))
                 await deliver_pending(s, settings)
         except Exception as exc:  # a delivery tick must never take down the app
             log.warning("delivery_tick_error", error=str(exc))
@@ -523,6 +577,7 @@ async def _scheduler_loop(stop: asyncio.Event) -> None:
     from kestrel.db.engine import get_sessionmaker
     from kestrel.ingest.scheduler import enqueue_due_scrapes
     from kestrel.queue.queue import TaskQueue
+    from kestrel.services.pursuit_undo import expire
     from kestrel.services.run_schedule import fire_if_due
 
     sm = get_sessionmaker()
@@ -533,6 +588,8 @@ async def _scheduler_loop(stop: asyncio.Event) -> None:
             continue
         try:
             async with sm() as s:
+                await expire(s)
+                await s.commit()
                 await enqueue_due_scrapes(s, queue)
         except Exception as exc:  # a scheduler tick must never take down the app
             log.warning("scheduler_tick_error", error=str(exc))
@@ -615,6 +672,23 @@ _EXTENSION_SCHEMES = frozenset({"chrome-extension", "moz-extension", "safari-web
 # the drive-by this guard exists to stop. The right long-term fix is to make it a POST; guarding it
 # here closes the hole without breaking the existing links that reach it.
 _UNSAFE_GETS = frozenset({"/renders/new"})
+
+
+class _VersionedStatic(StaticFiles):
+    """Static files. A request carrying ?v= (deps.static_url's build fingerprint) is cached for
+    good: its URL changes whenever the file does. Others, an older build's version among them,
+    keep Starlette's revalidation."""
+
+    async def get_response(self, path: str, scope) -> Response:  # noqa: ANN001 - ASGI scope
+        response = await super().get_response(path, scope)
+        from urllib.parse import parse_qs
+
+        from kestrel.web.deps import static_token
+
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        if query.get("v") == [static_token()] and response.status_code in (200, 304):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def _is_extension_origin(origin: str) -> bool:
@@ -791,6 +865,16 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
 
     app = FastAPI(title="Kestrel", lifespan=lifespan, docs_url="/docs")
 
+    @app.middleware("http")
+    async def _region_display(request: Request, call_next: Callable) -> Response:
+        from kestrel.date_display import current_region, read_region
+
+        token = current_region.set(await asyncio.to_thread(read_region))
+        try:
+            return await call_next(request)
+        finally:
+            current_region.reset(token)
+
     from kestrel.config import get_settings
 
     bind_all = get_settings().server.bind_all
@@ -867,6 +951,34 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
                     )
         return await call_next(request)
 
+    from kestrel.web import error_page
+
+    # A page that fails gets a calm page with the plain details (D-UI-152); anything that is not
+    # a page navigation keeps Starlette's own answer.
+    app.add_exception_handler(Exception, error_page.handle)
+
+    # A database another process or request is still writing (after busy_timeout) is a moment's
+    # wait, never a server error: say so plainly, as a toast for an htmx request (hardware check,
+    # 2026-10-26: POST /settings/desktop answered 500 while a closing copy held the file).
+    import sqlite3
+
+    from sqlalchemy.exc import OperationalError as SAOperationalError
+
+    async def _db_busy(request: Request, exc: Exception) -> Response:
+        if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+            return await error_page.handle(request, exc)
+        log.warning("database_busy", path=request.url.path, error_type=type(exc).__name__)
+        message = DB_BUSY_MESSAGE
+        headers = {"Retry-After": "2"}
+        if request.headers.get("HX-Request"):
+            import json as _json
+
+            headers["HX-Trigger"] = _json.dumps({"k-toast": {"message": message, "tone": "warn"}})
+        return PlainTextResponse(message, status_code=503, headers=headers)
+
+    app.add_exception_handler(SAOperationalError, _db_busy)
+    app.add_exception_handler(sqlite3.OperationalError, _db_busy)
+
     # LAN shared key: the third control, and the only one that stops an unauthenticated DEVICE.
     # Installed unconditionally, not just when bind_all is set, so that flipping bind_all can never
     # expose an unprotected app: the middleware exempts loopback anyway, so it is inert on a
@@ -911,7 +1023,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         ],
     )
 
-    app.mount("/static", StaticFiles(directory=paths.web_static_dir()), name="static")
+    app.mount("/static", _VersionedStatic(directory=paths.web_static_dir()), name="static")
     app.include_router(api_router)
     app.include_router(learning_router)
     app.include_router(pages_router)

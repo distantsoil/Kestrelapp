@@ -2,6 +2,8 @@
 {# D-UI-71: the Score again dialog as a page, for a Retry pressed without script. The form posts
    to /rescore, which queues and returns to `next` with what happened. #}
 {% block title %}Score again · Kestrel{% endblock %}
+{# No script of its own (the page form runs without one); named for the page lifecycle (D-UI-210). #}
+{% block page_name %}score-again{% endblock %}
 {% block content %}
 {% include "partials/score_again_dialog.html" %}
 {% endblock %}

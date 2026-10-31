@@ -1,0 +1,13 @@
+{% import "ui/macros.html" as ui %}
+{# Speed and cost (moved from Analytics). #}
+<section class="k-card mo-card" id="mo-speedcost" data-testid="mo-speedcost">
+  <header class="mo-head"><span class="k-badge">{{ ui.icon('clock') }}</span>
+    <div class="k-grow"><h3>Speed and cost</h3></div></header>
+  <dl class="mo-kv">
+    <div><dt>Last run</dt><dd>{% if run_minutes %}{{ run_minutes }} min{% else %}No run yet{% endif %}</dd></div>
+    {% set r2 = mean_latency.get(2) %}
+    <div><dt>Rating speed</dt><dd>{% if r2 and r2 >= 0.5 %}About {{ [(60 / r2)|round|int, 1]|max }} {{ 'role' if (60 / r2)|round|int <= 1 else 'roles' }} a minute{% else %}No data yet{% endif %}</dd></div>
+    <div><dt>Online spend this month</dt><dd>{{ spend.label if spend else '$0.00, all on this computer' }}</dd></div>
+    <div><dt>Faster first pass</dt><dd>{{ 'In use' if reranker_active else 'Not in use yet' }}</dd></div>
+  </dl>
+</section>

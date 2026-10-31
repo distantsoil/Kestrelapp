@@ -1,0 +1,9 @@
+{# Delete a saved story: asks first, because it cannot be undone. #}
+<div class="k-modal" id="pp-delete" role="dialog" aria-modal="true" aria-labelledby="pp-delete-t" aria-hidden="true" data-k-static data-testid="pp-delete">
+  <div class="k-modal__head"><h2 id="pp-delete-t">Delete "{{ story.title }}"?</h2></div>
+  <div class="k-modal__body"><p>The story is removed from your bank. Interview prep stops matching it to questions. This cannot be undone.</p></div>
+  <div class="k-modal__foot">
+    <button type="button" class="k-btn" data-k-close>Cancel</button>
+    <button type="button" class="k-btn k-btn--danger" hx-post="/stories/{{ story.id }}/delete" hx-vals='{{ ({"from": from, "opp": opp} if opp else {"from": from})|tojson }}' hx-swap="none" data-testid="story-delete-go">Delete story</button>
+  </div>
+</div>

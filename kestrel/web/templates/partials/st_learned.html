@@ -1,0 +1,18 @@
+{# What Kestrel has learned: three switches, each with a progress line. A stage waits for its own
+   number of ratings; the switch only lets you turn it off. Hard rule 6: the agreement rate is
+   never shown as solid under five ratings. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-learn" data-testid="st-learn" data-track="{{ track }}">
+  {{ st.head('What Kestrel has learned', 'wand') }}
+  {% for r in learn_rows %}
+  <div class="st-row st-lr{% if loop.first %} st-row--first{% endif %}{% if not r.ready %} is-dim{% endif %}" data-lr="{{ r.key }}" data-testid="st-lr-{{ r.key }}">
+    <div class="st-row__t"><b>{{ r.label }}</b><span class="st-dsm">{{ r.shown }} of {{ r.needed }} needed{% if r.n > r.needed %} ({{ r.n }} ratings){% endif %}</span></div>
+    <span class="st-progbar"><i style="width: {{ r.pct }}%"></i></span>
+    <span class="k-pill{% if r.tone != 'muted' %} k-pill--{{ r.tone }}{% endif %}">{{ r.pill }}</span>
+    <label class="k-switch st-sw"><input type="checkbox" role="switch" {% if r.on %}checked{% endif %}{% if not r.ready %} disabled{% endif %} aria-label="{{ r.label }}" hx-post="/settings/scoring/learn" hx-target="#st-learn" hx-swap="outerHTML" hx-trigger="change" hx-vals='{"track": "{{ track }}", "key": "{{ r.key }}"}' name="on" value="1" data-testid="st-learn-switch-{{ r.key }}"><span class="k-switch__track" aria-hidden="true"></span></label>
+    {% if r.key == 'build_model' %}<p class="st-lrn" data-testid="st-model-note">{{ model_note }}</p>{% endif %}
+  </div>
+  {% endfor %}
+  <div class="st-agree"><p data-testid="st-agree">{% if agree_insufficient %}Agrees with your calls: <b>Too few to tell ({{ agree_n }})</b>.{% else %}Agrees with your calls <b>{{ agree_pct }}%</b> of the time ({{ agree_n }} ratings).{% endif %}</p>
+    <a class="k-link" href="/calibrate">See your rating history</a></div>
+</section>

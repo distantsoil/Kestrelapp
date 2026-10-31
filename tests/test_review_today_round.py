@@ -137,9 +137,13 @@ def test_paused_with_nothing_leased_reads_paused_with_resume_and_a_slow_poll(mon
     s = _summary(None)
     assert s["paused"] and s["finishing"] == 0 and rs.step_words(s) == "Paused"
     with _client() as c:
-        panel = _panel(c.get("/").text)
+        panel = _panel(c.get("/today/run").text)
+        strip = c.get("/today/strip").text
         live = c.get("/runs").text
     assert ">Paused<" in panel and 'hx-trigger="every 30s, run-refresh from:body"' in panel
+    # Today's status strip says the same: Paused, Resume, a slow poll, no tray.
+    assert ">Paused<" in strip and 'data-testid="run-resume"' in strip
+    assert 'hx-trigger="every 30s' in strip and "tray" not in strip
     assert 'hx-post="/api/worker/resume"' in panel and "tray" not in panel  # finding 14
     assert 'data-testid="run-resume"' in live and "from the tray" not in live
 
@@ -202,9 +206,10 @@ def test_sec_titles_toggle_is_off_by_default_and_rebuilds_on_change():
         return row.config["queries"], (opt.value if opt else None)
 
     with _client() as c:
+        c.cookies.set("kestrel-track", "consulting")  # the tab the operator is on
         c.post("/sources/searches", data={"enable": "0"})
         assert _db(sec) == (SEC_NEUTRAL_QUERIES, None)
-        page = c.get("/sources").text
+        page = c.get("/sources?track=consulting").text
         assert SEC_TITLES_LABEL in page and 'data-testid="sec-titles"' in page
         assert "checked" not in page.split('data-testid="sec-titles"')[1].split(">")[0]
         r = c.post("/sources/sec-titles", data={"on": "1"}, headers=HX)
@@ -298,8 +303,10 @@ def test_an_open_run_with_no_live_task_reads_finishing_up_never_finished():
     s = _summary(None)
     assert s["active"] and s["stage"] == "finishing" and rs.step_words(s) == "Finishing up"
     with _client() as c:
-        panel = _panel(c.get("/").text)
+        panel = _panel(c.get("/today/run").text)
+        strip = c.get("/today/strip").text
     assert ">Finishing up<" in panel and ">finished<" not in panel and "Last run" not in panel
+    assert ">Finishing up<" in strip and "Finished" not in strip and "Last run" not in strip
 
 
 # ------------------------------------------------------------- finding 6: TIME_WAIT
@@ -533,7 +540,7 @@ def test_onboarding_next_ignores_a_posted_step_not_yet_reached():
         # A crafted post claims the searches step; the server reads About you, whose
         # requirement (your name) is unmet, so the wizard stays there and says why.
         r = c.post("/onboarding/next", data={"step": "searches"}, headers=HX)
-    assert 'data-step="about"' in r.text and "Add your full name" in r.text
+    assert 'data-step="about"' in r.text and "Add your first name" in r.text
 
 
 # ------------------------------------------------------------- finding 13: rule segment only

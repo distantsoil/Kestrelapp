@@ -1,0 +1,24 @@
+{# The ask-first dialog for Rewrite summary on an online model: provider, exactly what is sent and
+   what is not. static: a click outside does not close it, because it asks before something goes
+   online. Nothing is sent until Send and rewrite. #}
+{% from "ui/macros.html" import modal %}
+{% set send_attrs = {'data-testid': 'an-send', 'hx-post': '/analytics/narrative?track=' ~ track ~ '&range=' ~ range, 'hx-target': '#honest-summary', 'hx-swap': 'outerHTML'} %}
+{% set actions = [{'label': 'Cancel', 'close': True}] %}
+{% if hosted and employer != 'held' %}{% set actions = [{'label': 'Cancel', 'close': True}, {'label': 'Send and rewrite', 'kind': 'primary', 'close': True, 'attrs': send_attrs, 'vals': {'confirmed': '1', 'model': model, 'dest': dest|default('')}}] %}{% endif %}
+{% call modal('an-online-dialog', 'Rewrite the summary with an online model?', actions, static=True) %}
+  <p class="k-muted">{{ provider }}{% if model %}, {{ model }}{% endif %}, using your own credit</p>
+  <div class="an-send">
+    <b>What will be sent</b>
+    <ul>
+      <li data-testid="an-sends">{{ sends }}.</li>
+      <li data-testid="an-sends-page">For this summary, that is the counts and rates on this page for the {{ 'consulting' if track == 'consulting' else 'employment' }} track and the date range you chose, each with the number it rests on.</li>
+    </ul>
+    {% if employer == 'hidden' %}
+    <p data-testid="an-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+    {% elif employer == 'held' %}
+    <p data-testid="an-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a>, then try again.</p>
+    {% endif %}
+    <p><b>Not sent:</b> your name, contact details and your resume file.</p>
+    <p>{{ provider }} handles what it receives under its own terms{% if model and (model|string|lower).endswith(':free') %}, and a free model may use it for training{% endif %}.</p>
+  </div>
+{% endcall %}

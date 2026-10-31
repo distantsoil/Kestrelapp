@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel import paths
 from kestrel.db.models import Contact, Evaluation, Opportunity, Org, OrgResearch, PrepPack, Story
 from kestrel.interview.questions import active_set, set_questions
+from kestrel.research.connections import not_imported_connection
 
 _PANEL_TYPES = ("hiring_manager", "exec", "board", "peer", "recruiter", "pe_operator")
 
@@ -138,7 +139,9 @@ async def _assemble(session: AsyncSession, opportunity: Opportunity, org: Org | 
             (
                 await session.execute(
                     select(Contact).where(
-                        Contact.org_id == org.id, Contact.contact_type.in_(_PANEL_TYPES)
+                        Contact.org_id == org.id,
+                        Contact.contact_type.in_(_PANEL_TYPES),
+                        not_imported_connection(),
                     )
                 )
             )
@@ -186,6 +189,72 @@ def _content_md(org_name: str | None, role: str | None, a: _Assembled) -> str:
     return "\n".join(lines).strip()
 
 
+@dataclass
+class LiveView:
+    """What the Interview prep page shows beside the stored pack, read fresh each time so a story
+    the operator just wrote shows up at once: the role in one line, the likely questions with the
+    story Kestrel suggested for each (never invented: a question with no confident match has
+    none), the gaps worth handling, and the company notes the PDF carries."""
+
+    role_summary: str
+    questions: list[dict]  # [{question, story_id, why, kind}]
+    gaps: list[dict]  # [{requirement, severity, mitigation}], noise left out
+    notes: list[str]  # public company facts from research, for the PDF's company notes
+
+
+_KIND_OF_CATEGORY = {"gap_probe": "gap", "technical": "requirement", "role_specific": "requirement"}
+
+
+async def live_view(session: AsyncSession, opportunity_id: int) -> LiveView | None:
+    opportunity = await session.get(Opportunity, opportunity_id)
+    if opportunity is None:
+        return None
+    org = await session.get(Org, opportunity.org_id) if opportunity.org_id else None
+    ev = await _latest_eval(session, opportunity_id)
+    blocks = ev.blocks if ev and isinstance(ev.blocks, dict) else {}
+    a = blocks.get("a_role_summary") or {}
+    summary = (a.get("lead_with") if isinstance(a, dict) else None) or (
+        f"{opportunity.title or 'Role'}" + (f" at {org.name}" if org else "")
+    )
+    gaps = [
+        g for g in ((blocks.get("b_fit") or {}).get("gaps") or [])
+        if isinstance(g, dict) and g.get("severity") != "noise"
+    ]
+    stories = list(
+        (await session.execute(select(Story).where(Story.is_canonical.is_(True)))).scalars().all()
+    )
+    by_id = {s.id: s for s in stories}
+    by_key = {s.proof_point_key: s for s in stories if s.proof_point_key}
+    questions: list[dict] = []
+    qset = set_questions(await active_set(session, opportunity_id))
+    if qset:
+        for item in qset:
+            story = by_id.get(item.get("story_id")) or by_key.get(item.get("proof_point_key"))
+            questions.append({
+                "question": str(item["question"]).strip(),
+                "story_id": story.id if story else None,
+                "why": str(item.get("why_asked") or "").strip(),
+                "kind": _KIND_OF_CATEGORY.get(str(item.get("category")), "common"),
+            })
+    else:
+        for item in blocks.get("f_interview") or []:
+            text = str(item.get("likely_question") or "").strip() if isinstance(item, dict) else ""
+            if not text:
+                continue
+            story = by_key.get(item.get("proof_point_key"))
+            questions.append({
+                "question": text, "story_id": story.id if story else None,
+                "why": str(item.get("why_asked") or "").strip(), "kind": "requirement",
+            })
+    research = await _latest_research(session, org.id if org else None)
+    notes = [
+        str(s.get("statement")).strip()
+        for s in (research.signals if research else [])
+        if isinstance(s, dict) and str(s.get("statement") or "").strip()
+    ]
+    return LiveView(role_summary=summary, questions=questions, gaps=gaps, notes=notes)
+
+
 async def assemble_prep_pack(session: AsyncSession, opportunity_id: int) -> PrepPack | None:
     """Build and persist a prep pack row (no PDF yet). None if the opportunity is missing."""
     opportunity = await session.get(Opportunity, opportunity_id)
@@ -207,11 +276,15 @@ async def assemble_prep_pack(session: AsyncSession, opportunity_id: int) -> Prep
     return row
 
 
-async def render_prep_pack_pdf(session: AsyncSession, prep_pack_id: int) -> str | None:
+async def render_prep_pack_pdf(
+    session: AsyncSession, prep_pack_id: int, *, model: dict | None = None
+) -> str | None:
     """Render a stored prep pack to PDF via the Phase 8 pipeline (Playwright/Edge, empty
-    header/footer, scrubbed metadata) and record its path. Local-required (needs Edge)."""
+    header/footer, scrubbed metadata) and record its path. Local-required (needs Edge).
+    With `model` (the Interview prep page's paged pack) the PDF is those same pages; without it
+    the stored text is rendered."""
     from kestrel.docs.render import render_pdf
-    from kestrel.interview.render import prep_pack_html
+    from kestrel.interview.render import pack_pages_html, prep_pack_html
 
     row = await session.get(PrepPack, prep_pack_id)
     if row is None:
@@ -219,8 +292,11 @@ async def render_prep_pack_pdf(session: AsyncSession, prep_pack_id: int) -> str 
     opportunity = await session.get(Opportunity, row.opportunity_id)
     org = await session.get(Org, opportunity.org_id) if opportunity and opportunity.org_id else None
 
-    html = prep_pack_html(row, org_name=org.name if org else None,
-                          role=opportunity.title if opportunity else None)
+    html = (
+        pack_pages_html(model) if model is not None
+        else prep_pack_html(row, org_name=org.name if org else None,
+                            role=opportunity.title if opportunity else None)
+    )
     rendered = await render_pdf(html)
 
     out_dir = paths.data_dir() / "prep_packs"

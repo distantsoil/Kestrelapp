@@ -1,0 +1,30 @@
+{# Window controls at the top of the sidebar (D-UI-88, SPEC-INTERFACES 1.7). Rendered only while
+   the desktop shell runs, and hidden until the page finds the desktop window's JS API
+   (window.pywebview), so a browser tab on the same server never shows them. Windows and Linux:
+   minimize, maximize or restore and close, drawn here, close red on hover. macOS: the real
+   traffic lights sit over this row (a transparent title bar), so the row is only a spacer.
+   Close obeys close-to-tray exactly as the window's own close does. The empty part of the row
+   is the drag region; a double click toggles maximize. The edge handles below resize the
+   frameless window on Windows and Linux; they live in partials/window_edges.html, outside
+   .k-win, whose container query would otherwise pin them to the page instead of the window. Behavior: static/js/kestrel-ui.js (KUI.frame). #}
+<div class="k-wctl" id="k-wctl" data-k-wctl hidden aria-label="Window controls" role="group">
+  <button type="button" class="k-wc-min" data-wc="min" aria-label="Minimize" title="Minimize"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5h7"/></svg></button>
+  <button type="button" class="k-wc-max" data-wc="max" aria-label="Maximize" title="Maximize"><svg class="k-wc-maxi" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5h7v7h-7z"/></svg><svg class="k-wc-restore" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5h5.5V7M1.5 3h5.5v5.5H1.5z"/></svg></button>
+  <button type="button" class="k-wc-close" data-wc="close" aria-label="Close" title="Close"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6"/></svg></button>
+  <span class="k-wctl__drag pywebview-drag-region" data-k-drag aria-hidden="true"></span>
+</div>
+<script>
+  // Shown at once when this window already found the desktop API on an earlier page (kept in
+  // sessionStorage by kestrel-ui.js); a plain browser tab never has the key.
+  (function () {
+    try {
+      var os = sessionStorage.getItem('kestrel-frame');
+      var w = document.getElementById('k-wctl');
+      if (w && (os === 'win' || os === 'mac' || os === 'linux')) {
+        w.hidden = false;
+        w.classList.toggle('is-mac', os === 'mac');
+        document.documentElement.setAttribute('data-k-frame', os);
+      }
+    } catch (e) { /* storage off */ }
+  })();
+</script>

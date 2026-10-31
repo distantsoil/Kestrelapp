@@ -65,3 +65,120 @@ def prep_pack_html(row: PrepPack, *, org_name: str | None, role: str | None) -> 
         f"<!doctype html><html><head><meta charset='utf-8'><title>{title}</title>"
         f"<style>{_CSS}</style></head><body>{body}</body></html>"
     )
+
+
+# --------------------------------------------------------------------------- the paged prep pack
+# The prep pack as true Letter pages (816 by 1056 CSS pixels). The preview on the Interview prep
+# page and the PDF are built from these same pages, so what the operator reads before saving is
+# what is saved. The paper colors are fixed white and ink by design: a printed page does not
+# follow the app's theme.
+PAPER_CSS = """
+.pdfpg { width: 816px; height: 1056px; box-sizing: border-box; padding: 64px 72px; overflow: hidden;
+  background: #fff; color: #1B1F3A; font-family: Manrope, Inter, -apple-system, Segoe UI, Roboto,
+  Helvetica, Arial, sans-serif; display: flex; flex-direction: column; }
+.pdfpg * { box-sizing: border-box; }
+.pdfpg h1 { font-size: 30px; margin: 0 0 4px; }
+.pdfpg h2 { font-size: 15px; letter-spacing: .06em; text-transform: uppercase; color: #4F5BD5;
+  margin: 26px 0 8px; }
+.pdfpg .pm { font-size: 15px; color: #4A5070; line-height: 1.6; }
+.pdfpg p { margin: 0; font-size: 15px; line-height: 1.6; }
+.pdfpg .pq { padding: 10px 0; border-top: 1px solid #E3E6F3; font-size: 15px; }
+.pdfpg .pq b { display: block; line-height: 1.6; }
+.pdfpg .pq span { display: block; font-size: 13.5px; color: #4A5070; margin-top: 3px;
+  line-height: 1.6; }
+.pdfpg ul { margin: 0; padding-left: 20px; font-size: 15px; line-height: 1.7; }
+.pdfpg .pdfck { display: flex; gap: 10px; align-items: center; font-size: 15px; padding: 6px 0; }
+.pdfpg .pdfck i { width: 14px; height: 14px; border: 1.5px solid #4A5070; border-radius: 3px;
+  flex: none; }
+.pdfpg .pf { margin-top: auto; text-align: center; font-size: 12px; color: #6A6F8C; }
+"""
+
+_PAGE_BODY = 1056 - 2 * 64 - 40  # room for content above the footer line
+_CHECKLIST = (
+    "Say your top three stories out loud once",
+    "Read the posting again",
+    "Test your video link or plan your route",
+    "Have your questions ready",
+)
+
+
+def _lines(text: str, per_line: int) -> int:
+    return max(1, -(-len(text or "") // per_line))
+
+
+def pack_pages(model: dict) -> list[str]:
+    """The pack as a list of page bodies (HTML, no footer yet). `model` carries the role, the
+    when line, the one-line summary, the likely questions with the operator's own story text, the
+    ticked questions to ask, the company notes and a track word. Blocks are placed page by page by
+    an estimate of their height; a heading always travels with the block under it."""
+    e = html.escape
+    blocks: list[tuple[int, str]] = []
+    head = (
+        f"<h1>{e(model['title'])}</h1><div class=\"pm\">{e(model['role'])}<br>"
+        f"{e(model['org'])}<br>{e(model['when'])}</div>"
+    )
+    blocks.append((46 + 3 * 24, head))
+    summary = model.get("summary") or ""
+    blocks.append(
+        (52 + _lines(summary, 89) * 24, f"<h2>The role in one line</h2><p>{e(summary)}</p>")
+    )
+    heading = f"<h2>{e(model['ask_heading'])}</h2>"
+    first = True
+    for i, q in enumerate(model["questions"], 1):
+        story = (
+            f"Your story: {q['story_title']}. {q['story_text']}".strip()
+            if q.get("story_title") else "No story matched yet."
+        )
+        h = _lines(f"{i}. {q['q']}", 85) * 26 + _lines(story, 95) * 23 + 24
+        body = f"<div class=\"pq\"><b>{i}. {e(q['q'])}</b><span>{e(story)}</span></div>"
+        if first:
+            h += 52
+            body = heading + body
+            first = False
+        blocks.append((h, body))
+    if first:
+        blocks.append((52 + 26, heading + "<p>No likely questions yet.</p>"))
+    asks = model.get("asks") or []
+    items = "".join(f"<li>{e(a)}</li>" for a in asks) or "<li>None ticked</li>"
+    blocks.append((
+        52 + sum(_lines(a, 80) * 26 for a in asks or ["x"]),
+        f"<h2>Questions you will ask them</h2><ul>{items}</ul>",
+    ))
+    notes = model.get("notes") or []
+    nitems = "".join(f"<li>{e(n)}</li>" for n in notes) or (
+        "<li>Nothing notable found in public sources.</li>"
+    )
+    blocks.append((
+        52 + sum(_lines(n, 80) * 26 for n in notes or ["x"]),
+        f"<h2>Company notes</h2><ul>{nitems}</ul>",
+    ))
+    checks = "".join(f"<div class=\"pdfck\"><i></i>{e(c)}</div>" for c in _CHECKLIST)
+    blocks.append((52 + len(_CHECKLIST) * 34, f"<h2>Checklist</h2>{checks}"))
+
+    pages: list[list[str]] = [[]]
+    used = 0
+    for height, body in blocks:
+        if pages[-1] and used + height > _PAGE_BODY:
+            pages.append([])
+            used = 0
+        pages[-1].append(body)
+        used += height
+    total = len(pages)
+    return [
+        "".join(p) + f"<div class=\"pf\">Page {n} of {total}</div>" for n, p in enumerate(pages, 1)
+    ]
+
+
+def pack_pages_html(model: dict) -> str:
+    """The full document the PDF is printed from: one fixed Letter page per .pdfpg."""
+    title = html.escape(f"{model['title']}: {model['role']}")
+    body = "".join(f"<div class=\"pdfpg\">{p}</div>" for p in pack_pages(model))
+    css = (
+        "@page { size: 816px 1056px; margin: 0; } html, body { margin: 0; padding: 0; }"
+        ".pdfpg { page-break-after: always; break-after: page; }"
+        ".pdfpg:last-child { page-break-after: auto; break-after: auto; }"
+    )
+    return (
+        f"<!doctype html><html><head><meta charset='utf-8'><title>{title}</title>"
+        f"<style>{PAPER_CSS}{css}</style></head><body>{body}</body></html>"
+    )

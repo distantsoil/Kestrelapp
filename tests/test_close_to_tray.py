@@ -51,10 +51,11 @@ def test_default_close_hides_to_the_tray(shell):
     client = _fresh_app()
     assert shell.on_closing() is False
     assert shell.window.hidden and not shell._quitting and not shell.server.should_exit
-    assert "Settings > Appearance" in shell.icon.notes[0]
+    assert "Settings > This computer" in shell.icon.notes[0]
     body = client.get("/settings").text
-    assert "minimizes Kestrel to the system tray" in body
-    assert 'name="close_to_tray" value="on" checked' in body
+    assert "Keep running when I close the window" in body
+    line = next(ln for ln in body.splitlines() if 'name="close_to_tray"' in ln)
+    assert "checked" in line
 
 
 def test_turned_off_close_quits_gracefully(shell):
@@ -64,7 +65,9 @@ def test_turned_off_close_quits_gracefully(shell):
     assert shell.on_closing() is True  # the OS close goes ahead
     assert shell._quitting and shell.server.should_exit and shell.icon.stopped
     assert not shell.window.hidden
-    assert 'value="on" checked' not in client.get("/settings").text.split("desktop-window")[1]
+    line = next(ln for ln in client.get("/settings").text.splitlines()
+                if 'name="close_to_tray"' in ln)
+    assert "checked" not in line
 
 
 def test_turned_back_on_hides_again(shell):
@@ -104,7 +107,7 @@ def test_the_tray_notice_shows_once_per_launch_and_says_how_to_change_it(shell):
     assert len(shell.icon.notes) == 1  # the second close of the session is quiet
     note = shell.icon.notes[0]
     assert "keeps working in the background" in note
-    assert "Settings > Appearance > Desktop window" in note and "—" not in note
+    assert "Settings > This computer > Everyday options" in note and "—" not in note
 
 
 def test_a_failed_tray_notice_is_logged_at_warning(shell, monkeypatch):

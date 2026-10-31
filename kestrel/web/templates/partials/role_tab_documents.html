@@ -1,0 +1,43 @@
+{# Documents tab: the resume and cover letter (Consulting: capability statement and engagement
+   outline). A row opens a paper-style preview that slides up, with Edit and Download PDF (the
+   computer's Save dialog). Nothing here is ever sent. #}
+{% from "partials/role_icons.html" import ric %}
+<div id="rl-doctab" class="rl-doctab" data-tab="documents">
+{% if not has_docs and not unlocked %}
+  <div class="k-empty rl-emptydocs" data-testid="docs-empty"><div>
+    {{ ric('doc', 'k-ic--lg') }}
+    <h3>No documents for this {{ w.role }} yet.</h3>
+    <p>{{ 'Capability statements and engagement outlines' if consulting else 'Tailored resumes and cover letters' }} switch on once you {{ 'add it to your leads' if consulting else 'shortlist the role' }}. <a href="#" class="k-link" data-rl-open="rl-why">Why?</a></p>
+  </div></div>
+{% else %}
+  <section class="k-card rl-card">
+    <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ ric('doc') }}</span><div class="k-grow"><h3>Documents for this {{ w.role }}</h3></div></header>
+    {% for d in doc_rows %}
+    <div class="rl-docrow{{ ' is-first' if loop.first else '' }}" data-testid="docrow">
+      <span class="rl-docic">{{ ric(d.icon) }}</span>
+      <div><b>{{ d.title }}</b><div class="rl-dsm">{{ d.sub }}</div></div>
+      <div class="rl-btns">
+        {% if d.render_id %}
+          <button type="button" class="k-btn k-btn--sm" hx-get="/opportunities/{{ opp.id }}/role/preview/{{ d.render_id }}" hx-target="#rl-dialog" hx-swap="innerHTML" data-testid="doc-open">Open</button>
+          {% if d.has_pdf %}<a class="k-btn k-btn--sm" href="/renders/{{ d.render_id }}/download" download>Download PDF</a>{% endif %}
+        {% elif d.href %}<a class="k-btn k-btn--sm k-btn--primary" href="{{ d.href }}">{{ d.action }}</a>
+        {% else %}<button type="button" class="k-btn k-btn--sm" disabled title="{{ no_drafter }}">{{ d.action }}</button>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    <div class="rl-btns rl-docfoot">
+      {% if tailor_href %}<a class="k-btn k-btn--sm k-btn--primary" href="{{ tailor_href }}" data-testid="tailor-again">{{ w.tailor }}{{ ' again' if renders else '' }}</a>
+      {% else %}<button type="button" class="k-btn k-btn--sm" disabled title="No active {{ w.doc }} yet. Import or build one under Documents." data-testid="tailor-again">{{ w.tailor }}</button>{% endif %}
+      <button type="button" class="k-btn k-btn--sm" disabled title="{{ no_drafter }}">{{ 'New engagement outline' if consulting else 'New cover letter' }}</button>
+      {% if masters|length > 1 %}<span class="rl-quiet">Other masters:
+        {% for m in masters if m.id != (tailor_master.id if tailor_master else none) %}<a class="k-link" href="/renders/new?master_id={{ m.id }}&opportunity_id={{ opp.id }}&from=/opportunities/{{ opp.id }}">{{ m.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
+    </div>
+    {% if renders|length > 1 %}
+    <details class="rl-details"><summary>Earlier versions ({{ renders|length - 1 }})</summary>
+      <ul class="rl-list">{% for row in renders[1:] %}<li>{{ row.master.name if row.master else 'master #' ~ row.render.doc_master_id }} · {{ date_display(row.render.created_at, kind='datetime', time_style='24h') }}{% if row.render.page_count is not none %} · {{ row.render.page_count }} page{{ '' if row.render.page_count == 1 else 's' }}{% endif %} · <a class="k-link" href="/renders/{{ row.render.id }}">Review</a></li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+    <p class="rl-dsm">Every line in a resume is your own text, byte for byte. Nothing here is ever sent for you.</p>
+  </section>
+{% endif %}
+</div>

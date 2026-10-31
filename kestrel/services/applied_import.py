@@ -9,12 +9,14 @@ made by hand, and the import only records them."""
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import hashlib
 import io
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import chain
 
 import httpx
 from sqlalchemy import select
@@ -27,6 +29,7 @@ from kestrel.ingest.base import RawPosting
 from kestrel.ingest.dedup import jaccard, title_tokens
 from kestrel.ingest.normalize import normalize_and_store
 from kestrel.ingest.orgs import normalized_name
+from kestrel.urls import safe_web_url
 
 # Header words accepted for each column, lowercased, punctuation and spaces removed.
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
@@ -93,6 +96,8 @@ DATE_FORMATS = (
     "%d %b %Y",
 )
 TITLE_MATCH = 0.85
+MAX_ROWS = 10_000
+MAX_TEXT_BYTES = 25 * 1024 * 1024
 
 
 @dataclass
@@ -160,6 +165,11 @@ class ImportResult:
     skipped: int = 0
     pursuit_ids: list[int] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    # What Undo needs (Settings > Your data): the pursuits this import created, and the hidden
+    # roles it created for them. A role that already existed is never listed, so Undo cannot
+    # delete one.
+    created_pursuit_ids: list[int] = field(default_factory=list)
+    created_opp_ids: list[int] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------------------------ parsing
@@ -196,22 +206,45 @@ def parse_table(text: str) -> tuple[list[str], list[list[str]], str]:
     """(headers, rows, "markdown" | "csv"). A Markdown table is any run of `|` lines (front
     matter and prose around it are ignored); otherwise the text is read as CSV with the
     delimiter sniffed among comma, semicolon and tab. Raises ValueError with a plain reason."""
-    lines = text.splitlines()
-    pipe_lines = [ln for ln in lines if ln.strip().startswith("|")]
-    if len(pipe_lines) >= 2:
-        table = [_md_cells(ln) for ln in pipe_lines]
-        headers = table[0]
-        rows = [r for r in table[1:] if not _is_separator(r)]
+    if len(text) > MAX_TEXT_BYTES or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
+        raise ValueError("That tracker is too large to read here. Split it into smaller files.")
+    headers: list[str] | None = None
+    rows: list[list[str]] = []
+    pipe_count = 0
+    for line in io.StringIO(text):
+        if not line.strip().startswith("|"):
+            continue
+        pipe_count += 1
+        cells = _md_cells(line)
+        if headers is None:
+            headers = cells
+        elif not _is_separator(cells):
+            if len(rows) >= MAX_ROWS:
+                raise ValueError(f"That tracker has more than {MAX_ROWS:,} rows. Split the file.")
+            rows.append(cells)
+    if pipe_count >= 2:
         return headers, rows, "markdown"
-    body = "\n".join(ln for ln in lines if ln.strip())
-    if not body.strip():
+    lines = (line for line in io.StringIO(text) if line.strip())
+    first = next(lines, "")
+    if not first:
         raise ValueError("The text is empty.")
     try:
-        dialect = csv.Sniffer().sniff(body.splitlines()[0], delimiters=",;\t")
+        dialect = csv.Sniffer().sniff(first, delimiters=",;\t")
     except csv.Error:
         dialect = csv.excel
-    reader = csv.reader(io.StringIO(body), dialect)
-    table = [[c.strip() for c in r] for r in reader if any(c.strip() for c in r)]
+    reader = csv.reader(chain((first,), lines), dialect)
+    table = []
+    try:
+        for row in reader:
+            if not any(cell.strip() for cell in row):
+                continue
+            if len(table) > MAX_ROWS:
+                raise ValueError(f"That tracker has more than {MAX_ROWS:,} rows. Split the file.")
+            table.append([cell.strip() for cell in row])
+    except csv.Error as exc:
+        raise ValueError(
+            "That tracker could not be read as CSV. Check its fields and quotes."
+        ) from exc
     if len(table) < 2:
         raise ValueError("Need a header row and at least one data row.")
     return table[0], table[1:], "csv"
@@ -294,7 +327,7 @@ def parse_rows(text: str) -> ImportReview:
         r.date_raw = cell(raw, "date")
         r.status_raw = cell(raw, "status")
         r.source = cell(raw, "source") or None
-        r.url = cell(raw, "url") or None
+        r.url = safe_web_url(cell(raw, "url"))
         r.location = cell(raw, "location") or None
         r.notes = cell(raw, "notes") or None
         track = cell(raw, "track").lower() or "employment"
@@ -349,14 +382,18 @@ def _find_tracked(row: ImportRow, existing) -> tuple[int | None, str]:
 
 async def review(session: AsyncSession, text: str) -> ImportReview:
     """parse_rows plus the already-tracked check against every pursuit."""
-    rev = parse_rows(text)
+    rev = await asyncio.to_thread(parse_rows, text)
     if not rev.rows:
         return rev
     existing = await _existing_pursuits(session)
-    for r in rev.rows:
-        if r.problems:
-            continue
-        r.existing_pursuit_id, r.existing_label = _find_tracked(r, existing)
+
+    def match_rows() -> None:
+        for row in rev.rows:
+            if row.problems:
+                continue
+            row.existing_pursuit_id, row.existing_label = _find_tracked(row, existing)
+
+    await asyncio.to_thread(match_rows)
     return rev
 
 
@@ -396,7 +433,11 @@ def _record_status(session: AsyncSession, p: Pursuit, status: str, when: str) ->
 
 
 async def commit(
-    session: AsyncSession, rev: ImportReview, choices: dict[int, RowChoice]
+    session: AsyncSession,
+    rev: ImportReview,
+    choices: dict[int, RowChoice],
+    *,
+    commit_transaction: bool = True,
 ) -> ImportResult:
     """Write the ticked rows. Re-validates every choice (hard rule: the write boundary trusts no
     form): a status not valid for the track, an unparsed date, or a row with problems is skipped
@@ -443,6 +484,8 @@ async def commit(
         )
         res = await normalize_and_store(session, raw, source=source)
         opp = res.opportunity
+        if res.action == "new":
+            result.created_opp_ids.append(opp.id)
         # Hidden on arrival: this was applied for before Kestrel saw it, so it never enters
         # triage or the list (SPEC.md 5.6). No embed task: a hidden row is not scored.
         if not opp.archived_at:
@@ -476,7 +519,11 @@ async def commit(
         )
         result.imported += 1
         result.pursuit_ids.append(p.id)
-    await session.commit()
+        result.created_pursuit_ids.append(p.id)
+    if commit_transaction:
+        await session.commit()
+    else:
+        await session.flush()
     return result
 
 
@@ -555,12 +602,19 @@ async def fetch_posting(http, url: str) -> tuple[str, str]:
     the first's), and a hop toward a sign-in page is refused. Returns (final_url, html)."""
     from urllib.parse import urljoin, urlsplit
 
-    from kestrel.ingest.http import _raise_for_status
+    from kestrel.ingest.http import UnsafeURLError, _raise_for_status
 
     start = _host(url)
     current = url
     for _ in range(_MAX_HOPS + 1):
-        r = await http.request("GET", current, check_robots=True, follow_redirects=False)
+        try:
+            # public_only: a pasted link never reaches this computer or a private network, on
+            # the first hop or any redirect, and the page is capped at 2 MB.
+            r = await http.request(
+                "GET", current, check_robots=True, follow_redirects=False, public_only=True
+            )
+        except UnsafeURLError as exc:
+            raise FetchRefused(str(exc)) from exc
         if r.is_redirect:
             location = r.headers.get("location") or ""
             nxt = urljoin(current, location)

@@ -1,0 +1,23 @@
+{% import "ui/macros.html" as ui %}
+{# Models > Online with your key. Reads on_connected (providers with a saved key); spend is only
+   there on a full page load. Also sent out of band after a key is saved. #}
+<section class="k-card mo-card {{ 'mo-edge-info' if on_connected else '' }}" id="mo-online-card"{% if oob %} hx-swap-oob="outerHTML"{% endif %} data-testid="mo-online-card">
+  <header class="mo-head"><span class="k-badge k-badge--lg {{ '' if on_connected else 'k-badge--muted' }}">{{ ui.icon('cloud') }}</span>
+    <div class="k-grow"><h3>Online with your key <span class="k-muted mo-opt">(optional)</span> {{ ui.pill('Ready' if on_connected else 'Not set up', 'good' if on_connected else '') }}</h3>
+      <p class="k-muted">Runs on your provider's computers. You pay with your own key.</p></div></header>
+  {% if on_connected %}
+  <dl class="mo-strip">
+    <div><dt>Provider</dt><dd>{% for p in on_connected %}{% if not loop.first %}, {% endif %}{{ p.label }}{% endfor %}</dd></div>
+    <div><dt>Used for</dt><dd>{{ 'Every step' if choice == 'hosted' else ('Deeper read' if choice == 'both' else 'Nothing yet') }}</dd></div>
+    {% if spend is defined and spend %}<div class="mo-span2"><dt>This month</dt><dd>{{ spend.label }}</dd></div>{% endif %}
+  </dl>
+  <div class="mo-row"><span class="k-muted">Keys stay on this computer.</span>
+    <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-online-so" hx-get="/models/online?open=1" hx-target="#mo-online-body" hx-swap="innerHTML" data-testid="mo-online-manage">Manage keys</button></div>
+  {% else %}
+  <p class="k-muted mo-line">Add a key from OpenRouter, Anthropic, OpenAI or another provider.</p>
+  <div class="mo-setup">
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" data-k-slideover="#mo-online-so" hx-get="/models/online?open=1" hx-target="#mo-online-body" hx-swap="innerHTML" data-testid="mo-online-setup">Set up</button></div>
+  <ul class="mo-bene"><li>{{ ui.icon('clock') }}Faster than this computer on most steps.</li><li>{{ ui.icon('key') }}Pay per use, often cents per run.</li></ul>
+  {% endif %}
+  <div class="mo-shield">{{ ui.icon('shield') }}<div><b>Online requests send role and profile text off this computer.</b><span>Kestrel asks first.</span></div></div>
+</section>

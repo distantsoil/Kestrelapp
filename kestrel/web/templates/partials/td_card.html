@@ -1,0 +1,58 @@
+{# One Top matches card (D-UI-92, D-UI-156). Import:
+   {% from "partials/td_card.html" import card with context %}
+   A fixed-width card (about 270 to 300 px) with the company monogram, a title that reserves two
+   lines, company and place, the fit word and score out of 5, pay (an estimate says "est." and its
+   hover disclaimer, hard rule 6), the operator's own skills the posting mentions, and a short
+   "why it fits" the model wrote (clamped to three lines, labeled). A role with only a quick
+   screen says its full review is in progress. Actions: Save for later (a bookmark, not a
+   decision), Shortlist (Add to leads in Consulting) and Review (opens the summary; it never
+   decides). Shortlist and Save use the Pipeline's own routes, so Undo works as there. #}
+{% import "ui/macros.html" as ui %}
+{% macro card(c, consulting) -%}
+<article class="td-card" role="listitem" data-id="{{ c.id }}" data-testid="td-card"{% if c.pending %} data-pending="1"{% endif %}>
+  <div class="td-row">
+    {% if c.pending %}<span class="k-pill" data-fit="new">Being scored</span>
+    {% elif c.tone == 'good' %}<span class="k-pill k-pill--good" data-fit="{{ c.word }}">{{ ui.icon('check') }}{{ c.word|capitalize }}</span>
+    {% elif c.tone == 'warn' %}<span class="k-pill k-pill--warn" data-fit="{{ c.word }}">{{ ui.icon('alert') }}{{ c.word|capitalize }}</span>
+    {% else %}<span class="k-pill" data-fit="{{ c.word }}">{{ c.word|capitalize }}</span>{% endif %}
+    <span class="td-score td-score--{{ c.tone }}" data-testid="td-score">{% if c.score is not none and not c.pending %}{{ '%.1f'|format(c.score) }} <small>/ 5</small>{% else %}<small>Not scored yet</small>{% endif %}</span>
+    <button type="button" class="td-save" title="Save for later" aria-label="Save for later" data-testid="td-save"
+            hx-post="/opportunities/{{ c.id }}/decide/save" hx-swap="none">{{ ui.icon('bm') }}</button>
+  </div>
+  {% if c.kind %}<div class="td-kind">{{ c.kind }}</div>{% endif %}
+  <div class="td-t" data-testid="td-title">{{ c.title }}</div>
+  <div class="td-o"><span class="td-mono td-mono-{{ c.mono.tone }}" aria-hidden="true">{{ c.mono.letters }}</span><span class="td-o__n">{{ c.org }}</span></div>
+  <div class="td-row td-loc">{{ ui.icon('pin') }}<span>{{ c.place or 'Place not listed' }}</span></div>
+  {% if c.pending %}
+    <div class="td-pending"><span class="k-dot k-dot--live"></span>Full review in progress. Pay and details appear when it finishes.</div>
+  {% else %}
+    {% if c.pay %}<div class="td-pay" data-testid="td-pay">{{ c.pay }}{% if c.estimate %}<span class="td-est" tabindex="0" data-testid="td-est">est.<span class="td-tip" role="tooltip">{{ c.estimate_note }}</span></span>{% endif %}</div>
+    {% else %}<div class="td-pay td-pay--none">Pay not listed</div>{% endif %}
+    {% if c.value %}<div class="td-value">{{ c.value }}</div>{% endif %}
+    {% if c.why %}<div class="td-why" data-testid="td-why" title="Written by Kestrel's AI from the posting"><span class="td-ai">AI</span> {{ c.why }}</div>{% endif %}
+    {% if c.tags %}<div class="td-tags">{% for t in c.tags %}<span class="td-tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+  {% endif %}
+  <div class="td-btns">
+    <button type="button" class="k-btn k-btn--primary" data-td-review="{{ c.id }}" data-testid="td-review">{{ 'Review' if consulting else 'Review role' }}</button>
+    <button type="button" class="k-btn td-sl" data-testid="td-shortlist"
+            hx-post="/opportunities/{{ c.id }}/decide/shortlist" hx-swap="none">{{ 'Add to leads' if consulting else 'Shortlist' }}</button>
+  </div>
+</article>
+{%- endmacro %}
+
+{# The two dashed cards that stand in for the cards (D-UI-92): done for now, or no matches yet. #}
+{% macro empty_card(found, consulting) -%}
+{% if found %}
+<div class="td-empty" data-testid="td-done">
+  <div>{{ ui.icon('check', 'k-ic--lg') }}<h4>You're done for now!</h4>
+    <p>Run another scan or check out your pipeline.</p>
+    <div class="td-btns td-btns--center"><button type="button" class="k-btn k-btn--primary" data-td-runnow>Run a scan</button><a class="k-btn" href="/opportunities">Open Pipeline</a></div></div>
+</div>
+{% else %}
+<div class="td-empty" data-testid="td-none">
+  <div><h4>No matches yet</h4>
+    <p>New {{ 'opportunities' if consulting else 'roles' }} appear here after today's run.</p>
+    <div class="td-btns td-btns--center"><button type="button" class="k-btn k-btn--primary" data-td-runnow>Run a scan</button></div></div>
+</div>
+{% endif %}
+{%- endmacro %}

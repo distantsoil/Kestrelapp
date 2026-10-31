@@ -1,0 +1,37 @@
+{% import "ui/macros.html" as ui %}
+{# Scoring steps: plain names lead, tier codes are small captions. Fit with you carries its n
+   (hard rule 6). Model names are friendly, never raw ids. #}
+<section class="k-card mo-card" id="mo-steps" data-testid="mo-steps">
+  <header class="mo-head"><span class="k-badge">{{ ui.icon('models') }}</span>
+    <div class="k-grow"><h3>Scoring steps <span class="k-muted mo-sub">Every role goes through these in order.</span></h3></div></header>
+  <div class="mo-scroll"><table class="mo-tbl">
+    <thead><tr><th>Step</th><th>What it does</th><th>Model</th>
+      <th><span title="How much text the model can read at once, in pages of about 500 words. Too little and long postings get cut off without warning.">Can read</span></th>
+      <th>Fit with you</th><th></th></tr></thead>
+    <tbody>
+    {% for s in steps %}
+      <tr class="{{ 'is-bad' if s.can_read and s.can_read.tone == 'bad' else '' }}" data-testid="mo-step-{{ s.key }}">
+        <td><span class="k-stag k-stag--{{ s.tone if s.tone in ('t0','t1','t2','t3') else 'doc' }}">{{ s.code }}</span></td>
+        <td><b>{{ s.name }}</b>{% if s.asks %} <span class="k-muted mo-asks">{{ ui.icon('lock', 'k-ic--sm') }}Asks you first</span>{% endif %}
+          <div class="k-muted mo-does">{{ s.does }}</div></td>
+        <td>{% if s.key == 'rules' %}<span class="mo-model">{{ ui.icon('check', 'k-ic--sm') }}<b>No AI model</b></span>
+          {% else %}<span class="mo-model" title="{{ s.model }}, {{ 'online with your key' if s.online else 'on this computer' }}{{ ', your choice' if s.override else '' }}">{{ ui.icon('cloud' if s.online else 'laptop', 'k-ic--sm') }}<b>{{ s.model }}</b>
+          <span class="k-muted">· {{ 'Online' if s.online else 'This computer' }}{% if s.override %} · Override{% endif %}</span></span>{% endif %}</td>
+        <td>{% if s.can_read %}
+          <div class="mo-meter {{ 'is-bad' if s.can_read.tone == 'bad' else '' }}"><i style="width: {{ '45' if s.can_read.tone == 'bad' else '100' }}%"></i></div>
+          <div class="mo-cr {{ 'is-bad' if s.can_read.tone == 'bad' else 'k-muted' }}" title="{{ s.can_read.tip }}" data-testid="mo-canread-{{ s.key }}">{{ s.can_read.label }}
+            {% if s.can_read.tone == 'bad' %}<button type="button" class="k-link" hx-post="/models/health/fix" hx-target="#mo-health" hx-swap="outerHTML" data-testid="mo-fix-{{ s.key }}">Fix it</button>{% endif %}</div>
+          {% else %}<span class="k-muted">Not needed</span>{% endif %}</td>
+        <td><span class="mo-fit is-{{ s.fit.tone }}" data-testid="mo-fit-{{ s.key }}">{{ s.fit.label }}</span>
+          {% if s.fit.tone == 'info' %}<a class="k-link mo-seecheck" href="/bench">See Model check</a>{% endif %}</td>
+        <td class="mo-act">{% if s.changeable %}<span class="mo-actrow"><button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-change" hx-get="/models/change/{{ s.key }}" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-{{ s.key }}">Change</button>
+          <span class="mo-more"><button type="button" class="mo-kb" aria-haspopup="menu" aria-expanded="false" aria-label="More for {{ s.name }}" data-mo-more data-testid="mo-more-{{ s.key }}">&#8943;</button>
+            <span class="mo-menu" role="menu" hidden>
+              <button type="button" role="menuitem" data-k-slideover="#mo-change" hx-get="/models/change/{{ s.key }}" hx-target="#mo-change-body" hx-swap="innerHTML">Reset to default</button>
+              <a role="menuitem" href="/bench">Compare in Model check</a></span></span></span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  <div class="mo-ovr">{{ ui.icon('help') }}<div class="k-grow"><b>Model overrides</b><span class="k-muted">Use a different model for one company, one kind of role, or one role.</span></div>
+    <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-overrides-so" hx-get="/models/hosted/overrides" hx-target="#mo-overrides-body" hx-swap="innerHTML" data-testid="mo-overrides-open">Manage overrides</button></div>
+</section>

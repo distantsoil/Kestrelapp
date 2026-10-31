@@ -67,7 +67,7 @@
 
   {% if hosted_mode.active %}
   <div style="margin-top:.8rem">
-    <span class="muted">Disclosure acknowledged {{ hosted_mode.acknowledged_at }}.</span>
+    <span class="muted">Disclosure acknowledged {{ date_display(hosted_mode.acknowledged_at, 'raw') }}.</span>
     <form hx-post="/settings/hosted/mode" hx-target="#hosted-panel" hx-swap="outerHTML" style="display:inline">
       <input type="hidden" name="action" value="off">
       <button class="btn ghost" type="submit">Turn off hosted mode</button>
@@ -90,7 +90,7 @@
   {% if not hosted_mode.active %}
   <h3 style="margin-top:1rem">Hosted mode disclosure</h3>
   <div class="panel" style="padding:.8rem 1rem">
-    <p style="margin-top:0"><b>Status: {% if hosted_mode.active %}acknowledged {{ hosted_mode.acknowledged_at }}{% elif hosted_mode.acknowledged_at and not hosted_mode.acknowledgement_current %}the disclosure below changed since you accepted it on {{ hosted_mode.acknowledged_at }}, so hosted sends are paused until you read it and accept it again{% elif hosted_mode.enabled %}set on but not acknowledged, so off{% else %}not acknowledged{% endif %}.</b>
+    <p style="margin-top:0"><b>Status: {% if hosted_mode.active %}acknowledged {{ date_display(hosted_mode.acknowledged_at, 'raw') }}{% elif hosted_mode.acknowledged_at and not hosted_mode.acknowledgement_current %}the disclosure below changed since you accepted it on {{ date_display(hosted_mode.acknowledged_at, 'raw') }}, so hosted sends are paused until you read it and accept it again{% elif hosted_mode.enabled %}set on but not acknowledged, so off{% else %}not acknowledged{% endif %}.</b>
     {% if hosted_mode.active %}Hosted sends happen only on a hosted run (the switch above, a Run now choice, or the CLI flag).{% else %}Acknowledging the disclosure is the first of two steps; the switch above is the second. Until then every tier runs on this machine and the only thing that leaves it is a deeper read you preview and confirm.{% endif %}</p>
     {{ disclosure_text() }}
     <form hx-post="/settings/hosted/mode" hx-target="#hosted-panel" hx-swap="outerHTML">

@@ -1,0 +1,10 @@
+{"sentences": [
+  {"text": "Harbor Ledger makes bookkeeping software for small restaurants.", "source_indexes": [1]},
+  {"text": "It serves independent restaurants with fewer than 50 staff.", "source_indexes": [1, 2]},
+  {"text": "Its careers page lists 12 open roles, mostly in support and engineering.", "source_indexes": [2, 3]}
+ ],
+ "tags": [
+  {"key": "does", "text": "Restaurant bookkeeping software", "source_indexes": [1]},
+  {"key": "hiring", "text": "12 open roles", "source_indexes": [3]}
+ ],
+ "insufficient": false}

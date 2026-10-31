@@ -1,17 +1,19 @@
 {# The body of partials/score_history.html: rows from kestrel.web.pages.rescore.history_rows,
    newest first, and one comparison line. Nothing at all with fewer than two evaluations: the
-   role panel already shows the one score. Styles: kestrel.css (.score-history). #}
+   role panel already shows the one score. Models read by their friendly name (`r.name`), never a
+   raw id. Styles: static/css/pages/surfaces.css (.sf-hist), theme tokens only. #}
 {% if rows | length > 1 %}
-<section class="score-history" data-testid="score-history" aria-label="Every score for this role">
-  <h3 class="score-history-title">Every score, newest first</h3>
-  {% if compare %}<p class="score-history-compare" data-testid="score-history-compare">{{ compare }}</p>{% endif %}
-  <ul class="score-history-list">
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
+<section class="sf-hist" data-testid="score-history" aria-label="Every score for this role">
+  <h3>Every score, newest first</h3>
+  {% if compare %}<p class="sf-hist-compare" data-testid="score-history-compare">{{ compare }}</p>{% endif %}
+  <ul>
     {% for r in rows %}
-    <li class="score-history-row">
-      <span class="score-history-date">{{ r.date }}</span>
-      <span class="score-history-model">{{ r.model or 'unknown model' }}</span>
-      <span class="score-history-fit score-history-{{ r.tone }}">{{ r.fit }}</span>
-      <span class="score-history-score">{% if r.score is not none %}{{ '%.1f' | format(r.score) }}{% endif %}</span>
+    <li>
+      <span class="sf-hist-date">{{ r.date }}</span>
+      <span class="sf-hist-model">{{ r.name or r.model or 'Unknown model' }}</span>
+      <span class="sf-hist-{{ r.tone }}">{{ r.fit }}</span>
+      <span class="sf-hist-score">{% if r.score is not none %}{{ '%.1f' | format(r.score) }}{% endif %}</span>
     </li>
     {% endfor %}
   </ul>

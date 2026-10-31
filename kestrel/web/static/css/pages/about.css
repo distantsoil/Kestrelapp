@@ -1,0 +1,151 @@
+/* About (D-UI-125): page styles on tokens.css and components.css, token colors only
+   (tests/test_ui_tokens.py), every class prefixed ab-. The look follows
+   the locked design mockup (kept privately) */
+
+/* The mockup steps measure the window (@container kwin); the wrapper measures page-only steps. */
+.ab-wrap { container-type: inline-size; min-width: 0; }
+.ab-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px;
+  min-width: 0; }
+.ab-page, .ab-page * { box-sizing: border-box; }
+.ab-page .k-scene { margin: 0; padding: 4px 0 10px; }
+.ab-sub { margin: -4px 0 10px; font-size: 13.5px; }
+
+/* ----------------------------------------------------------------------- the identity card */
+.ab-id { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+.ab-mark { width: 84px; height: 84px; border-radius: 22px; flex: none; cursor: pointer;
+  padding: 0; border: 0; background: none; box-shadow: var(--shadow); overflow: hidden;
+  transition: transform var(--dur-2); }
+.ab-mark:hover { transform: rotate(-4deg) scale(1.03); }
+.ab-mark:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.ab-mark.is-tap { animation: ab-tap .25s ease; }
+@keyframes ab-tap { 50% { transform: scale(.92); } }
+.ab-mark img { width: 100%; height: 100%; display: block; }
+.ab-id h2 { margin: 0; font-size: var(--fs-2xl); }
+.ab-id__who { flex: 1; min-width: 240px; }
+.ab-vline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.ab-vtag { font-weight: 800; background: var(--soft); color: var(--brand); border-radius: var(--r-sm);
+  padding: 2px 9px; white-space: nowrap; }
+.ab-vline > .k-muted { font-size: 12px; color: var(--muted); }
+.ab-copy { font-size: 13px; margin-top: 6px; }
+.ab-upd { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; min-width: 230px;
+  padding-left: 20px; border-left: 1px solid var(--line); }
+@container kwin (max-width: 1000px) { .ab-upd { border-left: 0; padding-left: 0; } }
+.ab-result { min-height: 20px; }
+.ab-res { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; font-weight: 700;
+  font-size: 13.5px; }
+.ab-res.is-good { color: var(--good-ink); }
+.ab-res.is-info { color: var(--brand); }
+.ab-last { font-size: var(--fs-sm); color: var(--muted); }
+/* The update check shows a spinner while it asks (mockup .ab-spin). */
+.ab-checking { display: none; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700;
+  color: var(--muted); }
+.ab-checking.htmx-request { display: inline-flex; }
+.ab-spin { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--brand);
+  border-radius: 50%; animation: ab-spin .8s linear infinite; display: inline-block; }
+@keyframes ab-spin { to { transform: rotate(360deg); } }
+/* A fresh answer fades in. */
+.ab-res { animation: ab-in .3s ease backwards; }
+@keyframes ab-in { from { opacity: 0; transform: translateY(4px); } }
+.ab-upd .htmx-request { opacity: .6; }
+
+/* --------------------------------------------------------------------------- the promises */
+.ab-prom { display: flex; flex-direction: column; }
+.ab-pr { display: flex; gap: 14px; align-items: center; width: 100%; padding: 11px 8px; margin: 0;
+  border: 0; border-top: 1px solid var(--line); background: none; font: inherit; color: var(--ink);
+  text-align: left; cursor: pointer; border-radius: 0; transition: background var(--dur-1); }
+.ab-pr:first-child { border-top: 0; }
+.ab-pr:hover { background: var(--soft); }
+.ab-pr:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.ab-pr b { font-size: 14.5px; white-space: nowrap; min-width: 190px; }
+.ab-pr__t { flex: 1; min-width: 0; color: var(--muted); font-size: 13.5px; }
+.ab-pr > .k-ic { color: var(--muted); flex: none; }
+@container kwin (max-width: 1000px) { .ab-pr__t { display: none; } .ab-pr b { flex: 1; } }
+
+/* -------------------------------------------------------------------- built with and details */
+.ab-mk { display: flex; flex-wrap: wrap; gap: 8px; }
+.ab-mk span { border: 1px solid var(--line); border-radius: var(--r-pill); padding: 4px 11px;
+  font-weight: 700; font-size: 13px; background: var(--paper); white-space: nowrap; }
+.ab-credits { font-size: 13.5px; margin: 14px 0 6px; }
+/* Animated toggles (mockup .ab-tog): a chevron that turns 90 degrees as the section opens. */
+.ab-tog { margin-top: 8px; }
+.ab-tog > summary { cursor: pointer; font-weight: 700; color: var(--brand); padding: 4px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px; width: max-content; }
+.ab-tog > summary::-webkit-details-marker { display: none; }
+.ab-tog > summary .k-ic { width: 15px; height: 15px; transition: transform .25s; }
+.ab-tog[open] > summary .k-ic { transform: rotate(90deg); }
+.ab-tog h4 { margin: 12px 0 4px; font-size: var(--fs-md); }
+.ab-tog ul { margin: 0 0 8px; padding-left: 18px; font-size: 13.5px; }
+.ab-comp { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+.ab-comp td { padding: 6px 4px; border-top: 1px solid var(--line); }
+.ab-comp td:last-child { text-align: right; font-family: var(--mono); color: var(--muted); }
+.ab-notes { max-height: 200px; overflow: auto; font: 12px var(--mono); background: var(--soft);
+  border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; color: var(--muted);
+  margin: 8px 0 0; }
+.ab-acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+
+/* The diagnostics save result and the folder-open note. */
+.ab-note { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--good-ink);
+  margin-top: 6px; }
+.ab-note.is-warn { color: var(--warn-ink); }
+.ab-saved { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm); font-size: 13.5px;
+  background: var(--good-bg); color: var(--good-ink); }
+.ab-saved.is-warn { background: var(--warn-bg); color: var(--warn-ink); }
+.ab-saved__row { margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------------ the help column */
+.ab-frow { display: flex; flex-direction: column; gap: 6px; padding: 8px 0;
+  border-top: 1px solid var(--line); }
+.ab-frow:first-of-type { border-top: 0; }
+.ab-frow__l { display: flex; gap: 8px; align-items: center; }
+.ab-frow__l b { flex: 1; font-size: 13.5px; }
+.ab-frow code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 12.5px var(--mono); background: var(--soft); border-radius: 7px; padding: 5px 9px; }
+.ab-lnk { display: flex; gap: 10px; align-items: center; padding: 8px 0;
+  border-top: 1px solid var(--line); }
+.ab-lnk:first-of-type { border-top: 0; }
+.ab-lnk b { font-size: 13.5px; display: block; }
+.ab-lnk .k-muted { font-size: 13px; }
+
+/* Flyout text. */
+.k-flyout__body h6 { margin: 12px 0 4px; font-size: 13.5px; }
+.k-flyout__body h6:first-child { margin-top: 0; }
+.k-flyout__body p { margin: 0 0 10px; }
+.k-flyout__body ul { margin: 0 0 10px; padding-left: 18px; }
+
+/* --------------------------------------------------------------------- the small surprise */
+.ab-glider { position: absolute; left: -60px; top: 22px; z-index: 2; pointer-events: none;
+  color: var(--brand); opacity: 0; }
+.ab-glider.is-go { animation: ab-glide 4.2s cubic-bezier(.4, .1, .3, 1) forwards; }
+@keyframes ab-glide {
+  0% { opacity: 0; transform: translate(0, 10px); }
+  10% { opacity: 1; }
+  50% { transform: translate(55vw, -6px); }
+  90% { opacity: 1; }
+  100% { opacity: 0; transform: translate(110vw, 8px); }
+}
+.ab-glider svg { width: 54px; height: 28px; }
+.ab-glider__w { transform-origin: 27px 14px; animation: ab-flap .5s ease-in-out infinite alternate; }
+@keyframes ab-flap { to { transform: scaleY(.55); } }
+@media (prefers-reduced-motion: reduce) {
+  .ab-glider { display: none; }
+  .ab-mark, .ab-mark.is-tap { transition: none; animation: none; }
+}
+
+/* "More about this" has a chevron (mockup .ab-more). */
+
+/* Entrance: the cards fade up with a stagger (mockup .reveal rv .45s; .06s, .1s, then the helper
+   cards at .1s + i * .04s). */
+@keyframes ab-rv { from { opacity: 0; transform: translateY(8px); } }
+.ab-id { animation: ab-rv .45s .06s cubic-bezier(.22, .8, .3, 1) backwards; }
+#promises { animation: ab-rv .45s .1s cubic-bezier(.22, .8, .3, 1) backwards; }
+.ab-page .k-layout__main > .k-card:last-child { animation: ab-rv .45s .14s cubic-bezier(.22, .8, .3, 1) backwards; }
+.ab-page .k-hcard { animation: ab-rv .45s cubic-bezier(.22, .8, .3, 1) backwards;
+  animation-delay: calc(.1s + var(--ab-i, 0) * .04s); }
+.ab-page .k-hcard:nth-child(2) { --ab-i: 1; } .ab-page .k-hcard:nth-child(3) { --ab-i: 2; }
+.ab-page .k-hcard:nth-child(4) { --ab-i: 3; }
+@media (prefers-reduced-motion: reduce) {
+  .ab-id, #promises, .ab-page .k-layout__main > .k-card:last-child, .ab-page .k-hcard,
+  .ab-res, .ab-spin { animation: none; }
+}
+/* The side column is 400 px as drawn (about-mockup-locked.html .ab-lay). */
+.ab-page { --help-w: 400px; }

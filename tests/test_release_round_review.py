@@ -199,7 +199,9 @@ def test_2_a_linkedin_only_source_stays_off_says_why_and_offers_the_default_boar
         JobSpyAdapter().validate_config(src.config)  # a run-now or scheduled scan refuses
     with _client() as c:
         page = c.get("/sources").text
-        assert 'data-testid="no-boards"' in page and "Use Kestrel's default boards" in page
+        assert "default boards" in page.split('data-testid="source-reason"')[1]  # the row says why
+        drawer = c.get(f"/sources/{sid}/drawer").text
+        assert 'data-testid="no-boards"' in drawer and "Use Kestrel's default boards" in drawer
         refused = c.post(f"/sources/{sid}/toggle").text
         assert "default boards" in refused
         assert _run(lambda s: s.get(Source, sid)).enabled is False  # Turn on did not turn it on
@@ -555,7 +557,7 @@ def test_11_consulting_copy_and_prompts_assume_no_field():
     from kestrel.web.pages.onboarding import CONSULTING_PLAIN
 
     assert "CIO" not in CONSULTING_PLAIN and "CTO" not in CONSULTING_PLAIN
-    for name in ("triage_consulting.v1.md", "evaluate_consulting.v1.md",
+    for name in ("triage_consulting.v2.md", "evaluate_consulting.v2.md",
                  "engagement_outline.v1.md"):
         text = (PKG / "llm/prompts" / name).read_text("utf-8")
         assert not re.search(r"\bCIO\b|\bCTO\b", text), name

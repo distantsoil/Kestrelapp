@@ -1,0 +1,17 @@
+{# The header follows the run state (D-UI-103): a chip while a run is going or paused, Run now
+   and "This run only" when idle. Pause, Resume and Stop live in the card. #}
+{% import "ui/macros.html" as ui %}
+{% if state == 'active' %}
+  <span class="rn-chip" data-testid="rn-chip"><span class="k-dot k-dot--live" aria-hidden="true"></span>Running · <span data-live="chip">{{ v.step or 'Starting' }}</span></span>
+{% elif state == 'paused' %}
+  <span class="rn-chip is-paused" data-testid="rn-chip"><span class="k-dot k-dot--warn" aria-hidden="true"></span>Paused · <span data-live="chip">{{ v.headline }}</span></span>
+{% else %}
+  <span class="rn-split">
+    <button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="rn-run-now" {% if runs_online %}hx-get="/runs/start/choose" hx-target="#rn-dialog" hx-swap="innerHTML"{% else %}hx-post="/runs/start" hx-swap="none" hx-disabled-elt="this" data-busy-text="Starting the run…"{% endif %}>{{ ui.icon('play', 'k-ic--sm') }}Run now</button>
+    <button type="button" class="k-btn k-btn--primary k-btn--sm rn-caret" data-testid="rn-run-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="rn-menu" aria-label="More run options">{{ ui.icon('chevd', 'k-ic--sm') }}</button>
+    <div class="rn-menu" id="rn-menu" role="menu" hidden>
+      <button type="button" role="menuitem" {% if runs_online %}hx-get="/runs/start/choose" hx-target="#rn-dialog" hx-swap="innerHTML"{% else %}hx-post="/runs/start" hx-swap="none" data-busy-text="Starting the run…"{% endif %}><b>Run now</b><span>Uses {{ runs_use }}, your saved choice</span></button>
+      <button type="button" role="menuitem" data-testid="rn-this-run" hx-get="/runs/start/choose" hx-target="#rn-dialog" hx-swap="innerHTML"><b>This run only…</b><span>Local, online or both, for one run. Your settings do not change.</span></button>
+    </div>
+  </span>
+{% endif %}

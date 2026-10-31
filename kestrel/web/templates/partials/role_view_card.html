@@ -1,0 +1,48 @@
+{# Your view (D-UI-150): "Kestrel says 4.6, strong fit. Agree?" with Yes or Adjust. Adjust opens
+   the Calibrate-style 1 to 5 picker, optional nudges per dimension and an optional note, and
+   saves a label (source "manual"). Replaces the old always-visible override control. The
+   section is the swap target (#rl-view); its Undo reloads it from /role/view. #}
+{% from "partials/role_icons.html" import ric %}
+<section class="k-card rl-card rl-card--view" id="rl-view" data-testid="your-view" data-opp="{{ opp.id }}">
+  <div class="rl-fbtop">
+    <span class="rl-hb rl-hb--i">{{ ric('chat') }}</span><b>Your view</b>
+  </div>
+  <div class="rl-fbrow">
+    <span class="rl-say">Kestrel says <b>{{ '%.1f'|format(fit.score) }}</b>, {{ fit.word }}. Agree?</span>
+    {% if labels_state %}
+      <span class="k-pill k-pill--{{ 'good' if labels_state.agreed else 'info' }}" data-testid="view-saved">{{ ric('check') }}{% if labels_state.agreed %}You agreed. Saved for learning.{% else %}Your rating is saved ({{ labels_state.word }}). Kestrel will learn from it.{% endif %}</span>
+      <button type="button" class="k-btn k-btn--sm k-btn--quiet" data-rl-adjust aria-expanded="false" aria-controls="rl-adj" data-testid="view-change">Change</button>
+    {% else %}
+      <button type="button" class="k-btn k-btn--sm" hx-post="/opportunities/{{ opp.id }}/role/view" hx-vals='{"mode": "agree"}' hx-swap="none" data-testid="view-yes">Yes</button>
+      <button type="button" class="k-btn k-btn--sm" data-rl-adjust aria-expanded="false" aria-controls="rl-adj" data-testid="view-adjust">Adjust</button>
+    {% endif %}
+  </div>
+  <p class="rl-hint">This is where Kestrel learns most. One click is enough.</p>
+  {% if mine %}<p class="rl-dsm" data-testid="your-word">You said <b>{{ mine }}</b>{% if mine == fit.word %}, the same as the fit{% else %}; the fit says {{ fit.word }}{% endif %}.</p>{% endif %}
+  <div class="rl-adj" id="rl-adj"><div class="rl-adj__clip"><form class="rl-adjin" hx-post="/opportunities/{{ opp.id }}/role/view" hx-swap="none" data-testid="view-form">
+    <input type="hidden" name="mode" value="adjust">
+    <div>
+      <div class="rl-dl">Good match?</div>
+      <div class="rl-pick" role="group" aria-label="Good match?" id="rl-pick">
+        {% for n, word in cv_words.items() %}<button type="button" data-n="{{ n }}" aria-pressed="false" title="Key {{ n }}">{{ n }} <small>{{ word }}</small></button>{% endfor %}
+      </div>
+      <input type="hidden" name="score" id="rl-score" value="">
+      <p class="rl-dsm">Pick the number that fits you. Kestrel's was {{ '%.1f'|format(fit.score) }}.</p>
+    </div>
+    <div>
+      <div class="rl-dl">Optional: nudge any score</div>
+      <div class="rl-nud" id="rl-nud">
+        {% for d in dims %}<div class="rl-nr" data-key="{{ d.key }}" data-v="{{ d.score }}">
+          <span class="rl-nr__n">{{ d.name }}</span>
+          <button type="button" data-n="-1" aria-label="Lower {{ d.name }}">−</button>
+          <i><u style="--w: {{ d.pct }}%"></u></i>
+          <button type="button" data-n="1" aria-label="Raise {{ d.name }}">+</button>
+          <b>{{ '%.1f'|format(d.score) }}</b>
+          <input type="hidden" name="dim_{{ d.key }}" value="{{ d.score }}">
+        </div>{% endfor %}
+      </div>
+      <textarea class="rl-note" name="note" maxlength="500" placeholder="Why? For example: the role is more junior than the title suggests. (optional)" aria-label="Why (optional)"></textarea>
+      <div class="rl-adjfoot"><button type="button" class="k-btn k-btn--sm" data-rl-adjcancel>Cancel</button><button type="submit" class="k-btn k-btn--sm k-btn--primary" id="rl-adjsave" disabled data-testid="view-save">Save my rating</button></div>
+    </div>
+  </form></div></div>
+</section>

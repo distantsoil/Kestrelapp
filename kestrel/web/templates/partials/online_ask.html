@@ -1,0 +1,22 @@
+{# The ask-first panel for an action an online model would answer (route from
+   kestrel.services.online_consent.online_route). What is sent comes from the Hosted mode
+   disclosure (route.sends), never hand-written here. Put it inside a form that posts `confirmed`
+   and `model`; the server checks both again. #}
+{% macro ask(route, tid, verb) %}
+{%- if route and route.online %}
+<div class="k-card" data-testid="{{ tid }}-ask">
+  <b>An online model does this</b>
+  <p class="k-muted">{{ route.provider }}, using your own credit. Model: {{ route.model }}.</p>
+  <ul>
+    <li data-testid="{{ tid }}-sends">{{ route.sends }}.</li>
+    {%- if route.this_send %}<li>For this request that means {{ route.this_send }}.</li>{% endif %}
+  </ul>
+  {%- if route.employer == 'hidden' %}<p data-testid="{{ tid }}-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+  {%- elif route.employer == 'held' %}<p data-testid="{{ tid }}-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
+  <p><b>Not sent:</b> your name, contact details and your resume file. {{ route.provider }} handles what it receives under its own terms.</p>
+  <label><input type="checkbox" name="confirmed" value="1" data-testid="{{ tid }}-confirm"> Send this to {{ route.provider }} to {{ verb }}</label>
+  <input type="hidden" name="model" value="{{ route.model }}">
+  <input type="hidden" name="dest" value="{{ route.dest }}">
+</div>
+{%- endif %}
+{% endmacro %}

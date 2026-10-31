@@ -1,0 +1,24 @@
+{% import "ui/macros.html" as ui %}
+{# Health check: the preflight in plain words. Polls while a check or a fix runs. #}
+<section class="k-card mo-card {{ 'mo-edge-bad' if hc_failed else 'mo-edge-good' }}" id="mo-health" data-testid="mo-health"
+  {% if hc_running %}hx-get="/models/health" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <header class="mo-head"><span class="k-badge {{ 'k-badge--bad' if hc_failed else 'k-badge--good' }}">{{ ui.icon('shield') }}</span>
+    <div class="k-grow"><h3>Health check</h3></div></header>
+  <div class="mo-hact"><button type="button" class="k-btn k-btn--sm" hx-post="/models/health/run" hx-target="#mo-health" hx-swap="outerHTML" {% if hc_running %}disabled{% endif %} data-testid="mo-health-run">{{ 'Checking…' if hc_running and not hc_fixing else 'Run check' }}</button>
+    <span class="k-muted">{% if hc_when %}Checked {{ hc_when }}{% else %}Not checked yet{% endif %}</span></div>
+  {% if hc_message %}<p class="mo-msg {{ 'is-good' if hc_ok else 'is-bad' }}" role="status" data-testid="mo-health-message">{{ hc_message }}</p>{% endif %}
+  {% if hc_fixing %}<div class="mo-prog" role="progressbar" aria-label="Rebuilding Kestrel's models" {% if hc_percent is not none %}aria-valuenow="{{ hc_percent }}"{% endif %}><i style="width: {{ hc_percent or 5 }}%"></i></div><p class="k-muted">Rebuilding Kestrel's models, then testing again.</p>{% endif %}
+  <ul class="mo-checks">
+    {% for r in hc_rows %}
+    <li class="is-{{ r.state }}" data-testid="mo-hc-{{ r.key }}">
+      <span class="mo-state">{{ ui.icon('check' if r.state == 'ok' else ('alert' if r.state in ('fail', 'warn') else 'clock')) }}</span>
+      <div class="k-grow"><b>{{ r.title }}</b><span class="k-muted">{{ r.detail }}</span></div>
+      {% if r.fixable and not hc_running %}<button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/models/health/fix" hx-target="#mo-health" hx-swap="outerHTML" data-testid="mo-hc-fix-{{ r.key }}">Fix it</button>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <details class="mo-details"><summary>Show details</summary>
+    {% for r in hc_rows if r.tech %}<p class="mo-mono-line">{{ r.tech }}</p>{% endfor %}
+    {% if hc_log %}<pre class="mo-log">{{ hc_log|join('\n') }}</pre>{% endif %}
+    <p class="k-muted">The same test runs from a terminal with <code>kestrel doctor</code>.</p></details>
+</section>

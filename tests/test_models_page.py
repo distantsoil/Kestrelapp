@@ -74,7 +74,7 @@ async def _seed(*, confidential: bool = False) -> None:
             s.add(
                 Evaluation(
                     opportunity_id=opps[i].id, tier=2, track="employment", model=_LOCAL,
-                    prompt_version="evaluate/v1", verdict="apply", score=4.0,
+                    prompt_version="evaluate/v2", verdict="apply", score=4.0,
                     prompt_tokens=1000, completion_tokens=200, latency_ms=3000,
                 )
             )
@@ -87,7 +87,7 @@ async def _seed(*, confidential: bool = False) -> None:
         for i in range(8, 12):
             ev = Evaluation(
                 opportunity_id=opps[i].id, tier=3, track="employment", model=_HOSTED,
-                prompt_version="evaluate/v1", verdict="consider", score=3.0,
+                prompt_version="evaluate/v2", verdict="consider", score=3.0,
                 prompt_tokens=2000, completion_tokens=400, latency_ms=9000,
             )
             s.add(ev)
@@ -107,7 +107,7 @@ async def _seed(*, confidential: bool = False) -> None:
         s.add(
             Evaluation(
                 opportunity_id=opps[0].id, tier=2, track="employment", model=_LOCAL,
-                prompt_version="evaluate/v1", verdict="apply", score=4.0,
+                prompt_version="evaluate/v2", verdict="apply", score=4.0,
                 created_at=iso(datetime.now(UTC) - timedelta(days=100)),
             )
         )
@@ -144,7 +144,7 @@ def test_model_summary_agreement_math_and_insufficient_label():
     by_model = {r.model: r for r in rows}
 
     local = by_model[_LOCAL]
-    assert local.tier == 2 and local.prompt_version == "evaluate/v1"
+    assert local.tier == 2 and local.prompt_version == "evaluate/v2"
     assert local.n == 9  # 8 recent plus the 100-day-old one
     assert local.n_labeled == 9 and local.insufficient is False
     # opps[0] carries two evaluations and one label: 7 of 9 pairings agree.

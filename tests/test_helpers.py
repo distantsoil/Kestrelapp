@@ -93,3 +93,29 @@ def test_geo_allows_matches_state_and_metro_alias():
         remote_type="onsite", country="US", state="NY", city="Albany", location_raw="Albany, NY"
     )
     assert h._geo_allows(elsewhere, rules) is False
+
+
+def test_a_named_place_with_no_remote_wording_is_on_site_there():
+    """Owner ruling D-RULES-9: "North Carolina" with no remote or hybrid wording is on-site in
+    North Carolina, so a profile that lists only Texas sets it aside; vague or remote ones stay."""
+    from types import SimpleNamespace
+
+    from kestrel.rules.helpers import geo_evaluate
+
+    rules = {"remote_country_allowlist": ["US"], "onsite_states": ["TX"], "onsite_metros": []}
+
+    def opp(**kw):
+        base = {"remote_type": "unknown", "country": "US", "state": None, "city": None,
+                "location_raw": None, "title": "Senior Manager", "description_md": "Lead a team."}
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    assert geo_evaluate(opp(state="NC", location_raw="North Carolina"), rules) == (False, False)
+    by_city = opp(city="North Carolina", location_raw="North Carolina")  # stored before D-RULES-9
+    assert geo_evaluate(by_city, rules)[0] is False
+    remote = opp(state="NC", location_raw="North Carolina", description_md="Fully remote role.")
+    assert geo_evaluate(remote, rules) == (True, True)
+    assert geo_evaluate(opp(city="Multiple Locations", location_raw="Multiple Locations"),
+                        rules) == (True, True)
+    assert geo_evaluate(opp(location_raw=None), rules) == (True, True)
+    assert geo_evaluate(opp(state="TX", location_raw="Texas"), rules) == (True, False)

@@ -1,248 +1,364 @@
-{# The body of each onboarding step (D-UI-30), chosen by `key`. #}
+{# The body of each onboarding step (D-UI-30, D-UI-155), chosen by `key`. Six steps, built from the
+   shared k- components; ob- classes come from pages/onboarding.css. Copy follows the locked
+   mockup. Forms save through the Profile services and return the whole #ob-step. #}
+{% import "ui/macros.html" as ui %}
 {% from "partials/hosted_disclosure.html" import disclosure_text with context %}
-{# The step footer (D-UI-65): Back, then the step's ONE primary button, with a quiet "Skip for
-   now" beside it where the step can wait. `primary=False` when the step's primary is its own
-   form's button (a profile step's "Save ... and continue"); `hint` disables the primary and says
-   what it waits for. #}
-{% macro nav(next_label='Next', own_form=None, skip=False, primary=True, hint=None) %}
-<div class="ob-nav wizard-foot" data-testid="ob-nav">
-  {% if not is_first %}
-  <form method="post" action="/onboarding/back" hx-post="/onboarding/back" hx-target="#ob-step" hx-swap="outerHTML show:window:top">
-    <input type="hidden" name="step" value="{{ key }}">
-    <button class="btn ghost" type="submit" data-testid="ob-back">Back</button>
-  </form>
-  {% endif %}
-  <span class="sp"></span>
-  {{ caller() if caller else '' }}
-  {% if skip %}
-  <form method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step" hx-swap="outerHTML show:window:top">
-    <input type="hidden" name="step" value="{{ key }}"><input type="hidden" name="skip" value="1">
-    <button class="btn ghost" type="submit" data-testid="ob-skip">Skip for now</button>
-  </form>
-  {% endif %}
-  {% if primary %}
-  {% if own_form %}
-  <button class="btn primary" type="submit" form="{{ own_form }}" data-testid="ob-next"{% if hint %} disabled{% endif %}>{{ next_label }}</button>
-  {% else %}
-  <form method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step" hx-swap="outerHTML show:window:top">
-    <input type="hidden" name="step" value="{{ key }}">
-    <button class="btn primary" type="submit" data-testid="ob-next"{% if hint %} disabled{% endif %}>{{ next_label }}</button>
-  </form>
-  {% endif %}
-  {% endif %}
-</div>
-{% if hint and primary %}<p class="wizard-hint" data-testid="ob-next-hint" style="text-align:right;margin:.3rem 0 0">{{ hint }}</p>{% endif %}
-{% endmacro %}
+{% macro head(title, icon, tone='') -%}
+<header class="k-sec-head ob-sh"><span class="k-badge{% if tone %} k-badge--{{ tone }}{% endif %}">{{ ui.icon(icon) }}</span><div class="k-grow"><h3>{{ title }}</h3></div></header>
+{%- endmacro %}
+{% macro chips(name, items, cid, label, placeholder, tone='') -%}
+{% with chip_name = name, chip_items = items, chip_id = cid, chip_label = label, chip_tone = tone, chip_placeholder = placeholder %}{% include "partials/profile_chips.html" %}{% endwith %}
+{%- endmacro %}
 
 {% if key == 'welcome' %}
-  <div class="panel" style="padding:1rem 1.2rem">
-    <p style="margin-top:0"><b>Kestrel finds and ranks work for you, and leaves every decision to
-      you.</b> It searches public job boards and filings, reads each posting with an AI model, drops
-      the ones that clearly do not fit, scores the rest against what you want, and tailors your
-      resume for the ones worth pursuing, using only your own words.</p>
-    <p><b>What it never does.</b> Kestrel never applies, never sends an email or message, and never
-      fills in a form for you. It drafts and recommends; you decide and you send.</p>
-    <p><b>Your privacy.</b> Everything stays on this computer by default. If you choose a hosted
-      AI provider in the next step, only the text you agree to is sent to that provider, under your
-      own key, and you read exactly what that is before you connect.</p>
-    <p style="margin-bottom:0"><b>How long this takes.</b> About ten minutes of your time. If you
-      run the models on this computer, the first download can take longer; you can keep going while
-      it runs.</p>
+  <div class="ob-g3">
+    <section class="k-card ob-acc ob-acc--good">
+      {{ head('What Kestrel does', 'check', 'good') }}
+      <ul class="ob-ul">
+        <li>{{ ui.icon('search') }}Finds roles from public job boards and company pages</li>
+        <li>{{ ui.icon('target') }}Scores how well each one fits you</li>
+        <li>{{ ui.icon('pen') }}Tailors your own resume lines for each role</li>
+        <li>{{ ui.icon('apps') }}Tracks your applications to the outcome</li>
+      </ul>
+    </section>
+    <section class="k-card ob-acc ob-acc--info">
+      {{ head('What Kestrel never does', 'shield') }}
+      <ul class="ob-ul" data-testid="ob-never">
+        <li>{{ ui.icon('ban') }}Never applies for you</li>
+        <li>{{ ui.icon('ban') }}Never emails or messages anyone</li>
+        <li>{{ ui.icon('ban') }}Never logs in to a site as you</li>
+        <li>{{ ui.icon('check') }}It drafts and hands over. You decide.</li>
+      </ul>
+    </section>
+    <section class="k-card">
+      {{ head('Your privacy', 'lock') }}
+      <ul class="ob-ul">
+        <li>{{ ui.icon('laptop') }}Works on this computer by default</li>
+        <li>{{ ui.icon('cloud') }}Goes online only if you choose it</li>
+        <li>{{ ui.icon('info') }}Asks first, and shows what will be sent</li>
+        <li>{{ ui.icon('check') }}Free, and you are not the product</li>
+      </ul>
+    </section>
   </div>
-  {{ nav('Get started') }}
+  <section class="k-card">
+    {{ head('How setup goes', 'pipeline') }}
+    <div class="ob-road">
+      {% for icon, title, sub in [('cpu', 'Choose the AI', 'Where it runs'), ('user', 'About you', 'Name and what you want'), ('file', 'Your resume', 'Or skip for now'), ('target', 'What you want', 'A few short answers'), ('search', 'Your searches', 'Then a quick tour')] %}
+      <div class="ob-rs"><span class="k-badge">{{ ui.icon(icon) }}</span><div><b>{{ title }}</b><span class="ob-dsm">{{ sub }}</span></div></div>
+      {% endfor %}
+    </div>
+  </section>
+  <div class="ob-note">{{ ui.icon('clock') }}<div><b>About 5 minutes.</b><span class="ob-dsm">You can stop anytime and pick up where you left off.</span></div></div>
 
 {% elif key == 'models' %}
-  {% if models_message %}<div class="panel" role="status" style="padding:.6rem 1rem; margin-bottom:.8rem">{{ models_message }}</div>{% endif %}
-  <p style="margin-top:0">This computer: <b>{{ st.hardware_line }}</b>.
-    {% if st.recommended == 'hosted_only' %}<b>We recommend Hosted here:</b> {{ st.recommended_reason }}.
-    {% else %}<b>We recommend Local here</b> ({{ st.recommended_reason }}).{% endif %}</p>
+  {% if models_message %}<div class="ob-note" role="status" data-testid="ob-models-message">{{ ui.icon('info') }}<div>{{ models_message }}</div></div>{% endif %}
+  <section class="k-card">
+    {{ head('Your computer', 'cpu') }}
+    <div class="ob-hw" data-testid="ob-hardware">
+      <span class="ob-kv">{{ ui.icon('mem') }}<span><small>Memory</small><b>{{ hw_memory }}</b></span></span>
+      <span class="ob-kv">{{ ui.icon('gpu') }}<span><small>Graphics card</small><b>{{ hw_gpu }}</b></span></span>
+      {% if st.recommended == 'hosted_only' %}<span class="k-pill k-pill--warn">{{ ui.icon('alert') }}Light for models on this computer</span>
+      {% else %}<span class="k-pill k-pill--good">{{ ui.icon('check') }}Good for medium models</span>{% endif %}
+      <span class="ob-dsm">Checked just now. Nothing was sent.</span>
+    </div>
+  </section>
   {% if st.low_spec_warning %}
-  <div class="warnbox" role="alert" data-testid="low-spec-warning" style="margin-bottom:.8rem">
-    <b>{{ st.low_spec_warning }}</b> <span class="muted">Why: {{ st.recommended_reason }}.</span>
-  </div>
+  <div class="ob-note ob-note--warn" role="alert" data-testid="low-spec-warning">{{ ui.icon('alert') }}<div><b>{{ st.low_spec_warning }}</b><span class="ob-dsm">Why: {{ st.recommended_reason }}.</span></div></div>
   {% endif %}
-  <p class="muted" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
-  <div class="cards" role="radiogroup" aria-label="How Kestrel will run">
-    {% for value, label, blurb in [
-      ('local', 'Local', 'The AI runs on this computer through Ollama, a free program. Nothing leaves your computer. Needs a strong graphics card: an NVIDIA card with 12 GB of memory, or a Mac with Apple silicon and 16 GB.'),
-      ('hosted', 'Hosted', 'The AI runs at a provider you choose under your own key: OpenRouter (free models available), OpenModel, Anthropic or OpenAI. Works on any computer, with nothing to download.'),
-      ('both', 'Both', 'Local for daily work, with a hosted provider ready for the hardest cases or when you want it.'),
+  <div class="ob-note" data-testid="ob-pick">{{ ui.icon('info') }}<div><b>Our pick: {{ 'Online model' if st.recommended == 'hosted_only' else 'On this computer' }}.</b><span class="ob-dsm">{{ st.recommended_reason[:1] | upper }}{{ st.recommended_reason[1:] }}.</span></div></div>
+  <p class="ob-dsm" data-testid="speed-note">Free models, online or on your own computer, are often much slower than paid ones. A first scan can take an hour or more; Today shows the progress.</p>
+  <div class="ob-ch" role="radiogroup" aria-label="Where Kestrel thinks">
+    {% for value, label, icon, bullets in [
+      ('local', 'On this computer', 'laptop', ['Free to use', 'Stays private', 'Needs a capable computer']),
+      ('hosted', 'Online model', 'cloud', ['Works on any computer', 'You pay the service per use', 'Shows what is sent first']),
+      ('both', 'Both', 'both', ['This computer for most roles', 'Online for the hardest ones', 'Shows what is sent first']),
     ] %}
-    <form hx-post="/onboarding/models/mode" hx-target="#ob-step" hx-swap="outerHTML">
+    {% set picked = st.choice_explicit and st.choice == value %}
+    <form hx-post="/onboarding/models/mode" hx-target="#ob-step" hx-swap="outerHTML" method="post" action="/onboarding/models/mode">
       <input type="hidden" name="mode" value="{{ value }}">
-      <button type="submit" class="card{% if st.choice_explicit and st.choice == value %} sel{% endif %}"
-              aria-pressed="{{ 'true' if st.choice_explicit and st.choice == value else 'false' }}" data-testid="ob-mode-{{ value }}">
-        <b>{{ label }}</b>{% if (value == 'hosted' and st.recommended == 'hosted_only') or (value == 'local' and st.recommended != 'hosted_only') %} <span class="pill apply">recommended</span>{% endif %}
-        <div class="d">{{ blurb }}</div>
+      <button type="submit" class="ob-c" role="radio" aria-checked="{{ 'true' if picked else 'false' }}" data-testid="ob-mode-{{ value }}">
+        <span class="ob-r1"><span class="k-badge">{{ ui.icon(icon) }}</span>{% if (value == 'hosted' and st.recommended == 'hosted_only') or (value == 'local' and st.recommended != 'hosted_only') %}<span class="k-pill k-pill--good">Recommended</span>{% endif %}<span class="ob-tick">{{ ui.icon('check') }}</span></span>
+        <h4>{{ label }}</h4>
+        <ul class="ob-bl">{% for b in bullets %}<li>{{ b }}</li>{% endfor %}</ul>
       </button>
     </form>
     {% endfor %}
   </div>
 
   {% if st.choice_explicit %}
-  <div class="{{ 'panel' if models_ready else 'warnbox' }}" data-testid="ob-models-status" style="padding:.6rem 1rem; margin-top:1rem">
-    <b>{{ models_line }}.</b>
-    {% if not models_ready %}Finish below, or continue and come back: until the models are ready Kestrel can collect postings but not read or score them.{% endif %}
-  </div>
-
-  {% if st.choice in ('hosted', 'both') %}
-  <h2 style="margin-top:1.4rem">Connect a hosted provider</h2>
-  <p data-testid="ob-byok"><b>Bring your own key.</b> You open an account with the provider,
-    create an API key on their site (a long password made for programs), and paste it here.
-    Kestrel keeps the key on this computer and uses it only to call that provider; the provider
-    bills you directly for what you use, often cents a day, and OpenRouter has free models. Kestrel
-    never sees your bill and never sends the key anywhere else.</p>
-  <p class="muted" style="margin-bottom:.3rem">Where to get a key (sign in, then open the page named):</p>
-  <ul data-testid="ob-key-links" style="margin-top:0">
-    {% for p in presets %}
-    <li data-provider="{{ p.id }}"><b>{{ p.label }}</b>{% if p.free %} <span class="pill apply" data-testid="free-models-{{ p.id }}">Free models available</span>{% endif %}: the API keys page, <a href="{{ p.console }}" target="_blank" rel="noopener">{{ p.console | replace('https://', '') }}</a>. Keys start with <span class="mono">{{ p.key_prefix }}</span>.{% if p.key_saved %} <span class="pill apply">key saved</span>{% endif %}</li>
-    {% endfor %}
-  </ul>
-  <form hx-post="/onboarding/models/connect" hx-target="#ob-step" hx-swap="outerHTML" autocomplete="off"
-        data-busy-text="Checking the key and choosing a model for each tier…" class="panel" style="padding:.8rem 1rem">
-    {% set chosen = connect_provider or default_provider %}
-    <div role="radiogroup" aria-label="Provider">
-      {% for p in presets %}
-      <label style="display:inline-block; margin-right:1rem"><input type="radio" name="provider" value="{{ p.id }}" {% if p.id == chosen %}checked{% endif %}> {{ p.label }}{% if p.free %} <span class="pill apply">Free models available</span>{% endif %}</label>
-      {% endfor %}
-    </div>
-    <label style="display:block; margin-top:.6rem">API key
-      <input type="password" name="api_key" placeholder="paste the key; leave blank to use a saved one" style="width:100%; max-width:28rem"></label>
-    <details style="margin-top:.6rem">
-      <summary><b>What leaves this computer</b> (read before you connect)</summary>
-      {{ disclosure_text() }}
-    </details>
-    <label style="display:block; margin-top:.4rem"><input type="checkbox" name="ack" value="on"> I understand what each hosted tier sends and that the provider's retention rules apply.</label>
-    <label style="display:block"><input type="checkbox" name="free_only" value="on" {% if hosted_mode.free_only %}checked{% endif %}> Free models only (OpenRouter)</label>
-    <label style="display:block; margin-left:1.4rem" data-testid="allow-training"><input type="checkbox" name="allow_training" value="on"> Allow providers that may train on what Kestrel sends
-      <span class="muted">(needed for free models: almost every free model is offered only by providers that keep or train on prompts; Kestrel blocks them unless you tick this)</span></label>
-    <button class="btn" type="submit" style="margin-top:.6rem">Check the key and connect</button>
-    <span class="muted">Kestrel asks the provider two things: is this key valid, and which models can it use. Nothing about you is sent.</span>
-    {# The result sits right under the button that produced it (D-UI-40). #}
-    {% if connect_result %}{% with r = connect_result, testid = 'ob-connect-message' %}{% include "partials/hosted_connect_result.html" %}{% endwith %}{% endif %}
-  </form>
-  {% endif %}
+  <div class="ob-note{% if not models_ready %} ob-note--warn{% endif %}" data-testid="ob-models-status">{{ ui.icon('check' if models_ready else 'info') }}<div><b>{{ models_line }}.</b>
+    {% if not models_ready %}<span class="ob-dsm">You can continue while models finish. Until they are ready Kestrel can collect postings but not read or score them.</span>{% endif %}</div></div>
 
   {% if st.choice in ('local', 'both') %}
-  <h2 style="margin-top:1.4rem">Local models</h2>
-  <p class="muted" style="margin-top:0">Each step below is one button. If Ollama is missing, press
-    Download Ollama, install it like any other program, open it, then press Check again. Kestrel
-    never installs software for you. The downloads and builds show their progress here, and a
-    download you stop, or that Kestrel is closed during, continues from where it stopped.</p>
-  {% include "partials/onboarding_local.html" %}
-  <button class="btn ghost" style="margin-top:.6rem" hx-get="/onboarding/step?fresh=1" hx-target="#ob-step" hx-swap="outerHTML">Check again</button>
+  <section class="k-card" data-testid="ob-local-card">
+    {{ head('Set up on this computer', 'laptop') }}
+    {% include "partials/onboarding_local.html" %}
+    <div class="ob-row"><button class="k-btn k-btn--sm" type="button" hx-get="/onboarding/step?fresh=1" hx-target="#ob-step" hx-swap="outerHTML">Check again</button>
+      <span class="ob-dsm">You can continue while models download.</span></div>
+  </section>
   {% endif %}
-  {% endif %}
-  {{ nav('Continue', hint=None if st.choice_explicit else 'Choose Local, Hosted or Both first') }}
 
-{% elif key == 'tracks' %}
-  <form id="ob-tracks" method="post" action="/onboarding/next" hx-post="/onboarding/next" hx-target="#ob-step"
-        hx-swap="outerHTML show:window:top" class="track-pick panel" style="padding:1rem 1.2rem">
-    <input type="hidden" name="step" value="tracks">
-    <label><input type="checkbox" name="track" value="employment" {% if 'employment' in tracks %}checked{% endif %} data-testid="ob-track-employment">
-      <b>A job</b>: permanent employment. Kestrel searches job boards for the titles you want.</label>
-    <label><input type="checkbox" name="track" value="consulting" {% if 'consulting' in tracks %}checked{% endif %} data-testid="ob-track-consulting">
-      <b>Consulting work</b>: fractional and interim engagements.</label>
-    <p class="muted" style="margin:.6rem 0 0" data-testid="ob-consulting-plain">{{ consulting_plain }}</p>
-    {% if not tracks_chosen %}<p class="muted" style="margin:.4rem 0 0">Not sure? Choose a job only. You can add consulting later in Settings.</p>{% endif %}
-  </form>
-  {{ nav('Save and continue', own_form='ob-tracks') }}
+  {% if st.choice in ('hosted', 'both') %}
+  {% set chosen = connect_provider or default_provider %}
+  <section class="k-card" data-testid="ob-online-card">
+    {{ head('Connect an online model', 'cloud') }}
+    <p class="ob-dsm" data-testid="ob-byok"><b>Bring your own key.</b> You open an account with the service, create an API key on their site (a long password made for programs), and paste it here. Kestrel keeps the key on this computer and uses it only to call that service; the service bills you directly for what you use, often cents a day, and OpenRouter has free models. Kestrel never sees your bill and never sends the key anywhere else.</p>
+    <form id="ob-connect" hx-post="/onboarding/models/connect" hx-target="#ob-step" hx-swap="outerHTML" autocomplete="off"
+          data-busy-text="Checking the key and choosing a model for each tier…" data-ob-connect>
+      <div class="ob-svc" role="radiogroup" aria-label="Service">
+        {% for p in presets %}
+        <label class="ob-sv"><input type="radio" name="provider" value="{{ p.id }}" class="k-sr-only" data-ob-provider {% if p.key_saved %}data-saved{% endif %} {% if p.id == chosen %}checked{% endif %}>
+          <span class="ob-svbox"><span class="ob-mono">{{ p.label[:2] | upper }}</span><span class="ob-svname">{{ p.label }}</span>{% if p.free %}<span class="k-pill k-pill--good">Free models available</span>{% endif %}</span></label>
+        {% endfor %}
+      </div>
+      <p class="ob-dsm ob-keylinks">Where to get a key (sign in, then open the page named):</p>
+      <ul class="ob-keylinks" data-testid="ob-key-links">
+        {% for p in presets %}
+        <li data-provider="{{ p.id }}"{% if p.id != chosen %} hidden{% endif %}><b>{{ p.label }}</b>{% if p.free %} <span class="k-pill k-pill--good" data-testid="free-models-{{ p.id }}">Free models available</span>{% endif %}: the API keys page, <a class="k-link" href="{{ p.console }}" target="_blank" rel="noopener">{{ p.console | replace('https://', '') }}</a>. Keys start with <span class="ob-mono-text">{{ p.key_prefix }}</span>.{% if p.key_saved %} <span class="k-pill k-pill--good">key saved</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      <div class="ob-keyrow">
+        <input class="k-input" id="ob-key" type="password" name="api_key" placeholder="Paste your key here; leave blank to use a saved one" aria-label="Your key" autocomplete="off">
+        <button class="k-btn k-btn--primary" type="submit" id="ob-connect-btn" data-ob-connect-btn>Connect</button>
+        <span class="ob-dsm" data-ob-connect-hint></span>
+      </div>
+      <label class="ob-consent" for="ob-ack"><input type="checkbox" id="ob-ack" name="ack" value="on" data-testid="ob-ack"{% if connect_form and connect_form.ack %} checked{% endif %}>
+        <span><b>I understand what gets sent</b>{% if st.choice == 'both' %}<span class="ob-dsm">Only a deep read you start on one role goes to this service, and Kestrel shows what is sent first. What exactly is listed below.</span>{% else %}<span class="ob-dsm">Role text and the resume lines a step needs go to this service, under your own key. What exactly is listed below.</span>{% endif %}</span></label>
+      <details class="ob-details" data-testid="ob-sends">
+        <summary>What leaves this computer</summary>
+        {% if st.choice == 'both' %}
+        <p class="ob-dsm" data-testid="ob-sends-both">Quick sort and fit score stay on this computer. A deep read you start on one role sends {{ tier_sends.tier3 }}. Kestrel shows exactly what before you confirm, and holds the send when confidential mode is on and no current employer is chosen. The service's own retention rules apply to anything sent; Kestrel cannot recall it. Keys stay on this computer and go only to the service.</p>
+        {% else %}{{ disclosure_text() }}{% endif %}
+      </details>
+      {% set free_on = connect_form.free_only if connect_form else hosted_mode.free_only %}
+      {% set train_on = connect_form and connect_form.allow_training %}
+      <details class="ob-details" data-ob-more{% if free_on or train_on %} open{% endif %}>
+        <summary>More options</summary>
+        <label class="ob-check"><input type="checkbox" name="free_only" value="on" data-ob-free{% if free_on %} checked{% endif %}> Free models only (OpenRouter)</label>
+        <label class="ob-check" data-testid="allow-training"><input type="checkbox" name="allow_training" value="on" data-ob-train{% if train_on %} checked{% endif %}> Allow providers that may train on what Kestrel sends
+          <span class="ob-dsm">Needed for free models: almost every free model is offered only by providers that keep or train on prompts. Kestrel blocks them unless you tick this.</span></label>
+      </details>
+      <p class="ob-dsm">Kestrel asks the service two things: is this key valid, and which models can it use. Nothing about you is sent.</p>
+      {% if connect_result %}{% with r = connect_result, testid = 'ob-connect-message' %}{% include "partials/onboarding_connect_result.html" %}{% endwith %}{% endif %}
+    </form>
+  </section>
+  {% endif %}
+
+  {% if st.choice == 'both' %}
+  <section class="k-card" data-testid="ob-flow">
+    {{ head('Where each step runs', 'pipeline') }}
+    <div class="ob-flow">
+      <div class="ob-fc"><b>Quick sort</b><span class="k-pill">{{ ui.icon('laptop') }}This computer</span></div>
+      <div class="ob-fc"><b>Fit score</b><span class="k-pill">{{ ui.icon('laptop') }}This computer</span></div>
+      <div class="ob-fc"><b>Deep read</b><span class="k-pill k-pill--warn">{{ ui.icon('cloud') }}Online, you choose per role</span></div>
+    </div>
+  </section>
+  {% endif %}
+  {% endif %}
 
 {% elif key == 'about' %}
-  {% if tracks | length > 1 %}<p class="muted" style="margin-top:0">These details are saved for both of your searches.</p>{% endif %}
-  {% with ob_save_label = 'Save and continue', ob_require_name = True %}{% include "partials/profile_about.html" %}{% endwith %}
-  {{ nav(primary=False) }}
+  <form id="ob-about" hx-post="/onboarding/save/about" hx-target="#ob-step" hx-swap="outerHTML" method="post" action="/onboarding/save/about"
+        data-busy-text="Saving…" data-ob-form="about">
+    <div class="ob-stack">
+    <section class="k-card">
+      {{ head('Who are you?', 'about') }}
+      <p class="ob-dsm ob-lockline">{{ ui.icon('lock') }}Used on your resume. Never sent anywhere.</p>
+      <div class="ob-fields">
+        <div class="ob-f"><label for="ob-first">First name <span class="k-pill k-pill--warn">Required</span></label>
+          <input class="k-input" id="ob-first" name="first_name" value="{{ a.first_name }}" placeholder="e.g. Your first name" autocomplete="given-name" data-ob-need="first"></div>
+        <div class="ob-f"><label for="ob-last">Last name <span class="k-pill">Recommended</span></label>
+          <input class="k-input" id="ob-last" name="last_name" value="{{ a.last_name }}" placeholder="e.g. Your last name" autocomplete="family-name">
+          <small class="ob-dsm">Used on your resume.</small></div>
+        <div class="ob-f"><label for="ob-email">Email</label>
+          <input class="k-input" id="ob-email" type="email" name="email" value="{{ a.email }}" placeholder="e.g. you@example.com" autocomplete="email"></div>
+        <div class="ob-f"><label for="ob-city">City</label>
+          <input class="k-input" id="ob-city" name="location" value="{{ a.location }}" placeholder="e.g. Your city and state" autocomplete="address-level2"></div>
+      </div>
+      <div class="ob-more"><button class="k-link" type="button" data-ob-fold="ob-more-about" data-fold-more="Add more details" data-fold-less="Show fewer details" aria-expanded="false" aria-controls="ob-more-about">Add more details</button></div>
+      <div class="ob-fold" id="ob-more-about"><div><div class="ob-in">
+        <div class="ob-fields">
+          <div class="ob-f"><label for="ob-head">Headline <span class="k-pill">Optional</span></label>
+            <input class="k-input" id="ob-head" name="headline" value="{{ a.headline }}" placeholder="e.g. Your role in a few words"></div>
+          <div class="ob-f"><label for="ob-phone">Phone <span class="k-pill">Optional</span></label>
+            <input class="k-input" id="ob-phone" type="tel" name="phone" value="{{ a.phone }}" placeholder="e.g. (555) 010-0100" autocomplete="tel"></div>
+          <div class="ob-f"><label for="ob-li">LinkedIn link <span class="k-pill" data-testid="ob-linkedin-note">Not recorded</span></label>
+            <input class="k-input" id="ob-li" disabled placeholder="Kestrel does not keep a LinkedIn link yet"></div>
+        </div>
+      </div></div></div>
+    </section>
+    <section class="k-card">
+      {{ head('What are you looking for?', 'compass') }}
+      <div class="ob-ch ob-ch--two" role="group" aria-label="What you are looking for">
+        <label class="ob-cw"><input type="checkbox" class="k-sr-only" name="track" value="employment" data-ob-track="jobs" data-testid="ob-track-employment" {% if track_jobs %}checked{% endif %}>
+          <span class="ob-c"><span class="ob-r1"><span class="k-badge">{{ ui.icon('folder') }}</span><span class="ob-tick">{{ ui.icon('check') }}</span></span><h4>Jobs</h4><p>Full-time and part-time roles with an employer.</p></span></label>
+        <label class="ob-cw"><input type="checkbox" class="k-sr-only" name="track" value="consulting" data-ob-track="consulting" data-testid="ob-track-consulting" {% if track_consulting %}checked{% endif %}>
+          <span class="ob-c"><span class="ob-r1"><span class="k-badge">{{ ui.icon('prep') }}</span><span class="ob-tick">{{ ui.icon('check') }}</span></span><h4>Consulting and contract work</h4><p>Short projects, contracts and fractional roles where you work for yourself.</p></span></label>
+      </div>
+      <p class="ob-dsm ob-tsum" data-ob-tsum>{% if track_jobs and track_consulting %}You will answer a short section for each on the "What you want" step.{% elif track_jobs %}Jobs only. The consulting section is left out.{% elif track_consulting %}Consulting only. The jobs section is left out.{% else %}Pick at least one to continue.{% endif %}</p>
+      <details class="ob-details"><summary>What is consulting and contract work?</summary>
+        <p class="ob-dsm" data-testid="ob-consulting-plain">{{ consulting_plain }}</p></details>
+    </section>
+    </div>
+  </form>
 
 {% elif key == 'resume' %}
   {% if masters %}
-  <div class="panel" style="padding:.8rem 1rem" data-testid="ob-masters">
-    <b>Already imported:</b>
-    <ul style="margin:.3rem 0 0">{% for m in masters %}<li>{{ m.name }} <span class="muted">({{ m.track }}, {{ m.kind | replace('_', ' ') }})</span></li>{% endfor %}</ul>
-    <p class="muted" style="margin:.4rem 0 0">You can edit it any time under Profile, Documents. Import another below, or continue.</p>
-  </div>
-  {% else %}
-  <p class="warnbox" data-testid="ob-resume-skip-note" style="margin-top:0"><b>You can skip this,</b>
-    but until you import a resume Kestrel cannot tailor documents: it will still find and score
-    work, and you can import one later under Profile, Documents.</p>
+  <section class="k-card" data-testid="ob-masters">
+    {{ head('Already imported', 'check', 'good') }}
+    <ul class="ob-ul">{% for m in masters %}<li>{{ ui.icon('profile') }}<span>{{ m.name }} <span class="ob-dsm">({{ m.track }}, {{ m.kind | replace('_', ' ') }})</span></span></li>{% endfor %}</ul>
+    <p class="ob-dsm">You can edit it any time under Profile, Documents. Import another below, or continue.</p>
+  </section>
   {% endif %}
-  <h2 style="margin-top:1rem">Import your resume</h2>
-  <p class="muted" style="margin-top:0">Choose a file (.docx gives the cleanest result; .pdf, .md
-    and .txt work too) or paste the text. Kestrel shows what it read, then a proposal. Nothing is
-    saved until you press Accept. Reading a resume takes about a minute.</p>
-  <form id="import-form" hx-post="/api/documents/import/read" hx-target="#import-proposal"
-        hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data"
-        hx-disabled-elt="find button[type=submit]" data-busy-text="Uploading and reading your file…">
-    {# In the wizard the proposal carries the approval and the step's primary button (D-UI-65). #}
-    <input type="hidden" name="ob" value="1">
-    <div class="formgrid">
-      <label for="ob-imp-track">For</label>
-      <select id="ob-imp-track" name="track">{% for t in tracks %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
-      <label for="ob-imp-kind">Kind</label>
-      <select id="ob-imp-kind" name="doc_kind"><option value="resume">resume</option><option value="capability_statement">capability statement (consulting)</option></select>
-      <label for="ob-imp-file">File</label>
-      <input id="ob-imp-file" type="file" name="file" accept=".md,.txt,.pdf,.docx,.doc">
+  <section class="k-card" id="ob-import-card">
+    {{ head('Add your resume' if not masters else 'Import another resume', 'profile') }}
+    <form id="import-form" hx-post="/api/documents/import/read" hx-target="#import-proposal" hx-swap="innerHTML"
+          hx-encoding="multipart/form-data" enctype="multipart/form-data"
+          hx-disabled-elt="find button[type=submit]" data-busy-text="Uploading and reading your file…" data-ob-import>
+      {# In the wizard the proposal carries the approval and the step's primary button (D-UI-65). #}
+      <input type="hidden" name="ob" value="1">
+      {% if 'consulting' in tracks %}
+      <div class="ob-fields ob-fields--tight">
+        <div class="ob-f"><label for="ob-imp-track">For</label>
+          <select class="k-input" id="ob-imp-track" name="track">{% for t in tracks %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select></div>
+        <div class="ob-f"><label for="ob-imp-kind">Kind</label>
+          <select class="k-input" id="ob-imp-kind" name="doc_kind"><option value="resume">resume</option><option value="capability_statement">capability statement (consulting)</option></select></div>
+      </div>
+      {% else %}
+      <input type="hidden" name="track" value="employment"><input type="hidden" name="doc_kind" value="resume">
+      {% endif %}
+      <div class="ob-drop" data-ob-drop>
+        <span class="k-badge k-badge--lg">{{ ui.icon('profile') }}</span>
+        <b>Drop a Word, PDF or text file here</b>
+        <span class="ob-dsm" data-ob-filename>Word gives the cleanest result. PDF, .md and .txt work too.</span>
+        <div class="ob-drop-b">
+          <label class="k-btn" for="ob-imp-file">Choose a file</label>
+          <input class="k-sr-only" id="ob-imp-file" type="file" name="file" accept=".md,.txt,.pdf,.docx,.doc">
+          <button class="k-btn" type="button" data-ob-fold="ob-paste" data-fold-more="Paste text" data-fold-less="Hide pasted text" aria-expanded="false" aria-controls="ob-paste">Paste text</button>
+        </div>
+      </div>
+      <div class="ob-fold" id="ob-paste"><div><div class="ob-in">
+        <textarea class="k-input" name="text" rows="6" placeholder="Paste your resume text here" aria-label="Resume text"></textarea>
+      </div></div></div>
+      <div class="ob-row ob-readrow">
+        <button class="k-btn" type="submit" id="ob-read-btn">{{ 'Import another' if masters else 'Read my resume' }}</button>
+        <span class="ob-dsm">{{ ui.icon('info', 'k-ic--sm') }}Kestrel shows what it read, then the lines it will use. Nothing is saved until you approve it. Reading takes about a minute.</span>
+      </div>
+      <div class="ob-note{% if import_online %} ob-note--warn{% endif %}" data-testid="ob-import-where">{{ ui.icon('cloud' if import_online else 'laptop') }}<div>
+        {% if import_online %}<b>Reading runs online: {{ import_label }}.</b><span class="ob-dsm">Your whole resume text is sent to that service, under your key. Confidential mode hides your current employer only after you mark it; Kestrel says so before it sends.</span>
+        {% else %}<b>Reading runs on this computer{% if import_label %}: {{ import_label }}{% endif %}.</b><span class="ob-dsm">Your resume does not leave it.</span>{% endif %}
+      </div>
+      </div>
+    </form>
+    {% if not masters %}
+    <p class="ob-dsm ob-skipnote" data-testid="ob-resume-skip-note">{{ ui.icon('info', 'k-ic--sm') }}You can skip this. No tailored resumes until you add one: Kestrel still finds and scores roles, and you can import a resume later under Profile, Documents.</p>
+    {% endif %}
+  </section>
+  <div id="import-proposal" class="import-result" data-testid="ob-import-proposal"></div>
+
+{% elif key == 'wants' %}
+  <form id="ob-wants" hx-post="/onboarding/save/wants" hx-target="#ob-step" hx-swap="outerHTML" method="post" action="/onboarding/save/wants"
+        data-busy-text="Saving…" data-ob-form="wants">
+    <div class="ob-stack">
+    {% if 'employment' in tracks %}
+    <section class="k-card ob-sect" data-testid="ob-sec-jobs">
+      {{ head('The jobs you want', 'apps') }}
+      <div><div class="ob-sec">Job titles</div>
+        {{ chips('target_titles', w_titles, 'ob-titles', 'Job titles', 'e.g. ' ~ w_ex_title) }}
+        {% if w_headline and w_headline not in w_titles %}
+        <div class="ob-ideas"><span class="ob-dsm">From your headline:</span>
+          <button class="ob-sug" type="button" data-ob-sug="target_titles" data-v="{{ w_headline }}">{{ ui.icon('plus', 'k-ic--sm') }}{{ w_headline }}</button></div>
+        {% endif %}
+        <div hx-params="none" hx-target="#title-suggestions"><div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div></div>
+      </div>
+      <div class="ob-two">
+        <div><div class="ob-sec">Pay minimum</div>
+          <div class="ob-unit"><span>$</span><input class="k-input" name="comp_floor_usd" inputmode="numeric" value="{{ w_pay }}" placeholder="e.g. 65,000" aria-label="Pay minimum per year" autocomplete="off"><span>a year</span></div></div>
+        <div><div class="ob-sec">Work style</div>
+          <div class="ob-modes" role="group" aria-label="Work style">
+            {% for mkey, mlabel in work_modes %}<label class="ob-mode"><input type="checkbox" class="k-sr-only" name="mode_{{ mkey }}" value="on" {% if mkey in w_modes %}checked{% endif %}><span>{{ mlabel }}</span></label>{% endfor %}
+          </div></div>
+      </div>
+      <div class="ob-under" data-testid="ob-under">
+        {{ ui.switch('under', 'Keep roles a little under your minimum', w_under, id='ob-under', attrs={'data-ob-fold-switch': 'ob-margin'}) }}
+        <span class="ob-dsm">They still show, marked as under. Roles with no posted pay are always kept.</span>
+        <div class="ob-fold{% if w_under %} on{% endif %}" id="ob-margin"><div><div class="ob-in">
+          <div class="ob-row"><div class="k-grow ob-dsm">How far under</div>{{ ui.segmented('comp_floor_margin_pct', w_margin_options, w_margin, 'How far under your minimum') }}</div>
+        </div></div></div>
+      </div>
+      <div><button class="k-link" type="button" data-ob-fold="ob-more-jobs" data-fold-more="Add more details" data-fold-less="Show fewer details" aria-expanded="false" aria-controls="ob-more-jobs">Add more details</button></div>
+      <div class="ob-fold" id="ob-more-jobs"><div><div class="ob-in ob-sect">
+        <div class="ob-row"><div class="k-grow"><b>Lowest level to keep</b><span class="ob-dsm">Titles ranked below this are set aside. Any level keeps everything.</span></div>
+          <select class="k-input ob-select" name="seniority_floor" aria-label="Lowest level to keep">{% for fkey, flabel in seniority_floors %}<option value="{{ fkey }}" {% if fkey == w_level %}selected{% endif %}>{{ flabel }}</option>{% endfor %}</select></div>
+        <div><div class="ob-sec">Deal-breakers</div>
+          {{ chips('must_avoid', w_deal, 'ob-deal', 'Deal-breakers', 'e.g. Requires travel', 'skip') }}
+          <small class="ob-dsm">They lower the score of a role that has them. They never hide a role.</small></div>
+      </div></div></div>
+    </section>
+    {% endif %}
+    {% if 'consulting' in tracks %}
+    <section class="k-card ob-sect" data-testid="ob-sec-consulting">
+      {{ head('Consulting work', 'prep') }}
+      <div><div class="ob-sec">Work you offer</div>
+        {{ chips('service_lines', w_services, 'ob-services', 'Work you offer', 'e.g. ' ~ w_ex_service) }}</div>
+      <div class="ob-two">
+        <div><div class="ob-sec">Day-rate minimum</div>
+          <div class="ob-unit"><span>$</span><input class="k-input" name="day_rate_floor" inputmode="numeric" value="{{ w_rate }}" placeholder="e.g. 650" aria-label="Day-rate minimum" autocomplete="off"><span>a day</span></div></div>
+        <div><div class="ob-sec">Project length</div>
+          <div class="ob-unit"><input class="k-input" name="engagement_weeks" inputmode="numeric" value="{{ w_weeks }}" placeholder="Shortest, e.g. 4" aria-label="Shortest project, in weeks" autocomplete="off"><span>weeks at least</span></div>
+          <small class="ob-dsm" data-testid="ob-longest-note">{{ ui.icon('info', 'k-ic--sm') }}A longest length is not recorded yet.</small></div>
+      </div>
+      <div><button class="k-link" type="button" data-ob-fold="ob-more-cons" data-fold-more="Add more details" data-fold-less="Show fewer details" aria-expanded="false" aria-controls="ob-more-cons">Add more details</button></div>
+      <div class="ob-fold" id="ob-more-cons"><div><div class="ob-in ob-sect">
+        <div><div class="ob-sec">Sectors to skip</div>
+          {{ chips('excluded_sectors', w_skip, 'ob-skipsec', 'Sectors to skip', 'e.g. Gambling', 'skip') }}</div>
+      </div></div></div>
+    </section>
+    {% endif %}
+    <section class="k-card ob-sect" data-testid="ob-sec-where">
+      {{ head("Where you'll work", 'pin') }}
+      <div>{{ chips('onsite_metros', w_places, 'ob-places', 'Places', 'e.g. Austin, TX') }}
+        {% if w_city and w_city not in w_places %}
+        <div class="ob-ideas"><span class="ob-dsm">From your city:</span>
+          <button class="ob-sug" type="button" data-ob-sug="onsite_metros" data-v="{{ w_city }}">{{ ui.icon('plus', 'k-ic--sm') }}{{ w_city }}</button></div>
+        {% endif %}</div>
+      <div class="ob-row">{{ ui.switch('remote_ok', 'Include remote roles', w_remote, id='ob-remote') }}<span class="ob-dsm">Remote roles in the US (Kestrel's job boards are US-focused)</span></div>
+      <p class="ob-dsm ob-lockline">{{ ui.icon('info') }}<span>Kestrel matches places by name, not distance. Add nearby towns you would commute to.</span></p>
+    </section>
+    <p class="ob-dsm" data-ob-preview data-testid="ob-preview"></p>
     </div>
-    <textarea name="text" rows="6" style="width:100%; margin:.5rem 0" placeholder="Or paste your resume here"></textarea>
-    <button class="btn{% if not masters %} primary{% endif %}" type="submit" id="ob-read-btn">{{ 'Import another' if masters else 'Read my resume' }}</button>
   </form>
-  <div id="import-proposal" class="import-result"></div>
-  {% if masters %}{{ nav('Continue') }}{% else %}{{ nav(primary=False, skip=True) }}{% endif %}
-
-{% elif key == 'employment' %}
-  {% with ob_save_label = 'Save job terms and continue' %}{% include "partials/profile_employment.html" %}{% endwith %}
-  {# P15: titles suggested from the resume, accepted one at a time (D-TTL-3). #}
-  <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
-  {{ nav(primary=False, skip=True) }}
-
-{% elif key == 'consulting' %}
-  {% with ob_save_label = 'Save consulting terms and continue' %}{% include "partials/profile_consulting.html" %}{% endwith %}
-  {{ nav(primary=False, skip=True) }}
-
-{% elif key == 'location' %}
-  <p style="margin-top:0"><b>Matching is by place name.</b> Kestrel has no map: a posting matches
-    when its location names a place you list, so list every town and suburb you would accept, not
-    just the big city.{% if tracks | length > 1 %} These places apply to both of your searches.{% endif %}</p>
-  {% with ob_save_label = 'Save places and continue' %}{% include "partials/profile_location.html" %}{% endwith %}
-  {{ nav(primary=False, skip=True) }}
 
 {% elif key == 'searches' %}
-  {% if search_message %}<div class="{{ 'panel' if search_ok else 'warnbox' }}" role="status" data-testid="ob-search-message" style="padding:.6rem 1rem; margin-bottom:.8rem">{{ search_message }}</div>{% endif %}
-  {% if specs %}
-  <p style="margin-top:0">From your answers, Kestrel will run {{ specs | length }} search{{ 'es' if specs | length != 1 else '' }}:</p>
-  <div data-testid="ob-search-list">
-  {% for track, items in specs_by_track.items() %}
-    <h3 style="margin-bottom:.3rem">{{ 'Jobs' if track == 'employment' else 'Consulting' }}</h3>
-    <ul style="margin-top:0">{% for sp in items %}<li><b>{{ sp.name }}</b>: {{ sp.summary }}</li>{% endfor %}</ul>
-  {% endfor %}
-  </div>
-  {% else %}
-  <p class="warnbox" style="margin-top:0" data-testid="ob-no-searches"><b>There is nothing to search yet.</b></p>
-  {% endif %}
-  {% if gaps %}
-  <ul class="muted" data-testid="ob-search-gaps">{% for step, text in gaps %}<li>{{ text }} <a href="/onboarding?step={{ step }}">Go to that step</a></li>{% endfor %}</ul>
-  {% endif %}
-  {% if specs %}
-  <form hx-post="/onboarding/searches/start" hx-target="#ob-step" hx-swap="outerHTML" data-busy-text="Turning your searches on…" style="margin-top:.8rem">
-    <button class="btn{% if not searching_on %} primary{% endif %}" type="submit" data-testid="ob-start-searching">{{ 'Search again now' if searching_on else 'Start searching' }}</button>
-    {% if searching_on %}<span class="pill apply">searching is on</span>{% endif %}
-  </form>
-  <p class="muted">Kestrel reads public job boards a few times a day at a polite pace. It never
-    signs in anywhere and never applies for you. Your searches update by themselves when you change
-    your profile; you can see or pause them on the Sources page.</p>
-  {% endif %}
-  {# "Start searching" above is this step's primary until searching is on; then Finish. #}
-  {% if searching_on %}{{ nav('Finish') }}{% else %}{{ nav(primary=False, skip=True) }}{% endif %}
-
-{% elif key == 'done' %}
-  <div class="panel" style="padding:1rem 1.2rem" data-testid="ob-done">
-    <p style="margin-top:0"><b>Kestrel is set up.</b></p>
-    <ul>
-      <li>The first results appear in <a href="/opportunities">Pipeline</a> within a few minutes, as each posting is read and scored.</li>
-      <li><a href="/">Today</a> is your daily start: what is new, what needs a decision, and what is due.</li>
-      <li>Your profile, terms and documents live under <a href="/profile">Profile</a>; your searches under <a href="/sources">Sources</a>.</li>
-      <li>To go through this guide again, open <a href="/settings#system">Settings, System</a> and choose Restart onboarding: keep your details, or clear everything and start over.</li>
-    </ul>
-    {% if statuses.searches != 'ok' %}<p class="warnbox" style="margin-bottom:0">Your searches are not on yet. Go back one step and press Start searching when you are ready.</p>{% endif %}
-  </div>
-  {{ nav('Go to Today') }}
+  <section class="k-card" data-testid="ob-search-list-card">
+    {{ head('What Kestrel will search', 'sources') }}
+    {% if specs %}
+    <div data-testid="ob-search-list">
+      {% for track, items in specs_by_track.items() %}
+      {% for sp in items %}
+      <div class="ob-srch"><span class="k-badge">{{ ui.icon('apps' if track == 'employment' else 'prep') }}</span><div class="k-grow"><b>{{ sp.name }}</b><small>{{ sp.summary }}</small></div>
+        {% set edit_to = 'about' if sp.kind.startswith('sec') else 'wants' %}
+        <form class="ob-inline" method="post" action="/onboarding/edit/{{ edit_to }}" hx-post="/onboarding/edit/{{ edit_to }}" hx-target="#ob-step" hx-swap="outerHTML"><button class="k-link" type="submit" data-testid="ob-edit">Edit</button></form></div>
+      {% endfor %}
+      {% endfor %}
+      <div class="ob-srch"><span class="k-badge">{{ ui.icon('x') }}</span><div class="k-grow">{% if rows.hidden %}Hidden: <b>{{ rows.hidden | join(', ') }}</b>{% else %}Nothing hidden yet{% endif %}<small>{{ 'Roles that match a deal-breaker score lower, and sectors you skip are set aside. Nothing is deleted.' if rows.hidden else 'Add deal-breakers to score such roles lower.' }}</small></div>
+        <form class="ob-inline" method="post" action="/onboarding/edit/wants" hx-post="/onboarding/edit/wants" hx-target="#ob-step" hx-swap="outerHTML"><button class="k-link" type="submit">Edit</button></form></div>
+      <div class="ob-srch"><span class="k-badge">{{ ui.icon('profile') }}</span><div class="k-grow">{% if rows.resume_names %}Resume added: <b>{{ rows.resume_names[0] }}</b>{% else %}No resume yet{% endif %}<small>{{ 'Tailored resumes use your own lines.' if rows.resume_names else 'No tailored resumes until you add one.' }}</small></div>
+        <form class="ob-inline" method="post" action="/onboarding/edit/resume" hx-post="/onboarding/edit/resume" hx-target="#ob-step" hx-swap="outerHTML"><button class="k-link" type="submit">Edit</button></form></div>
+    </div>
+    {% else %}
+    <p class="ob-dsm" data-testid="ob-no-searches"><b>There is nothing to search yet.</b></p>
+    {% endif %}
+    {% if gaps %}
+    <ul class="ob-gaps" data-testid="ob-search-gaps">{% for step, text in gaps %}<li>{{ text }} <a class="k-link" href="/onboarding?step={{ step }}">Go to that step</a></li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+  <section class="k-card">
+    {{ head('Where Kestrel will look', 'pipeline') }}
+    <div class="ob-rw"><span class="ob-ok ob-ok--good">{{ ui.icon('check') }}</span><div class="k-grow"><b>Job boards</b><span class="ob-dsm">{{ boards }}, public listings only. {{ us_note }}</span></div></div>
+    <div class="ob-rw"><span class="ob-ok{% if companies %} ob-ok--good{% endif %}">{{ ui.icon('check' if companies else 'minus') }}</span><div class="k-grow"><b>Company career pages</b><span class="ob-dsm" data-testid="ob-companies">{% if companies %}{{ companies }} {{ 'company' if companies == 1 else 'companies' }} added. You can add more on the Sources page.{% else %}None added yet. You can add companies on the Sources page.{% endif %}</span></div></div>
+    <div class="ob-rw"><span class="ob-ok">{{ ui.icon('x') }}</span><div class="k-grow"><b>LinkedIn is never searched</b><span class="ob-dsm">You can paste a posting by hand.</span></div></div>
+  </section>
+  <div class="ob-note" data-testid="ob-search-state">{{ ui.icon('shield') }}<div>
+    {% if searching_on %}<b>Searching is on.</b><span class="ob-dsm">Start searching again to queue a fresh scan.</span>
+    {% else %}<b>Nothing is searching yet.</b><span class="ob-dsm">Searching starts only when you press Start searching.</span>{% endif %}</div></div>
 {% endif %}

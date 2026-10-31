@@ -1,39 +1,87 @@
 {# Employment terms (D-UI-21): the numbers the employment hard blockers and soft signals read. #}
+{% import "ui/macros.html" as ui %}
 <form hx-post="{{ form_post or ('/profile/employment/employment') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
-      class="panel" data-testid="profile-employment" data-busy-text="Saving…">
-  <h2 style="margin-top:0">Employment terms</h2>
+      class="pf-form" data-pf-form data-testid="profile-employment" data-busy-text="Saving…">
   {% if 'employment_terms' in from_example and not saved %}
-  <p class="warnbox" style="margin:.2rem 0 .8rem" data-testid="from-example">
+  <p class="pf-note pf-note--warn" data-testid="from-example">
     <b>Not saved yet.</b> The grey text is only an example; nothing here filters a posting
     until you type your own values and save this tab.</p>
   {% endif %}
-  <div class="formgrid">
-    <label for="pe-titles">Target titles</label>
-    <span><textarea id="pe-titles" name="target_titles" rows="4" style="width:100%" placeholder="{{ (ex_terms.target_titles or []) | join('\n') or 'One per line' }}">{{ (terms.target_titles or []) | join('\n') }}</textarea>
-      <span class="muted">An exact, partial or near title match raises the score ("IT Director" counts for "Director of IT"). Not a filter.</span></span>
-    <label for="pe-anti">Excluded titles</label>
-    <span><textarea id="pe-anti" name="anti_titles" rows="3" style="width:100%" placeholder="One per line">{{ (terms.anti_titles or []) | join('\n') }}</textarea>
-      <span class="muted">A title containing any of these, exactly as typed, is set aside. Near titles do not count here, so nothing extra is set aside.</span></span>
-    <label for="pe-floor">Seniority floor</label>
-    <span><select id="pe-floor" name="seniority_floor">
-      {% for key, label in seniority_floors %}
-        <option value="{{ key }}" {% if terms.seniority_floor == key %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-      <span class="muted">Titles ranked below this are rejected; a title with no rank passes (rule seniority_floor).</span></span>
-    <label for="pe-cfloor">Comp floor (USD)</label>
-    <span><input id="pe-cfloor" type="text" inputmode="numeric" name="comp_floor_usd" value="{{ terms.comp_floor_usd or '' }}" placeholder="65000">
-      <span class="muted">A posting whose top of range is below this is rejected (rule comp_floor). Blank: no floor.</span></span>
-    <label for="pe-ctarget">Comp target (USD)</label>
-    <span><input id="pe-ctarget" type="text" inputmode="numeric" name="comp_target_usd" value="{{ terms.comp_target_usd or '' }}" placeholder="80000">
-      <span class="muted">At or above this raises the score.</span></span>
-    <label>Exclude</label>
-    <span>
-      {% for t in employment_types %}
-        <label style="margin-right:.8rem"><input type="checkbox" name="type_{{ t }}" value="on"
-          {% if t in (terms.excluded_employment_types or []) %}checked{% endif %}> {{ t.replace('_', ' ') }}</label>
-      {% endfor %}
-    </span>
+  <div class="pf-cols">
+    <div class="pf-stack">
+      {% call ui.section_card('Titles you want', 'target', sub='On every board.') %}
+        {% with chip_name = 'target_titles', chip_items = terms.target_titles, chip_id = 'pe-titles', chip_label = 'Target titles', chip_tone = '',
+                chip_placeholder = ((ex_terms.target_titles or [])[0] if not terms.target_titles and ex_terms.target_titles else 'Add a title') %}
+          {% include "partials/profile_chips.html" %}
+        {% endwith %}
+        {# The Suggest titles box opens inside this card (profile.js, data-pf-sugg-toggle). The
+           suggestions load into it on their own, so the Employment form stays one form. #}
+        <div class="pf-sugg" data-pf-sugg data-pf-nodirty>
+          <button type="button" class="k-btn k-btn--sm" data-pf-sugg-toggle aria-expanded="false" aria-controls="pf-sugg-panel"
+                  data-testid="title-suggest-toggle">{{ ui.icon('spark', 'k-ic--sm') }}Suggest titles</button>
+          <div class="pf-sugg__panel" id="pf-sugg-panel" role="region" aria-label="Suggested titles">
+            <div class="pf-sugg__clip">
+              <div id="title-suggestions" hx-get="/profile/title-suggestions" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></div>
+            </div>
+          </div>
+        </div>
+        <small class="pf-hint">An exact, partial or near title match raises the score ("IT Director" counts for "Director of IT"). Not a filter.</small>
+      {% endcall %}
+      {# D-TTL-2: the close versions, loaded on their own so the Employment form stays one form. #}
+      <div id="title-variants" hx-get="/profile/title-variants" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></div>
+      {% call ui.section_card('Titles to skip', 'alert', 'bad', sub='A role is set aside only when its title clearly matches.') %}
+        {% with chip_name = 'anti_titles', chip_items = terms.anti_titles, chip_id = 'pe-anti', chip_label = 'Excluded titles', chip_tone = 'skip', chip_placeholder = 'Add a title' %}
+          {% include "partials/profile_chips.html" %}
+        {% endwith %}
+        <small class="pf-hint">A title containing any of these, exactly as typed, is set aside. Near titles do not count here, so nothing extra is set aside.</small>
+      {% endcall %}
+      {% call ui.section_card('Kinds of work to leave out', 'scan', 'warn', sub='Checked kinds are set aside.') %}
+        <div class="pf-checks">
+          {% for t in employment_types %}
+            <label class="pf-check"><input type="checkbox" name="type_{{ t }}" value="on"
+              {% if t in (terms.excluded_employment_types or []) %}checked{% endif %}> <span>{{ t.replace('_', ' ') }}</span></label>
+          {% endfor %}
+        </div>
+      {% endcall %}
+    </div>
+    <div class="pf-stack">
+      {% call ui.section_card('Level', 'profile', sub='Titles ranked below this are set aside.') %}
+        <div class="pf-f">
+          <label id="pe-floor-l">Lowest level to keep</label>
+          <div class="k-seg pf-level" role="group" aria-labelledby="pe-floor-l" data-k-seg data-testid="level-list">
+            <input type="hidden" id="pe-floor" name="seniority_floor" value="{{ terms.seniority_floor or '' }}">
+            {% for key, label in seniority_floors %}<button type="button" value="{{ key }}" class="{% if (terms.seniority_floor or '') == key %}is-on{% endif %}" aria-pressed="{{ 'true' if (terms.seniority_floor or '') == key else 'false' }}">{{ label }}</button>{% endfor %}
+          </div>
+          <small class="pf-hint">A title with no clear rank passes.</small>
+        </div>
+      {% endcall %}
+      {% call ui.section_card('Pay', 'offers', 'good', sub='Per year, in US dollars. Currency follows Region in Settings.') %}
+        <div class="pf-grid pf-grid--2">
+          <div class="pf-f">
+            <label for="pe-cfloor">Floor</label>
+            <input class="k-input" id="pe-cfloor" type="text" inputmode="numeric" name="comp_floor_usd" value="{{ terms.comp_floor_usd or '' }}" placeholder="65000">
+            <small class="pf-hint">Blank: no floor.</small>
+          </div>
+          <div class="pf-f">
+            <label for="pe-ctarget">Target</label>
+            <input class="k-input" id="pe-ctarget" type="text" inputmode="numeric" name="comp_target_usd" value="{{ terms.comp_target_usd or '' }}" placeholder="80000">
+            <small class="pf-hint">Raises the score.</small>
+          </div>
+        </div>
+        <div class="pf-payviz" data-pf-payviz aria-hidden="true">
+          <div class="pf-payviz__bar"></div>
+          <div class="pf-payviz__tk" data-pz="floor"></div><div class="pf-payviz__lbl" data-pz="floor">Floor</div>
+          <div class="pf-payviz__tk" data-pz="target"></div><div class="pf-payviz__lbl" data-pz="target">Target</div>
+        </div>
+        <p class="pf-hint">A posting whose top of range is below your floor is set aside.</p>
+        {% with margin_name = 'comp_floor_margin_pct', margin_value = comp_margin, margin_what = 'pay floor', margin_id = 'pe-margin' %}
+          {% include "partials/profile_margin.html" %}
+        {% endwith %}
+      {% endcall %}
+      {% call ui.section_card('Work mode', 'laptop', sub='Which ways of working you would take. Scoring reads it; it is never a filter.') %}
+        {% with wm_modes = terms.work_modes %}{% include "partials/profile_work_mode.html" %}{% endwith %}
+      {% endcall %}
+    </div>
   </div>
   {% include "partials/profile_save_row.html" %}
 </form>

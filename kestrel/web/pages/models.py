@@ -32,10 +32,12 @@ from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
+from kestrel.web.pages import models_ui
 
 log = structlog.get_logger()
 
 router = APIRouter()
+router.include_router(models_ui.router)
 
 _TRACKS = ("employment", "consulting")
 _SINCE_CHOICES = (7, 30, 90)
@@ -161,6 +163,7 @@ async def _load(track: str | None, since_days: int | None) -> dict:
         "hardware": _active_profile(),
         "provider": _provider(settings),
         "n_evaluations": sum(r.n for r in rows),
+        "settings": settings,
         **overrides,
     }
 
@@ -172,6 +175,7 @@ async def models(request: Request):
         track = ""
     since_days = _parse_since(request.query_params.get("since"))
     data = await _load(track or None, since_days)
+    data.update(await models_ui.page_ctx(data["rows"], data.pop("settings"), track))
     ctx = {
         "title": "Models", "query": dict(request.query_params),
         "track": track, "since": since_days, "since_choices": _SINCE_CHOICES,

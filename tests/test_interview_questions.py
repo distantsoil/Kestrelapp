@@ -16,6 +16,7 @@ from kestrel.db.models import (
     Evaluation,
     InterviewQuestionSet,
     Opportunity,
+    PrepPack,
     Pursuit,
     Quarantine,
     Story,
@@ -83,6 +84,19 @@ async def _seed(sm, *, track="employment", status="shortlisted", stories=0) -> t
 async def _count(sm, model, *where) -> int:
     async with sm() as s:
         return (await s.execute(select(func.count()).select_from(model).where(*where))).scalar_one()
+
+
+async def _confirm_online(sm, settings) -> None:
+    """Stamp every queued question task as the ask-first panel does for an online Tier 2."""
+    from kestrel.services.online_consent import destination_id
+
+    async with sm() as s:
+        for task in (await s.execute(select(Task).where(Task.type == qt.TASK_TYPE))).scalars():
+            task.payload = {
+                **task.payload, "consented_model": settings.llm.tiers["tier2"].model,
+                "consented_destination": destination_id(settings, "tier2"),
+            }
+        await s.commit()
 
 
 async def _apply(sm, pursuit_id: int, to: str | None = None) -> None:
@@ -327,6 +341,7 @@ async def test_a_hosted_tier_goes_through_the_hosted_plan_and_redacts_the_employ
         await s.commit()
     await _apply(sm, pid)
     settings = _hosted_settings("tier2", confidential=True)
+    await _confirm_online(sm, settings)
     client = _Client(settings=settings)
     await qt.drain_interview_questions(sm, client, settings)
     sent = "\n".join(m["content"] for m in client.calls[0]["messages"])
@@ -340,6 +355,7 @@ async def test_a_hosted_tier_with_nothing_to_redact_is_refused_not_sent(sm):
     _opp, pid = await _seed(sm)
     await _apply(sm, pid)
     settings = _hosted_settings("tier2", confidential=True)
+    await _confirm_online(sm, settings)
     client = _Client(settings=settings)
     await qt.drain_interview_questions(sm, client, settings)
     assert client.calls == []
@@ -587,8 +603,17 @@ def test_the_prep_page_leads_with_the_likely_questions_and_the_same_control(web)
     assert 'data-testid="question-list"' in html
     assert "Walk me through a platform you rescued." in html
     assert "Write a new list" in html
-    # near the top: before the generated pack and the notes panel
-    assert html.index('id="questions-card"') < html.index('id="prep-pack"')
+    # with no pack built yet the list shows in the strip; once built it is the likely-ask card,
+    # and that card sits above the pack sections (gaps, role, questions to ask)
+    async def add_pack():
+        async with get_sessionmaker()() as s:
+            s.add(PrepPack(opportunity_id=opp, content_md="# Prep\n\nBe ready.", stories={},
+                           questions_to_ask=[], panel=[]))
+            await s.commit()
+
+    asyncio.run(add_pack())
+    built = web.get(f"/prep/{opp}").text
+    assert built.index('data-testid="pp-qcard"') < built.index('data-testid="pp-gaps"')
     # the mock interview page does not list the set; it still draws from it internally
     assert 'data-testid="question-list"' not in web.get(f"/mock/{opp}").text
     forget_engine()

@@ -198,6 +198,13 @@ def _employer_mocks(robots_txt: str = "User-agent: *\nDisallow:\n", page: str = 
 
 @respx.mock
 async def test_a_run_discovers_known_boards_and_reads_the_unknown_employer_page(sm):
+    from kestrel import paths
+
+    paths.config_dir().mkdir(parents=True, exist_ok=True)
+    paths.config_dir().joinpath("profile.yml").write_text(
+        "employment:\n  employment_terms:\n    target_titles: [Platform Engineer]\n",
+        encoding="utf-8",
+    )
     respx.post(API).mock(return_value=Response(200, json=_page(1, False)))
     page = _employer_mocks()
     src = await _source(sm)

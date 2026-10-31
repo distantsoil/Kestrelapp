@@ -1,18 +1,24 @@
+{# Onboarding (D-UI-30, D-UI-116, D-UI-155, SPEC-INTERFACES 2.1 /onboarding). Full page with no
+   sidebar: the six-step wizard of the locked mockup, built on the shared design system. The
+   legacy sheet is not loaded; shell.css keeps the shared chrome working and onboarding.css hides
+   the sidebar and top bar. Every save returns the whole #ob-step, so nothing is ever stale. #}
 {% extends "base.html" %}
 {% block title %}Set up Kestrel · Kestrel{% endblock %}
 {% block pagetitle %}Set up Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{# Profile's sheet and script give the title chips and the near-floor control their look. #}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/pages/profile.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/pages/onboarding.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): onboarding.js defines the page "onboarding", which mounts
+   profile.js's form behavior (KProfile.mount) first, so profile.js loads first. #}
+{% block page_name %}onboarding{% endblock %}
+{% block page_scripts %}
+<script src="{{ static_url('js/profile.js') }}" defer></script>
+<script src="{{ static_url('js/onboarding.js') }}" defer></script>
+{% endblock %}
 {% block content %}
 {% with gap = linux_gap %}{% include "partials/linux_webkit.html" %}{% endwith %}
 {% include "partials/onboarding_step.html" %}
-<script>
-  // A resume accepted inside the wizard (the Documents import's own accept route) reloads the
-  // whole step, so the progress indicator and the step's status move with it.
-  document.addEventListener('htmx:afterRequest', function (evt) {
-    var cfg = evt.detail && evt.detail.requestConfig;
-    if (!cfg || !evt.detail.successful) return;
-    if ((cfg.path || '').indexOf('/api/documents/import/accept') === 0 && document.getElementById('ob-step')) {
-      htmx.trigger(document.body, 'ob-refresh');
-    }
-  });
-</script>
 {% endblock %}

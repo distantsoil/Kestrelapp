@@ -1,0 +1,90 @@
+{# Your contacts (D-UI-115, D-UI-131): import your own LinkedIn connections file. Kestrel never
+   signs in to LinkedIn and never looks anyone up; you download the file yourself. The email
+   column is never read. Steps: Choose file, Review, Done. Nothing is stored until Apply. #}
+{% import "partials/st_macros.html" as st with context %}
+{% set LINE = "Because you imported these connections from LinkedIn, their details may not be public. Kestrel keeps them on this computer only and never shares them." %}
+<section class="k-card st-card" id="st-ct" data-testid="st-ct" data-step="{{ ct_step }}">
+  {{ st.head('Your contacts', 'users') }}
+  {% if ct_step in ('review', 'done') %}
+  <ol class="k-steps st-steps" style="--k-steps: 3">
+    {% for label in ['Choose file', 'Review', 'Done'] %}{% set n = loop.index0 %}{% set at = 1 if ct_step == 'review' else 2 %}
+    <li class="k-step{% if ct_step == 'done' or n < at %} is-done{% elif n == at %} is-now{% endif %}"{% if n == at and ct_step != 'done' %} aria-current="step"{% endif %}><span class="k-step__n">{% if ct_step == 'done' or n < at %}{{ st.sic('check', 'k-ic--sm') }}{% else %}{{ loop.index }}{% endif %}</span><span class="k-step__label">{{ label }}</span></li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% if ct_error %}<p class="st-note st-note--bad" role="alert" data-testid="st-ct-error">{{ ct_error }}</p>{% endif %}
+  {% if ct_notice %}<p class="st-note st-note--good" role="status" data-testid="st-ct-notice">{{ ct_notice }}</p>{% endif %}
+
+  {% if ct_step == 'review' %}
+  {% set pv = ct_preview %}
+  <form class="st-imprev" hx-post="/settings/data/contacts/apply" hx-target="#st-ct" hx-swap="outerHTML">
+    <input type="hidden" name="payload" value="{{ ct_payload }}"><input type="hidden" name="skipped" value="{{ ct_skipped }}"><input type="hidden" name="file_name" value="{{ ct_file }}">
+    <div class="st-chips" data-testid="st-ct-chips">
+      <span class="k-pill k-pill--info">{{ pv.row_count }} people</span>
+      {% if not pv.first_import %}<span class="k-pill k-pill--good">{{ pv.new|length }} new</span><span class="k-pill k-pill--warn">{{ pv.changed|length }} changed job{{ '' if pv.changed|length == 1 else 's' }}</span><span class="k-pill">{{ pv.missing|length }} not in this file</span>{% endif %}
+    </div>
+    <div class="st-pv st-pv--lock">{{ st.sic('lock') }}<span>Email addresses in the file are not kept.</span></div>
+    {% if pv.first_import %}<p class="st-sub">First import, so there is nothing to compare yet. A newer file later shows who changed jobs.</p>
+    {% elif ct_changed %}
+    <div class="st-h">Changed jobs</div><p class="st-sub">Kestrel compares this file with your last one.</p>
+    <div class="k-table-wrap"><table class="k-table st-nw" data-testid="st-ct-changed"><thead><tr><th>Name</th><th>Before</th><th>Now</th><th>Kestrel will</th></tr></thead><tbody>
+      {% for c in ct_changed %}<tr><td><b>{{ c.name }}</b></td><td>{{ c.old_company or '' }}<small>{{ c.old_position or '' }}</small></td><td>{{ c.new_company or '' }}<small>{{ c.new_position or '' }}</small></td><td>Remember {{ c.name.split(' ')[0] }} used to work at {{ c.old_company or 'an earlier company' }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if ct_changed_more %}<p class="st-dsm">And {{ ct_changed_more }} more.</p>{% endif %}
+    {% endif %}
+    <div class="st-h">Company matches</div><p class="st-sub">Names in your file, matched to companies in Kestrel.</p>
+    {% if ct_sure or ct_possible %}
+    <div class="k-table-wrap"><table class="k-table st-nw" data-testid="st-ct-matches"><thead><tr><th>In your file</th><th>In Kestrel</th><th>Match</th></tr></thead><tbody>
+      {% for c in ct_sure %}<tr><td><b>{{ c.company_name }}</b></td><td>{{ c.org_name }}</td><td><span class="k-pill k-pill--good">Sure</span></td></tr>{% endfor %}
+      {% for p in ct_possible %}<tr><td><b>{{ p.c.company_name }}</b></td>
+        <td><input type="hidden" name="match_company_{{ p.i }}" value="{{ p.c.company_name }}"><label class="st-chg"><span>Change</span><span class="k-select"><select name="match_{{ p.i }}" aria-label="Change match for {{ p.c.company_name }}" data-st-match="{{ p.i }}">
+          <option value="{{ p.c.org_id }}">{{ p.c.org_name }}</option>
+          {% for o in p.similar %}<option value="{{ o.id }}">{{ o.name }}</option>{% endfor %}
+          <option value="none">Not a match</option></select></span></label></td>
+        <td><span class="k-pill k-pill--warn" id="st-ctm-{{ p.i }}">Possible match</span></td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p class="st-dsm">None of the companies in your file are in Kestrel yet. People are kept for later.</p>{% endif %}
+    <p class="st-other">{{ st.sic('users') }}{{ ct_other }} {{ 'person' if ct_other == 1 else 'people' }} at other companies, kept for later. {{ ct_no_company }} list{{ 's' if ct_no_company == 1 else '' }} no company.</p>
+    {% if not pv.first_import and pv.missing %}
+    <div class="st-miss" role="group" aria-label="{{ pv.missing|length }} people not in this file">
+      <div class="k-grow"><b>{{ pv.missing|length }} {{ 'person is' if pv.missing|length == 1 else 'people are' }} not in this file</b>
+        <span class="st-dsm">{% for m in ct_missing %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% if ct_missing_more %} and {{ ct_missing_more }} more{% endif %}.</span></div>
+      <div class="k-seg" data-k-seg><input type="hidden" name="keep_missing" value="1">
+        <button type="button" value="1" class="is-on" aria-pressed="true">Keep them</button>
+        <button type="button" value="0" aria-pressed="false">Remove them</button></div>
+    </div>
+    {% endif %}
+    <div class="st-foot"><button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/contacts" hx-target="#st-ct" hx-swap="outerHTML">Cancel</button><span class="st-dsm">Nothing is added until you press Apply.</span><span class="st-sp"></span>
+      <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-ct-apply">Apply changes</button></div>
+  </form>
+
+  {% elif ct_n %}
+  {% if ct_step == 'done' %}<div class="st-pv st-pv--ok" data-testid="st-ct-done">{{ st.sic('check') }}<span>Done. Find people you know on each role in your Pipeline.</span></div>{% endif %}
+  <div class="st-sum"><b data-testid="st-ct-count">{{ ct_n }} contact{{ '' if ct_n == 1 else 's' }}, imported {{ ct_when }}</b><span class="st-dsm">&middot; {{ ct_pipe }} at companies in your Pipeline</span></div>
+  <div class="st-hact">
+    <button type="button" class="k-btn k-btn--sm" data-st-pick-contacts data-testid="st-ct-newer">{{ st.sic('up', 'k-ic--sm') }}Import a newer file</button>
+    <button type="button" class="k-btn k-btn--sm k-btn--danger" data-k-modal="#st-ctremove-dialog" data-testid="st-ct-remove">{{ st.sic('trash', 'k-ic--sm') }}Remove all contacts</button>
+  </div>
+  <p class="st-dsm st-lockline" data-testid="st-ct-line">{{ LINE }}</p>
+  {{ st.det('Stored only on this computer.\nKept: name, company, title, connected date.\nNot kept: email addresses.') }}
+
+  {% else %}
+  <div class="st-row st-row--first"><div class="st-row__t st-two"><span>See people you know at companies in your Pipeline.</span><span class="st-dsm">You download your connections from LinkedIn; Kestrel never logs in there.</span></div></div>
+  <div class="st-hact">
+    <button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/contacts/how" hx-target="#st-dialog" hx-swap="innerHTML" data-testid="st-ct-how">How to get the file</button>
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" data-st-pick-contacts data-testid="st-ct-choose">Choose file</button>
+    <button type="button" class="k-link" hx-post="/settings/data/contacts/read" hx-vals='{"sample": "1"}' hx-target="#st-ct" hx-swap="outerHTML" data-testid="st-ct-sample">Use a sample file</button>
+  </div>
+  {% endif %}
+
+  {% if ct_step != 'review' %}
+  <form id="st-ct-pick" hx-post="/settings/data/contacts/read" hx-target="#st-ct" hx-swap="outerHTML" hx-encoding="multipart/form-data" hidden>
+    <input type="file" name="file" accept=".csv,.txt" data-st-autosubmit data-testid="st-ct-file"></form>
+  {% endif %}
+  <div class="k-modal" id="st-ctremove-dialog" role="dialog" aria-modal="true" aria-labelledby="st-ctremove-dialog-t" aria-hidden="true">
+    <div class="k-modal__head"><h2 id="st-ctremove-dialog-t">Remove all contacts?</h2></div>
+    <div class="k-modal__body"><p class="st-dsm">This deletes the {{ ct_n }} {{ 'contact' if ct_n == 1 else 'contacts' }} Kestrel keeps on this computer. Your roles and applications are not touched. If you wrote notes or drafts about someone, they stay and Kestrel tells you how many. You can import your file again any time.</p></div>
+    <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close>Cancel</button>
+      <button type="button" class="k-btn k-btn--danger" data-k-close hx-post="/settings/data/contacts/remove" hx-target="#st-ct" hx-swap="outerHTML" data-testid="st-ct-remove-go">Remove all contacts</button></div>
+  </div>
+</section>

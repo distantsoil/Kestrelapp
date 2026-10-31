@@ -1,58 +1,61 @@
-{# Models page > Hosted models per tier (D-UI-42). Closed: each hosted tier's model with "Default"
-   or "(Override)" and Reset to default. Open (after "Override models"): one picker per tier from
-   the provider's list, a Free only filter, an inline Save box per picked row, and Save all.
-   Unpicked rows are not sent as changes. Theme variables only. #}
+{# Models > Hosted models per step (D-UI-42), the Manage overrides drawer. Closed: each hosted step's
+   model with "Default" or "(Override)" and Reset to default. Open (after "Override models"): one
+   picker per step from the provider's list, a Free only filter, an inline Save box per picked row,
+   and Save all. Unpicked rows are not sent as changes. Only shared k- classes and theme variables,
+   because Settings > Models loads this partial too. #}
 {% from "partials/model_picker.html" import model_select with context %}
-<div class="panel" id="hosted-overrides" data-testid="hosted-overrides">
-  <h2>Hosted models per tier</h2>
-  {% if ov_message %}<div class="{{ 'okbox' if ov_ok else 'warnbox' }}" role="status" data-testid="override-message" style="padding:.5rem .8rem; margin-bottom:.6rem">{{ ov_message }}</div>{% endif %}
+<div id="hosted-overrides" data-testid="hosted-overrides">
+  <h3>Hosted models per step</h3>
+  {% if ov_message %}<div class="k-pill {{ 'k-pill--good' if ov_ok else 'k-pill--warn' }}" role="status" data-testid="override-message" style="white-space: normal; display: block; margin: 6px 0">{{ ov_message }}</div>{% endif %}
   {% if not ov_backend %}
-    <p class="muted">No hosted provider is connected, so there is nothing to override yet. Connect one under <a href="/settings#hosted">Settings &gt; Hosted (BYOK)</a>; it picks a default model per tier, which you can then override here.</p>
+    <p class="k-muted">No hosted provider is connected, so there is nothing to override yet. Connect one under <a class="k-link" href="/models">Online model</a> or <a class="k-link" href="/settings#hosted">Settings &gt; Hosted (BYOK)</a>; it picks a default model per step, which you can then override here.</p>
   {% else %}
-  <p class="muted">Connect picked a default model for each tier from {{ ov_label }}. Override any tier with a model of your own; a tier you leave alone keeps its default, and connecting again keeps every override. Deeper reads stay opt-in per opportunity whatever model it uses.</p>
+  <p class="k-muted">Connect picked a default model for each step from {{ ov_label }}. Override any step with a model of your own; a step you leave alone keeps its default, and connecting again keeps every override. Deeper reads stay opt-in per opportunity whatever model it uses.</p>
   {% if ov_error %}
-    <div class="warnbox" data-testid="override-error" style="margin:.4rem 0">{{ ov_error }}
-      <button class="btn small" type="button" hx-get="/models/hosted/overrides?open=1&refresh=1" hx-target="#hosted-overrides" hx-swap="outerHTML" data-busy-text="Fetching the model list again.">Try again</button></div>
+    <div class="k-pill k-pill--warn" data-testid="override-error" style="white-space: normal; display: block; margin: 6px 0">{{ ov_error }}
+      <button class="k-btn k-btn--sm" type="button" hx-get="/models/hosted/overrides?open=1&refresh=1" hx-target="#hosted-overrides" hx-swap="outerHTML" data-busy-text="Fetching the model list again.">Try again</button></div>
   {% endif %}
   {% if ov_open and ov_models %}
   <form hx-post="/models/hosted/overrides" hx-target="#hosted-overrides" hx-swap="outerHTML"
         hx-disabled-elt="find button[type=submit]" data-busy-text="Saving your overrides."
         x-data="{ freeOnly: {{ 'true' if ov_free_default else 'false' }} }" autocomplete="off">
     <label class="free-toggle"><input type="checkbox" x-model="freeOnly" data-testid="free-only" {% if ov_free_default %}checked{% endif %}> Free only</label>
-    <span class="muted">{{ ov_n_free }} free of {{ ov_models|length }} models. Each says how it returns JSON: structured (a strict schema), JSON mode, or no JSON guarantee; Kestrel checks every reply either way and keeps any it cannot use for review. Clear the box to show paid models too, for example a paid model for deeper reads with free quick screen and full review.</span>
-    <table class="data override-table" style="margin-top:.5rem">
-      <thead><tr><th>Tier</th><th>Now</th><th>Pick a model</th><th></th></tr></thead>
+    <span class="k-muted">{{ ov_n_free }} free of {{ ov_models|length }} models. Each says how it returns JSON: structured (a strict schema), JSON mode, or no JSON guarantee; Kestrel checks every reply either way and keeps any it cannot use for review. Clear the box to show paid models too, for example a paid model for deeper reads with free quick screen and full review.</span>
+    <div class="k-table-wrap"><table class="k-table override-table">
+      <thead><tr><th>Step</th><th>Now</th><th>Pick a model</th><th></th></tr></thead>
       <tbody>
       {% for r in ov_rows %}
         <tr x-data="{ picked: '' }" data-testid="override-row-{{ r.tier }}">
-          <td class="mono">{{ r.tier }}</td>
-          <td>{% if r.assigned %}<span class="mono">{{ r.model }}</span>{% else %}<span class="muted">stays local</span>{% endif %}
-            <span class="pill{{ ' keep' if r.override else ' grey' }}" data-testid="label-{{ r.tier }}">{{ r.label }}</span></td>
+          <td>{{ r.tier }}</td>
+          <td>{% if r.assigned %}<span>{{ r.model }}</span>{% else %}<span class="k-muted">stays local</span>{% endif %}
+            <span class="k-pill{{ ' k-pill--info' if r.override }}" data-testid="label-{{ r.tier }}">{{ r.label }}</span></td>
           <td>{{ model_select('model.' ~ r.tier, ov_models, ov_reasons[r.tier], xmodel='picked', placeholder='Keep ' ~ ('current' if r.assigned else 'local'), testid='pick-' ~ r.tier) }}
-            <div class="muted" style="font-size:var(--fs-xs)">Needs at least {{ r.budget|comma }} tokens of context.</div></td>
+            <div class="k-muted">Needs at least {{ r.budget|comma }} tokens of context.</div></td>
           <td><label class="save-pick" x-show="picked" x-cloak><input type="checkbox" name="save.{{ r.tier }}" value="on" checked> Save</label></td>
         </tr>
       {% endfor %}
       </tbody>
-    </table>
-    <button class="btn primary" type="submit" style="margin-top:.6rem" data-testid="save-all">Save all</button>
-    <button class="btn ghost" type="button" hx-get="/models/hosted/overrides" hx-target="#hosted-overrides" hx-swap="outerHTML" style="margin-top:.6rem">Cancel</button>
+    </table></div>
+    <div class="k-row">
+      <button class="k-btn k-btn--primary" type="submit" data-testid="save-all">Save all</button>
+      <button class="k-btn k-btn--quiet" type="button" hx-get="/models/hosted/overrides" hx-target="#hosted-overrides" hx-swap="outerHTML">Cancel</button>
+    </div>
   </form>
   {% else %}
-  <table class="data override-table">
-    <thead><tr><th>Tier</th><th>Model on a hosted run</th><th>Choice</th><th></th></tr></thead>
+  <div class="k-table-wrap"><table class="k-table override-table">
+    <thead><tr><th>Step</th><th>Model on a hosted run</th><th>Choice</th><th></th></tr></thead>
     <tbody>
     {% for r in ov_rows %}
       <tr data-testid="override-row-{{ r.tier }}">
-        <td class="mono">{{ r.tier }}</td>
-        <td>{% if r.assigned %}<span class="mono">{{ r.model }}</span>{% else %}<span class="muted">stays local</span>{% endif %}</td>
-        <td><span class="pill{{ ' keep' if r.override else ' grey' }}" data-testid="label-{{ r.tier }}">{{ r.label }}</span>{% if r.override and r.default_model %} <span class="muted">default {{ r.default_model }}</span>{% endif %}</td>
-        <td>{% if r.override %}<button class="btn small ghost" type="button" hx-post="/models/hosted/reset" hx-vals='{"tier": "{{ r.tier }}"}' hx-target="#hosted-overrides" hx-swap="outerHTML" data-testid="reset-{{ r.tier }}" data-busy-text="Restoring the default.">Reset to default</button>{% endif %}</td>
+        <td>{{ r.tier }}</td>
+        <td>{% if r.assigned %}<span>{{ r.model }}</span>{% else %}<span class="k-muted">stays local</span>{% endif %}</td>
+        <td><span class="k-pill{{ ' k-pill--info' if r.override }}" data-testid="label-{{ r.tier }}">{{ r.label }}</span>{% if r.override and r.default_model %} <span class="k-muted">default {{ r.default_model }}</span>{% endif %}</td>
+        <td>{% if r.override %}<button class="k-btn k-btn--sm k-btn--quiet" type="button" hx-post="/models/hosted/reset" hx-vals='{"tier": "{{ r.tier }}"}' hx-target="#hosted-overrides" hx-swap="outerHTML" data-testid="reset-{{ r.tier }}" data-busy-text="Restoring the default.">Reset to default</button>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
-  </table>
-  <button class="btn primary" type="button" style="margin-top:.6rem" data-testid="override-open"
+  </table></div>
+  <button class="k-btn k-btn--primary" type="button" data-testid="override-open"
           hx-get="/models/hosted/overrides?open=1" hx-target="#hosted-overrides" hx-swap="outerHTML"
           hx-disabled-elt="this" data-busy-text="Fetching the model list from {{ ov_label }}.">Override models</button>
   {% endif %}

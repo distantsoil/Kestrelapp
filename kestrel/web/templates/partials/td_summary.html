@@ -1,0 +1,79 @@
+{# The role summary that slides in on Review (D-UI-92, D-UI-156, the mockup's drawer). It is the
+   Pipeline panel's own read of the role (kestrel.web.pages.pipeline.panel_context), so Today and
+   Pipeline never disagree. Header: what it is, the title, the company and place, Close. Body: the
+   fit ring with the five dimension bars, pay and level, why it fits, gaps, lead with, the model's
+   summary (labeled as written by the AI) and the posting facts. Footer: Shortlist (Add to leads),
+   Tailor resume (Research company for a lead) and Open full role. Review alone never decides.
+   Everything is loaded into #td-drawer; the prose is the redacted copy from panel_context. #}
+{% import "ui/macros.html" as ui %}
+{% macro head(eyebrow, title, sub) -%}
+<div class="k-slideover__head">
+  <div class="k-grow"><small class="td-eyebrow">{{ eyebrow }}</small><h2 id="td-drawer-t">{{ title }}</h2><div class="td-o">{{ sub }}</div></div>
+  <button type="button" class="k-iconbtn" data-k-close aria-label="Close" data-testid="td-drawer-close">{{ ui.icon('x') }}</button>
+</div>
+{%- endmacro %}
+{% if kind == 'missing' %}
+  {{ head('Role summary', 'That role is gone', 'It may have been deleted.') }}
+  <div class="k-slideover__body"><p class="td-quiet">Go back to the list.</p></div>
+{% else %}
+{% set sub = org_name ~ (' · ' ~ place if place else '') %}
+<div class="td-drawer__in" data-kind="{{ kind }}" data-id="{{ opp.id }}">
+{% if kind == 'role' %}
+  {{ head(({'contract_posting': 'Contract posting', 'rfp': 'RFP', 'referral': 'Referral'}.get(opp.opp_type, 'Opportunity') if consulting else 'Role summary'), title, sub) }}
+  <div class="k-slideover__body">
+    <div class="td-ringrow">
+      <div class="td-ring td-ring--{{ tone }}" style="--p: {{ ring_pct }}" data-p="{{ ring_pct }}" role="img" aria-label="{{ '%.1f'|format(score or 0) }} out of 5" data-testid="td-ring">
+        <div><div><b>{{ '%.1f'|format(score or 0) }}</b><br><small>out of 5</small></div></div></div>
+      <div class="td-dims">
+        <div><span class="k-pill {{ 'k-pill--good' if tone == 'good' else 'k-pill--warn' }}" data-fit="{{ fit.word }}">{{ ui.icon('check' if tone == 'good' else 'alert') }}{{ fit.word|capitalize }}</span></div>
+        {% for d in dims %}<div class="td-dim"><span>{{ d.name }}</span><i><u style="--w: {{ d.pct }}%" data-w="{{ d.pct }}"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
+      </div>
+    </div>
+    {% if watch %}<div class="td-dsec td-dsec--warn" data-testid="td-watch"><h4>Worth checking</h4>{% for line in watch %}<div class="td-dsum">{{ line }}</div>{% endfor %}</div>{% endif %}
+    <div class="td-dgrid">
+      <div class="td-dbox"><div class="td-dl">{{ pay.label }}</div>
+        <div class="td-pay">{{ pay.text }}{% if pay.estimate %}<span class="td-est" tabindex="0">est.<span class="td-tip" role="tooltip">Estimated. This posting lists no pay. The range comes from similar roles Kestrel has seen and may be wrong. How many roles it rests on is not recorded.</span></span>{% endif %}</div>
+        {% if pay.pos is not none %}<div class="td-tgt"><i style="--x: {{ pay.pos }}%"></i></div>{% endif %}
+        <div class="td-dsm">{{ pay.note }}</div></div>
+      {% if level %}<div class="td-dbox"><div class="td-dl">{{ level.label }}</div><div class="td-strong">{{ level.text }}</div><div class="td-dsm">{{ level.note }}</div></div>{% endif %}
+    </div>
+    {% if reasons %}<div class="td-dsec"><h4>Why it fits</h4>
+      {% for r in reasons %}<div class="td-reason"><span class="td-m td-m--{{ r.tone }}">{{ r.mark }}</span><div>{{ r.text }}<span class="td-lvl">{{ r.word }}</span></div></div>{% endfor %}</div>{% endif %}
+    {% if gaps %}<div class="td-dsec"><h4>Gaps to address</h4>
+      {% for g in gaps %}<div class="td-reason"><span class="td-m td-m--a">!</span><div>{{ g.text }}{% if g.fatal %}<span class="td-lvl">Could rule it out</span>{% endif %}{% if g.how %}<div class="td-dsm">{{ g.how }}</div>{% endif %}</div></div>{% endfor %}</div>{% endif %}
+    {% if lead %}<div class="td-dsec td-dsec--lead"><h4>{{ lead.title }}</h4><div class="td-dsum">{{ lead.text }}</div></div>{% endif %}
+    {% if summary %}<div class="td-dsec"><h4>{{ 'The situation' if consulting else 'What the role is' }}</h4><div class="td-dsum" data-testid="td-summary">{{ summary }}<small>Written by Kestrel's AI from the posting. {{ ai_disclaimer }}</small></div></div>{% endif %}
+    <div class="td-facts"><span>{{ ui.icon('clock', 'k-ic--sm') }}{{ posted }}</span><span><span class="k-dot{% if liveness.tone == 'good' %} k-dot--live{% elif liveness.tone == 'bad' %} k-dot--bad{% endif %}"></span>{{ liveness.text }}</span></div>
+  </div>
+{% elif kind == 'pending' %}
+  {% set failed = fit.group == 'failed' %}
+  {{ head('Scoring failed' if failed else 'Being scored', title, sub) }}
+  <div class="k-slideover__body">
+    <div class="td-pending"><span class="k-dot {{ 'k-dot--bad' if failed else 'k-dot--live' }}"></span>
+      {% if failed %}{{ failed_reason }} Kestrel kept the raw answer for review.{% else %}Full review in progress. Reasons and details appear when it finishes.{% endif %}</div>
+    {% if failed %}<a class="k-btn td-fit" href="/quarantine">Open Needs another try</a>{% endif %}
+  </div>
+{% elif kind == 'nf' %}
+  {{ head('Not a fit', title, sub) }}
+  <div class="k-slideover__body">
+    <div class="td-dsec"><h4>{% if rule_why %}{{ rule_why.text }} {{ rule_why.verb }} {{ rule_why.place }}.{% else %}Set aside by your rules.{% endif %}</h4>
+      <div class="td-dsum">Your rules set this aside before any AI ran, so Kestrel has not scored it.</div></div>
+    {% if excerpt %}<div class="td-dsec"><h4>From the posting</h4><div class="td-dsum">{{ excerpt }}</div></div>{% endif %}
+  </div>
+{% else %}
+  {{ head('Signal', title, sub) }}
+  <div class="k-slideover__body"><div class="td-dsec"><h4>{{ sig.word }}</h4>
+    <div class="td-dsum">{{ sig.happened }}</div></div></div>
+{% endif %}
+  <div class="k-slideover__foot td-foot" data-testid="td-drawer-foot">
+    {% if kind == 'role' and not hidden %}
+      {% if on_list %}<button type="button" class="k-btn k-btn--done" disabled data-testid="td-drawer-onlist">{{ ui.icon('check') }}{{ 'In my leads' if consulting else 'On my shortlist' }}</button>
+      {% else %}<button type="button" class="k-btn" data-testid="td-drawer-shortlist" data-td-drawer-sl="{{ opp.id }}"
+              hx-post="/opportunities/{{ opp.id }}/decide/shortlist" hx-swap="none">{{ 'Add to leads' if consulting else 'Shortlist' }}</button>{% endif %}
+      {% if consulting %}<a class="k-btn" href="{{ open_href }}" data-testid="td-drawer-research">Research company</a>
+      {% else %}<a class="k-btn" href="/opportunities/{{ opp.id }}/tailor" data-testid="td-drawer-tailor">Tailor resume</a>{% endif %}
+    {% endif %}
+    <a class="k-btn k-btn--primary" href="{{ open_href }}" data-testid="td-drawer-open">Open full role &rarr;</a>
+  </div>
+</div>
+{% endif %}

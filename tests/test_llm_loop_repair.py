@@ -164,7 +164,7 @@ def test_hosted_loop_repair_never_caps_below_the_prompts_own_budget(monkeypatch)
     from kestrel.llm.prompts import load_prompt
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    spec = load_prompt("evaluate/v1")
+    spec = load_prompt("evaluate/v2")
     assert spec.max_tokens == 4000 and spec.repair_max_tokens == 2500
     route = respx.post(OR_URL).mock(side_effect=[
         _reply(_LEGIT_LOOP, finish="length", used=8000), _reply(json.dumps(_LEGIT_VALID))])
@@ -184,9 +184,9 @@ def test_loop_site_reports_the_dotted_field_path():
 
 
 def test_evaluation_prompts_declare_a_schema_sized_repair_budget():
-    assert load_prompt("evaluate/v1").repair_max_tokens == 2500
-    assert load_prompt("evaluate_consulting/v1").repair_max_tokens == 3000
-    for version in ("triage/v1", "triage_consulting/v1"):
+    assert load_prompt("evaluate/v2").repair_max_tokens == 2500
+    assert load_prompt("evaluate_consulting/v2").repair_max_tokens == 3000
+    for version in ("triage/v2", "triage_consulting/v2"):
         assert load_prompt(version).repair_max_tokens == 600
 
 
@@ -195,7 +195,7 @@ def test_run_prompt_threads_the_repair_budget(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     route = respx.post(OR_URL).mock(side_effect=[
         _reply(_P1_LOOP, finish="length", used=1200), _reply(json.dumps(_VALID_P1))])
-    spec = load_prompt("triage/v1")
+    spec = load_prompt("triage/v2")
     res = asyncio.run(run_prompt(LLMClient(_hosted()), spec, _MSGS))
     assert res.ok and _sent(route, 1)["max_tokens"] == 600
     assert "List each value at most once" in _sent(route, 1)["messages"][-1]["content"]

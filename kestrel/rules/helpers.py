@@ -20,6 +20,8 @@ from typing import Any
 import yaml
 from simpleeval import EvalWithCompoundTypes
 
+from kestrel.rules.margin import comp_max_near_floor, margin_floor
+
 AGE_NONE_SENTINEL = 999999  # SPEC.md 6.1 helper table: age_days(None)
 
 # seniority ladder (SPEC.md 6.1). Unknown -> -1; the seniority_floor rule guards on `>= 0` so an
@@ -250,10 +252,44 @@ def geo_evaluate(opp: Any, geo_rules: Any) -> tuple[bool, bool]:
     # 4. location_raw contains any alias as a substring
     if isinstance(location_raw, str) and any(_lower(a) in location_raw.lower() for a in aliases):
         return True, False
-    # 5. unknown remote type, nothing matched -> allow (bias to false positives), and flag it
+    # 5. unknown remote type, a specific place named and no remote or hybrid wording anywhere:
+    #    on-site there, so deny (owner ruling D-RULES-9; SPEC 6.1 step 5). The role stays in the
+    #    rules' set-aside list, restorable in one click.
+    if remote_type in (None, "unknown") and _names_a_place(state, city) and not _offers_remote(
+        getattr(opp, "title", None), location_raw, getattr(opp, "description_md", None)
+    ):
+        return False, False
+    # 6. unknown remote type, nothing matched -> allow (bias to false positives), and flag it
     if remote_type in (None, "unknown"):
         return True, True
     return False, False
+
+
+# Phrases that name no particular place: a posting that says only this is not on-site anywhere.
+_VAGUE_PLACES = {
+    "multiple locations", "various", "various locations", "anywhere", "nationwide", "worldwide",
+    "global", "united states", "usa", "us", "u.s.", "north america", "flexible", "tbd", "n/a",
+}
+_REMOTE_WORDS = re.compile(
+    r"\b(remote|remotely|hybrid|virtual|work from home|work-from-home|wfh|home[- ]based|"
+    r"telecommut\w*|work from anywhere)\b",
+    re.IGNORECASE,
+)
+
+
+_COUNTED_PLACES = re.compile(r"^\d+\s+(locations?|offices?|sites?|cities)$")
+
+
+def _names_a_place(state: Any, city: Any) -> bool:
+    if state:
+        return True
+    text = str(city or "").strip().lower()
+    # "2 Locations" (Workday's locationsText for a multi-site role) names no one place.
+    return bool(text) and text not in _VAGUE_PLACES and not _COUNTED_PLACES.match(text)
+
+
+def _offers_remote(*texts: Any) -> bool:
+    return any(isinstance(t, str) and _REMOTE_WORDS.search(t) for t in texts)
 
 
 def _geo_allows(opp: Any, geo_rules: Any) -> bool:
@@ -284,6 +320,8 @@ def build_evaluator(
         "value_in": value_in,
         "source_kind_in": source_kind_in,
         "comp_max_below": comp_max_below,
+        "margin_floor": margin_floor,
+        "comp_max_near_floor": comp_max_near_floor,
         "comp_max_at_least": comp_max_at_least,
         "trigger_int_below": trigger_int_below,
         "org_signal_count": org_signal_count,
@@ -316,6 +354,44 @@ _SOFT_UPGRADES = {
 }
 
 
+# The two pay blockers as shipped before the near-floor margin (D-RULES-2). Only these exact
+# untouched lines are read as their margin successors, so an existing install keeps near-floor
+# roles too; a blocker the operator edited is read as written. The matching near_floor soft signal
+# is appended when a track has the upgraded blocker and no near_floor signal of its own.
+_BLOCKER_UPGRADES = {
+    ("comp_floor", "comp_max_below(opp, profile.employment_terms.comp_floor_usd)"): (
+        "comp_max_below(opp, margin_floor(profile.employment_terms.comp_floor_usd, "
+        "profile.employment_terms.comp_floor_margin_pct))",
+        "comp_max_near_floor(opp, profile.employment_terms.comp_floor_usd, "
+        "profile.employment_terms.comp_floor_margin_pct)",
+    ),
+    ("rate_floor", "comp_max_below(opp, profile.consulting_terms.day_rate_floor)"): (
+        "comp_max_below(opp, margin_floor(profile.consulting_terms.day_rate_floor, "
+        "profile.consulting_terms.day_rate_floor_margin_pct))",
+        "comp_max_near_floor(opp, profile.consulting_terms.day_rate_floor, "
+        "profile.consulting_terms.day_rate_floor_margin_pct)",
+    ),
+}
+
+
+def _upgrade_shipped_blockers(data: dict) -> None:
+    for groups in data.values():
+        if not isinstance(groups, dict):
+            continue
+        soft = groups.get("soft_signals")
+        for rule in groups.get("hard_blockers", []) or []:
+            if not isinstance(rule, dict):
+                continue
+            hit = _BLOCKER_UPGRADES.get((rule.get("id"), rule.get("when")))
+            if hit is None:
+                continue
+            rule["when"] = hit[0]
+            if not isinstance(soft, list):
+                soft = groups["soft_signals"] = []
+            if not any(isinstance(r, dict) and r.get("id") == "near_floor" for r in soft):
+                soft.append({"id": "near_floor", "when": hit[1], "weight": 0.0})
+
+
 def _upgrade_shipped_soft(data: dict) -> None:
     for groups in data.values():
         if not isinstance(groups, dict):
@@ -334,6 +410,7 @@ def load_filters(path: str) -> dict:
     if not isinstance(data, dict):
         raise FilterConfigError(f"filters file {path} is not a mapping")
     _upgrade_shipped_soft(data)
+    _upgrade_shipped_blockers(data)
     return data
 
 

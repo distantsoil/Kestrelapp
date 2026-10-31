@@ -1,0 +1,79 @@
+{# The source drawer (D-UI-102): health history, settings, How often, the robots.txt note, Show
+   details, Check now, Edit and Remove. A slide-over on the shared design system (centered on the
+   right, never pinned to the top). Loaded into #src-drawer-slot; sources.js opens it. When it
+   answers an action it also sends the groups, tiles and counts again, out of band. #}
+{% import "partials/sources_macros.html" as sm %}
+{% import "ui/macros.html" as ui %}
+{% set v = view %}
+{% set s = v.src %}
+{% set editable = v.origin in ('you', 'built', 'sug') %}
+<aside class="k-slideover src-drawer" id="src-drawer" role="dialog" aria-modal="true" aria-labelledby="src-drawer-t" aria-hidden="true" data-testid="source-drawer" data-id="{{ v.id }}">
+  <div class="k-slideover__head">
+    {{ sm.badge(v) }}
+    <div class="k-grow"><h2 id="src-drawer-t">{{ v.name }}</h2><small class="k-muted">{{ v.type_line.split(' · ')[0] }}{{ ' career page' if v.group == 'ats' }}</small></div>
+    <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ ui.icon('x') }}</button>
+  </div>
+  <div class="k-slideover__body">
+    <div class="src-dstatus">{{ sm.health_pill(v) }}<span class="src-sub">{{ v.last if v.enabled else 'Paused. Turn it on to include it in runs.' }}</span></div>
+    {% if note %}<div class="src-msg is-{{ note.tone }}" role="status" data-testid="drawer-note">{{ ui.icon('check' if note.tone == 'good' else 'alert') }}<div>{{ note.text }}</div></div>{% endif %}
+    {% if v.reason and v.health != 'g' %}
+    <div class="src-msg is-{{ v.health }}" data-testid="drawer-reason">{{ ui.icon('alert') }}<div>{{ v.reason }}{% if v.health == 'b' and editable %}<div><button type="button" class="k-link" data-src-edit>Update the address</button></div>{% endif %}</div></div>
+    {% endif %}
+    <div>
+      <div class="src-k">Last 10 checks</div>
+      <div class="src-hist" role="img" aria-label="Last 10 checks">{% for c in v.spark %}<i class="{{ c if c != 'g' else '' }}" style="height:{{ 8 if c == 'm' else (28 if c == 'g' else 40) }}px"></i>{% endfor %}</div>
+      <div class="src-sub src-hist__cap"><span>10 checks ago</span><span data-testid="hist-n">{{ v.spark | replace('m', '') | length }} of 10 recorded</span><span>Latest</span></div>
+    </div>
+    <dl class="src-kv" data-testid="drawer-facts">
+      {% for k, val in rows %}<dt>{{ k }}</dt><dd>{{ val }}</dd>{% endfor %}
+      <dt><label for="src-cad">How often</label></dt>
+      <dd><span class="k-select"><select id="src-cad" class="k-input" name="cadence_hours" hx-post="/sources/{{ v.id }}/cadence" hx-trigger="change" hx-swap="none" data-testid="drawer-cadence">{% for h, label in cadences %}<option value="{{ h }}"{{ ' selected' if h == cadence }}>{{ label }}</option>{% endfor %}</select></span></dd>
+    </dl>
+    {% if v.sites %}<div class="src-sub" data-testid="site-counts">{% for site in v.sites %}{{ site.label }} {{ site.count }}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}
+    {% if v.model_used %}<div class="src-sub" data-testid="run-model-used">Last run on {{ v.model_used }}</div>{% endif %}
+    {% if v.unreadable %}<div class="src-sub" data-testid="unreadable-links">{{ v.unreadable }} {{ 'link' if v.unreadable == 1 else 'links' }} could not be read.</div>{% endif %}
+    <div class="src-msg is-info">{{ ui.icon('check') }}<div>{{ robots }}</div></div>
+    <details class="src-det" data-testid="drawer-details"{% if edit_error %} open{% endif %}>
+      <summary>Show details</summary>
+      <pre class="src-pre">{{ details }}</pre>
+      {% if v.group == 'boards' and s.kind == 'jobspy' and (s.config or {}).get('no_boards') %}
+      <button type="button" class="k-btn k-btn--sm" hx-post="/sources/{{ v.id }}/default-boards" hx-target="#sources-panel" hx-swap="outerHTML" data-testid="no-boards">Use Kestrel's default boards</button>
+      {% endif %}
+      {% if edit_error %}<div class="src-msg is-bad" role="alert" data-testid="edit-error">{{ ui.icon('alert') }}<div>{{ edit_error.message }}</div></div>{% endif %}
+      {% if editable or v.origin == 'profile' %}
+      <div class="src-k">Edit settings</div>
+      {{ sm.edit_form(s, edit_error.values if edit_error else none, tracks, kinds, config_text) }}
+      {% endif %}
+    </details>
+    {% if v.origin == 'profile' %}
+    <div class="src-msg is-info">{{ ui.icon('profile') }}<div>Kestrel builds this search from your target titles and places. Change these on <a class="k-link" href="{{ profile_href }}">Profile</a>. It is rebuilt every time you save your profile, unless you edit it here, which makes it your own.</div></div>
+    {% elif v.origin == 'found' %}
+    <div class="src-msg is-info">{{ ui.icon('sources') }}<div>Kestrel added this because a search found a posting on this company's own job board. You can turn it off, but not edit it. Once off, it is never added again.</div></div>
+    {% endif %}
+  </div>
+  <div class="k-slideover__foot src-dfoot">
+    <button type="button" class="k-btn k-btn--primary" hx-post="/sources/{{ v.id }}/check" hx-target="#src-drawer-slot" hx-swap="innerHTML" data-busy-text="Checking…" data-testid="check-now">{{ ui.icon('scan', 'k-ic--sm') }}Check now</button>
+    {% if s.kind not in signal_kinds and v.enabled %}
+    <span class="score-again src-again" data-testid="run-now-control">
+      <form method="get" action="/sources/{{ v.id }}/run-now/choose" hx-get="/sources/{{ v.id }}/run-now/choose" hx-target="next .score-again-slot" hx-swap="innerHTML">
+        <input type="hidden" name="page" value="1">
+        <button type="submit" class="k-btn score-again-btn" aria-haspopup="dialog" data-testid="run-now">Another model</button>
+      </form>
+      <span class="score-again-slot"></span>
+    </span>
+    {% endif %}
+    {% if editable %}<button type="button" class="k-btn" data-src-edit data-testid="drawer-edit">Edit</button>
+    {% elif v.origin == 'profile' %}<a class="k-btn" href="{{ profile_href }}">Change on Profile</a>{% endif %}
+    {% if v.removable %}
+    <button type="button" class="k-btn k-btn--danger" hx-post="/sources/{{ v.id }}/remove" hx-target="#src-list" hx-swap="outerHTML" data-testid="drawer-remove">Remove</button>
+    {% else %}
+    <button type="button" class="k-btn" hx-post="/sources/{{ v.id }}/toggle" hx-target="#src-list" hx-swap="outerHTML" data-testid="drawer-toggle">{{ 'Turn off' if v.enabled else 'Turn on' }}</button>
+    {% endif %}
+  </div>
+</aside>
+{% if refresh_list %}
+{% set oob_list = true %}{% set oob = true %}
+{% include "partials/sources_groups.html" %}
+{% include "partials/sources_health.html" %}
+{% include "partials/sources_counts.html" %}
+{% endif %}

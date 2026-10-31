@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import DocLayout, DocMaster, DocSection, DocSlot, DocVariant
 from kestrel.privacy import EmployerMap, from_pairs
+from kestrel.services import names
 
 # section_order tokens -> the doc_section.section_kind they render (resume + capability).
 _KIND_FOR_TOKEN = {
@@ -195,6 +196,9 @@ def default_config(catalog: MasterCatalog) -> dict:
 class Bullet:
     key: str
     text: str
+    # The slot this line came from, so a page can link a printed line to its card (the Tailor
+    # page's hover). Presentation only: it is not part of the line's text.
+    slot: str = ""
 
 
 @dataclass
@@ -326,8 +330,10 @@ def document_header(master: DocMaster) -> dict:
 
     state = load_state()
     block = state.tracks.get(master.track, {}) if master.track in state.present else {}
+    # first_name and last_name are the source (D-UI-117); a legacy full_name was split on load.
+    name = names.join_full_name(block.get("first_name"), block.get("last_name"))
     fields = {
-        "name": block.get("full_name"), "email": block.get("email"),
+        "name": name or block.get("full_name"), "email": block.get("email"),
         "phone": block.get("phone"), "location": block.get("location"),
         "headline": block.get("headline"),
     }
@@ -352,7 +358,9 @@ def resolve(catalog: MasterCatalog, config: dict) -> RenderDoc:
         unresolved.append(what)
         unresolved_keys[what] = key
 
-    layout_key = config.get("layout")
+    # A render that names no layout uses the one saved in the document's Look.
+    saved_look = getattr(catalog.master, "look", None) or {}
+    layout_key = config.get("layout") or saved_look.get("layout")
     layout = _layout(catalog, layout_key or "")
     if layout_key and layout is None:
         _miss("layout", layout_key)  # falls back to the kind's default section order
@@ -388,7 +396,7 @@ def resolve(catalog: MasterCatalog, config: dict) -> RenderDoc:
                     # The operator's own text, with only the marked employer name substituted
                     # under confidential mode (the same transform as every other part).
                     text = scrub(variant.text) if scrub is not None else variant.text
-                    bullets.append(Bullet(variant.key, text))
+                    bullets.append(Bullet(variant.key, text, sl.key))
             out.append(
                 RoleBlock(
                     org=_org_label(sec.section, emap),

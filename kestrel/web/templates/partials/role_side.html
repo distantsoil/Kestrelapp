@@ -1,0 +1,103 @@
+{# The decision column of the Role page (D-UI-150): Your decision (Shortlist as a toggle, Not for
+   me with its four reasons inline), Prepare (greyed until shortlisted, with a tooltip and Why?),
+   Research (always on), More, and a Documents mini card. #rl-side is the swap target for every
+   action here; each answer re-renders it and nothing else on the page moves. None of these
+   buttons applies, sends or submits anything (hard rule 1). #}
+{% from "partials/role_icons.html" import ric %}
+{% from "partials/_remove_confirm.html" import remove_confirm %}
+{% set base = '/opportunities/' ~ opp.id %}
+{% set hidden = opp.archived_at %}
+{% macro prep(label, icon, href='', why='', testid='') -%}
+  {%- if not unlocked -%}
+    <button type="button" class="k-btn rl-lock" aria-disabled="true" data-testid="{{ testid }}" data-locked="1">{{ ric(icon) }}{{ label }}<span class="rl-tip" role="tooltip">Available once you {{ 'add it to your leads' if consulting else 'shortlist this role' }}. Each one uses minutes of your computer's AI time (or online credit), so Kestrel only builds them for {{ w.roles }} you {{ 'add' if consulting else 'shortlist' }}.</span></button>
+  {%- elif why -%}
+    <button type="button" class="k-btn" disabled title="{{ why }}" data-testid="{{ testid }}">{{ ric(icon) }}{{ label }}</button>
+  {%- else -%}
+    <a class="k-btn rl-unlocked" href="{{ href }}" data-testid="{{ testid }}">{{ ric(icon) }}{{ label }}</a>
+  {%- endif -%}
+{%- endmacro %}
+<div id="rl-side" class="rl-side" data-unlocked="{{ 1 if unlocked else 0 }}" data-opp="{{ opp.id }}">
+  <section class="k-card rl-card" id="rl-decision" data-testid="decision">
+    <header class="k-sec-head"><span class="k-badge">{{ ric('bookmark') }}</span><div class="k-grow"><h3>Your decision</h3></div></header>
+    {% if rule_why %}<p class="rl-note" data-testid="rule-why">{{ rule_why.text }} {{ rule_why.verb }} <a class="k-link" href="{{ rule_why.href }}">{{ rule_why.place }}</a>.{% if not override_note %} Score again lets you score this one anyway.{% endif %}</p>{% endif %}
+    {% if override_note %}<p class="rl-note" data-testid="rule-override">{{ override_note }}</p>{% endif %}
+    {% if hidden %}
+      <div class="rl-hiddenbox" data-testid="hidden-note">
+        <p class="rl-dsm">{% if opp.archive_reason == 'not_interested' %}Moved to Not a fit in Pipeline.{% else %}Archived{% if opp.archive_reason and opp.archive_reason != 'other' %} ({{ archive_reasons.get(opp.archive_reason, opp.archive_reason)|lower }}){% endif %}. Find it under Hidden in Pipeline.{% endif %}</p>
+        <div class="rl-row2">
+          <button type="button" class="k-btn" hx-post="{{ base }}/role/put-back" hx-target="#rl-side" hx-swap="outerHTML" data-testid="restore">Put it back</button>
+          {% if next_id %}<a class="k-btn k-btn--primary" href="/opportunities/{{ next_id }}" hx-get="/opportunities/{{ next_id }}" hx-target="#rl-body" hx-swap="outerHTML" hx-push-url="true" data-rl-dir="1" data-testid="next-role">Next {{ w.role }} →</a>
+          {% else %}<a class="k-btn" href="/opportunities" data-testid="back-to-pipeline">Back to Pipeline</a>{% endif %}
+        </div>
+      </div>
+    {% else %}
+      <div class="rl-row2">
+        {% if pursuit %}
+          {% if fresh %}
+          <button type="button" class="k-btn k-btn--done" hx-post="{{ base }}/role/unshortlist" hx-target="#rl-side" hx-swap="outerHTML" data-testid="on-my-list" title="Click again to take it off {{ 'your leads' if consulting else 'your shortlist' }}">{{ ric('check') }}{{ w.on_list|capitalize }}</button>
+          {% else %}
+          <a class="k-btn k-btn--done" href="/pursuits" data-testid="on-my-list">{{ ric('check') }}{{ w.on_list|capitalize }} · {{ ((pursuit_column or pursuit.status|replace('_', ' ')).split(' / ')[0]) }}</a>
+          {% endif %}
+          <button type="button" class="k-btn" disabled title="Take it off {{ 'your leads' if consulting else 'your shortlist' }} first." data-testid="not-for-me">Not for me</button>
+        {% else %}
+          <button type="button" class="k-btn k-btn--primary" hx-post="{{ base }}/role/shortlist" hx-target="#rl-side" hx-swap="outerHTML" data-testid="add-to-list">{{ 'Add to leads' if consulting else 'Shortlist' }}</button>
+          <button type="button" class="k-btn" data-rl-nfm aria-expanded="false" aria-controls="rl-nfr" data-testid="not-for-me">Not for me</button>
+        {% endif %}
+      </div>
+      {% if not pursuit %}
+      <div class="rl-nfr" id="rl-nfr"><div class="rl-nfr__clip">
+        <div class="rl-nfrh"><b>Not for me because…</b><button type="button" class="k-iconbtn" data-rl-nfm-close aria-label="Cancel">{{ ric('x', 'k-ic--sm') }}</button></div>
+        <div class="rl-dsm">Pick one so Kestrel learns what to skip.</div>
+        <div class="rl-rgrid">{% for key, text, dim in nf_reasons %}<button type="button" hx-post="{{ base }}/role/not-for-me?reason={{ key }}" hx-target="#rl-side" hx-swap="outerHTML" data-why="{{ key }}">{{ text }}</button>{% endfor %}</div>
+      </div></div>
+      {% endif %}
+    {% endif %}
+
+    <div class="rl-lbl">{{ 'PREPARE' if consulting else 'PREPARE YOUR APPLICATION' }}</div>
+    <div class="rl-row2{{ ' is-stack' if consulting else '' }}">
+      {{ prep(w.tailor, 'profile', tailor_href, '' if tailor_href else ('No active ' ~ w.doc ~ ' yet. Import or build one under Documents.'), 'tailor') }}
+      {{ prep('Engagement outline' if consulting else 'Cover letter', 'prep', '', no_drafter, 'cover-letter') }}
+    </div>
+    <div class="rl-row2">
+      {{ prep('Discovery call prep' if consulting else 'Prep pack', 'calibrate', '/prep/' ~ opp.id ~ '?auto=1', '', 'interview-prep') }}
+    </div>
+    {% if not unlocked %}<div class="rl-locknote">{{ ric('info') }}<span>Greyed out until you {{ 'add it to your leads' if consulting else 'shortlist' }}. <a href="#" data-rl-open="rl-why" id="rl-why-link" data-testid="why-link">Why?</a></span></div>{% endif %}
+
+    <div class="rl-lbl">RESEARCH</div>
+    <div class="rl-row2">
+      <button type="button" class="k-btn" hx-post="{{ base }}/role/research" hx-vals='{"kind": "company"}' hx-swap="none" data-busy-text="Researching the company…" data-testid="research">{{ ric('glasses') }}Company</button>
+      <button type="button" class="k-btn" hx-post="{{ base }}/role/research" hx-vals='{"kind": "contacts"}' hx-swap="none" data-busy-text="Looking for public contacts…" data-testid="find-contacts">{{ ric('profile') }}Contacts</button>
+    </div>
+
+    <div class="rl-more" data-rl-more>
+      <button type="button" class="k-btn rl-morebtn" aria-haspopup="menu" aria-expanded="false" data-testid="more">More {{ ric('more', 'k-ic--sm') }}</button>
+      <div class="rl-menu" role="menu" hidden>
+        <button type="button" role="menuitem" hx-get="{{ base }}/role/deeper" hx-target="#rl-dialog" hx-swap="innerHTML" data-busy-text="Preparing what would be sent…" data-testid="escalate">Deeper read<small>Asks first, with what is sent and the cost</small></button>
+        <a role="menuitem" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next={{ base }}" data-testid="score-again">Score again…</a>
+        {% if not hidden %}<button type="button" role="menuitem" hx-post="{{ base }}/role/archive" hx-target="#rl-side" hx-swap="outerHTML" data-testid="archive">Archive</button>{% endif %}
+        {% if prep_ready %}<a role="menuitem" href="/mock/{{ opp.id }}" data-testid="mock-interview">Mock interview</a>{% endif %}
+        <button type="button" role="menuitem" data-rl-copy data-testid="copy-link">Copy link</button>
+        {% if pursuit and not fresh %}<hr><button type="button" role="menuitem" class="is-danger" hx-post="{{ base }}/role/remove" hx-vals='{"confirmed": "1"}' hx-target="#rl-side" hx-swap="outerHTML" hx-confirm="{{ remove_confirm(w, pursuit) }}" data-testid="remove-from-list">{{ w.remove_from_list }}</button>{% endif %}
+      </div>
+    </div>
+  </section>
+
+  {% if pursuit and qview %}{% set opp_id = opp.id %}{% include "partials/opp_questions.html" %}{% endif %}
+
+  <section class="k-card rl-card" id="rl-docs-mini" data-testid="documents-card">
+    <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ ric('doc') }}</span><div class="k-grow"><h3>Documents</h3></div></header>
+    {% if mini_rows %}
+      {% for d in mini_rows %}
+      <div class="rl-docrow{{ ' is-first' if loop.first else '' }}">
+        <span class="rl-docic">{{ ric(d.icon) }}</span>
+        <div><b>{{ d.title }}</b><div class="rl-dsm">{{ d.short }}</div></div>
+        {% if d.render_id %}<button type="button" class="k-btn k-btn--sm" hx-get="{{ base }}/role/preview/{{ d.render_id }}" hx-target="#rl-dialog" hx-swap="innerHTML" data-testid="doc-open">Open</button>{% endif %}
+      </div>
+      {% endfor %}
+    {% elif unlocked %}
+      <p class="rl-dsm">Nothing made yet. {{ w.tailor }} builds one from your own text.</p>
+    {% else %}
+      <p class="rl-dsm">None yet. {{ 'Outlines' if consulting else 'Tailored resumes and cover letters' }} for this {{ w.role }} appear here once you {{ 'add it to your leads' if consulting else 'shortlist it' }}.</p>
+    {% endif %}
+  </section>
+</div>

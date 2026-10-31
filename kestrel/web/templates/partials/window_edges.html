@@ -1,0 +1,8 @@
+{# The frameless window's resize handles (Windows and Linux), shown by KUI.frame once the desktop
+   window's JS API is found. Rendered at body level, never inside .k-win: its container query
+   (container-type: inline-size) is a containing block for position: fixed, so handles inside it
+   followed the page's height and the bottom ones sat below the window (hardware check, round 5).
+   They also opt out of any drag region, so the top edge resizes instead of moving the window. #}
+{% for edge in ('n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw') %}<div class="k-rsz k-rsz--{{ edge }}" data-k-rsz="{{ edge }}" hidden aria-hidden="true"></div>{% endfor %}
+{# D-UI-196: the page's rounded inner corners inside the Windows resize strip. #}
+<div class="k-corners" aria-hidden="true"></div>

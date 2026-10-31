@@ -1,0 +1,19 @@
+{# A document as a scaled true page (D-UI-150). The frame holds the same HTML the PDF is made from,
+   at the real page width; role.js scales it to fit and never reflows it. Edit opens the review page;
+   Download PDF uses the computer's Save dialog (D-UI-12). Nothing is sent. #}
+{% from "partials/role_icons.html" import ric %}
+<div class="k-modal k-modal--sheet rl-preview" id="rl-preview" role="dialog" aria-modal="true" aria-labelledby="rl-preview-t" aria-hidden="true" data-testid="doc-preview">
+  <div class="rl-pvh">
+    <div class="k-grow"><b id="rl-preview-t">{{ label }}</b><div class="rl-dsm">{{ master.name if master else '' }}{% if render.created_at %} · {{ date_display(render.created_at) }}{% endif %}{% if render.page_count is not none %} · {{ render.page_count }} page{{ '' if render.page_count == 1 else 's' }}{% endif %}</div></div>
+    <a class="k-btn k-btn--sm" href="/renders/{{ render.id }}?from=/opportunities/{{ opp_id }}" data-testid="doc-edit">Edit</a>
+    {% if has_pdf %}<a class="k-btn k-btn--sm k-btn--primary" href="/renders/{{ render.id }}/download" download data-testid="doc-download">{{ ric('dl', 'k-ic--sm') }}Download PDF</a>{% endif %}
+    <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ ric('x') }}</button>
+  </div>
+  <div class="rl-pvb" data-rl-stage>
+    {% if doc_html %}
+      <div class="rl-pvpage" data-rl-page><iframe class="rl-pvframe" title="{{ label }}" sandbox="allow-same-origin" srcdoc="{{ doc_html }}"></iframe></div>
+    {% else %}
+      <p class="rl-quiet">This document's source is no longer in your master, so it cannot be shown. The PDF is unchanged.</p>
+    {% endif %}
+  </div>
+</div>

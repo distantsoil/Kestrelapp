@@ -50,8 +50,8 @@ from kestrel.pipeline.profile import load_profile
 # The prompt id each track's gold set is benchmarked against (matches
 # kestrel.pipeline.tier2._VERSION).
 DEFAULT_PROMPT_VERSION: dict[str, str] = {
-    "employment": "evaluate/v1",
-    "consulting": "evaluate_consulting/v1",
+    "employment": "evaluate/v2",
+    "consulting": "evaluate_consulting/v2",
 }
 # Consulting comp figures in the gold set are day rates; employment figures are annual salary.
 _COMP_INTERVAL: dict[str, str] = {"employment": "year", "consulting": "day"}

@@ -1,0 +1,38 @@
+{# Company page helpers (D-UI-123). Icons the shared set does not have yet, kept here so the
+   shared macros file stays untouched, and the two pieces that swap together on Hide. #}
+{% set CI = {
+  'ext': '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  'eyeoff': '<path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.1A9.8 9.8 0 0 1 12 5c6 0 9.5 7 9.5 7a15 15 0 0 1-3 3.6M6.2 6.2A15 15 0 0 0 2.5 12S6 19 12 19c1.4 0 2.6-.3 3.8-.8"/>',
+  'eye': '<path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  'users': '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3c2.2.7 3.5 2.6 3.5 5.7"/>',
+  'building': '<path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M14 10h5a1 1 0 0 1 1 1v10M2 21h20M8 8h2M8 12h2M8 16h2"/>',
+  'news': '<path d="M4 5h13v14H6a2 2 0 0 1-2-2zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5"/>',
+  'copy': '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
+  'pay': '<circle cx="12" cy="12" r="9"/><path d="M14.5 9.5c-.4-.9-1.4-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.8 2.5 2-1 2-2.5 2c-1.2 0-2.2-.6-2.6-1.6M12 6.5v1.5M12 16v1.5"/>',
+  'retry': '<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/>',
+  'pin': '<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  'check': '<path d="M5 12l5 5 9-10"/>',
+  'clock': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  'shield': '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>'
+} %}
+{% macro ci(name, cls='') -%}
+<svg class="k-ic {{ cls }}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{{ CI[name]|safe }}</svg>
+{%- endmacro %}
+
+{# The Hide button. One control: Hide this company, or Show this company here once hidden. It
+   swaps itself and the banner (company_state.html) in place. #}
+{% macro actions(org, hidden) -%}
+<span id="co-actions" class="co-actions">
+  {% if hidden %}
+  <button type="button" class="k-btn k-btn--sm" data-testid="co-show" hx-post="/orgs/{{ org.id }}/unhide" hx-target="#co-actions" hx-swap="outerHTML">{{ ci('eye') }}Show this company here</button>
+  {% else %}
+  <button type="button" class="k-btn k-btn--sm" data-testid="co-hide" hx-post="/orgs/{{ org.id }}/hide" hx-target="#co-actions" hx-swap="outerHTML">{{ ci('eyeoff') }}Hide this company</button>
+  {% endif %}
+</span>
+{%- endmacro %}
+
+{% macro banner(org, hidden, oob=False) -%}
+<div id="co-banner" class="co-banner{% if hidden %} is-on{% endif %}" data-testid="co-banner"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if hidden %}<div class="co-banner__in">{{ ci('eyeoff') }}<span class="k-grow">Hidden. Its roles stay out of Pipeline and Today. Nothing Kestrel found was deleted. Manage hidden companies in Settings.</span><button type="button" class="k-btn k-btn--sm" data-testid="co-undo" hx-post="/orgs/{{ org.id }}/unhide" hx-target="#co-actions" hx-swap="outerHTML">Undo</button></div>{% endif %}
+</div>
+{%- endmacro %}

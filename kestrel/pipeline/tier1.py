@@ -34,7 +34,7 @@ from kestrel.pipeline.tasks import enqueue_once
 log = structlog.get_logger()
 
 _TIER1_HEAD_TOKENS = 1200  # SPEC.md 6.2: Tier 1 sees the first 1200 tokens of the description
-_VERSION = {"employment": "triage/v1", "consulting": "triage_consulting/v1"}
+_VERSION = {"employment": "triage/v2", "consulting": "triage_consulting/v2"}
 
 
 async def handle_t1(
@@ -49,6 +49,8 @@ async def handle_t1(
     requested_at: str | None = None,
     tier0_override: bool = False,
     t2_model_override: dict | None = None,
+    online_approval: dict | None = None,
+    lane_local_only: bool = False,
 ) -> HandlerOutcome:
     """`model_override` is set on a score-again task run on another model this time only
     (D-UI-50): `settings` already carry it for Tier 1, and the Tier 2 task enqueued here carries
@@ -77,6 +79,10 @@ async def handle_t1(
         t2_extra = {"model_override": t2_model_override}
     else:
         t2_extra = None
+    if lane_local_only:
+        t2_extra = {**(t2_extra or {}), "lane_local_only": True}
+    if online_approval is not None:
+        t2_extra = {**(t2_extra or {}), "online_approval": dict(online_approval)}
     if rescore:
         # The Tier 2 step of an operator's Score again is requested too (finding 10).
         #

@@ -1,0 +1,3 @@
+{# The count beside the title: roles left in this session, plain muted text as drawn. An
+   out-of-band swap target. #}
+<span id="cal-count" class="cal-count{{ '' if queue.current else ' cal-count--clear' }}" data-testid="cal-count"{% if oob %} hx-swap-oob="true"{% endif %}>{% if queue.current %}{{ queue.total - queue.done }} to rate{% else %}All clear{% endif %}</span>

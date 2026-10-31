@@ -135,6 +135,16 @@ def test_extension_manifest_is_valid_mv3():
     assert "background" in manifest and "content_scripts" in manifest
 
 
+def test_the_extension_never_runs_on_linkedin():
+    """Owner, 2026-10-30 (D-REL-6): the site says many times that nothing goes to LinkedIn, so the
+    seen-badge does not run there either, and LinkedIn is not a default board in its options."""
+    ext = Path("extension")
+    manifest = json.loads((ext / "manifest.json").read_text(encoding="utf-8"))
+    matches = [m for cs in manifest["content_scripts"] for m in cs["matches"]]
+    assert matches and not any("linkedin" in m.lower() for m in matches), matches
+    assert "linkedin" not in (ext / "options.html").read_text(encoding="utf-8").lower()
+
+
 def test_extension_javascript_parses():
     """The extension ships as source with no build step, so a syntax error would reach the operator
     and fail silently inside a service worker. Nothing else in the suite executes this JS, and the

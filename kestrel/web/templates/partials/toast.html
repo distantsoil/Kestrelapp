@@ -5,32 +5,33 @@
    flips. The scan toast (#kestrel-toast) is persistent: no auto-hide, it stays until it is
    dismissed (x, Escape while it has focus) or clicked; clicking opens the Pipeline on its New
    today chip (/opportunities?new_today=1). A scan with errors keeps the warning tone. Other
-   callers of window.kestrelToast(text) go to their own box (#kestrel-toast-note), stacked under
-   the scan toast, and fade after six seconds, so they never replace the scan toast or start a
-   timer on it. Seen and dismissed state live in localStorage, so one tab's toast is the only
+   callers of window.kestrelToast(text) go to the shared toast region (KUI.toast), where the
+   scan toast also sits, so they never replace the scan toast or start a timer on it. Seen and dismissed state live in localStorage, so one tab's toast is the only
    one, and dismissing it in one tab clears it in the others. Styled by id and data attributes
    only, with the theme tokens, so both schemes and both themes follow. The scan button's pulse
-   lives here too: this partial is on every page. #}
+   lives here too: this partial is on every page. It is part of the shell, outside the page's
+   content root: it is not mounted or unmounted with a page (D-UI-210), and a toast, with its
+   Undo, outlives the page that raised it. #}
 <style>
-  #kestrel-toast, #kestrel-toast-note { position: fixed; top: 12px; left: 50%; z-index: 60; max-width: min(92vw, 420px);
-    display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 14px;
-    background: var(--panel); color: var(--text); border: 1px solid var(--border);
-    border-left: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow);
-    font-size: var(--fs-md); transform: translate(-50%, -140%); opacity: 0;
-    transition: transform .28s ease-out, opacity .28s ease-out; }
-  #kestrel-toast-note { top: 72px; }
-  #kestrel-toast[data-show], #kestrel-toast-note[data-show] { transform: translate(-50%, 0); opacity: 1; }
-  #kestrel-toast[data-tone="warn"] { border-left-color: var(--warn); }
+  /* One toast look (D-UI-187, the surfaces design): the scan toast sits in the shared
+     bottom region (#k-toasts, kestrel-ui.js) and wears the same green chip as every toast. */
+  #kestrel-toast { pointer-events: auto; display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px 10px 16px; max-width: min(92vw, 520px);
+    background: var(--toast-bg); color: var(--toast-ink); border-radius: 12px; font-weight: 700;
+    box-shadow: var(--shadow-pop); font-size: var(--fs-md);
+    transform: translateY(220%); visibility: hidden;
+    transition: transform .38s var(--ease), visibility 0s .38s; }
+  #kestrel-toast[data-show] { transform: none; visibility: visible;
+    transition: transform .38s var(--ease), visibility 0s; }
+  #kestrel-toast[data-tone="warn"] { background: var(--warn-bg); color: var(--warn-ink); }
   #kestrel-toast:has(a[data-toast-text][href]) { cursor: pointer; }
   #kestrel-toast [data-toast-text] { color: inherit; text-decoration: none; }
   #kestrel-toast a[data-toast-text][href]:hover,
   #kestrel-toast a[data-toast-text][href]:focus-visible { text-decoration: underline; }
-  #kestrel-toast[hidden], #kestrel-toast-note[hidden] { display: none; }
-  #kestrel-toast [data-toast-close], #kestrel-toast-note [data-toast-close] { background: none;
-    border: 0; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer;
-    padding: 2px 4px; }
-  #kestrel-toast [data-toast-close]:hover,
-  #kestrel-toast-note [data-toast-close]:hover { color: var(--text); }
+  #kestrel-toast[hidden] { display: none; }
+  #kestrel-toast [data-toast-close] { border: 0; background: var(--wash); color: inherit;
+    border-radius: 7px; font-size: 16px; line-height: 1; cursor: pointer; padding: 3px 8px; }
+  #kestrel-toast [data-toast-close]:hover { filter: brightness(1.15); }
   #scan-btn { display: inline-flex; align-items: center; gap: 8px; }
   #scan-btn [data-scan-msg] { color: var(--muted); }
   #scan-btn [data-state="scanning"] { border-color: var(--accent); color: var(--accent-deep);
@@ -47,7 +48,7 @@
     50% { box-shadow: 0 0 0 4px var(--accent-tint), 0 0 10px 1px var(--accent); opacity: 1; }
   }
   @media (prefers-reduced-motion: reduce) {
-    #kestrel-toast, #kestrel-toast-note { transition: none; }
+    #kestrel-toast { transition: none; }
     #scan-btn [data-state="scanning"] { animation: none; box-shadow: 0 0 0 3px var(--accent-tint); }
   }
 </style>
@@ -55,11 +56,6 @@
 <div id="kestrel-toast" role="status" aria-live="polite" aria-atomic="true" hidden
      data-testid="toast">
   <a data-toast-text data-testid="toast-link"></a>
-  <button type="button" data-toast-close aria-label="Dismiss">&times;</button>
-</div>
-<div id="kestrel-toast-note" role="status" aria-live="polite" aria-atomic="true" hidden
-     data-testid="toast-note">
-  <a data-toast-text></a>
   <button type="button" data-toast-close aria-label="Dismiss">&times;</button>
 </div>
 <script>
@@ -73,6 +69,11 @@
     var queued = [];  // plain toasts waiting while the scan toast holds the only box
     var shownEvent = null;  // the scan event the persistent toast is showing, if any
     var fresh = false;  // set when the rail has just swapped in a new #scan-signal
+    // One toast system: the scan toast lives in the shared bottom region with the others.
+    (function () {
+      var region = document.getElementById('k-toasts'), t = document.getElementById(MAIN);
+      if (region && t && t.parentNode !== region && region.appendChild) region.appendChild(t);
+    })();
     function load(k) {
       try { var v = localStorage.getItem(k); if (v !== null) return v; } catch (e) {}
       return k in memo ? memo[k] : null;
@@ -125,8 +126,18 @@
       timers[id] = null;
       if (!opts.sticky) timers[id] = setTimeout(function () { hide(id); }, 6000);
     }
+    // Plain notes, with or without Undo or a destination, go through the shared toast region
+    // (kestrel-ui.js). The sticky scan toast above stays here: it is persistent, cross-tab and
+    // clickable, which the shared region does not model; it sits in that same region.
     window.kestrelToast = function (text, opts) {
-      return show(text, Object.assign({}, opts || {}, {sticky: false}));
+      opts = opts || {};
+      if (window.KUI) {
+        // Undo rides along (D-UI-152): the shared region owns the button and its longer timeout.
+        var undoable = typeof opts.undo === 'function' || !!opts.undoUrl;
+        return window.KUI.toast(text, {tone: opts.tone, timeout: undoable ? undefined : 6000,
+          undo: opts.undo, undoUrl: opts.undoUrl, undoLabel: opts.undoLabel, href: opts.href});
+      }
+      return show(text, Object.assign({}, opts, {sticky: false}));
     };
     // The end of the search step is not the end of the run (D-UI-63): scoring may continue, so
     // this never says "finished". The run panel says "Last run ... finished" when it closes.
@@ -183,7 +194,9 @@
       var link = box(id) && box(id).querySelector('a[data-toast-text][href]');
       if (!link) return;
       if (id === MAIN) dismissScan(); else hide(id);
-      if (!e.target.closest('a[href]')) window.location.assign(link.getAttribute('href'));
+      if (e.target.closest('a[href]')) return;
+      var to = link.getAttribute('href');
+      if (window.KUI && window.KUI.go) window.KUI.go(to); else window.location.assign(to);
     });
     // Escape dismisses the toast that has focus (its link or its x).
     document.addEventListener('keydown', function (e) {

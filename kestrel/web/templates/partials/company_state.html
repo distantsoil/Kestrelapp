@@ -1,0 +1,4 @@
+{# What Hide, Show and Undo swap: the button in place, and the banner out of band. #}
+{% from "partials/company_macros.html" import actions, banner %}
+{{ actions(org, hidden) }}
+{{ banner(org, hidden, oob=True) }}

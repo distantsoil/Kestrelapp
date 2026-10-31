@@ -1,0 +1,6 @@
+{# One Settings section's body. The page includes the quick ones inline and loads the heavy ones
+   (Which roles you see, Scoring and learning) the first time they open; both use this wrapper, so
+   a track switch or an Undo can swap the whole section in place. #}
+<div class="st-panebody" id="st-pane-{{ pane }}" data-pane="{{ pane }}">
+  {% include "partials/st_" ~ pane ~ ".html" %}
+</div>

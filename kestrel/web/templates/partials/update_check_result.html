@@ -1,10 +1,12 @@
+{# The Settings answer to Check now (D-UPD-3, restyled D-UI-152). Kestrel only says a version
+   exists and where to get it; there is no self-update. #}
 {% if outcome == 'available' %}
-<div class="warnbox" data-testid="update-result">Kestrel {{ version }} is available.
-  <button class="btn primary" type="button" hx-get="/updates/details" hx-target="#update-modal"
-          hx-swap="innerHTML">What's new</button></div>
+<div class="sf-notice" role="status" data-testid="update-result"><link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}"><span class="sf-msg">Kestrel {{ version }} is available. <a class="sf-a" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">Get it from kestrelapp.co</a>
+  <a class="sf-a" href="#" hx-get="/updates/details" hx-target="#update-modal"
+          hx-swap="innerHTML">What's new</a></span></div>
 {% elif outcome == 'current' %}
-<div class="muted" data-testid="update-result">Up to date (running {{ current }}).</div>
+<div class="k-muted" data-testid="update-result">Up to date (running {{ current }}).</div>
 {% else %}
-<div class="muted" data-testid="update-result">Couldn't reach kestrelapp.co. Kestrel will try again later.</div>
+<div class="k-muted" data-testid="update-result">Couldn't reach kestrelapp.co. Kestrel will try again later.</div>
 {% endif %}
 <span id="update-last-checked" hx-swap-oob="true">Last checked: {{ last_checked }}</span>

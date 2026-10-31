@@ -16,7 +16,7 @@ from statistics import median
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import CompObservation, Opportunity, Org
@@ -74,6 +74,14 @@ def _geo_summary(profile: Any) -> str:
 
 
 # --------------------------------------------------------------------------- PROFILE blocks
+def _yes_no(value: Any) -> str:
+    """A yes-or-no setting in plain words (PROMPTS.md PROFILE_COMPACT): never a program value
+    like `True`, which the model would otherwise copy into text the candidate reads (O20)."""
+    if value is None:
+        return "unspecified"
+    return "yes" if value else "no"
+
+
 def _money(value: Any, unit: str = "") -> str:
     if value is None or value == "":
         return "unspecified"
@@ -106,6 +114,7 @@ def profile_compact(profile: Any) -> str:
             f"Comp floor: {_money(_get(terms, 'comp_floor_usd'))} base. "
             f"Target: {_money(_get(terms, 'comp_target_usd'))}.",
         ]
+        lines += _work_modes_line(terms)
     else:
         lines += [
             f"Practice: {headline}. Minimum engagement: "
@@ -117,14 +126,23 @@ def profile_compact(profile: Any) -> str:
             f"Day rate floor: {_money(_get(con, 'day_rate_floor'), '/day')}. "
             f"Target: {_money(_get(con, 'day_rate_target'), '/day')}.",
         ]
+        lines += _work_modes_line(con)
     lines += [
-        f"Location: {_geo_summary(profile)}. Remote OK: {_get(geo, 'remote_ok')}. "
-        f"Relocation: {_get(geo, 'relocation_acceptable')}.",
+        f"Location: {_geo_summary(profile)}. "
+        f"Open to remote work: {_yes_no(_get(geo, 'remote_ok'))}. "
+        f"Open to relocating: {_yes_no(_get(geo, 'relocation_acceptable'))}.",
         f"Work authorization: {_get(profile, 'work_auth') or 'unspecified'}",
         f"Must have: {_joined(_get(profile, 'must_have'), 4)}",
         f"Must avoid: {_joined(_get(profile, 'must_avoid'), 4)}",
     ]
     return "\n".join(lines)
+
+
+def _work_modes_line(terms: Any) -> list[str]:
+    """One line naming the work modes the person chose (Profile > Employment or Consulting).
+    Nothing when none is chosen, so a profile that never set it reads exactly as before."""
+    modes = [str(m) for m in (_get(terms, "work_modes") or []) if m]
+    return [f"Work modes wanted: {', '.join(modes)}."] if modes else []
 
 
 def profile_full(profile: Any) -> str:
@@ -210,10 +228,11 @@ def _date_only(value: str | None) -> str:
 
 
 # ------------------------------------------------------------------------- comp corpus intel
-async def comp_intel_summary(session: AsyncSession, opp: Opportunity) -> str | None:
-    """The operator's own accumulated comp corpus for this title and geography (SPEC-MODULES 6.1),
-    or None when fewer than five observations exist (hard rule 6). Prefers same-geo observations,
-    falling back to title-only if same-geo is too thin; states the sample size either way."""
+async def comp_intel_stats(session: AsyncSession, opp: Opportunity) -> dict[str, Any] | None:
+    """The numbers behind comp_intel_summary: {"n", "lo", "hi", "median", "p25", "p75", "scope"}
+    for the observed midpoints of this title (same geography when it has five, else all), or None
+    when fewer than five observations exist (hard rule 6: the caller then says "too few" and
+    draws no bracket). `n_seen` is how many same-title observations were looked at either way."""
     title = (opp.title or "").lower().strip()
     if not title:
         return None
@@ -242,12 +261,49 @@ async def comp_intel_summary(session: AsyncSession, opp: Opportunity) -> str | N
         for r in chosen
         if r.min is not None or r.max is not None
     ]
-    mids = [m for m in mids if m is not None]
+    mids = sorted(m for m in mids if m is not None)
     if len(mids) < _MIN_COMP_CORPUS:
         return None
-    lo, hi, mid = min(mids), max(mids), median(mids)
+    n = len(mids)
+
+    def pct(q: float) -> float:
+        pos = (n - 1) * q
+        lo_i = int(pos)
+        hi_i = min(lo_i + 1, n - 1)
+        return mids[lo_i] + (mids[hi_i] - mids[lo_i]) * (pos - lo_i)
+
+    return {
+        "n": n, "lo": mids[0], "hi": mids[-1], "median": median(mids), "p25": pct(0.25),
+        "p75": pct(0.75), "scope": scope,
+    }
+
+
+async def comp_intel_count(session: AsyncSession, opp: Opportunity) -> int:
+    """How many same-title observations exist at all, for the "Too few (n)" line."""
+    title = (opp.title or "").lower().strip()
+    if not title:
+        return 0
+    return int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(CompObservation)
+                .where(CompObservation.normalized_title == title)
+            )
+        ).scalar_one()
+    )
+
+
+async def comp_intel_summary(session: AsyncSession, opp: Opportunity) -> str | None:
+    """The operator's own accumulated comp corpus for this title and geography (SPEC-MODULES 6.1),
+    or None when fewer than five observations exist (hard rule 6). Prefers same-geo observations,
+    falling back to title-only if same-geo is too thin; states the sample size either way."""
+    stats = await comp_intel_stats(session, opp)
+    if stats is None:
+        return None
     return (
-        f"median ${mid:,.0f} (n={len(mids)}, {scope}; range ${lo:,.0f}-${hi:,.0f}), "
+        f"median ${stats['median']:,.0f} (n={stats['n']}, {stats['scope']}; "
+        f"range ${stats['lo']:,.0f}-${stats['hi']:,.0f}), "
         "from the operator's own observed corpus"
     )
 

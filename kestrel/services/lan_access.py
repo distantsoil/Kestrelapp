@@ -41,6 +41,16 @@ class LanAccessError(UserFacingError, ValueError):
     """The settings file could not be changed safely. Nothing was written."""
 
 
+# The fixed refusals set_bind_all can raise. The two that name an error type (could not be read,
+# could not be written) are not on the list; the Settings route shows a fallback for them
+# (D-SEC-4), and the type goes to the log.
+SERVER_SHAPE = "The server section of settings.yml has a shape Kestrel cannot edit."
+NOT_YAML = "settings.yml is not valid YAML, so Kestrel left it alone."
+NOT_A_MAPPING = "settings.yml is not a mapping, so Kestrel left it alone."
+NOT_VERIFIED = "Kestrel could not change settings.yml safely and left it alone."
+REFUSALS: tuple[str, ...] = (SERVER_SHAPE, NOT_YAML, NOT_A_MAPPING, NOT_VERIFIED)
+
+
 def user_settings_path() -> Path:
     return paths.config_dir() / "settings.yml"
 
@@ -82,7 +92,7 @@ def _edit(text: str, value: bool) -> str:
             lines[start] = lines[start].replace("{", f"{{bind_all: {word}, ", 1)
         return "".join(lines)
     if rest:
-        raise LanAccessError("The server section of settings.yml has a shape Kestrel cannot edit.")
+        raise LanAccessError(SERVER_SHAPE)
     child_indent = "  "
     end = start + 1
     while end < len(lines):
@@ -128,11 +138,11 @@ def set_bind_all(value: bool) -> Path:
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise LanAccessError("settings.yml is not valid YAML, so Kestrel left it alone.") from exc
+        raise LanAccessError(NOT_YAML) from exc
     if data is None:
         data = {}
     if not isinstance(data, dict):
-        raise LanAccessError("settings.yml is not a mapping, so Kestrel left it alone.")
+        raise LanAccessError(NOT_A_MAPPING)
     new_text = _edit(text, value)
     expected = copy.deepcopy(data)
     if not isinstance(expected.get("server"), dict):
@@ -143,7 +153,7 @@ def set_bind_all(value: bool) -> Path:
     except yaml.YAMLError:
         verified = False
     if not verified:  # a bug or an exotic file: never write what was not checked
-        raise LanAccessError("Kestrel could not change settings.yml safely and left it alone.")
+        raise LanAccessError(NOT_VERIFIED)
 
     paths.ensure_dirs()
     target = user_settings_path()

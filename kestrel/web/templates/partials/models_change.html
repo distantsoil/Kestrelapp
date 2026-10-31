@@ -1,0 +1,52 @@
+{% import "ui/macros.html" as ui %}
+{# The Change model drawer body (D-UI-105): an On this computer or Online switch, local models
+   with a fit tag from the hardware, a Free only filter, a model whose context is below the
+   step's budget disabled with the reason, Save, Undo and Reset to default. An online pick says
+   exactly what is sent and needs a tick before Save (the server checks it too). #}
+<div id="mo-change-form" data-testid="mo-change-form" data-tier="{{ ch_tier }}">
+  <p class="k-muted">{{ ch_step.name }}: {{ ch_step.does }}</p>
+  {% if ch_message %}<p class="mo-msg {{ 'is-good' if ch_ok else 'is-bad' }}" role="status" data-testid="mo-change-message">{{ ch_message }}</p>{% endif %}
+  <div class="k-seg" role="group" aria-label="Where it runs">
+    <button type="button" aria-pressed="{{ 'true' if ch_where == 'local' else 'false' }}" hx-get="/models/change/{{ ch_tier }}?where=local" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-where-local">On this computer</button>
+    <button type="button" aria-pressed="{{ 'true' if ch_where == 'online' else 'false' }}" hx-get="/models/change/{{ ch_tier }}?where=online{{ '&free=1' if ch_free else '' }}" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-where-online">Online</button>
+  </div>
+
+  <form hx-post="/models/change/{{ ch_tier }}" hx-target="#mo-change-body" hx-swap="innerHTML" autocomplete="off">
+    <input type="hidden" name="where" value="{{ ch_where }}">
+    {% if ch_where == 'local' %}
+      <ul class="mo-pick" data-testid="mo-local-list">
+        {% for m in ch_local %}
+        <li><label><input type="radio" name="model" value="{{ m.id }}"{% if m.current %} checked{% endif %}>
+          <span class="k-grow"><b>{{ m.name }}</b>{% if m.default %} <span class="k-muted">default</span>{% endif %}<span class="k-muted">{{ m.size }}{% if not m.downloaded %}{{ ' · ' if m.size }}Not downloaded: picking it starts the download{% endif %}</span></span>
+          {{ ui.pill(m.fit, m.tone if m.tone in ('good', 'warn', 'bad') else '') }}</label></li>
+        {% endfor %}
+      </ul>
+      <p class="k-muted">Needs room for about {{ ch_budget }} pages of text.</p>
+    {% else %}
+      {% if ch_error %}
+        <p class="mo-msg is-bad" data-testid="mo-online-refused">{{ ch_error }}</p>
+        {% if not ch_connected %}<button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-online-so" hx-get="/models/online?open=1" hx-target="#mo-online-body" hx-swap="innerHTML">Set up an online model</button>{% endif %}
+      {% elif not ch_online_ok %}
+        <p class="mo-msg is-bad">This step always runs on this computer.</p>
+      {% else %}
+        <p class="k-muted">Provider: {{ ch_provider }}. {{ ch_models|length }} models fit this step.</p>
+        <label class="mo-lbl"><input type="checkbox" {% if ch_free %}checked{% endif %} hx-get="/models/change/{{ ch_tier }}?where=online{{ '' if ch_free else '&free=1' }}" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-free-only"> Free only ({{ ch_n_free }} free)</label>
+        <ul class="mo-pick" data-testid="mo-online-list">
+          {% for m in ch_models %}
+          {% set why = ch_reasons.get(m.id) %}
+          <li class="{{ 'is-off' if why }}"><label><input type="radio" name="model" value="{{ m.id }}"{% if why %} disabled{% endif %}>
+            <span class="k-grow"><b>{{ m.name }}</b><span class="k-muted">{{ m.price }}{% if m.context_length %} · {{ (m.context_length / 680)|round|int }} pages{% endif %}</span>
+              {% if why %}<span class="mo-bad">{{ why }}</span>{% endif %}</span></label></li>
+          {% endfor %}
+        </ul>
+        <div class="mo-shield">{{ ui.icon('shield') }}<div><b>What is sent</b><span>{{ ch_sends or 'The role text and the profile lines this step needs.' }} Your name and contact details are never sent.</span></div></div>
+        <label class="mo-lbl"><input type="checkbox" name="confirm" data-testid="mo-confirm-online"> I understand this goes to {{ ch_provider }} and uses my credit.</label>
+      {% endif %}
+    {% endif %}
+    <div class="mo-actions">
+      <button class="k-btn k-btn--primary" type="submit" data-testid="mo-change-save"{% if ch_where == 'online' and (ch_error or not ch_online_ok) %} disabled{% endif %}>Save</button>
+      {% if ch_undo %}<button class="k-btn" type="button" hx-post="/models/change/{{ ch_tier }}/undo?token={{ ch_undo_token }}" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-undo">Undo</button>{% endif %}
+      {% if ch_override %}<button class="k-btn k-btn--quiet" type="button" hx-post="/models/change/{{ ch_tier }}/reset" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-reset">Reset to default</button>{% endif %}
+    </div>
+  </form>
+</div>

@@ -1,0 +1,13 @@
+{# Reference article: the names Settings uses for each model step. /help#tier-names opens it in the
+   reader. #}
+<div id="tier-names">
+<p>Settings assigns a model to each of the four steps. An online assignment is used only in Hosted mode; the online deeper read sends data only when you confirm it.</p>
+<table class="hp-names">
+  <thead><tr><th>Name</th><th>What it is</th></tr></thead>
+  <tbody>
+    {% for n in tier_names %}
+    <tr><td>{{ n.label }}<br><span class="mono muted">{{ n.name }}</span></td><td>{{ n.what }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>

@@ -1,0 +1,20 @@
+{# Tailor resume: the parts that changed after a swap, a look change or the privacy switch, each
+   replacing its own element out of band. The page keeps its scroll, the open cards and the
+   preview frame. #}
+{% import "partials/tailor_macros.html" as M %}
+{% set fc = (flash or '') %}
+{% if fc.startswith('skills:') %}{% set fc = 'skills' %}{% endif %}
+{% if fc == 'skills' and ctx.skills_card %}{{ M.skills_card(ctx.skills_card, ctx, true) }}
+{% elif fc == 'summary' and ctx.summary_card %}{{ M.card(ctx.summary_card, ctx, true) }}
+{% elif fc %}{% for g in ctx.groups %}{% for c in g.cards %}{% if c.key == fc %}{{ M.card(c, ctx, true) }}{% endif %}{% endfor %}{% endfor %}
+{% endif %}
+{{ M.head(ctx, true) }}
+{{ M.warn(ctx, true) }}
+{{ M.guard(ctx, true) }}
+{{ M.changes(ctx, true) }}
+{{ M.reqs(ctx, true) }}
+{{ M.words(ctx, true) }}
+{{ M.privacy(ctx, true) }}
+{{ M.look(ctx, true) }}
+{{ M.posting(ctx, true) }}
+<textarea hx-swap-oob="outerHTML" id="tl-src" hidden aria-hidden="true" tabindex="-1" data-testid="tl-src" data-flash="{{ flash or '' }}">{{ ctx.preview_html }}</textarea>

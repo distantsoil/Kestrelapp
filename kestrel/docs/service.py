@@ -116,3 +116,35 @@ async def render_document(
         hide_suggestions=_hide_suggestions(catalog, config) if over else [],
         html=html,
     )
+
+
+async def refresh_pdf(
+    session: AsyncSession, settings: Settings, render: DocRender
+) -> DocRender | None:
+    """Write the PDF for this render's CURRENT picks. A swap, a hide or a look change on the
+    Tailor page edits the stored config but not the file, so the file is made again here, from the
+    same resolve() and render_html() the preview uses, whenever the page hands it over. Returns
+    None when the document the render came from no longer exists. A render failure (no browser)
+    propagates so the caller can say so; the old file is left as it was."""
+    catalog = await load_catalog(session, render.doc_master_id)
+    if catalog is None:
+        return None
+    config = dict(render.config or {})
+    config["redact_orgs"] = bool(config.get("redact_orgs") or settings.confidential_mode)
+    doc = resolve(catalog, config)
+    rendered = await render_pdf(render_html(doc))
+    org, role = await _target_org_role(session, catalog, render.opportunity_id)
+    filename = render.filename or filename_for(doc.header, org, role)
+    docs_dir = paths.data_dir() / "documents"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = docs_dir / f"{render.id}_{filename}"
+    pdf_path.write_bytes(rendered.pdf)
+    render.pdf_path = str(pdf_path)
+    render.filename = filename
+    render.page_count = rendered.page_count
+    config = dict(render.config or {})
+    config.pop("stale", None)
+    render.config = config
+    await session.commit()
+    await session.refresh(render)
+    return render

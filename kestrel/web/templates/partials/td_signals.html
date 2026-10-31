@@ -1,0 +1,26 @@
+{# New signals (Consulting only, above Top matches; D-UI-92): public trigger events with their
+   fit. Research opens the company; Add to leads and Not relevant use the Pipeline's routes, with
+   Undo. Trigger events appear only here. #}
+{% import "ui/macros.html" as ui %}
+<section class="k-card k-card--good td-panel" id="td-signals" data-testid="td-signals"
+         hx-get="/today/signals" hx-trigger="td-refresh from:body, kestrel:undone from:document" hx-swap="outerHTML" data-no-busy>
+  <header class="k-sec-head">
+    <span class="k-badge k-badge--good">{{ ui.icon('motion') }}</span>
+    <div class="k-grow"><h3>New signals <span class="td-count td-count--good" data-testid="sig-count">{{ signals.n }}</span></h3>
+      <p>Public events that suggest a company may need outside help soon. No posting yet.</p></div>
+    <a class="k-link" href="/opportunities?kind=signals&amp;track=consulting">View all</a>
+  </header>
+  <div class="td-list">
+    {% for g in signals.rows %}
+    <div class="td-item" data-id="{{ g.id }}" data-testid="sig-row">
+      <div class="k-grow"><b>{{ g.org }}</b>: {{ g.what }}<div class="td-o">{{ g.source }}</div></div>
+      {% if g.score is not none %}<span class="td-num td-num--{{ g.tone }}">{{ '%.1f'|format(g.score) }}</span>{% endif %}
+      <a class="k-btn k-btn--sm" href="{{ g.org_href }}" data-testid="sig-research">Research</a>
+      <button type="button" class="k-btn k-btn--sm" data-td-gone data-testid="sig-lead"
+              hx-post="/opportunities/{{ g.id }}/lead" hx-swap="none">Add to leads</button>
+      <button type="button" class="k-btn k-btn--sm" data-td-gone data-testid="sig-no"
+              hx-post="/opportunities/{{ g.id }}/decide/not-for-me?reason=later" hx-swap="none">Not relevant</button>
+    </div>
+    {% endfor %}
+  </div>
+</section>

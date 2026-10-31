@@ -1,30 +1,33 @@
-{# Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1). Tokens only. #}
-<div class="card" id="questions-card" data-testid="questions-card">
-  <h3>Likely interview questions</h3>
+{# Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1), in the Role page's
+   decision column. Tokens only. #}
+{% import "partials/online_ask.html" as online_ask %}
+<section class="k-card rl-card" id="questions-card" data-testid="questions-card">
+  <header class="k-sec-head"><div class="k-grow"><h3>Likely interview questions</h3></div></header>
   {% if qview.questions %}
-    <ol data-testid="question-list" style="margin:0 0 .6rem 1.1rem;padding:0">
+    <ol class="rl-list rl-qlist" data-testid="question-list">
       {% for q in qview.questions %}
-        <li data-testid="question" style="margin-bottom:.5rem">
+        <li data-testid="question">
           {{ q.question }}
-          <span class="pill grey">{{ q.category|replace('_', ' ') }}</span>
-          {% if q.why_asked %}<div class="quiet">{{ q.why_asked }}</div>{% endif %}
-          {% if q.story_title %}<div class="quiet">Your story: {{ q.story_title }}</div>{% endif %}
+          <span class="k-pill k-pill--info">{{ q.category|replace('_', ' ') }}</span>
+          {% if q.why_asked %}<div class="rl-dsm">{{ q.why_asked }}</div>{% endif %}
+          {% if q.story_title %}<div class="rl-dsm">Your story: {{ q.story_title }}</div>{% endif %}
         </li>
       {% endfor %}
     </ol>
-    <p class="quiet">The prep pack, mock interview and debrief use this list.</p>
+    <p class="rl-dsm">The prep pack, mock interview and debrief use this list.</p>
   {% elif qview.pending %}
-    <p class="quiet" data-testid="questions-pending">Writing the list.</p>
+    <p class="rl-dsm" data-testid="questions-pending">Writing the list.</p>
   {% elif qview.failed %}
-    <p class="quiet" data-testid="questions-failed">No list was made. The scored review's questions still apply. <a href="/quarantine">Failed scoring</a></p>
+    <p class="rl-dsm" data-testid="questions-failed">No list was made. The scored review's questions still apply. <a class="k-link" href="/quarantine">Failed scoring</a></p>
   {% else %}
-    {% if qview.applied %}<p class="quiet" data-testid="questions-none">No list yet. The scored review's questions apply until you write one.</p>
-    {% else %}<p class="quiet">Marking this role Applied writes the list. Until then the scored review's questions apply.</p>{% endif %}
+    {% if qview.applied %}<p class="rl-dsm" data-testid="questions-none">No list yet. The scored review's questions apply until you write one.</p>
+    {% else %}<p class="rl-dsm">Marking this role Applied writes the list. Until then the scored review's questions apply.</p>{% endif %}
   {% endif %}
-  {% if qnote %}<p class="quiet" role="status" data-testid="questions-note">{{ qnote }}</p>{% endif %}
+  {% if qnote %}<p class="rl-dsm" role="status" data-testid="questions-note">{{ qnote }}</p>{% endif %}
   {% if qview.applied %}
-  <button type="button" class="btn" data-testid="questions-regenerate"
-          hx-post="/opportunities/{{ opp_id }}/questions/regenerate"
-          hx-target="#questions-card" hx-swap="outerHTML"
-          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>{% endif %}
-</div>
+  <form class="rl-btns" hx-post="/opportunities/{{ opp_id }}/questions/regenerate"
+        hx-target="#questions-card" hx-swap="outerHTML">
+    {{ online_ask.ask(qview.route, 'questions', 'write the list') }}
+    <button type="submit" class="k-btn k-btn--sm" data-testid="questions-regenerate"
+          {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button></form>{% endif %}
+</section>

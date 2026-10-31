@@ -1,0 +1,1052 @@
+/* Kestrel shared components (UI overhaul, Phase 1). Visual reference: the locked mockups in
+   the private overhaul notes Tokens only: no color literal appears below, every color is a
+   var(--token) from tokens.css (tests/test_ui_tokens.py enforces it).
+
+   Classes carry a k- prefix so they never collide with the legacy stylesheet (kestrel.css),
+   which stays loaded after this file until each screen is converted.
+
+   Rules baked in (the private overhaul notes, "Consolidated rules"):
+   - Nothing sits on the scene art; header actions sit beside the title; the help column starts
+     level with the first main card, below the scene band.
+   - Slide-overs slide over content, never push; flyouts open centered vertically on the right.
+   - Titles, buttons, tags and chips never wrap; paired cards are equal height.
+   - scrollbar-gutter: stable so collapsing never re-sizes the page.
+   - Status color always comes with a label. Reduced motion turns every animation off. */
+
+/* ------------------------------------------------------------------ base and utilities */
+.k-win, .k-win *, .k-flyout, .k-slideover, .k-modal, .k-toasts { box-sizing: border-box; }
+.k-win {
+  font: var(--fs-md)/1.5 var(--font);
+  color: var(--ink);
+  background: var(--bg);
+}
+.k-sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.k-ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.k-ic--sm { width: 14px; height: 14px; }
+.k-ic--lg { width: 22px; height: 22px; }
+.k-muted { color: var(--muted); }
+.k-nowrap { white-space: nowrap; }
+.k-grow { flex: 1; min-width: 0; }
+.k-row { display: flex; align-items: center; gap: var(--sp-3); }
+.k-stack { display: flex; flex-direction: column; gap: var(--sp-4); }
+[hidden] { display: none !important; }
+
+/* ----------------------------------------------------------- focus rings (all k- controls) */
+[class^="k-"]:focus-visible, [class*=" k-"]:focus-visible,
+.k-win :focus-visible, .k-flyout :focus-visible, .k-slideover :focus-visible,
+.k-modal :focus-visible, .k-toasts :focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* ------------------------------------------- legacy resets inside k- components
+   kestrel.css styles bare elements (h2 is small uppercase, th is shaded, inputs get a 6px
+   radius, a:hover underlines). These rules sit before the component rules so that a component
+   that sets its own value wins the tie, and everything it leaves alone is neutral. */
+:is(.k-card, .k-hcard, .k-flyout, .k-slideover, .k-modal, .k-dz, .k-empty, .k-sec-head,
+    .k-scene, .k-toasts) :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0; font-size: var(--fs-lg); font-weight: 700; line-height: 1.3;
+  text-transform: none; letter-spacing: normal;
+}
+:is(.k-card, .k-hcard, .k-flyout, .k-slideover, .k-modal, .k-dz, .k-empty, .k-sec-head) p {
+  margin: 0 0 8px;
+}
+:is(.k-btn, .k-nav, .k-brand, .k-chip, .k-pill):hover { text-decoration: none; }
+:is(.k-card, .k-hcard, .k-flyout, .k-slideover, .k-modal, .k-dz) :is(th, td) {
+  text-align: left; vertical-align: middle;
+}
+
+/* Avatar slot in the top bar. */
+.k-avatar { display: inline-grid; place-items: center; width: 36px; height: 36px; flex: none;
+  border-radius: 50%; color: var(--brand-ink); text-decoration: none;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2)); }
+.k-avatar:hover { filter: brightness(1.08); text-decoration: none; }
+/* A picture change swaps the avatar in place; htmx marks the new one .htmx-added for a beat, so
+   it fades in instead of snapping. Reduced motion zeroes transitions below. */
+.k-avatar { transition: opacity .25s ease, filter .15s ease; }
+.k-avatar.htmx-added { opacity: 0; }
+.k-avatar__letter { font-weight: 700; font-size: var(--fs-lg); line-height: 1; }
+.k-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.k-avatar--bird { background: var(--tg2); color: var(--tg2i); }
+.k-avatar--leaf { background: var(--tgd); color: var(--tgdi); }
+.k-avatar--star { background: var(--tg1); color: var(--tg1i); }
+.k-avatar--sun { background: var(--tg0); color: var(--tg0i); }
+.k-avatar--mountain { background: var(--tg3); color: var(--tg3i); }
+.k-avatar--compass { background: var(--soft); color: var(--link-ink); }
+
+/* ---------------------------------------------------------- scrollbars (thin, tokenized) */
+.k-win, .k-win *, .k-flyout, .k-flyout *, .k-slideover, .k-slideover *,
+.k-modal, .k-modal *, .k-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.k-win ::-webkit-scrollbar, .k-flyout ::-webkit-scrollbar, .k-slideover ::-webkit-scrollbar,
+.k-modal ::-webkit-scrollbar, .k-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.k-win ::-webkit-scrollbar-thumb, .k-flyout ::-webkit-scrollbar-thumb,
+.k-slideover ::-webkit-scrollbar-thumb, .k-modal ::-webkit-scrollbar-thumb,
+.k-scroll::-webkit-scrollbar-thumb {
+  background: var(--line); border-radius: 6px; border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.k-win ::-webkit-scrollbar-track, .k-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ------------------------------------------------------------- window and scene shell
+   The app shell every page shares (templates/base.html), from the locked mockups
+   (today-mockup-locked.html :37-73 and :359-394, settings and pipeline the same): a paper
+   sidebar (a gradient in dark) with the window controls, the mark, the track switch, three nav
+   groups, Help and About at the foot and the two-line status readout; the page column on the
+   shared sky gradient; and a top row that scrolls with the page (no fixed band, D-UI-91). */
+/* The page scrolls on the document with the mockups' thin themed bar (9 px, a --line thumb). No
+   stable gutter here: a reserved gutter on <html> would paint a strip of the body's ground
+   beside the sky and pull right-anchored overlays off the window edge. */
+/* The page itself shows no scrollbar (owner ruling, D-UI-203): the round scroll cues mark that
+   there is more, and the wheel, touchpad and keys scroll as before. Inner lists keep their thin
+   themed bar. */
+html { scrollbar-width: none; }
+body, .k-win, .k-win > .k-main { scrollbar-width: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, .k-win::-webkit-scrollbar,
+.k-win > .k-main::-webkit-scrollbar { width: 0; height: 0; display: none; }
+html::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px;
+  border: 2px solid transparent; background-clip: padding-box; }
+html::-webkit-scrollbar-track { background: transparent; }
+.k-win {
+  display: grid;
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
+  min-height: 100vh;
+  /* Named so the layout steps the locked mockups take (1300, 1000 ...) measure the WINDOW, as the
+     mockups' .win does, never a page wrapper ~232px narrower (2026-10-26 conformance audit). */
+  container: kwin / inline-size;
+}
+.k-win--narrow { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
+.side {
+  background: var(--side-bg);
+  border-right: 1px solid var(--line);
+  padding: 18px 14px 12px;
+  display: flex; flex-direction: column; gap: 1px;
+  min-height: 0; overflow: auto;
+  position: sticky; top: 0; height: 100vh; overflow-x: hidden;
+}
+.k-brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: var(--fs-xl);
+  padding: 2px 8px 14px; color: var(--ink); text-decoration: none; letter-spacing: normal; }
+.k-brand:hover { text-decoration: none; }
+.k-brand__mark { width: 30px; height: 30px; border-radius: var(--r-sm); background: var(--brand);
+  display: grid; place-items: center; color: var(--brand-ink); flex: none; overflow: hidden; }
+.k-brand__mark:has(> img) { background: none; }
+.k-brand__mark img { width: 100%; height: 100%; display: block; }
+.k-brand__word { color: var(--ink); white-space: nowrap; }
+.k-sec {
+  font-family: var(--font); font-size: var(--fs-xs); letter-spacing: .09em; color: var(--muted);
+  padding: 12px 10px 5px; font-weight: 700; text-transform: uppercase; line-height: 1.5;
+}
+.mainnav { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; }
+/* A short window: the menu scrolls in its own space above the status readout instead of running
+   under it (owner, 2026-10-29: Settings sat under the readout at 1280x640). Hidden scrollbar, with
+   the scroll arrows (KUI.cue) as everywhere else. */
+.side .mainnav { overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+.side .mainnav::-webkit-scrollbar { display: none; }
+.side .k-sstat { flex: none; }
+.mainnav > a {
+  display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: var(--r-sm);
+  color: var(--ink); text-decoration: none; font-weight: 500; font-size: var(--fs-md);
+  line-height: 1.5; white-space: nowrap;
+  transition: background var(--dur-1), transform var(--dur-1);
+}
+.mainnav > a:hover { background: var(--soft); transform: translateX(2px); text-decoration: none; }
+.mainnav > a.active, .mainnav > a[aria-current="page"] { background: var(--soft); color: var(--brand); font-weight: 700; }
+.mainnav > a .k-ic { color: currentColor; }
+.mainnav > a .n { order: 3; margin-left: auto; font-size: 12px; font-weight: 700;
+  color: var(--muted); font-variant-numeric: tabular-nums; }
+.mainnav > a .n:empty { display: none; }
+.mainnav > a.active .n { color: var(--brand); }
+.mainnav > a .ring { order: 2; margin-left: auto; }
+.mainnav > a .ring:not([hidden]) + .n { margin-left: 6px; }
+.k-spacer { flex: 1; }
+/* The track switch (D-UI-57): a segmented control on --soft, the active tab filled --brand. */
+.track-switch {
+  display: flex; gap: 4px; background: var(--soft); border-radius: 9px; padding: 3px;
+  margin: 0 2px 6px;
+}
+.track-switch a {
+  flex: 1 1 auto; min-width: 0; text-align: center; font-size: 12px; padding: 4px 7px; border-radius: 7px;
+  color: var(--muted); font-weight: 600; white-space: nowrap; text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+}
+.track-switch a:hover { color: var(--ink); text-decoration: none; }
+.track-switch a.active { background: var(--brand); color: var(--brand-ink); }
+.track-switch a .n {
+  display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1.5; background: var(--paper); color: var(--link-ink);
+}
+.track-switch a.active .n { background: var(--brand-ink); color: var(--brand); }
+.track-switch a .n:empty { display: none; }
+/* The status readout (D-UI-91): two lines, never wrapping. */
+.k-sstat {
+  border-top: 1px solid var(--line); padding: 10px 8px 0; margin-top: 6px;
+  font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 6px;
+  line-height: 1.5; min-width: 0;
+}
+.k-sstat__l { display: flex; gap: 8px; align-items: center; min-width: 0; color: var(--muted);
+  text-decoration: none; }
+.k-sstat__l > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0; }
+.k-sstat b { color: var(--ink); }
+.k-sstat .k-sstat__bad { color: var(--bad-ink); }
+.k-sstat .k-sstat__warn { color: var(--warn-ink); }
+.k-sstat a { color: var(--bad-ink); text-decoration: none; font-weight: 600; }
+.k-sstat a:hover { text-decoration: underline; }
+.k-sstat a.k-sstat__quiet { color: inherit; font-weight: inherit; }
+.k-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.k-dot--live { background: var(--brand); animation: k-pulse 1.4s ease-in-out infinite; }
+.k-dot--bad { background: var(--bad); }
+.k-dot--idle { background: var(--muted); }
+.k-dot--warn { background: var(--warn); }
+.k-win--narrow .side { padding: 18px 10px 12px; align-items: center; }
+.k-win--narrow .k-sec, .k-win--narrow .mainnav > a .n,
+.k-win--narrow .k-brand__word, .k-win--narrow .k-sstat span:not(.k-dot) { display: none; }
+.k-win--narrow .mainnav > a { justify-content: center; padding: 9px; font-size: 0; }
+
+/* The page column: the shared sky gradient behind everything, scrolling with the page. */
+.k-main {
+  min-width: 0;
+  background: var(--main-bg);
+  background-attachment: local;
+  overflow-x: hidden;
+  display: flex; flex-direction: column; min-height: 100vh;
+}
+.k-content {
+  padding: 18px var(--content-pad) 26px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+/* The top row: search centered, then the bell, the theme toggle and the avatar. Transparent and
+   in the page flow, so it scrolls away with the page and the scene band rises under it. */
+.k-tools {
+  display: flex; align-items: center; gap: 10px; position: relative; z-index: 5;
+  padding: 18px var(--content-pad) 0;
+}
+.k-tools__gap { flex: 1; align-self: stretch; }
+.k-search {
+  margin: 0 auto; width: min(440px, 50%); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 12px; color: var(--muted); display: flex; align-items: center; gap: 8px;
+  background: var(--paper); cursor: pointer; font: inherit; text-align: left; min-width: 0;
+}
+.k-search:hover { border-color: var(--brand); }
+.k-search .k-ic { color: var(--muted); }
+.k-search__text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-search kbd { margin-left: auto; font: 11px/1.4 var(--font); border: 1px solid var(--line);
+  border-radius: 5px; padding: 1px 6px; background: var(--bg); color: var(--muted); white-space: nowrap; }
+.k-icon {
+  width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line);
+  display: grid; place-items: center; position: relative; background: var(--paper);
+  color: var(--ink); cursor: pointer; padding: 0; flex: none; font: inherit;
+}
+.k-icon:hover { background: var(--soft); }
+/* An icon swapped by state (the theme toggle's moon and sun) sits in a span; centre that too,
+   or the inline box's baseline lifts the glyph toward the top of the circle. */
+.k-icon > span { display: grid; place-items: center; line-height: 0; }
+.k-icon__n { position: absolute; top: -4px; right: -4px; background: var(--brand);
+  color: var(--brand-ink); font-size: 10px; line-height: 1.5; border-radius: 9px; padding: 0 5px;
+  font-weight: 700; }
+.k-icon__n:empty { display: none; }
+.k-icon__n.is-tick { animation: k-tick .45s ease; }
+.k-bell .k-ic { color: var(--bell); }
+.k-bell.is-wiggle .k-ic { animation: k-wig .9s ease; }
+@keyframes k-wig { 0%, 100% { transform: rotate(0); } 15% { transform: rotate(16deg); }
+  30% { transform: rotate(-13deg); } 45% { transform: rotate(9deg); } 60% { transform: rotate(-6deg); }
+  75% { transform: rotate(3deg); } }
+@keyframes k-tick { 50% { transform: scale(1.45); } }
+.k-bellwrap { position: relative; }
+/* Tooltips on the top row are drawn in the page, right-aligned under their control, so the
+   last ones never run past the window's right edge (a native tooltip there was clipped). */
+.k-tools [data-k-tip] { position: relative; }
+.k-tools [data-k-tip]:hover::after, .k-tools [data-k-tip]:focus-visible::after {
+  content: attr(data-k-tip); position: absolute; top: calc(100% + 8px); right: 0;
+  white-space: nowrap; background: var(--ink); color: var(--paper); font: 600 12px/1.4 var(--font);
+  padding: 4px 8px; border-radius: 6px; pointer-events: none; z-index: var(--z-flyout);
+  box-shadow: var(--shadow-soft); animation: k-inFade .15s ease .35s backwards; }
+/* The notification panel (today-mockup-locked.html :256-263): 440 px, a header, pill tabs. */
+.k-npanel {
+  position: absolute; right: -8px; top: calc(100% + 10px); width: min(440px, calc(100vw - 32px));
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop); z-index: var(--z-flyout); transform-origin: top right;
+  overflow: hidden; color: var(--ink);
+}
+.k-npanel.is-enter { transition: transform .32s var(--ease), opacity .25s; }
+.k-npanel.is-from { transform: translateY(-14px) scale(.97); opacity: 0; }
+.k-npanel__head { display: flex; align-items: center; gap: 6px; padding: 14px 16px 8px; }
+.k-npanel__head h3 { margin: 0; font-size: 17px; flex: 1; text-transform: none; letter-spacing: normal;
+  color: var(--ink); font-weight: 700; }
+.k-npanel__body { min-height: 60px; }
+.k-npanel__foot { font-size: 11.5px; color: var(--muted); padding: 8px 16px 12px;
+  border-top: 1px solid var(--line); }
+/* The notifications panel drops down over the page without dimming it (today-mockup-locked
+   .npanel has no scrim; owner round 15). The layer only catches the click outside that closes it. */
+.k-nscrim { position: fixed; inset: 0; background: transparent; z-index: calc(var(--z-flyout) - 1); }
+.k-nscrim.is-enter { transition: opacity .3s; }
+.k-nscrim.is-from { opacity: 0; }
+
+/* Window controls (D-UI-88): at the top of the sidebar, only inside the desktop window (the
+   script reveals them when pywebview is present). macOS keeps its real traffic lights over a
+   transparent title bar, so there the row is an empty spacer of the same size. */
+.k-wctl { display: flex; align-items: center; gap: 2px; min-height: 26px; margin: -6px 0 14px -4px; }
+.k-wctl[hidden] { display: none; }
+.k-wctl button {
+  border: 0; padding: 0; cursor: pointer; display: grid; place-items: center; color: var(--ink);
+  width: 34px; height: 26px; border-radius: 6px; background: transparent;
+}
+.k-wctl svg { width: 11px; height: 11px; stroke: currentColor; stroke-width: 1.2; fill: none; }
+.k-wctl button:hover { background: var(--line); }
+.k-wctl .k-wc-close:hover { background: var(--wc-close); color: var(--wc-close-ink); }
+.k-wctl .k-wc-min { order: 1; }
+.k-wctl .k-wc-max { order: 2; }
+.k-wctl .k-wc-close { order: 3; }
+.k-wctl .k-wc-restore { display: none; }
+.k-wctl.is-max .k-wc-max .k-wc-maxi { display: none; }
+.k-wctl.is-max .k-wc-max .k-wc-restore { display: inline; }
+.k-wctl button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.k-wctl.is-mac { min-height: 22px; margin: -6px 0 14px 2px; width: 60px; }
+.k-wctl.is-mac button { display: none; }
+.k-wctl__drag { flex: 1; align-self: stretch; min-width: 12px; }
+/* A full page with no sidebar (the setup wizard) keeps the window controls: base.html renders
+   them in the sidebar, the page's sheet pins that sidebar's controls at the wizard's top left
+   (onboarding-mockup-locked.html #wctl: left 28px, top 14px), and in the desktop window the
+   header leaves the mockup's 46 px above the mark for them (D-UI-189). */
+html[data-k-frame] .ob-top { padding-top: 46px; }
+
+/* Edge and corner resize handles for the frameless window on Windows and Linux. */
+.k-rsz { position: fixed; z-index: 2147483000; app-region: no-drag; -webkit-app-region: no-drag; }
+.k-rsz[hidden] { display: none; }
+.k-rsz--n { top: 0; left: 14px; right: 14px; height: 6px; cursor: ns-resize; }
+.k-rsz--s { bottom: 0; left: 14px; right: 14px; height: 6px; cursor: ns-resize; }
+.k-rsz--e { right: 0; top: 14px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.k-rsz--w { left: 0; top: 14px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.k-rsz--ne, .k-rsz--nw, .k-rsz--se, .k-rsz--sw { width: 14px; height: 14px; }
+.k-rsz--ne { top: 0; right: 0; cursor: nesw-resize; }
+.k-rsz--sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.k-rsz--nw { top: 0; left: 0; cursor: nwse-resize; }
+.k-rsz--se { bottom: 0; right: 0; cursor: nwse-resize; }
+html.k-maximized .k-rsz { display: none; }
+/* D-UI-196: on Windows the window draws a thin strip around the page in --frame-strip (the
+   sidebar's color) and resizes from it natively; the page sits inside as a panel whose corners
+   round into that strip. Maximized, the strip is gone and so are the corners. */
+.k-corners { display: none; }
+html[data-k-frame="win"]:not(.k-maximized) .k-corners {
+  --kr: var(--r-lg);
+  display: block; position: fixed; inset: 0; pointer-events: none; z-index: 2147483001;
+  background:
+    radial-gradient(circle at 100% 100%, transparent calc(var(--kr) - .5px), var(--frame-strip) var(--kr)) left top / var(--kr) var(--kr) no-repeat,
+    radial-gradient(circle at 0 100%, transparent calc(var(--kr) - .5px), var(--frame-strip) var(--kr)) right top / var(--kr) var(--kr) no-repeat,
+    radial-gradient(circle at 100% 0, transparent calc(var(--kr) - .5px), var(--frame-strip) var(--kr)) left bottom / var(--kr) var(--kr) no-repeat,
+    radial-gradient(circle at 0 0, transparent calc(var(--kr) - .5px), var(--frame-strip) var(--kr)) right bottom / var(--kr) var(--kr) no-repeat;
+}
+
+/* The command palette (surfaces-mockup-locked.html :545-600): a 660 px modal over a fading
+   scrim, rising in; grouped results with an icon tile, subline and match highlight; a hints
+   footer with the count; an empty state. */
+.k-pal-ov { position: fixed; inset: 0; z-index: calc(var(--z-toast) - 2); display: flex;
+  align-items: flex-start; justify-content: center; padding: 12vh 16px 16px;
+  background: var(--scrim-strong); }
+.k-pal-ov.is-enter { transition: opacity .2s ease; }
+.k-pal-ov.is-from { opacity: 0; }
+.k-pal { background: var(--paper); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: var(--shadow-pop); width: min(660px, 100%); max-height: 100%;
+  display: flex; flex-direction: column; overflow: hidden; animation: k-pal-rise .25s var(--ease) backwards; }
+@keyframes k-pal-rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+.k-pal__in { display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+  border-bottom: 1px solid var(--line); }
+.k-pal__in .k-ic { color: var(--muted); }
+.k-pal__in input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit;
+  font-size: 16px; color: var(--ink); padding: 0; }
+.k-pal__in input::placeholder { color: var(--muted); }
+.k-pal__in input:focus-visible { outline: 0; }
+.k-pal__kbd { font: 12px/1.4 var(--font); border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 6px; background: var(--bg); color: var(--ink); white-space: nowrap; }
+.k-pal__res { height: 340px; overflow: auto; padding: 6px 8px 10px; scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent; }
+.k-pal__gh { font-size: 11px; letter-spacing: .09em; font-weight: 700; color: var(--muted);
+  padding: 10px 10px 4px; }
+.k-pal__it { border-radius: 9px; cursor: pointer; border: 1px solid transparent; }
+.k-pal__row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; }
+.k-pal__it.is-sel { background: var(--soft); border-color: var(--tint-info-line); }
+.k-pal__ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  flex: none; background: var(--soft); color: var(--brand); }
+.k-pal__ic .k-ic { width: 16px; height: 16px; }
+.k-pal__tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.k-pal__tx b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k-pal__tx span { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.k-pal__tag { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.k-pal__it.is-sel .k-pal__tag { display: none; }
+.k-pal__enter { display: none; }
+.k-pal__it.is-sel .k-pal__enter { display: inline-block; }
+mark.k-pal__m { background: none; color: var(--brand); font-weight: 800; }
+.k-pal__empty { height: 100%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 6px; text-align: center; color: var(--muted); padding: 0 24px; }
+.k-pal__empty b { color: var(--ink); font-size: 16px; }
+.k-pal__hints { display: flex; gap: 16px; align-items: center; padding: 10px 18px;
+  border-top: 1px solid var(--line); background: var(--bg); color: var(--muted); font-size: 12.5px;
+  white-space: nowrap; }
+.k-pal__hints > span { display: inline-flex; gap: 6px; align-items: center; }
+.k-pal__count { margin-left: auto; }
+
+/* The closing screen (D-UI-90, launch-mockup-locked.html :85-87, :139-143). */
+.k-closing {
+  position: fixed; inset: 0; z-index: 2147483100; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(2px);
+  color: var(--ink); font-family: var(--font); animation: k-fade .25s ease both;
+}
+.k-closing__in { display: flex; flex-direction: column; align-items: center; gap: 14px;
+  text-align: center; max-width: 440px; padding: 0 24px; }
+.k-closing__mark { width: 72px; height: 72px; display: block; }
+.k-closing__name { font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+.k-closing__status { color: var(--muted); font-size: 15px; }
+html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform .35s ease, opacity .35s ease; }
+@keyframes k-fade { from { opacity: 0; } }
+
+/* Below 1100 px the sidebar is an icon rail; it never disappears (D-UI-91). At phone width
+   (700 px and under) the rail gives way to the bottom bar, whose More sheet holds every page. */
+@media (max-width: 1100px) {
+  .k-win { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
+  .side { padding: 18px 10px 12px; align-items: center; }
+  .side .k-sec, .side .mainnav > a .n, .side .k-brand__word,
+  .side .track-switch, .k-sstat__l > span:not(.k-dot) { display: none; }
+  .side .k-brand { padding: 2px 0 14px; }
+  .side .mainnav { width: 100%; }
+  .side .mainnav > a { justify-content: center; padding: 9px; position: relative; font-size: 0; }
+  .side .mainnav > a .ring { position: absolute; top: 4px; right: 6px; margin: 0; width: 8px; height: 8px; }
+  .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
+  .k-sstat__l { flex: none; }
+  .k-wctl { flex-direction: column; margin: -6px 0 12px; }
+  .k-wctl.is-mac { width: 22px; min-height: 60px; }
+}
+@media (max-width: 700px) {
+  .k-win { grid-template-columns: minmax(0, 1fr); }
+  .side { display: none; }
+  .k-tools { padding: 12px 16px 0; }
+}
+
+/* The shell's htmx slots (update banner, the disclosure, what's new and announcement cards) are
+   empty almost always; an empty slot takes no room and no flex gap above the title (O8). */
+#update-banner:not(:has(*)), #update-modal:not(:has(*)), #disclosure-slot:not(:has(*)),
+#whats-new-slot:not(:has(*)), #announcement-slot:not(:has(*)) { display: none; }
+
+/* Scene band: the art sits in the right ~65%, the page title in the empty left third. */
+.k-scene {
+  position: relative;
+  margin: 0 calc(var(--content-pad) * -1);
+  padding: 10px var(--content-pad) 14px;
+  overflow: hidden;
+  /* 122px puts the page title's center 169px under the window top, as every locked mockup
+     draws it (the band used to be 132px, which sat the title 10px low on every inner page). */
+  min-height: 122px;
+  display: flex; align-items: flex-end;
+}
+.k-scene__art {
+  position: absolute; right: 0; bottom: 0;
+  /* 620x118 at the right edge, as the locked Settings and Pipeline bands draw it; a narrow band
+     keeps the ratio and gives the title room. */
+  width: min(620px, 70%); height: auto; aspect-ratio: 620 / 118;
+  overflow: visible; pointer-events: none;
+}
+/* In the app shell the art reaches the window's right edge, as drawn, without widening the page:
+   the band is not a positioned box there, so the art's containing block is the page column
+   (.k-main) and right: 0 is the window edge. Vertically it keeps its static place, the band's
+   foot. Overflow past the page wrapper never counts toward that wrapper's width (pages are
+   checked for sideways scroll), because the art is not laid out inside it. */
+.k-main { position: relative; }
+.k-win .k-main .k-scene { position: static; }
+/* A page wrapper that is positioned would become the art's containing block and stop the art
+   short of the window edge (Settings, 22px). Keep the wrapper static; its own absolutely
+   positioned children sit in their own positioned boxes. */
+.k-win .k-main .st-page, .k-win .k-main .ab-page { position: static; }
+.k-win .k-main .k-scene__art { right: 0; bottom: auto; }
+.k-scene__stack { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; }
+.k-scene__title { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; }
+.k-scene__title h1 { margin: 0; font-size: var(--fs-2xl); letter-spacing: -.01em; white-space: nowrap; }
+.k-scene__sub { color: var(--muted); font-size: var(--fs-md); }
+.k-scene[data-animate="0"] svg, .k-scene[data-animate="0"] svg * { animation: none !important; }
+.sc-night { display: none; }
+[data-theme="dark"] .sc-night { display: inline; }
+[data-theme="dark"] .sc-day { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sc-night { display: inline; }
+  :root:not([data-theme="light"]) .sc-day { display: none; }
+}
+
+/* Main column plus help column. The help column starts level with the first main card. */
+.k-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) var(--help-w); gap: var(--sp-4);
+  align-items: start;
+}
+.k-layout__main { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.k-help-col { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.k-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4);
+  align-items: stretch; }
+.k-grid-2 > .k-card { display: flex; flex-direction: column; }
+
+@container kwin (max-width: 1300px) {
+  .k-layout { grid-template-columns: minmax(0, 1fr); }
+  .k-help-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .k-grid-2--wide { grid-template-columns: minmax(0, 1fr); }
+}
+@container kwin (max-width: 1000px) {
+  .k-help-col { grid-template-columns: minmax(0, 1fr); }
+  .k-grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+/* The one rule that dims the scene art: only when the WINDOW is 1100 px or less
+   (today-mockup-locked.html :218-221). Above that the art is always at full strength. */
+@container kwin (max-width: 1100px) {
+  .k-scene__art { opacity: .35; }
+}
+
+/* ------------------------------------------------------------------------- buttons */
+.k-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; text-decoration: none;
+  color: var(--ink); background: var(--paper);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px;
+  transition: background var(--dur-1), border-color var(--dur-1), transform .1s;
+}
+.k-btn:hover { background: var(--soft); }
+.k-btn:active { transform: scale(.97); }
+.k-btn[disabled], .k-btn[aria-disabled="true"] { opacity: .5; cursor: default; transform: none; }
+.k-btn--primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.k-btn--primary:hover { background: var(--brand); filter: brightness(1.08); }
+.k-btn--quiet { background: transparent; border-color: transparent; color: var(--link-ink); }
+.k-btn--quiet:hover { background: var(--soft); }
+.k-btn--danger { background: var(--bad-bg); border-color: var(--bad); color: var(--bad-ink); }
+.k-btn--danger:hover { background: var(--bad-bg); filter: brightness(.97); }
+.k-btn--sm { padding: 5px 11px; font-size: 13px; }
+.k-btn--done { background: var(--good-bg); border-color: transparent; color: var(--good-ink); }
+.k-iconbtn {
+  display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0;
+  background: none; border-radius: var(--r-sm); color: var(--muted); cursor: pointer;
+}
+.k-iconbtn:hover { background: var(--soft); }
+.k-link, .k-morelink {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 700; font-size: 13px;
+  color: var(--link-ink); cursor: pointer; text-decoration: none; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.k-link:hover, .k-morelink:hover { text-decoration: underline; }
+/* "More about this ›" on every page, as drawn (each page used to add the chevron itself). */
+.k-morelink::after { content: "\203A"; margin-left: 4px; font-size: 1.1em; }
+
+/* ------------------------------------------------------------------- chips and pills */
+.k-chip {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer;
+  font: inherit; font-weight: 600; font-size: 13px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 5px 12px;
+  transition: background var(--dur-1), border-color var(--dur-1), color var(--dur-1);
+}
+.k-chip:hover { border-color: var(--brand); }
+.k-chip.is-on, .k-chip[aria-pressed="true"] {
+  background: var(--brand); border-color: var(--brand); color: var(--brand-ink);
+}
+.k-chip__n { font-size: var(--fs-xs); font-weight: 800; color: var(--muted); }
+.k-chip.is-on .k-chip__n, .k-chip[aria-pressed="true"] .k-chip__n { color: var(--brand-ink); }
+.k-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* Status pill: always carries a text label; the icon is optional decoration. */
+.k-pill {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-size: var(--fs-sm); font-weight: 700; border-radius: var(--r-pill); padding: 2px 9px;
+  background: var(--soft); color: var(--link-ink);
+}
+.k-pill .k-ic { width: 13px; height: 13px; stroke-width: 2.2; }
+.k-pill--good { background: var(--good-bg); color: var(--good-ink); }
+.k-pill--warn { background: var(--warn-bg); color: var(--warn-ink); }
+.k-pill--bad { background: var(--bad-bg); color: var(--bad-ink); }
+.k-pill--info { background: var(--chip-i-bg); color: var(--chip-i-ink); }
+.k-tag {
+  display: inline-block; white-space: nowrap; font-size: var(--fs-xs); font-weight: 500;
+  color: var(--muted); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 1px 7px;
+}
+/* Step tags: scoring tiers T0 to T3 and documents. */
+.k-stag {
+  display: inline-grid; place-items: center; min-width: 36px; height: 28px; padding: 0 8px;
+  border-radius: var(--r-sm); font-weight: 800; font-size: 13px; white-space: nowrap;
+}
+.k-stag--t0 { background: var(--tg0); color: var(--tg0i); }
+.k-stag--t1 { background: var(--tg1); color: var(--tg1i); }
+.k-stag--t2 { background: var(--tg2); color: var(--tg2i); }
+.k-stag--t3 { background: var(--tg3); color: var(--tg3i); }
+.k-stag--doc { background: var(--tgd); color: var(--tgdi); }
+
+/* ------------------------------------------------------------------ cards and sections */
+.k-card {
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
+  padding: 16px 18px; min-width: 0;
+}
+.k-card--info { background: linear-gradient(135deg, var(--tint-info), var(--paper) 85%);
+  border-color: var(--tint-info-line); }
+.k-card--warn { background: linear-gradient(135deg, var(--tint-warn), var(--paper) 85%);
+  border-color: var(--tint-warn-line); }
+.k-card--good { background: linear-gradient(135deg, var(--good-bg), var(--paper) 70%); }
+.k-card h3 { white-space: nowrap; }
+
+/* Section header with an icon badge. */
+.k-sec-head { display: flex; align-items: flex-start; gap: var(--sp-3); margin-bottom: 6px; }
+.k-sec-head h3 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+.k-sec-head p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.k-sec-head__actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.k-badge {
+  width: 38px; height: 38px; border-radius: var(--r-md); display: grid; place-items: center;
+  flex: none; background: var(--soft); color: var(--brand);
+}
+.k-badge--good { background: var(--good-bg); color: var(--good-ink); }
+.k-badge--warn { background: var(--warn-bg); color: var(--warn-ink); }
+.k-badge--bad { background: var(--bad-bg); color: var(--bad-ink); }
+.k-badge--muted { background: var(--soft); color: var(--muted); }
+.k-badge--tier { background: var(--tg3); color: var(--tg3i); }
+.k-badge--lg { width: 44px; height: 44px; border-radius: 12px; }
+
+/* Help column and help card. A card is the one-line version; its flyout must add something. */
+/* A card with no accent is a plain thin outline as the mockups' .cardx draws it; only an accent
+   (info, warn, good, tier) adds the 4px colored left edge. */
+.k-hcard {
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 14px 16px;
+}
+.k-hcard--info { border-left: 4px solid var(--brand); }
+.k-hcard--warn { border-left: 4px solid var(--warn); }
+.k-hcard--good { border-left: 4px solid var(--good); }
+.k-hcard--tier { border-left: 4px solid var(--tg3i); }
+.k-hcard__head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.k-hcard__head .k-badge { width: 32px; height: 32px; border-radius: var(--r-sm); }
+.k-hcard h3 { margin: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-hcard p { margin: 0 0 8px; color: var(--ink); font-size: 13.5px; }
+.k-hcard__list { margin: 0 0 8px; padding-left: 16px; display: flex; flex-direction: column;
+  gap: 5px; font-size: 13.5px; color: var(--ink); }
+.k-hcard__list li { line-height: 1.45; }
+.k-hcard__list li::marker { color: var(--muted); }
+/* Plain help card (the locked mockups' .cardx.help on Sources, Runs, Models, Model check and
+   Needs another try): no accent edge, 38px badge, muted copy, one paragraph or a numbered list. */
+.k-hcard--plain { border-left: 1px solid var(--line); padding: 18px; }
+.k-hcard--plain .k-hcard__head { margin-bottom: 6px; gap: 12px; }
+.k-hcard--plain .k-hcard__head .k-badge { width: 38px; height: 38px; border-radius: 11px; }
+.k-hcard--plain h3 { font-size: 16px; }
+.k-hcard--plain .k-hcard__list { color: var(--muted); font-size: 13px; gap: 2px; margin-bottom: 6px; }
+.k-hcard__ol { margin: 0 0 6px; padding-left: 18px; font-size: 13px; color: var(--muted);
+  display: flex; flex-direction: column; gap: 2px; }
+.k-hcard .k-hcard__p { margin: 0 0 6px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.k-hcard .k-hcard__p .k-pill { font-size: 11.5px; padding: 1px 7px; }
+
+/* ------------------------------------------------------------ overlays: scrim, flyout */
+.k-scrim {
+  position: fixed; inset: 0; background: var(--scrim); opacity: 0; pointer-events: none;
+  visibility: hidden; z-index: var(--z-overlay);
+  transition: opacity var(--dur-2), visibility 0s var(--dur-2);
+}
+.k-scrim.is-on { opacity: 1; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+
+/* Flyout: right side, centered vertically in the window's visible area, slides in from the
+   right. kestrel-ui.js re-centers it when the window resizes; this CSS alone is correct. */
+.k-flyout {
+  position: fixed; right: calc(var(--k-ar, 0px) + 12px); top: var(--k-ay, 50%);
+  width: min(var(--flyout-w), calc(100vw - 24px)); max-height: calc(100vh - 24px);
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop); z-index: var(--z-flyout);
+  display: flex; flex-direction: column;
+  transform: translate(30px, -50%); opacity: 0; visibility: hidden;
+  transition: transform var(--dur-2) var(--ease), opacity .22s, visibility 0s var(--dur-2);
+}
+.k-flyout.is-open { transform: translate(0, -50%); opacity: 1; visibility: visible;
+  transition-delay: 0s; }
+.k-flyout__head { display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line); }
+.k-flyout__head small { display: block; font-size: var(--fs-xs); font-weight: 800;
+  letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+.k-flyout__head h2 { margin: 0; font-size: 17px; }
+.k-flyout__body { padding: 6px 18px 12px; overflow: auto; min-height: 0; font-size: var(--fs-md);
+  line-height: 1.55; }
+.k-flyout__body h6 { margin: 12px 0 4px; font-size: 13.5px; }
+.k-flyout__body p { margin: 0 0 8px; }
+.k-flyout__body ul { margin: 0; padding-left: 18px; }
+.k-flyout__foot { padding: 12px 16px; border-top: 1px solid var(--line); display: flex;
+  gap: var(--sp-2); align-items: center; }
+
+/* Slide-over: slides over the content (never pushes it), on the right, centered vertically in
+   the window's visible area like a flyout. Taller than the area: it fills it (12px margins)
+   and the body scrolls inside. Modal: focus is trapped and the page behind is inert. */
+.k-slideover {
+  position: fixed; right: var(--k-ar, 0px); top: var(--k-ay, 50%);
+  width: min(var(--slideover-w), 92vw); max-height: calc(100vh - 24px);
+  background: var(--paper); border: 1px solid var(--line); border-right: 0;
+  border-radius: var(--r-lg) 0 0 var(--r-lg); box-shadow: var(--shadow-side);
+  z-index: calc(var(--z-overlay) + 1); display: flex; flex-direction: column; overflow: hidden;
+  transform: translate(105%, -50%); visibility: hidden;
+  transition: transform .42s var(--ease), visibility 0s .42s;
+}
+.k-slideover.is-open { transform: translate(0, -50%); visibility: visible; transition-delay: 0s; }
+.k-slideover__head { display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+  border-bottom: 1px solid var(--line); }
+.k-slideover__head h2 { margin: 0; font-size: 17px; }
+.k-slideover__body { padding: 16px 18px; overflow: auto; display: flex; flex-direction: column;
+  gap: 14px; min-height: 0; }
+.k-slideover__foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; }
+
+/* Modal and sheet, over a scrim. */
+/* --k-ax/--k-ay/--k-ar: set by kestrel-ui.js (anchor) only when an ancestor makes itself the
+   overlay's containing block (a size container such as .k-win, a transform), so the overlay still
+   sits in the visible window on a scrolled page. Unset, the plain viewport values apply. */
+html.k-scroll-held { overflow: hidden; }
+.k-modal {
+  position: fixed; left: var(--k-ax, 50%); top: var(--k-ay, 50%); width: min(var(--modal-w), calc(100vw - 32px));
+  max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-pop); z-index: calc(var(--z-overlay) + 2);
+  transform: translate(-50%, -46%) scale(.97); opacity: 0; visibility: hidden;
+  transition: transform .3s var(--ease), opacity .22s, visibility 0s .3s;
+}
+.k-modal.is-open { transform: translate(-50%, -50%); opacity: 1; visibility: visible;
+  transition-delay: 0s; }
+.k-modal__head { padding: 16px 20px 6px; }
+.k-modal__head h2 { margin: 0; font-size: var(--fs-xl); }
+.k-modal__body { padding: 6px 20px 12px; overflow: auto; min-height: 0; }
+.k-modal__foot { padding: 12px 20px 16px; display: flex; justify-content: flex-end; gap: var(--sp-2); }
+.k-modal--sheet { top: auto; bottom: 0; width: min(640px, 100vw); border-radius: var(--r-xl) var(--r-xl) 0 0;
+  transform: translate(-50%, 105%); }
+.k-modal--sheet.is-open { transform: translate(-50%, 0); }
+
+/* Toast with Undo (surfaces-mockup-locked.html :511-514, settings :1297): one bottom toast,
+   centered over the page column, a green chip with white bold text, an Undo chip on a wash. It
+   slides up from below the window and back down on its way out. */
+.k-toasts {
+  position: fixed; left: calc(50% + var(--side-w) / 2); bottom: 22px; transform: translateX(-50%);
+  z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--sp-2);
+  align-items: center; pointer-events: none; width: max-content; max-width: calc(100vw - 32px);
+}
+.k-toast {
+  display: flex; align-items: center; gap: 10px; pointer-events: auto;
+  background: var(--toast-bg); color: var(--toast-ink); border-radius: 12px;
+  box-shadow: var(--shadow-pop); padding: 10px 16px; font-weight: 700;
+  animation: k-toast-in .38s var(--ease) both;
+}
+.k-toast[data-tone="warn"] { background: var(--warn-bg); color: var(--warn-ink); }
+.k-toast a { color: inherit; text-decoration: underline; }
+.k-toast.is-leaving { animation: k-toast-out .38s var(--ease) both; }
+.k-toast__undo {
+  border: 0; background: var(--wash); color: var(--toast-action); font: inherit; font-weight: 700;
+  border-radius: 7px; padding: 3px 9px; cursor: pointer;
+}
+.k-toast__undo:hover { text-decoration: underline; }
+@media (max-width: 1100px) { .k-toasts { left: calc(50% + var(--side-w-narrow) / 2); } }
+@media (max-width: 700px) { .k-toasts { left: 50%; bottom: calc(72px + env(safe-area-inset-bottom)); } }
+
+/* ------------------------------------------------------------------------ form controls */
+.k-switch { position: relative; display: inline-flex; align-items: center; gap: 10px;
+  cursor: pointer; }
+.k-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.k-switch__track {
+  position: relative; width: 40px; height: 22px; flex: none; border-radius: 12px;
+  background: var(--line); border: 1px solid var(--muted);
+  transition: background var(--dur-2) var(--ease), border-color var(--dur-2);
+}
+.k-switch__track::after {
+  content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--muted); transition: transform var(--dur-2) var(--ease), background var(--dur-2);
+}
+.k-switch input:checked + .k-switch__track { background: var(--brand); border-color: var(--brand); }
+.k-switch input:checked + .k-switch__track::after { transform: translateX(18px); background: var(--brand-ink); }
+.k-switch input:focus-visible + .k-switch__track { outline: 2px solid var(--brand); outline-offset: 2px; }
+.k-switch input:disabled + .k-switch__track { opacity: .5; }
+
+.k-seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-md);
+  overflow: hidden; background: var(--paper); }
+.k-seg button { border: 0; background: none; padding: 6px 12px; font: inherit; font-weight: 700;
+  font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.k-seg button + button { border-left: 1px solid var(--line); }
+.k-seg button:hover { background: var(--soft); }
+.k-seg button.is-on, .k-seg button[aria-pressed="true"], .k-seg button[aria-selected="true"] {
+  background: var(--soft); color: var(--brand);
+}
+
+.k-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--line);
+  border-radius: var(--r-md); overflow: hidden; background: var(--paper); }
+.k-stepper button { border: 0; background: none; width: 34px; font: inherit; font-size: 18px;
+  font-weight: 700; color: var(--ink); cursor: pointer; }
+.k-stepper button:hover { background: var(--soft); }
+.k-stepper button[disabled] { opacity: .4; cursor: default; }
+.k-stepper output, .k-stepper input[type] { appearance: none; -webkit-appearance: none;
+  border-radius: 0; max-width: none; width: 56px; min-width: 48px; padding: 6px 8px; text-align: center;
+  font: inherit; font-weight: 700; color: var(--ink); background: var(--paper); border: 0;
+  border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+
+.k-input, input.k-input, textarea.k-input, select.k-input, .k-select select {
+  font: inherit; font-size: 13.5px; color: var(--ink); background: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--r-md); padding: 7px 12px; min-width: 0;
+}
+.k-input, input.k-input, textarea.k-input { width: 100%; max-width: none; }
+.k-input::placeholder { color: var(--muted); }
+.k-input:hover, .k-select select:hover { border-color: var(--muted); }
+.k-input:focus, .k-select select:focus { border-color: var(--brand); outline: 2px solid var(--brand);
+  outline-offset: 1px; }
+.k-select { position: relative; display: inline-block; }
+.k-select select { appearance: none; -webkit-appearance: none; padding-right: 32px; cursor: pointer; }
+.k-select::after {
+  content: ""; position: absolute; right: 13px; top: 50%; width: 6px; height: 6px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: translateY(-70%) rotate(45deg); pointer-events: none;
+}
+.k-field { display: flex; flex-direction: column; gap: 4px; }
+.k-field > label { font-weight: 700; font-size: 13px; }
+.k-field small { color: var(--muted); font-size: var(--fs-sm); }
+
+/* Step strip: setup and progress steps, each with a state. */
+.k-steps { display: grid; grid-template-columns: repeat(var(--k-steps, 4), minmax(0, 1fr));
+  gap: var(--sp-2); margin: 0 0 12px; padding: 0; list-style: none; }
+.k-step { display: flex; align-items: center; gap: 8px; padding: 8px 12px; min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--paper);
+  font-weight: 600; font-size: 13px; color: var(--muted); }
+.k-step__n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  flex: none; font-size: var(--fs-sm); font-weight: 800; background: var(--soft); color: var(--muted); }
+.k-step__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-step.is-now { border-color: var(--brand); color: var(--ink); }
+.k-step.is-now .k-step__n { background: var(--brand); color: var(--brand-ink); }
+.k-step.is-done { color: var(--ink); }
+.k-step.is-done .k-step__n { background: var(--good-bg); color: var(--good-ink); }
+
+/* Table: one line per cell where possible. */
+.k-table-wrap { overflow-x: auto; }
+.k-table { width: 100%; border-collapse: collapse; font-size: 13.5px; background: transparent;
+  border: 0; border-radius: 0; overflow: visible; }
+.k-table th { text-align: left; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 800; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  white-space: nowrap; background: transparent; }
+.k-table td { padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.k-table tr:last-child td { border-bottom: 0; }
+.k-table tr.is-bad td { background: var(--bad-bg); }
+.k-table tbody tr:hover td { background: var(--soft); }
+.k-table .k-act { white-space: nowrap; text-align: right; }
+
+/* Danger zone. */
+.k-dz { border: 2px solid var(--bad); border-radius: var(--r-xl); background: var(--paper);
+  overflow: hidden; }
+.k-dz__head { display: flex; align-items: center; gap: 10px; background: var(--bad-bg);
+  color: var(--bad-ink); padding: 12px 20px; font-weight: 800; font-size: var(--fs-lg);
+  border-bottom: 1px solid var(--bad); }
+.k-dz__body { padding: 4px 20px 8px; }
+.k-dz__row { display: flex; align-items: center; gap: var(--sp-4); padding: 12px 0;
+  border-top: 1px solid var(--line); }
+.k-dz__row:first-child { border-top: 0; }
+
+/* Empty state. */
+.k-empty { border: 2px dashed var(--line); border-radius: var(--r-lg); display: grid;
+  place-items: center; text-align: center; padding: 28px 16px; color: var(--muted);
+  min-height: 160px; }
+.k-empty h3 { margin: 8px 0 4px; color: var(--ink); font-size: var(--fs-lg); }
+.k-empty p { margin: 0 0 12px; max-width: 46ch; }
+
+/* ------------------------------------------------- motion: moves between lists, arrivals */
+.k-item-out { opacity: 0; transform: translateX(30px); max-height: 0 !important; padding-top: 0 !important;
+  padding-bottom: 0 !important; overflow: hidden;
+  transition: opacity .25s, transform .3s, max-height .35s ease .1s, padding .35s ease .1s; }
+.k-item-in { animation: k-slide-in .45s ease backwards; }
+.k-arrive { animation: k-arrive .6s var(--ease) both, k-glow 2.2s ease .4s both; }
+.k-pulse-once { animation: k-pop .45s ease; }
+@keyframes k-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@keyframes k-toast-in { from { transform: translateY(220%); } }
+@keyframes k-toast-out { to { transform: translateY(220%); } }
+@keyframes k-slide-in { from { opacity: 0; transform: translateX(-24px); } }
+@keyframes k-arrive { from { opacity: 0; transform: translateY(-14px) scale(.96); } }
+@keyframes k-glow { 0% { box-shadow: 0 0 0 3px var(--brand); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes k-pop { 50% { transform: scale(1.35); } }
+
+/* ------------------------------------------------- shell motion (the locked mockups)
+   Launch entrance (today-mockup-locked.html :293-310): the sidebar slides in, nav items and
+   section labels stagger 28 ms apart, the top row fades, the title rises, the scene fades in,
+   then the page's blocks rise. kestrel-ui.js adds .k-intro on <html> once per launch and sets
+   --i on each item. Page arrival (pipeline-mockup-locked.html :374-381): the band settles from
+   the hero size into the slim band, the title rises, the page rises in after it (.k-page-in on <html>; never .k-arrive,
+   which is the single-row arrival above and would fade and shrink the whole window).
+   Fill mode `backwards` only: nothing keeps a transform after it lands (a transform would
+   capture position: fixed panels inside the page). */
+@keyframes k-inL { from { opacity: 0; transform: translateX(-10px); } }
+@keyframes k-inUp { from { opacity: 0; transform: translateY(10px); } }
+@keyframes k-inFade { from { opacity: 0; } }
+@keyframes k-settle { from { min-height: 230px; } }
+@keyframes k-settle-art { from { width: 700px; } }
+.k-intro .side { animation: k-inL .45s ease backwards; }
+.k-intro .side .mainnav > a, .k-intro .side .k-sec {
+  animation: k-inL .4s ease backwards; animation-delay: calc(var(--i, 0) * 28ms + 120ms); }
+.k-intro .k-tools { animation: k-inFade .5s .05s ease backwards; }
+.k-intro .k-scene__stack, .k-intro .k-scene__title { animation: k-inUp .5s .16s ease backwards; }
+.k-intro .k-scene__art { animation: k-inFade .9s .2s ease backwards; }
+.k-intro .k-rise { animation: k-inUp .5s ease backwards;
+  animation-delay: calc(var(--i, 0) * 90ms + 260ms); }
+/* Page changes are cross-document view transitions (owner round 11, D-UI-201): the browser keeps
+   the old page on screen until the new one has painted, then cross-fades the page column. The
+   sidebar (with the window controls) and the top row are named, so they hold still instead of
+   being redrawn. The blocks only nudge up (no opacity), so a page is never shown empty. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+}
+/* Only the sidebar is named: a name makes its own layer, and the top row's notifications panel
+   must stay above the page's click layer (owner round 15: the bell dimmed the whole screen).
+   The top row is the same on both pages, and the old page stays solid under the new one. */
+.k-win > .side { view-transition-name: k-side; }
+::view-transition-group(k-side) { animation: none; }
+::view-transition-old(k-side) { display: none; }
+::view-transition-new(k-side) { animation: none; }
+/* The header art (one per page) holds still too, like the sidebar (owner round 15: "wouldn't
+   keeping the existing background and header image make more sense?"). Leaving Today, where the
+   art is larger, it glides to the slim band's size. It is decoration: no panel lives inside it. */
+/* The scene and its seasonal touch are two SVGs in one band (scene-band.js); each needs its own
+   name. A shared name is a duplicate, and Chromium then drops the whole page transition (a grey
+   window on every page change while a touch is in season). */
+.k-scene__art:not(.k-scene__touch) { view-transition-name: k-art; }
+.k-scene__art.k-scene__touch { view-transition-name: k-touch; }
+::view-transition-group(k-art), ::view-transition-group(k-touch) { animation-duration: .45s; }
+::view-transition-old(k-art), ::view-transition-old(k-touch) { display: none; }
+::view-transition-new(k-art), ::view-transition-new(k-touch) { animation: none; }
+/* The old page stays solid underneath while the new one fades in over it: fading both at once
+   let the window's dark ground show through mid-change, a dark flick (owner round 15). */
+::view-transition-old(root) { animation: none; }
+::view-transition-new(root) { animation: k-vt-in .22s ease both; }
+@keyframes k-vt-in { from { opacity: 0; } }
+/* An in-place page change hands the focus to the new page's heading (D-UI-220), so a screen
+   reader announces the page as a page load does; the heading is not a control and draws no ring. */
+[data-k-landing]:focus,
+:root:root:root:root[data-scheme] [data-k-landing]:focus-visible { outline: none; box-shadow: none; }
+/* Between a sidebar click and the next page: the pointer says it is on its way. */
+html.k-going, html.k-going * { cursor: progress; }
+/* A button's "Starting..." note in a page's title row floats under the button instead of taking a
+   line of its own, so the cards below never jump while a request is open (owner round 16, Runs). */
+.k-scene__title .busy-status, .rn-split > .busy-status {
+  position: absolute; top: calc(100% + 6px); left: 0; margin: 0; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--muted); }
+.k-scene__title .k-btn, .rn-split { position: relative; }
+.k-pressed-going { opacity: .72; transition: opacity .12s ease; }
+@keyframes k-nudge { from { transform: translateY(8px); } }
+.k-page-in .k-scene__stack, .k-page-in .k-scene__title { animation: k-nudge .3s ease backwards; }
+/* Arrival is for what the page arrived with: content an htmx swap brings in later (a sheet, a
+   panel) is marked data-k-late and never replays it, because a running transform makes the
+   ancestor the containing block of a fixed sheet inside it (it opened below the window). */
+.k-page-in .k-rise:not([data-k-late]) { animation: k-nudge .3s ease backwards;
+  animation-delay: calc(var(--i, 0) * 30ms); }
+.k-from-today .k-scene { animation: k-settle .55s var(--ease) backwards; }
+.k-from-today .k-scene__art { animation: k-settle-art .55s var(--ease) backwards; }
+.k-from-today .k-scene__stack, .k-from-today .k-scene__title {
+  animation: k-nudge .45s ease backwards; }
+.k-from-today .k-rise:not([data-k-late]) { animation: k-nudge .45s ease backwards;
+  animation-delay: calc(var(--i, 0) * 50ms); }
+
+/* Scroll cues (pipeline-mockup-locked.html :404-408): kestrel-ui.js places them. */
+.k-cue { position: absolute; z-index: 25; width: 34px; height: 34px; margin-left: -17px;
+  border-radius: 50%; background: var(--paper); border: 1px solid var(--line);
+  box-shadow: var(--shadow); display: grid; place-items: center; color: var(--brand); padding: 0;
+  opacity: 0; pointer-events: none; transition: opacity .25s; cursor: pointer; }
+.k-cue.is-show { opacity: .95; pointer-events: auto; }
+.k-cue svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round; }
+.k-cue--down.is-show svg { animation: k-cue-down 1.6s ease-in-out infinite; }
+.k-cue--up.is-show svg { animation: k-cue-up 1.6s ease-in-out infinite; }
+@keyframes k-cue-down { 50% { transform: translateY(3px); } }
+@keyframes k-cue-up { 50% { transform: translateY(-3px); } }
+.k-cue--fixed { position: fixed; }
+.k-cue--fixed.k-cue--up { top: 8px; }
+.k-cue--fixed.k-cue--down { bottom: 8px; }
+@media (max-width: 700px) { .k-cue--fixed { display: none; } }
+
+/* Shared motion primitives for every page (CLAUDE.md: every transition, save and press moves).
+   - Press: buttons and links that act give a brief scale on press.
+   - Saved: KUI.saved(el) pulses a field or card green once and shows a "Saved" tick beside it.
+   - Fold: a <details> opens with its content easing down; KUI.fold(details) also eases it shut.
+   - Tab ink: KUI.ink(tabsEl) slides the .k-tabink bar under the active tab.
+   - Pane rise: KUI.paneIn(el) (or the .k-pane-in class) lifts a newly shown pane into place. */
+:is(.k-btn, .btn, .k-iconbtn, .k-icon, .k-link, button.k-chip, .k-seg button):active:not(:disabled) {
+  transform: scale(.97); }
+:is(.btn, .k-iconbtn, .k-icon) { transition: background var(--dur-1), border-color var(--dur-1),
+  transform .1s; }
+@keyframes k-saved { 0% { box-shadow: 0 0 0 0 var(--good); } 30% { box-shadow: 0 0 0 3px var(--good-bg); }
+  100% { box-shadow: 0 0 0 0 transparent; } }
+.k-saved-flash { animation: k-saved 1.4s ease; border-radius: var(--r-sm); }
+.k-saved-tick { display: inline-flex; align-items: center; gap: 4px; color: var(--good-ink);
+  font-weight: 700; font-size: 12.5px; animation: k-inFade .25s ease backwards; }
+.k-saved-tick.is-leaving { opacity: 0; transition: opacity .4s; }
+@keyframes k-fold-in { from { opacity: 0; transform: translateY(-6px); } }
+details[open] > :not(summary) { animation: k-fold-in .28s var(--ease) backwards; }
+details.is-folding > :not(summary) { opacity: 0; transform: translateY(-6px);
+  transition: opacity .2s, transform .2s; }
+.k-tabink { position: absolute; bottom: -1px; height: 3px; border-radius: 3px; background: var(--brand);
+  transition: left .35s var(--ease), width .35s var(--ease); pointer-events: none; }
+.k-pane-in { animation: k-inUp .32s var(--ease) backwards; }
+
+/* Reduced motion (the OS setting) stops every animation and transition, as the mockups do
+   (today-mockup-locked.html :363), on every page and every class, legacy or k-. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ------------------------------------------------- Preferences: text size, Reduce motion */
+/* base.html sets both on <html> from Settings > Preferences. Default changes nothing. */
+html[data-text-size="small"] body { zoom: .93; }
+html[data-text-size="large"] body { zoom: 1.08; }
+html[data-reduce-motion="1"] *, html[data-reduce-motion="1"] *::before,
+html[data-reduce-motion="1"] *::after { animation: none !important; transition: none !important; }
+
+/* ----------------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  [class^="k-"], [class*=" k-"], [class^="k-"] *, [class*=" k-"] *,
+  .k-scene svg, .k-scene svg * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .mainnav > a:hover { transform: none; }
+}
+
+/* Model picker and combobox (D-UI-69), shared by Models and Model check. Copied from kestrel.css
+   so pages that load shell.css instead of it still style the listbox. */
+.model-picker { max-width: 34rem; width: 100%; }
+.model-picker option:disabled { color: var(--muted); }
+
+/* the model combobox (D-UI-69): one input, a listbox right under it; theme variables only */
+.ke-combo { position: relative; max-width: 34rem; width: 100%; }
+.ke-combo[hidden], .ke-combo [hidden], .ke-native[hidden] { display: none; }
+.ke-combo-input:disabled, .ke-combo-toggle:disabled { cursor: not-allowed; opacity: .6; }
+.ke-combo-field { position: relative; display: flex; }
+.ke-combo-input { width: 100%; padding-right: 2rem; }
+.ke-combo-input:focus-visible, .ke-combo-toggle:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; }
+.ke-combo-toggle { position: absolute; right: 1px; top: 1px; bottom: 1px; width: 1.9rem;
+  border: 0; border-radius: 0 5px 5px 0; background: transparent; color: var(--muted);
+  cursor: pointer; padding: 0; }
+.ke-combo-list { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px);
+  max-height: min(20rem, 55vh); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: var(--shadow); padding: .25rem 0; }
+.ke-combo-heading { padding: .35rem .7rem .15rem; font-size: var(--fs-sm); font-weight: 600;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.ke-combo-opt { padding: .4rem .7rem; cursor: pointer; overflow-wrap: anywhere;
+  font-size: var(--fs-sm); line-height: 1.35; }
+.ke-combo-opt.is-active { background: var(--accent-tint); }
+.ke-combo-opt[aria-selected="true"] { font-weight: 600; }
+.ke-combo-opt[aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
+.ke-combo-opt.is-filtered, .ke-combo-group.is-filtered { display: none; }
+.ke-combo-empty { padding: .5rem .7rem; color: var(--muted); font-size: var(--fs-sm); }
+
+/* High contrast applies to every keyboard control, including legacy pages. */
+:root:root:root[data-scheme="contrast"] :focus-visible,
+:root:root:root[data-scheme="contrast"] .k-switch input:focus-visible + .k-switch__track {
+  outline: 3px solid var(--focus-ring); outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--paper);
+}
+:root:root:root[data-scheme="contrast"] .k-seg { overflow: visible; }
+/* Every avatar variant gets the same high contrast pair: its own foreground and background
+   rules would otherwise leave a glyph invisible (Compass) or near invisible (the others). */
+:root:root:root[data-scheme="contrast"] .k-avatar {
+  background: var(--brand); color: var(--brand-ink);
+}
+
+/* The ask-first dialog of a document AI action (partials/doc_online_consent.html, D-UI-179). */
+.doc-online-send { margin-top: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--tint-info-line);
+  border-radius: var(--r-sm); background: var(--tint-info); }
+.doc-online-send ul { margin: var(--sp-2) 0; padding-left: var(--sp-5); }
+.doc-online-send p { margin: var(--sp-2) 0 0; }

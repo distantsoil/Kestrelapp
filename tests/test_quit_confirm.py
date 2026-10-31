@@ -74,7 +74,8 @@ def test_keyboard_handling_is_wired():
     assert "go.focus()" in js and "opener.focus()" in js  # focus in, and back out on cancel
     # Quit is otherwise what the button always did.
     assert "fetch('/api/quit', {method: 'POST'})" in js
-    assert "Kestrel is closing" in js
+    # The closing screen of the locked launch mockup (D-UI-90), not a bare line of text.
+    assert "KUI.frame.closing()" in js and "innerHTML" not in js
 
 
 def test_dialog_uses_theme_variables_only():

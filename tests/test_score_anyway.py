@@ -236,7 +236,7 @@ _SENTENCE = ("Set aside by your seniority rule: the title reads as Director, and
 
 def test_the_role_says_why_and_score_anyway_from_the_dialog(monkeypatch):
     client, oid = _client(monkeypatch)
-    drawer = client.get(f"/opportunities/{oid}/drawer").text
+    drawer = client.get(f"/opportunities/{oid}/panel").text
     assert 'data-testid="rule-why"' in drawer and _SENTENCE in drawer
     link = 'href="/profile?tab=employment&amp;track=employment">Profile &gt; Employment</a>'
     assert link in drawer
@@ -261,7 +261,7 @@ def test_the_role_says_why_and_score_anyway_from_the_dialog(monkeypatch):
     assert "Queued 1 role for scoring." in r.text and "scored despite your rules" in r.text
     # Queued, not yet run: the note waits for the override to be recorded (D-UI-74 amended).
     note = "You asked to score this despite your rule on seniority."
-    assert note not in client.get(f"/opportunities/{oid}/drawer").text
+    assert note not in client.get(f"/opportunities/{oid}/panel").text
 
     async def run_it():
         from kestrel.db.engine import forget_engine, get_sessionmaker
@@ -271,7 +271,7 @@ def test_the_role_says_why_and_score_anyway_from_the_dialog(monkeypatch):
         forget_engine()
 
     asyncio.run(run_it())
-    drawer = client.get(f"/opportunities/{oid}/drawer").text
+    drawer = client.get(f"/opportunities/{oid}/panel").text
     assert note in drawer
     tab = client.get(f"/opportunities/{oid}/tab/evaluation").text
     assert note in tab
@@ -288,13 +288,15 @@ def test_no_script_refusal_has_its_own_outcome(monkeypatch):
     assert out["ok"] is False and "Score this role anyway" in out["text"]
 
 
-def test_settings_core_is_where_the_posting_age_rule_changes(monkeypatch):
+def test_settings_roles_is_where_the_posting_age_rule_changes(monkeypatch):
     client, _oid = _client(monkeypatch)
-    page = client.get("/settings").text
-    assert 'name="max_posting_age_days"' in page
-    assert 'name="consulting.max_trigger_age_days"' in page
-    client.post("/settings", data={"max_posting_age_days": "60",
-                                   "consulting.max_trigger_age_days": "0"})
-    page = client.get("/settings").text
-    assert 'name="max_posting_age_days" value="60"' in page
-    assert 'name="consulting.max_trigger_age_days" value="120"' in page  # 0 refused
+    page = client.get("/settings/section/roles").text
+    assert 'data-testid="st-num-age"' in page and 'value="45"' in page
+    client.post("/settings/roles/number", data={"track": "employment", "key": "age",
+                                                "value": "60"})
+    page = client.get("/settings/section/roles").text
+    assert 'data-testid="st-num-age"' in page and 'value="60"' in page
+    bad = client.post("/settings/roles/number", data={"track": "employment", "key": "age",
+                                                      "value": "0"})
+    assert "Use a whole number from 1 to 365. Kestrel is still using 60." in bad.text
+    assert 'value="60"' in client.get("/settings/section/roles").text  # 0 refused

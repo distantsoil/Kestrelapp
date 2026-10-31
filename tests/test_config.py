@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from kestrel.config import get_settings, load_settings
 
 
@@ -65,3 +67,26 @@ llm:
     # Should not raise
     s = load_settings()
     assert s.llm.tiers["tier2"].model == "kestrel-tier2"
+
+
+def test_nested_env_concurrency_accepts_whole_number_text(monkeypatch):
+    monkeypatch.setenv("KESTREL_CONCURRENCY__TIER1", "4")
+    monkeypatch.setenv("KESTREL_CONCURRENCY__TIER2", " 3 ")
+    monkeypatch.setenv("KESTREL_CONCURRENCY__EMBED", "16")
+    cfg = load_settings().concurrency
+    assert (cfg.tier1, cfg.tier2, cfg.embed) == (4, 3, 16)
+
+
+@pytest.mark.parametrize("bad", ["4.5", "4.0", "true", "0", "17", "-1", "", "four"])
+def test_nested_env_concurrency_still_rejects_other_values(monkeypatch, bad):
+    monkeypatch.setenv("KESTREL_CONCURRENCY__TIER1", bad)
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+@pytest.mark.parametrize("bad", [True, 4.0, 4.5, 0, 17])
+def test_concurrency_model_still_rejects_non_integers_and_out_of_range(bad):
+    from kestrel.config import Concurrency
+
+    with pytest.raises(ValueError):
+        Concurrency(tier1=bad)

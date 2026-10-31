@@ -1,0 +1,275 @@
+/* Analytics (D-UI-101). Page styles for /analytics, built on tokens.css and components.css: token
+   colors only, every class prefixed an-. The look follows
+   the locked design mockup (kept privately)
+
+   The status colors of "Where your applications stand" are mixed from theme tokens so the chosen
+   scheme and theme apply. Color never carries the meaning alone: every segment has its count and
+   its label in the legend, a hover tip, and the Table view lists the same numbers. */
+
+/* Window steps use @container kwin, the mockup's own `.win` measure (shell). */
+.an-wrap { min-width: 0; }
+.an-page {
+  /* Fixed status hues from the locked mockup (tokens.css --st-*, D-UI-187): offer green,
+     interviewing blue, waiting amber, turned down red, no reply purple, withdrew teal. Color
+     never carries the meaning alone: every segment has its count and label in the legend. */
+  --an-offer: var(--st-offer);
+  --an-iv: var(--st-iv);
+  --an-wait: var(--st-wait);
+  --an-rej: var(--st-rej);
+  --an-ghost: var(--st-ghost);
+  --an-wd: var(--st-wd);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  padding: 12px 8px 26px; min-width: 0;
+}
+.an-page, .an-page * { box-sizing: border-box; }
+.an-page .k-scene { margin: 0; padding: 4px 0 10px; }
+
+.an-sub { color: var(--muted); font-size: var(--fs-sm); }
+.an-pad { margin-top: 6px; }
+.an-few { color: var(--muted); font-style: italic; font-weight: 600; }
+
+/* --------------------------------------------------------------------------- the range bar */
+.an-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; position: relative;
+  z-index: 5; }
+.an-hint { color: var(--muted); font-size: var(--fs-sm); margin-left: 4px; }
+.an-bar .k-seg button { white-space: nowrap; }
+.an-bar .k-chip { white-space: nowrap; }
+.an-export { position: relative; }
+.an-export > summary { list-style: none; cursor: pointer; }
+.an-export > summary::-webkit-details-marker { display: none; }
+.an-export[open] > summary { border-color: var(--brand); }
+@keyframes an-pop { from { opacity: 0; transform: scale(.95); } }
+.an-menu {
+  transform-origin: top right; animation: an-pop .18s ease both;
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; min-width: 290px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column;
+}
+.an-menu a { padding: 9px 10px; border-radius: var(--r-sm); font-weight: 600; color: var(--ink);
+  text-decoration: none; }
+.an-menu a:hover, .an-menu a:focus-visible { background: var(--soft); }
+.an-menu p { margin: 0; padding: 6px 10px 4px; font-size: var(--fs-sm); color: var(--muted); }
+
+.an-note { border-radius: var(--r-sm); padding: 9px 12px; font-size: var(--fs-md);
+  border: 1px solid var(--line); }
+.an-note.is-warn { background: var(--tint-warn); border-color: var(--tint-warn-line);
+  color: var(--ink); }
+
+/* ------------------------------------------------------------------------------ the cards */
+.an-stack { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.an-card { padding: 18px; min-width: 0; }
+.an-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.an-head h3 { margin: 0; font-size: 16.5px; white-space: nowrap; }
+.an-aside { margin-left: auto; color: var(--muted); font-size: var(--fs-md); font-weight: 600;
+  white-space: nowrap; }
+.an-g2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-4); }
+.an-g2b { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+.an-g2 { align-items: start; }
+/* The funnel row and the Replies by fit / Where roles come from row stretch to equal height, as
+   the mockup's grid does (D-UI-218). */
+.an-g2b, .an-g2c { align-items: stretch; }
+
+/* The Table view swaps each chart for its table. */
+.an-table { display: none; }
+.is-table .an-chart { display: none; }
+.is-table .an-table { display: block; }
+
+/* ------------------------------------------------------------------------------ summary */
+.an-sum { border-left: 4px solid var(--brand); }
+.an-rows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+.an-r { display: flex; gap: 10px; align-items: flex-start; }
+.an-r .k-badge { width: 30px; height: 30px; }
+.an-r b { display: block; font-size: var(--fs-sm); letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 2px; }
+.an-r p { margin: 0; font-size: var(--fs-md); line-height: 1.5; }
+.an-r .k-link, .an-oldest .k-link { display: inline; white-space: normal; }
+.an-written { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.an-written__txt { white-space: pre-wrap; }
+.an-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--line); }
+.an-foot form { display: flex; align-items: center; gap: 10px; margin: 0; }
+.an-foot .import-status { display: none; }
+.an-foot form.htmx-request .import-status { display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: var(--fs-sm); }
+
+/* ------------------------------------------------------------------------------ count tiles */
+.an-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.an-kpi { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
+  padding: 14px 16px; min-width: 0; }
+.an-kpi__l { font-size: 13px; color: var(--muted); font-weight: 600; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px; line-height: 16px; }
+.an-kpi__n { font-size: 28px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.an-kpi__s, .an-kpi__p { font-size: var(--fs-sm); color: var(--muted); margin-top: 4px; }
+.an-kpi__p { margin-top: 2px; }
+.an-kpi.is-few { border-style: dashed; background: transparent; }
+.an-kpi.is-few .an-kpi__n { color: var(--muted); }
+.an-qi { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+  border: 1px solid var(--line); font-size: 10px; font-weight: 800; color: var(--muted);
+  cursor: help; flex: none; }
+
+/* ------------------------------------------------------------------- where they stand */
+.an-sbhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
+.an-sbhead b { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.an-sbhead .an-sub { margin-left: auto; }
+.an-sbar { display: flex; gap: 2px; height: 22px; margin: 6px 0 14px; }
+.an-sbar i { display: block; min-width: 4px; height: 100%; cursor: default;
+  transform-origin: left center; animation: an-growx .9s cubic-bezier(.22, .8, .3, 1) both; }
+@keyframes an-growx { from { transform: scaleX(0); } }
+@keyframes an-growy { from { transform: scaleY(0); } }
+.an-sbar i:first-child { border-radius: 4px 0 0 4px; }
+.an-sbar i:last-child { border-radius: 0 4px 4px 0; }
+.an-sbar i:hover { filter: brightness(1.1); }
+.an-slegend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; }
+.an-sl { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.an-sl b { font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
+.an-sl span:last-child { color: var(--muted); }
+.an-sl.is-zero { opacity: .75; }
+.an-sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.an-st-offer { background: var(--an-offer); }
+.an-st-iv { background: var(--an-iv); }
+.an-st-wait { background: var(--an-wait); }
+.an-st-rej { background: var(--an-rej); }
+.an-st-ghost { background: var(--an-ghost); }
+.an-st-wd { background: var(--an-wd); }
+
+/* ------------------------------------------------------------------------------ funnel */
+.an-fun { display: flex; flex-direction: column; gap: 10px; }
+.an-frow { display: grid; grid-template-columns: 150px minmax(0, 1fr) 92px; gap: 10px;
+  align-items: center; height: 30px; font-size: 13px; }
+.an-frow:hover { background: var(--soft); border-radius: 6px; }
+.an-frow__lab { font-weight: 600; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.an-frow__bar { position: relative; height: 100%; display: flex; align-items: center; min-width: 0; }
+.an-frow__bar u { display: block; height: 14px; border-radius: 0 4px 4px 0; background: var(--brand);
+  min-width: 3px; transform-origin: left center;
+  animation: an-growx .9s cubic-bezier(.22, .8, .3, 1) both; }
+/* Hatched: the step before held fewer than five, so its percent is not reliable. */
+.an-frow__bar u.is-few {
+  background: repeating-linear-gradient(45deg, var(--brand) 0 2px, transparent 2px 6px);
+  opacity: .55; outline: 1px solid var(--brand); outline-offset: -1px;
+}
+.an-frow__v { font-weight: 800; font-size: 13px; white-space: nowrap; text-align: right; }
+.an-frow__v em { font-style: normal; color: var(--muted); font-weight: 700; margin-left: 6px;
+  font-size: var(--fs-sm); }
+
+/* ------------------------------------------------------------------------------ tables */
+.an-at { width: 100%; border-collapse: collapse; font-size: 13px; }
+.an-at + .an-at { margin-top: 14px; }
+.an-at th { font-size: 11.5px; letter-spacing: .05em; color: var(--muted); text-align: left;
+  padding: 6px 8px; font-weight: 800; text-transform: uppercase; }
+.an-at td { padding: 8px; border-top: 1px solid var(--line); }
+.an-at td > b { white-space: nowrap; }
+.an-at td.c, .an-at th.c { text-align: center; }
+.an-fewnote { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.an-fewnote .an-few { margin-right: 4px; }
+.an-verdict { display: flex; gap: 10px; align-items: flex-start; background: var(--tint-warn);
+  border: 1px solid var(--tint-warn-line); border-radius: var(--r-md); padding: 9px 12px;
+  font-size: 13px; margin-top: 10px; }
+.an-verdict .k-ic { color: var(--warn); margin-top: 2px; flex: none; }
+.an-rate { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.an-rate i { display: inline-block; width: 70px; height: 7px; border-radius: 4px;
+  background: var(--soft); overflow: hidden; }
+.an-rate u { display: block; height: 100%; background: var(--brand); border-radius: 4px; }
+/* A bordered segmented control (mockup .seg2): radius 10, clipped, buttons 6px 12px, no gap. */
+.an-tabs { display: inline-flex; flex-wrap: wrap; margin-bottom: 10px; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--paper);
+  max-width: 100%; }
+.an-tabs button { border: 0; background: none; padding: 6px 12px; border-radius: 0;
+  font: inherit; font-weight: 700; font-size: 13px; color: var(--muted); cursor: pointer;
+  white-space: nowrap; }
+.an-tabs button:hover { background: var(--soft); }
+.an-tabs button.is-on { background: var(--soft); color: var(--brand); }
+
+/* --------------------------------------------------------------------------- reply timing */
+.an-tgrid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px;
+  align-items: start; }
+.an-k { font-size: var(--fs-sm); font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px; }
+.an-tbig .an-n { font-size: 34px; font-weight: 800; line-height: 1; }
+.an-tbig .an-n span { font-size: 15px; font-weight: 700; color: var(--muted); }
+.an-ages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.an-age { border-radius: 10px; padding: 8px 10px; background: var(--soft);
+  border-left: 4px solid var(--an-wait); }
+.an-age b { display: block; font-size: 20px; }
+.an-age span { font-size: var(--fs-sm); color: var(--muted); }
+.an-age.is-mid { border-left-color: var(--an-wait); }
+.an-age.is-old { border-left-color: var(--an-ghost); }
+.an-oldest { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+.an-oldest .k-ic { width: 16px; height: 16px; color: var(--warn); flex: none; }
+/* Pace and the later funnel steps stay reachable behind a fold (SPEC-INTERFACES /analytics),
+   because the locked mockup draws neither as a block. */
+.an-fold { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.an-fold > summary { cursor: pointer; font-weight: 700; color: var(--link-ink); width: max-content;
+  list-style: none; display: flex; align-items: center; gap: 6px; }
+.an-fold > summary::-webkit-details-marker { display: none; }
+.an-fold > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .25s var(--ease); }
+.an-fold[open] > summary::before { transform: rotate(45deg); }
+.an-fold > :not(summary) { margin-top: 10px; }
+.an-pace { margin-top: 0; }
+.an-wk { display: flex; align-items: flex-end; gap: 6px; height: 110px; padding-top: 10px;
+  border-bottom: 1px solid var(--line); }
+.an-wk div { flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: flex-end; height: 100%; min-width: 0; cursor: default; }
+.an-wk u { display: block; width: 100%; max-width: 26px; background: var(--brand);
+  border-radius: 4px 4px 0 0; min-height: 2px; transform-origin: bottom center;
+  animation: an-growy .9s cubic-bezier(.22, .8, .3, 1) both; }
+.an-wk div:hover u { filter: brightness(1.15); }
+.an-wkl { display: flex; gap: 6px; }
+.an-wkl span { flex: 1; text-align: center; font-size: var(--fs-xs); color: var(--muted);
+  white-space: nowrap; overflow: visible; min-width: 0; }
+.an-moved { align-self: start; }
+.an-moved p { margin: 0 0 10px; }
+
+/* --------------------------------------------------------------------------- the hover tip */
+.an-tip { position: fixed; z-index: 60; pointer-events: none; background: var(--ink);
+  color: var(--paper); font-size: 12.5px; padding: 7px 10px; border-radius: var(--r-sm);
+  box-shadow: var(--shadow); opacity: 0; transition: opacity .12s; max-width: 260px; }
+.an-tip.is-on { opacity: 1; }
+
+/* ------------------------------------------------------------------- the main column width */
+/* Page-only: the mockup draws "Where roles come from" in a 1680 window; its six group tabs and
+   five columns need more than half of a window narrower than that. */
+@container kwin (max-width: 1500px) { .an-g2c { grid-template-columns: 1fr; } }
+/* The mockup's steps, measured on the window (analytics-mockup-locked.html :442, :455, :615, :616). */
+@container kwin (max-width: 1300px) {
+  .an-g2b { grid-template-columns: 1fr; }
+  .an-slegend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .an-tgrid { grid-template-columns: 1fr; }
+  /* The mockup's three columns; the second row of two shares the width so no slot stays empty
+     (six tracks: three tiles of two, then two of three). */
+  .an-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .an-kpis .an-kpi { grid-column: span 2; }
+  .an-kpis .an-kpi:nth-child(n+4) { grid-column: span 3; }
+  .an-rows { grid-template-columns: 1fr; }
+}
+@container kwin (max-width: 1100px) {
+  .an-g2 { grid-template-columns: 1fr; }
+  .an-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .an-kpis .an-kpi, .an-kpis .an-kpi:nth-child(n+4) { grid-column: span 1; }
+  .an-kpis .an-kpi:last-child:nth-child(odd) { grid-column: span 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .an-tip { transition: none; }
+}
+
+.an-fgrp { min-width: 0; }
+.an-tabpanel[hidden] { display: none; }
+
+/* The ask-first dialog for an online Rewrite summary: the same warm box as the retry dialog. */
+.an-send { border: 1px solid var(--tint-warn-line); background: var(--tint-warn);
+  border-radius: var(--r-md); padding: 10px 12px; font-size: var(--fs-md); }
+.an-send ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.an-send p { margin: 8px 0 0; }
+
+/* Turned down uses --st-rej in both themes (the mockup's saturated red, #e34948); nothing mixes it
+   toward the paper, which made it read dusty pink in dark. */
+
+/* A range, table or track change swaps the body: the new stack fades up (mockup .ag.fade inUp). */
+.an-stack { transition: opacity .4s ease, transform .4s ease; }
+.an-stack.htmx-added { opacity: 0; transform: translateY(10px); }
+@media (prefers-reduced-motion: reduce) {
+  .an-sbar i, .an-frow__bar u, .an-wk u, .an-menu { animation: none; }
+  .an-stack { transition: none; }
+}

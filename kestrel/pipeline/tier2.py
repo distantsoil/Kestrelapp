@@ -41,7 +41,7 @@ from kestrel.pipeline.context import (
 
 log = structlog.get_logger()
 
-_VERSION = {"employment": "evaluate/v1", "consulting": "evaluate_consulting/v1"}
+_VERSION = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
 
 
 async def _gather_few_shot(
@@ -81,7 +81,11 @@ async def _gather_few_shot(
         from_bytes(query.vector),
         examples,
         k=settings.learning.few_shot_k,
-        min_labels=settings.learning.min_labels_for_few_shot,
+        # Switched off in Settings > Scoring and learning: no floor is ever reached.
+        min_labels=(
+            settings.learning.min_labels_for_few_shot
+            if settings.learning.use_examples else 10**9
+        ),
     )
     return chosen, [ex.id for ex in chosen]
 

@@ -7,9 +7,11 @@ Nothing here contacts anyone: a verb records what the operator already did."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from kestrel.date_display import format_display
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Pursuit
 from kestrel.services.pursuits import set_pursuit_status
@@ -24,6 +26,7 @@ class BoardColumn:
     label: str
     statuses: tuple[str, ...]
     empty: str
+    caption: str = ""
 
     @property
     def first(self) -> str:
@@ -33,28 +36,42 @@ class BoardColumn:
 
 COLUMNS: dict[str, tuple[BoardColumn, ...]] = {
     "employment": (
-        BoardColumn("to_apply", EMPLOYMENT["first_column"], ("shortlisted", "preparing"),
-                    "Roles you add to your list wait here until you apply."),
+        BoardColumn("to_apply", "To apply", ("shortlisted", "preparing"),
+                    "Roles you add to your list wait here until you apply.",
+                    "Get ready, then apply"),
         BoardColumn("applied", EMPLOYMENT["applied_done"], ("applied", "screening"),
-                    "Roles you have applied for, with a follow-up date."),
+                    "Roles you have applied for, with a follow-up date.",
+                    "Waiting to hear back"),
         BoardColumn("interviewing", "Interviewing", ("interviewing", "final"),
-                    "Roles with an interview on the calendar."),
+                    "Roles with an interview on the calendar.",
+                    "Talking with them"),
         BoardColumn("closed", "Offer / Closed",
                     ("offer", "accepted", "rejected", "withdrawn", "ghosted"),
-                    "Offers, rejections and withdrawals land here with the outcome recorded."),
+                    "Offers, rejections and withdrawals land here with the outcome recorded.",
+                    "Decide, or record how it ended"),
     ),
     "consulting": (
         BoardColumn("to_contact", CONSULTING["first_column"], ("shortlisted", "researching"),
-                    "Leads you add to your list wait here until you reach out."),
+                    "Leads you add to your list wait here until you reach out.",
+                    "Research, then reach out"),
         BoardColumn("conversation", "In conversation", ("outreach_sent", "conversation"),
-                    "Leads you have contacted, with a follow-up date."),
+                    "Leads you have contacted, with a follow-up date.",
+                    "You reached out"),
         BoardColumn("proposal", "Proposal", ("scoping", "proposal_sent", "negotiating"),
-                    "Leads with a scope or proposal in play."),
+                    "Leads with a scope or proposal in play.",
+                    "Scoping and pricing"),
         BoardColumn("closed", "Won / Closed", ("won", "lost", "no_response"),
-                    "Won, lost and unanswered leads land here with the outcome recorded."),
+                    "Won, lost and unanswered leads land here with the outcome recorded.",
+                    "Record how it ended"),
     ),
 }
 
+# The statuses folded into the "Closed" group inside the last column (D-UI-100). Offer and
+# accepted / won stay in the column itself: they are results the operator still acts on.
+FOLDED_STATUSES: dict[str, tuple[str, ...]] = {
+    "employment": ("rejected", "withdrawn", "ghosted"),
+    "consulting": ("lost", "no_response"),
+}
 # Statuses that end a pursuit: the card shows outcome capture instead of verbs.
 CLOSED_STATUSES: dict[str, tuple[str, ...]] = {
     "employment": ("accepted", "rejected", "withdrawn", "ghosted"),
@@ -76,7 +93,7 @@ INTERVIEW_STATUSES: dict[str, tuple[str, ...]] = {
 }
 # The statuses the outcome form offers per track (existing outcome fields, D-UI-46).
 OUTCOME_CHOICES: dict[str, tuple[str, ...]] = {
-    "employment": ("accepted", "rejected", "withdrawn"),
+    "employment": ("accepted", "withdrawn", "rejected", "ghosted"),
     "consulting": ("won", "lost", "no_response"),
 }
 
@@ -89,6 +106,31 @@ CONSULTING_STAGE_NAMES: dict[str, str] = {
     "shortlisted": CONSULTING["first_column"],
     "outreach_sent": CONSULTING["applied_done"],
 }
+
+
+# The words on the Applications screen's Stage label and menu (D-UI-100, the locked mockup).
+STAGE_LABELS: dict[str, str] = {
+    "shortlisted": "Shortlisted", "preparing": "Preparing", "applied": "Applied",
+    "screening": "Screening", "interviewing": "Interviewing", "final": "Final round",
+    "offer": "Offer", "accepted": "Accepted", "rejected": "Not selected",
+    "withdrawn": "Withdrew", "ghosted": "No reply", "researching": "Researching",
+    "outreach_sent": "Reached out", "conversation": "In conversation", "scoping": "Scoping",
+    "proposal_sent": "Proposal sent", "negotiating": "Negotiating", "won": "Won", "lost": "Lost",
+    "no_response": "No response",
+}
+# What the history timeline says for a status the operator moved a card to.
+HISTORY_TEXT: dict[str, str] = {
+    "applied": "You applied", "screening": "They replied", "interviewing": "Interview scheduled",
+    "final": "Stage set to Final round", "offer": "Offer received", "accepted": "Accepted",
+    "rejected": "Not selected", "withdrawn": "You withdrew",
+    "ghosted": "Closed: no reply", "outreach_sent": "You reached out",
+    "conversation": "They replied", "proposal_sent": "Proposal sent", "won": "Won",
+    "lost": "Lost", "no_response": "Closed: no response",
+}
+
+
+def stage_label(status: str) -> str:
+    return STAGE_LABELS.get(status) or status.replace("_", " ").capitalize()
 
 
 def stage_name(status: str, track: str | None = None) -> str:
@@ -142,6 +184,7 @@ VERBS: dict[str, dict[str, Verb]] = {
         "heard_back": Verb("heard_back", "conversation", None, clear_next=True),  # "They replied"
         "follow_again": Verb("follow_again", None, "Follow up"),
         "proposal": Verb("proposal", "proposal_sent", "Follow up on proposal"),
+        "call": Verb("call", "conversation", "Call"),  # "Call scheduled"
         "offer": Verb("offer", "won", None, clear_next=True),  # "Won"
         "rejected": Verb("rejected", "lost", None, clear_next=True),  # "Lost"
     },
@@ -157,7 +200,7 @@ VERB_LABELS: dict[str, dict[str, str]] = {
     "consulting": {
         "applied": CONSULTING["applied_q"], "heard_back": "They replied",
         "follow_again": "No reply, follow up again", "proposal": "Proposal sent",
-        "offer": "Won", "rejected": "Lost",
+        "call": "Call scheduled", "offer": "Won", "rejected": "Lost",
     },
 }
 
@@ -170,10 +213,10 @@ def verbs_for_card(track: str, status: str) -> list[str]:
             return ["applied"]
         if key == "conversation":
             keys = ["heard_back"] if status == "outreach_sent" else []
-            return [*keys, "proposal", "follow_again"]
+            return [*keys, "proposal", "call", "follow_again"]
         if key == "proposal":
             return ["offer", "rejected", "follow_again"]
-        return []
+        return []  # won and the closed group: outcome capture only
     if key == "to_apply":
         return ["applied"]
     if key == "applied":
@@ -203,7 +246,7 @@ def day_stamp(d: date) -> str:
 def short_date(value: str | None) -> str:
     """'Oct 9' from an ISO date or timestamp, or '' when blank."""
     d = parse_day(value)
-    return f"{d.strftime('%b')} {d.day}" if d else ""
+    return format_display(d, "short")
 
 
 def is_waiting(p: Pursuit) -> bool:
@@ -350,11 +393,13 @@ async def apply_verb(
         p.next_action = verb.next_action
         p.next_action_at = (on + timedelta(days=FOLLOW_UP_DAYS)).isoformat()
         p.last_activity_at = now
-    elif verb_key in ("interview", "proposal"):
+    elif verb_key in ("interview", "call", "proposal"):
         when = parse_day(form.get("when"))
-        if verb_key == "interview":
+        if verb_key in ("interview", "call"):
             if when is None:
-                return "Choose the interview date."
+                return "Choose the interview date." if verb_key == "interview" else (
+                    "Choose the date of the call."
+                )
             clock = str(form.get("at_time") or "").strip()
             try:
                 stamp = (
@@ -366,7 +411,9 @@ async def apply_verb(
                 )
             except ValueError:
                 return "That time is not valid."
-            p.next_action, p.next_action_at = verb.next_action, stamp
+            kind = " ".join(str(form.get("kind") or "").split())[:40]
+            p.next_action = f"{verb.next_action} ({kind})" if kind else verb.next_action
+            p.next_action_at = stamp
         else:
             follow = parse_day(form.get("follow_up")) or (on + timedelta(days=FOLLOW_UP_DAYS))
             p.next_action, p.next_action_at = verb.next_action, follow.isoformat()
@@ -384,3 +431,134 @@ async def apply_verb(
     p.last_activity_at = now
     await session.flush()
     return None
+
+
+# ---------------------------------------------------------------- the card's one next-step button
+@dataclass(frozen=True)
+class NextStep:
+    label: str
+    kind: str  # "form" (a form in the panel), "menu" (a small choice list) or "act" (one verb)
+    key: str  # the form name, the menu name or the verb key
+
+
+def next_step(track: str, status: str) -> NextStep | None:
+    """The single button on a card (D-UI-100): it records what the operator did, then moves the
+    card. None for a closed card (its outcome is edited in the panel)."""
+    if status in FOLDED_STATUSES.get(track, ()) or status in ("accepted",):
+        return None
+    if track == "consulting":
+        if status in ("shortlisted", "researching"):
+            return NextStep("Reached out", "act", "applied")
+        if status == "outreach_sent":
+            return NextStep("They replied?", "menu", "creply")
+        if status == "conversation":
+            return NextStep("Proposal sent", "act", "proposal")
+        if status in ("scoping", "proposal_sent", "negotiating"):
+            return NextStep("What happened?", "menu", "cres")
+        return NextStep("Record outcome", "form", "outcome") if status == "won" else None
+    if status in ("shortlisted", "preparing"):
+        return NextStep("I applied", "form", "applied")
+    if status in ("applied", "screening"):
+        return NextStep("Heard back?", "menu", "heard")
+    if status in ("interviewing", "final"):
+        return NextStep("What happened?", "menu", "ivres")
+    return NextStep("Record outcome", "form", "outcome") if status == "offer" else None
+
+
+# The choice lists behind the next-step buttons: (label, verb key, or "form:<name>" for a form).
+MENUS: dict[str, tuple[tuple[str, str], ...]] = {
+    "heard": (
+        ("Heard back", "heard_back"),
+        ("No reply yet: follow up again in 7 days", "follow_again"),
+        ("Interview scheduled", "form:interview"),
+    ),
+    "ivres": (
+        ("Offer received", "offer"), ("Not selected", "rejected"), ("I withdrew", "withdrew"),
+    ),
+    "creply": (
+        ("They replied", "heard_back"),
+        ("No reply yet: follow up again in 7 days", "follow_again"),
+    ),
+    "cres": (
+        ("Won", "offer"), ("Lost", "rejected"),
+        ("No reply yet: follow up again in 7 days", "follow_again"),
+    ),
+}
+MENU_NAMES: dict[str, tuple[str, ...]] = {
+    "employment": ("heard", "ivres"),
+    "consulting": ("creply", "cres"),
+}
+
+
+def record_buttons(track: str, status: str) -> list[tuple[str, str]]:
+    """The panel's "Record what happened" buttons: (label, verb key or "form:<name>")."""
+    if status in FOLDED_STATUSES.get(track, ()):
+        return [("Edit outcome", "form:outcome")]
+    if track == "consulting":
+        if status in ("shortlisted", "researching"):
+            return [("Reached out", "applied")]
+        if status == "outreach_sent":
+            return [("They replied", "heard_back"), ("No reply yet", "follow_again")]
+        if status == "conversation":
+            return [("Proposal sent", "proposal"), ("Call scheduled", "form:interview"),
+                    ("No reply yet", "follow_again")]
+        if status in ("scoping", "proposal_sent", "negotiating"):
+            return [("Won", "offer"), ("Lost", "rejected"), ("No reply yet", "follow_again")]
+        return [("Record outcome", "form:outcome")]
+    if status in ("shortlisted", "preparing"):
+        return [("I applied", "form:applied")]
+    if status in ("applied", "screening"):
+        return [("Heard back", "heard_back"), ("No reply yet", "follow_again"),
+                ("Interview scheduled", "form:interview")]
+    if status in ("interviewing", "final"):
+        return [
+            ("Offer received", "offer"), ("Not selected", "rejected"), ("I withdrew", "withdrew"),
+        ]
+    return [("Record outcome", "form:outcome")]
+
+
+# ------------------------------------------------------------------------------- small helpers
+def due_label(due: date | None, on: date | None = None) -> str:
+    """'Today', 'Tomorrow', 'Oct 27', or '' when there is no date."""
+    if due is None:
+        return ""
+    delta = (due - (on or today())).days
+    if delta == 0:
+        return "Today"
+    if delta == 1:
+        return "Tomorrow"
+    return format_display(due, "short")
+
+
+def clock_label(stamp: str | None) -> str:
+    """'2:00 PM' from an ISO timestamp that carries a time of day, else ''."""
+    if not stamp or len(stamp) < 16:
+        return ""
+    try:
+        t = datetime.strptime(stamp[11:16], "%H:%M")
+    except ValueError:
+        return ""
+    return format_display(t, kind="time")
+
+
+_SCHEDULED_RE = re.compile(r"(Interview|Call)( \([^()]{1,40}\))?")
+
+
+def is_scheduled(p: Pursuit, on: date | None = None) -> bool:
+    """Whether the card's next step is an interview or call that has not happened yet."""
+    # Only what the Interview scheduled and Call scheduled forms write ("Interview", "Call", with
+    # the kind in parentheses) on a card at the stage that holds them; a typed reminder such as
+    # "Call recruiter" is a follow-up, never an interview.
+    if not _SCHEDULED_RE.fullmatch(p.next_action or ""):
+        return False
+    if p.status not in INTERVIEW_STATUSES.get(p.track, ()) and p.status != "conversation":
+        return False
+    when = parse_day(p.next_action_at)
+    return when is not None and when >= (on or today())
+
+
+def monogram(name: str | None) -> tuple[str, int]:
+    """Two letters and a stable color slot (0 to 6) for an organization's badge."""
+    words = [w for w in (name or "").replace("-", " ").split() if w[:1].isalnum()]
+    letters = "".join(w[0] for w in words[:2]).upper() or "?"
+    return letters, sum(ord(c) for c in (name or "")) % 7

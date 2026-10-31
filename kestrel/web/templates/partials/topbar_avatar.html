@@ -1,0 +1,18 @@
+{# The top bar avatar (the account slot): one partial so Settings, Profile and the shell draw it
+   the same way. GET /ui/avatar returns it for a page that changed the picture; the Profile photo
+   routes append it with oob=True so htmx swaps it in place with no page change. The swap fades
+   (components.css .k-avatar). #}
+{% set avatar_marks = {
+  'bird': '<path d="M3 16c5 0 8-2 9-6l1-3 3 1 4-1-3 3c-.2 6-4 9-10 9H3z"/><path d="M16 9h.01"/>',
+  'leaf': '<path d="M5 19C5 9 11 5 20 4c0 9-4 15-13 15zM5 19l8-8"/>',
+  'star': '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  'mountain': '<path d="M2 19l7-12 4 7 3-4 6 9z"/>',
+  'compass': '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>'
+} %}
+{% set prefs = ui_prefs() %}{% set av = prefs.avatar %}
+<a class="k-avatar k-avatar--{{ av }}" id="k-topavatar" href="/profile" title="Profile" aria-label="Profile" data-avatar="{{ av }}"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
+  {%- if av == 'photo' and prefs.photo %}<img src="{{ prefs.photo }}" alt="">
+  {%- elif av == 'initial' and prefs.initial %}<span class="k-avatar__letter" aria-hidden="true">{{ prefs.initial }}</span>
+  {%- elif av in ('bird', 'leaf', 'star', 'sun', 'mountain', 'compass') %}<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true">{{ avatar_marks[av]|safe }}</svg>
+  {%- else %}<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>{% endif %}</a>

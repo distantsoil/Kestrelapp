@@ -1,0 +1,10 @@
+{# See them: the roles one rule would hide, from your last 200, each with Show it anyway. Opens
+   as a dialog; the rows swap one at a time. #}
+{% import "ui/macros.html" as ui %}
+{% call ui.modal('st-see-dialog', name, [{'label': 'Done', 'kind': 'primary', 'close': True}]) %}
+  <p class="st-dsm" data-testid="st-see-count">Showing {{ shown_n }} of {{ total }} from your last {{ of_n }} roles.</p>
+  <div class="st-hl" id="st-hl" data-testid="st-hl">
+    {% for r in roles %}{% include "partials/st_see_row.html" %}{% else %}
+    <p class="st-dsm">No roles in your last {{ of_n }} match this rule.</p>{% endfor %}
+  </div>
+{% endcall %}

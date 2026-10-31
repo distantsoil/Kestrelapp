@@ -1,0 +1,6 @@
+<div class="st-hr{% if r.shown %} is-shown{% endif %}" id="st-hr-{{ r.id }}" data-testid="st-hr-{{ r.id }}">
+  <div><b>{{ r.title }}</b>{% if r.org %}<span class="st-dsm">{{ r.org }}</span>{% endif %}{% if r.why %}<span class="st-dsm">Why hidden: {{ r.why }}</span>{% endif %}</div>
+  {% if r.shown %}<button type="button" class="k-btn k-btn--sm" disabled>Shown</button>
+  {% elif r.inpipe %}<button type="button" class="k-btn k-btn--sm" disabled>In Pipeline</button>
+  {% else %}<button type="button" class="k-btn k-btn--sm" hx-post="/settings/roles/show/{{ r.id }}" hx-target="#st-hr-{{ r.id }}" hx-swap="outerHTML" data-testid="st-show-{{ r.id }}">Show it anyway</button>{% endif %}
+</div>

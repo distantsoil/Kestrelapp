@@ -1,0 +1,9 @@
+{# Past runs: a timeline of the last ten with Show more (D-UI-103). Every run is in the Analytics
+   export. A run opens in the drawer. #}
+{% import "ui/macros.html" as ui %}
+<header class="k-sec-head">
+  <span class="k-badge">{{ ui.icon('clock') }}</span>
+  <div class="k-grow"><h3>Past runs</h3></div>
+  <span class="k-muted" data-live="hist-n">{{ history.total }} {{ 'run' if history.total == 1 else 'runs' }}</span>
+</header>
+<div id="runs-tl" data-testid="rn-history">{% include "partials/runs_history.html" %}</div>

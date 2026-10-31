@@ -1,0 +1,40 @@
+{# This computer (D-UI-106): how Kestrel runs, the setup checklist, and the everyday options. #}
+{% import "partials/st_macros.html" as st with context %}
+{% include "partials/st_mode.html" %}
+<div id="st-chk-slot" hx-get="/settings/computer/checklist" hx-trigger="load" hx-swap="outerHTML">
+  <section class="k-card st-card" id="st-chk"><p class="st-dsm" role="status">Checking this computer…</p></section>
+</div>
+<section class="k-card st-card" id="st-everyday" data-testid="st-everyday">
+  {{ st.head('Everyday options', 'settings') }}
+  <div class="st-row st-row--first">
+    <div class="st-row__t"><b class="st-lab">Keep this computer awake during runs{% if opt.platform != 'windows' %} <span class="k-pill">Windows only</span>{% endif %}</b>
+      <span class="st-dsm">Stops sleep while Kestrel works. Stays on until you quit Kestrel.</span></div>
+    {{ st.sw('awake', 'Keep this computer awake during runs', opt.awake, {'data-st-url': '/settings/computer/option'}) }}
+  </div>
+  <div class="st-row">
+    <div class="st-row__t"><b>Start Kestrel when my computer starts</b>
+      <span class="st-dsm">Opens quietly in the tray.</span></div>
+    {{ st.sw('autostart', 'Start Kestrel when my computer starts', opt.autostart, {'data-st-url': '/settings/computer/option'}) }}
+  </div>
+  <div class="st-row" id="desktop-window">
+    <div class="st-row__t"><b>Keep running when I close the window</b>
+      <span class="st-dsm">Kestrel stays in the tray so runs can finish. Quit from the tray icon.</span></div>
+    {{ st.sw('tray', 'Keep running when I close the window', opt.tray, {'data-st-url': '/settings/computer/option', 'name': 'close_to_tray'}) }}
+  </div>
+  {{ st.det('On macOS, it stays in the menu bar.\nWith this off, closing the window quits Kestrel and stops the worker.\nIt applies from the next close.') }}
+  <div class="st-row">
+    <div class="st-row__t"><b>Online model keys</b>
+      <span class="st-dsm" id="st-keyline" data-testid="st-keyline">{% if choice == 'local' %}Only needed for Online or Both.{% elif any_key %}{{ provider_names|join(', ') }} key saved. Change it on Models.{% else %}No key saved yet.{% endif %}</span></div>
+    <a class="k-btn k-btn--sm" href="/models" data-testid="st-open-models">Open Models</a>
+  </div>
+  <div class="st-row" id="updates">
+    <div class="st-row__t"><b>Check for updates automatically</b>
+      <span class="st-dsm" data-testid="update-last-checked" id="update-last-checked">Last checked: {{ update_last_checked }}</span></div>
+    {{ st.sw('updates', 'Check for updates automatically', opt.updates, {'data-st-url': '/settings/computer/option', 'name': 'updates_enabled'}) }}
+  </div>
+  <div class="st-hact">
+    <button class="k-btn k-btn--sm" type="button" hx-post="/updates/check" hx-target="#update-result" hx-swap="innerHTML" data-testid="st-update-check">Check now</button>
+    <span class="st-res" id="update-result" aria-live="polite"></span>
+  </div>
+  {{ st.det('Updates come from kestrelapp.co once a day. Nothing about you is sent.\nKestrel never downloads or installs anything: you choose if and when to update.') }}
+</section>

@@ -51,14 +51,17 @@ def _client() -> TestClient:
     return TestClient(build_app(worker=False))
 
 
-def test_tailor_page_intro_swap_and_hide_controls():
+def test_tailor_page_shows_cards_with_the_other_wordings_and_no_free_editing():
     render_id, _ = _seed_render()
     html = _client().get(f"/renders/{render_id}").text
-    assert "Kestrel picked a wording for each part of your resume to match this role." in html
-    assert "then render the PDF." in html
-    assert "Swap (2)" in html and "Owned technology strategy." in html  # the other wording
-    assert ">Hide</button>" in html and "Edit wording" in html
-    assert "hide this slot" not in html and "optional slot" not in html
+    # The proof strip says whose words these are; the other wordings are the operator's own.
+    assert "Every line is your own text, word for word." in html
+    assert "Other wordings (1)" in html and "Owned technology strategy." in html
+    assert "Leave this line out" in html  # the optional slot only
+    assert html.count("Leave this line out") == 1
+    # Edits happen in Profile > Documents: no free editing, no Hide button, no AI-written summary.
+    assert "Edit wording" not in html and ">Hide</button>" not in html
+    assert "AI suggestion" not in html
 
 
 def test_hide_this_part_goes_through_the_override_path():
@@ -66,7 +69,8 @@ def test_hide_this_part_goes_through_the_override_path():
     c = _client()
     r = c.post(f"/renders/{render_id}/swap", data={"slot_key": "side_project",
                                                   "variant_key": "hide"})
-    assert r.status_code == 200 and "Hidden from this resume." in r.text
+    assert r.status_code == 200 and 'id="tl-card-side_project"' in r.text
+    assert "Not on this resume." in r.text and "Left out" in r.text
 
     async def _rows():
         engine = make_async_engine(paths.db_path())
@@ -99,13 +103,12 @@ def test_renamed_pages_use_the_plain_names():
     asyncio.run(_fresh_sm())
     c = _client()
     stories = " ".join(c.get("/stories").text.split())
-    assert "<h1>My stories</h1>" in stories and "Story bank" not in stories
+    assert "<h1>Interview prep</h1>" in stories and "My stories" not in stories
     assert "A draft is yours once you save it; nothing rewrites it after that." in stories
     prep = c.get("/prep/999").text
-    assert "<h1>Interview prep</h1>" in prep and "Prep pack" not in prep
+    # D-UI-221: the tabs stay even for a role that is gone; the page says so under them.
+    assert "<h1>Interview prep</h1>" in prep and 'data-testid="pp-tabs"' in prep
     quarantine = " ".join(c.get("/quarantine").text.split())
-    assert "<h1>Failed scoring</h1>" in quarantine
-    assert "Retry lets you score the posting again with the same model or another one." in (
-        quarantine
-    )
+    assert "<h1>Needs another try</h1>" in quarantine
+    assert "Some roles couldn’t be scored. Nothing was dropped; they wait here." in quarantine
     assert "schema" not in quarantine.split("<main")[-1].lower()

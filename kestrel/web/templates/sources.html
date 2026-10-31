@@ -1,10 +1,95 @@
+{# Sources (D-UI-102, SPEC-INTERFACES 2.1 /sources). Built on the shared design system:
+   ui/macros.html for the band, help cards, flyouts, slide-over and modal; tokens for every color.
+   Rows are grouped by what a source holds; a row action swaps only the groups. #}
 {% extends "base.html" %}
+{# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
+{% import "ui/macros.html" as ui %}
 {% block title %}Sources · Kestrel{% endblock %}
+{# Converted screen: no legacy page styles. shell.css keeps the shared chrome working. #}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/sources.css') }}">
+{% endblock %}
+{# The page lifecycle (D-UI-210): sources.js defines the page "sources"; base.html mounts it. #}
+{% block page_name %}sources{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/sources.js') }}" defer></script>{% endblock %}
 {% block content %}
-<h1>Sources</h1>
-<p class="muted">Where Kestrel looks for work. Your searches are built from your profile and
-follow it when it changes. Company boards and other sources are under Advanced.</p>
-<p class="muted" data-testid="us-note">{{ us_note }} Kestrel does not search LinkedIn; LinkedIn does not allow automated access. You can paste a LinkedIn posting by hand with Add a role I found elsewhere.</p>
+<div class="src-wrap"><div class="src-page" data-track="{{ track }}">
+  {% call ui.scene_band('Sources') %}
+    {% include "partials/sources_counts.html" %}
+    <button type="button" class="k-btn k-btn--sm" data-k-flyout="#src-how-fly" aria-controls="src-how-fly" aria-expanded="false" data-testid="src-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
+  {% endcall %}
+  <div class="k-layout">
+    <div class="k-layout__main">
+      {% include "partials/sources_panel.html" %}
+    </div>
+    {% call ui.help_column() %}
+      {{ ui.help_card('How sources work', ['Kestrel checks each source on a schedule and adds what it finds to Pipeline.', 'It reads public pages only and never signs in.', 'It goes slowly so sites stay happy.'], 'info', 'sources', 'src-how-fly', plain=True) }}
+      <article class="k-hcard k-hcard--good k-hcard--plain" data-testid="origin-card">
+        <div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('scan') }}</span><h3>Where sources come from</h3></div>
+        <div class="src-orig">
+          {%- for k, o in origins.items() %}<div><span class="src-tag src-tag--{{ k }}">{{ o[0] }}</span><span>{{ o[1] }}</span></div>{% endfor -%}
+        </div>
+        {{ ui.flyout_trigger('src-origin-fly') }}
+      </article>
+      {{ ui.help_card('What to add', (['Companies you would like to work with: watch their filings and news.', 'One search per kind of work beats one big search.'] if track == 'consulting' else ['Companies you would like to work for: paste their careers page link, or add them by name.', 'One search per job title works better than one big search.']) + ['LinkedIn is not searched. Paste a LinkedIn posting into ' ~ ('Leads' if track == 'consulting' else 'Applications') ~ ' instead.'], 'warn', 'help', 'src-add-fly', plain=True) }}
+      <article class="k-hcard k-hcard--info k-hcard--plain" data-testid="good-to-know">
+        <div class="k-hcard__head"><span class="k-badge k-badge--muted">{{ ui.icon('alert') }}</span><h3>Good to know</h3></div>
+        <div class="src-gtk">
+          <details><summary>Why some sources can’t be added</summary><ul><li>LinkedIn does not allow automated access, so Kestrel does not search it.</li><li>Sites that need you to sign in.</li><li>Pages that build their job list in the browser.</li></ul></details>
+          <details><summary>Why some come back empty</summary><ul><li>ZipRecruiter blocks automated searches.</li><li>Google Jobs returns nothing right now.</li><li>Boards stop near 1,000 results. Split a broad search by place or title.</li></ul></details>
+          <details><summary>What the colors mean</summary><div class="src-legend">
+            <div><span class="k-pill k-pill--good"><span class="k-dot"></span>Healthy</span><span>Working normally.</span></div>
+            <div><span class="k-pill k-pill--warn"><span class="k-dot k-dot--warn"></span>Slowed down</span><span>The site asked Kestrel to wait. It retries next run.</span></div>
+            <div><span class="k-pill k-pill--bad"><span class="k-dot k-dot--bad"></span>Needs you</span><span>The address moved or was removed.</span></div>
+            <div><span class="k-pill"><span class="k-dot k-dot--idle"></span>Paused</span><span>Off by your choice. Nothing is deleted.</span></div>
+          </div></details>
+        </div>
+        {{ ui.flyout_trigger('src-limits-fly') }}
+      </article>
+    {% endcall %}
+  </div>
 
-{% include "partials/sources_panel.html" %}
+  {# Where the drawer and the Add sheet load. #}
+  <div id="src-drawer-slot"></div>
+  <div id="src-sheet-slot"></div>
+
+  {% call ui.flyout('src-how-fly', 'How sources work', help_href='/help#sources') %}
+    <h4>What happens on a check</h4>
+    <p>Kestrel asks the source for its current list, keeps the postings it has not seen, and sends them to Pipeline to be scored. Postings it already has are skipped, even if they show up on several boards.</p>
+    <h4>How often</h4>
+    <p>Each source has its own schedule. Open Details and change How often to daily, weekly or more often.</p>
+    <h4>How Kestrel stays polite</h4>
+    <p>It follows each site’s robots.txt, waits between requests and names itself in every request. If a site asks it to wait, it stops there and tries again next check. That shows as Slowed down, and the rest of the run carries on.</p>
+    <h4>Check now</h4>
+    <p>Details has Check now for one source, and the toolbar has Check all now. Use them after you fix an address.</p>
+  {% endcall %}
+  {% call ui.flyout('src-origin-fly', 'Where sources come from', help_href='/help#sources') %}
+    <h4>From your profile</h4>
+    <p>Kestrel rebuilds these every time you save your profile, from your target titles and places, and also searches close variants of each title. Edit one and it becomes your own: it stops following your profile.</p>
+    <h4>Found in results</h4>
+    <p>When a search result links to a company’s own job board, on a hiring system Kestrel can read, Kestrel adds that board and checks it daily. At most {{ found_cap }} per track. Turn one off and it stays off: Kestrel never adds it again.</p>
+    <h4>Suggested</h4>
+    <p>Suggestions come from companies where you shortlisted or applied. Dismiss one and Kestrel stops suggesting it. Add one and it is marked Suggested.</p>
+    <h4>Built in and added by you</h4>
+    <p>Built-in sources give a new install somewhere to start. You can turn them off. Anything you add yourself, by link or by name, you can edit or remove.</p>
+  {% endcall %}
+  {% call ui.flyout('src-add-fly', 'What to add', help_href='/help#sources') %}
+    {% if track == 'consulting' %}
+    <h4>Companies to watch</h4><p>Pick companies you would like to work with. New leadership, an acquisition or a new site often means they need outside help.</p>
+    <h4>A good search</h4><p>One kind of work per search, like “contract reporting analyst”. A long list of terms in one search returns noise.</p>
+    <h4>Public bids</h4><p>Add a bid search for each kind of work, with the industry codes that fit it. SAM.gov needs your own free key, under Sources that need your own key.</p>
+    {% else %}
+    <h4>Finding a careers page</h4><p>Search the web for the company name plus “careers”, open any job, and copy the address. Or use Company by name and let Kestrel look.</p>
+    <h4>A good search</h4><p>“Operations Analyst” in Austin works better than “manager” anywhere. Add a second search for a second title rather than one long list.</p>
+    <h4>Which boards</h4><p>Indeed and Glassdoor find the most. ZipRecruiter and Google Jobs are limited today, and Kestrel says why before you add them.</p>
+    {% endif %}
+  {% endcall %}
+  {% call ui.flyout('src-limits-fly', 'When a source does not work', help_href='/help#sources') %}
+    <h4>LinkedIn</h4><p>How to tell: it is not offered in Add a source. What to do: open the posting on LinkedIn, copy the text, and use Add a role I found elsewhere on {{ 'Leads' if track == 'consulting' else 'Applications' }}. Kestrel scores it like any other role.</p>
+    <h4>A site that needs you to sign in</h4><p>How to tell: Check says Kestrel does not read that kind of page. What to do: copy the posting text, or save the posting as a PDF, and add it on {{ 'Leads' if track == 'consulting' else 'Applications' }}.</p>
+    <h4>A board that always finds 0</h4><p>How to tell: the row shows 0 open on every check. ZipRecruiter and Google Jobs do this today. What to do: turn it off and use Indeed and Glassdoor, or add the companies you care about directly.</p>
+    <h4>A search near 1,000</h4><p>How to tell: the row shows close to 1,000 open. Boards stop there, so roles are missed. What to do: split it. For example, run “Operations Analyst” as three searches, for Austin, Dallas and Houston, instead of one for all of Texas.</p>
+  {% endcall %}
+</div></div>
 {% endblock %}

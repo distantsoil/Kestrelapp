@@ -28,6 +28,7 @@ from kestrel.db.models import (
     Setting,
     Source,
 )
+from kestrel.services.hidden_orgs import any_hidden, not_hidden_org_clause, opp_visible_clause
 from kestrel.web.queries import (
     _latest_eval_subq,
     failure_summary,
@@ -154,6 +155,7 @@ async def review_queue(
         .where(
             Pursuit.id.is_(None),
             Opportunity.archived_at.is_(None),
+            not_hidden_org_clause(),  # a hidden company stays out of Today (D-UI-123)
             Evaluation.tier == 2,
             Evaluation.created_at >= since,
             Evaluation.verdict.in_(SHORTLIST_VERDICTS) | Evaluation.needs_review.is_(True),
@@ -198,7 +200,9 @@ def due_label(due: date, today: date) -> tuple[str, str]:
         return "today", "today"
     if due == today + timedelta(days=1):
         return "tomorrow", "tomorrow"
-    return "week", due.strftime("%a")
+    from kestrel.date_display import format_display
+
+    return "week", format_display(due, "weekday")
 
 
 async def actions_due(
@@ -347,9 +351,11 @@ async def act_summary(
     today = today or date.today()
     n_apply = await _count(
         session,
-        select(func.count()).select_from(Pursuit).where(
+        select(func.count()).select_from(Pursuit)
+        .join(Opportunity, Opportunity.id == Pursuit.opportunity_id).where(
             Pursuit.status.in_(("shortlisted", "preparing", "researching")),
             Pursuit.closed_at.is_(None),
+            opp_visible_clause(),
             *([Pursuit.track == track] if track else []),
         ),
     )
@@ -361,6 +367,7 @@ async def act_summary(
             Pursuit.closed_at.is_(None),
             Pursuit.status.not_in(_TERMINAL),
             Pursuit.next_action_at <= today.isoformat() + "\uffff",
+            opp_visible_clause(),
         )
         .order_by(Pursuit.next_action_at, Pursuit.id)
     )
@@ -410,9 +417,10 @@ async def switched_off_work(session: AsyncSession) -> list[dict[str, Any]]:
     for track in switched_off_tracks():
         n_open = await _count(
             session,
-            select(func.count()).select_from(Pursuit).where(
+            select(func.count()).select_from(Pursuit)
+            .join(Opportunity, Opportunity.id == Pursuit.opportunity_id).where(
                 Pursuit.track == track, Pursuit.closed_at.is_(None),
-                Pursuit.status.not_in(_TERMINAL),
+                Pursuit.status.not_in(_TERMINAL), opp_visible_clause(),
             ),
         )
         if not n_open:
@@ -478,7 +486,7 @@ def progress_view(progress: dict[str, Any] | None, *, now: datetime | None = Non
         ended = _parse_iso(last.get("ended_at"))
         view["last_run"] = {
             "ended_at": last.get("ended_at"),
-            "hhmm": ended.astimezone().strftime("%H:%M") if ended else None,
+            "hhmm": _hhmm(ended.isoformat()) if ended else None,
             "status": run_ended_word(last.get("status")),
             "scored": int(last.get("scored") or 0),
             "failed": int(last.get("failed") or 0),
@@ -524,7 +532,9 @@ async def ghosting_count(
     g_stmt = (
         select(func.count())
         .select_from(Pursuit)
+        .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
         .where(
+            opp_visible_clause(),
             Pursuit.closed_at.is_(None),
             Pursuit.status.not_in(_TERMINAL),
             Pursuit.last_activity_at.is_not(None),
@@ -566,7 +576,8 @@ async def overnight(
     # window with no run, is derived from the opportunities first seen in the window.
     # Only when the run spans the whole window; a short cycle's counts would undercount it.
     spans = run is not None and run.started_at == since
-    t0_counts = (run.counts or {}).get("tier0") if spans else None
+    # The run row's own counts include every company, so with a hidden company they are not used.
+    t0_counts = (run.counts or {}).get("tier0") if spans and not await any_hidden(session) else None
     if track is None and isinstance(t0_counts, dict) and "seen" in t0_counts:
         t0 = {
             "in": int(t0_counts.get("seen", 0) or 0),
@@ -575,7 +586,8 @@ async def overnight(
         }
     else:
         seen_stmt = select(Opportunity.stage, func.count()).where(
-            Opportunity.first_seen_at >= since, Opportunity.stage != "new"
+            Opportunity.first_seen_at >= since, Opportunity.stage != "new",
+            opp_visible_clause(),
         )
         if track:
             seen_stmt = seen_stmt.where(Opportunity.track == track)
@@ -584,7 +596,8 @@ async def overnight(
         kept = sum(int(v) for k, v in by_stage.items() if k != "t0_reject")
         t0 = {"in": kept + blocked, "kept": kept, "blocked": blocked}
     reason_stmt = select(Opportunity.stage_reason).where(
-        Opportunity.stage == "t0_reject", Opportunity.first_seen_at >= since
+        Opportunity.stage == "t0_reject", Opportunity.first_seen_at >= since,
+        opp_visible_clause(),
     )
     if track:
         reason_stmt = reason_stmt.where(Opportunity.track == track)
@@ -596,8 +609,10 @@ async def overnight(
     t0["reasons"] = [{"rule": r, "n": c} for r, c in rules.most_common(2)]
 
     # Tiers 1 and 2 from the evaluations written in the window.
-    ev_stmt = select(Evaluation.tier, Evaluation.verdict, func.count()).where(
-        Evaluation.created_at >= since, Evaluation.tier.in_((1, 2))
+    ev_stmt = (
+        select(Evaluation.tier, Evaluation.verdict, func.count())
+        .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
+        .where(Evaluation.created_at >= since, Evaluation.tier.in_((1, 2)), opp_visible_clause())
     )
     if track:
         ev_stmt = ev_stmt.where(Evaluation.track == track)
@@ -722,6 +737,7 @@ async def _scored_roles(session: AsyncSession, track: str | None) -> int:
             Evaluation.tier >= 2,
             Evaluation.verdict.in_(("apply", "pursue", "consider", "pass")),
             Opportunity.archived_at.is_(None),
+            opp_visible_clause(),
         )
     )
     if track:
@@ -927,12 +943,12 @@ async def system_asks(
         failed = fails.scoring + fails.other
         again = fails.rescore
         if failed and again:
-            title = (f"{_plural(failed, 'posting', 'postings')} failed scoring; "
+            title = (f"{_plural(failed, 'posting', 'postings')} {_need(failed)} another try; "
                      f"score again failed for {again}")
         elif again:
             title = f"Score again failed for {_plural(again, 'posting', 'postings')}"
         else:
-            title = f"{_plural(failed, 'posting', 'postings')} failed scoring"
+            title = f"{_plural(failed, 'posting', 'postings')} {_need(failed)} another try"
         stands = (" Their earlier scores stand." if again > 1
                   else " Its earlier score stands." if again else "")
         asks.append(
@@ -1040,7 +1056,7 @@ def quarantine_line(n: int, kinds: Counter[str] | None = None) -> str:
     """Failed postings are separate from pending work: they never clear by waiting. The reason
     follows the stored errors (a budget overrun and a malformed answer need different fixes)."""
     return (
-        f"{_plural(n, 'posting', 'postings')} failed scoring. {quarantine_why(kinds)} "
+        f"{_plural(n, 'posting', 'postings')} {_need(n)} another try. {quarantine_why(kinds)} "
         "Retry them, or pick another model on Models."
     )
 
@@ -1087,11 +1103,18 @@ def _hhmm(value: str | None) -> str | None:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone().strftime("%H:%M")
+    from kestrel.date_display import format_display
+
+    return format_display(dt, kind="time", time_style="24h", local=True)
 
 
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
+
+
+def _need(n: int) -> str:
+    """"needs" for one, "need" for any other count (the totals read "need another try")."""
+    return "needs" if n == 1 else "need"
 
 
 async def happening_now(
@@ -1139,7 +1162,7 @@ async def happening_now(
         scan = await latest_scan(session)
         at = _hhmm(scan["at"]) if scan else None
         if scan is None or at is None:
-            line = "Idle. No scan yet; press Scan now to run the first one."
+            line = "Idle. No scan yet; press Run now to run the first one."
         elif scan.get("errors"):
             e = scan["errors"]
             line = (

@@ -1,0 +1,380 @@
+{
+ "_fixture_note": "Captured 2026-10-29 from himalayas.app/jobs/api/search?q=analyst&country=US&sort=recent (descriptions trimmed). The last three jobs are edited copies for the expired, non-US and worldwide cases.",
+ "comments": "Search results come 20 to a page. Pass ?page=2, ?page=3 and so on for more; there is no cursor on search. Cursor pagination (nextCursor) is only on /jobs/api, the browse feed. 13/03/2026: The API has been updated to include the companySlug field in the response.",
+ "updatedAt": 1793309699,
+ "offset": 0,
+ "limit": 20,
+ "totalCount": 5000,
+ "jobs": [
+  {
+   "title": "Data Analyst",
+   "excerpt": "DescriptionSentra is the AI Data Readiness platform for enterprises deploying AI at scale.",
+   "companyName": "Sentra",
+   "companySlug": "sentra",
+   "companyLogo": "",
+   "employmentType": "Full Time",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Data-Analyst",
+    "Classification-Analyst",
+    "Security-Data-Analyst",
+    "Analytics-Analyst",
+    "Associate-Data-Analyst",
+    "Data-Analytics-Specialist",
+    "Research-Data-Analyst",
+    "Data-Intelligence-Analyst"
+   ],
+   "parentCategories": [
+    "Data Science"
+   ],
+   "description": "<h3>Description</h3><p class=\"ql-align-justify\"><a href=\"https://himalayas.app/companies/sentra\">Sentra</a> is the AI Data Readiness platform for enterprises deploying AI at scale. <a href=\"https://himalayas.app/companies/sentra\">Sentra</a> continuously discovers, classifies, and governs sensitive data across cloud, SaaS, data warehouses, and AI environments - giving security teams complete visibility into what AI systems can access, what they can expose, and where compliance violations exist. Unlike alternatives that copy data to vendor clouds or require customer-managed outpost infrastructure, <a href=\"https://himalayas.app/companies/sentra\">Sentra</a> provisions ephemeral scanners directly inside the customer's environment, delivering petabyte-scale classification at a fraction of the cost. Trusted by Lyft, SoFi, Munich RE, PennyMac, Glovo and others.</p>",
+   "pubDate": 1793309683,
+   "expiryDate": 1798493682,
+   "applicationLink": "https://himalayas.app/companies/sentra/jobs/data-analyst?utm_source=api",
+   "guid": "https://himalayas.app/companies/sentra/jobs/data-analyst"
+  },
+  {
+   "title": "Software Quality Engineer/Analyst",
+   "excerpt": "By applying to this position, you acknowledge that Solventum recently publicly announced its intention to divest its Health Information Systems Business.",
+   "companyName": "Solventum",
+   "companySlug": "solventum",
+   "companyLogo": "https://cdn-images.himalayas.app/6zqvqfjvlqayt0ctuejqbu27dqli",
+   "employmentType": "Full Time",
+   "minSalary": 106000,
+   "maxSalary": 145750,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Senior"
+   ],
+   "currency": "USD",
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Software-Quality-Engineer",
+    "Software-Test-Engineer",
+    "QA-Analyst",
+    "Software-Quality-Analyst",
+    "Software-Quality-Assurance-Analyst",
+    "Software-QA-Analyst",
+    "Software-Quality-Assurance-Engineer",
+    "Software-QA-Engineer",
+    "Software-QA-and-Testing-Engineer",
+    "Software-QA-Specialist",
+    "Software-QA-Tester",
+    "Software-Design-Quality-Engineer",
+    "Quality-Engineer"
+   ],
+   "parentCategories": [
+    "Developer"
+   ],
+   "description": "By applying to this position, you acknowledge that <a href=\"https://himalayas.app/companies/solventum\">Solventum</a> recently publicly announced its intention to divest its Health Information Systems Business. No decision has been made regarding the ultimate structure or timing of any potential transaction, and there can be no assurance that a separation will occur. Any transaction would be subject to customary approvals, including approval by <a href=\"https://himalayas.app/companies/solventum\">Solventum</a>'s Board of Directors, regulatory requirements and other customary conditions. This position supports the Health Information Systems Business. If a future transaction involving that business were to occur, the impact on this role would be determined as part of that process and would remain subject to applicable legal requirements, approvals and business decisions.  Link:  <a href=\"htt",
+   "pubDate": 1793309236,
+   "expiryDate": 1798493235,
+   "applicationLink": "https://himalayas.app/companies/solventum/jobs/software-quality-engineer-analyst?utm_source=api",
+   "guid": "https://himalayas.app/companies/solventum/jobs/software-quality-engineer-analyst"
+  },
+  {
+   "title": "Financial Analyst - Financial Operations",
+   "excerpt": "SummaryPerforms basic-to-complex financial and business-related analyses to support departmental operating budgets and financial operations, provider productivity and benchmarking processes, business ",
+   "companyName": "The Medical College of Wisconsin, Inc.",
+   "companySlug": "the-medical-college-of-wisconsin-inc",
+   "companyLogo": "https://cdn-images.himalayas.app/2y3j3ey8d8hqb047q1sldhnxvakn",
+   "employmentType": "Full Time",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Senior"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Financial-Analyst",
+    "Financial-Operations-Analyst",
+    "Healthcare-Financial-Analyst",
+    "Business-Analyst",
+    "Operational-Finance-Analyst",
+    "Finance-Operations-Analyst",
+    "Finance-and-Operations-Analyst"
+   ],
+   "parentCategories": [
+    "Finance",
+    "Data Science"
+   ],
+   "description": "<h3><b>Summary</b></h3><p>Performs basic-to-complex financial and business-related analyses to support departmental operating budgets and financial operations, provider productivity and benchmarking processes, business plans, forecasting models, and practice leadership. Ad hoc financial duties as assigned. </p><br><h3><b>Primary Responsibilities</b></h3><ul><li>Performs financial analysis, analyzes P&amp;L statements, and prepares accurate and timely reporting to enable decision-making by practice leadership </li></ul><ul><li>Provides financial support in the business development and assessment of potential new business opportunities </li></ul><ul><li>Identifies potential opportunities for improvement to internal financial/business processes </li></ul><ul><li>Assists management with analysis and implementation of financial/business process improvements </li></ul>",
+   "pubDate": 1793309017,
+   "expiryDate": 1798493015,
+   "applicationLink": "https://himalayas.app/companies/the-medical-college-of-wisconsin-inc/jobs/financial-analyst-financial-operations?utm_source=api",
+   "guid": "https://himalayas.app/companies/the-medical-college-of-wisconsin-inc/jobs/financial-analyst-financial-operations"
+  },
+  {
+   "title": "AI/ Supply Chain Intelligence Intern",
+   "excerpt": "Standard Job Description Selected individual will be a member of the Lockheed Martin Supply Chain (LMSC) Internship Program, applying AI/ML techniques to enhance supply chain forecasting, optimization",
+   "companyName": "Lockheed Martin Corporation",
+   "companySlug": "lockheed-martin-corporation",
+   "companyLogo": "https://cdn-images.himalayas.app/mh5r9chs1uiod2zqk2ldld9ihohp",
+   "employmentType": "Intern",
+   "minSalary": 24.37,
+   "maxSalary": 38.71,
+   "salaryPeriod": "hourly",
+   "seniority": [
+    "Entry-level"
+   ],
+   "currency": "USD",
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Supply-Chain-Analytics-Intern",
+    "Artificial-Intelligence-Intern",
+    "Machine-Learning-Intern",
+    "Supply-Chain-Analyst",
+    "Supply-Chain-Intern",
+    "AI-Analytics-Intern",
+    "Supply-Chain-Management-Intern",
+    "AI-Data-Science-Intern",
+    "Supply-Chain-Internship",
+    "Supply-Chain-Planning-Intern",
+    "Business-Intelligence-Intern",
+    "Artificial-Intelligence-Internship"
+   ],
+   "parentCategories": [
+    "Operations"
+   ],
+   "description": "<div>\n<div>\n<div><h2>Standard Job Description</h2></div>\n<div>Selected individual will be a member of the Lockheed Martin Supply Chain (LMSC) Internship Program, applying AI/ML techniques to enhance supply chain forecasting, optimization, and automation. The candidate will gain exposure to how LM leverages advanced analytics to improve demand visibility, inventory management, and operational efficiency across the enterprise. Responsibilities may include assisting in the development or validation of ML models for predictive analytics, supporting data preprocessing and feature engineering for supply chain datasets, and helping evaluate model performance against operational key performance indicators. Learning objectives will cover fundamentals of supply chain AI/ML applications, data-driven decision support, and LM’s approach to responsible AI integration within operational workflows.</div",
+   "pubDate": 1793309699,
+   "expiryDate": 1798493697,
+   "applicationLink": "https://himalayas.app/companies/lockheed-martin-corporation/jobs/ai-supply-chain-intelligence-intern?utm_source=api",
+   "guid": "https://himalayas.app/companies/lockheed-martin-corporation/jobs/ai-supply-chain-intelligence-intern"
+  },
+  {
+   "title": "Sales Systems Administrator (Temporary)",
+   "excerpt": "Who We Are:Nutrabolt is a fast-growing, global active health and wellness company with a portfolio of market leading performance-oriented brands that energize and fuel active lifestyles.",
+   "companyName": "Nutrabolt",
+   "companySlug": "nutrabolt",
+   "companyLogo": "https://cdn-images.himalayas.app/sr7d0dhhny879jrsacnk7fja710e",
+   "employmentType": "Temporary",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Sales-Systems-Manager",
+    "Sales-Operations-Administrator",
+    "Trade-Management-Specialist",
+    "Sales-Operations-Specialist",
+    "Sales-Systems-Analyst",
+    "Sales-Administrator",
+    "Sales-Administration-Specialist",
+    "Sales-Support-Administrator",
+    "Sales-Operations-Admin"
+   ],
+   "parentCategories": [
+    "Sales"
+   ],
+   "description": "<h3>Who We Are:</h3><p><a href=\"https://himalayas.app/companies/nutrabolt\">Nutrabolt</a> is a fast-growing, global active health and wellness company with a portfolio of market leading performance-oriented brands that energize and fuel active lifestyles. The company’s disruptive and innovative products compete in the Functional Beverage and Active Nutrition segments, under three consumer-loved brands: C4® (one of the fastest-growing energy drink brands in the United States and the #1 selling global pre-workout brand), XTEND® (the #1 post-workout recovery brand in the United States), and Cellucor® (an award-winning sports nutrition brand created in 2002).</p>",
+   "pubDate": 1793308998,
+   "expiryDate": 1798492996,
+   "applicationLink": "https://himalayas.app/companies/nutrabolt/jobs/sales-systems-administrator-temporary?utm_source=api",
+   "guid": "https://himalayas.app/companies/nutrabolt/jobs/sales-systems-administrator-temporary"
+  },
+  {
+   "title": "Archived Sales Systems Administrator",
+   "excerpt": "Who We Are:Nutrabolt is a fast-growing, global active health and wellness company with a portfolio of market leading performance-oriented brands that energize and fuel active lifestyles.",
+   "companyName": "Nutrabolt",
+   "companySlug": "nutrabolt",
+   "companyLogo": "https://cdn-images.himalayas.app/sr7d0dhhny879jrsacnk7fja710e",
+   "employmentType": "Temporary",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "United States"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Sales-Systems-Manager",
+    "Sales-Operations-Administrator",
+    "Trade-Management-Specialist",
+    "Sales-Operations-Specialist",
+    "Sales-Systems-Analyst",
+    "Sales-Administrator",
+    "Sales-Administration-Specialist",
+    "Sales-Support-Administrator",
+    "Sales-Operations-Admin"
+   ],
+   "parentCategories": [
+    "Sales"
+   ],
+   "description": "<h3>Who We Are:</h3><p><a href=\"https://himalayas.app/companies/nutrabolt\">Nutrabolt</a> is a fast-growing, global active health and wellness company with a portfolio of market leading performance-oriented brands that energize and fuel active lifestyles. The company’s disruptive and innovative products compete in the Functional Beverage and Active Nutrition segments, under three consumer-loved brands: C4® (one of the fastest-growing energy drink brands in the United States and the #1 selling global pre-workout brand), XTEND® (the #1 post-workout recovery brand in the United States), and Cellucor® (an award-winning sports nutrition brand created in 2002).</p>",
+   "pubDate": 1793308998,
+   "expiryDate": 1700000000,
+   "applicationLink": "https://himalayas.app/companies/nutrabolt/jobs/sales-systems-administrator-temporary?utm_source=api-archived",
+   "guid": "https://himalayas.app/companies/nutrabolt/jobs/sales-systems-administrator-temporary-archived"
+  },
+  {
+   "title": "Sales Systems Administrator (Berlin)",
+   "excerpt": "Who We Are:Nutrabolt is a fast-growing, global active health and wellness company with a portfolio of market leading performance-oriented brands that energize and fuel active lifestyles.",
+   "companyName": "Nutrabolt",
+   "companySlug": "nutrabolt",
+   "companyLogo": "https://cdn-images.himalayas.app/sr7d0dhhny879jrsacnk7fja710e",
+   "employmentType": "Temporary",
+   "minSalary": null,
+   "maxSalary": null,
+   "salaryPeriod": "annual",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": null,
+   "locationRestrictions": [
+    "Germany"
+   ],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Sales-Systems-Manager",
+    "Sales-Operations-Administrator",
+    "Trade-Management-Specialist",
+    "Sales-Operations-Specialist",
+    "Sales-Systems-Analyst",
+    "Sales-Administrator",
+    "Sales-Administration-Specialist",
+    "Sales-Support-Administrator",
+    "Sales-Operations-Admin"
+   ],
+   "parentCategories": [
+    "Sales"
+   ],
+   "description": "<h3>Who We Are:</h3><p><a href=\"https://himalayas.app/companies/nutrabolt\">Nutrabolt</a> is a fast-growing, global active health and wellness company with a portfolio of market leading performance-oriented brands that energize and fuel active lifestyles. The company’s disruptive and innovative products compete in the Functional Beverage and Active Nutrition segments, under three consumer-loved brands: C4® (one of the fastest-growing energy drink brands in the United States and the #1 selling global pre-workout brand), XTEND® (the #1 post-workout recovery brand in the United States), and Cellucor® (an award-winning sports nutrition brand created in 2002).</p>",
+   "pubDate": 1793308998,
+   "expiryDate": 1798492996,
+   "applicationLink": "https://himalayas.app/companies/nutrabolt/jobs/sales-systems-administrator-temporary?utm_source=api-berlin",
+   "guid": "https://himalayas.app/companies/nutrabolt/jobs/sales-systems-administrator-temporary-berlin"
+  },
+  {
+   "title": "Data Analyst, Worldwide",
+   "excerpt": "DescriptionSentra is the AI Data Readiness platform for enterprises deploying AI at scale.",
+   "companyName": "Sentra",
+   "companySlug": "sentra",
+   "companyLogo": "",
+   "employmentType": "Full Time",
+   "minSalary": 4000,
+   "maxSalary": 5000,
+   "salaryPeriod": "monthly",
+   "seniority": [
+    "Mid-level"
+   ],
+   "currency": "EUR",
+   "locationRestrictions": [],
+   "timezoneRestrictions": [
+    -10,
+    -9,
+    -8,
+    -7,
+    -6,
+    -5,
+    14
+   ],
+   "categories": [
+    "Data-Analyst",
+    "Classification-Analyst",
+    "Security-Data-Analyst",
+    "Analytics-Analyst",
+    "Associate-Data-Analyst",
+    "Data-Analytics-Specialist",
+    "Research-Data-Analyst",
+    "Data-Intelligence-Analyst"
+   ],
+   "parentCategories": [
+    "Data Science"
+   ],
+   "description": "<h3>Description</h3><p class=\"ql-align-justify\"><a href=\"https://himalayas.app/companies/sentra\">Sentra</a> is the AI Data Readiness platform for enterprises deploying AI at scale. <a href=\"https://himalayas.app/companies/sentra\">Sentra</a> continuously discovers, classifies, and governs sensitive data across cloud, SaaS, data warehouses, and AI environments - giving security teams complete visibility into what AI systems can access, what they can expose, and where compliance violations exist. Unlike alternatives that copy data to vendor clouds or require customer-managed outpost infrastructure, <a href=\"https://himalayas.app/companies/sentra\">Sentra</a> provisions ephemeral scanners directly inside the customer's environment, delivering petabyte-scale classification at a fraction of the cost. Trusted by Lyft, SoFi, Munich RE, PennyMac, Glovo and others.</p>",
+   "pubDate": 1793309683,
+   "expiryDate": 1798493682,
+   "applicationLink": "https://himalayas.app/companies/sentra/jobs/data-analyst?utm_source=api-worldwide",
+   "guid": "https://himalayas.app/companies/sentra/jobs/data-analyst-worldwide"
+  }
+ ]
+}

@@ -217,6 +217,8 @@ def render_html(doc: RenderDoc) -> str:
         ALIGNS,
         DEFAULT_ACCENT,
         FONTS,
+        MARGINS,
+        SIZES,
         STYLES,
         layout_defaults,
         resolve_style,
@@ -230,6 +232,10 @@ def render_html(doc: RenderDoc) -> str:
     style["align"] = style.get("align") if style.get("align") in ALIGNS else "left"
     style["font"] = style.get("font") if style.get("font") in FONTS else "Georgia"
     style["font_css"] = FONTS[style["font"]]
+    style["size"] = style.get("size") if style.get("size") in SIZES else "default"
+    style["margins"] = style.get("margins") if style.get("margins") in MARGINS else "normal"
+    style["font_scale"] = SIZES[style["size"]]
+    style["page_margin"] = MARGINS[style["margins"]]
     style["accent"] = (valid_accent(style.get("accent"))
                        or layout_defaults(style.get("layout")).get("accent", DEFAULT_ACCENT))
     return _env().get_template("document.html").render(

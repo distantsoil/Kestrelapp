@@ -4,6 +4,65 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-30
+
+The Release Candidate for 1.0: every screen redesigned, smoother page changes, more places to find roles, and security fixes.
+
+### What's new
+
+- **A new look.** Every screen is redesigned, with a frameless window, a command palette (Ctrl K or Cmd K) and gentle motion that your system's reduce-motion setting turns off.
+- **Smoother.** Pages change in place without reloading the window, and the setup wizard moves smoothly between steps.
+- **More places to find roles.** USAJobs and Adzuna (each with your own free key), Himalayas and We Work Remotely for remote roles, Recruitee, Teamtailor, Personio and Breezy HR, and any careers page that publishes its jobs for search engines.
+- **Fewer irrelevant roles.** Roles outside your area or unrelated to your target titles are dropped before they cost time or money.
+- **Alerts on your terms.** An alert sound of Kestrel's own, and Quiet hours that hold pop-ups and send one summary afterward.
+- **Safer.** Bundled libraries updated past their known vulnerabilities, and error messages that never show file paths or other internal details.
+
+### Added
+
+- A frameless window with minimize, maximize and close in the sidebar (macOS keeps its own buttons), a thin themed frame you can resize from, double-click to maximize, and a window that reopens at the size and place you left it.
+- A loading screen at start, "Updating your data" after an update, a clear "Kestrel couldn't start" card with Try again, and a "Closing Kestrel" screen when you quit.
+- A command palette (Ctrl K, or Cmd K on a Mac) for roles, companies, settings and actions.
+- Gentle motion on page changes, tabs, folds, saves and presses; your system's reduce-motion setting turns it off.
+- USAJobs, a free source of US government jobs: tick it when adding a job board search, paste your own free USAJobs key and email, and Kestrel searches the official listings. It sends USAJobs only your search words, place, key and email.
+- Adzuna, a job search board with your own free keys, and two remote job boards that need none: Himalayas and We Work Remotely. Tick them when adding a job board search. Adzuna sends only the start of each description, so those roles say so. Ticking two boards at once and pressing Undo now removes both.
+- Any careers page, not only the named systems. Paste a link and Kestrel reads the job data the page publishes for search engines (schema.org JobPosting), including pages that only link to their job pages (up to 25 a run). A page that builds its list with JavaScript is told plainly instead of showing zero. A link to a hiring system Kestrel already reads still uses that reader.
+- More company job boards: Recruitee, Teamtailor, Personio and Breezy HR. Kestrel follows it from your searches like the others, and a careers page on the company's own domain is recognized too. A Teamtailor site that has switched its job feed off is reported plainly instead of failing. Personio roles with no description in its feed get theirs from the job page, within a per-run cap, as Breezy HR roles do from their posting pages.
+- An alert sound: with **Play a sound** on in Settings, Kestrel plays the sound and volume you picked with each pop-up it delivers (its own sound, never the system's, and it works with the window hidden), at most once a minute and never during Quiet hours.
+- Quiet hours work: pop-ups (on this computer, by phone, or by webhook) wait until the quiet hours end, then arrive as one summary. The bell in Kestrel still updates.
+- **Classic page loads** in Settings > Preferences: a fallback that loads each page fresh, for anyone who prefers it or hits a problem.
+- The interface font (Manrope) ships with the app, so text looks as designed offline.
+- A manual workflow that exports the open security alerts, for maintainers.
+
+### Changed
+
+- The sidebar, the top row (which now scrolls with the page), the scene art and the background follow the mockups in light and dark, and layouts fit the window instead of stacking early.
+- A requirement your profile does not show is "Partly met" and listed under Gaps, never counted in your favor; reasons are plain sentences.
+- Pipeline lists scored roles first; one role found on several boards shows once.
+- Messages point at the current Settings sections (Privacy and access, Your data).
+- The About page and README credit MiniMax M3 (formerly listed under its stealth name, Space Bunny) and add Kimi K2.7 and MiMo: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, MiniMax M3, LongCat, Kimi K2.7 and MiMo.
+- Moving between pages no longer reloads the window: the sidebar, top row and header art stay put and only the page changes. Back and Forward work as before, and unsaved Profile changes still hold you on the page.
+- Roles outside your search area, and roles whose titles are unrelated to the ones you target, are dropped before they are stored or scored. "New York - Remote" style listings still pass.
+- Top matches shows fully reviewed roles only; roles still being reviewed are a count under the heading.
+- Interview prep keeps its three tabs (Story bank, Practice, Prep pack) on every tab.
+- **Run now** on Today respects your online-model choice and approval the first time.
+- Work mode and Location agree on remote and hybrid in Profile.
+- Kestrel's requests identify it with a link to kestrelapp.co, and About links the public source repository.
+- The browser extension no longer runs on LinkedIn.
+- The release stage is named Release Candidate.
+
+### Fixed
+
+- The **Computer notifications** switch and the per-alert switches in Settings now take effect for pop-ups (they were saved but not read).
+- Windows pop-ups no longer play the system sound.
+- The setup wizard's steps slide over each other, so the screen is never blank between steps.
+- Sheets and dialogs open in view on a scrolled page, and when a page is still arriving.
+- The command palette keeps keys typed before it opens; pages load faster after an update; the sidebar menu scrolls above the status line on a short window; no grey window during seasonal art; Role tabs fade in without a flash.
+
+### Security
+
+- Updated the image, PDF and sign-in libraries Kestrel bundles to versions without known vulnerabilities.
+- Error messages on screen never include file paths, addresses or other internal details; the log keeps them.
+
 ## [0.6.5] - 2026-10-23
 
 ### New
@@ -19,7 +78,6 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 - Turn LAN access on or off from Settings, after creating a shared secret. It takes effect after a restart.
 - Change which model each tier uses from Settings > Models.
 - With an OpenRouter key, the status rail shows what you have spent this month.
-- A notice that a refreshed look for Kestrel is coming. It closes for good with Got it.
 
 ### Changed
 

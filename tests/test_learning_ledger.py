@@ -322,7 +322,9 @@ def test_settings_page_has_the_learning_tab_and_the_partial_renders():
     with _client() as c:
         page = c.get("/settings")
         assert page.status_code == 200
-        assert "tab==='learning'" in page.text and 'hx-get="/settings/learning"' in page.text
+        assert 'data-testid="st-nav-scoring"' in page.text  # Learning is Scoring and learning
+        scoring = c.get("/settings/section/scoring").text
+        assert 'data-testid="st-learn"' in scoring and 'data-testid="st-export"' in scoring
         r = c.get("/settings/learning")
     assert r.status_code == 200
     body = r.text
@@ -357,7 +359,7 @@ def test_labels_partial_pages_filters_and_deletes():
     assert counts["labels"] + counts["overrides"] == 4 and counts["opps"] == 4
 
 
-def test_export_downloads_raw_json():
+def test_export_downloads_json_redacted_under_confidential_mode():
     asyncio.run(_seed_app_db(confidential=True))
     with _client() as c:
         r = c.get("/settings/learning/export")
@@ -367,8 +369,8 @@ def test_export_downloads_raw_json():
     assert disposition.startswith("attachment;") and 'filename="kestrel-labels-' in disposition
     assert disposition.endswith('.json"')
     data = r.json()
-    assert data["redacted"] is False and data["n"] == 5 and len(data["labels"]) == 5
-    assert _EMPLOYER in r.text and _PLACEHOLDER not in r.text
+    assert data["redacted"] is True and data["n"] == 5 and len(data["labels"]) == 5
+    assert _EMPLOYER not in r.text and _PLACEHOLDER in r.text
 
 
 def test_reset_refuses_without_the_word_and_runs_with_it():

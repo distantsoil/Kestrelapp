@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Backup · Kestrel{% endblock %}
+{# No script of its own; named for the page lifecycle (D-UI-210). #}
+{% block page_name %}backup{% endblock %}
 {% block content %}
 <h1>Backup</h1>
 <p class="muted">Take a backup before a reinstall, a machine move, or any experiment with the
-database. Restore is on <a href="/settings">Settings</a> under the LAN &amp; backup tab.</p>
+database. Restore is on <a href="/settings">Settings</a> under Your data.</p>
 
 <div class="split">
   <div class="panel">
@@ -25,7 +27,7 @@ database. Restore is on <a href="/settings">Settings</a> under the LAN &amp; bac
       re-entered in Settings after a reinstall, by design.</li>
       <li>The LAN shared secret is taken out of the database copy before it is zipped. Restoring
       keeps the secret this computer already has, so on a different computer, set up LAN pairing
-      again on Settings, LAN &amp; backup tab.</li>
+      again on Settings, Your data.</li>
       <li>Logs, the learned ranking, the computer check, and the downloaded AI models. Open Setup
       to rebuild the models.</li>
     </ul>
@@ -65,7 +67,7 @@ database. Restore is on <a href="/settings">Settings</a> under the LAN &amp; bac
 
 <div class="panel">
   <h2>Restore</h2>
-  <p>Restore from a backup zip on <a href="/settings">Settings</a>, LAN &amp; backup tab, or run
+  <p>Restore from a backup zip on <a href="/settings">Settings</a>, Your data, or run
   <span class="mono">kestrel restore &lt;file.zip&gt;</span>. The archive is validated in full
   before anything is touched and the current database is copied aside first, so a bad restore is
   always reversible. Restart Kestrel afterward.</p>

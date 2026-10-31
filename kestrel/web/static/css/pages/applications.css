@@ -1,0 +1,318 @@
+/* Applications / Leads (D-UI-100). Page styles for /pursuits, built on tokens.css and
+   components.css: token colors only (tests/test_ui_tokens.py), every class prefixed ap-. The look
+   follows the locked design mockup (kept privately) */
+
+/* Column colors come from tokens, so a scheme change recolors the board. */
+.ap-page { --ap-c1: var(--brand); --ap-c2: var(--tg2i); --ap-c3: var(--good); --ap-c4: var(--warn); }
+.ap-main { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px;
+  min-width: 0; }
+/* The wrapper is the container the @container rules measure. */
+.ap-wrap { container-type: inline-size; min-width: 0; }
+.ap-page, .ap-page * { box-sizing: border-box; }
+.ap-main .k-scene { margin: 0; padding: 4px 0 10px; }
+.ap-counts { font-size: var(--fs-md); white-space: nowrap; }
+.ap-v { color: var(--muted); font-size: var(--fs-sm); }
+.ap-linkbtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer;
+  text-align: left; }
+/* Keep the link color in both themes (a bare button would take the browser's button text color). */
+.k-link.ap-linkbtn { color: var(--link-ink); font-weight: 700; font-size: 13px; }
+.ap-notice { border-radius: var(--r-sm); padding: 9px 12px; margin: 0; font-size: var(--fs-md);
+  background: var(--tint-warn); border: 1px solid var(--tint-warn-line); color: var(--ink); }
+
+/* ------------------------------------------------------------------------ search and chips */
+.ap-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.ap-sbox { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line);
+  background: var(--paper); border-radius: var(--r-md); padding: 0 12px; color: var(--muted);
+  box-sizing: border-box; height: 36px; width: 260px; min-width: 0; max-width: 100%; flex: none; }
+.ap-sbox input { border: 0; outline: 0; background: none; font: inherit; font-size: 13.5px;
+  color: var(--ink); width: 100%; min-width: 0; height: 100%; padding: 0; }
+.ap-sbox:focus-within { outline: 2px solid var(--brand); outline-offset: 1px; }
+.ap-view { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-md);
+  overflow: hidden; background: var(--paper); height: 36px; box-sizing: border-box; }
+.ap-view button { border: 0; background: none; padding: 6px 12px; font: inherit; font-weight: 700;
+  font-size: 13px; color: var(--muted); cursor: pointer; display: inline-flex; gap: 6px;
+  align-items: center; }
+.ap-view button.is-on { background: var(--soft); color: var(--brand); }
+.ap-count { margin-left: auto; font-size: var(--fs-sm); }
+.ap-mf { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s var(--ease); }
+.ap-mf.is-open { grid-template-rows: 1fr; }
+.ap-mf > .ap-mfi { overflow: hidden; min-height: 0; }
+.ap-mf.is-open > .ap-mfi { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--paper); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px; }
+.ap-fl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700;
+  color: var(--muted); min-width: 0; border: 0; padding: 0; margin: 0; }
+.ap-fl input:not([type="radio"]):not([type="checkbox"]), .ap-fl select, .ap-fl textarea {
+  font: inherit; font-weight: 500; font-size: 13px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 8px; min-width: 0; }
+.ap-fl input:focus, .ap-fl select:focus, .ap-fl textarea:focus {
+  outline: 2px solid var(--brand); outline-offset: -1px; }
+.ap-pform .ap-fl select, .ap-pform .ap-fl input:not([type="radio"]) { background: var(--paper); }
+.ap-frow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ap-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------------- board layout */
+.ap-split { container-type: inline-size; min-width: 0; position: relative; }
+.ap-appgrid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--sp-4);
+  align-items: start; }
+/* The mockup drops the rail under the board at 1040; its four 228px columns plus the 300px rail
+   need about 1270, so the rail drops there instead of clipping the last column. */
+@container (max-width: 1270px) {
+  .ap-appgrid { grid-template-columns: minmax(0, 1fr); }
+  .ap-rail { grid-template-columns: 1fr 1fr; }
+}
+@container (max-width: 640px) { .ap-rail { grid-template-columns: 1fr; } }
+.ap-boardwrap { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+.ap-board { display: grid; grid-template-columns: repeat(var(--n), minmax(228px, 1fr)); gap: 12px;
+  overflow-x: auto; padding-bottom: 6px; align-items: start; scrollbar-width: thin;
+  scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
+.ap-board > .ap-col { scroll-snap-align: start; }
+/* Shown only when the stages no longer fit: the board then scrolls inside its own box. */
+.ap-scrollhint { display: none; font-size: var(--fs-sm); color: var(--muted); margin: 0;
+  text-align: right; }
+@container (max-width: 950px) { .ap-scrollhint { display: block; } }
+.ap-board[style*="--n:1"] { grid-template-columns: minmax(228px, 560px); }
+.ap-col { background: color-mix(in srgb, var(--paper) 55%, transparent);
+  border: 1px solid var(--line); border-top: 3px solid var(--cc); border-radius: var(--r-lg);
+  padding: 12px 10px 10px; min-width: 0;
+  transition: background .2s, border-color .2s, box-shadow .2s; }
+.ap-col[hidden] { display: none; }
+.ap-col.is-over { background: color-mix(in srgb, var(--cc) 10%, var(--paper));
+  border-color: var(--cc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc) 22%, transparent); }
+.ap-colh { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 14.5px; }
+.ap-cdot { width: 9px; height: 9px; border-radius: 50%; background: var(--cc); flex: none; }
+.ap-cn { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--muted);
+  background: var(--soft); border-radius: 10px; padding: 1px 8px; }
+.ap-cap { font-size: 12px; color: var(--muted); padding: 2px 4px 10px; }
+.ap-cards { display: flex; flex-direction: column; gap: 8px; }
+.ap-cempty { border: 1.5px dashed var(--line); border-radius: var(--r-md); padding: 14px;
+  font-size: 12.5px; color: var(--muted); text-align: center; }
+.ap-cempty[hidden], .ap-colmore[hidden], .ap-nomatch[hidden], .ap-fu[hidden] { display: none; }
+.ap-colmore { align-self: center; }
+.ap-empty { display: flex; align-items: center; gap: 14px; padding: 18px;
+  border: 1.5px dashed var(--line); border-radius: var(--r-lg); background: var(--paper); }
+.ap-empty > div { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.ap-empty span { color: var(--muted); }
+.ap-nomatch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--paper); }
+.ap-nomatch span { color: var(--muted); }
+
+/* --------------------------------------------------------------------------------- cards */
+.ap-card { background: var(--paper); border: 1px solid var(--line);
+  border-left: 3px solid var(--cc, var(--line)); border-radius: 11px;
+  padding: 10px 10px 9px 11px; display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  transition: box-shadow .2s, transform .2s, border-color .2s, opacity .3s; min-width: 0; }
+.ap-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+.ap-card:focus-visible, .ap-row:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.ap-card[hidden], .ap-row[hidden] { display: none; }
+.ap-card.is-sel { box-shadow: 0 0 0 2px var(--brand); }
+.ap-card.is-dragging { opacity: .55; transform: rotate(1.5deg) scale(1.02); box-shadow: var(--shadow); }
+.ap-card.is-closed { border-left-color: var(--line); opacity: .85; }
+.ap-c1 { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
+.ap-mono { width: 30px; height: 30px; border-radius: var(--r-sm); display: grid;
+  place-items: center; font-weight: 800; font-size: 11.5px; flex: none; color: var(--paper);
+  background: var(--brand); }
+.ap-mono[data-slot="1"] { background: var(--good); }
+.ap-mono[data-slot="2"] { background: var(--warn); }
+.ap-mono[data-slot="3"] { background: var(--tg3i); }
+.ap-mono[data-slot="4"] { background: var(--bad); }
+.ap-mono[data-slot="5"] { background: var(--tg2i); }
+.ap-mono[data-slot="6"] { background: var(--muted); }
+.ap-t { font-weight: 700; font-size: 13.5px; line-height: 1.3; overflow-wrap: break-word; hyphens: none; }
+.ap-o { font-size: 12.5px; color: var(--muted); }
+.ap-kb { border: 0; background: none; color: var(--muted); width: 26px; height: 26px;
+  border-radius: 7px; display: grid; place-items: center; flex: none; margin: -3px -4px 0 0;
+  cursor: pointer; }
+.ap-kb:hover { background: var(--soft); }
+.ap-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.ap-tags:empty { display: none; }
+.ap-tags .k-pill { font-size: 11px; padding: 1px 7px; }
+.ap-newtag { background: var(--brand); color: var(--brand-ink); }
+.ap-next { display: flex; gap: 6px; font-size: 12px; color: var(--ink); align-items: flex-start;
+  line-height: 1.35; }
+.ap-next > span { min-width: 0; }
+.ap-next .k-ic { width: 13px; height: 13px; flex: none; margin-top: 2px; color: var(--muted); }
+.ap-ghost { align-items: center; flex-wrap: wrap; color: var(--warn-ink); }
+.ap-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-top: 2px; flex-wrap: wrap; min-width: 0; }
+.ap-foot > * { min-width: 0; }
+.ap-stg { border: 1px solid var(--line); background: var(--bg); border-radius: var(--r-pill);
+  padding: 2px 6px 2px 9px; font: inherit; font-size: 11.5px; font-weight: 700; color: var(--muted);
+  display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; cursor: pointer; }
+.ap-stg:hover { border-color: var(--brand); color: var(--brand); }
+.ap-stg .k-ic { width: 13px; height: 13px; }
+.ap-nx { background: var(--tint-info); border-color: var(--tint-info-line); color: var(--brand);
+  white-space: nowrap; }
+.ap-nx:hover { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.ap-foot .ap-nx { padding: 4px 10px; font-size: 12px; }
+.ap-card.is-new { animation: ap-arrive .5s var(--ease) both, ap-glow 1.8s .4s ease-out both; }
+@keyframes ap-arrive { from { opacity: 0; transform: translateY(-14px) scale(.96); } }
+@keyframes ap-glow { 0% { box-shadow: 0 0 0 3px var(--brand); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* The Closed group folds inside the last column. */
+.ap-closedg { margin-top: 4px; }
+.ap-cgh { width: 100%; display: flex; justify-content: space-between; align-items: center;
+  border: 1px dashed var(--line); background: none; border-radius: var(--r-md); padding: 7px 10px;
+  font: inherit; font-weight: 700; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.ap-cgh .k-ic { width: 15px; height: 15px; transition: transform .3s; }
+.ap-closedg.is-open .ap-cgh .k-ic { transform: rotate(180deg); }
+.ap-cgx { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .4s var(--ease); }
+.ap-closedg.is-open .ap-cgx { grid-template-rows: 1fr; }
+.ap-closedg.is-still .ap-cgx, .ap-closedg.is-still .ap-cgi { transition: none; }
+.ap-cgi { overflow: hidden; min-height: 0; display: flex; flex-direction: column; gap: 8px;
+  transition: padding .4s; }
+.ap-closedg.is-open .ap-cgi { padding-top: 8px; }
+/* Folded content is out of the tab order and the reading order, not only clipped. */
+.ap-closedg:not(.is-open) .ap-cgi { visibility: hidden; transition: padding .4s, visibility 0s .4s; }
+.ap-mf:not(.is-open) > .ap-mfi { visibility: hidden; transition: visibility 0s .35s; }
+
+/* ----------------------------------------------------------------------------- the table */
+.ap-tablewrap { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
+  overflow: auto; }
+.ap-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ap-table th { text-align: left; background: var(--bg); font-size: 11px; font-weight: 800;
+  color: var(--muted); letter-spacing: .05em; text-transform: uppercase; padding: 9px 14px; }
+.ap-table td { padding: 10px 14px; border-top: 1px solid var(--line); vertical-align: middle; }
+.ap-row { cursor: pointer; }
+.ap-row:hover { background: var(--soft); }
+.ap-row.is-sel { background: var(--tint-info); }
+.ap-rolecell { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ap-tt { display: flex; flex-direction: column; min-width: 0; }
+.ap-tt b, .ap-tt small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-tt small { color: var(--muted); }
+.ap-late { color: var(--warn-ink); font-weight: 700; }
+.ap-stagepill { --cc: var(--brand); background: color-mix(in srgb, var(--cc) 14%, var(--paper));
+  color: var(--cc); }
+/* A stage takes its column's color: the table pill and the panel eyebrow (mockup .pill, .kind). */
+[data-col="to_apply"], [data-col="to_contact"] { --cc: var(--ap-c1); }
+[data-col="applied"], [data-col="conversation"] { --cc: var(--ap-c2); }
+[data-col="interviewing"], [data-col="proposal"] { --cc: var(--ap-c3); }
+.ap-stagepill[data-col="closed"], .ap-kind[data-col="closed"] { --cc: var(--ap-c4); }
+
+/* ------------------------------------------------------------------------------ the rail */
+.ap-rail { display: grid; gap: 12px; min-width: 0; }
+.ap-rc { display: flex; flex-direction: column; gap: 10px; padding: 14px; min-width: 0; }
+.ap-rc h3 { margin: 0; font-size: 14.5px; display: flex; align-items: center; gap: 9px; }
+.ap-rc h3 .ap-cn { margin-left: auto; }
+.ap-fuscope { margin-left: 2px; font-weight: 600; }
+.ap-ivr { display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--line);
+  padding-top: 10px; min-width: 0; }
+.ap-ivr .k-grow { min-width: 0; }
+.ap-clip { display: block; max-width: 100%; border: 0; background: none; padding: 0; font: inherit;
+  font-size: 13px; font-weight: 700; color: var(--ink); cursor: pointer; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-clip:hover { color: var(--brand); }
+.ap-dblk { width: 42px; flex: none; text-align: center; border-radius: var(--r-sm);
+  background: var(--soft); color: var(--brand); padding: 4px 0; line-height: 1.1; }
+.ap-dblk small { font-size: 10px; font-weight: 800; letter-spacing: .06em; display: block; }
+.ap-dblk b { font-size: 17px; }
+.ap-fu { display: flex; gap: 9px; align-items: flex-start; border-top: 1px solid var(--line);
+  padding-top: 9px; cursor: pointer; }
+.ap-fu input { margin-top: 3px; accent-color: var(--brand); width: 15px; height: 15px; }
+.ap-fu .k-grow { min-width: 0; display: flex; flex-direction: column; }
+.ap-fu b { font-size: 13px; }
+.ap-fu .ap-v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-fd { font-size: 11.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.ap-fd.late { color: var(--warn-ink); }
+.ap-fd.today { color: var(--brand); }
+.ap-remf { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s var(--ease); }
+.ap-remf.is-open { grid-template-rows: 1fr; }
+.ap-remi { overflow: hidden; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.ap-remf.is-open .ap-remi { border-top: 1px solid var(--line); padding-top: 10px; }
+.ap-remform { display: flex; flex-direction: column; gap: 8px; }
+.ap-remf:not(.is-open) .ap-remi { visibility: hidden; }
+
+/* ------------------------------------------------------------------------------ the panel */
+.ap-panel { width: min(460px, 92vw); }
+.ap-panel-in, .ap-panel-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.ap-panel .k-flyout__body { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex;
+  flex-direction: column; gap: 14px; padding: 16px 18px; }
+.ap-panel .k-flyout__foot { justify-content: space-between; gap: 8px; }
+.ap-panel .k-flyout__foot > * { flex: 1; }
+.ap-panel .k-flyout__head h2 { font-size: 17px; }
+.ap-kind { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--cc, var(--brand)); }
+.ap-pmeta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ap-lead { background: var(--tint-info); border: 1px solid var(--tint-info-line);
+  border-radius: var(--r-md); padding: 10px 12px; }
+.ap-lead.is-late { background: var(--tint-warn); border-color: var(--tint-warn-line); }
+.ap-lead--closed { background: var(--bg); border-color: var(--line); }
+.ap-lead h4, .ap-sec h4 { margin: 0 0 6px; font-size: 14px; }
+.ap-lead p { margin: 0; font-size: 13.5px; opacity: .85; line-height: 1.55; }
+.ap-rbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-pform { margin-top: 10px; border: 1px solid var(--tint-info-line); background: var(--tint-info);
+  border-radius: 11px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.ap-pform h4 { margin: 0; font-size: 13.5px; }
+.ap-pform p { margin: 0; }
+.ap-disc summary { cursor: pointer; font-size: 12.5px; color: var(--link-ink); font-weight: 700;
+  margin-bottom: 6px; }
+.ap-radios { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-radio { position: relative; }
+.ap-radio input { position: absolute; opacity: 0; pointer-events: none; }
+.ap-radio span { display: inline-block; border: 1px solid var(--line); background: var(--paper);
+  border-radius: var(--r-sm); padding: 6px 12px; font-weight: 700; font-size: 13px; color: var(--ink);
+  cursor: pointer; }
+.ap-radio input:checked + span { background: var(--brand); border-color: var(--brand);
+  color: var(--brand-ink); }
+.ap-radio input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 2px; }
+.ap-docl { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 5px 0; }
+.ap-docl .k-ic { width: 15px; height: 15px; color: var(--muted); }
+.ap-note { width: 100%; min-height: 64px; resize: vertical; font: inherit; font-size: 13px;
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 8px; }
+.ap-check { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; }
+.ap-hist { display: flex; flex-direction: column; }
+.ap-he { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: baseline;
+  font-size: 12.5px; padding: 0 0 10px; position: relative; }
+.ap-he i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); margin-top: 3px;
+  position: relative; z-index: 1; }
+.ap-he:not(:last-child)::before { content: ""; position: absolute; left: 4px; top: 12px; bottom: 0;
+  width: 1px; background: var(--line); }
+.ap-he.is-last i { background: var(--brand); }
+.ap-he b { font-weight: 600; }
+.ap-he small { color: var(--muted); }
+
+/* ------------------------------------------------------------------------------- the menus */
+.ap-menu { position: fixed; z-index: calc(var(--z-overlay) + 3); background: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: var(--shadow-pop);
+  padding: 5px; min-width: 210px; max-width: 280px; max-height: 70vh; overflow: auto; }
+.ap-menu[hidden] { display: none; }
+.ap-menu button { display: flex; justify-content: space-between; width: 100%; text-align: left;
+  border: 0; background: none; padding: 7px 10px; border-radius: 7px; font: inherit; font-size: 13px;
+  color: var(--ink); cursor: pointer; }
+.ap-menu button:hover, .ap-menu button:focus-visible { background: var(--soft); }
+.ap-menu button.is-on { color: var(--brand); font-weight: 700; }
+.ap-menu button.is-on::after { content: "\2713"; }
+.ap-mh { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); padding: 8px 10px 3px; }
+.ap-mhint { font-size: 11.5px; color: var(--muted); padding: 4px 10px 6px; }
+.ap-addform { display: flex; flex-direction: column; gap: 12px; }
+.ap-addform p { margin: 0; }
+.ap-addform textarea { min-height: 90px; resize: vertical; }
+.ap-sherr { color: var(--bad-ink); font-size: 12.5px; min-height: 1px; }
+.ap-draft-btn { margin-top: 6px; }
+.ap-draft { display: flex; flex-direction: column; gap: 12px; overflow-wrap: anywhere; }
+.ap-draft p { margin: 0; }
+.ap-draft-text { min-height: 180px; }
+.ap-draft-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
+.ap-draft-facts dd { margin: 0; }
+.ap-applied-done { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-card, .ap-cgx, .ap-cgi, .ap-remf, .ap-mf, .ap-col { transition: none; }
+  .ap-card.is-new { animation: none; }
+}
+@container (max-width: 900px) {
+  .ap-mf.is-open > .ap-mfi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* The rail's head badge is the mockup's 30px (.hb), not the 38px default. */
+.ap-rc .k-badge { width: 30px; height: 30px; }
+.ap-rc .k-badge .k-ic { width: 16px; height: 16px; }
+/* A view switch or a re-render fades the board in with a short rise (mockup viewswap). */
+@keyframes ap-viewin { from { opacity: 0; transform: translateY(6px); } }
+#apps-board.is-viewin { animation: ap-viewin .26s var(--ease) backwards; }
+/* The panel's content slides in when another card is picked. */
+@keyframes ap-panelin { from { opacity: 0; transform: translateX(28px); } }
+#ap-panel-in > .ap-panel-body { animation: ap-panelin .28s var(--ease) backwards; }
+@media (prefers-reduced-motion: reduce) { #apps-board.is-viewin, #ap-panel-in > .ap-panel-body { animation: none !important; } }

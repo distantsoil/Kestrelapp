@@ -41,7 +41,29 @@ def format_last_checked(iso: str | None) -> str:
     except ValueError:
         return "never"
     local = (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone()
-    return f"{local:%b} {local.day}, {local.year} at {local:%H:%M}"
+    from kestrel.date_display import format_display
+
+    return format_display(local, "short_year", kind="datetime", time_style="24h", separator=" at ")
+
+
+def relative_last_checked(iso: str | None, *, now: datetime | None = None) -> str:
+    """About's wording (about-mockup-locked.html doUpdate): "just now", "5 minutes ago",
+    "3 days ago", or "never". An unreadable stamp reads as never."""
+    if not iso:
+        return "never"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "never"
+    dt = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    secs = max(0, int(((now or datetime.now(UTC)) - dt).total_seconds()))
+    if secs < 60:
+        return "just now"
+    for size, unit in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if secs >= size:
+            n = secs // size
+            return f"{n} {unit}{'' if n == 1 else 's'} ago"
+    return "just now"  # unreachable; keeps the function total
 
 
 def _download_page(state: updater.UpdateState) -> str:
@@ -101,7 +123,11 @@ async def _available(s: AsyncSession) -> tuple[str | None, updater.UpdateState]:
 async def banner(request: Request):
     async with sessionmaker()() as s:
         version, state = await _available(s)
-    ctx = {"version": version, "download_page": _download_page(state)}
+    ctx = {
+        "version": version,
+        "current": kestrel.__version__,
+        "download_page": _download_page(state),
+    }
     return _fragment(request, "update_banner.html", ctx)
 
 
@@ -113,6 +139,7 @@ async def details(request: Request):
     releases = updater.pending_releases(feed, kestrel.__version__) if feed else []
     ctx = {
         "version": version or state.latest_version,
+        "current": kestrel.__version__,
         "notes": _notes(releases),
         "download_page": _download_page(state),
     }
@@ -120,16 +147,22 @@ async def details(request: Request):
 
 
 @router.post("/updates/check", response_class=HTMLResponse)
-async def check(request: Request):
-    """Operator-triggered check. Never shows exception text: check_now already logs the cause."""
+async def check(request: Request, surface: str = Form("")):
+    """Operator-triggered check. Never shows exception text: check_now already logs the cause.
+    `surface=about` answers in About's own words and markup; every other caller gets the shared
+    result. Either way Kestrel only says a version exists and where to get it."""
     current = kestrel.__version__
     outcome, version = "unreachable", None
     last_checked = "never"
+    download = updater.DOWNLOAD_PAGE
     try:
         async with sessionmaker()() as s:
             cfg = (await load_settings_with_db(s)).updates
             state = await updater.check_now(s, feed_url=cfg.feed_url, current=current)
-        last_checked = format_last_checked(state.last_checked_at)
+        last_checked = (relative_last_checked if surface == "about" else format_last_checked)(
+            state.last_checked_at
+        )
+        download = _download_page(state)
         if state.last_check_ok:
             latest = state.latest_version
             if latest and updater.is_newer(latest, current):
@@ -138,8 +171,15 @@ async def check(request: Request):
                 outcome = "current"
     except Exception as exc:  # a check must never 500 the page; the log keeps the cause
         log.warning("update_check_ui_failed", error_type=type(exc).__name__)
-    ctx = {"outcome": outcome, "version": version, "current": current, "last_checked": last_checked}
-    return _fragment(request, "update_check_result.html", ctx, trigger=True)
+    ctx = {
+        "outcome": outcome,
+        "version": version,
+        "current": current,
+        "last_checked": last_checked,
+        "download_page": download,
+    }
+    name = "about_update_result.html" if surface == "about" else "update_check_result.html"
+    return _fragment(request, name, ctx, trigger=True)
 
 
 @router.post("/updates/remind", response_class=HTMLResponse)
@@ -170,11 +210,17 @@ async def whats_new_card(request: Request):
     releases = []
     if feed:
         releases = [
-            r for r in feed.releases
+            r
+            for r in feed.releases
             if updater.is_newer(r.version, prev) and not updater.is_newer(r.version, current)
         ]
         releases.sort(key=lambda r: updater.parse_version(r.version) or (0, 0, 0, ()), reverse=True)
-    ctx = {"current": current, "notes": _notes(releases), "download_page": _download_page(state)}
+    ctx = {
+        "current": current,
+        "previous": prev,
+        "notes": _notes(releases),
+        "download_page": _download_page(state),
+    }
     return _fragment(request, "update_whats_new.html", ctx)
 
 

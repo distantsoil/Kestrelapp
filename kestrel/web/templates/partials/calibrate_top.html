@@ -1,0 +1,93 @@
+{# The three strips and, from the tune-up threshold, the weight suggestion. `oob` marks the
+   out-of-band copy. Every number here is a count of ratings with its n; a comparison drawn
+   from fewer than five ratings says so (hard rule 6). #}
+{% import "ui/macros.html" as ui %}
+{% set pct_tune = [100, (strips.n * 100 // strips.tune_at)]|min %}
+{% set pct_taste = [100, (strips.n * 100 // strips.rank_at)]|min %}
+<div id="cal-top" class="cal-top"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <section class="k-card cal-prog" aria-label="Your progress" data-testid="cal-strips">
+    <div class="cal-seg" data-testid="cal-session">
+      <span class="k-badge">{{ ui.icon('calibrate') }}</span>
+      <div>
+        <div class="cal-k">This session</div>
+        {% if queue.total %}
+        <div class="cal-big">{{ [queue.done, queue.total]|min }} of {{ queue.total }}</div>
+        <div class="cal-dots" aria-hidden="true">{% for i in range(queue.total) %}<i class="{{ 'is-on' if i < queue.done else ('is-cur' if i == queue.done else '') }}"></i>{% endfor %}</div>
+        {% else %}
+        <div class="cal-big">Nothing to rate</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="cal-seg" data-testid="cal-tune-strip">
+      <div class="cal-ring" style="--p: {{ pct_tune }}" role="img" aria-label="{{ [strips.n, strips.tune_at]|min }} of {{ strips.tune_at }} ratings"><div>{{ [strips.n, strips.tune_at]|min }}/{{ strips.tune_at }}</div></div>
+      <div>
+        <div class="cal-k">Scoring tune-up</div>
+        <div class="cal-strong">{% if strips.tune_state == 'more' %}{{ strips.tune_left }} more {{ 'rating' if strips.tune_left == 1 else 'ratings' }}{% elif strips.tune_state == 'review' %}Ready to review{% elif strips.tune_state == 'done' %}Done. Checks again every {{ strips.tune_at }}{% else %}Checking your ratings{% endif %}</div>
+        <div class="cal-sm cal-dsm">You approve any change.</div>
+      </div>
+    </div>
+    <div class="cal-seg cal-seg--taste cal-seg--open" data-testid="cal-taste" role="button" tabindex="0" data-k-flyout="#cal-model-fly" aria-controls="cal-model-fly" aria-expanded="false" aria-label="Your sorting model: details and training">
+      {% if strips.taste_state == 'learning' %}
+      <div class="cal-grow">
+        <div class="cal-row"><span class="cal-k">Learns your taste</span><span class="cal-sm"><b>{{ strips.n }}</b> of {{ strips.rank_at }}</span></div>
+        <div class="cal-track" role="img" aria-label="{{ strips.n }} of {{ strips.rank_at }} ratings"><u style="width: {{ pct_taste }}%"></u></div>
+        <div class="cal-sm cal-dsm cal-hide-narrow">Kestrel learns to sort new roles your way.</div>
+      </div>
+      {% else %}
+      <span class="k-badge k-badge--good">{{ ui.icon('check') }}</span>
+      <div>
+        <div class="cal-k">Your taste</div>
+        {% if strips.taste_state == 'in_use' %}
+        <div class="cal-strong">In use</div>
+        {% if strips.taste_note %}<div class="cal-sm cal-dsm cal-hide-narrow">{{ strips.taste_note }}</div>{% endif %}
+        {% elif strips.taste_state == 'not_in_use' %}
+        <div class="cal-strong">Learned, not in use yet</div>
+        <div class="cal-sm cal-dsm cal-hide-narrow">Usual scoring still gets more of your ratings right. Kestrel retries every 50 ratings.</div>
+        {% else %}
+        <div class="cal-strong">Ready to learn</div>
+        <div class="cal-sm cal-dsm cal-hide-narrow">Kestrel tries it every 50 ratings and uses it only if it does better.</div>
+        {% endif %}
+      </div>
+      {% endif %}
+      <span class="cal-chev" aria-hidden="true">{{ ui.icon('arrow', 'k-ic--sm') }}</span>
+    </div>
+  </section>
+
+  {% if oob %}{% include "partials/calibrate_model.html" %}{% endif %}
+
+  {% if tune %}
+  <section class="k-card cal-tune" id="cal-tune" data-testid="cal-tune" aria-label="Weight tune-up">
+    <header class="cal-tune__head">
+      <span class="k-badge">{{ ui.icon('analytics') }}</span><h3>Weight tune-up ready</h3>
+      <span class="cal-sm cal-dsm cal-push">Based on your {{ tune.n }} ratings</span>
+    </header>
+    <div class="cal-tune__body">
+      <div>
+        <div class="cal-leg"><span><i></i>Now</span><span><i class="is-new"></i>Proposed</span></div>
+        {% for r in tune.rows %}
+        <div class="cal-wrow"><span>{{ r.name }}</span>
+          <div class="cal-bars"><i style="width: {{ [r.now * 2.4, 100]|min }}%" title="Now {{ r.now }}%"></i><i class="is-new" style="width: {{ [r.new * 2.4, 100]|min }}%" title="Proposed {{ r.new }}%"></i></div>
+          <b>{{ r.now }} to {{ r.new }}%</b></div>
+        {% endfor %}
+      </div>
+      <div class="cal-tune__side">
+        <div class="cal-sm">On ratings it has not seen, Kestrel's scores would miss yours by</div>
+        <div class="cal-miss">
+          <div><b>{{ '%.2f'|format(tune.miss_now) }}</b><span>now</span></div>
+          <span class="cal-arrow" aria-hidden="true">{{ ui.icon('arrow') }}</span>
+          <div><b class="{{ 'is-better' if tune.better else '' }}">{{ '%.2f'|format(tune.miss_new) }}</b><span>proposed</span></div>
+        </div>
+        <div class="cal-sm cal-dsm">Points on the 5-point scale, averaged over {{ tune.n }} ratings.{% if tune.reason %} {{ tune.reason }}{% elif not tune.better %} The new weights would not be closer, so keeping the current ones is fine.{% endif %}</div>
+        <div class="cal-btns">
+          <button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="tune-yes"
+                  hx-post="/calibrate/tune/{{ tune.id }}/accept" hx-vals='{{ {"since": since, "skip": skip}|tojson }}'
+                  hx-target="#cal-card" hx-swap="outerHTML">Use the new weights</button>
+          <button type="button" class="k-btn k-btn--sm" data-testid="tune-no"
+                  hx-post="/calibrate/tune/{{ tune.id }}/reject" hx-vals='{{ {"since": since, "skip": skip}|tojson }}'
+                  hx-target="#cal-card" hx-swap="outerHTML">Keep current</button>
+        </div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</div>

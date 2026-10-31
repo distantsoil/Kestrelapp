@@ -31,14 +31,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 
 from kestrel.analytics.progress import model_label, tier2_label, tier2_pace_seconds
+from kestrel.date_display import format_display
 from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine
 from kestrel.llm import credit
 from kestrel.pipeline._shared import derived_num_ctx
 from kestrel.pipeline.profile import load_profile
 from kestrel.queue.rescore import MAX_ROLES, enqueue_rescore, parse_ids
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web import models_view as mv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason
 from kestrel.web.fit import RuleWhy, explain_rule, fit_for
 
 router = APIRouter()
@@ -90,7 +92,12 @@ async def _hosted_models(settings) -> tuple[str, str | None, list, list, dict, s
     try:
         raw = await hm.fetch_models(name, backend)
     except hm.ModelListError as exc:
-        return label, name, [], [], {}, plain_error(exc)
+        # Built from the provider's name, not the failure's text (D-SEC-4); fetch_models logged why.
+        log.info("rescore_model_list_failed", provider=name, error=str(exc))
+        return label, name, [], [], {}, (
+            f"The model list from {label} could not be fetched. Check the key and your "
+            "connection under Settings > Hosted."
+        )
     raw = [m for m in raw if (m.json_mode or "schema") in _JSON_MODES]
     picker = hm.picker_models(raw)
     reasons = {m.id: why for m in picker if (why := hm.block_reason(m, _TIER, backend))}
@@ -126,6 +133,152 @@ async def _override_for(settings, pick: str) -> tuple[dict | None, str, str | No
     return {"backend": "local", "model": pick, "json_mode": "schema"}, f"{pick} (local)", None
 
 
+async def _bases() -> dict[str, str | None]:
+    """tier -> the model Kestrel's own model for it is built from (bench's lookup), so a
+    `kestrel-tier2` tag can be shown as the model the operator knows. Empty when unknown."""
+    try:
+        from kestrel.web.pages.bench import _bases as bench_bases
+
+        return await bench_bases()
+    except Exception as exc:  # a label is never worth a failed dialog
+        log.info("rescore_bases_unavailable", error_type=type(exc).__name__)
+        return {}
+
+
+def friendly_name(model: str | None, bases: dict[str, str | None]) -> str:
+    """A model as the operator reads it, never a raw Kestrel tag: `kestrel-tier2:latest` is the
+    model it is built from, a hosted id drops its vendor prefix."""
+    name = (model or "").strip().removesuffix(":latest")
+    base = bases.get(name) or bases.get(name.removeprefix("kestrel-"))
+    return mv.friendly_model(name, base=base)
+
+
+def tier2_where(settings) -> tuple[str, bool]:
+    """(provider label or "this computer", online?) for the configured full-review model."""
+    tcfg = settings.llm.tiers.get(_TIER)
+    backend = settings.llm.backends.get(tcfg.backend) if tcfg is not None else None
+    if backend is not None and backend.external:
+        return "online", True
+    return "on this computer", False
+
+
+def usual_model_ctx(settings, bases: dict[str, str | None]) -> dict:
+    """The configured full-review model as the dialogs say it (friendly name, where it runs)."""
+    from kestrel.llm import providers as prov
+
+    tcfg = settings.llm.tiers.get(_TIER)
+    where, online = tier2_where(settings)
+    return {
+        "current_name": friendly_name(tcfg.model if tcfg else None, bases),
+        "current_where": where,
+        "current_online": online,
+        # Only OpenRouter's ":free" variants may train on what they receive.
+        "current_free": bool(online and tcfg and prov.is_free_variant(str(tcfg.model))),
+    }
+
+
+async def _last_fit(session, opp_id: int) -> str | None:
+    rows = await history_rows(session, opp_id)
+    return rows[0]["fit"] if rows else None
+
+
+async def _consent(session, settings) -> dict:
+    """What the ask-first step states for an online pick: the Tier 2 line of the Hosted mode
+    disclosure (the text the operator acknowledged), the employer rule and the credit left.
+    Lazy imports: needs_try imports this module."""
+    import json
+
+    from kestrel.services import hosted_balance
+    from kestrel.services.online_consent import merge_approvals
+    from kestrel.web.pages.needs_try import _employer_state, _sentence
+
+    sends = settings.llm.hosted_mode.disclosure_terms()["sends"]
+    credit_row = await hosted_balance.rail_row(session, settings)
+    approvals = [_approval_for_override(settings, None)]
+    _label, hosted_backend, raw, _picker, _reasons, _note = await _hosted_models(settings)
+    for model in raw:
+        try:
+            model_id = model.id if hasattr(model, "id") else model.get("id")
+            json_mode = model.json_mode if hasattr(model, "json_mode") else model.get("json_mode")
+            context_length = (
+                model.context_length if hasattr(model, "context_length")
+                else model.get("context_length")
+            )
+            approvals.append(_approval_for_override(settings, {
+                "backend": hosted_backend or settings.llm.tiers["tier2"].backend,
+                "model": model_id,
+                "json_mode": json_mode or "schema",
+                "context_length": context_length,
+            }))
+        except (KeyError, ValueError):
+            continue
+    return {
+        "sends": _sentence(sends["tier2"]),
+        "employer": await _employer_state(session, settings),
+        "credit": credit_row["label"] if credit_row else None,
+        "approval_json": json.dumps(merge_approvals(*approvals), separators=(",", ":")),
+    }
+
+
+def _approval_for_override(settings, override: dict | None) -> dict[str, list[str]]:
+    """Destinations for both scoring tiers when a one-off model applies to either task type."""
+    from kestrel.pipeline._shared import settings_with_override
+    from kestrel.services.online_consent import approval_for, merge_approvals
+
+    approvals = [approval_for(settings, ("tier1", "tier2"))]
+    if override:
+        for tier in ("tier1", "tier2"):
+            try:
+                candidate = settings_with_override(settings, tier, override)
+            except ValueError:
+                continue
+            approvals.append(approval_for(candidate, (tier,)))
+    return merge_approvals(*approvals)
+
+
+async def online_refusal(session, settings, form) -> str | None:
+    """The code of why an online pick must not be queued, or None (hard rule: nothing goes online
+    unasked). Not confirmed in the ask-first step, Hosted mode off, or confidential mode with no
+    current employer chosen (the send would be held, so it is refused here too, not queued).
+    Shared by Score again, Run now and Scan now."""
+    from kestrel.pipeline._shared import settings_with_override
+    from kestrel.services.online_consent import CHANGED, HELD, NOT_CONFIRMED, approval_problem
+
+    effective = settings
+    pick = str(form.get("model") or "")
+    # The cheap refusals come first: an unconfirmed or Hosted-off pick is refused before the
+    # model list is looked at (that lookup can reach the provider), and with its own code.
+    if pick.startswith(HOSTED_PREFIX):
+        if str(form.get("confirmed") or "") != "1":
+            return "not_confirmed"
+        if not settings.llm.hosted_mode.active:
+            return "hosted_off"
+        override, _label, why = await _override_for(settings, pick)
+        if override is None:
+            return "bad_model"
+        try:
+            effective = settings_with_override(settings, "tier2", override)
+        except ValueError:
+            effective = settings
+    expected = _approval_for_override(
+        settings, override if pick.startswith(HOSTED_PREFIX) else None
+    )
+    problem = await approval_problem(
+        session, effective, ("tier1", "tier2"), form, expected=expected
+    )
+    if problem is None:
+        return None
+    if problem == NOT_CONFIRMED:
+        return "not_confirmed"
+    if problem == "Nothing was sent. Online models need Hosted mode, which is off.":
+        return "hosted_off"
+    if problem == HELD:
+        return "held"
+    if problem == CHANGED:
+        return "not_confirmed"
+    return "not_confirmed"
+
+
 def estimate_minutes(n: int, pace_s: float | None) -> int | None:
     if pace_s is None or n <= 0:
         return None
@@ -140,6 +293,12 @@ OUTCOMES: dict[str, tuple[bool, str]] = {
     "no_pick": (False, "Not queued: pick a model, or choose Same model."),
     "no_roles": (False, "Not queued: pick at least one role to score again."),
     "not_queued": (False, "Not queued. Open the role to see why, or try again."),
+    "not_confirmed": (False, "Not queued: nothing was sent. Confirm the online send first."),
+    "bad_model": (False, "Not queued: that model is not available right now. Pick another."),
+    "hosted_off": (False, "Not queued: nothing was sent. Online models need Hosted mode, "
+                         "which is off."),
+    "held": (False, "Not queued: nothing was sent. Confidential mode is on and no current "
+                    "employer is chosen. Choose it in Settings, then try again."),
     "rules": (False, "Not queued: your rules set this role aside. Open it to see which rule and "
                      "where to change it, or choose Score this role anyway."),
 }
@@ -225,8 +384,14 @@ async def choose(request: Request):
         settings = await load_settings_with_db(s)
         pace = await tier2_pace_seconds(s)
         aside = await set_aside(s, settings, ids)
+        consent = await _consent(s, settings)
+        role = await s.get(Opportunity, ids[0]) if len(ids) == 1 else None
+        last_fit = await _last_fit(s, role.id) if role is not None else None
     local, local_note = await asyncio.to_thread(_local_models, settings)
     label, _name, _raw, hosted, reasons, hosted_note = await _hosted_models(settings)
+    bases = await _bases()
+    tcfg = settings.llm.tiers.get(_TIER)
+    where, online = tier2_where(settings)
     preselect_id, preselect_note = preselection(
         settings, qp.get("model"), local, hosted, reasons
     )
@@ -243,6 +408,15 @@ async def choose(request: Request):
         "opp_ids": ids,
         "n": len(ids),
         "current_label": tier2_label(settings),
+        "current_name": friendly_name(tcfg.model if tcfg else None, bases),
+        "current_where": where,
+        "current_online": online,
+        "last_fit": last_fit,
+        "role_title": role.title if role is not None else None,
+        "role_org": (role.org_name or None) if role is not None else None,
+        "local_labels": {m: friendly_name(m, bases) for m in local},
+        "consent": consent,
+        "hosted_on": bool(settings.llm.hosted_mode.active),
         "local_models": local,
         "local_note": local_note,
         "hosted_label": label,
@@ -313,6 +487,12 @@ async def rescore(request: Request):
         async with sessionmaker()() as s:
             settings = await load_settings_with_db(s)
             override = None
+            if pick == "same" or pick.startswith(HOSTED_PREFIX):
+                # Hard rule: nothing goes to an online model unless the operator confirmed it in
+                # the ask-first step, Hosted mode is on, and the model is one that step lists.
+                code = await online_refusal(s, settings, form)
+                if code:
+                    return answer(OUTCOMES[code][1], ok=False, code=code)
             if pick and pick != "same":
                 override, _label, why = await _override_for(settings, pick)
                 if override is None:
@@ -320,12 +500,13 @@ async def rescore(request: Request):
             result = await enqueue_rescore(
                 s, ids, model_override=override, tier0_anyway=anyway,
                 explain=rule_explainer(s, settings),
+                online_approval=form.get("online_approval"),
             )
             await _count_retry(s, str(form.get("quarantine_id") or ""), result.queued)
             await s.commit()
     except Exception as exc:  # a write path never turns into a 500 (CLAUDE.md)
         log.warning("rescore_failed", error_type=type(exc).__name__, error=str(exc))
-        return answer(f"Not queued: {plain_error(exc)}", ok=False)
+        return answer(f"Not queued: {fixed_reason(exc)}", ok=False)
     n = len(result.queued)
     head = f"Queued {n} role{'s' if n != 1 else ''} for scoring." if n else "Nothing queued."
     body = " ".join([head, *result.messages()])
@@ -341,26 +522,28 @@ async def rescore(request: Request):
     return answer(body, ok=bool(n), headers=headers, code=code, n=n, links=links)
 
 
-def short_model(model: str | None) -> str:
-    """"google/gemma-4-31b:free" reads "Gemma"; a Kestrel local model keeps its tag."""
+def short_model(model: str | None, bases: dict[str, str | None] | None = None) -> str:
+    """"google/gemma-4-31b:free" reads "Gemma". A Kestrel local model reads as the model it is
+    built from when `bases` knows it, else keeps its tag."""
     if not model:
         return "an unknown model"
     base = model.split("/")[-1].split(":")[0]
     if base.startswith("kestrel-"):
-        return base
+        return friendly_name(model, bases) if bases is not None else base
     head = base.split("-")[0]
     return head[:1].upper() + head[1:] if head else model
 
 
-def comparison(rows: list[dict]) -> str | None:
+def comparison(rows: list[dict], bases: dict[str, str | None] | None = None) -> str | None:
     """One line comparing the newest score with the one before it."""
     scored = [r for r in rows if r["score"] is not None]
     if len(scored) < 2:
         return None
     new, old = scored[0], scored[1]
-    a, b = short_model(new["model"]), short_model(old["model"])
+    a, b = short_model(new["model"], bases), short_model(old["model"], bases)
     if new["model"] != old["model"] and a == b:
-        a, b = new["model"], old["model"]
+        a, b = (friendly_name(new["model"], bases or {}),
+                friendly_name(old["model"], bases or {}))
     diff = round(new["score"] - old["score"], 1)
     if new["model"] == old["model"]:
         if diff == 0:
@@ -386,7 +569,7 @@ async def history_rows(session, opp_id: int) -> list[dict]:
         fit = fit_for(ev, None)
         score = ev.score if ev.score is not None else ev.weighted_score
         rows.append({
-            "date": (ev.created_at or "")[:10],
+            "date": format_display(ev.created_at),
             "model": ev.model,
             "fit": fit.word,
             "tone": fit.tone,
@@ -400,5 +583,8 @@ async def history(request: Request, opp_id: int):
     async with sessionmaker()() as s:
         opp = await s.get(Opportunity, opp_id)
         rows = await history_rows(s, opp_id) if opp is not None else []
-    ctx = {"opp_id": opp_id, "rows": rows, "compare": comparison(rows)}
+    bases = await _bases()
+    for r in rows:
+        r["name"] = friendly_name(r["model"], bases) if r["model"] else "Unknown model"
+    ctx = {"opp_id": opp_id, "rows": rows, "compare": comparison(rows, bases)}
     return templates().TemplateResponse(request, "partials/score_history_list.html", ctx)

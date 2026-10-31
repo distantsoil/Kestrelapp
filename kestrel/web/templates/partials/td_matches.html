@@ -1,0 +1,27 @@
+{# Top matches today (D-UI-92, D-UI-156): a horizontal carousel of fixed-width cards. A wider
+   window shows more cards, a narrower one fewer, with the next card peeking from the edge.
+   Arrows, keys, the page dots and touch, pen or mouse dragging move it (today.js; a drag never
+   presses the button under it). Re-requested whole after an Undo. #}
+{% from "partials/td_card.html" import card, empty_card with context %}
+{% import "ui/macros.html" as ui %}
+<section class="td-matches" id="td-matches" data-testid="td-matches" aria-labelledby="td-mh">
+  <div class="td-head">
+    <h3 id="td-mh">Top matches today<span class="td-sub" id="td-sub" data-testid="td-sub">{{ found_line }}</span></h3>
+    <div class="td-arrows">
+      <a class="k-link td-viewall" href="/opportunities?new_today=1" data-testid="td-viewall">View all matches {{ ui.icon('arrow', 'k-ic--sm') }}</a>
+      <button type="button" class="td-arr" id="td-prev" aria-label="Previous matches" data-testid="td-prev">{{ ui.icon('chev', 'td-flip') }}</button>
+      <button type="button" class="td-arr" id="td-next" aria-label="Next matches" data-testid="td-next">{{ ui.icon('chev') }}</button>
+    </div>
+  </div>
+  <p class="td-review-count" id="td-pending" data-testid="td-pending" aria-live="polite">{% if matches.pending %}{{ matches.pending }} more being reviewed{% endif %}</p>
+  <p class="td-desc">{% if consulting %}The best of today's new postings, RFPs and referrals, ranked by fit.{% else %}The best of today's new roles, ranked by fit.{% endif %}</p>
+  <div class="td-viewport" id="td-vp" role="region" tabindex="0" aria-label="Top matches. Use the arrow keys to move through them.">
+    <div class="td-track" id="td-track" role="list" data-found="{{ matches.found }}">
+      {% for c in matches.cards %}{{ card(c, consulting) }}{% endfor %}
+      {% if not matches.cards %}{{ empty_card(0 if matches.pending else matches.found, consulting) }}{% endif %}
+    </div>
+  </div>
+  <div class="td-dots" id="td-dots" role="group" aria-label="Pages"></div>
+  {# The dashed card that replaces the last card when every card has been actioned (today.js). #}
+  <template id="td-done-tpl">{{ empty_card(1, consulting) }}</template>
+</section>

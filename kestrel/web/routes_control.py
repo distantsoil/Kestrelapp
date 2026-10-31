@@ -34,14 +34,16 @@ from kestrel.db.models import (
 )
 from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
+from kestrel.services.online_consent import online_run_refusal
 from kestrel.services.setting_overrides import (
+    HOSTED_CHANGED,
+    hosted_run_problem,
     load_settings_with_db,
     peek_run_mode,
     queue_run_mode,
 )
 from kestrel.web.app import current_run_mode, is_paused, set_paused
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
 
@@ -77,14 +79,28 @@ def _model_display_name(model_name: str) -> str:
 router = APIRouter()
 
 
+async def _confirmed(request: Request) -> str:
+    """`confirmed` from the query string or a form body, whichever the caller used."""
+    if request.query_params.get("confirmed"):
+        return request.query_params["confirmed"]
+    try:
+        return str((await request.form()).get("confirmed") or "")
+    except (ValueError, RuntimeError):  # not a form body
+        return ""
+
+
 @router.post("/api/run/now")
-async def run_now(mode: str | None = None):
+async def run_now(request: Request, mode: str | None = None):
     """Queue the next worker cycle in `mode` ("local" or "hosted"; default the stored
     `llm.mode`). One-shot: the serve loop consumes the request on its next cycle and later cycles
     return to the stored mode. "hosted" is refused (400, with the reason) until the disclosure is
     acknowledged and tier1 and tier2 have hosted assignments. Queues only; never calls a model
     here, never acts externally."""
     credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
+    try:
+        request_form = await request.form()
+    except (ValueError, RuntimeError):
+        request_form = {}
     async with sessionmaker()() as s:
         chosen = mode or (await load_settings_with_db(s)).llm.mode
         if chosen not in MODES:
@@ -92,11 +108,34 @@ async def run_now(mode: str | None = None):
                 {"queued": False, "reason": f"unknown mode {chosen!r}; use local or hosted"},
                 status_code=400,
             )
+        if chosen in ("hosted", "both") and await _confirmed(request) != "1":
+            return JSONResponse(
+                {
+                    "queued": False,
+                    "reason": "Nothing was sent. Please confirm the online send first.",
+                },
+                status_code=400,
+            )
+        # A run on an online model sends data: resolve the requested mode before checking the
+        # approval, so an explicit hosted request cannot be judged against stored local tiers.
         try:
-            await queue_run_mode(s, chosen)
+            settings = await load_settings_with_db(s, mode=chosen)
+        except HostedModeError:
+            # The reason is read again from the settings, not taken from the exception's text
+            # (D-SEC-4); if they changed meanwhile it is the fixed sentence.
+            problem = await hosted_run_problem(s, chosen) or HOSTED_CHANGED
+            return JSONResponse({"queued": False, "reason": problem}, status_code=400)
+        refusal = await online_run_refusal(
+            s, settings, mode=chosen, confirmed=await _confirmed(request),
+            approval=request_form.get("online_approval")
+        )
+        if refusal is not None:
+            return JSONResponse({"queued": False, "reason": refusal[0]}, status_code=refusal[1])
+        try:
+            await queue_run_mode(s, chosen, online_approval=request_form.get("online_approval"))
             await s.commit()
-        except HostedModeError as exc:
-            return JSONResponse({"queued": False, "reason": plain_error(exc)}, status_code=400)
+        except HostedModeError:  # the settings changed since they were loaded above
+            return JSONResponse({"queued": False, "reason": HOSTED_CHANGED}, status_code=400)
         except StaleDataError:  # the loop consumed the row mid-request: ask again, never a 500
             return JSONResponse(
                 {"queued": False, "reason": "the queue changed while queuing; try again"},
@@ -184,10 +223,29 @@ async def scan_state(s: AsyncSession, activity: dict | None = None) -> dict[str,
     }
 
 
-def _scan_button(request: Request, state: dict[str, Any], msg: str | None = None):
-    return templates().TemplateResponse(
+def _scan_button(
+    request: Request, state: dict[str, Any], msg: str | None = None, *, started: bool = False
+):
+    response = templates().TemplateResponse(
         request, "partials/scan_button.html", {"scan_state": state, "scan_msg": msg}
     )
+    if started:  # the status strip shows the queued scan now, not at its next poll
+        response.headers["HX-Trigger"] = "run-refresh"
+    return response
+
+
+def _refusal_code(problem: str) -> str:
+    """The outcome code for an approval_problem message, so the operator reads the real reason
+    (a changed destination, Hosted mode off, an employer hold), not one catch-all line."""
+    from kestrel.services import online_consent as oc
+
+    if problem == oc.HELD:
+        return "held"
+    if "Hosted mode" in problem:
+        return "hosted_off"
+    if problem == oc.CHANGED:
+        return "changed"
+    return "not_confirmed"
 
 
 @router.get("/scan/button", response_class=HTMLResponse)
@@ -204,6 +262,12 @@ SCAN_OUTCOMES: dict[str, str] = {
     "no_pick": "Not started: pick a model, or choose My usual models.",
     "bad_model": "Not started: that model is not available right now. Pick another.",
     "none": "No searches are on. Turn one on under Sources.",
+    "not_confirmed": "Not started: nothing was sent. Confirm the online send first.",
+    "held": "Not started: nothing was sent. Confidential mode is on and no current employer is "
+            "chosen. Choose it in Settings, then try again.",
+    "hosted_off": "Not started: nothing was sent. Online models need Hosted mode, which is off.",
+    "changed": "Not started: nothing was sent. The online model or service changed since this "
+               "opened. Open it again to see where it goes.",
 }
 
 
@@ -217,20 +281,41 @@ async def scan_choose(request: Request):
     """The Scan now dialog (D-UI-72): the Run now dialog for every search at once. Without script
     (`page=1`, no HX-Request) it is a page that posts back to Today."""
     import asyncio
+    import json
 
     from kestrel.analytics.progress import tier2_label
+    from kestrel.services.online_consent import approval_for, merge_approvals
     from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.services.tracks import load_enabled
     from kestrel.web.pages import rescore as rs
 
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
+        consent = await rs._consent(s, settings)
+        # The scan's own destinations include the trigger tier (company filings): the snapshot the
+        # dialog posts back must cover every online tier /scan/start checks (R1, 2026-10-29).
+        consent["approval_json"] = json.dumps(merge_approvals(
+            json.loads(consent["approval_json"]), approval_for(settings, ("trigger",)),
+        ), separators=(",", ":"))
+        tracks = await load_enabled(s)
+        searches = (
+            await s.execute(
+                select(Source).where(Source.enabled.is_(True), Source.track.in_(tracks))
+                .order_by(Source.name)
+            )
+        ).scalars().all()
     local, local_note = await asyncio.to_thread(rs._local_models, settings)
     label, _name, _raw, hosted, reasons, hosted_note = await rs._hosted_models(settings)
+    bases = await rs._bases()
     page = request.query_params.get("page") == "1" and not request.headers.get("HX-Request")
     ctx = {
+        **rs.usual_model_ctx(settings, bases),
+        "searches": [{"id": x.id, "name": x.name} for x in searches],
+        "consent": consent,
+        "local_labels": {m: rs.friendly_name(m, bases) for m in local},
         "form_action": "/scan/start",
         "form_target": "#scan-btn",
-        "heading": "Scan all searches now",
+        "heading": "Run a search now",
         "cancel_href": "/",
         "scope_note": "Applies to the full review of the roles this scan finds, and only to "
                       "this scan. The quick screen always uses your usual model. Your settings "
@@ -264,7 +349,10 @@ async def scan_start(request: Request):
     from fastapi.responses import RedirectResponse
 
     from kestrel.ingest.scheduler import enqueue_all_scrapes
+    from kestrel.pipeline._shared import settings_with_override
     from kestrel.queue.queue import TaskQueue
+    from kestrel.services.online_consent import approval_problem
+    from kestrel.services.setting_overrides import load_settings_with_db
     from kestrel.web.pages.sources import _run_choice
 
     form = await request.form()
@@ -273,6 +361,16 @@ async def scan_start(request: Request):
     sm = sessionmaker()
     async with sm() as s:
         override, label, refused = await _run_choice(s, None, form)
+        if refused is None:
+            settings = await load_settings_with_db(s)
+            effective = settings
+            if override is not None:
+                effective = settings_with_override(settings, "tier2", override)
+            problem = await approval_problem(
+                s, effective, ("tier1", "tier2", "trigger"), form
+            )
+            if problem:
+                refused = (_refusal_code(problem), problem)
     if refused is not None:
         code, text = refused
         text = SCAN_OUTCOMES.get(code, text.replace("Not run:", "Not started:"))
@@ -283,7 +381,8 @@ async def scan_start(request: Request):
         return _scan_button(request, state, text)
     async with sm() as s:
         queued = await enqueue_all_scrapes(
-            s, TaskQueue(sm), model_override=override, model_label=label
+            s, TaskQueue(sm), model_override=override, model_label=label,
+            online_approval=form.get("online_approval"), reconfirm_held=True,
         )
     async with sm() as s:
         state = await scan_state(s)
@@ -292,7 +391,7 @@ async def scan_start(request: Request):
         msg = SCAN_OUTCOMES["none"]
     if not hx:
         return RedirectResponse("/" + ("?scan_outcome=none" if msg else ""), status_code=303)
-    return _scan_button(request, state, msg)
+    return _scan_button(request, state, msg, started=bool(queued))
 
 
 @router.post("/scan/cancel", response_class=HTMLResponse)
@@ -389,7 +488,9 @@ def _ago(value: str | None, now: datetime | None = None) -> str | None:
 
 def _hhmm_local(value: str | None) -> str | None:
     dt = _parse_iso(value)
-    return dt.astimezone().strftime("%H:%M") if dt else None
+    from kestrel.date_display import format_display
+
+    return format_display(dt, kind="time", time_style="24h", local=True) if dt else None
 
 
 async def _worker_row(
@@ -457,7 +558,8 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
         tier2 = settings.llm.hosted_tiers.get("tier2") or settings.llm.tiers.get("tier2")
         name = tier2.model if tier2 else "hosted"
         displayed = _model_display_name(name)
-        return {"state": "good", "label": f"Hosted mode · {displayed}", "loaded": [], "up": None}
+        return {"state": "good", "label": f"Hosted mode · {displayed}", "loaded": [], "up": None,
+                "display": displayed}
     if not ollama_needed(settings):  # no tier on Ollama: its absence is not a fault (D-SETUP-8)
         return {"state": "idle", "label": "Ollama not needed", "loaded": [], "up": None}
     ps = await _probe_ollama(settings.llm.ollama_native_url)
@@ -469,7 +571,7 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
         displayed = _model_display_name(shown)
         label = f"Ollama · {displayed}{extra} loaded"
         return {"state": "good", "label": label, "loaded": ps["loaded"],
-                "up": True}
+                "up": True, "display": f"{displayed}{extra}"}
     return {"state": "idle", "label": "Ollama up · no model loaded", "loaded": [], "up": True}
 
 
@@ -516,6 +618,92 @@ async def _scan_row(s: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _provider_name(key: str) -> str:
+    """The provider's own name for the readout ("OpenRouter key"), from the backend key."""
+    names = {"openrouter": "OpenRouter", "openmodel": "OpenModel", "anthropic": "Anthropic",
+             "openai": "OpenAI"}
+    return names.get(str(key).lower(), str(key).replace("_", " ").title() or "Online")
+
+
+async def _next_run(s: AsyncSession) -> str | None:
+    """When the schedule fires next, in the Today strip's words, or None with no schedule."""
+    from kestrel.date_display import format_display
+    from kestrel.services import run_schedule as rs
+
+    try:
+        sched, last = await rs.load(s)
+        nxt = rs.next_fire(sched, rs.local_now(), last)
+    except (ValueError, TypeError, OSError) as exc:  # the readout must render without it
+        log.warning("readout_next_run_failed", error_type=type(exc).__name__)
+        return None
+    return format_display(nxt, "weekday", kind="datetime") if nxt else None
+
+
+def readout(payload: dict[str, Any]) -> dict[str, Any]:
+    """The sidebar's two-line status readout (D-UI-91, SPEC-INTERFACES 2 "Status readout") from
+    the status payload. Line one is the activity: a problem first (failed scoring links to Needs
+    another try, failing searches to Sources), then Working with a live dot, Paused, or Idle with
+    the next scheduled run. Line two is the AI in use. Each line keeps a data-rail key so the
+    detail it came from stays addressable."""
+    worker = payload.get("worker") or {}
+    scan = payload.get("scan") or {}
+    model = payload.get("model")
+    hosted = payload.get("hosted") or {}
+    balance = payload.get("balance")
+    credit_notes = payload.get("credit") or []
+    failed = int(worker.get("open_failed") or 0)
+    problem = None
+    if failed:
+        # The total (failure_summary), not the Pipeline group's stage subset (D-UI-70).
+        problem = {"dot": "bad", "word": "Problem", "rail": "failed", "href": "/quarantine",
+                   "text": f"{failed} {'role needs' if failed == 1 else 'roles need'} another try",
+                   "title": "Roles the model could not finish: open Needs another try"}
+    elif scan.get("state") == "bad":
+        problem = {"dot": "bad", "word": "Problem", "rail": "scan", "href": "/sources",
+                   "text": scan.get("label") or "", "title": "A search is failing: open Sources"}
+    if worker.get("state") == "good":
+        # A live run reads Working; a standing problem rides along in the tooltip and takes the
+        # line again as soon as the run ends.
+        label = worker.get("label") or ""
+        state = {"dot": "live", "word": "Working", "rail": "worker", "href": None,
+                 "text": label, "title": label + (f" · {problem['text']}" if problem else "")}
+    elif worker.get("state") == "warn":
+        label = worker.get("label") or ""
+        state = {"dot": "warn", "word": "Paused", "rail": "worker", "href": None,
+                 "text": label, "title": label + (f" · {problem['text']}" if problem else "")}
+    elif problem:
+        state = problem
+    else:
+        nxt = payload.get("next_run")
+        label = worker.get("label") or ""
+        idle_default = label.startswith(PLAIN["worker_idle"])
+        text = f"next run {nxt}" if nxt else ("no run scheduled" if idle_default else label)
+        state = {"dot": "idle", "word": "Idle", "rail": "worker", "href": None,
+                 "text": text, "title": label}
+    mode = payload.get("settings_mode") or payload.get("mode")
+    if credit_notes:
+        engine = {"dot": "warn", "rail": "credit", "text": credit_notes[0],
+                  "href": "/settings#hosted", "title": "Your online model key is out of credit"}
+    elif mode == "hosted" or (model and model.get("label") == "Ollama not needed") or balance:
+        provider = hosted.get("provider") or "Online model"
+        text = f"{provider} key" if hosted.get("key_present") else "Online model, no key yet"
+        if mode != "hosted" and model and model.get("up"):
+            text = f"Local + {provider}"  # Both: the local engine with an online key beside it
+        low = bool(balance and balance.get("state") == "warn")
+        engine = {"dot": "warn" if low or not hosted.get("key_present") else "good",
+                  "rail": "engine", "text": text, "href": None, "balance": balance,
+                  "title": (balance or {}).get("note") or text}
+    elif model is None or model.get("up") is False:
+        engine = {"dot": "bad", "rail": "engine", "text": "Local AI not running",
+                  "href": "/models", "title": "The local AI engine is not running: open Models"}
+    else:
+        shown = model.get("display")
+        text = f"Local AI ready · {shown}" if shown else "Local AI ready · no model loaded"
+        engine = {"dot": "good" if shown else "idle", "rail": "engine", "text": text,
+                  "href": None, "title": model.get("label") or ""}
+    return {"state": state, "engine": engine}
+
+
 def _hosted_row(settings: Settings) -> dict[str, Any]:
     from kestrel.llm import providers as prov
 
@@ -526,7 +714,7 @@ def _hosted_row(settings: Settings) -> dict[str, Any]:
     ]
     if present:
         return {"state": "good", "label": f"Hosted key present · {present[0]}",
-                "key_present": True}
+                "key_present": True, "provider": _provider_name(present[0])}
     return {"state": "warn", "label": "Online deeper-read key: not set", "key_present": False}
 
 
@@ -589,7 +777,13 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
     calibrate = (await s.execute(pool)).scalar_one()
     # No needs_review count (review finding 12): no nav badge shows it, so its out-of-band span
     # had no target and its query was wasted on every 30 s poll.
-    out = {"shortlist": shortlist, "unrated": unrated, "calibrate": calibrate}
+    # Applications (Leads): the follow-ups due on the track, the board's own quiet rule
+    # (analytics.today.act_summary), as the locked mockup counts it beside the nav item.
+    from kestrel.analytics.today import act_summary
+
+    followups = int((await act_summary(s, track))["follow_up"])
+    out = {"shortlist": shortlist, "unrated": unrated, "calibrate": calibrate,
+           "followups": followups}
     out.update(await track_badges(s))
     return out
 
@@ -640,7 +834,10 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
     balance = await _balance_row(s, settings)
     counts = await _nav_counts(s)
     scanning = await scan_state(s, activity)
+    next_run = await _next_run(s)
     return {
+        "next_run": next_run,
+        "settings_mode": settings.llm.mode,
         "version": __version__,
         "paused": is_paused(),
         "activity": activity,
@@ -686,7 +883,9 @@ async def status_rail(request: Request):
     """The sidebar status rail: four rows with a state dot each, polled by HTMX every 10 s."""
     async with sessionmaker()() as s:
         payload = await _status_payload(s)
-    return templates().TemplateResponse(request, "partials/status_rail.html", payload)
+    return templates().TemplateResponse(
+        request, "partials/status_rail.html", {**payload, "readout": readout(payload)}
+    )
 
 
 @router.get("/status/counts", response_class=HTMLResponse)

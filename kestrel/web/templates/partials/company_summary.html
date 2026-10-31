@@ -1,0 +1,62 @@
+{# The summary card (P16, D-UI-123). Swaps itself: Refresh, the ask-first panel for an online
+   model, and the poll while a pass is queued. Each sentence ends in numbered markers that point
+   at the public page it rests on (What Kestrel knows). #}
+{% from "partials/company_macros.html" import ci %}
+{% import "ui/macros.html" as ui %}
+{% set busy = sm.state == 'pending' or sm.get('refreshing') %}
+<section class="k-card co-sum" id="co-sum" data-testid="co-summary" data-state="{{ sm.state }}"{% if busy %} hx-get="/orgs/{{ org.id }}/summary" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
+  <header class="k-sec-head">
+    <span class="k-badge">{{ ci('news') }}</span>
+    <div class="k-grow"><h3>About {{ about_name or 'this company' }}</h3>
+      <p data-testid="co-sum-label">{{ sm.label }}. It can be wrong, so check the sources.</p></div>
+  </header>
+
+  {% if notice %}<div class="co-notice" role="status" data-testid="org-summary-refresh">{{ notice }}</div>{% endif %}
+
+  {% if dialog %}
+  <div class="co-ask" role="group" aria-labelledby="co-ask-t" data-testid="co-ask">
+    <b id="co-ask-t">Send to {{ dialog.model }} to write this summary?</b>
+    <p>Refresh sends this company's name and short excerpts from its public pages to the online service, using your own credit. Nothing goes until you press Send and refresh.</p>
+    <ul>
+      <li data-testid="co-sends">Sent: the company name and short excerpts of {% if dialog.pages %}the {{ dialog.pages }} public {{ 'page' if dialog.pages == 1 else 'pages' }} listed below{% else %}its public pages{% endif %}.</li>
+      <li>Not sent: your resume, your profile, your contacts or your name.</li>
+    </ul>
+    {% if dialog.tier2_line %}<details class="co-det"><summary>Show details</summary><p class="k-muted">The online setting you agreed to for this step covers: {{ dialog.tier2_line }}.</p></details>{% endif %}
+    <div class="co-ask__acts">
+      <button type="button" class="k-btn k-btn--sm" hx-get="/orgs/{{ org.id }}/summary" hx-target="#co-sum" hx-swap="outerHTML">Cancel</button>
+      <button type="button" class="k-btn k-btn--sm k-btn--primary" data-testid="co-send" hx-post="/orgs/{{ org.id }}/summary/refresh" hx-vals='{"confirmed": "1", "model": {{ dialog.model|tojson }}, "dest": {{ dialog.dest|tojson }}}' hx-target="#co-sum" hx-swap="outerHTML">Send and refresh</button>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if sm.state == 'ok' %}
+  <div class="co-ab">
+    <p data-testid="co-sentences">{% for s in sm.sentences %}{{ s.text }}{% for m in s.markers %}<a class="co-sup" href="#co-src-{{ m.n }}" data-src="co-src-{{ m.n }}" data-tip="{{ m.tip }}" aria-label="Source {{ m.n }}: {{ m.tip }}">{{ m.n }}</a>{% endfor %}{% if not loop.last %} {% endif %}{% endfor %}</p>
+    {% set t = sm.tags %}
+    {% if t.get('does') or t.get('serves') or t.get('direction') %}
+    <div class="co-ab3">
+      {% for key, name in [('does', 'What they do'), ('serves', 'Who they serve'), ('direction', 'Recent direction')] %}
+      <div><div class="co-dl">{{ name }}</div><b title="{{ t[key].text if t.get(key) else '' }}">{{ t[key].text if t.get(key) else 'Not stated' }}</b></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if t.get('hiring') %}
+    <div class="co-hire">{{ ci('building') }}<span><b>How they hire:</b> {{ t['hiring'].text }}{% for m in t['hiring'].markers %}<a class="co-sup" href="#co-src-{{ m.n }}" data-src="co-src-{{ m.n }}" data-tip="{{ m.tip }}" aria-label="Source {{ m.n }}: {{ m.tip }}">{{ m.n }}</a>{% endfor %}</span></div>
+    {% endif %}
+  </div>
+  {% elif sm.state == 'pending' %}
+  <div class="co-wait" data-testid="co-pending"><span class="co-spin" aria-hidden="true"></span><span>Writing the summary from the public pages. It runs in the background and appears here when it is done.</span></div>
+  {% elif sm.state == 'insufficient' %}
+  <div class="co-abno" data-testid="co-insufficient">{{ ci('news', 'k-ic--lg') }}<div><b>Not enough public information to write a summary yet.</b>Kestrel found {{ sm.source_count }} {{ 'source' if sm.source_count == 1 else 'sources' }}. It needs at least two, and it does not ask a model to guess.</div></div>
+  {% elif sm.state == 'quarantined' %}
+  <div class="co-abno" data-testid="co-quarantined">{{ ci('retry', 'k-ic--lg') }}<div><b>The AI's answer could not be used this time.</b>Nothing was dropped and no summary was made up. Kestrel kept the answer and will try again, or you can press Refresh.</div></div>
+  {% else %}
+  <div class="co-abno" data-testid="co-none">{{ ci('news', 'k-ic--lg') }}<div><b>No summary yet.</b>Press Refresh to write one from the company's public pages.{% if sm.online %} Kestrel asks before anything goes online.{% endif %}</div></div>
+  {% endif %}
+
+  <div class="co-abf">
+    <span class="co-abt" data-testid="co-sum-foot">{% if sm.get('updated') %}{% if sm.state == 'ok' %}Written from the public sources listed below. {% endif %}Last tried {{ sm.updated }}.{% else %}Written from public pages only.{% endif %}</span>
+    <button type="button" class="k-link co-refresh{% if busy %} is-busy{% endif %}" data-testid="co-refresh"{% if busy %} disabled{% endif %} hx-post="/orgs/{{ org.id }}/summary/refresh" hx-target="#co-sum" hx-swap="outerHTML"><span class="co-spin" aria-hidden="true"></span><span>{{ 'Refreshing' if busy else 'Refresh summary' }}</span></button>
+    <a class="k-link" href="#co-knows">See sources</a>
+  </div>
+</section>

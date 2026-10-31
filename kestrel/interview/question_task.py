@@ -49,6 +49,8 @@ log = structlog.get_logger()
 
 TASK_TYPE = "interview_questions"
 PROMPT = "interview_questions/v1"
+TIER = "tier2"  # prompt interview_questions/v1 runs on this tier
+QUESTIONS_SENDS = "the posting, your profile, your stories and the notes Kestrel holds on the role"
 QUARANTINE_TIER = 14  # the quarantine row's `tier` names the prompt, as P8, P9 and P13 do
 MAX_ATTEMPTS = 3
 _LIVE = ("pending", "leased")
@@ -56,17 +58,31 @@ _LIVE = ("pending", "leased")
 
 # ---------------------------------------------------------------------------------- enqueue
 async def request_interview_questions(
-    session: AsyncSession, opportunity_id: int, pursuit_id: int, *, regenerate: bool = False
+    session: AsyncSession,
+    opportunity_id: int,
+    pursuit_id: int,
+    *,
+    regenerate: bool = False,
+    consent: dict | None = None,
 ) -> bool:
     """Queue one question task for this role unless one is already waiting or running (dedup on
     the payload's opportunity_id). Without `regenerate`, a role that already has an active set
     queues nothing. Flushes, never commits: the caller commits with the status change. True when
-    a task was added."""
+    a task was added. With Tier 2 online, nothing is queued unless `consent` confirms the model
+    configured now (marking a role Applied sends nothing; the page offers the ask-first action)."""
+    from kestrel.services.online_consent import held_for_consent
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    if held_for_consent(await load_settings_with_db(session), TIER, consent):
+        return False
     if not regenerate and await active_set(session, opportunity_id) is not None:
         return False
     added = await enqueue_once(
         session, TASK_TYPE, opportunity_id,
-        extra={"pursuit_id": pursuit_id, "regenerate": regenerate, "requested_at": utcnow_iso()},
+        extra={
+            "pursuit_id": pursuit_id, "regenerate": regenerate, "requested_at": utcnow_iso(),
+            **(consent or {}),
+        },
     )
     await session.flush()
     return added
@@ -291,6 +307,7 @@ async def drain_interview_questions(
     loop). Never raises into the caller's worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
     from kestrel.queue.queue import TaskQueue
+    from kestrel.services.online_consent import held_at_run_time
 
     queue = TaskQueue(sm)
     wid = "pipeline-questions"
@@ -300,6 +317,12 @@ async def drain_interview_questions(
         if task is None:
             break
         payload = task.payload or {}
+        if await held_at_run_time(sm, settings, TIER, payload):
+            # Tier 2 is online and this task carries no confirmation for the model configured
+            # now. It sends nothing; the role page offers the ask-first action.
+            log.info("interview_questions_held_online", task=task.id)
+            await queue.complete(task.id, worker_id=wid)
+            continue
         beat = asyncio.create_task(_renew(queue, task.id, wid))
         try:
             async with sm() as s:

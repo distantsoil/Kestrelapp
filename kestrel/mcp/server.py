@@ -24,6 +24,7 @@ from kestrel.db.models import (
     StatusEvent,
     Story,
 )
+from kestrel.research.connections import not_imported_connection
 from kestrel.web.redact import confidential, redact_json, redact_name, redact_text
 
 TOOL_NAMES = [
@@ -200,7 +201,11 @@ def build_mcp() -> FastMCP:
                 )
             ).scalar_one_or_none()
             contacts = (
-                (await s.execute(select(Contact).where(Contact.org_id == org_id))).scalars().all()
+                (
+                    await s.execute(
+                        select(Contact).where(Contact.org_id == org_id, not_imported_connection())
+                    )
+                ).scalars().all()
             )
             conf, mapping = await confidential(s)
         # Research prose, org signals, and contact records ("VP Engineering at Northwind") all

@@ -1,0 +1,52 @@
+{# The Needs another try card (D-UI-104): filters, bulk try, one row per role, the empty state, and
+   the failures a later score already resolved as history (D-UI-70). The whole card is what a
+   filter swaps; every action swaps one row. #}
+{% from "ui/macros.html" import icon, chip %}
+<section class="k-card rt-card" id="rt-card" data-step="{{ step }}">
+  {% if retry_error %}<div class="rt-banner is-warn" role="status" data-testid="retry-error">{{ retry_error }}</div>{% endif %}
+  {% if outcome %}<div class="rt-banner {{ 'is-good' if outcome.ok else 'is-warn' }}" role="status" data-testid="retry-note">{{ outcome.text }}</div>{% endif %}
+  {% if open_more %}<div class="rt-banner is-warn" data-testid="open-more">And {{ open_more }} more older failures not shown here.</div>{% endif %}
+  <div class="rt-bar">
+    <label class="rt-all"><input type="checkbox" id="rt-all" aria-label="Select all roles shown"><span id="rt-all-text">Select all</span></label>
+    <div class="rt-chips" id="rt-chips" role="group" aria-label="Filter by step">
+      {%- for key, label in filters %}{{ chip(label, counts[key], key == step, {'data-testid': 'rt-chip-' ~ key, 'hx-get': '/quarantine?step=' ~ key, 'hx-target': '#rt-card', 'hx-swap': 'outerHTML', 'hx-push-url': 'false'}) }}{% endfor -%}
+    </div>
+    <span class="k-grow"></span>
+    <input type="hidden" id="rt-step" name="step" value="{{ step }}">
+    <button type="button" class="k-btn k-btn--primary k-btn--sm rt-bulk" id="rt-bulk" data-testid="rt-bulk"
+            hx-post="/quarantine/bulk" hx-include="#rt-step, #rt-card .rt-cb:checked" hx-swap="none"
+            {%- if not rows %} disabled{% endif %}>Try all again</button>
+  </div>
+  <span hidden hx-get="/quarantine/summary" hx-vals='{"step": "{{ step }}"}' hx-trigger="rt-refresh from:body"
+        hx-target="#rt-chips" hx-swap="innerHTML"></span>
+  <div class="rt-list" id="rt-list">
+    {%- for row in rows %}{% include "partials/retry_row.html" %}{% endfor -%}
+  </div>
+  <div class="rt-empty" id="rt-empty" data-testid="rt-empty"{% if rows %} hidden{% endif %}>
+    <span class="k-badge k-badge--good k-badge--lg">{{ icon('check') }}</span>
+    {% if waiting and step != 'all' %}
+    <b>Nothing in this step needs another try.</b><span>Choose All to see the other roles waiting.</span>
+    {% else %}
+    <b>Nothing needs another try.</b><span>Roles that can’t be scored will wait here until you decide.</span>
+    {% endif %}
+  </div>
+  {% if resolved_rows %}
+  <details class="rt-resolved" data-testid="resolved-failures">
+    <summary>Scored since ({{ resolved_rows | length }})</summary>
+    <ul class="rt-hist">
+      {%- for row in resolved_rows %}
+      <li>
+        <span class="rt-role"><b>{% if row.opp %}<a href="/opportunities/{{ row.opp.id }}">{{ row.opp.title or ('Role ' ~ row.opp.id) }}</a>{% else %}No role attached{% endif %}</b></span>
+        <span class="k-pill k-pill--info">{{ row.step_label }}</span>
+        <span class="rt-why">{{ row.reason }}</span>
+        <span class="rt-when">{{ row.when }}</span>
+        <details class="rt-det"><summary>Show details</summary>
+          <div class="rt-kind">What the AI said</div><pre class="rt-mono">{{ row.q.raw_response or '(empty)' }}</pre>
+          <div class="rt-kind">Which model</div><p class="rt-meta">{{ row.q.model or 'Unknown' }}</p>
+        </details>
+      </li>
+      {%- endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>

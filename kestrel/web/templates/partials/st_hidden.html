@@ -1,0 +1,14 @@
+{# Hidden companies: the companies hidden from a Company page, each with Unhide. Hiding deletes
+   nothing, so Unhide puts everything back. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-hidden" data-testid="st-hidden">
+  {{ st.head('Hidden companies', 'eyeoff', sub='Companies you hid from their Company page. Their roles stay out of Pipeline until you unhide them.') }}
+  {% for h in hidden %}
+  <div class="st-row{% if loop.first %} st-row--first{% endif %}" data-testid="st-hidden-{{ h.org_id }}">
+    <div class="st-row__t"><b>{{ h.name }}</b><span class="st-dsm">{{ h.role_count }} role{{ '' if h.role_count == 1 else 's' }} kept out of your lists</span></div>
+    <button type="button" class="k-btn k-btn--sm" hx-post="/settings/roles/unhide/{{ h.org_id }}" hx-target="#st-hidden" hx-swap="outerHTML" data-testid="st-unhide-{{ h.org_id }}">Unhide</button>
+  </div>
+  {% else %}
+  <p class="st-dsm" data-testid="st-hidden-empty">You have not hidden any companies. Use Hide this company on a Company page.</p>
+  {% endfor %}
+</section>

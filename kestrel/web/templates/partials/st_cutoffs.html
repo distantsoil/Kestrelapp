@@ -1,0 +1,22 @@
+{# Score cutoffs (D-UI-107): Strong match and Worth a look, 0.0 to 5.0 in steps of 0.1, Worth a
+   look always lower. The preview says how the last 200 scored roles would sort. #}
+{% import "partials/st_macros.html" as st with context %}
+<section class="k-card st-card" id="st-cut" data-testid="st-cut" data-track="{{ track }}">
+  {{ st.head('Score cutoffs', 'tune', sub='Scores run from 0.0 to 5.0. These two lines sort your roles into groups.') }}
+  {% for which, name, hint, val in [('strong', 'Strong match from', 'Roles at or above this score show as strong matches.', strong), ('look', 'Worth a look from', 'Roles from here up to strong matches are worth a look.', look)] %}
+  <form class="st-row{% if loop.first %} st-row--first{% endif %}" hx-post="/settings/roles/cutoffs" hx-target="#st-cut" hx-swap="outerHTML" hx-trigger="change">
+    <input type="hidden" name="track" value="{{ track }}"><input type="hidden" name="which" value="{{ which }}">
+    <div class="st-row__t"><b>{{ name }}</b><span class="st-dsm">{{ hint }}</span></div>
+    <span class="st-stepper{% if cut_field == which %} is-bad{% endif %}">
+      <button type="button" hx-post="/settings/roles/cutoffs" hx-vals='{"track": "{{ track }}", "which": "{{ which }}", "delta": "-1"}' hx-target="#st-cut" hx-swap="outerHTML" aria-label="Lower {{ name }} by 0.1" data-testid="st-cut-{{ which }}-down">&minus;</button>
+      <input name="value" inputmode="decimal" value="{{ typed.get(which) if typed.get(which) is not none else f1(val) }}" aria-label="{{ name }}" autocomplete="off" data-testid="st-cut-{{ which }}"{% if cut_field == which %} aria-invalid="true"{% endif %}>
+      <button type="button" hx-post="/settings/roles/cutoffs" hx-vals='{"track": "{{ track }}", "which": "{{ which }}", "delta": "1"}' hx-target="#st-cut" hx-swap="outerHTML" aria-label="Raise {{ name }} by 0.1" data-testid="st-cut-{{ which }}-up">+</button>
+    </span>
+  </form>
+  {% endfor %}
+  {% if cut_error %}<p class="st-err" role="alert" data-testid="st-cut-error">{{ st.sic('warn', 'k-ic--sm') }}{{ cut_error }}</p>{% endif %}
+  <div class="st-cutft">
+    <p data-testid="st-cut-preview">{% if cut_error %}Fix the cutoffs above to see the preview.{% elif counts.scored < 5 %}Too few scored roles to preview yet ({{ counts.scored }} of your last {{ counts.of_n }}).{% else %}With these cutoffs: <b>{{ counts.strong }}</b> strong match{{ '' if counts.strong == 1 else 'es' }} and <b>{{ counts.look }}</b> worth a look in your last {{ counts.of_n }}.{% endif %}</p>
+    <button type="button" class="k-link" hx-post="/settings/roles/cutoffs" hx-vals='{"track": "{{ track }}", "restore": "1"}' hx-target="#st-cut" hx-swap="outerHTML" data-testid="st-cut-restore">Restore defaults</button>
+  </div>
+</section>

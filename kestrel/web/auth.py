@@ -228,7 +228,12 @@ def qr_svg(data: str) -> str:
     except ImportError:
         return ""
     buf = io.BytesIO()  # segno writes bytes even for SVG
-    segno.make(data, error="m").save(buf, kind="svg", scale=4, border=2, xmldecl=False, svgns=True)
+    # Dark on white whatever the theme: a scanner needs the contrast, so this is the one color pair
+    # that is not a theme token (SPEC-INTERFACES 2.6, Access from other devices).
+    segno.make(data, error="m").save(
+        buf, kind="svg", scale=4, border=2, xmldecl=False, svgns=True,
+        dark="#000000", light="#ffffff",
+    )
     return buf.getvalue().decode("utf-8")
 
 

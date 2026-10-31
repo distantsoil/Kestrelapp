@@ -3,7 +3,7 @@
    rule as the Quit button, D-UI-27). Keyboard: focus starts on Quit and stays inside the dialog
    (Tab and Shift+Tab wrap), Enter confirms, Esc or Cancel closes it and returns focus to the
    button that opened it. Styles live in kestrel.css (.quit-confirm), theme variables only.
-   Quitting does exactly what the button always did: POST /api/quit, then a closing notice. #}
+   Quitting does exactly what the button always did: POST /api/quit, with the closing screen. #}
 {% if desktop_can_quit is defined and desktop_can_quit() %}
 <dialog id="quit-confirm" class="quit-confirm" data-testid="quit-confirm"
         aria-labelledby="quit-confirm-title" aria-describedby="quit-confirm-desc">
@@ -34,8 +34,10 @@
     }
     function quit() {
       if (dlg.open) dlg.close();
+      // The closing screen (D-UI-90): the mark, "Closing Kestrel" and the reassurance line,
+      // over the app, which then scales down and fades as the window goes.
+      if (window.KUI && window.KUI.frame) window.KUI.frame.closing();
       fetch('/api/quit', {method: 'POST'});
-      document.body.innerHTML = '<p style="padding:2rem">Kestrel is closing…</p>';
     }
     function open(from) {
       opener = from || document.activeElement;

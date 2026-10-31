@@ -1,14 +1,37 @@
-<div class="card" data-testid="whats-new-card" style="margin-bottom:12px">
-  <h3>You're on {{ current }}. Here's what changed.</h3>
-  {% for n in notes %}
-    <h4 style="margin:.6rem 0 .2rem">{{ n.version }} <span class="muted">{{ n.date }}</span></h4>
-    {{ n.html }}
-  {% else %}
-    {% if download_page %}
-      <p class="muted">The release notes are on the <a href="{{ download_page }}" target="_blank"
-         rel="noopener noreferrer">download page</a>.</p>
-    {% endif %}
-  {% endfor %}
-  <p style="margin:.6rem 0 0"><button class="btn" type="button" hx-post="/updates/whats-new/dismiss"
-     hx-target="#whats-new-slot" hx-swap="innerHTML">Dismiss</button></p>
-</div>
+{# What is new after an update (D-UPD-4, restyled D-UI-152): shown once, as a dialog, the first
+   time the new version opens. Release notes are escaped HTML. "Got it" dismisses it for good.
+   Styles: static/css/pages/surfaces.css. #}
+{% from "ui/macros.html" import icon %}
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
+<dialog class="sf-dialog" data-testid="whats-new-card" aria-labelledby="whats-new-title">
+  <div class="sf-form">
+    <div class="sf-head">
+      <span class="sf-ic sf-ic--good" aria-hidden="true">{{ icon('check') }}</span>
+      <h2 id="whats-new-title">Kestrel is now on version {{ current }}</h2>
+    </div>
+    <p class="sf-sub">You installed {{ current }}{% if previous %}, up from {{ previous }}{% endif %}. Here is what changed.</p>
+    <div class="sf-body sf-notes">
+      {% for n in notes %}
+        <h4>{{ n.version }} <span class="k-muted">{{ date_display(n.date, fallback=n.date) }}</span></h4>
+        {{ n.html }}
+      {% else %}
+        <p class="k-muted">The release notes are on the <a class="sf-a" href="{{ download_page }}" target="_blank"
+           rel="noopener noreferrer">download page</a>.</p>
+      {% endfor %}
+      <div class="sf-priv">{{ icon('shield') }}<span><b>Nothing about you was sent to check for updates.</b></span></div>
+    </div>
+    <div class="sf-foot">
+      <a class="sf-a sf-l" href="{{ download_page }}" target="_blank" rel="noopener noreferrer">See every change</a>
+      <button class="k-btn k-btn--primary" type="button" data-testid="whats-new-dismiss" hx-post="/updates/whats-new/dismiss"
+              hx-target="#whats-new-slot" hx-swap="innerHTML">Got it</button>
+    </div>
+  </div>
+</dialog>
+<script>
+  (function () {
+    var d = document.currentScript.previousElementSibling;
+    if (!d || d.tagName !== 'DIALOG') return;
+    d.addEventListener('cancel', function (e) { e.preventDefault(); });
+    if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
+  })();
+</script>

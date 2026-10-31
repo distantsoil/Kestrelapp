@@ -1,176 +1,191 @@
-{% set svo = metrics.score_vs_outcome %}
+{# Everything below the title band: the range bar and every card. One date range for the page. #}
+{% from "ui/macros.html" import icon %}
+{% set r = report %}
+{% set w = r.words %}
+{% set tab_keys = tabs|map(attribute=0)|list %}
+{% set active_tab = tab if tab in tab_keys else tab_keys[0] %}
+{% macro few_cell(n) -%}<span class="an-few" title="Fewer than {{ min_n }}, so this rate is not reliable yet">Too few ({{ n }})</span>{%- endmacro %}
+{% macro card_head(icon_name, title, aside='') -%}
+<header class="an-head"><span class="k-badge">{{ icon(icon_name) }}</span><h3>{{ title }}</h3>{% if aside %}<span class="an-aside">{{ aside }}</span>{% endif %}</header>
+{%- endmacro %}
+{% if not print_mode %}<div class="an-bar">
+  <div class="k-seg" role="group" aria-label="Date range" id="an-range">
+    {%- for key, label in range_choices %}
+    <button type="button" class="{{ 'is-on' if key == range }}" aria-pressed="{{ 'true' if key == range else 'false' }}" data-testid="an-range-{{ key }}"
+            hx-get="/analytics?range={{ key }}{{ '&view=table' if view == 'table' }}" hx-target="#analytics-body" hx-swap="innerHTML" hx-push-url="true">{{ label }}</button>
+    {%- endfor %}
+  </div>
+  <span class="an-hint">{{ w.range_noun|capitalize }} sent in this period, and everything that has happened to them since.</span>
+  <span class="k-grow"></span>
+  <button type="button" class="k-chip{{ ' is-on' if view == 'table' }}" aria-pressed="{{ 'true' if view == 'table' else 'false' }}" data-testid="an-table-view"
+          hx-get="/analytics?range={{ range }}{{ '' if view == 'table' else '&view=table' }}" hx-target="#analytics-body" hx-swap="innerHTML" hx-push-url="true">Table view</button>
+  <details class="an-export" id="an-export" data-testid="an-export">
+    <summary class="k-chip" aria-haspopup="menu">Export</summary>
+    <div class="an-menu" role="menu">
+      <a role="menuitem" href="/analytics/export/summary.pdf?range={{ range }}" download>Summary and charts (PDF)</a>
+      <a role="menuitem" href="/analytics/export/numbers.csv?range={{ range }}" download>All numbers on this page (CSV)</a>
+      <a role="menuitem" href="/analytics/export/applications.csv" download>Every application and its history (CSV)</a>
+      <p>Saved to your computer. Nothing is sent anywhere.</p>
+    </div>
+  </details>
+</div>{% endif %}
 
-{% if model_note %}
-<div class="warnbox" style="margin-bottom:.8rem">{{ model_note }}</div>
-{% endif %}
-
+<div class="an-stack{{ ' is-table' if view == 'table' }}" data-view="{{ view }}">
 {% include "partials/analytics_summary.html" %}
 
-{# --------------------------------------------------------------------------- The funnel. #}
-<div class="panel">
-  <h2>Funnel</h2>
-  {% set max_n = fn.steps[0].count if fn.steps else 0 %}
-  {% set step_labels = {'ingested': 'Found', 'tier0_pass': 'Passed the rules check', 'tier1_pass': 'Passed the quick screen', 'tier2_evaluated': 'Fully reviewed', 'shortlisted': 'Shortlisted', 'pursued': 'Pursued', 'first_response': 'First reply', 'screening': 'Screening', 'interview': 'Interview', 'final': 'Final round', 'offer': 'Offer'} %}
-  {% for step in fn.steps %}
-    <div style="margin:.5rem 0">
-      <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:.85rem">
-        <span title="{{ step.name }}">{{ step_labels.get(step.name, step.name.replace('_', ' ')|capitalize) }}</span>
-        <span class="mono muted">
-          {{ step.count }}
-          {% if step.conversion is not none and not loop.first %}
-            &middot; {{ (step.conversion * 100)|round(1) }}% of {{ step.sample_size }}
-            {% if step.sample_size < 5 %}<span class="pill">{{ too_few(step.sample_size) }}</span>{% endif %}
-          {% endif %}
-        </span>
-      </div>
-      <div style="height:14px; background:var(--bg-alt); border-radius:6px; overflow:hidden">
-        <div style="height:100%; width:{{ ((step.count / max_n * 100) if max_n else 0)|round(1) }}%;
-                    background:var(--orange); border-radius:6px"></div>
-      </div>
-    </div>
-  {% else %}
-    <p class="muted">No opportunities on this track yet.</p>
-  {% endfor %}
-</div>
-
-{# ---------------------------------------------------------- Response rate by score band. #}
-<div class="panel">
-  <h2>Response rate by score band</h2>
-  {% for b in svo.by_score_band %}
-    <div style="margin:.4rem 0">
-      <div style="display:flex; justify-content:space-between; font-size:.85rem">
-        <span class="mono">{{ b.band }}</span>
-        <span class="mono muted">
-          {% if b.rate is not none %}{{ (b.rate * 100)|round(1) }}%{% else %}-{% endif %}
-          of {{ b.n }}
-          {% if b.insufficient %}<span class="pill">{{ too_few(b.n) }}</span>{% endif %}
-        </span>
-      </div>
-      <div style="height:12px; background:var(--bg-alt); border-radius:6px; overflow:hidden">
-        <div style="height:100%; width:{{ ((b.rate * 100) if b.rate is not none else 0)|round(1) }}%;
-                    background:var(--orange); border-radius:6px"></div>
-      </div>
-    </div>
-  {% else %}
-    <p class="muted">No score bands yet.</p>
-  {% endfor %}
-</div>
-
-{# --------------------------------------------------------------------------- Breakdowns. #}
-{% set breakdowns = [
-  ("Source", metrics.breakdowns.by_source),
-  ("Org size", metrics.breakdowns.by_size),
-  ("Ownership", metrics.breakdowns.by_ownership),
-  ("Remote type", metrics.breakdowns.by_remote),
-] %}
-<div class="split">
-  {% for label, bd in breakdowns[:2] %}
-  <div class="panel">
-    <h2>By {{ label }}</h2>
-    <table class="data">
-      <thead><tr><th>{{ label }}</th><th>total</th><th>replied</th><th>rate</th></tr></thead>
-      <tbody>
-        {% for key, v in bd.items() %}
-        <tr>
-          <td>{{ key }}</td>
-          <td class="mono">{{ v.n }}</td>
-          <td class="mono">{{ v.responded }}</td>
-          <td class="mono">
-            {% if v.rate is not none %}{{ (v.rate * 100)|round(1) }}%{% else %}-{% endif %}
-            {% if v.insufficient %}<span class="pill">{{ too_few(v.n) }}</span>{% endif %}
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" class="muted">No data yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{# ------------------------------------------------------------------------------ count tiles #}
+<div class="an-kpis" data-testid="an-kpis">
+  {%- for t in r.tiles %}
+  <div class="an-kpi{{ ' is-few' if t.few }}" data-testid="an-kpi-{{ loop.index }}">
+    <div class="an-kpi__l">{{ t.label }}{% if t.help %} <span class="an-qi" tabindex="0" data-tip="{{ t.help }}" aria-label="{{ t.help }}">?</span>{% endif %}</div>
+    <div class="an-kpi__n">{{ '{:,}'.format(t.n) }}</div>
+    <div class="an-kpi__s">{% if t.few %}{{ t.n }} so far. Not enough data yet ({{ t.base }}){% else %}{{ t.sub }}{% endif %}</div>
+    {% if t.prev is not none and range != 'all' %}<div class="an-kpi__p">vs {{ '{:,}'.format(t.prev) }} in the previous {{ r.range_label.replace('last ', '') }}</div>{% endif %}
   </div>
-  {% endfor %}
-</div>
-<div class="split">
-  {% for label, bd in breakdowns[2:] %}
-  <div class="panel">
-    <h2>By {{ label }}</h2>
-    <table class="data">
-      <thead><tr><th>{{ label }}</th><th>total</th><th>replied</th><th>rate</th></tr></thead>
-      <tbody>
-        {% for key, v in bd.items() %}
-        <tr>
-          <td>{{ key }}</td>
-          <td class="mono">{{ v.n }}</td>
-          <td class="mono">{{ v.responded }}</td>
-          <td class="mono">
-            {% if v.rate is not none %}{{ (v.rate * 100)|round(1) }}%{% else %}-{% endif %}
-            {% if v.insufficient %}<span class="pill">{{ too_few(v.n) }}</span>{% endif %}
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" class="muted">No data yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endfor %}
+  {%- endfor %}
 </div>
 
-{# --------------------------------------------------------------- Cost/quality and time. #}
-{% set q = metrics.quality %}
-{% set tmet = metrics.time %}
-<div class="split">
-  <div class="panel">
-    <h2>Cost &amp; quality</h2>
-    <div class="formgrid">
-      <label>Evaluations</label><div class="mono">{{ q.evaluations }}</div>
-      <label>Override rate</label>
-      <div class="mono">
-        {% if q.override_rate is not none %}
-          {{ (q.override_rate * 100)|round(1) }}% ({{ q.override_n }}/{{ q.evaluations }})
-        {% else %}-{% endif %}
-      </div>
-      <label title="Quarantine">Failed scoring rate</label>
-      <div class="mono">
-        {% if q.quarantine_rate is not none %}
-          {{ (q.quarantine_rate * 100)|round(1) }}% ({{ q.quarantine_n }})
-        {% else %}-{% endif %}
-      </div>
-      <label>JSON validity</label>
-      <div class="mono">
-        {% if q.json_validity_rate is not none %}{{ (q.json_validity_rate * 100)|round(1) }}%
-        {% else %}-{% endif %}
-      </div>
-      <label>Total tokens</label><div class="mono">{{ q.total_tokens|comma }}</div>
+<div class="an-g2 an-g2b">
+{# ----------------------------------------------------------------- where they stand #}
+{% set st = r.standing %}
+<section class="k-card an-card" data-testid="an-standing">
+  {{ card_head('apps', st.title) }}
+  <div class="an-chart">
+    <div class="an-sbhead"><b>{{ st.total }}</b> {{ st.sent_verb }}<span class="an-sub">{{ st.short_n }} {{ st.short_verb }}, {{ st.not_sent }} {{ st.not_sent_label }}</span></div>
+    {% if st.total %}
+    <div class="an-sbar" role="img" aria-label="{{ st.title }}: {% for s in st.segments if s.n %}{{ s.label }} {{ s.n }}{{ ', ' if not loop.last }}{% endfor %}">
+      {%- for s in st.segments if s.n %}<i class="an-st-{{ s.key }}" style="flex: {{ s.n }}" data-tip="{{ s.label }}: {{ s.n }} of {{ st.total }}"></i>{% endfor -%}
     </div>
-    {% if q.insufficient %}<p style="margin-top:.5rem"><span class="pill">{{ too_few(q.evaluations) }}</span></p>{% endif %}
-    {% if q.tokens_by_tier %}
-    <table class="data" style="margin-top:.6rem">
-      <thead><tr><th>Step</th><th>Calls</th><th>Tokens</th></tr></thead>
-      <tbody>
-        {% for tier, t in q.tokens_by_tier.items() %}
-        <tr><td class="mono" title="Tier {{ tier }}">{{ {0: 'Rules check', 1: 'Quick screen', 2: 'Full review', 3: 'Deeper read'}.get(tier, tier) }}</td><td class="mono">{{ t.calls }}</td><td class="mono">{{ t.tokens|comma }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
     {% endif %}
+    <div class="an-slegend">
+      {%- for s in st.segments %}<div class="an-sl{{ ' is-zero' if not s.n }}"><span class="an-sw an-st-{{ s.key }}"></span><b>{{ s.n }}</b><span>{{ s.label }}</span></div>{% endfor -%}
+    </div>
+    {% if st.few %}<div class="an-sub an-pad">{{ few_cell(st.total) }}</div>{% endif %}
   </div>
+  <div class="an-table">
+    <table class="an-at"><thead><tr><th>Where it stands</th><th class="c">Count</th><th class="c">Share</th></tr></thead><tbody>
+      {%- for s in st.segments %}<tr><td>{{ s.label }}</td><td class="c">{{ s.n }}</td><td class="c">{{ (s.share ~ '%') if s.share is not none else '0%' }}</td></tr>{% endfor -%}
+    </tbody></table>
+  </div>
+</section>
 
-  <div class="panel">
-    <h2>Time</h2>
-    <div class="formgrid">
-      <label>{{ words(track).board }}</label><div class="mono">{{ tmet.applications }}</div>
-      <label>Per week</label>
-      <div class="mono">
-        {% if tmet.applications_per_week is not none %}{{ tmet.applications_per_week }} (from {{ tmet.applications_n }})
-        {% else %}<span class="pill">{{ too_few(tmet.applications_n) }}</span>{% endif %}
+{# ------------------------------------------------------------------------------ the funnel #}
+<section class="k-card an-card" data-testid="an-funnel">
+  {{ card_head('pipeline', 'How Kestrel narrows the field', '% is of the step before') }}
+  {%- macro frows(group) %}
+      {%- for f in group %}
+      <div class="an-frow" data-tip="{{ f.label }}: {{ '{:,}'.format(f.n) }}{% if f.base is not none %} of {{ '{:,}'.format(f.base) }} {{ f.prev_label|lower }}{% if f.pct is not none %} ({{ f.pct }}%){% endif %}{% if f.few %}. Fewer than {{ min_n }}, so this rate is not reliable.{% endif %}{% endif %}">
+        <div class="an-frow__lab">{{ f.label }}</div>
+        <div class="an-frow__bar"><u class="{{ 'is-few' if f.few }}" style="width: {{ f.width }}%"></u></div>
+        <span class="an-frow__v">{{ '{:,}'.format(f.n) }}{% if f.base is not none %} <em>{{ 'too few' if f.few else ((f.pct ~ '%') if f.pct is not none else '') }}</em>{% endif %}</span>
       </div>
-      <label>Median first response</label>
-      <div class="mono">
-        {% if tmet.median_first_response_days is not none %}
-          {{ tmet.median_first_response_days }} days (from {{ tmet.first_response_n }})
-        {% else %}
-          <span class="pill">{{ too_few(tmet.first_response_n) }}</span>
-        {% endif %}
+      {%- endfor %}
+  {%- endmacro %}
+  <div class="an-chart">
+    <div class="an-fun">{{ frows(r.funnel.a) }}</div>
+    {# The mockup draws the four narrowing steps only. The later steps (SPEC-INTERFACES /analytics,
+       group two, with its own scale) stay one click away rather than cut. #}
+    <details class="an-fold" data-k-fold data-testid="an-funnel-later">
+      <summary>Shortlisted to offer</summary>
+      <div class="an-fun">{{ frows(r.funnel.b) }}</div>
+    </details>
+  </div>
+  <div class="an-table">
+    {%- for group in (r.funnel.a, r.funnel.b) %}
+    <table class="an-at"><thead><tr><th>Step</th><th class="c">Count</th><th class="c">From the step before</th></tr></thead><tbody>
+      {%- for f in group %}<tr><td>{{ f.label }}</td><td class="c">{{ '{:,}'.format(f.n) }}</td><td class="c">{% if f.base is none %}{% elif f.few %}{{ few_cell(f.base) }}{% else %}{{ (f.pct ~ '%') if f.pct is not none else '' }}{% endif %}</td></tr>{% endfor -%}
+    </tbody></table>
+    {%- endfor %}
+  </div>
+</section>
+</div>
+
+<div class="an-g2 an-g2c">
+{# ------------------------------------------------------------ replies by fit score #}
+{% set b = r.bands %}
+<section class="k-card an-card" data-testid="an-bands">
+  {{ card_head('calibrate', 'Replies by fit score') }}
+  {% if b.rows %}
+  <table class="an-at"><thead><tr><th>Score</th><th class="c">{{ b.cols[0] }}</th><th class="c">{{ b.cols[1] }}</th><th class="c">{{ b.cols[2] }}</th></tr></thead><tbody>
+    {%- for row in b.rows %}
+    <tr><td><b>{{ row.label }}</b></td><td class="c">{{ row.n }}</td>
+      {%- for cell in (row.reply, row.deep) %}
+      <td class="c">{% if cell.few %}{{ cell.n }} of {{ cell.base }}<div>{{ few_cell(cell.base) }}</div>{% else %}{{ cell.pct }}%<div class="an-sub">{{ cell.n }} of {{ cell.base }}</div>{% endif %}</td>
+      {%- endfor %}
+    </tr>
+    {%- endfor %}
+  </tbody></table>
+  {% if b.rows|selectattr('reply.few')|list or b.rows|selectattr('deep.few')|list %}<div class="an-fewnote"><span class="an-few">Too few</span> means fewer than {{ min_n }}, so no rate is shown. Rates from small numbers still swing a lot.</div>{% endif %}
+  {% if not b.comparable %}
+  <div class="an-verdict" data-testid="an-too-early">{{ icon('alert') }}<div><b>Too early to compare.</b> {{ b.scored }} {{ w.sent_nouns }} with a score so far. Kestrel compares score ranges once each one has at least {{ min_n }}.</div></div>
+  {% endif %}
+  {% else %}
+  <p class="an-sub">{% if b.sent %}None of the {{ b.sent }} {{ w.sent_nouns }} in this period has a fit score.{% else %}No {{ w.sent_nouns }} in this period yet.{% endif %}</p>
+  <div class="an-verdict" data-testid="an-too-early">{{ icon('alert') }}<div><b>Too early to compare.</b> {{ b.sent }} {{ w.sent_nouns }} so far. Kestrel compares score ranges once each one has at least {{ min_n }}.</div></div>
+  {% endif %}
+</section>
+
+{# ------------------------------------------------------------- where roles come from #}
+<section class="k-card an-card" data-testid="an-sources">
+  {{ card_head('sources', w.breakdown_title) }}
+  <div class="an-tabs" role="tablist" aria-label="Group by" id="an-tabs">
+    {%- for key, label in tabs %}<button type="button" role="tab" class="{{ 'is-on' if key == active_tab }}" aria-selected="{{ 'true' if key == active_tab else 'false' }}" data-tab="{{ key }}" data-testid="an-tab-{{ key }}">{{ label }}</button>{% endfor -%}
+  </div>
+  {%- for key, label in tabs %}
+  {% set tb = r.tabs[key] %}
+  <div class="an-tabpanel" data-panel="{{ key }}"{% if key != active_tab %} hidden{% endif %}>
+    <table class="an-at"><thead><tr><th>{{ label }}</th>{% for c in w.breakdown_cols %}<th class="c">{{ c }}</th>{% endfor %}<th>Reply rate</th></tr></thead><tbody>
+      {%- for row in tb.rows %}
+      <tr><td><b>{{ row.name }}</b></td><td class="c">{{ row.found }}</td><td class="c">{{ row.short }}</td><td class="c">{{ row.sent }}</td>
+        <td>{% if row.few %}{{ few_cell(row.sent) }}{% else %}<span class="an-rate"><i><u style="width: {{ row.rate }}%"></u></i>{{ row.rate }}% <span class="an-sub">({{ row.replied }} of {{ row.sent }})</span></span>{% endif %}</td></tr>
+      {%- else %}<tr><td colspan="5" class="an-sub">Nothing in this period yet.</td></tr>
+      {%- endfor %}
+    </tbody></table>
+    {% if tb.any_few %}<div class="an-fewnote"><span class="an-few">Too few</span> means fewer than {{ min_n }}, so no rate is shown. Rates from small numbers still swing a lot.</div>{% endif %}
+  </div>
+  {%- endfor %}
+</section>
+</div>
+
+<div class="an-g2">
+{# ------------------------------------------------------------------- reply timing #}
+{% set tm = r.timing %}
+<section class="k-card an-card" data-testid="an-timing">
+  {{ card_head('clock', 'Reply timing') }}
+  <div class="an-tgrid">
+    <div class="an-tbig"><div class="an-k">Median days to first reply</div>
+      {% if tm.median is none %}<div>{{ few_cell(tm.n) }}</div>{% else %}<div class="an-n">{{ tm.median }} <span>days</span></div><div class="an-sub">from {{ tm.n }} replies</div>{% endif %}
+      <div class="an-sub an-pad">{{ w.sent_nouns|capitalize }} with no reply yet are not in this number.</div></div>
+    <div><div class="an-k">Still waiting, by age</div>
+      <div class="an-ages">
+        <div class="an-age"><b>{{ tm.waiting.lt7 }}</b><span>Under 7 days</span></div>
+        <div class="an-age is-mid"><b>{{ tm.waiting['7to14'] }}</b><span>7 to 14 days</span></div>
+        <div class="an-age is-old"><b>{{ tm.waiting.gt14 }}</b><span>Over 14 days</span></div>
       </div>
+      {% if tm.oldest %}<div class="an-oldest">{{ icon('alert') }}<span>Oldest with no reply: <a class="k-link" href="/pursuits" data-testid="an-oldest">{{ tm.oldest.title }}{% if tm.oldest.org %}, {{ tm.oldest.org }}{% endif %}</a>, {{ tm.oldest.days }} days</span></div>{% endif %}
     </div>
   </div>
+  {% set pc = r.pace %}
+  <details class="an-fold" data-k-fold data-testid="an-pace-fold"{% if view == 'table' %} open{% endif %}>
+  <summary>{{ w.pace_title }}</summary>
+  <div class="an-pace" data-testid="an-pace">
+    <div class="an-wk an-chart" role="img" aria-label="{{ w.pace_title }}: {{ pc.total }} in {{ pc.bars|length }} weeks">
+      {%- for bar in pc.bars %}<div data-tip="Week of {{ bar.label }}: {{ bar.n }}"><u style="height: {{ bar.height }}%"></u></div>{% endfor -%}
+    </div>
+    <div class="an-wkl an-chart">{% for bar in pc.bars %}<span>{% if loop.first or loop.last or loop.index0 % 4 == 0 %}{{ bar.label }}{% endif %}</span>{% endfor %}</div>
+    <div class="an-table"><table class="an-at"><thead><tr><th>Week of</th><th class="c">Count</th></tr></thead><tbody>
+      {%- for bar in pc.bars %}<tr><td>{{ bar.label }}</td><td class="c">{{ bar.n }}</td></tr>{% endfor -%}
+    </tbody></table></div>
+    <div class="an-sub an-pad">{{ pc.total }} sent in {{ pc.bars|length }} weeks.
+      {% if pc.to_sent_median is not none %}Shortlist to sent takes {{ pc.to_sent_median }} days at the median, from {{ pc.to_sent_n }}.{% else %}Shortlist to sent: {{ few_cell(pc.to_sent_n) }}{% endif %}</div>
+  </div>
+  </details>
+</section>
+
+<section class="k-card an-card an-moved" data-testid="an-models-card">
+  {{ card_head('models', 'How Kestrel is running') }}
+  <p class="an-sub">Scoring quality, run time and online spend moved to Models, next to the settings that change them.</p>
+  <div><a class="k-btn k-btn--sm" href="/models">Open Models</a></div>
+</section>
+</div>
 </div>

@@ -123,7 +123,7 @@ async def _add_slots(session: AsyncSession, section_id: int, slots: list) -> Non
 async def seed_resume_master(session: AsyncSession) -> int:
     master = DocMaster(
         track="employment",
-        name="Jordan Rivera — Resume",
+        name="Jordan Rivera, resume",
         doc_kind="resume",
         header={
             "name": "Jordan A. Rivera",
@@ -324,7 +324,7 @@ async def seed_resume_master(session: AsyncSession) -> int:
 async def seed_capability_master(session: AsyncSession) -> int:
     master = DocMaster(
         track="consulting",
-        name="Jordan Rivera — Capability",
+        name="Jordan Rivera, capability statement",
         doc_kind="capability_statement",
         header={
             "name": "Jordan A. Rivera",

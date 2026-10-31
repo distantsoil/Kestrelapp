@@ -1,0 +1,78 @@
+{# The groups (D-UI-102): suggested companies, then one collapsible group per kind of source,
+   then Paused. Rows are uniform; the switch and Details are the only controls on one. #}
+{% import "partials/sources_macros.html" as sm %}
+{% import "ui/macros.html" as ui %}
+<div class="src-groups" id="src-list"{% if oob_list %} hx-swap-oob="outerHTML"{% endif %} data-testid="source-groups" data-track="{{ track }}">
+  {% if consent_held %}
+  <div class="src-note" role="status" data-testid="consent-held-note">{{ consent_held }} source check{{ '' if consent_held == 1 else 's' }} waiting for your confirmation. The model or online service changed. Choose Check all now to review and approve the current destination.</div>
+  {% endif %}
+  {% if checking %}
+  <div class="src-note" role="status" data-testid="checking-note" hx-get="/sources/list" hx-trigger="every 6s [srcPollOk()]" hx-target="#src-list" hx-swap="outerHTML">{{ ui.icon('scan', 'k-ic--sm') }} Checking {{ checking }} source{{ '' if checking == 1 else 's' }}. Each row updates when its check finishes.</div>
+  {% endif %}
+
+  {% if suggestions %}
+  <section class="src-grp is-open src-sug" data-g="sug" data-testid="group-sug">
+    <div class="src-grph">
+      <button type="button" class="src-gtog" data-src-collapse="sug" aria-expanded="true" aria-label="Show or hide Suggested companies">{{ ui.icon('chev') }}</button>
+      <span class="k-badge k-badge--good">{{ ui.icon('scan') }}</span>
+      <div class="src-gtx"><h3>Suggested {{ 'companies to watch' if track == 'consulting' else 'companies' }} <span class="src-cnt">{{ suggestions | length }}</span></h3>
+        <div class="src-sub">Based on {{ 'companies you work with' if track == 'consulting' else 'roles you shortlisted and applied to' }}. Nothing is added until you say so.</div></div>
+    </div>
+    <div class="src-gbody"><div class="src-gin"><div class="src-sugs">
+      {%- for sg in suggestions %}
+      <div class="src-sugc" data-testid="suggestion">
+        {{ sm.mono(sg.name) }}
+        <div class="src-rn"><div class="src-nm">{{ sg.name }}</div><div class="src-ty">{{ sg.reason }}</div></div>
+        <button type="button" class="k-btn k-btn--primary k-btn--sm" hx-post="/sources/suggestions/add" hx-vals='{{ {"name": sg.name} | tojson }}' hx-target="#src-list" hx-swap="outerHTML" data-busy-text="Looking…" data-testid="suggestion-add">Add</button>
+        <button type="button" class="k-btn k-btn--sm" hx-post="/sources/suggestions/dismiss" hx-vals='{{ {"name": sg.name} | tojson }}' hx-target="#src-list" hx-swap="outerHTML" data-testid="suggestion-dismiss">Dismiss</button>
+      </div>
+      {%- endfor %}
+    </div></div></div>
+  </section>
+  {% endif %}
+
+  {% for g in groups %}
+  {% call sm.group(g.key, g.title, g.note, g.icon, g.views, g.add) %}
+    {% if g.key == 'boards' %}
+      {% if generated %}
+      <div class="src-line" data-testid="your-searches">
+        <span>Searches from your profile: <span class="k-pill {{ 'k-pill--good' if generated_on else '' }}" data-testid="searches-state">{{ 'On' if generated_on else 'Off' }}</span>. They are rebuilt when you save your <a class="k-link" href="/profile?tab=employment">profile</a>.</span>
+        <form hx-post="/sources/searches" hx-target="#sources-panel" hx-swap="outerHTML">
+          <input type="hidden" name="enable" value="{{ '0' if generated_on else '1' }}">
+          <button class="k-btn k-btn--sm{{ '' if generated_on else ' k-btn--primary' }}" type="submit" data-testid="searches-switch">{{ 'Turn searching off' if generated_on else 'Turn searching on' }}</button>
+        </form>
+      </div>
+      {% elif not g.views %}
+      <p class="src-line src-line--text" data-testid="no-searches">Your searches come from <a class="k-link" href="/profile?tab=employment">Profile &gt; Employment</a> and Location: add the job titles you want and where, and they appear here.</p>
+      {% endif %}
+    {% elif g.key == 'ats' %}
+      {% if found_boards %}
+      <p class="src-line" data-testid="found-boards">{{ found_boards }} company board{{ '' if found_boards == 1 else 's' }} found in your searches{% if found_boards >= found_cap %} (the most Kestrel adds is {{ found_cap }}){% endif %}. Each is read straight from the company, once a day. Turn one off and it stays off.</p>
+      {% endif %}
+      <p class="src-note">Unrelated titles are skipped before storage and counted on each run. Uncertain matches are kept.</p>
+      {% if lane_message %}<div class="src-note" data-testid="lane-result">{{ lane_message }}</div>{% endif %}
+      {% if lane.waiting %}
+      <div class="src-lane" data-testid="lane" x-data="{ confirming: false }">
+        <p data-testid="lane-waiting">Waiting: {{ lane.waiting }} role{{ '' if lane.waiting == 1 else 's' }} from earlier runs. Kestrel rechecks their area and title before scoring. Clear mismatches are set aside. These roles use local models only.{% if lane.hosted %} Choose local models for both scoring tiers to score the remaining roles.{% else %} Remaining roles score when Kestrel is idle.{% endif %}
+          <button class="k-btn k-btn--sm" type="button" data-testid="lane-score-now" x-show="!confirming" @click="confirming = true">Score everything now</button></p>
+        <div class="src-confirm" x-show="confirming" x-cloak data-testid="lane-confirm">
+          <p><b>Recheck {{ lane.waiting }} waiting role{{ '' if lane.waiting == 1 else 's' }} and score matches locally?</b></p>
+          {% if lane.hosted %}<p data-testid="lane-sends">Nothing will be sent to an online model. Choose local models for both scoring tiers first.</p>
+          {% endif %}
+          <p>On a local model this takes your computer about <b>{{ lane.time }}</b> (up to {{ lane.waiting }} roles at about {{ lane.seconds }} seconds each{{ '' if lane.measured else ', a rough figure because not enough roles have been scored yet' }}), and it will be busy meanwhile.</p>
+          <p>This happens once. Any remaining backlog waits for local scoring when Kestrel is idle.</p>
+          <button class="k-btn k-btn--primary k-btn--sm" type="button" hx-post="/sources/score-everything" hx-vals='{{ {"confirm": "1", "model": lane.model, "dest": lane.dest, "online_approval": lane.approval_json} | tojson }}' hx-target="#sources-panel" hx-swap="outerHTML" data-testid="lane-confirm-yes">Yes, score them all now</button>
+          <button class="k-btn k-btn--sm" type="button" @click="confirming = false">Cancel</button>
+        </div>
+      </div>
+      {% endif %}
+    {% elif g.key == 'sig' and consulting %}
+      <p class="src-line" data-testid="sec-titles-row"><label class="src-check"><input type="checkbox" name="on" value="1" data-testid="sec-titles" hx-post="/sources/sec-titles" hx-trigger="change" hx-target="#sources-panel" hx-swap="outerHTML"{% if sec_titles_on %} checked{% endif %}> {{ sec_titles_label }}</label></p>
+    {% endif %}
+  {% endcall %}
+  {% endfor %}
+
+  {% if paused %}{{ sm.group('paused', 'Paused', 'Kept with their settings. Turn one on to include it in runs again.', 'minus', paused, none, open=False) }}{% endif %}
+
+  <div class="src-none" id="src-none" hidden data-testid="src-none">No sources match. <button type="button" class="k-link" data-src-clear>Clear the filters</button></div>
+</div>

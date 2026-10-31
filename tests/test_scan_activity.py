@@ -84,6 +84,10 @@ def _no_ollama(monkeypatch):
     deps.set_ui_scheme_cache(None)
 
 
+def _ago_iso(**kw) -> str:
+    return iso(datetime.now(UTC) - timedelta(**kw))
+
+
 def _src(name: str = "Board", **kw) -> Source:
     return Source(track="employment", kind="jobspy", name=name, enabled=True, **kw)
 
@@ -323,7 +327,7 @@ def test_scan_button_idle_and_scanning_states():
     asyncio.run(_seed([_src()]))
     with _client() as c:
         idle = c.get("/scan/button").text
-    assert 'data-testid="scan-now"' in idle and "Scan now" in idle
+    assert 'data-testid="scan-now"' in idle and "Run now" in idle
     assert "every 5s" not in idle  # no polling while idle
 
     asyncio.run(_seed([_src(), Task(type="scrape", status="pending", payload={"source_id": 1}),
@@ -349,7 +353,7 @@ def test_scan_start_queues_every_enabled_search_and_says_when_there_is_none():
     asyncio.run(_seed())
     with _client() as c:
         empty = c.post("/scan/start").text
-    assert "Scan now" in empty and "No searches are on" in empty
+    assert "Run now" in empty and "No searches are on" in empty
 
 
 def test_cancel_scan_cancels_pending_and_lets_the_leased_one_finish():
@@ -563,7 +567,7 @@ def test_now_line_scanning_scoring_idle_and_paused():
                            "Nothing to do; results land in Pipeline.")
 
     asyncio.run(_seed())
-    assert _now()["line"] == "Idle. No scan yet; press Scan now to run the first one."
+    assert _now()["line"] == "Idle. No scan yet; press Run now to run the first one."
 
     at = iso(datetime.now(UTC).replace(hour=14, minute=5))
     asyncio.run(_seed([Run(name=runlog.APP_RUN_NAME, status="done",
@@ -585,37 +589,40 @@ def test_quarantine_is_stated_apart_from_pending_work():
                                   error="finish_reason: length")]))
     now = _now()
     assert now["state"] == "scoring" and now["quarantined"] == 2
-    assert now["quarantine"] == ("2 postings failed scoring. The model ran out of room. "
+    assert now["quarantine"] == ("2 postings need another try. The model ran out of room. "
                                  "Retry them, or pick another model on Models.")
     with _client() as c:
         page = c.get("/").text
         partial = c.get("/today/now").text
     # Today shows the run panel in place of the Now line (D-UI-59); the line's partial stays.
-    assert 'data-testid="today-run"' in page and 'data-testid="today-now"' not in page
-    assert "2 postings failed scoring" in page.split('data-testid="today-asks"')[1]
+    assert 'data-testid="td-strip"' in page and 'data-testid="today-now"' not in page
     assert 'hx-get="/today/now"' in partial
     assert "Scoring: 1 posting waiting for the quick screen" in partial
 
 
 # ---------------------------------------------------------------------------------- Runs page
-def test_runs_page_shows_a_running_run_and_recent_scans():
+def test_runs_page_shows_a_running_run_and_its_searches():
     asyncio.run(_seed([
         _src("Indeed VP IT"),
-        ScrapeRun(source_id=1, status="ok", counts={"new": 5}, finished_at=utcnow_iso()),
-        ScrapeRun(source_id=1, status="failed", error="HTTP 429", counts={}),
         Run(name=runlog.APP_RUN_NAME, status="running", mode="local",
+            started_at=_ago_iso(minutes=10),
             counts={"scrape": {"completed": 1, "errors": 0, "new": 5}}),
+        ScrapeRun(source_id=1, status="ok", counts={"new": 5}, started_at=_ago_iso(minutes=9),
+                  finished_at=_ago_iso(minutes=8)),
+        ScrapeRun(source_id=1, status="failed", error="HTTP 429", counts={},
+                  started_at=_ago_iso(minutes=7), finished_at=_ago_iso(minutes=6)),
         Task(type="scrape", status="pending", payload={"source_id": 1}),
     ]))
     with _client() as c:
         page = c.get("/runs").text
         live = c.get("/runs", headers={"HX-Request": "true"}).text
     for html in (page, live):
-        latest = html.split('data-testid="latest-run"')[1].split('data-testid="recent-scans"')[0]
-        assert "<b>Running</b>" in latest and "Scan: 1 search, 5 new" in latest
-        scans = html.split('data-testid="recent-scans"')[1]
-        assert "Indeed VP IT" in scans and "HTTP 429" in scans and ">5<" in scans
-        assert "<td>Scan</td>" in html
+        card = html.split('data-testid="run-live"')[1].split('data-region="history"')[0]
+        assert "Running now" in card and 'data-run="active"' in card
+        assert "5 found so far" in card
+        events = card.split('data-testid="run-events"')[1].split("</ul>")[0]
+        assert "was rate-limited; it is retried next run" in events  # plain words, never "HTTP 429"
+        assert "HTTP 429" not in html
 
 
 def test_runs_page_empty_says_when_a_run_is_recorded():
@@ -623,7 +630,7 @@ def test_runs_page_empty_says_when_a_run_is_recorded():
     with _client() as c:
         html = c.get("/runs").text
     assert "A run is recorded when the worker has something to scan or score." in html
-    assert "No scans yet." in html
+    assert "No runs yet." in html
 
 
 _STICKY_HARNESS = r"""
@@ -703,6 +710,9 @@ def test_toast_markup_is_a_link_with_a_warning_tone_and_stays_announced():
     assert '<a data-toast-text data-testid="toast-link"></a>' in html
     assert "'/opportunities?new_today=1'" in html and "sticky: true" in html
     style = html.split("<style>")[1].split("</style>")[0]
-    assert '#kestrel-toast[data-tone="warn"] { border-left-color: var(--warn); }' in style
+    # The mockup's toast look (a filled chip at the bottom); the warning tone fills amber.
+    warn = ('#kestrel-toast[data-tone="warn"] '
+            '{ background: var(--warn-bg); color: var(--warn-ink); }')
+    assert warn in style
     # Marked seen only when shown, as before.
     assert html.index("setSeen(ev);\n        var n") > html.index("Marked seen only when shown")

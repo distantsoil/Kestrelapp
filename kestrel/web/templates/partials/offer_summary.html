@@ -1,0 +1,10 @@
+{# "Ahead on ..." for each open offer: where it is the single best on a row weighted Matters or
+   higher. It reflects the operator's weights and ratings; there is no winner badge. #}
+{% from "ui/macros.html" import icon %}
+<section class="k-card of-sum" id="of-summary" data-testid="of-summary">
+  <header class="k-sec-head"><span class="k-badge">{{ icon('tune') }}</span><div class="k-grow"><h3>Weighted by what matters to you</h3></div></header>
+  <div class="of-wsum">
+    {%- for x in (summary or []) %}<div class="of-wbox"><b title="{{ x.name }}">{{ x.name }}</b><p>{{ x.text }}</p></div>{% endfor -%}
+  </div>
+  <p class="of-foot">This reflects your weights and ratings, not advice. Change a weight and it updates.</p>
+</section>

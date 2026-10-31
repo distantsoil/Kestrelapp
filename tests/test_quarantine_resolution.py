@@ -183,7 +183,7 @@ async def test_every_surface_agrees_across_kinds_of_failure(sm, monkeypatch):
         asks = await system_asks(s, get_settings(), None)
     assert (summary.scoring, summary.rescore, summary.other) == (2, 1, 2)
     ask = next(a for a in asks if a["key"] == "quarantine")
-    assert ask["title"] == "4 postings failed scoring; score again failed for 1"
+    assert ask["title"] == "4 postings need another try; score again failed for 1"
     assert "Its earlier score stands." in ask["line"] and "—" not in ask["line"]
     del errored
 
@@ -331,28 +331,27 @@ def _picked(body: str, value: str) -> bool:
 
 
 def _row_html(page: str, qid: int) -> str:
-    start = page.index(f'<td class="mono">{qid}</td>')
-    return page[start:page.index("</tr>", start)]
+    """One row of Needs another try: from its element to the next row (or the end of the list)."""
+    start = page.index(f'id="rt-row-{qid}"')
+    nxt = page.find('id="rt-row-', start + 10)
+    return page[start:nxt if nxt != -1 else len(page)]
 
 
-def test_retry_opens_the_score_again_dialog_on_the_model_that_failed(monkeypatch):
+def test_the_page_lists_each_role_once_and_the_score_again_dialog_still_opens_on_the_failed_model(
+    monkeypatch,
+):
     client, ids = _client(monkeypatch)
     page = client.get("/quarantine").text
-    # The banner is the one "needs you" number: three roles (the scored one once).
-    assert "3 need you. Try them again" in page
+    # One row per role (the scored role's two failures are one row), the pill counts roles.
+    assert "<h1>Needs another try</h1>" in page and "3 roles waiting" in page
+    for key in ("q2", "q1", "q3"):
+        assert f'id="rt-row-{ids[key]}"' in page, key
+    assert f'id="rt-row-{ids["q_rescore"]}"' not in page  # folded into the newer failure's row
+    # Try again re-queues in place (D-UI-104); the model menu loads on demand; the dialog opens
+    # on the model that failed only from the Score again dialog now (D-UI-71 stays for it).
     row = _row_html(page, ids["q2"])
-    assert 'hx-get="/rescore/choose"' in row and 'action="/rescore/choose"' in row
-    assert f'name="model" value="{FAILED_MODEL}"' in row
-    assert f'name="quarantine_id" value="{ids["q2"]}"' in row and "Retry…" in row
-    assert "hx-post=\"/quarantine/" not in row  # never a silent re-run of the same model
-    # Tier 1: the promotion goes on to a full review, so it opens on the full-review model.
-    row1 = _row_html(page, ids["q1"])
-    assert 'hx-get="/rescore/choose"' in row1 and 'name="model"' not in row1
-    # A failed score-again opens on its own model, which is offered: "A different model" picked.
-    rrow = _row_html(page, ids["q_rescore"])
-    assert 'name="model" value="kestrel-other"' in rrow and "Try again…" in rrow
-    # Tier 3 keeps the plain retry, which explains that escalation is operator-confirmed.
-    assert f'hx-post="/quarantine/{ids["q3"]}/retry"' in _row_html(page, ids["q3"])
+    assert f'hx-post="/quarantine/{ids["q2"]}/retry"' in row and "Try again" in row
+    assert f'hx-get="/quarantine/{ids["q2"]}/models"' in row
     assert "—" not in page
 
     hx = {"HX-Request": "true"}
@@ -408,8 +407,9 @@ def test_submitting_queues_an_operator_request_and_counts_the_attempt(monkeypatc
     assert task.payload["rescore"] is True
     assert task.payload["model_override"]["model"] == "kestrel-other:latest"
     assert q.attempts == 3 and stage == "quarantined"  # the stage moves when the score lands
-    # Now queued: the row says so instead of offering Retry again.
-    assert 'data-testid="retry-queued"' in _row_html(client.get("/quarantine").text, ids["q2"])
+    # Now queued: the row says so instead of offering Try again.
+    row = _row_html(client.get("/quarantine").text, ids["q2"])
+    assert 'data-testid="retry-queued"' in row and "Trying again" in row
 
 
 def test_retry_works_without_script(monkeypatch):
@@ -417,8 +417,9 @@ def test_retry_works_without_script(monkeypatch):
     page = client.get("/rescore/choose", params={"opp_ids": ids["t2"], "model": FAILED_MODEL,
                                                  "quarantine_id": ids["q2"],
                                                  "next": "/quarantine", "page": "1"}).text
-    assert "Score 1 role again" in page and "Score again · Kestrel" in page
-    assert '<dialog class="score-again-dialog" data-testid="score-again-dialog" open' in page
+    assert "Score this role again?" in page and "Score again · Kestrel" in page
+    assert ('<dialog class="score-again-dialog sf-dialog" data-testid="score-again-dialog" open'
+            in page)
     assert 'method="post" action="/rescore"' in page and 'hx-post="/rescore"' not in page
     # The dialog's own script stays out of the no-script page. (Match its own code, not
     # "showModal": the shell's quit dialog uses that too when the desktop shell is on.)
@@ -431,7 +432,7 @@ def test_retry_works_without_script(monkeypatch):
                     follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/quarantine?outcome=no_pick&n=0"
     refused = client.get(r.headers["location"]).text
-    assert 'class="warnbox" role="status" data-testid="retry-note"' in refused
+    assert 'class="rt-banner is-warn" role="status" data-testid="retry-note"' in refused
     assert "Not queued: pick a model, or choose Same model." in refused
     r = client.post("/rescore", data={"opp_ids": str(ids["t2"]), "model_choice": "same",
                                       "quarantine_id": str(ids["q2"]),
@@ -439,7 +440,7 @@ def test_retry_works_without_script(monkeypatch):
                     follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/quarantine?outcome=queued&n=1"
     landed = client.get(r.headers["location"]).text
-    assert 'class="okbox" role="status" data-testid="retry-note"' in landed
+    assert 'class="rt-banner is-good" role="status" data-testid="retry-note"' in landed
     assert "Queued 1 role for scoring." in landed
     # Free text in the URL is never shown; an unknown code shows nothing.
     page = client.get("/quarantine", params={"note": "Call this number", "outcome": "x"}).text

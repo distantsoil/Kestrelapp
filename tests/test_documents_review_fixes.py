@@ -131,3 +131,14 @@ def test_the_specs_name_the_indigo_brand_not_orange():
     ui = (root / "SPEC-INTERFACES.md").read_text(encoding="utf-8")
     web = ui.split("## 2. Web UI", 1)[1][:600]
     assert "#4F5BD5" in web and "#D4622A" not in web and "Orange" not in web
+
+
+def test_hostile_slot_key_error_comes_back_as_plain_text_never_html():
+    render_id, _ = _seed_tailor()
+    r = _client().post(f"/renders/{render_id}/swap",
+                       data={"slot_key": "<img src=x onerror=alert(1)>", "variant_key": "a"})
+    assert r.status_code == 400
+    assert r.headers["content-type"].startswith("text/plain")
+    assert "<img" in r.text  # shown as text by the toast, which only uses textContent
+    assert _client().get("/renders/999999/download").headers["content-type"].startswith(
+        "text/plain")

@@ -58,7 +58,7 @@ def test_comp_display_and_fallback():
 
 
 def test_tier1_employment_leaves_no_placeholder():
-    spec = load_prompt("triage/v1")
+    spec = load_prompt("triage/v2")
     opp = _emp_opp()
     profile = load_profile("employment")
     values = build_tier1_values(
@@ -73,7 +73,7 @@ def test_tier1_employment_leaves_no_placeholder():
 
 
 def test_tier2_employment_leaves_no_placeholder_and_shows_history():
-    spec = load_prompt("evaluate/v1")
+    spec = load_prompt("evaluate/v2")
     opp = _emp_opp()
     profile = load_profile("employment")
     values = build_tier2_values(
@@ -88,7 +88,7 @@ def test_tier2_employment_leaves_no_placeholder_and_shows_history():
 
 
 def test_consulting_trigger_event_shows_trigger_hides_posting():
-    spec = load_prompt("triage_consulting/v1")
+    spec = load_prompt("triage_consulting/v2")
     opp = _emp_opp()
     opp.opp_type = "trigger_event"
     opp.description_md = None
@@ -108,7 +108,7 @@ def test_consulting_trigger_event_shows_trigger_hides_posting():
 
 
 def test_consulting_eval_renders_org_signals_line():
-    spec = load_prompt("evaluate_consulting/v1")
+    spec = load_prompt("evaluate_consulting/v2")
     opp = _emp_opp()
     opp.opp_type = "contract_posting"
     profile = load_profile("consulting")

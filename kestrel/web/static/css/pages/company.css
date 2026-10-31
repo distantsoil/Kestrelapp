@@ -1,0 +1,223 @@
+/* Company page (D-UI-123). Page styles for /orgs/{id}, built on tokens.css and components.css:
+   token colors only (tests/test_ui_tokens.py), every class prefixed co-. The look follows
+   the locked design mockup (kept privately) */
+
+/* The wrapper is the container the shared @container rules measure (the main column). */
+.co-wrap { container-type: inline-size; min-width: 0; }
+.co-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px; min-width: 0; }
+.co-page, .co-page * { box-sizing: border-box; }
+.co-page .k-scene { margin: 0; padding: 4px 0 10px; }
+.co-crumb { font-size: var(--fs-sm); color: var(--muted); }
+.co-crumb a { color: var(--link-ink); text-decoration: none; }
+.co-crumb a:hover { text-decoration: underline; }
+
+/* ----------------------------------------------------------------- header facts and Hide */
+.co-mono { display: inline-grid; place-items: center; width: 48px; height: 48px;
+  border-radius: 13px; background: var(--brand); color: var(--brand-ink); font-size: 17px;
+  font-weight: 800; letter-spacing: .02em; flex: none; margin-right: 14px; vertical-align: middle; }
+.co-page .k-scene__title h1 { display: inline-flex; align-items: center; }
+.co-meta { margin: 0; padding-left: 62px; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
+  color: var(--muted); font-size: 13px; }
+.co-meta span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.co-meta .k-ic { width: 14px; height: 14px; }
+.co-meta a { color: var(--link-ink); font-weight: 700; display: inline-flex; align-items: center;
+  gap: 5px; text-decoration: none; }
+.co-meta a:hover { text-decoration: underline; }
+.co-actions { display: inline-flex; gap: 8px; align-items: center; }
+.co-actions .k-btn { white-space: nowrap; min-width: 170px; justify-content: center; }
+.co-banner { display: grid; grid-template-rows: 0fr; margin-bottom: -14px;
+  transition: grid-template-rows .3s var(--ease), margin .3s var(--ease); }
+.co-banner.is-on { grid-template-rows: 1fr; margin-bottom: 0; }
+.co-banner > * { overflow: hidden; min-height: 0; }
+.co-banner__in { display: flex; align-items: center; gap: 12px; background: var(--tint-warn);
+  border: 1px solid var(--tint-warn-line); border-radius: var(--r-md); padding: 10px 14px;
+  font-weight: 600; }
+.co-page:has(.co-banner.is-on) .co-body { opacity: .55; transition: opacity .3s var(--ease); }
+
+.co-count { font-size: 12px; font-weight: 800; border-radius: 10px; padding: 1px 8px;
+  background: var(--soft); color: var(--link-ink); margin-left: 4px; }
+.co-none { color: var(--muted); padding: 6px 0; margin: 0; }
+.co-foot { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+.co-kind { margin: 14px 0 4px; font-size: 11px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); }
+.co-kind:first-of-type { margin-top: 0; }
+.co-kind--gap { margin-top: 18px; }
+.co-dl { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 1px; }
+.co-det { margin-top: 12px; }
+.co-det summary { cursor: pointer; font-size: 13px; color: var(--link-ink); font-weight: 600; }
+.co-dtx { margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.6; max-width: 760px; }
+.co-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--soft);
+  border-top-color: var(--brand); animation: co-spin .8s linear infinite; display: none;
+  flex: none; }
+@keyframes co-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .co-spin { animation: none; } .co-banner { transition: none; } }
+
+/* --------------------------------------------------------------------------- open roles */
+.co-role { display: grid; grid-template-columns: minmax(0, 1fr) 112px 62px 96px; gap: 14px;
+  align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+.co-role:first-of-type { border-top: 0; padding-top: 4px; }
+.co-rt { min-width: 0; }
+.co-rt b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 15px; }
+.co-rs { display: flex; align-items: center; gap: 10px; margin-top: 3px; min-width: 0;
+  color: var(--muted); font-size: 13px; }
+.co-rs > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0; flex: 0 1 auto; }
+.co-role .k-pill { justify-self: start; white-space: nowrap; }
+.co-score { font-weight: 800; font-size: 16px; text-align: right; white-space: nowrap; }
+.co-score small { color: var(--muted); font-weight: 500; font-size: 12px; }
+.co-open { justify-self: end; white-space: nowrap; }
+.co-chk { position: relative; display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  font-weight: 700; border-radius: 20px; padding: 1px 9px; white-space: nowrap; cursor: help;
+  flex: none; }
+.co-chk .k-ic { width: 13px; height: 13px; stroke-width: 2.2; }
+.co-chk.is-ok { background: var(--good-bg); color: var(--good-ink); }
+.co-chk.is-stale { background: var(--warn-bg); color: var(--warn-ink); }
+.co-chk.is-closed { background: var(--soft); color: var(--muted); }
+.co-chk:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.co-tip { position: absolute; left: 0; bottom: calc(100% + 8px); width: 300px; background: var(--ink);
+  color: var(--paper); font-weight: 500; font-size: 12.5px; line-height: 1.45; padding: 9px 11px;
+  border-radius: var(--r-md); opacity: 0; pointer-events: none; transform: translateY(4px);
+  transition: opacity .2s, transform .2s; z-index: 6; white-space: normal; }
+.co-chk:hover .co-tip, .co-chk:focus-visible .co-tip { opacity: 1; transform: none; }
+
+/* --------------------------------------------------------------------------- the summary */
+.co-sum { min-width: 0; }
+.co-notice { background: var(--tint-info); border: 1px solid var(--tint-info-line);
+  border-radius: var(--r-md); padding: 8px 12px; margin: 4px 0 10px; font-size: 13px; }
+.co-ab p { margin: 0; font-size: 15px; line-height: 1.65; max-width: 900px; }
+.co-sup { position: relative; display: inline-block; vertical-align: super; font-size: 10.5px;
+  line-height: 1; font-weight: 800; color: var(--link-ink); cursor: pointer; margin: 0 1px 0 2px;
+  text-decoration: none; }
+.co-sup:hover { text-decoration: underline; }
+.co-sup::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px);
+  transform: translate(-50%, 4px); background: var(--ink); color: var(--paper); font-size: 12px;
+  font-weight: 500; line-height: 1.4; padding: 6px 9px; border-radius: var(--r-md);
+  white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  z-index: 6; }
+.co-sup:hover::after, .co-sup:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+.co-ab3, .co-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.co-ab3 { margin: 14px 0 10px; }
+.co-stats { margin-bottom: 16px; }
+.co-ab3 > div, .co-stats > div { border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 9px 12px; background: var(--paper); min-width: 0; }
+.co-ab3 b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.co-stats b { font-size: 16px; white-space: nowrap; }
+.co-hire { display: flex; align-items: center; gap: 8px; font-size: 14px; min-width: 0; }
+.co-hire .k-ic { width: 16px; height: 16px; color: var(--brand); flex: none; }
+.co-abf { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.co-abt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.co-abf .k-link { font-size: 12.5px; background: none; border: 0; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; }
+.co-refresh.is-busy { pointer-events: none; opacity: .8; }
+.co-refresh.is-busy .co-spin { display: inline-block; }
+.co-abno, .co-few, .co-knempty { display: flex; align-items: center; gap: 14px;
+  border: 1.5px dashed var(--line); border-radius: var(--r-lg); padding: 16px; color: var(--muted); }
+.co-abno b, .co-few b, .co-knempty b { display: block; color: var(--ink); font-size: 15px;
+  margin-bottom: 2px; }
+.co-wait { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 8px 0; }
+.co-wait .co-spin { display: inline-block; }
+.co-ask { border: 1px solid var(--tint-warn-line); background: var(--tint-warn);
+  border-radius: var(--r-md); padding: 12px 14px; margin: 6px 0 12px; }
+.co-ask p, .co-ask ul { margin: 6px 0; font-size: 13.5px; }
+.co-ask ul { padding-left: 18px; }
+.co-ask__acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
+/* --------------------------------------------------------------- what Kestrel knows, pay */
+.co-fh, .co-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 250px) 88px;
+  gap: 14px; align-items: center; }
+.co-fh { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); padding: 0 0 6px; }
+.co-fh span:last-child, .co-row .co-dt { text-align: right; }
+.co-row { padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.co-tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.co-src { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  font-size: 13px; color: var(--link-ink); font-weight: 600; display: flex; align-items: center;
+  gap: 5px; text-decoration: none; }
+.co-src.is-plain { color: var(--muted); }
+.co-src span { overflow: hidden; text-overflow: ellipsis; }
+.co-src:hover span { text-decoration: underline; }
+.co-src .k-ic { width: 13px; height: 13px; flex: none; }
+.co-dt { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.co-rn { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--soft); color: var(--link-ink); font: 800 10.5px/1 var(--font);
+  font-style: normal; margin-right: 8px; vertical-align: 1px; }
+.co-row.is-flash { animation: co-flash 1.4s ease; }
+@keyframes co-flash { 0% { background: var(--tint-info); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .co-row.is-flash { animation: none; } }
+.co-bar { position: relative; height: 12px; border-radius: 8px; background: var(--soft);
+  margin-top: 4px; }
+.co-bar__w { position: absolute; top: 5px; height: 2px; background: var(--muted); opacity: .6; }
+.co-bar__m { position: absolute; top: 0; height: 12px; border-radius: 7px; background: var(--brand);
+  opacity: .85; }
+.co-bar__d { position: absolute; top: -3px; width: 4px; height: 18px; border-radius: 2px;
+  background: var(--ink); transform: translateX(-50%); }
+.co-sc { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted);
+  margin-top: 5px; }
+
+/* ------------------------------------------------------------------------------ people */
+.co-av { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--soft); color: var(--link-ink); font-weight: 800; font-size: 13px; flex: none; }
+.co-kn, .co-person { display: grid; gap: 12px; align-items: center; padding: 10px 0;
+  border-top: 1px solid var(--line); }
+.co-kn { grid-template-columns: 36px minmax(0, 1fr) minmax(0, max-content) auto; }
+.co-person { grid-template-columns: 36px minmax(0, 1fr) minmax(0, 260px) auto; }
+.co-kind + .co-kn { border-top: 0; }
+.co-pn { min-width: 0; }
+.co-pn b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.co-pn span { display: block; font-size: 13px; color: var(--muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.co-how, .co-seen { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; }
+.co-kn .co-how { overflow: visible; text-overflow: clip; max-width: 560px; }
+.co-acts { display: flex; gap: 6px; }
+.co-acts .k-btn { white-space: nowrap; }
+.co-note { display: flex; align-items: flex-start; gap: 10px; background: var(--tint-info);
+  border: 1px solid var(--tint-info-line); border-radius: var(--r-md); padding: 10px 12px;
+  margin: 12px 0 0; font-size: 13px; }
+.co-note .k-ic { width: 18px; height: 18px; color: var(--brand); flex: none; margin-top: 1px; }
+.co-knempty { padding: 18px; }
+.co-knempty .k-grow b { font-size: 16px; }
+.co-t { color: var(--muted); font-size: 13.5px; }
+.co-draft { margin: 8px 0; background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 12px 14px; font-size: 14px; line-height: 1.6;
+  white-space: pre-wrap; color: var(--ink); font-family: inherit; }
+
+/* ------------------------------------------------------------------------------ history */
+.co-hist { display: grid; grid-template-columns: minmax(0, 1fr) 110px 150px; gap: 14px;
+  align-items: center; padding: 11px 0; border-top: 1px solid var(--line); }
+.co-hist:first-of-type { border-top: 0; padding-top: 2px; }
+.co-hist .co-rt span { display: block; font-size: 13px; color: var(--muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.co-hist .k-pill { justify-self: start; white-space: nowrap; }
+.co-research summary { cursor: pointer; font-weight: 700; }
+.co-pre { white-space: pre-wrap; margin: 8px 0; }
+
+/* The mockup's container rules: the stat and tile rows keep three columns at every width the
+   mockup shows (it has no rule that stacks them); the help column stack comes from the shared
+   .k-layout. */
+@container (max-width: 1100px) {
+  .co-kn, .co-person { grid-template-columns: 36px minmax(0, 1fr) auto; }
+  .co-how, .co-seen { display: none; }
+}
+
+/* Card headers: the title at the left, its sub-line right-aligned on the same row (mockup .co-h3r). */
+.co-body .k-sec-head > .k-grow { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; align-self: center; min-width: 0; }
+.co-body .k-sec-head > .k-grow > p { margin: 0; text-align: right; min-width: 0; font-size: 13px; }
+.co-edge { border-left: 4px solid var(--brand); }
+/* The pay card's "Typical $X" label floats above the range bar at the typical mark. */
+.co-pt { position: relative; height: 16px; font-size: 11.5px; font-weight: 700; color: var(--ink);
+  white-space: nowrap; transform: translateX(-50%); width: max-content; margin-top: 6px; }
+/* Sections rise in, one after the other, when the page opens (mockup co-sec-in). */
+.co-body > section:not(#co-sum) { animation: k-inUp .4s var(--ease) backwards; }
+.co-body > section:nth-child(2) { animation-delay: .06s; }
+.co-body > section:nth-child(3) { animation-delay: .12s; }
+.co-body > section:nth-child(4) { animation-delay: .18s; }
+.co-body > section:nth-child(n+5) { animation-delay: .24s; }
+@media (prefers-reduced-motion: reduce) { .co-body > section:not(#co-sum) { animation: none; } }
+
+/* "More about this" reads with a chevron (mockup help links). */

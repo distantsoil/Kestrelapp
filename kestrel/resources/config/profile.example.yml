@@ -11,7 +11,8 @@
 employment:
   track: employment
   is_active: true
-  full_name: "Jordan A. Rivera"
+  first_name: "Jordan"
+  last_name: "Rivera"
   email: "jordan.rivera@example.com"
   phone: "+1-614-555-0142"
   location: "Columbus, OH"
@@ -52,6 +53,7 @@ employment:
     anti_titles: []            # empty: no title is excluded
     seniority_floor: ""        # blank: any level (nothing is hidden for its level)
     comp_floor_usd:            # blank: no pay floor
+    comp_floor_margin_pct: 5   # keep roles up to this percent under the floor: 0 (exact), 2, 5, 10 or 15
     comp_target_usd: 70000
     excluded_employment_types: []
   geo_rules: &geo_rules
@@ -66,7 +68,8 @@ employment:
 consulting:
   track: consulting
   is_active: true
-  full_name: "Jordan A. Rivera"
+  first_name: "Jordan"
+  last_name: "Rivera"
   email: "jordan.rivera@example.com"
   phone: "+1-614-555-0142"
   location: "Columbus, OH"
@@ -96,6 +99,7 @@ consulting:
       metric: "2 days to 2 hours"
   consulting_terms:
     day_rate_floor:
+    day_rate_floor_margin_pct: 5   # 0 (exact), 2, 5, 10 or 15
     day_rate_target: 600
     min_engagement_days:
     max_concurrent: 2

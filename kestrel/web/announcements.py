@@ -6,14 +6,10 @@ again. This is the only registry: add an entry here, do not add a second banner 
 
 from __future__ import annotations
 
-ANNOUNCEMENTS: tuple[dict[str, str], ...] = (
-    {
-        "id": "ui-refresh-2026",
-        "text": (
-            "A refreshed look is coming. Your data stays as it is."
-        ),
-    },
-)
+# Empty on purpose: the refreshed-look notice (D-UI-82) was removed once the redesign shipped
+# (D-UI-157). Add {"id": ..., "text": ...} here for a future notice; the route and the Today
+# slot already handle it.
+ANNOUNCEMENTS: tuple[dict[str, str], ...] = ()
 
 DISMISSED_KEY = "ui.announcements_dismissed"
 

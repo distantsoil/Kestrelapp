@@ -1,0 +1,45 @@
+{# Scoring and learning (D-UI-108): what matters most, what Kestrel has learned, your ratings.
+   All learning uses only your ratings and stays on this computer. #}
+{% import "partials/st_macros.html" as st with context %}
+{% set pane = 'scoring' %}
+{% include "partials/st_trackbar.html" %}
+{% include "partials/st_weights.html" %}
+{% include "partials/st_learned.html" %}
+<section class="k-card st-card" id="st-ratings" data-testid="st-ratings">
+  {{ st.head('Your ratings', 'up') }}
+  <div class="st-hact st-hact--first">
+    <a class="k-btn k-btn--sm k-btn--primary" href="/settings/scoring/export" download data-testid="st-export">{{ st.sic('dl', 'k-ic--sm') }}Export my ratings</a>
+    <span class="st-dsm">Includes your employer name unless Confidential mode is on.</span>
+  </div>
+</section>
+<section class="k-dz st-dz" id="st-forget-dz" aria-labelledby="st-forget-t">
+  <div class="k-dz__head">{{ st.sic('warn', 'k-ic--lg') }}<span id="st-forget-t">Danger zone</span></div>
+  <div class="k-dz__body">
+    <div class="k-dz__row"><div class="k-grow"><b>Forget my ratings</b><span class="st-dsm">Choose what Kestrel forgets. Roles, scores, applications and documents are kept.</span></div></div>
+    <div class="st-cks" data-testid="st-forget-opts">
+      <label class="st-ck"><input type="checkbox" checked data-st-forget="ratings"> Your ratings</label>
+      <label class="st-ck"><input type="checkbox" checked data-st-forget="model"> Your own sorting model</label>
+      <label class="st-ck"><input type="checkbox" checked data-st-forget="weights"> Suggested weight changes</label>
+    </div>
+    <div class="st-hact"><button type="button" class="k-btn k-btn--sm k-btn--danger" id="st-forget-open" data-testid="st-forget-open" data-k-modal="#st-forget-dialog">Forget my ratings</button></div>
+  </div>
+</section>
+{% import "ui/macros.html" as ui %}
+<div class="k-modal" id="st-forget-dialog" role="dialog" aria-modal="true" aria-labelledby="st-forget-dialog-t" aria-hidden="true" data-k-static>
+  <div class="k-modal__head"><h2 id="st-forget-dialog-t">Forget my ratings?</h2></div>
+  <form id="st-forget-form" hx-post="/settings/scoring/forget" hx-target="#st-forget-res" hx-swap="innerHTML">
+    <div class="k-modal__body">
+      <p class="st-dsm">This permanently removes:</p>
+      <ul class="st-lst" id="st-forget-list"></ul>
+      <input type="hidden" name="ratings" value="off" data-st-fg="ratings"><input type="hidden" name="model" value="off" data-st-fg="model"><input type="hidden" name="weights" value="off" data-st-fg="weights">
+      <div class="st-keep">{{ st.sic('info') }}<div class="k-grow"><b>Roles, scores, applications and documents are kept.</b></div></div>
+      <label class="st-dsm st-lbl" for="st-forget-reset">Type {{ reset_word }} to continue</label>
+      <input class="k-input" id="st-forget-reset" name="confirm" autocomplete="off" placeholder="{{ reset_word }}" data-testid="st-forget-reset">
+      <div id="st-forget-res" role="status"></div>
+    </div>
+    <div class="k-modal__foot">
+      <button type="button" class="k-btn" data-k-close>Cancel</button>
+      <button type="submit" class="k-btn k-btn--danger" id="st-forget-go" disabled data-testid="st-forget-go">Forget</button>
+    </div>
+  </form>
+</div>

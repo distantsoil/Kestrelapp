@@ -17,7 +17,7 @@ dependencies = [
   "httpx",
   "playwright",
   "markdownify",
-  "pypdf",
+  "pypdf>=6.21.2",
   "python-docx",  # .docx import (kestrel.docs.convert); .pdf goes through pypdf above
 
   # Rules / config
@@ -61,10 +61,10 @@ dependencies = [
   "pywebview",
   "pythonnet; sys_platform == 'win32'",
   "pystray",
-  "pillow",
+  "pillow>=13.0.0",
   # MCP + notifications (win11toast is the Windows toast; macOS and Linux use osascript and
   # notify-send through kestrel.services.delivery)
-  "fastmcp",
+  "fastmcp>=3.4.10,<4",
   "win11toast; sys_platform == 'win32'",
 ]
 
@@ -73,6 +73,7 @@ dev = [
   "ruff",
   "pytest",
   "pytest-asyncio",
+  "pytest-xdist>=3.8,<4",
   "respx",
   "pyinstaller",
 ]
@@ -90,6 +91,14 @@ packages = ["kestrel"]
 "kestrel/resources" = "kestrel/resources"
 "kestrel/llm/prompts" = "kestrel/llm/prompts"
 "kestrel/db/migrations" = "kestrel/db/migrations"
+
+[tool.uv]
+constraint-dependencies = [
+  "certifi>=2026.10.19",
+  "filelock>=4.2.1",
+  "opentelemetry-api>=1.45.1",
+  "setuptools>=84.1.0",
+]
 
 [tool.ruff]
 line-length = 100

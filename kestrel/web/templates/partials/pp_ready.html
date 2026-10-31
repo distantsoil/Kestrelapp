@@ -1,0 +1,19 @@
+{# The readiness strip: the ring counts the questions that have a story. #}
+{% import "partials/pp_icons.html" as i %}
+{% set r = 26 %}
+<div class="pp-ready" id="pp-ready"{% if oob %} hx-swap-oob="true"{% endif %} data-testid="pp-ready">
+  <div class="pp-tile pp-tile--ring">
+    <svg class="pp-ring" viewBox="0 0 64 64" role="img" aria-label="{{ have }} of {{ total }} questions have a story">
+      <circle class="pp-ring__bg" cx="32" cy="32" r="26"/>
+      <circle class="pp-ring__fg" cx="32" cy="32" r="26" stroke-dasharray="{{ ring_circ }}" stroke-dashoffset="{{ (ring_circ * (1 - (have / total if total else 0)))|round(2) }}" transform="rotate(-90 32 32)"/>
+      <text x="32" y="37" text-anchor="middle">{{ have }}/{{ total }}</text>
+    </svg>
+    <div><b data-testid="pp-ring-text">{% if total and have == total %}Every question has a story{% else %}{{ have }} of {{ total }} questions have a story{% endif %}</b>
+      <span>{{ 'Their likely questions on the call' if con else 'Questions they are likely to ask' }}</span></div>
+  </div>
+  <div class="pp-tile"><span class="k-badge k-badge--warn">{{ i.pi('alert') }}</span><div><b data-testid="pp-need">{{ need }}</b><span>Questions still need a story</span></div></div>
+  <div class="pp-tile"><span class="k-badge">{{ i.pi('ask') }}</span><div><b data-testid="pp-ask-n">{{ ask_on }}</b><span>Questions you will ask them</span></div></div>
+  <div class="pp-tile"><span class="k-badge k-badge--tier">{{ i.pi('clock') }}</span>
+    <div>{% if when.days is not none %}<b>{{ when.days if when.days > 0 else 0 }} {{ 'day' if when.days == 1 else 'days' }}</b><span>{% if when.days < 0 %}Since the {{ 'call' if con else 'interview' }} date{% else %}Until the {{ 'call' if con else 'interview' }}{% endif %}</span>
+      {%- else %}<b>Not set</b><span>No {{ 'call' if con else 'interview' }} date on the application</span>{% endif %}</div></div>
+</div>

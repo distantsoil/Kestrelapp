@@ -19,7 +19,7 @@ from kestrel.db.models import Source
 from kestrel.ingest import board_discovery
 from kestrel.ingest.base import RawPosting
 from kestrel.ingest.employer_page import MAX_PAGE_BYTES, parse_job_posting
-from kestrel.ingest.http import HttpClient
+from kestrel.ingest.http import HttpClient, UnsafeURLError
 
 log = structlog.get_logger()
 
@@ -49,9 +49,9 @@ async def _read_page(url: str, http: HttpClient) -> RawPosting | None:
             return None
         r = await http.request(
             "GET", url, check_robots=True, follow_redirects=False, retries=1,
-            rate_per_sec=_PAGE_RATE,
+            rate_per_sec=_PAGE_RATE, public_only=True,
         )
-    except (PermissionError, httpx.HTTPError) as exc:
+    except (PermissionError, httpx.HTTPError, UnsafeURLError) as exc:
         log.debug("employer_link.unreadable", error=type(exc).__name__)
         return None
     if r.status_code != 200 or len(r.content) > MAX_PAGE_BYTES:

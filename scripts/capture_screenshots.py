@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -104,7 +105,9 @@ def _real_identity_terms() -> list[str]:
         for track in data.values():
             if not isinstance(track, dict):
                 continue
-            for key in ("full_name", "email", "phone", "location", "headline"):
+            for key in (
+                "first_name", "last_name", "full_name", "email", "phone", "location", "headline",
+            ):
                 val = track.get(key)
                 if isinstance(val, str) and len(val.strip()) > 3:
                     terms.append(val.strip())
@@ -170,13 +173,11 @@ async def _seed(sm) -> dict:
         Pursuit,
         Quarantine,
         Run,
-        Setting,
         Source,
         StatusEvent,
     )
     from kestrel.docs.seed import _ensure_layouts
     from kestrel.services import onboarding as ob
-    from kestrel.web.deps import GUIDES
 
     ids: dict = {}
     async with sm() as s:
@@ -259,6 +260,17 @@ async def _seed(sm) -> dict:
                             "growth": {"score": score, "why": "Clear path to a broader remit."},
                         },
                         blocks={
+                            "b_fit": {
+                                "matches": [
+                                    {"requirement": "Runs a multi-site operations team",
+                                     "evidence": "Led a 40 person operations group.",
+                                     "strength": "strong"},
+                                ],
+                                "gaps": [
+                                    {"requirement": "Vendor contract negotiation",
+                                     "note": "Not shown in the resume text."},
+                                ],
+                            },
                             "reason": "Strong scope match against the operator's stated targets."
                             if score >= 3.5
                             else "Partial match: the scope is narrower than the stated targets."
@@ -363,7 +375,6 @@ async def _seed(sm) -> dict:
         await _ensure_layouts(s)
         # A finished onboarding, so "/" is Today and "/setup" is Settings > System.
         await ob.save(s, ob.OnboardingState(completed=True, completed_at=now.isoformat()))
-        s.add(Setting(key="ui.guides_dismissed", value=[k for k in GUIDES if k != "today"]))
 
         s.add(
             Run(
@@ -501,16 +512,16 @@ async def _capture() -> int:
                             page, name, theme, full=name in full_page, expect_orgs=expect_orgs
                         )
 
-                    # Settings > Hosted (BYOK): the tab loads its panel over HTMX, so click the
-                    # tab and wait for the panel's own heading. No key is connected yet, which is
-                    # exactly the state a new operator sees (the connect happens further down).
-                    await page.goto(f"{base}/settings", wait_until="networkidle")
-                    await page.click("button:has-text(\"Hosted (BYOK)\")")
-                    await page.wait_for_selector("#hosted-panel #mode-switch", timeout=10_000)
+                    # Settings > This computer: the section loads its checklist over HTMX, so
+                    # open it by its anchor and wait for the checklist's own card. Online keys
+                    # live on Models now, so this is the page a new operator sees first.
+                    await page.goto(f"{base}/settings#computer", wait_until="networkidle")
+                    await page.wait_for_selector("#st-chk", timeout=10_000)
+                    await page.wait_for_selector("#st-everyday", timeout=10_000)
                     await page.wait_for_timeout(400)
-                    html = await snap(page, "settings-hosted", theme)
-                    if "Run Kestrel on" not in html or "hosted-assignments" not in html:
-                        failures.append(f"settings-hosted-{theme}.png: the Hosted panel is missing")
+                    html = await snap(page, "settings-computer", theme)
+                    if "Everyday options" not in html or "st-chk" not in html:
+                        failures.append(f"settings-computer-{theme}.png: the section is missing")
 
                     # The render review page. /renders/new creates a DocRender (a real PDF) and
                     # redirects to it. A render failure is not fatal: the shot would be misleading,
@@ -601,9 +612,17 @@ def main() -> int:
     try:
         return asyncio.run(_capture())
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-        # Report what actually happened. ignore_errors=True plus an unconditional success message
-        # would claim the seed was deleted while a held SQLite handle left it on disk.
+        # The server has exited by now, but Windows can hold the SQLite handles for a moment.
+        for _ in range(5):
+            try:
+                shutil.rmtree(tmp)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(1)
+        # Report what actually happened rather than claiming success while a handle kept the
+        # seed database on disk.
         if tmp.exists():
             print(
                 f"WARNING: the seed database could NOT be deleted; remove it by hand: {tmp}",

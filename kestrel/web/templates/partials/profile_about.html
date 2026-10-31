@@ -1,33 +1,72 @@
-{# About you, per track (D-UI-21). Writes the personal block of profile.yml. #}
+{# About you, per track (D-UI-21, D-UI-117). Writes the personal block of profile.yml. The
+   onboarding wizard includes this same form with ob_* set. #}
+{% import "ui/macros.html" as ui %}
 <form hx-post="{{ form_post or ('/profile/' ~ track ~ '/about') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
-      class="panel" data-testid="profile-about" data-busy-text="Saving…"
-      {% if ob_require_name %}x-data="{ named: {{ 'true' if block.full_name else 'false' }} }"{% endif %}>
-  <h2 style="margin-top:0">About you <span class="badge">{{ track }}</span></h2>
-  <div class="formgrid">
-    <label for="pa-name">Full name</label>
-    <input id="pa-name" type="text" name="full_name" value="{{ block.full_name or '' }}" autocomplete="name"
-           {% if ob_require_name %}@input="named = $el.value.trim() !== ''"{% endif %}>
-    <label for="pa-email">Email</label>
-    <input id="pa-email" type="email" name="email" value="{{ block.email or '' }}" autocomplete="email">
-    <label for="pa-phone">Phone</label>
-    <input id="pa-phone" type="text" name="phone" value="{{ block.phone or '' }}" autocomplete="tel">
-    <label for="pa-loc">Home location</label>
-    <input id="pa-loc" type="text" name="location" value="{{ block.location or '' }}" placeholder="Columbus, OH">
-    <label for="pa-head">Headline</label>
-    <input id="pa-head" type="text" name="headline" value="{{ block.headline or '' }}"
-           placeholder="One line, as on your resume">
-    <label for="pa-auth">Work authorization</label>
-    <input id="pa-auth" type="text" name="work_auth" value="{{ block.work_auth or '' }}" placeholder="US citizen">
-    <label for="pa-spon">Visa sponsorship</label>
-    <span><input id="pa-spon" type="checkbox" name="requires_sponsorship" value="on" {% if block.requires_sponsorship %}checked{% endif %}>
-      Check this if you need an employer to sponsor your visa.
-      <span class="muted">When checked, postings that say they cannot sponsor are rejected.</span></span>
-    <label for="pa-must">Must have</label>
-    <textarea id="pa-must" name="must_have" rows="3" placeholder="One per line">{{ (block.must_have or []) | join('\n') }}</textarea>
-    <label for="pa-avoid">Must avoid</label>
-    <textarea id="pa-avoid" name="must_avoid" rows="3" placeholder="One per line">{{ (block.must_avoid or []) | join('\n') }}</textarea>
-  </div>
-  <p class="muted" style="margin:.5rem 0 0">Must-have and must-avoid are read by the scoring
-    model, not the hard filters: a miss lowers the score, it does not reject.</p>
+      class="pf-form" data-pf-form data-testid="profile-about" data-busy-text="Saving…"
+      {% if ob_require_name %}x-data="{ named: {{ 'true' if block.first_name else 'false' }} }"{% endif %}>
+  {% call ui.section_card('You', 'profile', sub='Printed at the top of your resume and capability statement. Shown as ' ~ track ~ '.') %}
+    {% if not ob_next %}{% include "partials/profile_photo.html" %}{% endif %}
+    <div class="pf-grid">
+      <div class="pf-f">
+        <label for="pa-first">First name</label>
+        <input class="k-input" id="pa-first" type="text" name="first_name" value="{{ block.first_name or '' }}" autocomplete="given-name" required
+               {% if ob_require_name %}@input="named = $el.value.trim() !== ''"{% endif %}>
+        <small class="pf-hint">Required. Kestrel greets you by it.</small>
+      </div>
+      <div class="pf-f">
+        <label for="pa-last">Last name</label>
+        <input class="k-input" id="pa-last" type="text" name="last_name" value="{{ block.last_name or '' }}" autocomplete="family-name">
+        <small class="pf-hint">Optional.</small>
+      </div>
+      <div class="pf-f">
+        <label for="pa-head">Headline</label>
+        <input class="k-input" id="pa-head" type="text" name="headline" value="{{ block.headline or '' }}" placeholder="One line, as on your resume">
+        {% if not block.headline %}<small class="pf-hint" data-testid="headline-hint">Type it here once. A resume import does not fill this in; it prints under your name on every document.</small>{% endif %}
+      </div>
+      <div class="pf-f">
+        <label for="pa-email">Email</label>
+        <input class="k-input" id="pa-email" type="email" name="email" value="{{ block.email or '' }}" autocomplete="email">
+      </div>
+      <div class="pf-f">
+        <label for="pa-phone">Phone</label>
+        <input class="k-input" id="pa-phone" type="text" name="phone" value="{{ block.phone or '' }}" autocomplete="tel">
+      </div>
+      <div class="pf-f">
+        <label for="pa-loc">Home location</label>
+        <input class="k-input" id="pa-loc" type="text" name="location" value="{{ block.location or '' }}" placeholder="Columbus, OH">
+      </div>
+    </div>
+  {% endcall %}
+  {% call ui.section_card('Work authorization', 'shield', 'good', sub='Read by the filters and the scoring model.') %}
+    <div class="pf-grid">
+      <div class="pf-f">
+        <label for="pa-auth">Work authorization</label>
+        <input class="k-input" id="pa-auth" type="text" name="work_auth" value="{{ block.work_auth or '' }}" placeholder="US citizen">
+      </div>
+      <div class="pf-f">
+        <label for="pa-spon">Visa sponsorship</label>
+        <span class="pf-check"><input id="pa-spon" type="checkbox" name="requires_sponsorship" value="on" {% if block.requires_sponsorship %}checked{% endif %}>
+          <span>Check this if you need an employer to sponsor your visa.</span></span>
+        <small class="pf-hint">When checked, postings that say they cannot sponsor are rejected.</small>
+      </div>
+    </div>
+  {% endcall %}
+  {% call ui.section_card('What you want and what you avoid', 'tune', 'warn', sub='One per line. Read by the scoring model, not the hard filters: a miss lowers the score, it does not reject.') %}
+    <div class="pf-grid">
+      <div class="pf-f">
+        <label for="pa-must">Must have</label>
+        <textarea class="k-input" id="pa-must" name="must_have" rows="3" placeholder="One per line">{{ (block.must_have or []) | join('\n') }}</textarea>
+      </div>
+      <div class="pf-f">
+        <label for="pa-avoid">Must avoid</label>
+        <textarea class="k-input" id="pa-avoid" name="must_avoid" rows="3" placeholder="One per line">{{ (block.must_avoid or []) | join('\n') }}</textarea>
+      </div>
+    </div>
+  {% endcall %}
+  {% if not ob_next and conf is defined %}
+  {% call ui.section_card('Keep my search private', 'lock', 'warn', sub='Confidential mode swaps your current employer for a neutral label in documents and lists.') %}
+    {% include "partials/profile_confidential.html" %}
+  {% endcall %}
+  {% endif %}
   {% include "partials/profile_save_row.html" %}
 </form>

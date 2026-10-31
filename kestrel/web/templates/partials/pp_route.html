@@ -1,0 +1,26 @@
+{# Where the next answer is critiqued, and the confirmation that rides on the page. The hidden
+   fields below are what the answer route re-checks on the server: Hosted mode, the model, and the
+   confirmation. Nothing is stored; a reload goes back to this computer. #}
+{% import "partials/pp_icons.html" as i %}
+<div class="pp-runon" id="pp-route" data-testid="pp-route"{% if route.native and not confirmed %} data-needs-confirm="1"{% endif %}>
+  {%- if confirmed %}<input type="hidden" name="confirmed" value="1">{% endif %}
+  {%- if confirmed and picked %}<input type="hidden" name="route_model" value="{{ picked }}">{% endif %}
+  {%- if confirmed and picked %}<input type="hidden" name="online_approval" value='{{ online_approval|default("{}") }}'>{% endif %}
+  {%- if confirmed and route.native %}<input type="hidden" name="route_model_native" value="{{ route.model }}"><input type="hidden" name="dest" value="{{ route.dest }}">{% endif %}
+  {%- if route_error %}<span class="pp-warn" role="alert">{{ route_error }}</span>{% endif %}
+  {%- if route.native %}
+    <span class="k-pill k-pill--info" data-testid="pp-online-pill">Online model · {{ route.provider }}</span>
+    <span class="k-muted">Set in Models.</span>
+    {%- if not confirmed %}<a class="k-link" href="#" role="button" hx-get="/mock/{{ opp_id }}/online" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-confirm-online">See what is sent</a>{% endif %}
+  {%- elif confirmed and picked %}
+    <span class="k-pill k-pill--info" data-testid="pp-online-pill">Online model · {{ picked_name or picked }}</span>
+    <a class="k-link" href="#" role="button" hx-get="/mock/{{ opp_id }}/route" hx-target="#pp-route" hx-swap="outerHTML" data-testid="pp-go-local">Switch back to my computer</a>
+  {%- else %}
+    <span class="k-pill k-pill--good" data-testid="pp-local-pill">{{ i.pi('check', 'k-ic--sm') }}Runs on your computer</span>
+    {%- if route.can_switch %}
+    <a class="k-link" href="#" role="button" hx-get="/mock/{{ opp_id }}/online" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="pp-go-online">Use an online model instead</a>
+    {%- else %}
+    <span class="k-muted">Online models need Hosted mode, which is off. <a class="k-link" href="/models">Open Models</a></span>
+    {%- endif %}
+  {%- endif %}
+</div>

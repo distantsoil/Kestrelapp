@@ -98,8 +98,8 @@ def _pursuit(pid: int):
 
 def _column(html: str, label: str) -> str:
     """The HTML of one board column, by heading."""
-    parts = html.split('<div class="col"')
-    return next(p for p in parts[1:] if f">{label} <" in p)
+    parts = html.split('data-testid="apps-col"')
+    return next(p for p in parts[1:] if f'data-col-label="{label}"' in p.split(">", 1)[0])
 
 
 # -------------------------------------------------------------------------- columns per track
@@ -120,13 +120,14 @@ def test_board_has_four_employment_columns_and_places_cards():
     _seed(status="ghosted", title="Ghost role")
     with c:
         html = c.get("/pursuits").text
-    for label in ("My shortlist", "Applied", "Interviewing", "Offer / Closed"):
-        assert f">{label} <" in html
-    assert "Prep role" in _column(html, "My shortlist")
+    for label in ("To apply", "Applied", "Interviewing", "Offer / Closed"):
+        assert f'data-col-label="{label}"' in html
+    assert "Prep role" in _column(html, "To apply")
     assert "Screen role" in _column(html, "Applied")
     assert "Final role" in _column(html, "Interviewing")
     assert "Ghost role" in _column(html, "Offer / Closed")
-    assert "Kestrel never applies for you. Add roles here, tailor the resume" in html
+    # D-UI-100: the page has no lede line; the promise lives in Help and About.
+    assert "Kestrel never applies for you" not in html and 'data-testid="never-applies"' not in html
     assert "<h1" in html and ">Applications</h1>" in html
 
 
@@ -137,33 +138,36 @@ def test_board_has_four_consulting_columns():
     with c:
         html = c.get("/pursuits?track=consulting").text
     for label in ("To contact", "In conversation", "Proposal", "Won / Closed"):
-        assert f">{label} <" in html
+        assert f'data-col-label="{label}"' in html
     assert "Lead A" in _column(html, "To contact")
     assert "Lead B" in _column(html, "Proposal")
-    assert ">Leads</h1>" in html and "Reached out?" not in _column(html, "Proposal")
+    assert ">Leads</h1>" in html and "Reached out" not in _column(html, "Proposal")
 
 
 def test_leads_board_uses_consulting_words_and_employment_is_unchanged():
-    """D-UI-54: the first column is "To contact", the button "Reached out?" (green "Reached out"
-    once pressed); employment keeps "My shortlist" and "Applied?"."""
+    """D-UI-54: the first column is "To contact", the button "Reached out" (green "Reached out"
+    once pressed); employment keeps "To apply" and "I applied"."""
     c = _fresh(consulting=True)
     _, lead = _seed(track="consulting", status="shortlisted", title="Lead")
     _seed(status="shortlisted", title="Role")
     with c:
         leads = c.get("/pursuits?track=consulting").text
         jobs = c.get("/pursuits").text
-        assert ">To contact <" in leads and "My shortlist" not in leads.split("<main")[1]
-        assert "Reached out?" in _column(leads, "To contact")
-        assert "Applied?" not in leads and "Add to my leads" in leads
-        assert "Kestrel never contacts anyone for you. Add leads here" in leads
-        assert ">My shortlist <" in jobs and "Applied?" in _column(jobs, "My shortlist")
-        assert "Reached out" not in jobs and "Add to my shortlist" in jobs
+        assert 'data-col-label="To contact"' in leads and 'data-col-label="To apply"' not in leads
+        assert 'data-step-key="applied"' in _column(leads, "To contact")
+        assert ">Reached out</button>" in _column(leads, "To contact")
+        assert "I applied" not in leads and "Add a lead I found elsewhere" in leads
+        assert "Import past leads" in leads
+        assert 'data-col-label="To apply"' in jobs
+        assert ">I applied</button>" in _column(jobs, "To apply")
+        assert "Reached out</button>" not in jobs and "Add a role I found elsewhere" in jobs
         done = c.post(f"/pursuits/{lead}/act/applied/quick", data={}).text
-        assert "\u2713 Reached out" in done and "Applied" not in done
-    assert pb.done_label(pb.VERB_LABELS["consulting"]["applied"]) == "\u2713 Reached out"
-    assert pb.done_label(pb.VERB_LABELS["employment"]["applied"]) == "\u2713 Applied"
+        assert "✓ Reached out" in done and "Applied" not in done
+    assert pb.done_label(pb.VERB_LABELS["consulting"]["applied"]) == "✓ Reached out"
+    assert pb.done_label(pb.VERB_LABELS["employment"]["applied"]) == "✓ Applied"
     assert pb.stage_name("shortlisted") == "My shortlist"
     assert pb.stage_name("shortlisted", "consulting") == "To contact"
+    assert pb.stage_label("shortlisted") == "Shortlisted"
 
 
 def test_table_view_still_renders():
@@ -171,8 +175,8 @@ def test_table_view_still_renders():
     _seed(status="applied", title="Table role")
     with c:
         html = c.get("/pursuits?view=table").text
-    assert '<table class="data">' in html and "Table role" in html
-    assert 'class="kanban' not in html
+    assert 'data-testid="apps-table"' in html and "Table role" in html
+    assert 'data-testid="apps-board-grid"' not in html
 
 
 # --------------------------------------------------------------------------------- nav label
@@ -232,16 +236,20 @@ def _add_render(opp_id: int) -> int:
 
 def test_i_applied_form_offers_this_roles_renders_without_file_names():
     c = _fresh()
-    opp_id, _ = _seed()
+    opp_id, pid = _seed()
     rid = _add_render(opp_id)
     with c:
-        html = c.get("/pursuits").text
+        board = c.get("/pursuits").text
+        html = c.get(f"/pursuits/{pid}/panel?form=applied").text
     assert f'<option value="{rid}" selected>Exec resume' in html
-    assert "None / not tailored" in html and "Acme-secret" not in html
+    assert "None / not tailored" in html
+    assert "Acme-secret" not in html and "Acme-secret" not in board
     # Tailor opens the drawer's own entry (a render of the track's resume), with the way back
     # here; /opportunities/{id}/tailor is a bare partial and never a link target.
+    assert f"/renders/new?master_id=1&amp;opportunity_id={opp_id}&amp;from=/pursuits" in board
     assert f"/renders/new?master_id=1&amp;opportunity_id={opp_id}&amp;from=/pursuits" in html
-    assert f"/opportunities/{opp_id}/tailor" not in html
+    bare = f"/opportunities/{opp_id}/tailor"
+    assert bare not in html and bare not in board
     assert (date.today() + timedelta(days=7)).isoformat() in html  # follow-up default
 
 
@@ -269,8 +277,8 @@ def test_i_applied_with_a_custom_date_and_no_document():
     c = _fresh()
     _, pid = _seed()
     with c:
-        html = c.get("/pursuits").text
-        assert '<details class="datedisc pform">' in html and 'name="applied_on"' in html
+        html = c.get(f"/pursuits/{pid}/panel?form=applied").text
+        assert '<details class="ap-disc">' in html and 'name="applied_on"' in html
         c.post(f"/pursuits/{pid}/act/applied", data={
             "document_id": "", "applied_on": "2026-10-01", "follow_up": ""})
     p, _ = _pursuit(pid)
@@ -317,7 +325,7 @@ def test_applied_column_verbs():
         p, events = _pursuit(pid)
         assert p.status == "interviewing" and p.next_action == "Interview"
         assert p.next_action_at == f"{when.isoformat()}T10:00"
-        assert f"interview {when.strftime('%b')} {when.day} 10:00" in c.get("/pursuits").text
+        assert f"{when.strftime('%b')} {when.day}, 10:00 AM" in c.get("/pursuits").text
         assert "Choose the interview date" in c.post(
             f"/pursuits/{pid}/act/interview", data={}).text
         c.post(f"/pursuits/{pid}/act/offer", data={})
@@ -334,12 +342,14 @@ def test_closing_verbs_and_outcome_capture():
         p, _ = _pursuit(pid)
         assert p.status == "rejected" and p.closed_at
         html = c.get("/pursuits").text
-        assert "Record outcome" in _column(html, "Offer / Closed")
+        assert "Closed · 1" in _column(html, "Offer / Closed")
+        form = c.get(f"/pursuits/{pid}/panel?form=outcome").text
+        assert 'name="final_status"' in form and 'name="furthest_stage"' in form
         r = c.post(f"/pursuits/{pid}/outcome", data={
             "final_status": "withdrawn", "furthest_stage": "interviewing",
             "rejection_reason": "comp too low", "days_to_first_response": "4"},
             headers={"HX-Request": "true"})
-        assert "Outcome recorded" in r.text and "Outcome recorded</div>" in r.text
+        assert "Outcome saved" in r.headers["HX-Trigger"] and 'data-testid="board"' in r.text
     p, events = _pursuit(pid)
     assert (p.status, p.outcome, p.outcome_reason, p.outcome_stage) == (
         "withdrawn", "withdrawn", "comp too low", "interviewing")
@@ -351,7 +361,7 @@ def test_consulting_verbs():
     _, pid = _seed(track="consulting", status="researching", title="Lead")
     with c:
         html = c.get("/pursuits?track=consulting").text
-        assert "Reached out?" in html and "Tailor capability statement" in html
+        assert 'data-step-key="applied"' in html and "Capability statement" in html
         c.post(f"/pursuits/{pid}/act/applied", data={"applied_on": "2026-10-10"})
         p, _ = _pursuit(pid)
         assert p.status == "outreach_sent" and p.next_action == "Follow up"
@@ -461,7 +471,7 @@ def test_add_by_paste_creates_opportunity_pursuit_event_and_queues_scoring():
         r = c.post("/pursuits/add", data={"text": text, "org_name": "Tidal", "track": "employment"},
                    headers={"HX-Request": "true"})
         assert r.status_code == 200 and "Added to your list" in r.text
-        assert "VP of Infrastructure" in _column(r.text, "My shortlist")
+        assert "VP of Infrastructure" in _column(r.text, "To apply")
 
     async def _go(s):
         opps = (await s.execute(select(Opportunity))).scalars().all()
@@ -506,7 +516,7 @@ def test_add_by_url_fetches_once_and_reads_the_page():
     with c:
         r = c.post("/pursuits/add", data={"url": "https://jobs.example.com/roles/42"})
     assert "Added to your list" in r.text
-    assert "Director of Technology" in _column(r.text, "My shortlist")
+    assert "Director of Technology" in _column(r.text, "To apply")
     assert page.call_count == 1 and robots.called
     opp = _run(lambda s: s.scalar(select(Opportunity)))
     assert opp.title == "Director of Technology - Vestis" and opp.url.endswith("/roles/42")
@@ -526,7 +536,7 @@ def test_add_by_url_failure_is_reported_and_pasted_text_is_kept():
         kept = c.post("/pursuits/add", data={
             "url": "https://jobs.example.com/roles/9", "text": "Head of Platform\nBuild things."})
     assert "Could not read that page" in kept.text and "Using the text you pasted" in kept.text
-    assert "Head of Platform" in _column(kept.text, "My shortlist")
+    assert "Head of Platform" in _column(kept.text, "To apply")
 
 
 @respx.mock
@@ -597,7 +607,7 @@ def test_a_past_interview_asks_for_the_outcome_instead_of_counting_quiet_days():
           next_action="Interview", next_action_at=(date.today() - timedelta(days=6)).isoformat())
     with c:
         col = _column(c.get("/pursuits").text, "Interviewing")
-    assert "days quiet" not in col and "interview was" in col and "record the outcome" in col
+    assert "days quiet" not in col and "interview was" in col and "Record the outcome" in col
 
 
 def test_a_missing_org_is_never_a_dash():
@@ -615,8 +625,8 @@ def test_a_missing_org_is_never_a_dash():
     with c:
         board = c.get("/pursuits").text
         table = c.get("/pursuits?view=table").text
-    assert '<div class="meta">unknown</div>' in board
-    assert "—" not in _column(board, "My shortlist") and "<td></td>" in table
+    assert '<div class="ap-o">Unknown organization</div>' in board
+    assert "—" not in _column(board, "To apply") and "Unknown organization" in table
 
 
 @respx.mock
@@ -700,8 +710,8 @@ def test_card_remove_deletes_the_pursuit_like_the_panel_and_returns_the_board():
     _run(extras)
     with c:
         html = c.get("/pursuits").text
-        assert f'hx-post="/pursuits/{pid}/remove"' in html
-        assert f'hx-post="/pursuits/{other_pid}/remove"' in html
+        assert 'data-testid="board-remove"' in html and "Remove from Applications" in html
+        assert 'data-id="' + str(pid) + '"' in html and 'data-id="' + str(other_pid) + '"' in html
         r = c.post(f"/pursuits/{pid}/remove", headers={"HX-Request": "true"})
         assert r.status_code == 200
         assert 'data-testid="board"' in r.text and "Wrong role" not in r.text
@@ -725,27 +735,78 @@ def test_card_remove_deletes_the_pursuit_like_the_panel_and_returns_the_board():
     assert _pursuit(other_pid)[0] is not None
 
 
-def test_card_remove_confirm_is_stage_aware_and_speaks_each_track():
+def test_card_remove_asks_only_when_an_offer_would_be_lost_and_speaks_each_track():
+    from kestrel.db.models import Offer
+
     c = _fresh(consulting=True)
-    _seed(status="shortlisted", title="Fresh role")
-    _seed(status="applied", title="Applied role")
+    _, fresh = _seed(status="shortlisted", title="Fresh role")
+    _, with_offer = _seed(status="offer", title="Offer role")
     _seed(track="consulting", status="shortlisted", title="Fresh lead")
-    _seed(track="consulting", status="proposal_sent", title="Late lead")
+
+    async def offer(s):
+        s.add(Offer(pursuit_id=with_offer, base=150000))
+        await s.commit()
+
+    _run(offer)
     with c:
         emp = c.get("/pursuits").text
         con = c.get("/pursuits?track=consulting").text
 
-    def confirm(html: str, title: str) -> str:
-        card = html.split(f">{title}</a>", 1)[1].split('class="card pcard', 1)[0]
-        tag = card.split("/remove", 1)[1].split(">", 1)[0]
-        return tag.split('hx-confirm="', 1)[1].split('"', 1)[0]
+    def confirm(html: str, pid: int) -> str:
+        tag = html.split(f'data-id="{pid}"', 1)[1].split(">", 1)[0]
+        return tag.split('data-confirm="', 1)[1].split('"', 1)[0]
 
-    assert confirm(emp, "Fresh role") == "Remove this from your shortlist?"
-    assert confirm(emp, "Applied role").startswith("Remove this from your shortlist? Its status")
-    assert "cannot be undone" in confirm(emp, "Applied role")
-    assert confirm(con, "Fresh lead") == "Remove this from your leads?"
-    assert confirm(con, "Late lead").startswith("Remove this from your leads? Its status")
-    assert ">Remove from my shortlist<" in emp and ">Remove from my leads<" in con
+    assert confirm(emp, fresh) == ""  # Undo covers it
+    assert confirm(emp, with_offer) == "offer"  # an entered offer cannot be put back
+    assert "Remove from Applications" in emp and "Remove from Leads" in con
+
+
+def test_removing_a_card_can_be_undone_with_its_history_and_outcome():
+    import json
+
+    from kestrel.db.models import Outcome
+
+    c = _fresh()
+    opp_id, pid = _seed(status="applied", title="Put me back", notes_md="my notes", priority=1)
+
+    async def extras(s):
+        s.add_all([
+            StatusEvent(pursuit_id=pid, from_status=None, to_status="shortlisted"),
+            StatusEvent(pursuit_id=pid, from_status="shortlisted", to_status="applied"),
+            Outcome(pursuit_id=pid, opportunity_id=opp_id, final_status="rejected"),
+        ])
+        await s.commit()
+
+    _run(extras)
+    with c:
+        r = c.post(f"/pursuits/{pid}/remove", headers={"HX-Request": "true"})
+        trig = json.loads(r.headers["HX-Trigger"])
+        assert "Removed" in trig["k-toast"]["message"] and "apps-close-panel" in trig
+        undo_url = trig["k-toast"]["undoUrl"]
+        assert _pursuit(pid)[0] is None
+        assert c.post(undo_url).status_code == 200
+        again = c.post(undo_url)  # used up: nothing happens twice
+        assert "no longer be undone" in again.text
+    p, events = _pursuit_by_opp(opp_id)
+    assert p.status == "applied" and p.notes_md == "my notes" and p.priority == 1
+    assert [e.to_status for e in events] == ["shortlisted", "applied"]
+
+    async def outcomes(s):
+        return len((await s.execute(select(Outcome))).all())
+
+    assert _run(outcomes) == 1
+
+
+def _pursuit_by_opp(opp_id: int):
+    async def _go(s):
+        p = (await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))).scalar_one()
+        ev = (
+            await s.execute(select(StatusEvent).where(StatusEvent.pursuit_id == p.id).order_by(
+                StatusEvent.id))
+        ).scalars().all()
+        return p, ev
+
+    return _run(_go)
 
 
 def test_a_board_pref_save_racing_another_never_loses_the_choice(monkeypatch):

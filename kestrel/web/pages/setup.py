@@ -38,7 +38,7 @@ from kestrel.services import onboarding as ob
 from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.flash import flash_redirect, flash_text
 
 log = structlog.get_logger()
@@ -47,14 +47,7 @@ router = APIRouter()
 ACTIONS = ("pull", "build", "verify", "check", "cancel")
 FIRST_RUN_REDIRECT = True
 
-BANNER = (
-    '<div class="warnbox" id="finish-setup" style="display:flex;align-items:center;gap:1rem;'
-    'flex-wrap:wrap;margin-bottom:1rem"><div><b>Finish setup.</b> Kestrel is not fully set up '
-    "yet. The setup guide picks up where you left off: how Kestrel thinks, who you are, what you "
-    'want, and your first search.</div><a class="btn pri" href="/onboarding">Finish setup</a>'
-    "</div>"
-)
-# The banner goes just inside <main> (the shell's content column), or <body> when there is none.
+# The gap panel goes just inside <main> (the shell's content column), or <body> when there is none.
 _MAIN_TAG = re.compile(r"<main\b[^>]*>", re.IGNORECASE)
 _BODY_TAG = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
 
@@ -182,7 +175,7 @@ async def setup_profile(request: Request):
         return _fail(f"Unknown hardware profile: {html.escape(name)}.", 400)
     except OSError as exc:
         log.warning("setup_profile_record_failed", error_type=type(exc).__name__, error=str(exc))
-        return _fail(f"could not record the profile: {html.escape(plain_error(exc))}", 500)
+        return _fail(f"could not record the profile: {html.escape(fixed_reason(exc))}", 500)
     msg = f"Profile {name} recorded."
     if request.headers.get("HX-Request"):
         return await _system_partial(request, await setup_state(), message=msg)
@@ -267,23 +260,23 @@ async def setup_action(request: Request, name: str):
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_with_banner(request: Request):
-    """A fresh install opens the onboarding; an unfinished one gets the Finish setup banner."""
+    """A fresh install opens the onboarding. An unfinished one gets the Finish setup banner, which
+    Today prints itself (kestrel.web.pages.today, D-UI-156)."""
     from kestrel.web.pages.dashboard import dashboard
 
     async with sessionmaker()() as s:
         fresh = await ob.is_fresh_install(s)
-        done = (not fresh) and await ob.is_complete(s)
     if fresh and FIRST_RUN_REDIRECT and not request.headers.get("HX-Request"):
         return RedirectResponse("/onboarding", status_code=303)
     response = await dashboard(request)
     gap = linux_gap_html()
-    if done and not gap:
+    if not gap:
         return response
     body = bytes(response.body).decode("utf-8", "replace")
     m = _MAIN_TAG.search(body) or _BODY_TAG.search(body)
     if m is None:
         return response
-    body = body[: m.end()] + gap + ("" if done else BANNER) + body[m.end() :]
+    body = body[: m.end()] + gap + body[m.end() :]
     return HTMLResponse(body, status_code=response.status_code)
 
 

@@ -12,17 +12,17 @@
    JSON (D-UI-48): "structured" (a strict schema), "JSON mode" (JSON with the schema in the
    prompt) or "no JSON guarantee" (the prompt alone); every reply is validated the same way.
    A caller marks the combobox inert with data-combo-disabled or root.kecombo.setDisabled(bool). #}
-{% macro model_option(m, reason=None, selected=None, value_prefix='') -%}
+{% macro model_option(m, reason=None, selected=None, value_prefix='', show_id=True) -%}
 <option value="{{ value_prefix }}{{ m.id }}" data-free="{{ '1' if m.free else '0' }}"
         {%- if not m.free %} x-bind:hidden="typeof freeOnly !== 'undefined' && freeOnly"{% endif %}
         {%- if reason %} disabled title="{{ reason }}"{% endif %}
         {%- if selected and selected == m.id %} selected{% endif %}>
-  {{- m.name }}{% if m.name != m.id %} ({{ m.id }}){% endif %} · {% if m.context_length %}{{ m.context_length|comma }} context{% else %}context not listed{% endif %} · {{ m.price }}{% if m.mode_label is defined and m.mode_label %} · {{ m.mode_label }}{% endif %}{% if reason %} · unavailable: {{ reason }}{% endif -%}
+  {{- m.name }}{% if show_id and m.name != m.id %} ({{ m.id }}){% endif %} · {% if m.context_length %}{{ m.context_length|comma }} context{% else %}context not listed{% endif %} · {{ m.price }}{% if m.mode_label is defined and m.mode_label %} · {{ m.mode_label }}{% endif %}{% if reason %} · unavailable: {{ reason }}{% endif -%}
 </option>
 {%- endmacro %}
 
-{% macro model_text(m, reason=None) -%}
-{{- m.name }}{% if m.name != m.id %} ({{ m.id }}){% endif %} · {% if m.context_length %}{{ m.context_length|comma }} context{% else %}context not listed{% endif %} · {{ m.price }}{% if m.mode_label is defined and m.mode_label %} · {{ m.mode_label }}{% endif %}{% if reason %} · unavailable: {{ reason }}{% endif -%}
+{% macro model_text(m, reason=None, show_id=True) -%}
+{{- m.name }}{% if show_id and m.name != m.id %} ({{ m.id }}){% endif %} · {% if m.context_length %}{{ m.context_length|comma }} context{% else %}context not listed{% endif %} · {{ m.price }}{% if m.mode_label is defined and m.mode_label %} · {{ m.mode_label }}{% endif %}{% if reason %} · unavailable: {{ reason }}{% endif -%}
 {%- endmacro %}
 
 {# One listbox row. `uid` is unique per picker so aria-controls and aria-activedescendant resolve. #}
@@ -36,11 +36,11 @@
 
 {% macro model_select(name, models, reasons={}, local_models=[], hosted_label='Hosted',
                       placeholder='Pick a model', xmodel=None, value_prefix='', testid=None,
-                      selected=None) %}
+                      selected=None, local_labels={}, show_ids=True) %}
 {% set base = ((testid or name) ~ '-combo')|replace('.', '-')|replace('_', '-') %}
 {% set ns = namespace(sel_value='', sel_label='') %}
-{% for m in local_models if selected == m %}{% set ns.sel_value = m %}{% set ns.sel_label = m %}{% endfor %}
-{% for m in models if selected == m.id and not reasons.get(m.id) %}{% set ns.sel_value = value_prefix ~ m.id %}{% set ns.sel_label = m.name ~ ((' (' ~ m.id ~ ')') if m.name != m.id else '') %}{% endfor %}
+{% for m in local_models if selected == m %}{% set ns.sel_value = m %}{% set ns.sel_label = local_labels.get(m, m) %}{% endfor %}
+{% for m in models if selected == m.id and not reasons.get(m.id) %}{% set ns.sel_value = value_prefix ~ m.id %}{% set ns.sel_label = m.name ~ ((' (' ~ m.id ~ ')') if (show_ids and m.name != m.id) else '') %}{% endfor %}
 {# Progressive enhancement: the native select is the picker until static/js/model_combo.js runs;
    it then disables and hides the select, shows the combobox and enables the hidden input, so the
    two never both submit. The select must stay directly before the combobox root. #}
@@ -49,12 +49,12 @@
   <option value="">{{ placeholder }}</option>
   {% if local_models %}
   <optgroup label="Local (Ollama)">
-    {% for m in local_models %}<option value="{{ m }}"{% if selected == m %} selected{% endif %}>{{ m }}</option>{% endfor %}
+    {% for m in local_models %}<option value="{{ m }}"{% if selected == m %} selected{% endif %}>{{ local_labels.get(m, m) }}</option>{% endfor %}
   </optgroup>
   {% endif %}
   {% if models %}
   <optgroup label="{{ hosted_label }}">
-    {% for m in models %}{{ model_option(m, reasons.get(m.id), selected, value_prefix) }}{% endfor %}
+    {% for m in models %}{{ model_option(m, reasons.get(m.id), selected, value_prefix, show_ids) }}{% endfor %}
   </optgroup>
   {% endif %}
 </select>
@@ -76,17 +76,17 @@
     {% if local_models %}
     <div role="group" class="ke-combo-group" aria-labelledby="{{ base }}-gl">
       <div class="ke-combo-heading" id="{{ base }}-gl" role="presentation">Local (Ollama)</div>
-      {% for m in local_models %}{{ combo_option(base ~ '-opt-l' ~ loop.index, m, m, m, selected == m) }}{% endfor %}
+      {% for m in local_models %}{{ combo_option(base ~ '-opt-l' ~ loop.index, m, local_labels.get(m, m), local_labels.get(m, m), selected == m) }}{% endfor %}
     </div>
     {% endif %}
     {% if models %}
     <div role="group" class="ke-combo-group" aria-labelledby="{{ base }}-gh">
       <div class="ke-combo-heading" id="{{ base }}-gh" role="presentation">{{ hosted_label }}</div>
-      {% for m in models %}{% set why = reasons.get(m.id) %}{{ combo_option(base ~ '-opt-h' ~ loop.index, value_prefix ~ m.id, m.name ~ ((' (' ~ m.id ~ ')') if m.name != m.id else ''), model_text(m, why), selected == m.id and not why, why, m.free) }}{% endfor %}
+      {% for m in models %}{% set why = reasons.get(m.id) %}{{ combo_option(base ~ '-opt-h' ~ loop.index, value_prefix ~ m.id, m.name ~ ((' (' ~ m.id ~ ')') if (show_ids and m.name != m.id) else ''), model_text(m, why, show_ids), selected == m.id and not why, why, m.free) }}{% endfor %}
     </div>
     {% endif %}
     <div class="ke-combo-empty" data-combo-empty role="status" hidden>No model matches what you typed.</div>
   </div>
-  <script src="/static/js/model_combo.js"></script>
+  <script src="{{ static_url('js/model_combo.js') }}"></script>
 </div>
 {% endmacro %}

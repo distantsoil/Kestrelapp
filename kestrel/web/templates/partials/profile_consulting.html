@@ -1,9 +1,9 @@
 {# Consulting terms (D-UI-21): the numbers the consulting hard blockers read. #}
+{% import "ui/macros.html" as ui %}
 <form hx-post="{{ form_post or ('/profile/consulting/consulting') }}" hx-target="{{ form_target or '#profile-section' }}" hx-swap="{{ form_swap or 'innerHTML' }}"
-      class="panel" data-testid="profile-consulting" data-busy-text="Saving…">
-  <h2 style="margin-top:0">Consulting terms</h2>
+      class="pf-form" data-pf-form data-testid="profile-consulting" data-busy-text="Saving…">
   {# How this track differs (SPEC.md 5.2, 5.3): the operator asked what it actually looks for. #}
-  <details class="help" style="margin:.2rem 0 .8rem" data-testid="consulting-how">
+  <details class="pf-details" data-testid="consulting-how">
     <summary><b>How the consulting track finds work</b> (it is not a resume search)</summary>
     <p>Posted fractional and interim roles are a small market, so this track mostly works the
       other way around: it watches for <b>trigger events</b>, public facts that mean a company
@@ -23,32 +23,75 @@
       and the service lines below.</p>
   </details>
   {% if 'consulting_terms' in from_example and not saved %}
-  <p class="warnbox" style="margin:.2rem 0 .8rem" data-testid="from-example">
+  <p class="pf-note pf-note--warn" data-testid="from-example">
     <b>Not saved yet.</b> The grey text is only an example; nothing here filters a posting
     until you type your own values and save this tab.</p>
   {% endif %}
-  <div class="formgrid">
-    <label for="pc-floor">Day rate floor (USD)</label>
-    <span><input id="pc-floor" type="text" inputmode="numeric" name="day_rate_floor" value="{{ cterms.day_rate_floor or '' }}" placeholder="1800">
-      <span class="muted">An engagement priced below this is rejected (rule rate_floor). Blank: no floor.</span></span>
-    <label for="pc-target">Day rate target (USD)</label>
-    <input id="pc-target" type="text" inputmode="numeric" name="day_rate_target" value="{{ cterms.day_rate_target or '' }}" placeholder="2400">
-    <label for="pc-min">Minimum engagement (days)</label>
-    <span><input id="pc-min" type="text" inputmode="numeric" name="min_engagement_days" value="{{ cterms.min_engagement_days or '' }}" placeholder="20">
-      <span class="muted">Shorter engagements are rejected (rule too_short).</span></span>
-    <label for="pc-max">Concurrent engagements</label>
-    <input id="pc-max" type="text" inputmode="numeric" name="max_concurrent" value="{{ cterms.max_concurrent or '' }}" placeholder="2">
-    <label for="pc-lines">Service lines</label>
-    <textarea id="pc-lines" name="service_lines" rows="4" placeholder="{{ (ex_cterms.service_lines or []) | join('\n') or 'One per line' }}">{{ (cterms.service_lines or []) | join('\n') }}</textarea>
-    <label for="pc-size">Target org size</label>
-    <textarea id="pc-size" name="target_org_size" rows="2" placeholder="One per line, e.g. 100-500">{{ (cterms.target_org_size or []) | join('\n') }}</textarea>
-    <label for="pc-sect">Target sectors</label>
-    <textarea id="pc-sect" name="target_sectors" rows="3" placeholder="{{ (ex_cterms.target_sectors or []) | join('\n') or 'One per line' }}">{{ (cterms.target_sectors or []) | join('\n') }}</textarea>
-    <label for="pc-exsect">Excluded sectors</label>
-    <span><textarea id="pc-exsect" name="excluded_sectors" rows="2" style="width:100%" placeholder="One per line">{{ (cterms.excluded_sectors or []) | join('\n') }}</textarea>
-      <span class="muted">An engagement in any of these is rejected (rule excluded_sector).</span></span>
-    <label for="pc-travel">Travel tolerance</label>
-    <input id="pc-travel" type="text" name="travel_tolerance" value="{{ cterms.travel_tolerance or '' }}" placeholder="regional, up to 6 days per month">
+  <div class="pf-cols">
+    <div class="pf-stack">
+      {% call ui.section_card('What you offer', 'profile', sub='One per line.') %}
+        <div class="pf-f">
+          <label for="pc-lines">Service lines</label>
+          <textarea class="k-input" id="pc-lines" name="service_lines" rows="4" placeholder="{{ (ex_cterms.service_lines or []) | join('\n') or 'One per line' }}">{{ (cterms.service_lines or []) | join('\n') }}</textarea>
+        </div>
+        <div class="pf-grid pf-grid--2">
+          <div class="pf-f">
+            <label for="pc-sect">Target sectors</label>
+            <textarea class="k-input" id="pc-sect" name="target_sectors" rows="3" placeholder="{{ (ex_cterms.target_sectors or []) | join('\n') or 'One per line' }}">{{ (cterms.target_sectors or []) | join('\n') }}</textarea>
+          </div>
+          <div class="pf-f">
+            <label for="pc-exsect">Excluded sectors</label>
+            <textarea class="k-input" id="pc-exsect" name="excluded_sectors" rows="3" placeholder="One per line">{{ (cterms.excluded_sectors or []) | join('\n') }}</textarea>
+            <small class="pf-hint">An engagement in any of these is set aside.</small>
+          </div>
+        </div>
+        <div class="pf-f">
+          <label for="pc-size">Target org size</label>
+          <textarea class="k-input" id="pc-size" name="target_org_size" rows="2" placeholder="One per line, e.g. 100-500">{{ (cterms.target_org_size or []) | join('\n') }}</textarea>
+        </div>
+      {% endcall %}
+    </div>
+    <div class="pf-stack">
+      {% call ui.section_card('Day rate', 'offers', 'good', sub='Per day, in US dollars.') %}
+        <div class="pf-grid pf-grid--2">
+          <div class="pf-f">
+            <label for="pc-floor">Floor</label>
+            <input class="k-input" id="pc-floor" type="text" inputmode="numeric" name="day_rate_floor" value="{{ cterms.day_rate_floor or '' }}" placeholder="1800">
+            <small class="pf-hint">Blank: no floor.</small>
+          </div>
+          <div class="pf-f">
+            <label for="pc-target">Target</label>
+            <input class="k-input" id="pc-target" type="text" inputmode="numeric" name="day_rate_target" value="{{ cterms.day_rate_target or '' }}" placeholder="2400">
+            <small class="pf-hint">Raises the score.</small>
+          </div>
+        </div>
+        <p class="pf-hint">An engagement priced below your floor is set aside.</p>
+        {% with margin_name = 'day_rate_floor_margin_pct', margin_value = rate_margin, margin_what = 'day-rate floor', margin_id = 'pc-margin' %}
+          {% include "partials/profile_margin.html" %}
+        {% endwith %}
+      {% endcall %}
+      {% call ui.section_card('Engagements', 'clock', 'warn', sub='How much and how long.') %}
+        <div class="pf-grid pf-grid--2">
+          <div class="pf-f">
+            <label for="pc-min">Minimum days</label>
+            <input class="k-input" id="pc-min" type="text" inputmode="numeric" name="min_engagement_days" value="{{ cterms.min_engagement_days or '' }}" placeholder="20">
+            <small class="pf-hint">Shorter is set aside.</small>
+          </div>
+          <div class="pf-f">
+            <label for="pc-max">At the same time</label>
+            <input class="k-input" id="pc-max" type="text" inputmode="numeric" name="max_concurrent" value="{{ cterms.max_concurrent or '' }}" placeholder="2">
+            <small class="pf-hint">Concurrent engagements.</small>
+          </div>
+        </div>
+        <div class="pf-f">
+          <label for="pc-travel">Travel tolerance</label>
+          <input class="k-input" id="pc-travel" type="text" name="travel_tolerance" value="{{ cterms.travel_tolerance or '' }}" placeholder="regional, up to 6 days per month">
+        </div>
+      {% endcall %}
+      {% call ui.section_card('Work mode', 'laptop', sub='Which ways of working you would take. Scoring reads it; it is never a filter.') %}
+        {% with wm_modes = cterms.work_modes %}{% include "partials/profile_work_mode.html" %}{% endwith %}
+      {% endcall %}
+    </div>
   </div>
   {% include "partials/profile_save_row.html" %}
 </form>

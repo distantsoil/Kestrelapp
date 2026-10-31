@@ -187,7 +187,8 @@ def test_remembered_tab_is_the_track_on_pages_without_a_query():
     assert "Consulting lead" in pipe and "Employment role" not in pipe
     assert "Employment role" in pipe_emp and "Consulting lead" not in pipe_emp
     assert "Consulting lead" in pipe_q and "Employment role" not in pipe_q
-    assert "leads worth a look" in today or "lead worth a look" in today
+    # Today reads the remembered tab too (the page carries its track).
+    assert 'id="today" data-track="consulting"' in today
     assert cal.status_code == 200
     assert 'data-track="consulting"' in board
     active = today.split('class="track-switch"')[1].split("</div>")[0]
@@ -354,7 +355,10 @@ def test_today_run_panel_while_searching_and_the_rail_agree():
     asyncio.run(_seed(_active_rows()))
     with _client() as c:
         c.cookies.set(deps.TRACK_COOKIE, "employment")
-        html = c.get("/").text
+        # The run panel is the /today/run partial (Today prints the status strip instead,
+        # D-UI-156); the strip's headline is the same string.
+        html = c.get("/today/run?track=employment").text
+        strip = c.get("/today/strip").text
         part = c.get("/today/run?track=employment").text
         rail = c.get("/status/rail").text
     panel = _panel(html)
@@ -362,6 +366,7 @@ def test_today_run_panel_while_searching_and_the_rail_agree():
     head = panel.split('data-testid="run-headline">')[1].split("<")[0]
     assert head == "Searching 3 of 4 searches"  # global: both tracks' searches
     assert f">{head}<" in rail
+    assert f'data-testid="run-headline">{head}<' in strip  # the strip says the same words
     assert 'class="run-prog breathe"' in panel and "last activity " in panel
     assert 'data-testid="run-current">Data Analyst on Indeed and Google<' in panel
     assert 'hx-trigger="every 5s, run-refresh from:body"' in part
@@ -380,10 +385,14 @@ def test_today_run_panel_while_rating_shows_the_segments_and_matches_the_rail():
                      updated_at=_ago()))
     asyncio.run(_seed(rows))
     with _client() as c:
-        panel = _panel(c.get("/?track=employment").text)
+        panel = _panel(c.get("/today/run?track=employment").text)
+        strip = c.get("/today/strip?track=employment").text
         rail = c.get("/status/rail").text
     head = panel.split('data-testid="run-headline">')[1].split("<")[0]
     assert head.startswith("Rating ") and f">{head}<" in rail
+    # The strip's live counts: "Rating new roles", with rated, failed and waiting in place.
+    counts = strip.split('data-testid="found-counts">')[1].split("</span>")[0]
+    assert "Rating new roles" in strip and "2 rated" in counts and "1 failed" in counts
     legend = panel.split('data-testid="run-legend"')[1].split("</p>")[0]
     assert "2 scored" in legend and "1 failed" in legend and "1 rating now" in legend
     assert 'class="s-good"' in panel and 'class="s-bad"' in panel
@@ -424,7 +433,7 @@ def test_today_run_panel_when_finished_reads_two_lines_and_review_counts_agree()
 
     asyncio.run(reasons())
     with _client() as c:
-        html = c.get("/").text
+        html = c.get("/today/run").text
     panel = _panel(html)
     review = html.split('data-testid="today-review"')[1].split('data-testid="today-act"')[0]
     assert 'data-run="idle"' in panel and ">Last run<" in panel
@@ -456,8 +465,8 @@ def test_today_run_panel_names_the_track_with_both_and_an_untouched_track_says_s
         _opp(1, run=1), _ev(1, score=4.8, at=_ago(minutes=90)),
     ]))
     with _client() as c:
-        emp = _panel(c.get("/?track=employment").text)
-        cons = _panel(c.get("/?track=consulting").text)
+        emp = _panel(c.get("/today/run?track=employment").text)
+        cons = _panel(c.get("/today/run?track=consulting").text)
     assert "to Employment&#39;s Worth a look" in emp or "to Employment's Worth a look" in emp
     assert 'data-testid="run-no-track">No runs yet on this track.<' in cons
     assert _summary("consulting")["has_run"] is False
@@ -466,8 +475,10 @@ def test_today_run_panel_names_the_track_with_both_and_an_untouched_track_says_s
 def test_today_run_panel_with_no_run_yet():
     asyncio.run(_seed())
     with _client() as c:
-        panel = _panel(c.get("/").text)
+        panel = _panel(c.get("/today/run").text)
+        strip = c.get("/today/strip").text
     assert 'data-run="none"' in panel and ">No runs yet<" in panel
+    assert 'data-state="none"' in strip and ">No runs yet<" in strip
 
 
 def test_paused_worker_reads_paused_with_no_stall_and_a_slow_poll(monkeypatch):
@@ -480,13 +491,17 @@ def test_paused_worker_reads_paused_with_no_stall_and_a_slow_poll(monkeypatch):
     assert s["paused"] and not s["active"] and s["stage"] == "paused"
     assert not rs.view(s)["stalled"]
     with _client() as c:
-        panel = _panel(c.get("/").text)
+        panel = _panel(c.get("/today/run").text)
+        strip = c.get("/today/strip").text
         rail = c.get("/status/rail").text
     # A search is still under its lease: it finishes, nothing new starts (review finding 2).
     assert s["finishing"] == 1 and rs.step_words(s) == "Pausing: finishing 1"
     assert 'data-run="paused"' in panel and ">Pausing: finishing 1<" in panel
     assert "breathe" not in panel and 'data-testid="run-resume"' in panel
     assert "tray" not in panel  # finding 14: worded without assuming a tray
+    # The strip says Paused too, offers Resume, and polls slowly (nothing is moving).
+    assert ">Pausing: finishing 1<" in strip and 'data-testid="run-resume"' in strip
+    assert 'hx-trigger="every 30s' in strip and "breathe" not in strip
     assert "Pausing: finishing 1" in rail
 
 
@@ -512,7 +527,8 @@ def test_a_days_old_pending_task_does_not_stretch_this_run():
 
 def test_switched_off_track_is_held_and_its_pursuits_stay_visible():
     """R2: a switched-off track does not scan or score (its tasks are not claimable and not
-    live work); its open pursuits still show on Today's Act card with the track's name."""
+    live work); its open pursuits still show on Today (Applications needing action) with the
+    track's name."""
     from kestrel.queue.queue import claimable
 
     asyncio.run(_seed([
@@ -542,11 +558,10 @@ def test_switched_off_track_is_held_and_its_pursuits_stay_visible():
     assert not _summary(None)["active"]
     with _client() as c:
         html = c.get("/").text
-    act = html.split('data-testid="today-act"')[1].split('data-testid="today-schedule"')[0]
+    act = html.split('data-testid="td-apps"')[1].split("</section>")[0]
     off = act.split('data-testid="act-off-track"')[1].split("</p>")[0]
     assert "Consulting (switched off): 1 to act on" in off
     assert 'href="/pursuits?track=consulting"' in off
-    assert ">1<small>thing to do</small>" in act
     with _client() as c:
         apps = c.get("/pursuits").text
     banner = apps.split('data-testid="off-track-pursuits"')[1].split("</p>")[0]
@@ -596,23 +611,27 @@ def test_runs_live_panel_shows_the_step_bars_and_events():
     asyncio.run(_seed(_active_rows()))
     with _client() as c:
         html = c.get("/runs", headers={"HX-Request": "true"}).text
-    panel = html.split('data-testid="run-live"')[1].split('data-testid="recent-scans"')[0]
-    step = panel.split('data-testid="run-step"')[1].split("</p>")[0]
+    panel = html.split('data-testid="run-live"')[1]
+    step = panel.split('data-testid="run-step"')[1].split("</div>")[0]
     assert "Searching 3 of 4 searches: Data Analyst on Indeed and Google · 11 found so far" in step
     assert 'data-bar="search"' in panel and 'data-bar="quick"' in panel
-    assert 'data-bar="full"' in panel
+    assert 'data-bar="rating"' in panel and 'data-bar="deeper"' in panel
+    assert "Only when you ask" in panel  # the fifth stage (Deeper read) always reads this
     events = panel.split('data-testid="run-events"')[1].split("</ul>")[0]
     assert "Scoring failed for Analyst 5: the model repeated itself" in events
     assert "Found 3 leads on Indeed for &#39;interim CFO&#39;" in events
     # The newest row was written at seed time, so the words are "N seconds ago" for the time the
     # seed, app start and request took: "0 seconds ago" on a fast machine, "1 second ago"
     # (singular, correctly) on a slow Windows runner. Assert the exact words for whatever N is.
-    activity = re.search(r'data-testid="run-activity">Last activity (\d+) (seconds?) ago<', panel)
+    activity = re.search(
+        r'data-testid="run-activity">\s*<span class="k-dot[^>]*></span>Last activity (\d+) '
+        r'(seconds?) ago\s*<', panel)
     assert activity is not None, panel
     secs = int(activity.group(1))
     assert secs < 60 and activity.group(2) == ("second" if secs == 1 else "seconds")
     assert 'data-testid="run-stall"' not in panel
-    assert 'hx-trigger="every 5s, run-refresh from:body"' in html
+    with _client() as c:  # the poll that patches the card in place lives on the page
+        assert 'hx-trigger="every 5s, run-refresh from:body"' in c.get("/runs").text
 
 
 def test_ago_words_says_one_second_in_the_singular():
@@ -627,7 +646,7 @@ def test_runs_live_panel_warns_after_ten_minutes_without_activity():
     with _client() as c:
         html = c.get("/runs").text
     panel = html.split('data-testid="run-live"')[1]
-    warn = panel.split('data-testid="run-stall"')[1].split("</p>")[0]
+    warn = panel.split('data-testid="run-stall"')[1].split("</div>")[0]
     assert "No activity for 31 minutes" in warn or "No activity for 30 minutes" in warn
     assert 'href="/about#diagnostics"' in warn
 
@@ -659,13 +678,14 @@ def test_every_run_summary_class_has_a_css_rule():
 
     tdir = Path(paths.web_templates_dir()) / "partials"
     css = (Path(paths.web_static_dir()) / "css" / "kestrel.css").read_text("utf-8")
+    shell_css = (Path(paths.web_static_dir()) / "css" / "components.css").read_text("utf-8")
     block = css.split("/* --- run summary (D-UI-58) --- */")[1]
     classes: set[str] = set()
     for name in ("today_run.html", "run_live_panel.html"):
         for attr in re.findall(r'class="([^"]+)"', (tdir / name).read_text("utf-8")):
             classes |= {c for c in attr.split() if c.startswith("run-") and "{" not in c}
     assert classes and all(f".{c}" in block for c in classes), classes
-    assert ".track-switch a .n" in css
+    assert ".track-switch a .n" in shell_css  # the shell's track switch (components.css)
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", block)  # theme variables only
 
 

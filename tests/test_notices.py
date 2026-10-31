@@ -76,3 +76,15 @@ def test_linux_notices_name_the_appimage_runtime_and_its_mit_license(tmp_path):
     spec = (ROOT / "packaging" / "kestrel.spec").read_text(encoding="utf-8")
     assert "runtime_notice=" in spec and "RUNTIME-NOTICE.txt" in spec
     assert 'sys.platform == "linux"' in spec  # only the Linux build embeds the runtime
+
+
+def test_the_shipped_interface_font_and_its_license_are_in_the_notices():
+    """D-UI-127: Manrope is vendored, so its OFL text ships in the notices."""
+    from pathlib import Path
+
+    from kestrel import paths
+
+    fonts = Path(paths.web_static_dir()) / "fonts" / "manrope"
+    assert (fonts / "manrope-latin-wght-normal.woff2").stat().st_size > 10_000
+    text = notices.build_notices()
+    assert "Manrope (the interface font)" in text and "SIL Open Font License" in text

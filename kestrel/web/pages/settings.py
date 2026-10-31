@@ -30,7 +30,7 @@ from kestrel.rules import helpers
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.auth import SETTING_KEY as SHARED_SECRET_KEY
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, fixed_reason, plain_error
 from kestrel.web.uploads import closing_upload
 
 # Settings > Appearance (docs/UI_PROPOSAL.html): the two shipped schemes with their swatches.
@@ -114,52 +114,149 @@ async def _proposed_calibrations(session: AsyncSession) -> list[Calibration]:
 router = APIRouter()
 
 
+async def _prefs_ctx(settings: Settings) -> dict:
+    """What Preferences shows and what the scene managers start from (D-UI-106, D-UI-110)."""
+    import json as _json
+    from datetime import date as _date
+
+    from kestrel import ui_settings as u
+    from kestrel.date_display import format_display
+    from kestrel.services import profile_photo
+    from kestrel.services import tracks as tracks_svc
+    from kestrel.web import settings_view as sv
+
+    ui, notify, region = settings.ui, settings.notify, settings.region
+    first = ""
+    for track in ("employment", "consulting"):
+        prof = load_profile(track)
+        first = str(getattr(prof, "first_name", "") or "").strip()
+        if first:
+            break
+    initial = (first[:1] or "K").upper()
+    photo_v = profile_photo.version()
+    quiet = dict(notify.quiet_hours)
+    starts, ends = sv.quiet_choices()
+    touches_off = [sv.TOUCH_JS[t] for t in ui.touches_off if t in sv.TOUCH_JS]
+    data = {
+        "todayLabel": format_display(_date.today(), "weekday_long"),
+        "touchDays": sv.TOUCH_DAYS, "touchLabels": sv.touch_date_labels(),
+        "scene": ui.scene, "daily": ui.scene_daily, "rotation": list(ui.scene_rotation),
+        "order": list(u.SCENES), "animate": ui.scene_animate, "touches": ui.touches_enabled,
+        "touchesOff": touches_off, "avatar": ui.avatar, "sound": notify.sound,
+        "soundName": notify.sound_name, "volume": int(round(notify.sound_volume * 100)),
+        "quiet": quiet, "textSize": ui.text_size, "reduceMotion": ui.reduce_motion,
+        "tracks": list(tracks_svc.enabled_tracks_cached()),
+        "scheme": ui.scheme,
+    }
+    return {
+        "tracks": tuple(tracks_svc.enabled_tracks_cached()),
+        "schemes": sv.SCHEMES, "scheme": ui.scheme, "avatar": ui.avatar,
+        "avatar_icons": sv.AVATAR_ICONS, "avatar_names": sv.AVATAR_NAMES, "initial": initial,
+        "photo": f"/profile/photo?v={photo_v}" if photo_v else "",
+        "scene_animate": ui.scene_animate, "touches_enabled": ui.touches_enabled,
+        "text_sizes": sv.TEXT_SIZES, "text_size": ui.text_size, "reduce_motion": ui.reduce_motion,
+        "classic_nav": ui.classic_nav,
+        "date_formats": sv.date_format_options(), "date_format": region.date_format,
+        "time_formats": sv.time_options(), "time_format": region.time_format,
+        "region_preview": sv.region_preview(region.date_format, region.time_format),
+        "notify_kinds": list(sv.NOTIFY_KINDS.items()),
+        "notify_on": {g: sv.notify_on(settings, g) for g in sv.NOTIFY_KINDS},
+        "toast": notify.toast, "sound": notify.sound, "sounds": sv.SOUND_LABELS,
+        "sound_name": notify.sound_name, "volume": int(round(notify.sound_volume * 100)),
+        "quiet": quiet, "quiet_starts": starts, "quiet_ends": ends,
+        "data_json": _json.dumps(data).replace("<", "\\u003c"),
+        "today": _date.today().isoformat(),
+    }
+
+
+async def _computer_ctx(request: Request) -> dict:
+    from kestrel.services import updater
+    from kestrel.web.pages.settings_computer import mode_ctx, option_state
+    from kestrel.web.pages.updates import format_last_checked
+
+    ctx = await mode_ctx()
+    ctx["opt"] = await option_state()
+    async with sessionmaker()() as s:
+        state = await updater.load_state(s)
+        ctx["update_last_checked"] = format_last_checked(state.last_checked_at)
+    ctx["oob"] = False
+    ctx["key_result"] = None
+    return ctx
+
+
+async def pane_ctx(pane: str, request: Request) -> dict:
+    """The context one section's partial needs. The heavy sections run only when asked for."""
+    if pane == "computer":
+        return await _computer_ctx(request)
+    if pane == "roles":
+        from kestrel.web.pages.settings_roles import roles_pane_ctx
+
+        return await roles_pane_ctx(request)
+    if pane == "scoring":
+        from kestrel.web.pages.settings_learn import scoring_pane_ctx
+
+        return await scoring_pane_ctx(request)
+    if pane == "privacy":
+        from kestrel.web.pages.settings_privacy import access_ctx, conf_ctx, mcp_ctx
+
+        return {**await conf_ctx(), **await access_ctx(request), **await mcp_ctx()}
+    if pane == "data":
+        from kestrel.web.pages.settings_data import data_pane_ctx
+
+        return await data_pane_ctx(request)
+    if pane == "preferences":
+        async with sessionmaker()() as s:
+            settings = await load_settings_with_db(s)
+        return {"pf": await _prefs_ctx(settings)}
+    raise KeyError(pane)
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
+    if request.headers.get("HX-Request"):
+        async with sessionmaker()() as s:
+            settings = await load_settings_with_db(s)
+            preview = await _filter_preview(s, settings)
+        return templates().TemplateResponse(
+            request, "partials/filter_preview.html", {"preview": preview}
+        )
+    from datetime import date
+
+    from kestrel import ui_settings as u
+    from kestrel.web import settings_view as sv
+
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
-        preview = await _filter_preview(s, settings)
-        calibrations = await _proposed_calibrations(s)
-        secret_row = await s.get(Setting, SHARED_SECRET_KEY)
-        from kestrel.web.redact import confidential_is_inert
-
-        conf_inert = await confidential_is_inert(s)
-        from kestrel.docs.current_employer import choose_href, current_employers
-
-        # D-PRIV-1: the operator's own config screen is the one place that names the employer
-        # confidential mode hides, so they can see what it does and change it.
-        employers = await current_employers(s) if settings.confidential_mode else []
-        employer_choose_href = await choose_href(s)
-        from kestrel.services import updater
-        from kestrel.web.pages.updates import format_last_checked
-
-        update_last_checked = format_last_checked((await updater.load_state(s)).last_checked_at)
-    lan_secret = secret_row.value if secret_row and isinstance(secret_row.value, str) else None
-    from kestrel.services import lan_access
-
-    lan = lan_access.state(
-        running_on=getattr(request.app.state, "bind_all", None), has_secret=bool(lan_secret)
-    )
-    ctx = {
+    ui = settings.ui
+    ctx: dict = {
         "title": "Settings",
         "query": dict(request.query_params),
         "settings": settings,
-        "preview": preview,
-        "calibrations": calibrations,
-        "lan_secret": lan_secret,
-        "lan_secret_html": _lan_join_html(lan_secret, request) if lan_secret else "",
-        "lan": lan,
-        "data_dir": str(paths.data_dir()),
-        "confidential_inert": conf_inert,
-        "confidential_employers": [e for e in employers if not e["inferred"]],
-        "employer_banner": [e for e in employers if e["inferred"]],
-        "employer_choose_href": employer_choose_href,
-        "update_last_checked": update_last_checked,
-        **_appearance_ctx(settings),
+        "groups": sv.GROUPS,
+        "help": sv.HELP,
+        "how_it_works": sv.HOW_IT_WORKS,
+        "band_scene": u.scene_for_day(ui.scene, ui.scene_daily, list(ui.scene_rotation),
+                                      date.today()),
+        "band_animate": ui.scene_animate,
     }
-    if request.headers.get("HX-Request"):
-        return templates().TemplateResponse(request, "partials/filter_preview.html", ctx)
+    for pane in ("computer", "privacy", "data", "preferences"):
+        ctx.update(await pane_ctx(pane, request))
+    # Both A and the section partials read `pane` and these names; the page sets `pane` itself.
     return templates().TemplateResponse(request, "settings.html", ctx)
+
+
+@router.get("/settings/section/{pane}", response_class=HTMLResponse)
+async def settings_section(request: Request, pane: str):
+    """One section's body, for the sections the page loads when they first open and for a swap in
+    place after a track switch or an Undo."""
+    from kestrel.web import settings_view as sv
+
+    if pane not in sv.SECTION_IDS:
+        return HTMLResponse("That section does not exist.", status_code=404)
+    ctx = await pane_ctx(pane, request)
+    ctx["pane"] = pane
+    ctx.setdefault("track", request.query_params.get("track") or "")
+    return templates().TemplateResponse(request, "partials/st_pane.html", ctx)
 
 
 @router.get("/settings/filters/preview", response_class=HTMLResponse)
@@ -201,7 +298,11 @@ async def save_settings(request: Request):
             v = form.get(key)
             if v:
                 with contextlib.suppress(ValueError):
-                    await _set(s, key, int(v))
+                    tier = key.split(".")[1]
+                    values = config_mod.Concurrency.model_validate_strings(
+                        {tier: str(v)}, strict=True,
+                    )
+                    await _set(s, key, getattr(values, tier))
         # The posting age rules (Tier 0 stale and stale_trigger, D-UI-73): the place a "Set
         # aside by your posting age rule" sentence sends the operator. Whole days, 1 to 3650.
         for key in ("max_posting_age_days", "consulting.max_trigger_age_days"):
@@ -304,7 +405,12 @@ async def restore_from_upload(request: Request):
     from pathlib import Path
 
     from kestrel.db import migrate
-    from kestrel.services.backup import InvalidBackupError, restore_backup
+    from kestrel.services.backup import (
+        BACKUP_REFUSALS,
+        RESTORE_FALLBACK,
+        InvalidBackupError,
+        restore_backup,
+    )
     from kestrel.services.reset import IDLE_WAIT_S, _forget_caches
     from kestrel.web import app as app_mod
 
@@ -324,14 +430,12 @@ async def restore_from_upload(request: Request):
         log.warning("restore_upload_read_failed", error_type=type(exc).__name__, error=str(exc))
         return HTMLResponse(
             f'<div class="warnbox">Could not read the upload: '
-            f"{html.escape(plain_error(exc))}</div>"
+            f"{html.escape(fixed_reason(exc))}</div>"
         )
 
-    # `InvalidBackupError` messages quote the archive's own entry names, which the uploader fully
-    # controls (a rejected member may be named `config/<img src=x onerror=...>/../../x.yml`).
-    # Escaped here so a crafted archive cannot execute markup in the app's own origin, which is
-    # the origin holding the LAN shared secret and every mutating endpoint. `/backup/download`
-    # escapes the same way; documents.py and bench.py do too.
+    # The archive's own entry names are the uploader's to choose (a rejected member may be named
+    # `config/<img src=x onerror=...>/../../x.yml`), so no refusal quotes one: `InvalidBackupError`
+    # carries a sentence from `backup.BACKUP_REFUSALS` and the name goes to the log (D-SEC-4).
     # The database is written through SQLite while the app's connections stay open (R1), so the
     # pool is NOT torn down here: disposing it used to leave the background loops on the old
     # engine and every new request on a second one, both open on the same file. What must stop is
@@ -361,12 +465,14 @@ async def restore_from_upload(request: Request):
                 # with every request on uvicorn's one loop, so they run in a thread.
                 result = await asyncio.to_thread(restore_backup, tmp_zip)
         except InvalidBackupError as exc:
-            return HTMLResponse(f'<div class="warnbox">{html.escape(plain_error(exc))}</div>')
+            log.info("restore_refused_upload", error=str(exc))
+            said = authored_error(exc, BACKUP_REFUSALS, RESTORE_FALLBACK)
+            return HTMLResponse(f'<div class="warnbox">{html.escape(said)}</div>')
         except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
             log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
             return HTMLResponse(
                 f'<div class="warnbox">Restore failed: '
-                f"{html.escape(plain_error(exc))}</div>"
+                f"{html.escape(fixed_reason(exc))}</div>"
             )
         try:
             # A backup from an older Kestrel is on an older schema. Startup migrates; a restore in
@@ -395,7 +501,22 @@ async def restore_from_upload(request: Request):
         await app_mod._load_enabled_tracks()
 
     # Escaped: the restored config and document file names come from the archive, which the
-    # uploader controls (the same reason InvalidBackupError messages are escaped above).
+    # uploader controls (the same reason no refusal above quotes an entry name).
+    if form.get("from_settings"):
+        # Settings > Your data: one plain sentence and a message, not the file-by-file summary.
+        import json as _json
+
+        name = html.escape(str(getattr(upload, "filename", "") or "the backup"))
+        before = html.escape(
+            Path(str(result.pre_restore_backup)).name if result.pre_restore_backup
+            else "the Kestrel-backups folder"
+        )
+        text = f"Restored from {name}. Earlier data saved as {before}."
+        return HTMLResponse(
+            f'<p class="st-note st-note--good" role="status" data-testid="st-restored">{text}</p>',
+            headers={"HX-Trigger": _json.dumps({"k-toast": {"message": html.unescape(text),
+                                                            "timeout": 9000}})},
+        )
     lines = "<br>".join(html.escape(line) for line in result.summary_lines())
     return HTMLResponse(
         f'<div class="muted">Restore complete. Kestrel is using the restored data now.<br>{lines}'
@@ -610,7 +731,7 @@ async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dic
     backends = {
         name: {
             "label": next(
-                (p["label"] for p in prov.PRESETS.values() if p["backend"] == name), name
+                (p["label"] for p in prov.presets(settings).values() if p["backend"] == name), name
             ),
             "provider": b.provider,
             "protocol": b.protocol,
@@ -643,8 +764,8 @@ async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dic
         "hosted": status,
         "hosted_backends": backends,
         "effort_levels": prov.EFFORT_LEVELS,
-        "presets": prov.PRESETS,
-        "preset_order": provider_order(),
+        "presets": prov.presets(settings),
+        "preset_order": [*provider_order(), *(["other"] if "other" in backends else [])],
         "free_providers": FREE_PROVIDERS,
         "system_keys_ignored": sorted(
             b["env"] for b in backends.values() if config_mod.system_secret_ignored(b["env"])
@@ -655,7 +776,8 @@ async def _hosted_ctx(session: AsyncSession, settings: Settings, **extra) -> dic
         "use_system_keys": config_mod.use_system_keys(),
         "settings_file": paths.config_file("settings.yml"),
         "connect_default": next(
-            (pid for pid, p in prov.PRESETS.items() if p["backend"] == status.backend_name),
+            (pid for pid, p in prov.presets(settings).items()
+             if p["backend"] == status.backend_name),
             "openrouter",
         ),
         "hosted_mode": settings.llm.hosted_mode,
@@ -1124,6 +1246,7 @@ async def hosted_save_tiers(request: Request):
 # where it lives, and the one place to view, export and reset it. All reads and writes go
 # through kestrel.learning.ledger; this is presentation plus the typed-confirmation gate.
 from kestrel.learning import ledger  # noqa: E402
+from kestrel.web.redact import confidential  # noqa: E402
 
 LEDGER_PAGE = 50
 RESET_WORD = "RESET"
@@ -1233,17 +1356,25 @@ async def learning_delete_label(label_id: int, request: Request):
 
 @router.get("/settings/learning/export")
 async def learning_export():
-    """Every decision as a JSON download. Not redacted: it is the operator's own data and the
-    page says so beside the button."""
+    """Every decision as a JSON download. Redacted when Confidential mode is on."""
     import json
     from datetime import UTC, datetime
 
     from fastapi.responses import Response
 
     async with sessionmaker()() as s:
-        rows = await ledger.export_labels(s)
+        settings = await load_settings_with_db(s)
+        redact = bool(settings.confidential_mode)
+        if redact and not (await confidential(s))[1]:
+            return Response(
+                content=("Confidential mode is on but no employer is set, so nothing could be "
+                         "hidden. Add your current employer in Profile, then export again."),
+                media_type="text/plain", status_code=409,
+                headers={"Cache-Control": "no-store"},
+            )
+        rows = await ledger.export_labels(s, redact=redact)
     body = json.dumps(
-        {"exported_at": utcnow_iso(), "n": len(rows), "redacted": False, "labels": rows},
+        {"exported_at": utcnow_iso(), "n": len(rows), "redacted": redact, "labels": rows},
         indent=2,
     )
     name = f"kestrel-labels-{datetime.now(UTC).date().isoformat()}.json"
@@ -1398,9 +1529,9 @@ async def _mcp_ctx(s: AsyncSession, *, message: str | None = None, ok: bool = Tr
 
 @router.get("/settings/mcp", response_class=HTMLResponse)
 async def mcp_panel(request: Request):
-    async with sessionmaker()() as s:
-        ctx = await _mcp_ctx(s)
-    return templates().TemplateResponse(request, "partials/mcp_switch.html", ctx)
+    from kestrel.web.pages.settings_privacy import mcp_ctx
+
+    return templates().TemplateResponse(request, "partials/st_mcp.html", await mcp_ctx())
 
 
 @router.post("/settings/mcp", response_class=HTMLResponse)
@@ -1436,5 +1567,8 @@ async def mcp_switch(request: Request):
             log.warning("mcp_switch_failed", on=on, error=f"{type(exc).__name__}: {exc}")
             message, ok = ("The MCP server could not be "
                            f"{'started' if on else 'stopped'}: {plain_error(exc)}"), False
-        ctx = await _mcp_ctx(s, message=message, ok=ok)
-    return templates().TemplateResponse(request, "partials/mcp_switch.html", ctx)
+    from kestrel.web.pages.settings_privacy import mcp_ctx
+
+    return templates().TemplateResponse(
+        request, "partials/st_mcp.html", await mcp_ctx(message=message, ok=ok)
+    )

@@ -1,79 +1,132 @@
-{# The Score again dialog (D-UI-50): a themed <dialog> in the pattern of partials/quit_confirm.html
-   and partials/assess_model.html. Loaded on demand by the button in partials/score_again.html
-   (GET /rescore/choose) and opened as soon as it lands. Same model, or a different one for this
-   run only: the shared picker macro, narrowed by the route to structured and JSON-mode models
-   that meet the Tier 2 context budget. Settings never change. Keyboard: focus starts on the
-   first choice and stays inside (Tab and Shift+Tab wrap); Esc or Cancel closes it and returns
-   focus to the button. Styles: kestrel.css (.score-again-dialog), theme variables only. #}
+{# The Score again dialog (D-UI-50, restyled D-UI-152 to the surfaces mockup): a themed <dialog>
+   loaded on demand by the button in partials/score_again.html (GET /rescore/choose) and opened as
+   soon as it lands. Same model, or a different one for this run only: the shared picker macro,
+   narrowed by the route to structured and JSON-mode models that meet the Tier 2 context budget,
+   with friendly names (never a raw model id). Settings never change. An online pick asks first:
+   the second step names the provider, the model, what is sent (the Hosted mode disclosure line),
+   whether the employer is hidden or the send is held, and the cost; the server refuses an online
+   pick unless it carries confirmed=1. Keyboard: focus starts on the first choice and stays inside
+   (Tab and Shift+Tab wrap); Esc or Cancel closes it and returns focus to the button. Styles:
+   static/css/pages/surfaces.css (.sf-*), theme tokens only. #}
 {% from "partials/model_picker.html" import model_select with context %}
+{% from "ui/macros.html" import icon as kicon %}
 {% set roles = '1 role' if n == 1 else n ~ ' roles' %}
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 {# D-UI-71: `preselect` (a pick value) checks "A different model" with that model chosen, so a
    Retry from Failed scoring opens on the model that failed; `page` renders it open as a plain
    form (no script needed) that posts to /rescore and returns to `next`. #}
-<dialog class="score-again-dialog" data-testid="score-again-dialog"{% if page %} open{% endif %}
+<dialog class="score-again-dialog sf-dialog" data-testid="score-again-dialog"{% if page %} open{% endif %}
         aria-labelledby="score-again-title" aria-describedby="score-again-desc">
-  <form class="score-again-box" method="post" action="/rescore"
+  <form class="score-again-box sf-form" method="post" action="/rescore"
         {%- if not page %} hx-post="/rescore" hx-target="next .score-again-status" hx-swap="innerHTML"{% endif %}
-        autocomplete="off" data-score-again-form>
-    <h2 id="score-again-title">Score {{ roles }} again</h2>
+        autocomplete="off" data-score-again-form data-hosted-prefix="{{ hosted_prefix }}">
+    <div class="sf-head">
+      <span class="sf-ic" aria-hidden="true">{{ kicon('scan') }}</span>
+      <h2 id="score-again-title">{% if n == 1 %}Score this role again?{% elif n %}Score {{ roles }} again?{% else %}Score again{% endif %}</h2>
+      {% if page %}<a class="k-iconbtn sf-x" href="{{ next or '/quarantine' }}" aria-label="Close">{{ kicon('x') }}</a>
+      {% else %}<button type="button" class="k-iconbtn sf-x" data-score-again-cancel aria-label="Close">{{ kicon('x') }}</button>{% endif %}
+    </div>
     {% if not n %}
-    <p id="score-again-desc">Pick one or more roles first.</p>
-    <div class="score-again-actions">
-      {% if page %}<a class="btn" href="{{ next or '/quarantine' }}">Close</a>
-      {% else %}<button type="button" class="btn" data-score-again-cancel>Close</button>{% endif %}
+    <div class="sf-body"><p id="score-again-desc">Pick one or more roles first.</p></div>
+    <div class="sf-foot">
+      {% if page %}<a class="k-btn" href="{{ next or '/quarantine' }}">Close</a>
+      {% else %}<button type="button" class="k-btn" data-score-again-cancel>Close</button>{% endif %}
     </div>
     {% else %}
+    {% if role_title %}<p class="sf-sub sf-t" data-testid="score-again-role">{{ role_title }}{% if role_org %} · {{ role_org }}{% endif %}</p>{% endif %}
     <input type="hidden" name="opp_ids" value="{{ opp_ids | join(',') }}">
+    <input type="hidden" name="online_approval" value='{{ consent.approval_json }}'>
     {% if quarantine_id %}<input type="hidden" name="quarantine_id" value="{{ quarantine_id }}">{% endif %}
     {% if page and next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
-    <fieldset class="score-again-choices">
-      <legend class="score-again-legend">Which model</legend>
-      <label class="score-again-choice">
-        <input type="radio" name="model_choice" value="same"{% if not preselect %} checked{% endif %} data-testid="score-again-same">
-        <span>Same model{% if current_label %} ({{ current_label }}){% endif %}</span>
-      </label>
-      <label class="score-again-choice">
-        <input type="radio" name="model_choice" value="other" data-testid="score-again-other"
-               {%- if preselect %} checked{% endif %}
-               {%- if not (local_models or hosted_models) %} disabled{% endif %}>
-        <span>A different model, this time only</span>
-      </label>
-      {% if local_models or hosted_models %}
-      <div class="score-again-pick">
-        {{ model_select('model', hosted_models, hosted_reasons, local_models=local_models,
-                        hosted_label=hosted_label or 'Hosted', placeholder='Pick a model',
-                        value_prefix=hosted_prefix, testid='score-again-pick',
-                        selected=preselect_id) }}
+    <div class="sf-body">
+      <div class="sf-stack" data-sf-main>
+        {# D-UI-73 / D-UI-74: a role a Tier 0 rule set aside says which rule and where it changes,
+           and can be scored anyway, for that role only. The rules themselves never change. #}
+        {% if set_aside %}
+        <div class="sf-card sf-card--warn sf-stack" data-testid="score-again-set-aside">
+          <b>{{ 'This role was' if n == 1 else 'Some of these roles were' }} set aside by your rules.</b>
+          {% for r in set_aside %}
+          <span class="sf-small" data-testid="score-again-rule-why">{{ r.why.text }} {{ r.why.verb }} <a class="sf-a" href="{{ r.why.href }}">{{ r.why.place }}</a>.</span>
+          {% endfor %}
+          <label class="sf-chk">
+            <input type="checkbox" name="tier0_anyway" value="1" data-testid="score-again-anyway">
+            <span><b>Score {{ 'this role' if n == 1 else 'these ' ~ n ~ ' roles' }} anyway</b><br><span class="sf-small sf-muted">This skips your rules for {{ 'this role' if set_aside|length == 1 else 'these roles' }} only, then runs the quick screen and the full review on the model you pick. Your rules do not change, and each role records that you chose this.</span></span>
+          </label>
+        </div>
+        {% endif %}
+        <label class="sf-choice">
+          <input type="radio" name="model_choice" value="same"{% if not preselect %} checked{% endif %} data-testid="score-again-same">
+          <span class="sf-tx"><b>Same model</b><span>{{ current_name }}, {{ current_where }}.{% if last_fit %} Last score: {{ last_fit|capitalize }}.{% endif %}</span></span>
+        </label>
+        <label class="sf-choice">
+          <input type="radio" name="model_choice" value="other" data-testid="score-again-other"
+                 {%- if preselect %} checked{% endif %}
+                 {%- if not (local_models or hosted_models) %} disabled{% endif %}>
+          <span class="sf-tx"><b>A different model, this time only</b><span>Your usual model stays the same afterward.</span>
+            {% if local_models or hosted_models %}
+            <span class="sf-pick">
+              {{ model_select('model', hosted_models, hosted_reasons, local_models=local_models,
+                              hosted_label=hosted_label or 'Online, with your key',
+                              placeholder='Pick a model', value_prefix=hosted_prefix,
+                              testid='score-again-pick', selected=preselect_id,
+                              local_labels=local_labels, show_ids=False) }}
+            </span>
+            {% else %}
+            <span class="score-again-note" data-testid="score-again-no-models">No other model is available right now.</span>
+            {% endif %}
+          </span>
+        </label>
+        {% if page and hosted_models %}
+        <label class="sf-chk" data-testid="score-again-confirm-box">
+          <input type="checkbox" name="confirmed" value="1">
+          <span><b>Allow sending to {{ hosted_label or 'the online service' }}</b><br><span class="sf-small sf-muted">Only needed if you picked an online model. {{ consent.sends }}. Not sent: your name, contact details and your resume file.</span></span>
+        </label>
+        {% endif %}
+        <div class="sf-card sf-card--info sf-what" id="score-again-desc">
+          {% if current_online %}
+          <div class="sf-ln">{{ kicon('cloud') }}<span>The usual model is online, so the full review goes to your online service as it does for any scan. {{ consent.sends }}.</span></div>
+          {% else %}
+          <div class="sf-ln">{{ kicon('shield') }}<span>The usual model stays on this computer. Nothing is sent anywhere.</span></div>
+          {% endif %}
+          <div class="sf-ln">{{ kicon('clock') }}<span data-testid="score-again-speed">Free models are often much slower and less reliable than paid ones. Local models depend on your hardware.{% if minutes %} {{ roles[:1] | upper }}{{ roles[1:] }} may take about {{ minutes }} minute{{ 's' if minutes != 1 }}.{% endif %}</span></div>
+          <div class="sf-ln">{{ kicon('info') }}<span>Your full-review model setting does not change. The new scores sit beside the old ones so you can compare.</span></div>
+        </div>
+        {% if hosted_models and hosted_while_local %}<p class="score-again-note sf-small" data-testid="score-again-external-note"><b>Kestrel is on local models. If you pick an online model, these {{ roles }} are scored on {{ hosted_label }}: what Hosted mode sends for a full review leaves this computer, with the same redaction. Kestrel asks first.</b></p>{% endif %}
+        {% if preselect_note %}<p class="score-again-note sf-small" data-testid="score-again-preselect-note">{{ preselect_note }}</p>{% endif %}
+        {% if local_note %}<p class="score-again-note sf-small sf-muted">{{ local_note }}</p>{% endif %}
+        {% if hosted_note %}<p class="score-again-note sf-small sf-muted">{{ hosted_note }}</p>{% endif %}
       </div>
-      {% else %}
-      <p class="score-again-note" data-testid="score-again-no-models">No other model is available right now.</p>
+      {# The ask-first step for an online pick. Script shows it instead of sending; the server
+         refuses an online pick without confirmed=1 whatever the page did. #}
+      <div class="sf-stack sf-confirm" data-sf-confirm data-testid="score-again-confirm" hidden>
+        <div class="sf-card sf-card--warn sf-what">
+          <b>Send this to {{ hosted_label or 'the online service' }}?</b>
+          <div class="sf-ln">{{ kicon('check') }}<span>Model: <b data-sf-model></b>, using your own key.</span></div>
+          <div class="sf-ln">{{ kicon('check') }}<span data-testid="score-again-sends">Sent: {{ consent.sends }}.</span></div>
+          {% if consent.employer == 'hidden' %}
+          <div class="sf-ln">{{ kicon('lock') }}<span data-testid="score-again-employer">Confidential mode is on: your current employer is hidden before anything is sent.</span></div>
+          {% elif consent.employer == 'held' %}
+          <div class="sf-ln">{{ kicon('alert') }}<span data-testid="score-again-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a class="sf-a" href="/settings">Choose your employer in Settings</a>, then try again.</span></div>
+          {% endif %}
+          <div class="sf-ln">{{ kicon('x') }}<span>Not sent: your name, contact details and your resume file.</span></div>
+          <div class="sf-ln">{{ kicon('clock') }}<span>Cost: charged to your own key{% if consent.credit %}. {{ consent.credit }}{% endif %}.</span></div>
+          <span class="sf-small sf-muted">{{ hosted_label or 'The service' }} handles what it receives under its own terms, and a free model may use it for training.</span>
+        </div>
+      </div>
+    </div>
+    {% if not page %}<input type="hidden" name="confirmed" value="1" data-sf-confirmed disabled>{% endif %}
+    <div class="sf-foot">
+      <span class="sf-foot-main" data-sf-foot-main>
+        {% if page %}<a class="k-btn" href="{{ next or '/quarantine' }}" data-testid="score-again-cancel">Cancel</a>
+        {% else %}<button type="button" class="k-btn" data-score-again-cancel data-testid="score-again-cancel">Cancel</button>{% endif %}
+        <button type="submit" class="k-btn k-btn--primary" data-testid="score-again-go">Score again</button>
+      </span>
+      {% if not page %}
+      <span class="sf-foot-confirm" data-sf-foot-confirm hidden>
+        <button type="button" class="k-btn" data-sf-back data-testid="score-again-back">Back</button>
+        <button type="submit" class="k-btn k-btn--primary" data-sf-send data-testid="score-again-send"{% if consent.employer == 'held' %} disabled{% endif %}>Send and score</button>
+      </span>
       {% endif %}
-    </fieldset>
-    {# D-UI-73 / D-UI-74: a role a Tier 0 rule set aside says which rule and where it changes,
-       and can be scored anyway, for that role only. The rules themselves never change. #}
-    {% if set_aside %}
-    <fieldset class="score-again-choices" data-testid="score-again-set-aside">
-      <legend class="score-again-legend">Set aside by your rules</legend>
-      {% for r in set_aside %}
-      <p class="score-again-note" data-testid="score-again-rule-why">{{ r.why.text }} {{ r.why.verb }} <a href="{{ r.why.href }}">{{ r.why.place }}</a>.</p>
-      {% endfor %}
-      <label class="score-again-choice">
-        <input type="checkbox" name="tier0_anyway" value="1" data-testid="score-again-anyway">
-        <span>Score {{ 'this role' if n == 1 else 'these ' ~ n ~ ' roles' }} anyway</span>
-      </label>
-      <p class="score-again-note">This skips your rules for {{ 'this role' if set_aside|length == 1 else 'these roles' }} only, then runs the quick screen and the full review on the model you pick. Your rules do not change, and each role records that you chose this.</p>
-    </fieldset>
-    {% endif %}
-    <p id="score-again-desc" class="score-again-note">Your full-review model setting does not change. The new scores sit beside the old ones so you can compare.</p>
-    {% if hosted_models and hosted_while_local %}<p class="score-again-note" data-testid="score-again-external-note"><b>Kestrel is on local models. If you pick a {{ hosted_label }} model, these {{ roles }} are scored on {{ hosted_label }}: what Hosted mode sends for a full review leaves this computer, with the same redaction.</b></p>{% endif %}
-    {% if preselect_note %}<p class="score-again-note" data-testid="score-again-preselect-note">{{ preselect_note }}</p>{% endif %}
-    {% if local_note %}<p class="score-again-note">{{ local_note }}</p>{% endif %}
-    {% if hosted_note %}<p class="score-again-note">{{ hosted_note }}</p>{% endif %}
-    <p class="score-again-note score-again-speed" data-testid="score-again-speed">Free models are often much slower and less reliable than paid ones. Local models depend on your hardware.{% if minutes %} {{ roles[:1] | upper }}{{ roles[1:] }} may take about {{ minutes }} minute{{ 's' if minutes != 1 }}.{% endif %}</p>
-    <div class="score-again-actions">
-      {% if page %}<a class="btn ghost" href="{{ next or '/quarantine' }}" data-testid="score-again-cancel">Cancel</a>
-      {% else %}<button type="button" class="btn ghost" data-score-again-cancel data-testid="score-again-cancel">Cancel</button>{% endif %}
-      <button type="submit" class="btn primary" data-testid="score-again-go">Score again</button>
     </div>
     {% endif %}
   </form>
@@ -83,6 +136,13 @@
   (function () {
     const dlg = document.currentScript.previousElementSibling;
     if (!dlg || dlg.tagName !== 'DIALOG') return;
+    // Every listener below belongs to this dialog and is tied to one controller kept on it
+    // (D-UI-210): running this again on the same dialog replaces the set instead of doubling it,
+    // and closing the dialog ends the set.
+    if (dlg.kBound) dlg.kBound.abort();
+    const ac = new AbortController();
+    dlg.kBound = ac;
+    const sig = { signal: ac.signal };
     const wrap = dlg.closest('.score-again');
     const opener = wrap ? wrap.querySelector('.score-again-btn') : null;
     const form = dlg.querySelector('form');
@@ -99,6 +159,7 @@
     function close() {
       if (dlg.open) dlg.close();
       dlg.remove();
+      ac.abort();
       if (opener && opener.focus) opener.focus();
     }
     const combo = dlg.querySelector('.ke-combo');
@@ -111,24 +172,51 @@
       setPickDisabled(!(other && other.checked));
     }
     syncPick();
-    [same, other].forEach((r) => r && r.addEventListener('change', syncPick));
-    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } });
-    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close));
+    [same, other].forEach((r) => r && r.addEventListener('change', syncPick, sig));
+    if (sel) sel.addEventListener('change', () => { if (sel.value && other) { other.checked = true; } }, sig);
+    dlg.querySelectorAll('[data-score-again-cancel]').forEach((b) => b.addEventListener('click', close, sig));
+    const mainStep = dlg.querySelector('[data-sf-main]');
+    const confirmStep = dlg.querySelector('[data-sf-confirm]');
+    const footMain = dlg.querySelector('[data-sf-foot-main]');
+    const footConfirm = dlg.querySelector('[data-sf-foot-confirm]');
+    const confirmed = dlg.querySelector('[data-sf-confirmed]');
+    const prefix = form ? (form.getAttribute('data-hosted-prefix') || 'hosted:') : 'hosted:';
+    function online() { return !!(other && other.checked && sel && sel.value.indexOf(prefix) === 0); }
+    function showConfirm(on) {
+      if (!confirmStep) return;
+      confirmStep.hidden = !on; mainStep.hidden = on;
+      footConfirm.hidden = !on; footMain.hidden = on;
+      if (on) {
+        const label = dlg.querySelector('.ke-combo [role="combobox"]');
+        const name = dlg.querySelector('[data-sf-model]');
+        if (name) name.textContent = (label && label.value) || sel.value;
+        const send = dlg.querySelector('[data-sf-send]');
+        if (send) send.focus();
+      }
+      if (confirmed) confirmed.disabled = true;
+    }
+    const sendBtn = dlg.querySelector('[data-sf-send]');
+    if (sendBtn) sendBtn.addEventListener('click', () => { if (confirmed) confirmed.disabled = false; }, sig);
+    const backBtn = dlg.querySelector('[data-sf-back]');
+    if (backBtn) backBtn.addEventListener('click', () => showConfirm(false), sig);
     if (form) {
       // "A different model" needs a pick; "Same model" sends model=same (a disabled select sends
-      // nothing, so the hidden fallback below carries it).
+      // nothing, so the hidden fallback below carries it). An online pick asks first: the first
+      // press shows what is sent, and only "Send and score" posts confirmed=1.
       form.addEventListener('submit', (e) => {
         if (other && other.checked && sel && !sel.value) {
           e.preventDefault(); e.stopImmediatePropagation(); setPickDisabled(false); pickBox.focus();
+        } else if (online() && confirmed && confirmed.disabled) {
+          e.preventDefault(); e.stopImmediatePropagation(); showConfirm(true);
         }
-      }, true);
+      }, { capture: true, signal: ac.signal });
       form.addEventListener('htmx:configRequest', (e) => {
         if (!(other && other.checked)) e.detail.parameters['model'] = 'same';
-      });
-      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); });
-      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); });
+      }, sig);
+      form.addEventListener('htmx:beforeRequest', () => { if (dlg.open) dlg.close(); }, sig);
+      form.addEventListener('htmx:afterRequest', () => { dlg.remove(); ac.abort(); }, sig);
     }
-    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); }, sig);
     dlg.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); close(); return; }
       if (e.key === 'Tab') {
@@ -138,10 +226,10 @@
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
-    });
-    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    }, sig);
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); }, sig);
     if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
-    const first = focusables()[0];
+    const first = dlg.querySelector('input[name="model_choice"]:checked') || focusables()[0];
     if (first) first.focus();
   })();
 </script>

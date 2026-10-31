@@ -1,0 +1,155 @@
+{# The panel that slides over Pipeline from the right (D-UI-96): header (what it is, the title, the
+   company and place, a link icon that copies this panel's own URL, and Close, always rightmost),
+   the body, and a footer of three buttons. Its inner markup only: #pl-panel is in the page.
+   `kind` picks the body: role (scored), pending (being scored or failed), nf (set aside by your
+   rules, never scored), signal (Consulting), missing. All prose is the redacted copy from
+   kestrel.web.pages.pipeline.panel_context. The Not for me footer swaps in place to its four
+   one-click reasons (data-pl-ask, no request until one is chosen). #}
+{% import "ui/macros.html" as ui %}
+{% macro head(eyebrow, title, sub) -%}
+  <div class="pl-dh">
+    <div class="pl-dh__t"><div class="pl-eyebrow">{{ eyebrow }}</div><b>{{ title }}</b><div class="pl-dh__sub">{{ sub }}</div></div>
+    <button type="button" class="pl-xbtn" data-pl-copy title="Copy link" aria-label="Copy link to this role"><svg class="k-ic k-ic--sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg></button>
+    <button type="button" class="pl-xbtn" data-pl-close title="Close" aria-label="Close">{{ ui.icon('x', 'k-ic--sm') }}</button>
+  </div>
+{%- endmacro %}
+
+{% macro ring(score, pct, tone) -%}
+  <div class="pl-ring pl-ring--{{ tone }}" style="--p: {{ pct }}" data-p="{{ pct }}" role="img" aria-label="{{ '%.1f'|format(score) }} out of 5">
+    <div><div><b>{{ '%.1f'|format(score) }}</b><br><small>out of 5</small></div></div></div>
+{%- endmacro %}
+
+{% macro reasons_grid(opp, reasons, signal=False) -%}
+  <div class="pl-fr">
+    <div class="pl-frh"><span><b>{{ 'Not relevant because…' if signal else 'Not for me because…' }}</b> <span class="pl-frs">Pick one so Kestrel learns what to skip.</span></span>
+      <button type="button" class="pl-xbtn pl-xbtn--sm" data-pl-back title="Cancel" aria-label="Cancel">{{ ui.icon('x', 'k-ic--sm') }}</button></div>
+    <div class="pl-rgrid">
+      {% for key, text, dim in reasons %}<button type="button" hx-post="/opportunities/{{ opp.id }}/decide/not-for-me?reason={{ key }}" hx-swap="none" data-why="{{ key }}">{{ text }}</button>{% endfor %}
+    </div>
+    <a class="pl-frl" href="{{ open_href }}">More to say? {{ 'Open the full signal' if signal else 'Rate it on the full role page' }} &rarr;</a>
+  </div>
+{%- endmacro %}
+
+<div class="pl-panel__in" data-kind="{{ kind }}"{% if opp is defined %} data-id="{{ opp.id }}"{% endif %}>
+{% if kind == 'missing' %}
+  <div class="pl-dh"><div class="pl-dh__t"><b>That role is gone</b></div><button type="button" class="pl-xbtn" data-pl-close aria-label="Close">{{ ui.icon('x', 'k-ic--sm') }}</button></div>
+  <div class="pl-db"><p class="pl-pending">It may have been deleted. Go back to the list.</p></div>
+
+{# ---------------------------------------------------------------------------------- signal #}
+{% elif kind == 'signal' %}
+  {% set sg = sig %}
+  {{ head('Signal · ' ~ sg.type_label, org_name, sg.happened) }}
+  <div class="pl-db">
+    <div class="pl-ringrow">
+      {% if sg.score is not none %}{{ ring(sg.score, sg.ring_pct, sg.tone) }}{% endif %}
+      <div class="pl-dims"><span class="k-pill {{ 'k-pill--good' if sg.tone == 'good' else 'k-pill--warn' }}">{{ ui.icon('check' if sg.tone == 'good' else 'alert') }}{{ sg.word if sg.score is not none else 'Not scored yet' }}</span>
+        <div class="pl-dsm">How well this kind of event matches the work you do, based on your profile.</div></div>
+    </div>
+    <div class="pl-dbox"><div class="pl-dl">What happened</div><div class="pl-strong">{{ sg.happened }}</div>
+      <div class="pl-dsm">{{ [sg.when]|select|join(' · ') }}{% if sg.source_url %} · <a class="k-link" href="{{ sg.source_url }}" target="_blank" rel="noopener">Read the source ↗</a>{% endif %}</div>
+      {% if sg.evidence %}<div class="pl-dsm">“{{ sg.evidence }}”</div>{% endif %}</div>
+    {% if sg.why %}<div class="pl-dsec"><h4>Why it may need outside help</h4><div class="pl-dsum">{{ sg.why }}</div></div>{% endif %}
+    <div class="pl-dsec"><h4>Who to approach</h4><div class="pl-dsum">{{ sg.who or 'Not clear yet.' }}</div></div>
+    {% if sg.move %}<div class="pl-dsec pl-lead"><h4>Opening move</h4><div class="pl-dsum">{{ sg.move }}</div></div>{% endif %}
+    <div class="pl-dsum"><small>Written by Kestrel's AI from public sources. Kestrel never contacts anyone; you decide whether to reach out.</small></div>
+  </div>
+  <div class="pl-foot" id="pl-foot">
+    <div class="pl-foot__a">
+      {% if on_list %}<button type="button" class="k-btn k-btn--done" disabled>{{ ui.icon('check') }}In my leads</button>
+      {% else %}<button type="button" class="k-btn" data-pl-lead>Add to leads</button>{% endif %}
+      <button type="button" class="k-btn" data-pl-ask>Not relevant</button>
+      <a class="k-btn k-btn--primary" href="{{ org_href }}">Research company &rarr;</a>
+    </div>
+    <div class="pl-fl">
+      <div class="pl-frh"><span><b>Add to leads</b> <span class="pl-frs">Optional: set a first step.</span></span>
+        <button type="button" class="pl-xbtn pl-xbtn--sm" data-pl-back title="Cancel" aria-label="Cancel">{{ ui.icon('x', 'k-ic--sm') }}</button></div>
+      <form class="pl-fbrow" hx-post="/opportunities/{{ opp.id }}/lead" hx-target="#pl-panel" hx-swap="innerHTML">
+        <input class="k-input" name="step" value="Research the company" maxlength="200" aria-label="Next step">
+        <span class="pl-due" role="group" aria-label="Due"><input type="hidden" name="due" value="week">
+          <button type="button" data-due="today">Today</button><button type="button" data-due="week" class="is-on">This week</button><button type="button" data-due="next">Next week</button></span>
+        <button type="submit" class="k-btn k-btn--sm k-btn--primary">Add</button>
+      </form>
+    </div>
+    {{ reasons_grid(opp, reasons_list, signal=True) }}
+  </div>
+
+{# ------------------------------------------------------------------------------------ nf #}
+{% elif kind == 'nf' %}
+  {{ head('Not a fit', title, org_name ~ (' · ' ~ place if place else '')) }}
+  <div class="pl-db">
+    <div class="pl-dsec pl-dsec--plain"><h4 data-testid="rule-why">{% if rule_why %}{{ rule_why.text }} {{ rule_why.verb }} <a href="{{ rule_why.href }}">{{ rule_why.place }}</a>.{% else %}Set aside by your rules.{% endif %}</h4>
+      <div class="pl-dsum">Your rules set this aside before any AI ran, so Kestrel has not scored it. If the rule is too strict, keep this one or adjust the rule.</div></div>
+    {% if excerpt %}<div class="pl-dsec"><h4>From the posting</h4><div class="pl-dsum">{{ excerpt }}<small>Shown as posted. Kestrel has not summarized it.</small></div></div>{% endif %}
+    <div class="pl-facts"><span>{{ ui.icon('clock', 'k-ic--sm') }}{{ posted }}</span><span><span class="k-dot{% if liveness.tone == 'good' %} k-dot--live{% endif %}"></span>{{ liveness.text }}</span></div>
+  </div>
+  <div class="pl-foot" id="pl-foot"><div class="pl-foot__a">
+    <button type="button" class="k-btn" hx-post="/opportunities/{{ opp.id }}/decide/keep-anyway" hx-swap="none" data-testid="panel-keep-anyway">Keep it anyway</button>
+    <a class="k-btn" href="{{ rule_why.href if rule_why and rule_why.href else '/profile' }}" data-testid="panel-review-rules">Review your rules</a>
+    <a class="k-btn k-btn--primary" href="{{ open_href }}" data-testid="panel-open">Open full role &rarr;</a>
+  </div></div>
+
+{# ------------------------------------------------------------------------------- pending #}
+{% elif kind == 'pending' %}
+  {% set failed = fit.group == 'failed' %}
+  {{ head('Scoring failed' if failed else ('Not scored' if scoring == 'removed' else 'Being scored'), title, org_name ~ (' · ' ~ place if place else '')) }}
+  <div class="pl-db">
+    {% if override_note %}<div class="pl-dsm" data-testid="panel-override-note">{{ override_note }}</div>{% endif %}
+    <div class="pl-pending"><span class="k-dot {{ 'k-dot--bad' if failed else ('k-dot--idle' if scoring == 'removed' else 'k-dot--live') }}"></span>
+      {% if failed %}{{ failed_reason }} Kestrel kept the raw answer for review.
+      {% elif scoring == 'removed' %}You removed this role from Needs another try, so it has no score. <a href="/quarantine">Undo it there</a> to put it back in line.
+      {% elif scoring == 'held' %}This track is switched off, so the role waits until you switch it back on.
+      {% elif scoring == 'background' %}This company-board role scores in the background when Kestrel is idle.
+      {% elif scoring == 'stuck' %}Scoring stopped before it finished. Score it again.
+      {% else %}Being scored now. Details appear when the review finishes.{% endif %}</div>
+    {% if failed or scoring in ('stuck', 'removed', 'not_queued') %}
+      <a class="k-btn k-btn--primary pl-fit-content" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities">Score again</a>
+    {% endif %}
+    {% if failed %}<a class="k-btn pl-fit-content" href="/quarantine" data-testid="panel-needs-try">Open Needs another try</a>{% endif %}
+  </div>
+  <div class="pl-foot" id="pl-foot"><div class="pl-foot__a"><a class="k-btn k-btn--primary" href="{{ open_href }}">Open full role &rarr;</a></div></div>
+
+{# -------------------------------------------------------------------------------- role #}
+{% elif kind == 'role' %}
+  {{ head(({'contract_posting': 'Contract posting', 'rfp': 'RFP', 'referral': 'Referral'}.get(opp.opp_type, 'Opportunity') if consulting else 'Role summary'), title, org_name ~ (' · ' ~ place if place else '')) }}
+  <div class="pl-db">
+    <div class="pl-ringrow">
+      {{ ring(score if score is not none else 0, ring_pct, tone) }}
+      <div class="pl-dims">
+        <div class="pl-dims__top"><span class="k-pill {{ 'k-pill--good' if tone == 'good' else 'k-pill--warn' }}" data-fit="{{ fit.word }}">{{ ui.icon('check' if tone == 'good' else 'alert') }}{{ fit.word|capitalize }}</span>
+          {% if hidden %}<span class="pl-tag">hidden</span>{% endif %}{% if saved %}<span class="pl-tag">Saved</span>{% endif %}</div>
+        {% for d in dims %}<div class="pl-dim"><span>{{ d.name }}</span><i><u style="--w: {{ d.pct }}%" data-w="{{ d.pct }}"></u></i><b>{{ '%.1f'|format(d.score) }}</b></div>{% endfor %}
+      </div>
+    </div>
+    {% if override_note %}<div class="pl-dsm" data-testid="panel-override-note">{{ override_note }}</div>{% endif %}
+    {% if model_word %}<div class="pl-dsm" data-testid="panel-agreement">The model said {{ model_word }}, the scoring rules said {{ rules_word }}. Your call.</div>{% endif %}
+    {% if watch %}<div class="pl-dsec pl-dsec--warn" data-testid="panel-watch"><h4>Worth checking</h4>{% for line in watch %}<div class="pl-dsum">{{ line }}</div>{% endfor %}</div>{% endif %}
+    <div class="pl-dgrid">
+      <div class="pl-dbox"><div class="pl-dl">{{ pay.label }}</div>
+        <div class="pl-pay">{{ pay.text }}{% if pay.estimate %}<span class="pl-est" tabindex="0">est.<span class="pl-tip" role="tooltip">Kestrel's estimate from similar roles. The posting does not list pay.</span></span>{% endif %}</div>
+        {% if pay.pos is not none %}<div class="pl-tgt"><i style="left: {{ pay.pos }}%"></i></div>{% endif %}
+        <div class="pl-dsm" data-testid="pay-note">{{ pay.note }}</div></div>
+      {% if level %}<div class="pl-dbox"><div class="pl-dl">{{ level.label }}</div><div class="pl-strong">{{ level.text }}</div><div class="pl-dsm">{{ level.note }}</div></div>{% endif %}
+    </div>
+    {% if reasons %}<div class="pl-dsec"><h4>Why it fits</h4>
+      {% for r in reasons %}<div class="pl-reason"><span class="pl-m pl-m--{{ r.tone }}">{{ r.mark }}</span><div>{{ r.text }}<span class="pl-lvl">{{ r.word }}</span></div></div>{% endfor %}</div>{% endif %}
+    {% if gaps %}<div class="pl-dsec"><h4>Gaps to address</h4>
+      {% for g in gaps %}<div class="pl-reason"><span class="pl-m pl-m--a">!</span><div>{{ g.text }}{% if g.fatal %}<span class="pl-lvl">Could rule it out</span>{% endif %}{% if g.how %}<div class="pl-dsm">{{ g.how }}</div>{% endif %}</div></div>{% endfor %}</div>{% endif %}
+    {% if lead %}<div class="pl-dsec pl-lead"><h4>{{ lead.title }}</h4><div class="pl-dsum">{{ lead.text }}</div></div>{% endif %}
+    {% if summary %}<div class="pl-dsec"><h4>Summary</h4><div class="pl-dsum" data-testid="panel-summary">{{ summary }}<small>Written by Kestrel's AI from the posting. {{ ai_disclaimer }}</small></div></div>{% endif %}
+    <div class="pl-facts"><span>{{ ui.icon('clock', 'k-ic--sm') }}{{ posted }}</span><span><span class="k-dot{% if liveness.tone == 'good' %} k-dot--live{% elif liveness.tone == 'bad' %} k-dot--bad{% endif %}"></span>{{ liveness.text }}</span></div>
+  </div>
+  <div class="pl-foot" id="pl-foot">
+    <div class="pl-foot__a">
+      {% if hidden %}
+        <button type="button" class="k-btn" hx-post="/opportunities/{{ opp.id }}/decide/put-back" hx-swap="none" data-testid="panel-put-back">Put it back</button>
+      {% else %}
+        {% if on_list %}<button type="button" class="k-btn k-btn--done" disabled data-testid="panel-on-list">{{ ui.icon('check') }}{{ 'In my leads' if consulting else 'On my shortlist' }}</button>
+        {% else %}<button type="button" class="k-btn" hx-post="/opportunities/{{ opp.id }}/decide/shortlist" hx-target="#pl-panel" hx-swap="innerHTML" data-testid="panel-shortlist">{{ 'Add to leads' if consulting else 'Shortlist' }}</button>{% endif %}
+        <button type="button" class="k-btn" data-pl-ask data-testid="panel-not-for-me">Not for me</button>
+      {% endif %}
+      <a class="k-btn k-btn--primary" href="{{ open_href }}" data-testid="panel-open">Open full role &rarr;</a>
+    </div>
+    {{ reasons_grid(opp, reasons_list) }}
+  </div>
+{% endif %}
+</div>

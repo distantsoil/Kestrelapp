@@ -179,7 +179,8 @@ def test_each_tab_renders_its_form_with_the_starting_terms():
         loc = c.get("/profile?tab=location&track=consulting").text
         assert 'data-testid="profile-location"' in loc and 'name="onsite_metros"' in loc
         picker = loc.split('data-testid="profile-track-switch"')[1].split("</div>")[0]
-        assert 'aria-selected="true"\n         class="active" data-track="consulting"' in picker
+        assert 'aria-selected="true" class="active" data-track="consulting"' in " ".join(
+            picker.split())
         assert "@click=\"setTrack('consulting')\"" in picker and ">Consulting</a>" in picker
         # Employment terms are the employment track's whatever the query says (finding 1).
         emp2 = c.get("/profile?tab=employment&track=consulting").text
@@ -195,7 +196,7 @@ def test_profile_track_tabs_are_the_track_switch_and_the_nav_agrees():
     with _client() as c:
         for t in ("employment", "consulting"):
             page = c.get(f"/profile?tab={t}").text  # redirected to name its track
-            tabs = page.split('class="tabs" role="tablist"')[1].split("</div>")[0]
+            tabs = page.split('class="pf-tabs" role="tablist"')[1].split("</div>")[0]
             assert f"href=\"/profile?tab={t}&track={t}\"" in tabs.replace("&amp;", "&")
             assert f"@click=\"setTrack('{t}')\"" in tabs
             switch = page.split('class="track-switch"')[1].split("</div>")[0]
@@ -211,11 +212,14 @@ def test_profile_track_tabs_are_the_track_switch_and_the_nav_agrees():
 def test_saving_from_the_page_writes_the_file_and_shows_it_on_the_next_load():
     with _client() as c:
         r = c.post("/profile/employment/about",
-                   data={"full_name": "Pat Example", "is_active": "on", "must_avoid": "staffing"})
+                   data={"first_name": "Pat", "last_name": "Example", "is_active": "on",
+                         "must_avoid": "staffing"})
         assert r.status_code == 200
-        assert 'data-testid="profile-saved"' in r.text and 'value="Pat Example"' in r.text
+        assert 'data-testid="profile-saved"' in r.text
+        assert 'value="Pat"' in r.text and 'value="Example"' in r.text
         html = c.get("/profile").text
-        assert 'data-testid="no-profile"' not in html and 'value="Pat Example"' in html
+        assert 'data-testid="no-profile"' not in html
+        assert 'value="Pat"' in html and 'value="Example"' in html
         r = c.post("/profile/employment/employment",
                    data={"seniority_floor": "vp", "comp_floor_usd": "x"})
         assert 'data-testid="profile-problem"' in r.text and "whole number" in r.text
@@ -291,7 +295,7 @@ def test_an_unreadable_profile_blocks_every_save_and_says_so():
     with _client() as c:
         html = c.get("/profile").text
         assert 'data-testid="profile-unreadable"' in html
-        assert '<button class="btn primary" type="submit" disabled>' in html
+        assert 'type="submit" disabled>Save changes</button>' in html
         r = c.post("/profile/employment/about", data={"full_name": "Pat"})
         assert 'data-testid="profile-problem"' in r.text
     assert "Pat" not in pe.profile_path().read_text(encoding="utf-8")

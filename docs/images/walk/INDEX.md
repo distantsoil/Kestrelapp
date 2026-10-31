@@ -1,0 +1,228 @@
+# Screenshot walk
+
+All roles, employers, and people are invented.
+
+- [first-run-empty-light.png](first-run-empty-light.png): Fresh install before setup or any search.
+- [onboarding-welcome-light.png](onboarding-welcome-light.png): Onboarding step: welcome.
+- [onboarding-models-light.png](onboarding-models-light.png): Onboarding step: models.
+- [onboarding-about-light.png](onboarding-about-light.png): Onboarding step: about.
+- [onboarding-resume-light.png](onboarding-resume-light.png): Onboarding step: resume.
+- [onboarding-wants-light.png](onboarding-wants-light.png): Onboarding step: wants.
+- [onboarding-searches-light.png](onboarding-searches-light.png): Onboarding step: searches.
+- [onboarding-welcome-dark.png](onboarding-welcome-dark.png): Onboarding step: welcome.
+- [onboarding-models-dark.png](onboarding-models-dark.png): Onboarding step: models.
+- [onboarding-about-dark.png](onboarding-about-dark.png): Onboarding step: about.
+- [onboarding-resume-dark.png](onboarding-resume-dark.png): Onboarding step: resume.
+- [onboarding-wants-dark.png](onboarding-wants-dark.png): Onboarding step: wants.
+- [onboarding-searches-dark.png](onboarding-searches-dark.png): Onboarding step: searches.
+- [onboarding-welcome-narrow.png](onboarding-welcome-narrow.png): Onboarding step: welcome.
+- [onboarding-models-narrow.png](onboarding-models-narrow.png): Onboarding step: models.
+- [onboarding-about-narrow.png](onboarding-about-narrow.png): Onboarding step: about.
+- [onboarding-resume-narrow.png](onboarding-resume-narrow.png): Onboarding step: resume.
+- [onboarding-wants-narrow.png](onboarding-wants-narrow.png): Onboarding step: wants.
+- [onboarding-searches-narrow.png](onboarding-searches-narrow.png): Onboarding step: searches.
+- [today-main-light.png](today-main-light.png): Daily start and decisions waiting.
+- [pipeline-main-light.png](pipeline-main-light.png): Role groups and decisions.
+- [role-main-light.png](role-main-light.png): Role evaluation.
+- [role-evaluation-light.png](role-evaluation-light.png): role: Evaluation tab.
+- [role-posting-light.png](role-posting-light.png): role: Posting tab.
+- [role-organization-light.png](role-organization-light.png): role: Organization tab.
+- [role-documents-1-light.png](role-documents-1-light.png): role: Documents 1 tab.
+- [role-history-light.png](role-history-light.png): role: History tab.
+- [applications-main-light.png](applications-main-light.png): Application board.
+- [applications-list-light.png](applications-list-light.png): Application list.
+- [profile-main-light.png](profile-main-light.png): Profile details.
+- [profile-about-you-light.png](profile-about-you-light.png): profile: About you tab.
+- [profile-documents-light.png](profile-documents-light.png): profile: Documents tab.
+- [profile-employment-light.png](profile-employment-light.png): profile: Employment tab.
+- [profile-location-light.png](profile-location-light.png): profile: Location tab.
+- [profile-stories-light.png](profile-stories-light.png): profile: Stories tab.
+- [profile-consulting-light.png](profile-consulting-light.png): Consulting profile.
+- [stories-main-light.png](stories-main-light.png): Story bank.
+- [documents-main-light.png](documents-main-light.png): Resume source text.
+- [prep-main-light.png](prep-main-light.png): Interview prep pack.
+- [prep-prep-pack-light.png](prep-prep-pack-light.png): prep: Prep pack tab.
+- [prep-practice-light.png](prep-practice-light.png): prep: Practice tab.
+- [prep-story-bank-light.png](prep-story-bank-light.png): prep: Story bank tab.
+- [mock-main-light.png](mock-main-light.png): Practice interview entry.
+- [offers-main-light.png](offers-main-light.png): Recorded offer.
+- [offers-compare-light.png](offers-compare-light.png): offers: Compare tab.
+- [offers-negotiate-light.png](offers-negotiate-light.png): offers: Negotiate tab.
+- [offers-history-light.png](offers-history-light.png): offers: History tab.
+- [company-main-light.png](company-main-light.png): Researched fictional company.
+- [sources-main-light.png](sources-main-light.png): Search sources.
+- [runs-main-light.png](runs-main-light.png): Run history.
+- [needs-another-try-main-light.png](needs-another-try-main-light.png): Quarantined role.
+- [calibrate-main-light.png](calibrate-main-light.png): Rating queue.
+- [analytics-main-light.png](analytics-main-light.png): Search summary.
+- [models-main-light.png](models-main-light.png): Model choices.
+- [model-check-main-light.png](model-check-main-light.png): Model check.
+- [settings-main-light.png](settings-main-light.png): Settings overview.
+- [help-main-light.png](help-main-light.png): Help.
+- [about-main-light.png](about-main-light.png): About and release information.
+- [tailor-review-light.png](tailor-review-light.png): Tailored resume review and source text choices.
+- [analytics-table-light.png](analytics-table-light.png): Analytics table view of the same numbers.
+- [analytics-group-src-light.png](analytics-group-src-light.png): Analytics grouped by src.
+- [analytics-group-work-light.png](analytics-group-work-light.png): Analytics grouped by work.
+- [analytics-group-level-light.png](analytics-group-level-light.png): Analytics grouped by level.
+- [analytics-group-size-light.png](analytics-group-size-light.png): Analytics grouped by size.
+- [analytics-group-own-light.png](analytics-group-own-light.png): Analytics grouped by own.
+- [analytics-group-remote-light.png](analytics-group-remote-light.png): Analytics grouped by remote.
+- [models-change-model-light.png](models-change-model-light.png): models: change-model open without saving or sending.
+- [offers-record-dialog-light.png](offers-record-dialog-light.png): offers: record-dialog open without saving or sending.
+- [sources-add-dialog-light.png](sources-add-dialog-light.png): sources: add-dialog open without saving or sending.
+- [runs-run-menu-light.png](runs-run-menu-light.png): runs: run-menu open without saving or sending.
+- [settings-computer-light.png](settings-computer-light.png): Settings: computer section.
+- [settings-roles-light.png](settings-roles-light.png): Settings: roles section.
+- [settings-scoring-light.png](settings-scoring-light.png): Settings: scoring section.
+- [settings-privacy-light.png](settings-privacy-light.png): Settings: privacy section.
+- [settings-data-light.png](settings-data-light.png): Settings: data section.
+- [settings-preferences-light.png](settings-preferences-light.png): Settings: preferences section.
+- [settings-appearance-light.png](settings-appearance-light.png): Theme and color scheme controls.
+- [settings-scheme-indigo-light.png](settings-scheme-indigo-light.png): Settings color scheme: indigo.
+- [settings-scheme-teal-light.png](settings-scheme-teal-light.png): Settings color scheme: teal.
+- [settings-scheme-plum-light.png](settings-scheme-plum-light.png): Settings color scheme: plum.
+- [settings-scheme-graphite-light.png](settings-scheme-graphite-light.png): Settings color scheme: graphite.
+- [settings-scheme-contrast-light.png](settings-scheme-contrast-light.png): Settings color scheme: contrast.
+- [pipeline-filters-light.png](pipeline-filters-light.png): pipeline: filters open.
+- [pipeline-saved-views-light.png](pipeline-saved-views-light.png): pipeline: saved-views open.
+- [applications-card-menu-light.png](applications-card-menu-light.png): applications: card-menu open.
+- [analytics-export-menu-light.png](analytics-export-menu-light.png): analytics: export-menu open.
+- [role-more-menu-light.png](role-more-menu-light.png): role: more-menu open.
+- [role-online-ask-light.png](role-online-ask-light.png): Deeper read consent dialog before any online send.
+- [pipeline-role-panel-light.png](pipeline-role-panel-light.png): Role side panel over the Pipeline list.
+- [today-main-dark.png](today-main-dark.png): Daily start and decisions waiting.
+- [pipeline-main-dark.png](pipeline-main-dark.png): Role groups and decisions.
+- [role-main-dark.png](role-main-dark.png): Role evaluation.
+- [role-evaluation-dark.png](role-evaluation-dark.png): role: Evaluation tab.
+- [role-posting-dark.png](role-posting-dark.png): role: Posting tab.
+- [role-organization-dark.png](role-organization-dark.png): role: Organization tab.
+- [role-documents-1-dark.png](role-documents-1-dark.png): role: Documents 1 tab.
+- [role-history-dark.png](role-history-dark.png): role: History tab.
+- [applications-main-dark.png](applications-main-dark.png): Application board.
+- [applications-list-dark.png](applications-list-dark.png): Application list.
+- [profile-main-dark.png](profile-main-dark.png): Profile details.
+- [profile-about-you-dark.png](profile-about-you-dark.png): profile: About you tab.
+- [profile-documents-dark.png](profile-documents-dark.png): profile: Documents tab.
+- [profile-employment-dark.png](profile-employment-dark.png): profile: Employment tab.
+- [profile-location-dark.png](profile-location-dark.png): profile: Location tab.
+- [profile-stories-dark.png](profile-stories-dark.png): profile: Stories tab.
+- [profile-consulting-dark.png](profile-consulting-dark.png): Consulting profile.
+- [stories-main-dark.png](stories-main-dark.png): Story bank.
+- [documents-main-dark.png](documents-main-dark.png): Resume source text.
+- [prep-main-dark.png](prep-main-dark.png): Interview prep pack.
+- [prep-prep-pack-dark.png](prep-prep-pack-dark.png): prep: Prep pack tab.
+- [prep-practice-dark.png](prep-practice-dark.png): prep: Practice tab.
+- [prep-story-bank-dark.png](prep-story-bank-dark.png): prep: Story bank tab.
+- [mock-main-dark.png](mock-main-dark.png): Practice interview entry.
+- [offers-main-dark.png](offers-main-dark.png): Recorded offer.
+- [offers-compare-dark.png](offers-compare-dark.png): offers: Compare tab.
+- [offers-negotiate-dark.png](offers-negotiate-dark.png): offers: Negotiate tab.
+- [offers-history-dark.png](offers-history-dark.png): offers: History tab.
+- [company-main-dark.png](company-main-dark.png): Researched fictional company.
+- [sources-main-dark.png](sources-main-dark.png): Search sources.
+- [runs-main-dark.png](runs-main-dark.png): Run history.
+- [needs-another-try-main-dark.png](needs-another-try-main-dark.png): Quarantined role.
+- [calibrate-main-dark.png](calibrate-main-dark.png): Rating queue.
+- [analytics-main-dark.png](analytics-main-dark.png): Search summary.
+- [models-main-dark.png](models-main-dark.png): Model choices.
+- [model-check-main-dark.png](model-check-main-dark.png): Model check.
+- [settings-main-dark.png](settings-main-dark.png): Settings overview.
+- [help-main-dark.png](help-main-dark.png): Help.
+- [about-main-dark.png](about-main-dark.png): About and release information.
+- [tailor-review-dark.png](tailor-review-dark.png): Tailored resume review and source text choices.
+- [analytics-table-dark.png](analytics-table-dark.png): Analytics table view of the same numbers.
+- [analytics-group-src-dark.png](analytics-group-src-dark.png): Analytics grouped by src.
+- [analytics-group-work-dark.png](analytics-group-work-dark.png): Analytics grouped by work.
+- [analytics-group-level-dark.png](analytics-group-level-dark.png): Analytics grouped by level.
+- [analytics-group-size-dark.png](analytics-group-size-dark.png): Analytics grouped by size.
+- [analytics-group-own-dark.png](analytics-group-own-dark.png): Analytics grouped by own.
+- [analytics-group-remote-dark.png](analytics-group-remote-dark.png): Analytics grouped by remote.
+- [models-change-model-dark.png](models-change-model-dark.png): models: change-model open without saving or sending.
+- [offers-record-dialog-dark.png](offers-record-dialog-dark.png): offers: record-dialog open without saving or sending.
+- [sources-add-dialog-dark.png](sources-add-dialog-dark.png): sources: add-dialog open without saving or sending.
+- [runs-run-menu-dark.png](runs-run-menu-dark.png): runs: run-menu open without saving or sending.
+- [settings-computer-dark.png](settings-computer-dark.png): Settings: computer section.
+- [settings-roles-dark.png](settings-roles-dark.png): Settings: roles section.
+- [settings-scoring-dark.png](settings-scoring-dark.png): Settings: scoring section.
+- [settings-privacy-dark.png](settings-privacy-dark.png): Settings: privacy section.
+- [settings-data-dark.png](settings-data-dark.png): Settings: data section.
+- [settings-preferences-dark.png](settings-preferences-dark.png): Settings: preferences section.
+- [settings-appearance-dark.png](settings-appearance-dark.png): Theme and color scheme controls.
+- [pipeline-filters-dark.png](pipeline-filters-dark.png): pipeline: filters open.
+- [pipeline-saved-views-dark.png](pipeline-saved-views-dark.png): pipeline: saved-views open.
+- [applications-card-menu-dark.png](applications-card-menu-dark.png): applications: card-menu open.
+- [analytics-export-menu-dark.png](analytics-export-menu-dark.png): analytics: export-menu open.
+- [role-more-menu-dark.png](role-more-menu-dark.png): role: more-menu open.
+- [role-online-ask-dark.png](role-online-ask-dark.png): Deeper read consent dialog before any online send.
+- [pipeline-role-panel-dark.png](pipeline-role-panel-dark.png): Role side panel over the Pipeline list.
+- [today-main-narrow.png](today-main-narrow.png): Daily start and decisions waiting.
+- [pipeline-main-narrow.png](pipeline-main-narrow.png): Role groups and decisions.
+- [role-main-narrow.png](role-main-narrow.png): Role evaluation.
+- [role-evaluation-narrow.png](role-evaluation-narrow.png): role: Evaluation tab.
+- [role-posting-narrow.png](role-posting-narrow.png): role: Posting tab.
+- [role-organization-narrow.png](role-organization-narrow.png): role: Organization tab.
+- [role-documents-1-narrow.png](role-documents-1-narrow.png): role: Documents 1 tab.
+- [role-history-narrow.png](role-history-narrow.png): role: History tab.
+- [applications-main-narrow.png](applications-main-narrow.png): Application board.
+- [applications-list-narrow.png](applications-list-narrow.png): Application list.
+- [profile-main-narrow.png](profile-main-narrow.png): Profile details.
+- [profile-about-you-narrow.png](profile-about-you-narrow.png): profile: About you tab.
+- [profile-documents-narrow.png](profile-documents-narrow.png): profile: Documents tab.
+- [profile-employment-narrow.png](profile-employment-narrow.png): profile: Employment tab.
+- [profile-location-narrow.png](profile-location-narrow.png): profile: Location tab.
+- [profile-stories-narrow.png](profile-stories-narrow.png): profile: Stories tab.
+- [profile-consulting-narrow.png](profile-consulting-narrow.png): Consulting profile.
+- [stories-main-narrow.png](stories-main-narrow.png): Story bank.
+- [documents-main-narrow.png](documents-main-narrow.png): Resume source text.
+- [prep-main-narrow.png](prep-main-narrow.png): Interview prep pack.
+- [prep-prep-pack-narrow.png](prep-prep-pack-narrow.png): prep: Prep pack tab.
+- [prep-practice-narrow.png](prep-practice-narrow.png): prep: Practice tab.
+- [prep-story-bank-narrow.png](prep-story-bank-narrow.png): prep: Story bank tab.
+- [mock-main-narrow.png](mock-main-narrow.png): Practice interview entry.
+- [offers-main-narrow.png](offers-main-narrow.png): Recorded offer.
+- [offers-compare-narrow.png](offers-compare-narrow.png): offers: Compare tab.
+- [offers-negotiate-narrow.png](offers-negotiate-narrow.png): offers: Negotiate tab.
+- [offers-history-narrow.png](offers-history-narrow.png): offers: History tab.
+- [company-main-narrow.png](company-main-narrow.png): Researched fictional company.
+- [sources-main-narrow.png](sources-main-narrow.png): Search sources.
+- [runs-main-narrow.png](runs-main-narrow.png): Run history.
+- [needs-another-try-main-narrow.png](needs-another-try-main-narrow.png): Quarantined role.
+- [calibrate-main-narrow.png](calibrate-main-narrow.png): Rating queue.
+- [analytics-main-narrow.png](analytics-main-narrow.png): Search summary.
+- [models-main-narrow.png](models-main-narrow.png): Model choices.
+- [model-check-main-narrow.png](model-check-main-narrow.png): Model check.
+- [settings-main-narrow.png](settings-main-narrow.png): Settings overview.
+- [help-main-narrow.png](help-main-narrow.png): Help.
+- [about-main-narrow.png](about-main-narrow.png): About and release information.
+- [tailor-review-narrow.png](tailor-review-narrow.png): Tailored resume review and source text choices.
+- [analytics-table-narrow.png](analytics-table-narrow.png): Analytics table view of the same numbers.
+- [analytics-group-src-narrow.png](analytics-group-src-narrow.png): Analytics grouped by src.
+- [analytics-group-work-narrow.png](analytics-group-work-narrow.png): Analytics grouped by work.
+- [analytics-group-level-narrow.png](analytics-group-level-narrow.png): Analytics grouped by level.
+- [analytics-group-size-narrow.png](analytics-group-size-narrow.png): Analytics grouped by size.
+- [analytics-group-own-narrow.png](analytics-group-own-narrow.png): Analytics grouped by own.
+- [analytics-group-remote-narrow.png](analytics-group-remote-narrow.png): Analytics grouped by remote.
+- [models-change-model-narrow.png](models-change-model-narrow.png): models: change-model open without saving or sending.
+- [offers-record-dialog-narrow.png](offers-record-dialog-narrow.png): offers: record-dialog open without saving or sending.
+- [sources-add-dialog-narrow.png](sources-add-dialog-narrow.png): sources: add-dialog open without saving or sending.
+- [runs-run-menu-narrow.png](runs-run-menu-narrow.png): runs: run-menu open without saving or sending.
+- [settings-computer-narrow.png](settings-computer-narrow.png): Settings: computer section.
+- [settings-roles-narrow.png](settings-roles-narrow.png): Settings: roles section.
+- [settings-scoring-narrow.png](settings-scoring-narrow.png): Settings: scoring section.
+- [settings-privacy-narrow.png](settings-privacy-narrow.png): Settings: privacy section.
+- [settings-data-narrow.png](settings-data-narrow.png): Settings: data section.
+- [settings-preferences-narrow.png](settings-preferences-narrow.png): Settings: preferences section.
+- [settings-appearance-narrow.png](settings-appearance-narrow.png): Theme and color scheme controls.
+- [pipeline-filters-narrow.png](pipeline-filters-narrow.png): pipeline: filters open.
+- [pipeline-saved-views-narrow.png](pipeline-saved-views-narrow.png): pipeline: saved-views open.
+- [applications-card-menu-narrow.png](applications-card-menu-narrow.png): applications: card-menu open.
+- [analytics-export-menu-narrow.png](analytics-export-menu-narrow.png): analytics: export-menu open.
+- [role-more-menu-narrow.png](role-more-menu-narrow.png): role: more-menu open.
+- [role-online-ask-narrow.png](role-online-ask-narrow.png): Deeper read consent dialog before any online send.
+- [pipeline-role-panel-narrow.png](pipeline-role-panel-narrow.png): Role side panel over the Pipeline list.
+- [today-undo-toast-light.png](today-undo-toast-light.png): Save for later confirmation with Undo.
+- [settings-confidential-on-light.png](settings-confidential-on-light.png): Confidential mode and employer preview.
+- [pipeline-confidential-on-light.png](pipeline-confidential-on-light.png): Pipeline with confidential mode enabled.
+- [role-refused-online-light.png](role-refused-online-light.png): Deeper read is preview only without an online key.
+- [error-missing-render-light.png](error-missing-render-light.png): User-facing response to a stale render link.

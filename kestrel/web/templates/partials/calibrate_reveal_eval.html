@@ -1,0 +1,17 @@
+{# After the operator answers: "You said X. Kestrel said Y." with Close or Different, the five
+   scores and Kestrel's own reading. Needs said, said_word, dims, kestrel, read. #}
+{% import "ui/macros.html" as ui %}
+{% set close = cv.is_close(kestrel, said) %}
+<div class="cal-cmp" data-testid="cal-reveal">
+  <span>You said <b>{{ said_word }}</b> ({{ said }}). {% if kestrel is not none %}Kestrel said <b>{{ '%.1f'|format(kestrel) }}</b>.{% else %}Kestrel has no score for this role.{% endif %}</span>
+  {% if kestrel is not none %}<span class="k-pill {{ 'k-pill--good' if close else 'k-pill--warn' }}" data-testid="cal-result">{{ 'Close' if close else 'Different' }}</span>{% endif %}
+</div>
+{% if kestrel is not none %}
+<div class="cal-ringrow">
+  <div class="cal-ring3 {{ 'is-mid' if kestrel < 4 else '' }}" style="--p: {{ (kestrel / 5 * 100)|round|int }}" role="img" aria-label="Kestrel's score {{ '%.1f'|format(kestrel) }} of 5"><div><div><b>{{ '%.1f'|format(kestrel) }}</b><span>of 5</span></div></div></div>
+  <div class="cal-dims">
+    {% for d in dims %}<div class="cal-dim"><span>{{ d.name }}</span><i><u style="width: {{ d.score * 20 }}%"></u></i><b>{{ d.score }}</b></div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+{% if read %}<div class="cal-sm cal-read"><b>Kestrel's read:</b> {{ read }}</div>{% endif %}
