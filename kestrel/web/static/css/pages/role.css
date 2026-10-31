@@ -242,6 +242,11 @@
 .rl-row2 > .k-btn--done { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-align: center; }
 .rl-row2 > .k-btn--done + .k-btn { flex: 0 0 auto; }
+/* The button is a flex box (.rl-side .k-btn), and an ellipsis never applies to a flex box's bare
+   text: "On my shortlist · Interviewing" was cut mid-letter (issue #57). The label sits in its own
+   span, which can shrink and show the ellipsis; the full label is the button's title. */
+.rl-row2 > .k-btn--done > .rl-done-t { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 .rl-row2.is-stack { flex-direction: column; }
 .rl-side .k-btn { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .rl-lock { opacity: .55; cursor: not-allowed; position: relative; }

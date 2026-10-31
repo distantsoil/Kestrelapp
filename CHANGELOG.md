@@ -10,6 +10,7 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 - **A press that fails always says so.** When Kestrel cannot complete something you pressed, a message now says nothing changed, instead of the page staying as it was.
 - **Roles you already applied for no longer say "Being scored".** Roles brought in by Import past applications, and re-posts of roles you applied to, are hidden and never scored. The role page, the Pipeline panel and Applications now say "Not scored" and why.
 - **Where roles come from on Analytics** no longer runs past its card when the window is narrowed to just above the size where the cards stack. Long source names and the reply rate wrap instead.
+- **The "On my shortlist" button on a role** no longer cuts off the column name mid-letter. A long one such as "Interviewing" now ends in "…" when the column is narrow, and hovering shows the full label.
 - **Needs another try** no longer keeps a failure you cannot clear. A failure that did not come from scoring a role, such as job title ideas, names its step, says where to run it again, and can be removed.
 
 ### Changed

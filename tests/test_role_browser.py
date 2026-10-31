@@ -416,3 +416,102 @@ def test_a_tab_change_fades_the_new_pane_in_without_a_flash(live):
         assert not errors, errors
     finally:
         ctx.close()
+
+
+_CHIP = """() => { const b = document.querySelector('[data-testid="on-my-list"]');
+  const t = b.querySelector('.rl-done-t'); const cs = getComputedStyle(b);
+  const br = b.getBoundingClientRect(); const row = b.parentElement.getBoundingClientRect();
+  const inner = br.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+  const out = {title: b.title, btn: [br.left, br.right], row: [row.left, row.right], inner: inner};
+  if (t) { const r = t.getBoundingClientRect();
+    Object.assign(out, {span: [r.left, r.right], top: r.top, h: r.height, text: t.textContent,
+      ell: getComputedStyle(t).textOverflow, cut: t.scrollWidth > t.clientWidth}); }
+  return out; }"""
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1000, 1280, 1680])
+@pytest.mark.parametrize("status", ["applied", "interviewing", "offer", "rejected"])
+def test_the_on_my_list_chip_never_cuts_a_letter(live, theme, width, status):
+    """Issue #57: "On my shortlist · Interviewing" was cut mid-letter with no ellipsis, because the
+    button is a flex box and an ellipsis never applies to a flex box's bare text. The label now
+    fits or ends in an ellipsis inside the button, on one line, with the full label as its title."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Pursuit
+
+    _, _, ids = live
+
+    async def put():
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+                from sqlalchemy import delete
+
+                await s.execute(delete(Pursuit).where(Pursuit.opportunity_id == ids["strong"]))
+                s.add(Pursuit(opportunity_id=ids["strong"], track="employment", status=status,
+                              applied_at=utcnow_iso(), last_activity_at=utcnow_iso()))
+                await s.commit()
+        finally:
+            await engine.dispose()
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as pool:  # Playwright's sync API holds this thread's event loop
+        pool.submit(asyncio.run, put()).result()
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        c = page.evaluate(_CHIP)
+        assert "span" in c, ("the label has no span of its own", c)
+        assert c["title"] == c["text"] and c["text"].startswith("On my shortlist · "), c
+        assert c["ell"] == "ellipsis", c
+        assert c["span"][1] <= c["inner"] + 1, ("label runs past the button", c, theme, width)
+        assert c["btn"][1] <= c["row"][1] + 1, ("button runs past its row", c)
+        assert c["h"] <= 24, ("label wrapped", c)
+        if status == "interviewing" and width == 1680:  # the narrow side column: it must shorten
+            assert c["cut"], ("expected the ellipsis to show", c)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_a_lead_chip_in_the_stacked_row_ends_in_an_ellipsis_too(live):
+    """The consulting row stacks (.rl-row2.is-stack) and reads "In my leads · <column>"."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Pursuit
+
+    base, browser, ids = live
+
+    async def put():
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+                s.add(Pursuit(opportunity_id=ids["lead"], track="consulting",
+                              status="proposal_sent", applied_at=utcnow_iso(),
+                              last_activity_at=utcnow_iso()))
+                await s.commit()
+        finally:
+            await engine.dispose()
+
+    with ThreadPoolExecutor(1) as pool:
+        pool.submit(asyncio.run, put()).result()
+    ctx = browser.new_context(viewport={"width": 1680, "height": 1000})
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/opportunities/{ids['lead']}")
+        page.wait_for_selector("#rl-body")
+        wait_for_layout(page)
+        c = page.evaluate(_CHIP)
+        assert "span" in c and c["text"].startswith("In my leads · "), c
+        assert c["span"][1] <= c["inner"] + 1 and c["h"] <= 24, c
+    finally:
+        ctx.close()
