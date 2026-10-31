@@ -45,7 +45,7 @@ from kestrel.db.models import (
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
-from kestrel.web.fit import GOOD, NOT_FIT, verdict_for_fit
+from kestrel.web.fit import GOOD, IMPORTED_REASON, NOT_FIT, verdict_for_fit
 from kestrel.web.queries import latest_evaluation, record_override
 from kestrel.web.words import words
 
@@ -302,7 +302,7 @@ async def remove_from_list(
     if clear_import_archive and opp.archive_reason == "applied":
         opp.archived_at = None
         opp.archive_reason = None
-        if opp.stage_reason == "Imported applied history":
+        if opp.stage_reason == IMPORTED_REASON:
             opp.stage_reason = None
     await session.delete(pursuit)
     if commit:

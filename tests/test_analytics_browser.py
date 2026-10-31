@@ -189,8 +189,8 @@ def test_funnel_bars_are_their_true_share_of_the_track(live, theme, width):
 def test_cards_contain_their_content_and_tiles_leave_no_empty_slot(live, theme, width):
     ctx, page, errors = _page(live, theme, width)
     try:
-        # Nothing runs past its own card, and the group tabs, rate cells and first-column names
-        # stay on one line (the Where roles come from card at 1280).
+        # Nothing runs past its own card, and with the seeded short names the group tabs, rate
+        # cells and first-column names stay on one line (a long name may wrap, D-UI-226).
         bad = page.evaluate("""() => { const out = [];
           for (const card of document.querySelectorAll('.an-card')) {
             const c = card.getBoundingClientRect();
@@ -296,6 +296,61 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(liv
         page.wait_for_selector("#an-dialog .k-modal", state="attached")
         page.wait_for_timeout(200)
         assert page.evaluate("window.__opens") == 0
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+_CONTAINED = """() => { const out = [];
+  for (const card of document.querySelectorAll('.an-card')) {
+    const c = card.getBoundingClientRect();
+    for (const el of card.querySelectorAll('*')) {
+      if (el.offsetParent === null || el.closest('[hidden]')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width && (r.right > c.right + 1 || r.left < c.left - 1))
+        out.push([el.tagName, el.className, (el.textContent || '').trim().slice(0, 24),
+                  Math.round(r.right - c.right)]); } }
+  return out; }"""
+
+
+@pytest.fixture
+def live_long_source(monkeypatch):
+    """The owner's data shape (issue #60): a long source name and three-digit counts."""
+    import sqlite3
+
+    from playwright.sync_api import sync_playwright
+
+    from kestrel import paths
+    from kestrel.web.serve import running_server
+
+    _seed_web(150)
+    con = sqlite3.connect(paths.db_path())
+    try:
+        con.execute("UPDATE source SET name = 'Applied history import (employment)'")
+        con.commit()
+    finally:
+        con.close()
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        yield base, browser
+        browser.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1520, 1600, 1640, 1680, 1760])
+def test_where_roles_come_from_stays_inside_its_card_side_by_side(live_long_source, theme, width):
+    """Between the 1500px stacking step and a wide window the card is about 600px wide. A long
+    source name and "0% (0 of 149)" used to run up to 74px past it (issue #60); they wrap now."""
+    ctx, page, errors = _page(live_long_source, theme, width)
+    try:
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        bad = page.evaluate(_CONTAINED)
+        assert not bad, (bad[:5], theme, width)
+        if width >= 1760:  # room enough: nothing wraps, as the mockup draws it
+            for sel in (".an-rate", ".an-at td > b"):
+                for el in page.query_selector_all(sel):
+                    if el.is_visible():
+                        assert el.bounding_box()["height"] <= 28, (sel, theme, width)
         assert not errors, errors
     finally:
         ctx.close()

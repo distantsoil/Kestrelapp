@@ -159,7 +159,9 @@
 .an-at th { font-size: 11.5px; letter-spacing: .05em; color: var(--muted); text-align: left;
   padding: 6px 8px; font-weight: 800; text-transform: uppercase; }
 .an-at td { padding: 8px; border-top: 1px solid var(--line); }
-.an-at td > b { white-space: nowrap; }
+/* Names and rate cells wrap rather than push the table past its card: the side-by-side layout
+   leaves about 600px per card between 1500 and 1680 (issue #60). The mockup sets no nowrap. */
+.an-at td > b { overflow-wrap: break-word; }
 .an-at td.c, .an-at th.c { text-align: center; }
 .an-fewnote { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
 .an-fewnote .an-few { margin-right: 4px; }
@@ -167,7 +169,7 @@
   border: 1px solid var(--tint-warn-line); border-radius: var(--r-md); padding: 9px 12px;
   font-size: 13px; margin-top: 10px; }
 .an-verdict .k-ic { color: var(--warn); margin-top: 2px; flex: none; }
-.an-rate { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.an-rate { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .an-rate i { display: inline-block; width: 70px; height: 7px; border-radius: 4px;
   background: var(--soft); overflow: hidden; }
 .an-rate u { display: block; height: 100%; background: var(--brand); border-radius: 4px; }

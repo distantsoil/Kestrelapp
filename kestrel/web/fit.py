@@ -23,6 +23,7 @@ gone, D-UI-45).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,6 +67,33 @@ _FAILURE_WORDS: tuple[tuple[tuple[str, ...], str], ...] = (
      "the reply was not in the expected shape"),
 )
 FAILURE_FALLBACK = "scoring did not finish"
+
+# Hidden as applied before any model read it (issue #59): the applied-history import
+# (D-IMPORT-1) and a re-post of a role already applied for (SPEC.md 5.6). Tier 0 skips hidden
+# roles, so nothing will score them: they read Not scored, never Being scored.
+IMPORTED_REASON = "Imported applied history"
+_REPOST = re.compile(r"Re-post of (pursuit|hidden opportunity) #(\d+)")
+
+
+def hidden_unscored_why(opp: Any) -> str | None:
+    """Why a role hidden as applied has no score, in the operator's words; None for any role
+    the pipeline will still score. Callers use queries.hidden_unscored, which also rules out a
+    queued Score again; the "Re-post of" forms are written by ingest.normalize.suppress_if_applied
+    (tests/test_hidden_unscored.py ties the two)."""
+    if getattr(opp, "stage", None) != "new" or getattr(opp, "archive_reason", None) != "applied":
+        return None
+    from kestrel.web.words import words
+
+    role = words(getattr(opp, "track", None))["role"]
+    reason = getattr(opp, "stage_reason", None) or ""
+    if reason == IMPORTED_REASON:
+        return "Imported from your applied history."
+    m = _REPOST.fullmatch(reason)
+    if m and m.group(1) == "pursuit":
+        return f"Re-post of a {role} you applied to (pursuit #{m.group(2)})."
+    if m:
+        return f"Re-post of a {role} you hid as applied ({role} #{m.group(2)})."
+    return "Hidden as applied before it was scored."
 
 
 def failure_words(error: str | None) -> str:

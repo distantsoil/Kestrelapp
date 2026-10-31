@@ -61,6 +61,7 @@ from kestrel.web.errors import plain_error
 from kestrel.web.fit import fit_word_for_verdict
 from kestrel.web.pages.pipeline import _events, _toast
 from kestrel.web.queries import (
+    hidden_unscored,
     opportunity_history,
     opportunity_renders,
     org_context,
@@ -294,6 +295,9 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
             Task.last_error == APPROVAL_HOLD,
             func.json_extract(Task.payload, "$.opportunity_id") == opp_id,
         ).limit(1))).first() is not None
+        # Hidden as applied with nothing queued: Not scored, never Being scored (issue #59).
+        # Score again queues a live task, and then it is Being scored after all.
+        detail["hidden_why"] = (await hidden_unscored(s2, [opp])).get(opp.id)
         stats = None if track == "consulting" else await comp_intel_stats(s2, opp)
         n_seen = 0 if track == "consulting" else await comp_intel_count(s2, opp)
         reqs = rv.requirements(opp, ev_json)

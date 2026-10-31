@@ -91,16 +91,20 @@
 {# ------------------------------------------------------------------------------- pending #}
 {% elif kind == 'pending' %}
   {% set failed = fit.group == 'failed' %}
-  {{ head('Scoring failed' if failed else ('Not scored' if scoring == 'removed' else 'Being scored'), title, org_name ~ (' · ' ~ place if place else '')) }}
+  {{ head('Scoring failed' if failed else ('Not scored' if scoring in ('removed', 'hidden') else 'Being scored'), title, org_name ~ (' · ' ~ place if place else '')) }}
   <div class="pl-db">
     {% if override_note %}<div class="pl-dsm" data-testid="panel-override-note">{{ override_note }}</div>{% endif %}
-    <div class="pl-pending"><span class="k-dot {{ 'k-dot--bad' if failed else ('k-dot--idle' if scoring == 'removed' else 'k-dot--live') }}"></span>
+    <div class="pl-pending"><span class="k-dot {{ 'k-dot--bad' if failed else ('k-dot--idle' if scoring in ('removed', 'hidden') else 'k-dot--live') }}"></span>
       {% if failed %}{{ failed_reason }} Kestrel kept the raw answer for review.
       {% elif scoring == 'removed' %}You removed this role from Needs another try, so it has no score. <a href="/quarantine">Undo it there</a> to put it back in line.
+      {% elif scoring == 'hidden' %}<span data-testid="panel-hidden-why">{{ hidden_why }} Kestrel does not score {{ w.roles }} you already applied for. Put it back to score it.</span>
       {% elif scoring == 'held' %}This track is switched off, so the role waits until you switch it back on.
       {% elif scoring == 'background' %}This company-board role scores in the background when Kestrel is idle.
       {% elif scoring == 'stuck' %}Scoring stopped before it finished. Score it again.
       {% else %}Being scored now. Details appear when the review finishes.{% endif %}</div>
+    {% if scoring == 'hidden' %}
+      <button type="button" class="k-btn pl-fit-content" hx-post="/opportunities/{{ opp.id }}/decide/put-back" hx-swap="none" data-testid="panel-put-back">Put it back</button>
+    {% endif %}
     {% if failed or scoring in ('stuck', 'removed', 'not_queued') %}
       <a class="k-btn k-btn--primary pl-fit-content" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities">Score again</a>
     {% endif %}

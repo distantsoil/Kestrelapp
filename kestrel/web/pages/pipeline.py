@@ -165,6 +165,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         "removed": removed,
         "scoring": probe.scoring,
         "failed_reason": probe.failed_reason,
+        "hidden_why": probe.hidden_why,
         "posted": pv.posted_words(opp.date_posted),
         "liveness": pv.liveness_fact(opp),
         "open_href": f"/opportunities/{opp.id}",

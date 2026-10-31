@@ -117,9 +117,10 @@ async def _tailor_master(session: AsyncSession, track: str) -> DocMaster | None:
 
 async def _fit_labels(session: AsyncSession, opps: list[Opportunity]) -> dict[int, dict]:
     """The fit each role shows: the number once scored, else nothing (the card says "Being
-    scored"; never a dash and never a no, hard rule 4)."""
+    scored", or "Not scored" and why for a role hidden as applied that nothing will score,
+    D-UI-225; never a dash and never a no, hard rule 4)."""
     from kestrel.web.fit import fit_for
-    from kestrel.web.queries import _latest_eval_subq
+    from kestrel.web.queries import _latest_eval_subq, hidden_unscored
 
     if not opps:
         return {}
@@ -134,11 +135,14 @@ async def _fit_labels(session: AsyncSession, opps: list[Opportunity]) -> dict[in
             )
         ).scalars()
     }
+    unscored = await hidden_unscored(session, opps)
     out: dict[int, dict] = {}
     for opp in opps:
         fit = fit_for(evals.get(opp.id), opp.stage)
         out[opp.id] = {
             "score": f"{fit.score:.1f}" if fit.score is not None else "", "value": fit.score,
+            # Hidden as applied before any model read it: Not scored, never Being scored (#59).
+            "unscored": unscored.get(opp.id) if fit.score is None else None,
         }
     return out
 

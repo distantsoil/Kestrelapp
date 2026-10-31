@@ -6,8 +6,8 @@
    other part from kestrel.web.pipeline_view (row.view). Import:
    {% from "partials/pl_row.html" import row, signal_row with context %} #}
 {% import "ui/macros.html" as ui %}
-{% set scoring_pill = {'running': 'scoring…', 'queued': 'queued', 'background': 'background', 'held': 'held', 'not_queued': 'not queued', 'failed': 'failed', 'stuck': 'stuck', 'removed': 'not scored'} %}
-{% set scoring_tip = {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A role from an earlier run, waiting to be rechecked before local scoring.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.', 'removed': 'You removed this role from Needs another try. It has no score.'} %}
+{% set scoring_pill = {'running': 'scoring…', 'queued': 'queued', 'background': 'background', 'held': 'held', 'not_queued': 'not queued', 'failed': 'failed', 'stuck': 'stuck', 'removed': 'not scored', 'hidden': 'not scored'} %}
+{% set scoring_tip = {'running': 'A model is scoring this role now.', 'queued': 'Waiting for its turn to be scored.', 'background': 'A role from an earlier run, waiting to be rechecked before local scoring.', 'held': 'This track is switched off, so nothing on it is scored until you switch it back on.', 'not_queued': 'Not queued for scoring yet.', 'failed': 'Scoring failed.', 'stuck': 'Scoring stopped before it finished.', 'removed': 'You removed this role from Needs another try. It has no score.', 'hidden': 'Hidden as applied, so Kestrel does not score it.'} %}
 
 {% macro check_box(label) -%}
   <button type="button" class="pl-ck" data-pl-pick aria-label="Select {{ label }}" aria-pressed="false">{{ ui.icon('check') }}</button>
@@ -67,7 +67,7 @@
       {# The why clause: an unscored row says why it stopped (D-UI-56): the quarantine reason in
          plain words for Scoring failed, "scoring stopped" for a stuck orphan, and for a role
          taken off Needs another try, that it was (D-UI-133) with the way back. #}
-      {% set why = (r.failed_reason or ft.why) if r.scoring == 'failed' else ('scoring stopped' if r.scoring == 'stuck' else ('removed from Needs another try' if r.scoring == 'removed' else ft.why)) %}
+      {% set why = (r.failed_reason or ft.why) if r.scoring == 'failed' else ('scoring stopped' if r.scoring == 'stuck' else ('removed from Needs another try' if r.scoring == 'removed' else (r.hidden_why if r.scoring == 'hidden' else ft.why))) %}
       {% set parts = [v.org, v.place, ((v.pay ~ (' (estimate)' if v.estimate and not v.pay.endswith('est.') else '')) if v.pay else ('Pay not listed' if not unscored and not nf else '')), v.value, ('Seen ' ~ ('twice' if o.seen_count == 2 else o.seen_count ~ ' times')) if o.seen_count and o.seen_count > 1 else '', why] %}
       <div class="pl-meta">{{ parts|select|join(' · ') }}{% if r.scoring == 'removed' %} <a href="/quarantine" data-testid="removed-undo">Undo in Needs another try</a>{% endif %}</div>
     </div>
@@ -79,7 +79,7 @@
       {% elif unscored and r.scoring in ('failed', 'stuck') %}
         <span class="row-score-again" data-testid="row-score-again"><a class="k-btn k-btn--sm" href="/rescore/choose?opp_ids={{ o.id }}&page=1&next=/opportunities">Score again</a></span>
       {% elif unscored %}
-        <div class="pl-score"><small>{{ {'running': 'scoring…', 'queued': 'waiting', 'removed': 'not scored'}.get(r.scoring, '') }}</small>
+        <div class="pl-score"><small>{{ {'running': 'scoring…', 'queued': 'waiting', 'removed': 'not scored', 'hidden': 'not scored'}.get(r.scoring, '') }}</small>
           <span class="pl-age{% if v.found.fresh %} is-fresh{% endif %}" title="{{ v.found.title }}">{{ v.found.text }}</span></div>
       {% else %}
         <div class="pl-score pl-score--{{ ft.tone }}" data-fit-score>{{ '%.1f'|format(ft.score) if ft.score is not none else '' }} <small>/ 5</small>
