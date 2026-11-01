@@ -8,14 +8,16 @@
   <button class="k-btn k-btn--primary" type="submit" name="_next" value="1" data-testid="ob-save-next"
       {% if profile_problem %}disabled{% elif ob_require_name %}:disabled="!named"{% endif %}>{{ ob_save_label or 'Save and continue' }}</button>
   {% if ob_require_name %}<span class="wizard-hint" x-show="!named" data-testid="ob-save-hint">Add your first name first</span>{% endif %}
-  {% if saved %}<span class="pf-saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>{% endif %}
+  {% if saved %}<span class="pf-saved" role="status" data-testid="profile-saved">Saved{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>{% endif %}
   {% if problem %}<span class="pf-problem" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>{% endif %}
 </div>
 {% else %}
-<div class="pf-savebar{% if saved and not problem %} is-saved{% endif %}" data-pf-savebar {% if saved or problem %}data-shown{% endif %}>
+{# A save is confirmed once, by the toast with Undo (profile.js, the pf-saved event). The bar does
+   not say Saved: after a save it slides away as it was (is-closing, contents showing), so nothing
+   else competes with the toast (D-UI-231). #}
+<div class="pf-savebar{% if saved and not problem %} is-closing{% endif %}" data-pf-savebar {% if saved or problem %}data-shown{% endif %}>
   <span class="pf-savebar__msg" data-pf-msg>
-    {% if saved %}<span class="pf-saved" role="status" data-testid="profile-saved">Saved to profile.yml{% if searches_updated %}. Your job searches were updated to match.{% endif %}{% if rechecking %} Kestrel will re-check {{ rechecking }} role{{ '' if rechecking == 1 else 's' }} the rules set aside.{% endif %}</span>
-    {% elif problem %}<span class="pf-problem" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>
+    {% if problem %}<span class="pf-problem" role="alert" data-testid="profile-problem">Not saved: {{ problem }}</span>
     {% else %}<span data-pf-dirty-msg>Unsaved changes</span>{% endif %}
   </span>
   <button class="k-btn k-btn--sm" type="button" data-pf-discard>Discard</button>

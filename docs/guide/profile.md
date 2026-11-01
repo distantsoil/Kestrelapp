@@ -24,7 +24,7 @@ The page title's **How it works** button opens guidance. The help cards beside t
 
 ### Work authorization
 
-Enter **Work authorization**, such as `US citizen`. Under **Visa sponsorship**, select **Check this if you need an employer to sponsor your visa.** when you need sponsorship. Kestrel then rejects postings that say they cannot sponsor.
+Enter **Work authorization** in your own words, such as `US citizen` or `UK citizen who needs sponsorship`. The gray example in the empty field is not saved. Under **Visa sponsorship**, select **Check this if you need an employer to sponsor your visa.** when you need sponsorship. Kestrel then rejects postings that say they cannot sponsor.
 
 ### What you want and what you avoid
 
@@ -40,7 +40,7 @@ When the switch is on, Kestrel replaces that employer in generated documents and
 
 ![Profile, Employment tab](../images/walk/profile-employment-light.png)
 
-Employment settings define which job postings to search, keep, or score lower. If a new profile has not been saved, a notice explains that grey terms are examples only. Type your own values and save before those terms are used.
+Employment settings define which job postings to search, keep, or score lower. If a new profile has not been saved, a notice explains that gray terms are examples only. Type your own values and save before those terms are used.
 
 ### Titles and work types
 
@@ -112,7 +112,7 @@ Stories marked **Draft** were proposed from notes and have not been edited by yo
 
 On **About you**, **Employment**, **Consulting**, and **Location**, editing a field shows the save bar with **Unsaved changes**, **Discard**, and **Save changes**. Save or discard before switching tabs. If you try to switch with unsaved edits, the save bar asks you to save or discard first. **Discard** reloads the saved values.
 
-After a successful save, Kestrel confirms **Saved to profile.yml**. It may also say that job searches were updated or that roles set aside by the rules will be checked again. The **Saved** message offers **Undo**, which restores the previous saved version. Undo covers one save; saving again makes the earlier Undo unavailable.
+After a successful save, Kestrel confirms once, with a **Saved** message at the bottom of the window. It may also say that job searches were updated or that roles set aside by the rules will be checked again. That message offers **Undo**, which restores the previous saved version. Undo covers one save; saving again makes the earlier Undo unavailable.
 
 A refused save leaves your edits on screen and shows **Not saved** with the reason. If `profile.yml` cannot be read, the page says that nothing can be saved and disables **Save changes**. Fix the file or restore its backup through **Settings > LAN & backup**, then reload. See the [Settings guide](settings.md). If there is no profile yet, a notice explains that the filters use the shipped example's terms until you save, and that the personal fields start blank. Enter your own details and save.
 

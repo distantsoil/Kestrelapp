@@ -5,6 +5,7 @@ real loader. Offline, on the per-test data home from conftest."""
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,16 @@ def test_no_profile_starts_blank_with_the_example_only_as_placeholders():
     assert emp["geo_rules"] == {"remote_ok": True}
     assert emp["is_active"] is True
     assert st.examples["employment"]["employment_terms"]["target_titles"]  # placeholder source
+
+
+def test_the_empty_work_authorization_field_cannot_be_read_as_a_saved_value():
+    """#85: the placeholder is an instruction, and a hint line says the gray text is an example."""
+    with _client() as c:
+        html = c.get("/profile").text
+    tag = re.search(r'<input[^>]*id="pa-auth"[^>]*>', html).group(0)
+    assert 'placeholder="For example: US citizen' in tag and 'placeholder="US citizen"' not in tag
+    assert 'value=""' in tag
+    assert 'id="pa-auth-h"' in html and "only an example" in html
 
 
 def test_first_save_writes_only_what_was_entered_and_the_loader_accepts_it():
@@ -215,7 +226,7 @@ def test_saving_from_the_page_writes_the_file_and_shows_it_on_the_next_load():
                    data={"first_name": "Pat", "last_name": "Example", "is_active": "on",
                          "must_avoid": "staffing"})
         assert r.status_code == 200
-        assert 'data-testid="profile-saved"' in r.text
+        assert "pf-saved" in r.headers["hx-trigger"]
         assert 'value="Pat"' in r.text and 'value="Example"' in r.text
         html = c.get("/profile").text
         assert 'data-testid="no-profile"' not in html

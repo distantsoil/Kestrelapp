@@ -2,9 +2,9 @@
    rail response (every 10 s) swaps #scan-signal out of band; the script below turns a new scan
    event into "Search done: N new. Still scoring M." (never "finished" while scoring continues,
    D-UI-63) and refreshes the Scan button when the scan state
-   flips. The scan toast (#kestrel-toast) is persistent: no auto-hide, it stays until it is
-   dismissed (x, Escape while it has focus) or clicked; clicking opens the Pipeline on its New
-   today chip (/opportunities?new_today=1). A scan with errors keeps the warning tone. Other
+   flips. The scan toast (#kestrel-toast) clears itself after 9 seconds, paused while the pointer or focus is on it, and goes sooner when it is dismissed (x,
+   Escape while it has focus) or clicked; clicking opens the Pipeline on its New today chip
+   (/opportunities?new_today=1), which is also where to find the result afterward. A scan with errors keeps the warning tone. Other
    callers of window.kestrelToast(text) go to the shared toast region (KUI.toast), where the
    scan toast also sits, so they never replace the scan toast or start a timer on it. Seen and dismissed state live in localStorage, so one tab's toast is the only
    one, and dismissing it in one tab clears it in the others. Styled by id and data attributes
@@ -66,6 +66,8 @@
     var MAIN = 'kestrel-toast', NOTE = 'kestrel-toast-note';
     var memo = {};  // when localStorage is unavailable, remember for this page only
     var timers = {};
+    var HOLD_SCAN = 9000;  // the scan toast has a destination, so it stays longer
+    var HOLD_NOTE = 6000;  // a plain note here (KUI.toast, when present, times its own)
     var queued = [];  // plain toasts waiting while the scan toast holds the only box
     var shownEvent = null;  // the scan event the persistent toast is showing, if any
     var fresh = false;  // set when the rail has just swapped in a new #scan-signal
@@ -102,14 +104,14 @@
       if (shownEvent !== null) store(DISMISSED, shownEvent);  // clears it in the other tabs
       hide(MAIN);
     }
-    // opts: {href: where a click goes, sticky: stay until dismissed or clicked, tone: 'warn'}.
-    // A sticky toast owns #kestrel-toast; any other goes to #kestrel-toast-note, so a plain
-    // toast can never replace a persistent one or start a timer on it.
+    // opts: {href: where a click goes, main: use the scan toast's box, tone: 'warn'}.
+    // The scan toast owns #kestrel-toast; any other goes to #kestrel-toast-note, so a plain
+    // toast can never replace it or start a timer on it.
     function show(text, opts) {
       opts = opts || {};
-      var id = opts.sticky ? MAIN : NOTE;
+      var id = opts.main ? MAIN : NOTE;
       var t = box(id);
-      if (!t && !opts.sticky) {
+      if (!t && !opts.main) {
         if (shownEvent !== null) { queued.push([text, opts]); return; }  // no second box
         id = MAIN; t = box(MAIN);
       }
@@ -122,13 +124,29 @@
       if (opts.tone) t.setAttribute('data-tone', opts.tone); else t.removeAttribute('data-tone');
       t.hidden = false;
       requestAnimationFrame(function () { t.setAttribute('data-show', ''); });
-      clearTimeout(timers[id]);
-      timers[id] = null;
-      if (!opts.sticky) timers[id] = setTimeout(function () { hide(id); }, 6000);
+      arm(id);
     }
+    // A toast clears after its hold (9 s for the scan toast, 6 s for a plain note here); a pointer
+    // or focus on it holds it, and leaving restarts the clock, as the shared toasts do.
+    function arm(id) {
+      clearTimeout(timers[id]);
+      timers[id] = setTimeout(function () { hide(id); }, id === MAIN ? HOLD_SCAN : HOLD_NOTE);
+    }
+    function hold(id) { clearTimeout(timers[id]); timers[id] = null; }
+    function release(e) {
+      var id = ownerOf(e.target), to = e.relatedTarget;
+      if (!id || (to && ownerOf(to) === id)) return;
+      var t = box(id);
+      if (t && t.hasAttribute('data-show')) arm(id);
+    }
+    function grab(e) { var id = ownerOf(e.target); if (id) hold(id); }
+    document.addEventListener('mouseover', grab);
+    document.addEventListener('focusin', grab);
+    document.addEventListener('mouseout', release);
+    document.addEventListener('focusout', release);
     // Plain notes, with or without Undo or a destination, go through the shared toast region
-    // (kestrel-ui.js). The sticky scan toast above stays here: it is persistent, cross-tab and
-    // clickable, which the shared region does not model; it sits in that same region.
+    // (kestrel-ui.js). The scan toast above stays here: it is cross-tab and clickable, which the
+    // shared region does not model; it sits in that same region.
     window.kestrelToast = function (text, opts) {
       opts = opts || {};
       if (window.KUI) {
@@ -137,7 +155,7 @@
         return window.KUI.toast(text, {tone: opts.tone, timeout: undoable ? undefined : 6000,
           undo: opts.undo, undoUrl: opts.undoUrl, undoLabel: opts.undoLabel, href: opts.href});
       }
-      return show(text, Object.assign({}, opts, {sticky: false}));
+      return show(text, Object.assign({}, opts, {main: false}));
     };
     // The end of the search step is not the end of the run (D-UI-63): scoring may continue, so
     // this never says "finished". The run panel says "Last run ... finished" when it closes.
@@ -163,7 +181,7 @@
         var n = parseInt(sig.getAttribute('data-new') || '0', 10) || 0;
         var errs = parseInt(sig.getAttribute('data-errors') || '0', 10) || 0;
         var scoring = parseInt(sig.getAttribute('data-scoring') || '0', 10) || 0;
-        show(searchDoneText(n, errs, scoring), {href: NEW_HREF, sticky: true, tone: errs ? 'warn' : ''});
+        show(searchDoneText(n, errs, scoring), {href: NEW_HREF, main: true, tone: errs ? 'warn' : ''});
         shownEvent = ev;
       }
       // At most one button refresh per fresh signal, so a state that flips between the two

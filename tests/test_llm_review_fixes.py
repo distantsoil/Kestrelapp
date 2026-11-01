@@ -414,9 +414,10 @@ def test_plain_toasts_stack_under_the_scan_toast_and_dismissal_is_shared(tmp_pat
     out = subprocess.run([node, str(js)], capture_output=True, text=True, timeout=30, check=True)
     got = json.loads(out.stdout.strip().splitlines()[-1])
     assert got["scanShown"] is True
-    # The plain toast went to the shared region with its own timer; the scan toast is untouched.
+    # The plain toast went to the shared region with its own timer; the scan toast keeps its
+    # own 9 s clock (it no longer stays forever, #86).
     assert got["afterPlain"] == {"scanStill": True, "scanTexts": 1, "noteShown": False,
-                                 "timers": [], "kui": [["Saved", 6000]]}
+                                 "timers": [9000], "kui": [["Saved", 6000]]}
     assert got["afterEsc"] == {"scanShown": False, "dismissed": "2", "seen": "2"}
     assert got["otherTab"] is False
 

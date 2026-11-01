@@ -18,7 +18,7 @@
     <button type="button" class="k-btn k-btn--sm" data-k-flyout="#rn-steps-fly" aria-controls="rn-steps-fly" aria-expanded="false" data-testid="rn-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
   {% endcall %}
   {# The poller: it fetches the fragment; runs.js patches the regions. Never replaced. #}
-  <div id="runs-poll" hidden hx-get="/runs" hx-trigger="every 5s, run-refresh from:body" hx-swap="none" data-busy-text=""></div>
+  <div id="runs-poll" hidden hx-get="/runs" hx-trigger="every 5s, run-refresh from:body" hx-swap="none"></div>
   <div class="k-layout">
     <div class="k-layout__main">
       <section class="k-card rn-live" id="runs-live" data-testid="latest-run" data-region="live" data-sig="{{ live_sig }}">{% include "partials/runs_live.html" %}</section>

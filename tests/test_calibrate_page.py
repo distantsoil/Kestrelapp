@@ -334,7 +334,8 @@ def test_few_labels_say_not_enough_yet_in_the_history_header():
     _seed(n_roles=6, n_labeled=3)
     with _client() as c:
         body = c.get("/calibrate").text
-    assert "Not enough data yet (n=3)" in body
+    assert "Not enough data yet." in body
+    assert "(n=" not in body
     assert "You and Kestrel were close on" not in body
     assert "27 more ratings" in body and "3/30" in body
 
@@ -367,7 +368,7 @@ def test_everything_is_done_summary_with_and_without_more_roles():
         second = re.search(r"calitem-(\d+)", c.get(f"/calibrate/card?since={since}").text).group(1)
         r = c.post("/calibrate/rate", data={"opportunity_id": second, "score": "3", "since": since})
     assert 'data-testid="cal-done"' in r.text and "All 2 rated." in r.text
-    assert "Not enough ratings in this session to compare yet (n=2)" in r.text
+    assert "Not enough ratings in this session to compare yet. 2 so far." in r.text
     assert (
         "Kestrel is not unsure about anything right now. It finds more after the next run."
         in r.text
@@ -641,3 +642,17 @@ def test_tune_undo_is_refused_across_tracks():
         c.post(f"/calibrate/tune/{cid}/reject", data={"since": "2026-01-01"})
         r = c.post(f"/calibrate/tune-undo/{cid}?track=consulting")
     assert r.status_code == 404
+
+
+def test_no_shipped_copy_states_a_count_as_n_equals():
+    """#96: the count is said in words ("2 of 2", "2 so far"), never as statistics shorthand."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "kestrel" / "web"
+    hits = [
+        str(p.relative_to(root))
+        for p in [*root.glob("templates/**/*.html"), root / "calibrate_view.py",
+                  *(f for f in (root / "static" / "js").glob("*.js") if ".min." not in f.name)]
+        if re.search(r"\(n=|insufficient \(n", p.read_text(encoding="utf-8"))
+    ]
+    assert hits == []

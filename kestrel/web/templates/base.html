@@ -157,10 +157,11 @@
       // it never shows the cursor or the bar, so a page change does not flash a loading bar.
       // Nor is a long request that shows its own status (data-no-busy, e.g. the import): there a
       // spinning cursor for a minute reads as a hang.
-      function polled(evt) { var el = evt.detail && evt.detail.elt; if (el && el.closest && el.closest('[data-no-busy], [data-busy-text]')) return true; var t = el && el.getAttribute && el.getAttribute('hx-trigger'); return !!(t && /\b(every|load|revealed|intersect)\b/.test(t)); }
+      function polled(evt) { var el = evt.detail && evt.detail.elt; if (el && el.closest && el.closest('[data-no-busy], [data-busy-text]:not([data-busy-text=""])')) return true; var t = el && el.getAttribute && el.getAttribute('hx-trigger'); return !!(t && /\b(every|load|revealed|intersect)\b/.test(t)); }
       // An element with data-busy-text (a model call, a PDF render) gets a spinner and that text
       // beside it for as long as its request is open, instead of the cursor (D-UI-20).
-      function host(evt) { var el = evt.detail && evt.detail.elt; return el && el.closest && el.closest('[data-busy-text]'); }
+      // An empty value names no status, so it is not a host (it would insert an empty spinner).
+      function host(evt) { var el = evt.detail && evt.detail.elt; return el && el.closest && el.closest('[data-busy-text]:not([data-busy-text=""])'); }
       function showStatus(h) {
         if (h.__status) return;
         var s = document.createElement('span');

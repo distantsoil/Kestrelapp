@@ -41,7 +41,8 @@
     <div class="pf-grid">
       <div class="pf-f">
         <label for="pa-auth">Work authorization</label>
-        <input class="k-input" id="pa-auth" type="text" name="work_auth" value="{{ block.work_auth or '' }}" placeholder="US citizen">
+        <input class="k-input" id="pa-auth" type="text" name="work_auth" value="{{ block.work_auth or '' }}" placeholder="For example: US citizen, or UK citizen who needs sponsorship" aria-describedby="pa-auth-h">
+        <small class="pf-hint" id="pa-auth-h">Say it in your own words. The gray text is only an example, not a saved answer.</small>
       </div>
       <div class="pf-f">
         <label for="pa-spon">Visa sponsorship</label>

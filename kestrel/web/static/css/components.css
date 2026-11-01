@@ -707,6 +707,9 @@ html.k-scroll-held { overflow: hidden; }
 }
 .k-modal.is-open { transform: translate(-50%, -50%); opacity: 1; visibility: visible;
   transition-delay: 0s; }
+/* A sheet may wrap its head, body and foot (or just body and foot) in a form. A plain form is a
+   block, so the body would never shrink and the footer would fall below the window. */
+.k-modal > form { display: flex; flex-direction: column; min-height: 0; max-height: inherit; }
 .k-modal__head { padding: 16px 20px 6px; }
 .k-modal__head h2 { margin: 0; font-size: var(--fs-xl); }
 .k-modal__body { padding: 6px 20px 12px; overflow: auto; min-height: 0; }

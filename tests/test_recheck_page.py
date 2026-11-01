@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,10 +55,13 @@ def test_saving_a_looser_floor_says_how_many_roles_get_a_second_look():
     with TestClient(build_app(worker=False)) as c:
         first = c.post("/profile/employment/employment",
                        data={"target_titles": "IT Director", "seniority_floor": "director"})
-        assert first.status_code == 200 and "Saved to profile.yml" in first.text
+        assert first.status_code == 200
+        said = json.loads(first.headers["hx-trigger"])["pf-saved"]["message"]
+        assert said.startswith("Saved.")
+        assert "Saved to profile.yml" not in first.text  # one confirmation: the toast, not the bar
         again = c.post("/profile/employment/employment",
                        data={"target_titles": "IT Director", "seniority_floor": "director"})
-        assert "re-check" not in again.text  # nothing the rules read has changed
+        assert "re-check" not in again.headers["hx-trigger"]  # nothing the rules read has changed
         looser = c.post("/profile/employment/employment",
                         data={"target_titles": "IT Director", "seniority_floor": ""})
-    assert "Kestrel will re-check 1 role the rules set aside." in looser.text
+    assert "Kestrel will re-check 1 role the rules set aside." in looser.headers["hx-trigger"]

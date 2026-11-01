@@ -440,6 +440,36 @@ def test_the_live_card_updates_in_place_and_never_re_mounts(running):
         ctx.close()
 
 
+def test_a_poll_inserts_no_node_above_the_latest_run_card(live):
+    """#77: the 5 s poll once inserted an empty spinner above the card and pushed the page down."""
+    base, browser, _active = live
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        page.evaluate("""() => {
+          window.__added = [];
+          const card = document.querySelector('[data-testid="latest-run"]');
+          window.__top = card.getBoundingClientRect().top;
+          new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => {
+            if (n.nodeType === 1 && (n.matches('.busy-status') || n.querySelector('.busy-status')))
+              window.__added.push(n.className);
+          }))).observe(document.body, {childList: true, subtree: true});
+          window.__polls = 0;
+          document.addEventListener('htmx:afterRequest', e => {
+            if (e.detail.elt && e.detail.elt.id === 'runs-poll') window.__polls += 1; });
+        }""")
+        page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+        page.wait_for_function("window.__polls >= 1")
+        page.wait_for_timeout(200)
+        assert page.evaluate("window.__added") == []
+        assert page.evaluate("document.querySelector('.busy-status')") is None
+        assert page.evaluate(
+            "document.querySelector('[data-testid=\"latest-run\"]').getBoundingClientRect().top"
+        ) == page.evaluate("window.__top")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_stop_confirms_inline_and_keep_running_backs_out(running):
     base, browser = running
     ctx, page, errors = _page(base, browser, "light", 1280)

@@ -53,7 +53,7 @@ Choose **Skip** to move the role to the end of this session's queue. Skipping do
 
 Choose **Change** beside a role to load its earlier rating into the card. The card shows **Changing an earlier rating. You said** your earlier word. Choose another rating or add a reason or score nudge, then choose **Save**. Choose **Cancel** on the card to leave the earlier rating as it was.
 
-Kestrel labels a comparison based on fewer than five ratings **Not enough data yet (n=...)**, and does not present a small sample as a reliable pattern. With no saved ratings, history says **Nothing yet. Your ratings show up here.**
+Kestrel labels a comparison based on fewer than five ratings **Not enough data yet**, next to the count, and does not present a small sample as a reliable pattern. With no saved ratings, history says **Nothing yet. Your ratings show up here.**
 
 ## What your ratings change
 

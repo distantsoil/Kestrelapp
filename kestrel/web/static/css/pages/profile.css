@@ -106,7 +106,7 @@
   color: var(--brand-ink); }
 .pf-saved { color: var(--good-ink); font-weight: 700; }
 .pf-problem { color: var(--bad); font-weight: 700; }
-.pf-savebar .pf-saved, .pf-savebar .pf-problem { color: inherit; }
+.pf-savebar .pf-problem { color: inherit; }
 .pf-savebar.is-nudge { animation: pf-nudge .4s ease; }
 .pf-wizard-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 @keyframes pf-nudge { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
@@ -475,6 +475,17 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
   transition: left .4s cubic-bezier(.22, .8, .3, 1), transform .4s cubic-bezier(.22, .8, .3, 1); }
 .pf-payviz[hidden] { display: none; }
 
-/* After a save the bar says so, without its buttons, then folds away (profile.js); a refused
-   save keeps the bar and its buttons until the person acts (owner round 16). */
-.pf-savebar.is-saved .k-btn { display: none; }
+/* After a save the bar slides away as it was, contents still showing (the mockup's mark()); the
+   toast is the one confirmation. A refused save keeps the bar and its buttons until the person
+   acts (owner round 16). */
+.pf-savebar.is-closing { pointer-events: none; }
+/* The toasts rise above a showing bar, never under it (#86), by the bar's measured height
+   (--pf-savebar-h, set by profile.js, so a wrapped message is cleared too); they settle back
+   when it leaves. Screens with no save bar (the setup steps) never lift them. */
+.k-toasts { transition: bottom .3s var(--ease); }
+body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .k-toasts {
+  bottom: calc(14px + var(--pf-savebar-h, 52px) + var(--sp-2)); }
+@media (max-width: 700px) {
+  body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .k-toasts {
+    bottom: calc(72px + var(--pf-savebar-h, 52px) + var(--sp-2) + env(safe-area-inset-bottom)); }
+}

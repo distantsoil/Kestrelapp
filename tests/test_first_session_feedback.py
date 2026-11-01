@@ -319,7 +319,7 @@ def test_import_form_posts_to_the_read_step_and_long_requests_skip_the_busy_curs
     assert 'id="import-proposal" class="import-result"' in docs
     assert "htmx:xhr:progress" in docs and "Uploading" in docs and "Reading" in docs
     base = (tpl / "base.html").read_text(encoding="utf-8")
-    assert "closest('[data-no-busy], [data-busy-text]')" in base
+    assert "closest('[data-no-busy], [data-busy-text]:not([data-busy-text=\"\"])')" in base
 
 
 @respx.mock

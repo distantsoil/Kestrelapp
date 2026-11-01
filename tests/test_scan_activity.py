@@ -653,7 +653,7 @@ const toast = {
   hasAttribute: (k) => k in toastAttrs,
 };
 const listeners = {};
-let timers = 0;
+let timers = 0; const holds = [];
 global.document = {
   getElementById: (id) => (id === 'scan-signal' ? sig : id === 'kestrel-toast' ? toast : null),
   addEventListener: (ev, fn) => { listeners[ev] = fn; },
@@ -662,7 +662,10 @@ let went = null;
 global.window = {location: {assign: (u) => { went = u; }}};
 global.sessionStorage = undefined;
 global.requestAnimationFrame = (f) => f();
-global.setTimeout = (f, ms) => { if (ms && ms >= 1000) { timers += 1; return 1; } f(); return 0; };
+global.setTimeout = (f, ms) => {
+  if (ms && ms >= 1000) { timers += 1; holds.push(ms); return 1; }
+  f(); return 0;
+};
 global.clearTimeout = () => {};
 eval(SCRIPT);
 function poll(state) { Object.assign(attrs, state); listeners['htmx:afterSettle'](); }
@@ -676,14 +679,14 @@ const second = {tone: toastAttrs['data-tone'] || null, timers: timers};
 const box = {closest: (q) => (q === '#kestrel-toast' ? toast : null)};
 listeners['click']({target: box});
 window.kestrelToast('Saved');  // any other toast still fades on its own
-console.log(JSON.stringify({first, second, went, plainTimers: timers,
+console.log(JSON.stringify({first, second, went, plainTimers: timers, holds,
                             plainHref: linkAttrs.href || null}));
 """
 
 
-def test_scan_toast_stays_until_dismissed_and_opens_the_new_postings(tmp_path):
-    """The scan toast is sticky (no auto-hide), links to the Pipeline's New today chip, keeps the
-    warning tone when the scan had errors, and a click on it navigates there."""
+def test_scan_toast_clears_itself_and_opens_the_new_postings(tmp_path):
+    """The scan toast clears itself after 9 s (#86), links to the Pipeline's New today chip,
+    keeps the warning tone when the scan had errors, and a click on it navigates there."""
     import json
     import shutil
     import subprocess
@@ -697,18 +700,21 @@ def test_scan_toast_stays_until_dismissed_and_opens_the_new_postings(tmp_path):
     js.write_text(f"const SCRIPT = {json.dumps(script)};\n{_STICKY_HARNESS}", encoding="utf-8")
     out = subprocess.run([node, str(js)], capture_output=True, text=True, timeout=30, check=True)
     got = json.loads(out.stdout.strip().splitlines()[-1])
-    assert got["first"] == {"href": "/opportunities?new_today=1", "tone": None, "timers": 0,
+    assert got["first"] == {"href": "/opportunities?new_today=1", "tone": None, "timers": 1,
                             "hidden": 0}
-    assert got["second"] == {"tone": "warn", "timers": 0}
+    assert got["second"] == {"tone": "warn", "timers": 2}
     assert got["went"] == "/opportunities?new_today=1"
-    assert got["plainTimers"] == 1 and got["plainHref"] is None
+    # The scan toast holds 9 s (the last is a fallback note sharing its box); plain and Undo
+    # toasts go through KUI.toast and keep their own 2600 / 8000 ms.
+    assert got["holds"] == [9000, 9000, 9000]
+    assert got["plainTimers"] == 3 and got["plainHref"] is None
 
 
 def test_toast_markup_is_a_link_with_a_warning_tone_and_stays_announced():
     html = (Path(paths.web_templates_dir()) / "partials" / "toast.html").read_text("utf-8")
     assert 'role="status" aria-live="polite"' in html and "data-toast-close" in html
     assert '<a data-toast-text data-testid="toast-link"></a>' in html
-    assert "'/opportunities?new_today=1'" in html and "sticky: true" in html
+    assert "'/opportunities?new_today=1'" in html and "main: true" in html and "sticky" not in html
     style = html.split("<style>")[1].split("</style>")[0]
     # The mockup's toast look (a filled chip at the bottom); the warning tone fills amber.
     warn = ('#kestrel-toast[data-tone="warn"] '
