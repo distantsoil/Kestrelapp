@@ -260,7 +260,6 @@
 
 /* ----------------------------------------------------------------------------- the sheet */
 #of-sheet { --modal-w: 760px; }
-.of-sheet > form { display: flex; flex-direction: column; min-height: 0; max-height: inherit; }
 .of-sb { display: flex; flex-direction: column; gap: 14px; }
 .of-g { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px; }
 .of-g h4 { margin: 0 0 10px; font-size: 12px; letter-spacing: .05em; text-transform: uppercase;

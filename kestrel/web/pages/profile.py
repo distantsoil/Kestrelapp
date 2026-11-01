@@ -507,6 +507,17 @@ async def story_delete(request: Request, story_id: int):
         error=None if done else "That story is already gone."))
 
 
+def _saved_message(searches_updated: bool, rechecking: int) -> str:
+    """The one save confirmation (the toast): what was saved, then what else changed."""
+    text = "Saved."
+    if searches_updated:
+        text += " Your job searches were updated to match."
+    if rechecking:
+        text += (f" Kestrel will re-check {rechecking} role{'' if rechecking == 1 else 's'}"
+                 " the rules set aside.")
+    return text
+
+
 @router.post("/profile/{track}/{section}", response_class=HTMLResponse)
 async def profile_save(request: Request, track: str, section: str):
     """Save one tab of one track. The partial re-renders with "Saved" or the reason it was
@@ -540,7 +551,8 @@ async def profile_save(request: Request, track: str, section: str):
         # The toast offers Undo, which restores profile.yml.bak (D-UI-119). The variants list
         # follows an Employment save (D-TTL-2).
         # profile.js shows the toast: it owns the Undo so it can say plainly when Undo fails.
-        events: dict = {"pf-saved": {"message": "Saved", "undoUrl": "/profile/undo",
+        events: dict = {"pf-saved": {"message": _saved_message(searches_updated, rechecking),
+                                     "undoUrl": "/profile/undo",
                                      "token": pe.undo_token()}}
         if section == "employment":
             events["titleVariantsChanged"] = True

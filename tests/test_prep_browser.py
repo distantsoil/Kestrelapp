@@ -186,6 +186,28 @@ def test_the_sheet_the_swap_menu_and_the_preview_open_centered(live):
     page.close()
 
 
+def test_a_long_story_keeps_its_buttons_inside_a_short_window(live):
+    """#98: the form around the sheet's head, body and foot pushed Save story off the window."""
+    base, browser, ids = live
+    opp = ids["Larkspur Logistics"]["opp"]
+    page = browser.new_page(viewport={"width": 1280, "height": 600})
+    page.goto(f"{base}/prep/{opp}")
+    page.wait_for_selector("#pp-layout")
+    page.click('[data-testid="pp-have-story"]')
+    page.wait_for_selector("#pp-story-sheet.is-open")
+    long = "A long sentence about what happened at the sites. " * 30
+    for name in ("situation", "action", "result"):
+        page.fill(f'textarea[name="{name}"]', long)
+    wait_for_layout(page)
+    for tid in ("pp-sheet-save", "pp-sheet-cancel"):
+        b = page.eval_on_selector(
+            f'[data-testid="{tid}"]', "e => e.getBoundingClientRect().toJSON()")
+        assert 0 <= b["top"] and b["bottom"] <= 600, (tid, b)
+    assert page.eval_on_selector(
+        "#pp-story-sheet .k-modal__body", "e => e.scrollHeight > e.clientHeight")
+    page.close()
+
+
 def test_the_practice_tab_keeps_its_place_when_a_mode_is_picked(live):
     base, browser, ids = live
     opp = ids["Larkspur Logistics"]["opp"]

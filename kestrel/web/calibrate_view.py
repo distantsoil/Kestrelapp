@@ -203,7 +203,7 @@ async def session_line(s: AsyncSession, track: str, since: str) -> str:
     ).all()
     said = dict(rows)  # the latest rating of each role wins
     if len(said) < FLOOR:
-        return f"Not enough ratings in this session to compare yet (n={len(said)})."
+        return f"Not enough ratings in this session to compare yet. {len(said)} so far."
     evs = {
         ev.opportunity_id: ev.score
         for ev in (

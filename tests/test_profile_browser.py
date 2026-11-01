@@ -82,6 +82,17 @@ def _open(live, tab: str, theme: str, width: int, probe: bool = False):
     return ctx, page, errors
 
 
+def _save_and_wait(page, selector: str = "[data-pf-savebar] button[type=submit]") -> None:
+    """Click Save, then wait for the NEW saved toast and the clean form that replaced the old one
+    (the toast rises with the response, ahead of the swap)."""
+    page.evaluate(
+        "document.querySelectorAll('.k-toast').forEach(t => t.setAttribute('data-old', ''))")
+    page.click(selector)
+    page.wait_for_selector(
+        '.k-toast[data-testid="profile-saved"]:not([data-old]):not(.is-leaving)')
+    page.wait_for_selector("form[data-pf-form]:not([data-dirty])", state="attached")
+
+
 def _shot(page, name: str) -> None:
     out = os.environ.get("KESTREL_SHOT_DIR")
     if out:
@@ -131,6 +142,121 @@ def test_no_overlap_no_wrapping_no_sideways_scroll(live, tab, theme, width):
         ctx.close()
 
 
+def test_a_save_is_confirmed_once_by_the_toast_and_the_bar_slides_away(live):
+    """#88: no "Saved to profile.yml" bar under the Saved / Undo toast."""
+    ctx, page, errors = _open(live, "about", "light", 1280)
+    try:
+        page.fill("#pa-head", "Operations lead")
+        page.click("[data-pf-savebar] button[type=submit]")
+        toast = page.locator('.k-toast[data-testid="profile-saved"]')
+        toast.wait_for(state="visible")
+        assert "Saved" in toast.inner_text()
+        page.wait_for_function(
+            "() => !document.querySelector('[data-pf-savebar]').hasAttribute('data-shown')")
+        page.wait_for_function(
+            "() => getComputedStyle(document.querySelector('[data-pf-savebar]'))"
+            ".visibility === 'hidden'")
+        assert "Saved to profile.yml" not in page.inner_text("body")
+        assert page.locator(".pf-saved").count() == 0
+        assert page.locator(".k-toast").count() == 1
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+_SCAN_DONE_JS = """() => {
+  const sig = document.getElementById('scan-signal');
+  const fire = (ev) => {
+    sig.setAttribute('data-ready', '1'); sig.setAttribute('data-event', ev);
+    sig.setAttribute('data-scanning', '0'); sig.setAttribute('data-new', '4');
+    document.dispatchEvent(new Event('htmx:afterSettle', {bubbles: true}));
+  };
+  fire('1'); fire('2');
+}"""
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 900])
+def test_the_search_done_toast_clears_itself_pauses_on_hover_and_clears_the_save_bar(
+        live, theme, width):
+    """#86: it used to stay forever and sat on top of the Save bar, wrapped message or not."""
+    ctx, page, errors = _open(live, "about", theme, width)
+    try:
+        page.fill("#pa-head", "Operations lead")  # the Save bar is up
+        bar = page.locator("[data-pf-savebar]")
+        assert bar.is_visible()
+        # The longest message the bar says: a blocked tab switch.
+        page.click('.pf-tabs a[data-tab="location"]')
+        assert "Save or discard" in bar.inner_text()
+        page.evaluate(_SCAN_DONE_JS)
+        toast = page.locator("#kestrel-toast")
+        toast.wait_for(state="visible")
+        page.wait_for_timeout(500)  # the region has settled above the bar
+        t = toast.bounding_box()
+        b = bar.bounding_box()
+        assert t["y"] + t["height"] <= b["y"] + 1, (t, b)  # never over Save
+        measured = page.evaluate(
+            "getComputedStyle(document.documentElement).getPropertyValue('--pf-savebar-h')")
+        assert measured == f"{round(b['height'])}px", (measured, b)
+        # Held while the pointer is on it, past the 9 s it would otherwise last.
+        page.mouse.move(t["x"] + t["width"] / 2, t["y"] + t["height"] / 2)
+        page.wait_for_timeout(9500)
+        assert toast.is_visible()
+        page.mouse.move(5, 5)
+        toast.wait_for(state="hidden", timeout=12000)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+_FRAMES_JS = """() => new Promise(resolve => {
+  const frames = [];
+  const t0 = performance.now();
+  const bar = () => document.querySelector('[data-pf-savebar]');
+  const tick = () => {
+    const b = bar();
+    const kids = b ? Array.from(b.children) : [];
+    const tf = b ? new DOMMatrix(getComputedStyle(b).transform).m42 : null;
+    frames.push({t: Math.round(performance.now() - t0),
+      kids: kids.map(k => +getComputedStyle(k).opacity),
+      barY: tf, barOpacity: b ? +getComputedStyle(b).opacity : null,
+      toasts: Array.from(document.querySelectorAll('.k-toast')).map(
+        k => ({old: k.hasAttribute('data-old'), leaving: k.classList.contains('is-leaving'),
+               top: Math.round(k.getBoundingClientRect().top)}))});
+    if (performance.now() - t0 < 2200) requestAnimationFrame(tick); else resolve(frames);
+  };
+  requestAnimationFrame(tick);
+})"""
+
+
+def test_a_save_slides_the_bar_away_with_its_contents_and_the_old_toast_leaves_animated(live):
+    """#88: no frame shows the bar's contents faded out before it moves, and a second save's
+    earlier toast leaves with its exit animation instead of vanishing."""
+    ctx, page, errors = _open(live, "about", "light", 1280)
+    try:
+        page.fill("#pa-head", "Operations lead")
+        _save_and_wait(page)
+        page.wait_for_timeout(700)
+        page.fill("#pa-head", "Operations director")
+        page.wait_for_timeout(700)  # the bar has finished sliding in
+        page.evaluate("document.querySelectorAll('.k-toast').forEach("
+                      "t => t.setAttribute('data-old', ''))")
+        page.evaluate("() => { window.__frames = (" + _FRAMES_JS + ")(); }")
+        page.click("[data-pf-savebar] button[type=submit]", no_wait_after=True)
+        frames = page.evaluate("window.__frames")
+        shown = [f for f in frames if f["barY"] is not None]
+        assert shown
+        # Contents are never faded: every child of the bar is fully opaque in every frame.
+        assert all(all(o == 1 for o in f["kids"]) for f in shown), shown[:3]
+        # The bar did slide (translateY went from 0 to a positive offset).
+        assert max(f["barY"] for f in shown) > 20
+        # The old toast was seen leaving (is-leaving) at least once before it was gone.
+        assert any(t["old"] and t["leaving"] for f in frames for t in f["toasts"])
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_save_bar_appears_on_an_edit_and_a_blocked_tab_switch_nudges(live):
     ctx, page, errors = _open(live, "about", "light", 1680)
     try:
@@ -144,8 +270,7 @@ def test_save_bar_appears_on_an_edit_and_a_blocked_tab_switch_nudges(live):
         assert "tab=about" in page.url or page.url.endswith("/profile")
         assert "Save or discard" in bar.inner_text()
         assert not page.query_selector(".k-modal.is-open")
-        page.click("[data-pf-savebar] button[type=submit]")
-        page.wait_for_selector('[data-testid="profile-saved"]')
+        _save_and_wait(page)
         page.click('.pf-tabs a[data-tab="location"]')
         page.wait_for_selector('[data-testid="profile-location"]')
         assert not errors, errors
@@ -164,8 +289,7 @@ def test_chip_remove_updates_saved_titles_before_and_after_swap(live, name):
         for title in ("Lane F first", "Lane F middle", "Lane F last"):
             field.fill(title)
             field.press("Enter")
-        page.click('[data-pf-savebar] button[type=submit]')
-        page.wait_for_selector('[data-testid="profile-saved"]')
+        _save_and_wait(page)
         box.get_by_role("button", name="Remove Lane F middle", exact=True).locator("svg").click()
         expect(box.get_by_text("Lane F middle", exact=True)).to_have_count(0)
         assert "Lane F middle" not in box.locator("textarea").input_value()
@@ -174,8 +298,7 @@ def test_chip_remove_updates_saved_titles_before_and_after_swap(live, name):
         field.press("Enter")
         box.get_by_role("button", name="Remove Lane F new", exact=True).click()
         expect(box.get_by_text("Lane F new", exact=True)).to_have_count(0)
-        page.click('[data-pf-savebar] button[type=submit]')
-        page.wait_for_selector('[data-testid="profile-saved"]')
+        _save_and_wait(page)
         page.reload()
         values = box.locator("textarea").input_value().splitlines()
         assert "Lane F first" in values and "Lane F last" in values
@@ -202,8 +325,7 @@ def test_refused_save_keeps_edits_and_can_be_corrected(live):
         page.click('.pf-tabs a[data-tab="location"]')
         expect(page.locator('[data-pf-msg]')).to_contain_text("Save or discard")
         page.fill("#pe-cfloor", "120000")
-        page.click('[data-pf-savebar] button[type=submit]')
-        page.wait_for_selector('[data-testid="profile-saved"]')
+        _save_and_wait(page)
         page.reload()
         expect(page.locator("#pe-ctarget")).to_have_value("175000")
         expect(page.get_by_text("Unsaved title", exact=True)).to_be_visible()
@@ -248,8 +370,7 @@ def test_accept_title_preserves_unsaved_edits(live):
                .get_by_text("Suggested new title", exact=True)).to_be_visible()
         expect(page.locator("#pe-ctarget")).to_have_value("175000")
         expect(page.get_by_text("Unsaved title", exact=True)).to_be_visible()
-        page.click('[data-pf-savebar] button[type=submit]')
-        page.wait_for_selector('[data-testid="profile-saved"]')
+        _save_and_wait(page)
         page.reload()
         expect(page.locator("#pe-ctarget")).to_have_value("175000")
         expect(page.get_by_text("Unsaved title", exact=True)).to_be_visible()
@@ -318,8 +439,7 @@ def test_near_floor_switch_off_saves_exact_and_on_defaults_to_five(live):
         assert labels == ["2%", "5%", "10%", "15%"], labels
         assert seg.locator("button.is-on").inner_text().strip() == "5%"
         page.locator(".pf-margin__sw").first.click()
-        page.click("[data-pf-savebar] button[type=submit]")
-        page.wait_for_selector('[data-testid="profile-saved"]')
+        _save_and_wait(page)
         assert not page.locator(".pf-margin [data-pf-margin-on]").first.is_checked()
         assert page.locator(".pf-margin [data-pf-margin-value]").first.input_value() == "0"
         assert "set aside" in page.locator('[data-testid="near-floor-hint"]').first.inner_text()
@@ -528,8 +648,7 @@ def test_work_mode_and_location_agree_both_ways(live):
                   n => [n, document.querySelector('[name=' + n + ']').checked]))""")
 
         def save() -> None:
-            page.click("[data-pf-savebar] button[type=submit]")
-            page.wait_for_selector('[data-testid="profile-saved"]')
+            _save_and_wait(page)
 
         # Start from On-site only, saved.
         for key in ("remote", "hybrid"):
@@ -577,6 +696,39 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
             page.evaluate("document.querySelector('#preview [data-pf-page]').dataset.old = '1';"
                           "htmx.trigger('#preview', 'pf-refresh')")
             page.wait_for_selector("#preview [data-pf-page][data-pf-pages]:not([data-old])")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+_RO_PROBE_JS = """(() => {
+  const seen = new Set();
+  const obs = ResizeObserver.prototype.observe;
+  const unobs = ResizeObserver.prototype.unobserve;
+  ResizeObserver.prototype.observe = function (t, o) { seen.add(t); return obs.call(this, t, o); };
+  ResizeObserver.prototype.unobserve = function (t) { seen.delete(t); return unobs.call(this, t); };
+  window.__roBars = () => Array.from(seen).filter(e => e.hasAttribute &&
+    e.hasAttribute('data-pf-savebar')).map(e => e.isConnected);
+})();"""
+
+
+def test_the_save_bar_watcher_lets_go_of_swapped_out_bars(live):
+    """Each save swaps the form and its bar; the observer must not keep every old bar."""
+    base, browser, master_id = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 1300})
+    page = ctx.new_page()
+    page.add_init_script(_RO_PROBE_JS)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(_url(base, "about", master_id))
+        page.wait_for_selector(".pf-tabs")
+        wait_for_layout(page)
+        for i in range(3):
+            page.fill("#pa-head", f"Operations lead {i}")
+            _save_and_wait(page)
+            page.wait_for_timeout(300)
+            assert page.evaluate("window.__roBars()") == [True], i
         assert not errors, errors
     finally:
         ctx.close()

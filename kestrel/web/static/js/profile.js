@@ -58,25 +58,49 @@
   /* ------------------------------------------------------------------ the Save bar */
   function dirtyForms() { return doc.querySelectorAll('form[data-pf-form][data-dirty]'); }
 
-  // A saved confirmation folds away by itself; an edit before then turns it back into the bar.
+  // After a save the bar arrives still shown, contents and all (is-closing), then slides away on
+  // its own, as the mockup's mark() does; the toast is the one confirmation. An edit before then
+  // turns it back into the bar.
   function foldSaved(scope) {
-    Array.prototype.forEach.call((scope || doc).querySelectorAll('[data-pf-savebar].is-saved'),
+    Array.prototype.forEach.call((scope || doc).querySelectorAll('[data-pf-savebar].is-closing'),
       function (bar) {
         if (folding.has(bar)) return;
         folding.add(bar);
-        cx.after(3500, function () {
+        cx.after(60, function () {
           folding.delete(bar);
-          if (!bar.classList.contains('is-saved')) return;
+          if (!bar.classList.contains('is-closing')) return;
           bar.removeAttribute('data-shown');
-          cx.after(400, function () { bar.classList.remove('is-saved'); });
+          cx.after(400, function () { bar.classList.remove('is-closing'); });
         });
       });
   }
-  function onSettleFold(e) { foldSaved(e.target); }
+  function onSettleFold(e) { foldSaved(e.target); watchBar(); }
+
+  // The toasts rise above the bar by its measured height (--pf-savebar-h, read in profile.css).
+  // The bar is swapped with its form, so each settle looks for the new one.
+  var watchedBars = [];
+  function watchBar() {
+    if (!ro) return;
+    // A swapped-out bar is no longer in the page: stop observing it, so saves never pile up.
+    watchedBars = watchedBars.filter(function (b) {
+      if (b.isConnected) return true;
+      ro.unobserve(b);
+      return false;
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll('[data-pf-savebar]'), function (b) {
+      if (watchedBars.indexOf(b) === -1) { ro.observe(b); watchedBars.push(b); }
+    });
+    measureBar();
+  }
+  function measureBar() {
+    var b = doc.querySelector('[data-pf-savebar]');
+    if (b) doc.documentElement.style.setProperty('--pf-savebar-h',
+      Math.round(b.getBoundingClientRect().height) + 'px');
+  }
 
   function markDirty(form) {
-    var sb = form.querySelector('[data-pf-savebar].is-saved');
-    if (sb) { sb.classList.remove('is-saved'); sb.removeAttribute('data-shown'); }
+    var sb = form.querySelector('[data-pf-savebar].is-closing');
+    if (sb) sb.classList.remove('is-closing');
     if (form.hasAttribute('data-dirty')) return;
     form.setAttribute('data-dirty', '');
     var msg = form.querySelector('[data-pf-msg]');
@@ -448,8 +472,12 @@
   function onSaved(e) {
     var d = e.detail || {};
     if (!root.KUI || !root.KUI.toast) return;
-    root.KUI.toast(d.message || 'Saved', { undo: function () { undo(d); } });
+    // One confirmation per save: the one before it, if still up, makes way for this one.
+    if (savedToast) savedToast.dismiss();
+    savedToast = root.KUI.toast(d.message || 'Saved', { undo: function () { undo(d); } });
+    savedToast.el.setAttribute('data-testid', 'profile-saved');
   }
+  var savedToast = null;
 
   /* ------------------------------------------------------------------------------ stories */
   function onStorySaved(e) {
@@ -522,7 +550,7 @@
       if (!watched.has(n)) { watched.add(n); ro.observe(n); }
     });
   }
-  function onResizeFit() { fitAll(doc); }
+  function onResizeFit() { fitAll(doc); measureBar(); }
 
   /* ------------------------------------------------------------------ tab ink and pane entry
      Each tab is its own page, so the ink under the active tab starts where it was on the page the
@@ -615,6 +643,7 @@
     ctx.on(doc, 'k-seg-change', onSegChange);
     ctx.on(doc, 'change', onMarginSwitch);
     ctx.on(doc, 'htmx:afterSettle', onSettleFold);
+    ctx.onUnmount(function () { doc.documentElement.style.removeProperty('--pf-savebar-h'); });
     foldSaved();
     ctx.on(doc, 'input', onEdit);
     ctx.on(doc, 'change', onEdit);
@@ -638,6 +667,7 @@
     ctx.on(doc, 'htmx:afterRequest', onDocumentEdit);
     ro = root.ResizeObserver ? ctx.observe(new root.ResizeObserver(onResizeFit)) : null;
     if (ro) { ctx.on(doc, 'htmx:load', watch); watch(); }
+    watchBar();
     ctx.on(root, 'resize', onResizeFit);
     ctx.on(root, 'pagehide', onPageHide);
     ctx.on(root, 'resize', onResizeInk);

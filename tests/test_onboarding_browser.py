@@ -342,6 +342,27 @@ def test_about_you_gate_tracks_summary_and_the_more_details_fold(live, theme):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
+def test_a_dirty_setup_form_never_lifts_the_toasts(live, theme):
+    """A setup step's save row has no data-pf-savebar, so a dirty profile form there must leave
+    the toast region where it was (the lift is for the Profile save bar only). No setup step
+    renders a pf-form today, so the dirty form is put on the step the way profile.js marks one."""
+    ctx, page, errors = _open(live, theme, 1280, "wants")
+    try:
+        assert page.locator("[data-pf-savebar]").count() == 0
+        bottom = "getComputedStyle(document.querySelector('.k-toasts')).bottom"
+        before = page.evaluate(bottom)
+        page.evaluate(
+            "document.body.insertAdjacentHTML('beforeend',"
+            "'<form class=\"pf-form\" data-pf-form data-dirty hidden></form>')")
+        page.wait_for_selector("form.pf-form[data-dirty]", state="attached")
+        page.wait_for_timeout(600)  # past the .3s bottom transition
+        assert page.evaluate(bottom) == before
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_wants_chips_gate_switch_and_the_live_preview(live, theme):
     ctx, page, errors = _open(live, theme, 1280, "wants")
     try:

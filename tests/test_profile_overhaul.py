@@ -107,7 +107,8 @@ def test_a_save_without_a_first_name_is_refused_and_a_one_word_name_is_kept(clie
     assert "Add your first name." in bad.text and 'data-testid="profile-problem"' in bad.text
     assert "k-toast" not in bad.headers.get("hx-trigger", "")
     ok = client.post("/profile/employment/about", data={"first_name": "Cher"})
-    assert 'data-testid="profile-saved"' in ok.text
+    assert 'data-testid="profile-problem"' not in ok.text
+    assert json.loads(ok.headers["hx-trigger"])["pf-saved"]["message"].startswith("Saved.")
     saved = yaml.safe_load(pe.profile_path().read_text(encoding="utf-8"))["employment"]
     assert (saved["first_name"], saved["last_name"], saved["full_name"]) == ("Cher", "", "Cher")
 
@@ -133,11 +134,11 @@ def test_each_stop_is_stored_and_read_back_on_both_tabs(client, stop, stored):
     r = client.post("/profile/employment/employment",
                     data={"seniority_floor": "", "comp_floor_margin_pct": stop,
                           "comp_floor_usd": "110000"})
-    assert 'data-testid="profile-saved"' in r.text
+    assert "pf-saved" in r.headers["hx-trigger"]
     assert _stops(_soup(r.text))[1] == stop
     r = client.post("/profile/consulting/consulting",
                     data={"day_rate_floor_margin_pct": stop, "day_rate_floor": "1800"})
-    assert 'data-testid="profile-saved"' in r.text and _stops(_soup(r.text))[1] == stop
+    assert "pf-saved" in r.headers["hx-trigger"] and _stops(_soup(r.text))[1] == stop
     saved = yaml.safe_load(pe.profile_path().read_text(encoding="utf-8"))
     assert saved["employment"]["employment_terms"]["comp_floor_margin_pct"] == stored
     assert saved["consulting"]["consulting_terms"]["day_rate_floor_margin_pct"] == stored
@@ -169,7 +170,7 @@ def test_the_save_bar_is_in_the_page_and_a_save_offers_undo_in_a_toast(client):
     assert bar.select_one("[data-pf-discard]") and bar.select_one("button[type=submit]")
     r = client.post("/profile/employment/location", data={"remote_ok": "on"})
     toast = json.loads(r.headers["hx-trigger"])["pf-saved"]
-    assert toast["message"] == "Saved" and toast["undoUrl"] == "/profile/undo"
+    assert toast["message"].startswith("Saved.") and toast["undoUrl"] == "/profile/undo"
     assert _soup(r.text).select_one("[data-pf-savebar][data-shown]") is not None
 
 

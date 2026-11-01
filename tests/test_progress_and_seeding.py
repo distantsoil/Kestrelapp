@@ -217,7 +217,7 @@ def test_base_shows_the_busy_text_inline_and_not_as_a_cursor():
     assert "data-busy-text" in _BASE
     assert "import-status busy-status" in _BASE and "className = 'spin'" in _BASE
     # A request from such an element never counts toward the busy cursor.
-    assert "closest('[data-no-busy], [data-busy-text]')" in _BASE
+    assert "closest('[data-no-busy], [data-busy-text]:not([data-busy-text=\"\"])')" in _BASE
     assert ".busy-status" in _CSS
 
 
