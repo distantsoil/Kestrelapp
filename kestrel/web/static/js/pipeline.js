@@ -366,7 +366,18 @@
   var LIST_DONE = ['htmx:afterSettle', 'htmx:responseError', 'htmx:sendError', 'htmx:timeout',
                    'htmx:swapError'];
   function onListDone(e) {
-    if (e.target && e.target.id === 'pipeline-list') listIdle();
+    if (e.target && e.target.id === 'pipeline-list') { listIdle(); syncRescoringPanel(); }
+  }
+  // Being scored again (issue #74): the list polls while work is live and its rows carry the
+  // state. When the open role's row no longer matches what its panel shows (queued became
+  // running, or the new score landed), the panel is asked again in place, with no slide.
+  function syncRescoringPanel() {
+    if (!state.sel) return;
+    var row = rowFor(state.sel), inner = $('#pl-panel .pl-panel__in');
+    if (!row || !inner || Number(inner.getAttribute('data-id')) !== Number(state.sel)) return;
+    if ((row.getAttribute('data-rescoring') || '') !== (inner.getAttribute('data-rescoring') || '')) {
+      select(state.sel, { silent: true, instant: true });
+    }
   }
 
   function onGone(e) {

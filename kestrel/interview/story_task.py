@@ -153,6 +153,7 @@ async def drain_story_builds(
         await _record(sm, {
             "at": utcnow_iso(), "ok": True, "sketches": res.sketches,
             "created": len(res.created_story_ids), "attached": len(res.attached),
+            "skipped": res.skipped,
         })
         await queue.complete(task.id, worker_id=wid)
         done += 1

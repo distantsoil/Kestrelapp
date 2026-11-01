@@ -114,7 +114,11 @@ def read_card(opp, ev_json: dict | None, fit_word: str | None) -> dict[str, str]
     b = _blocks(ev_json)
     title = _MATCH_TITLES.get(fit_word or "", "What the model saw")
     parts: list[str] = []
-    if getattr(opp, "track", None) == "consulting":
+    if fit_word == "not a fit":
+        # A weak match says why it is weak (#63): the model's own dealbreakers, the posting check,
+        # then the gaps. Reasons in its favor are on the In your favor card, never here.
+        parts = _weak_reasons(opp, ev_json)
+    elif getattr(opp, "track", None) == "consulting":
         thesis = b.get("b_thesis") or {}
         situ = b.get("a_situation") or {}
         econ = b.get("d_economics") or {}
@@ -147,8 +151,12 @@ def read_card(opp, ev_json: dict | None, fit_word: str | None) -> dict[str, str]
         if gaps and fit_word in ("strong fit", "good fit", "maybe"):
             parts.append(f"Worth watching: {_s(gaps[0]['text']).rstrip('.')}.")
     if not parts:
+        # A weak match falls back to its weakest dimension, a fit to its strongest: the reason
+        # always agrees with the title.
+        weak = fit_word == "not a fit"
         for d in sorted(
-            dimension_rows(ev_json, getattr(opp, "track", None)), key=lambda r: -r["score"]
+            dimension_rows(ev_json, getattr(opp, "track", None)),
+            key=lambda r: r["score"] if weak else -r["score"],
         ):
             if d["why"]:
                 parts.append(_sentence(d["why"]))
@@ -156,6 +164,47 @@ def read_card(opp, ev_json: dict | None, fit_word: str | None) -> dict[str, str]
     if not parts:
         return None
     return {"title": title, "text": " ".join(parts)}
+
+
+_LEGIT_SENTENCES = {
+    "suspect": "The posting looks suspect.",
+    "reject": "The posting may not be a real opening.",
+}
+
+
+def _weak_reasons(opp, ev_json: dict | None) -> list[str]:
+    """Why a role is not a fit, in the model's words: each dealbreaker's detail, the posting
+    check when it is not clean, then up to two gaps (fatal first), then pay below the minimum.
+    Nothing is composed beyond joining them; empty when the model gave none of these."""
+    ev = ev_json or {}
+    parts: list[str] = []
+    for bl in ev.get("blockers") or []:
+        if isinstance(bl, dict) and _s(bl.get("detail")):
+            sentence = _sentence(bl["detail"])
+            if sentence not in parts:
+                parts.append(sentence)
+    legit = ev.get("legitimacy") or {}
+    if isinstance(legit, dict) and legit.get("status") in _LEGIT_SENTENCES:
+        parts.append(_LEGIT_SENTENCES[legit["status"]])
+    if getattr(opp, "track", None) == "consulting":
+        econ = _blocks(ev_json).get("d_economics") or {}
+        if isinstance(econ, dict) and econ.get("vs_floor") == "below_floor":
+            parts.append(_PAY_SENTENCES["below_floor"].replace("The pay", "The rate"))
+        return parts
+    gaps = sorted(gap_rows(ev_json), key=lambda g: not g["fatal"])
+    for g in gaps[:2]:
+        parts.append(f"Gap: {g['text'].rstrip('.')}.")
+    comp = _blocks(ev_json).get("d_comp") or {}
+    if isinstance(comp, dict) and comp.get("vs_floor") == "below_floor":
+        # A job board's estimate is not the employer's pay (#66): say which it is.
+        below = _PAY_SENTENCES["below_floor"]
+        if pv.is_estimate(opp):
+            below = below.replace("The pay", "The estimated pay")
+        parts.append(below)
+    level = _blocks(ev_json).get("c_level") or {}
+    if isinstance(level, dict) and level.get("relative_level") in ("above", "below"):
+        parts.append(_LEVEL_SENTENCES[level["relative_level"]])
+    return parts
 
 
 def gap_rows(ev_json: dict | None) -> list[dict[str, Any]]:
@@ -182,7 +231,7 @@ LEGACY_SERVICE_HOW = (
 )
 
 
-def _match_rows(matches: list) -> list[dict[str, Any]]:
+def _match_rows(matches: list, *, thin: bool = False) -> list[dict[str, Any]]:
     """P2 `b_fit.matches` or P2C `b_thesis.matches` as rows: only `strong` is Met; partial,
     adjacent and unverified are Partly met. An unverified match carries no evidence (what the
     profile lacks is not proof: no Evidence row, no source lookup) and says Kestrel can't tell
@@ -197,7 +246,7 @@ def _match_rows(matches: list) -> list[dict[str, Any]]:
                 "text": _s(m["requirement"]),
                 "state": MET if m.get("strength") == "strong" else PART,
                 "evidence": "" if unverified else _s(m.get("evidence")),
-                "how": UNVERIFIED_HOW if unverified else "",
+                "how": pv.unverified_how(thin) if unverified else "",
                 "strength": _s(m.get("strength")),
                 "unverified": unverified,
             }
@@ -205,7 +254,7 @@ def _match_rows(matches: list) -> list[dict[str, Any]]:
     return rows
 
 
-def requirements(opp, ev_json: dict | None) -> list[dict[str, Any]]:
+def requirements(opp, ev_json: dict | None, *, thin: bool = False) -> list[dict[str, Any]]:
     """One row per thing the posting asks for: Met (a strong match), Partly met (partial,
     adjacent, or unverified: the profile neither shows nor rules it out) or Not met (a gap).
     From the model's `b_fit` for a role; for a lead from `b_thesis.matches` graded the same way
@@ -219,7 +268,7 @@ def requirements(opp, ev_json: dict | None) -> list[dict[str, Any]]:
         delivery = b.get("f_delivery") or {}
         graded = thesis.get("matches") if isinstance(thesis, dict) else None
         if isinstance(graded, list):
-            rows += _match_rows(graded)
+            rows += _match_rows(graded, thin=thin)
         else:
             # A read from before b_thesis.matches named service lines with no evidence: nothing
             # to count as Met, so each is Partly met under Gaps (PROMPTS.md P2C, O20).
@@ -257,7 +306,9 @@ def requirements(opp, ev_json: dict | None) -> list[dict[str, Any]]:
                 )
     else:
         fit = b.get("b_fit") or {}
-        rows += _match_rows((fit.get("matches") if isinstance(fit, dict) else None) or [])
+        rows += _match_rows(
+            (fit.get("matches") if isinstance(fit, dict) else None) or [], thin=thin
+        )
         for g in gap_rows(ev_json):
             rows.append(
                 {

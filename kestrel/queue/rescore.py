@@ -111,12 +111,15 @@ async def enqueue_rescore(
     model_override: dict | None = None,
     online_approval: dict | None = None,
     tier0_anyway: bool = False,
+    score_stubs: bool = False,
     explain: Callable[[Opportunity], Awaitable[Any]] | None = None,
 ) -> RescoreResult:
     """Stage the score-again tasks in the CALLER's session (the caller commits). No stage is
     changed here (module docstring). `tier0_anyway` queues the roles a Tier 0 rule set aside
     too (Score this role anyway); otherwise they are refused, and `explain` (when given) says why
-    for each one."""
+    for each one. `score_stubs` is the operator's explicit Score again (or Score anyway) on a
+    role: the task carries `score_stub`, so Tier 2 scores a posting with next to no description
+    (D-SRC-18) instead of leaving it Not scored. Automatic callers leave it off."""
     result = RescoreResult()
     ids = list(dict.fromkeys(opp_ids))[:MAX_ROLES]
     rows = {
@@ -127,6 +130,8 @@ async def enqueue_rescore(
     }
     # `requested`: the operator asked, so a switched-off track never holds it (finding 10).
     extra: dict = {"rescore": True, "requested": True, "requested_at": utcnow_iso()}
+    if score_stubs:
+        extra["score_stub"] = True
     if model_override:
         extra["model_override"] = dict(model_override)
     if online_approval:

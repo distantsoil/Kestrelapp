@@ -43,6 +43,7 @@ GROUP_MAYBE = "maybe"
 GROUP_APPLIED = "applied"
 GROUP_NOT_FIT = "not_fit"
 GROUP_NEW = "new"
+GROUP_UNSCORED = "unscored"
 GROUP_FAILED = "failed"
 GROUP_LABELS = {
     GROUP_WORTH: "Worth a look",
@@ -50,6 +51,7 @@ GROUP_LABELS = {
     GROUP_APPLIED: "Applied",
     GROUP_NOT_FIT: "Not a fit",
     GROUP_NEW: "Being scored",
+    GROUP_UNSCORED: "Not scored",
     GROUP_FAILED: "Scoring failed",
 }
 # The one-line explanation under the Scoring failed header (D-UI-56).
@@ -72,6 +74,10 @@ FAILURE_FALLBACK = "scoring did not finish"
 # (D-IMPORT-1) and a re-post of a role already applied for (SPEC.md 5.6). Tier 0 skips hidden
 # roles, so nothing will score them: they read Not scored, never Being scored.
 IMPORTED_REASON = "Imported applied history"
+# A scraped posting with no body (issue #66) is not sent to a model and is not a failure: it stays
+# at t1_pass with this stage_reason (written by pipeline.tier2) and reads Not scored.
+EMPTY_POSTING_STAGE_REASON = "t2 posting has no description"
+EMPTY_POSTING_WHY = "The posting has no description."
 _REPOST = re.compile(r"Re-post of (pursuit|hidden opportunity) #(\d+)")
 
 
@@ -80,6 +86,12 @@ def hidden_unscored_why(opp: Any) -> str | None:
     the pipeline will still score. Callers use queries.hidden_unscored, which also rules out a
     queued Score again; the "Re-post of" forms are written by ingest.normalize.suppress_if_applied
     (tests/test_hidden_unscored.py ties the two)."""
+    if (
+        getattr(opp, "stage", None) == "t1_pass"
+        and getattr(opp, "stage_reason", None) == EMPTY_POSTING_STAGE_REASON
+        and getattr(opp, "archive_reason", None) != "applied"
+    ):
+        return EMPTY_POSTING_WHY
     if getattr(opp, "stage", None) != "new" or getattr(opp, "archive_reason", None) != "applied":
         return None
     from kestrel.web.words import words
@@ -277,14 +289,16 @@ def rule_word(rules: Any) -> str:
 
 
 def fit_for(
-    evaluation: Any, stage: str | None, *, t0_rules: Any = None, live: bool = False
+    evaluation: Any, stage: str | None, *, t0_rules: Any = None, live: bool = False,
+    stage_reason: str | None = None,
 ) -> Fit:
     """Translate the latest evaluation plus the opportunity stage into the operator's word.
 
     `evaluation` may be None, an Evaluation row or a dict with verdict / score / weighted_score /
     needs_review / tier. `stage` is the opportunity's stage string. `live` is whether the role
     has a pending or leased scoring task: a parked role queued to score again is Being scored,
-    one with nothing queued is Scoring failed (D-UI-56)."""
+    one with nothing queued is Scoring failed (D-UI-56). A posting with no body (`stage_reason`,
+    EMPTY_POSTING_STAGE_REASON) with nothing queued is Not scored, not Being scored (D-SRC-18)."""
     verdict = _get(evaluation, "verdict")
     tier = _get(evaluation, "tier")
     score = _get(evaluation, "score")
@@ -299,6 +313,8 @@ def fit_for(
         if live:
             return Fit(NEW, GROUP_NEW, _TONE[NEW], None, "")
         return Fit(NEW, GROUP_FAILED, _TONE[NEW], None, FAILED_WHY)
+    if stage == "t1_pass" and stage_reason == EMPTY_POSTING_STAGE_REASON and not live:
+        return Fit(NEW, GROUP_UNSCORED, _TONE[NEW], None, "")
     if stage == "t0_reject":
         return Fit(NOT_FIT, GROUP_NOT_FIT, _TONE[NOT_FIT], None, f"{rule_word(t0_rules)} rule")
     if verdict == "kill" or stage == "t1_reject":
@@ -474,12 +490,18 @@ def _detail(rule: str, opp: Any, profile: Any, settings: Any, org: Any) -> str:
         return "the title reads as below the lowest level you set"
     if rule == "comp_floor":
         cap, floor = _get(opp, "comp_max"), _get(eterms, "comp_floor_usd")
+        if cap is not None and floor is not None and _get(opp, "comp_source") == "inferred":
+            return (f"the job board's pay estimate tops out at {_money(cap)}, below your floor "
+                    f"of {_money(floor)}. An estimate is not posted pay")
         if cap is not None and floor is not None:
             return (f"the top of the posted pay is {_money(cap)}, below your floor of "
                     f"{_money(floor)}")
         return "the posted pay is below your floor"
     if rule == "rate_floor":
         cap, floor = _get(opp, "comp_max"), _get(cterms, "day_rate_floor")
+        if cap is not None and floor is not None and _get(opp, "comp_source") == "inferred":
+            return (f"the job board's rate estimate tops out at {_money(cap)}, below your day "
+                    f"rate floor of {_money(floor)}. An estimate is not a posted rate")
         if cap is not None and floor is not None:
             return (f"the top of the posted rate is {_money(cap)}, below your day rate floor "
                     f"of {_money(floor)}")

@@ -190,7 +190,8 @@ async def _seed_opps(sm, n: int = 3) -> None:
                     title=f"VP of IT #{i}", comp_max=250000, comp_source="parsed",
                     remote_type="hybrid", state="OH", city="Columbus", location_raw="Columbus, OH",
                     date_posted=_recent(), seen_count=1, ghost_score=0.1, stage="new",
-                    description_md="Own IT leadership, budget and vendor accountability.",
+                    description_md="Own IT leadership, budget and vendor accountability."
+                    + " Details follow." * 20,  # over the Tier 2 stub floor (D-SRC-18)
                 )
             )
         await s.commit()

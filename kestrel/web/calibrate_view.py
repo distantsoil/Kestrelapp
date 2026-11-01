@@ -102,9 +102,10 @@ def pay_line(opp: Opportunity) -> str:
     per = {"hourly": " an hour", "daily": " a day", "weekly": " a week", "monthly": " a month"}.get(
         (opp.comp_interval or "").lower(), ""
     )
+    est = " est." if opp.comp_source == "inferred" else ""  # a job-board estimate says so
     if lo and hi and round(lo) != round(hi):
-        return f"{sym}{lo:,.0f} to {sym}{hi:,.0f}{per}"
-    return f"{sym}{(hi or lo):,.0f}{per}"
+        return f"{sym}{lo:,.0f} to {sym}{hi:,.0f}{per}{est}"
+    return f"{sym}{(hi or lo):,.0f}{per}{est}"
 
 
 def place_line(opp: Opportunity) -> str:

@@ -908,6 +908,54 @@
     d.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + CHEV[dir] + '</svg>';
     return d;
   }
+  /* The page cues are fixed over the viewport, so content can sit under one. Content must never
+     be covered: when a cue would show, it looks for a spot along its edge with nothing under it
+     (the page centre first, then outward) and stays hidden when there is none. "Nothing" means
+     no text, and no control or media either: a link, button, field, label, image, icon, video,
+     frame. The scan runs when the page comes to rest after a scroll, on a resize and when the
+     content itself changes (a debounced observer), never on a timer; it samples a coarse grid
+     and gives up after a few candidate spots. Its motion and the reduced-motion rule are
+     unchanged. */
+  var CUE_BLOCKING = 'a, button, input, select, textarea, label, img, svg, video, iframe, ' +
+    '[role="button"]';
+  var CUE_GRID = 3, CUE_STEP = 48, CUE_TRIES = 14;
+  function cueTextUnder(l, t, w, h) {
+    var seen = new Set(), rg = doc.createRange(), pad = 3;
+    for (var i = 0; i < CUE_GRID; i++) for (var j = 0; j < CUE_GRID; j++) {
+      var els = doc.elementsFromPoint(l + w * i / (CUE_GRID - 1), t + h * j / (CUE_GRID - 1));
+      for (var k = 0; k < els.length; k++) seen.add(els[k]);
+    }
+    var found = false;
+    seen.forEach(function (e) {
+      if (found || e === doc.documentElement || e === doc.body) return;
+      if (e.closest('.k-cue')) return;
+      if (e.matches(CUE_BLOCKING)) { found = true; return; }  // a control or media (a frame's text too)
+      for (var c = e.firstChild; c && !found; c = c.nextSibling) {
+        if (c.nodeType !== 3 || !c.nodeValue.trim()) continue;
+        rg.selectNodeContents(c);
+        var rs = rg.getClientRects();
+        for (var q = 0; q < rs.length; q++) {
+          var b = rs[q];
+          if (b.right > l - pad && b.left < l + w + pad && b.bottom > t - pad && b.top < t + h + pad) {
+            found = true;
+            break;
+          }
+        }
+      }
+    });
+    return found;
+  }
+  function cueFreeX(dir, mid, lo, hi) {
+    var size = 34, t = dir === 'up' ? 8 : root.innerHeight - 8 - size, tried = [mid];
+    for (var d = CUE_STEP; tried.length < CUE_TRIES && (mid - d >= lo || mid + d <= hi); d += CUE_STEP) {
+      if (mid - d >= lo) tried.push(mid - d);
+      if (mid + d <= hi) tried.push(mid + d);
+    }
+    for (var i = 0; i < tried.length; i++) {
+      if (!cueTextUnder(tried[i] - size / 2, t, size, size)) return tried[i];
+    }
+    return null;
+  }
   function cueUpdate(cs) {
     var page = !cs.el;
     var top = page ? (root.scrollY || doc.documentElement.scrollTop) : cs.el.scrollTop;
@@ -925,8 +973,27 @@
       cs.up.style.top = (er.top - hr.top + 8) + 'px';
       cs.down.style.top = (er.bottom - hr.top - 42) + 'px';
     }
-    cs.up.classList.toggle('is-show', !cs.moving && more > 4 && top > 8);
-    cs.down.classList.toggle('is-show', !cs.moving && more > 4 && top < more - 8);
+    var showUp = !cs.moving && more > 4 && top > 8;
+    var showDown = !cs.moving && more > 4 && top < more - 8;
+    if (page) {
+      var m = doc.querySelector('.k-main').getBoundingClientRect();
+      var lo = Math.max(m.left, 0) + 24, hi = Math.min(m.right, root.innerWidth) - 24;
+      // The same page at the same place answers the same: the scan reruns only when this key
+      // changes, or when the content changed (cueContentChanged clears the key).
+      var key = [Math.round(top), Math.round(more), root.innerWidth, root.innerHeight,
+                 Math.round(m.left), Math.round(m.width), showUp, showDown].join('|');
+      if (cs.key !== key) {
+        cs.key = key;
+        cs.xs = {
+          up: showUp ? cueFreeX('up', m.left + m.width / 2, lo, hi) : null,
+          down: showDown ? cueFreeX('down', m.left + m.width / 2, lo, hi) : null
+        };
+      }
+      if (cs.xs.up === null) showUp = false; else cs.up.style.left = cs.xs.up + 'px';
+      if (cs.xs.down === null) showDown = false; else cs.down.style.left = cs.xs.down + 'px';
+    }
+    cs.up.classList.toggle('is-show', showUp);
+    cs.down.classList.toggle('is-show', showDown);
   }
   function cue(el) {
     el = el ? el$(el) : null;
@@ -954,6 +1021,28 @@
     return cs;
   }
   function refreshCues() { cueSets.forEach(cueUpdate); }
+  // The content changed (htmx swap, late load, something opened): scan again once it settles.
+  var cueDebounce = 0;
+  function cueContentChanged() {
+    clearTimeout(cueDebounce);
+    cueDebounce = setTimeout(function () {
+      cueSets.forEach(function (cs) { cs.key = null; });
+      refreshCues();
+    }, 150);
+  }
+  function cueWatch() {
+    root.addEventListener('resize', cueContentChanged);
+    if (root.ResizeObserver) {
+      var ro = new root.ResizeObserver(cueContentChanged);
+      ro.observe(doc.body);
+      var main = doc.querySelector('.k-main');
+      if (main) ro.observe(main);
+    }
+    var main2 = doc.querySelector('.k-main');
+    if (root.MutationObserver && main2) {  // the main content only: the side rail polls
+      new root.MutationObserver(cueContentChanged).observe(main2, { childList: true, subtree: true });
+    }
+  }
 
   /* Shared motion primitives (components.css "Shared motion primitives"). */
   function saved(el, opts) {
@@ -1823,8 +1912,7 @@
         cue(null);
         var nav = doc.querySelector('.side .mainnav');
         if (nav) cue(nav);  // a short window scrolls the menu above the status readout
-        root.addEventListener('resize', refreshCues);
-        setInterval(refreshCues, 400);  // content that loads in later changes the length
+        cueWatch();  // content that loads in later changes the length: observed, not polled
       }
     };
     if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', ready); else ready();

@@ -51,6 +51,7 @@
       <input type="hidden" name="text" value="{{ markdown }}">
       <input type="hidden" name="track" value="{{ track }}">
       <input type="hidden" name="doc_kind" value="{{ doc_kind }}">
+      {% include "partials/import_proof_points.html" %}
       {% if proposal.flags.unplaced %}
         {# Coverage (D-IMPORT-3, D-IMPORT-6): lines no slot took. Shown so nothing is dropped
            silently, and the operator decides where each goes. The text stays as written. #}

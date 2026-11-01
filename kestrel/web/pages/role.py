@@ -67,6 +67,7 @@ from kestrel.web.queries import (
     org_context,
 )
 from kestrel.web.redact import redact_json, redact_text
+from kestrel.web.rescoring import EARLIER, rescoring_states
 from kestrel.web.words import words
 
 log = structlog.get_logger()
@@ -298,9 +299,17 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         # Hidden as applied with nothing queued: Not scored, never Being scored (issue #59).
         # Score again queues a live task, and then it is Being scored after all.
         detail["hidden_why"] = (await hidden_unscored(s2, [opp])).get(opp.id)
+        # Queued or running to score again (issue #74); a task held for approval is not in line.
+        detail["rescoring"] = (
+            None if detail["scoring_held"]
+            else (await rescoring_states(s2, [opp_id])).get(opp_id)
+        )
         stats = None if track == "consulting" else await comp_intel_stats(s2, opp)
         n_seen = 0 if track == "consulting" else await comp_intel_count(s2, opp)
-        reqs = rv.requirements(opp, ev_json)
+        from kestrel.services.profile_readiness import operator_profile_is_thin
+
+        thin = await asyncio.to_thread(operator_profile_is_thin, track)
+        reqs = rv.requirements(opp, ev_json, thin=thin)
         sources = await _evidence_sources(s2, reqs, track, conf, mapping)
         labels = list(
             (
@@ -339,6 +348,7 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
     detail.update(
         {
             "tab": tab,
+            "earlier_label": EARLIER,
             "tab_labels": rv.TAB_LABELS,
             "tabs": TABS,
             "w": w,
@@ -509,6 +519,16 @@ async def render_page(request: Request, opp_id: int, tab: str) -> Response:
     if htmx and not restore:
         return templates().TemplateResponse(request, "partials/role_body.html", ctx)
     return templates().TemplateResponse(request, "opportunity_detail.html", ctx)
+
+
+@router.get("/opportunities/{opp_id}/role/rescoring")
+async def rescoring_status(opp_id: int):
+    """Where a score again stands, for the role page's poll (issue #74): `state` is "queued",
+    "running" or "none" (it landed, failed or was cancelled, so the page asks for the new card)."""
+    async with sessionmaker()() as s:
+        found = (await rescoring_states(s, [opp_id])).get(opp_id)
+    return JSONResponse(found.as_dict() if found else {"state": "none"},
+                        headers={"Cache-Control": "no-store"})
 
 
 async def render_tab(request: Request, opp_id: int, name: str) -> Response:
@@ -991,7 +1011,9 @@ async def add_story(request: Request, opp_id: int):
         queued = None
         if rescore:
             credit.clear()
-            res = await enqueue_rescore(s, [opp_id], online_approval=form.get("online_approval"))
+            res = await enqueue_rescore(
+                s, [opp_id], online_approval=form.get("online_approval"), score_stubs=True
+            )
             queued = bool(res.queued)
         await s.commit()
     if rescore:

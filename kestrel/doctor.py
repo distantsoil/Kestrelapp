@@ -143,15 +143,26 @@ def _check_config(rep: DoctorReport) -> None:
 
 def _check_profile(rep: DoctorReport) -> None:
     profile = paths.config_dir() / "profile.yml"
-    if profile.exists():
+    from kestrel.pipeline.profile import profile_unreadable
+
+    if profile.exists() and profile_unreadable():
+        # No parse text: it quotes the operator's own file.
+        rep.add(
+            "Profile configured",
+            FAIL,
+            "profile.yml exists but could not be read; roles are scored against an empty profile",
+            "Fix or remove config/profile.yml, or open Profile in Kestrel and choose Start fresh "
+            "(your file is kept as profile.yml.broken-<time>).",
+        )
+    elif profile.exists():
         rep.add("Profile configured", PASS, str(profile))
     else:
         # WARN, not blocking, in Phase 0: the profile editor is a later phase; the example exists.
         rep.add(
             "Profile configured",
             WARN,
-            "no profile.yml (only profile.example.yml)",
-            "Copy config/profile.example.yml to config/profile.yml and edit it.",
+            "no profile.yml: roles are scored against an empty profile",
+            "Finish setup (or copy config/profile.example.yml to config/profile.yml and edit it).",
         )
 
 

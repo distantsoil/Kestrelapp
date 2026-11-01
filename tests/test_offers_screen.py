@@ -32,7 +32,7 @@ from kestrel.privacy import Employer, EmployerMap
 from kestrel.web import offers_view as ov
 from tests import offers_seed
 
-pytestmark = pytest.mark.usefixtures("_isolate_data_home")
+pytestmark = pytest.mark.usefixtures("_isolate_data_home", "example_operator_profile")
 
 HX = {"HX-Request": "true"}
 

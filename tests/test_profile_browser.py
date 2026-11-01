@@ -688,3 +688,139 @@ def test_the_documents_scripts_run_again_without_doubling_their_listeners(live):
         assert not errors, errors
     finally:
         ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1200, 1280])
+def test_documents_editor_and_preview_stay_side_by_side(live, theme, width):
+    """D-UI-230: editor left, live preview right at 1200 and 1280; the delete action is a small
+    danger button in the header row, not bare text; nothing scrolls sideways."""
+    ctx, page, errors = _open(live, "documents", theme, width)
+    try:
+        _shot(page, f"docs-{width}-{theme}")
+        m = page.evaluate("""() => {
+          const r = s => document.querySelector(s).getBoundingClientRect();
+          const del = document.querySelector('[data-testid=doc-delete-btn]');
+          const d = del.getBoundingClientRect(), cs = getComputedStyle(del);
+          return {main: r('.pf-dmain'), prev: r('.pf-dprev'), del: [d.width, d.height],
+                  border: cs.borderTopWidth, bg: cs.backgroundColor,
+                  sx: document.documentElement.scrollWidth - innerWidth}; }""")
+        assert m["prev"]["left"] >= m["main"]["right"]
+        assert abs(m["prev"]["top"] - m["main"]["top"]) <= 4
+        label = page.query_selector(".pf-tb b")  # "Live preview" is not squeezed under a button
+        assert label.evaluate("e => e.getBoundingClientRect().width >= e.scrollWidth - 1")
+        boxes = page.evaluate(_BOXES, ".pf-tb > b, .pf-tb > .k-btn")
+        assert not any(_overlaps(a, b) for i, a in enumerate(boxes) for b in boxes[i + 1:])
+        assert m["sx"] <= 0 and m["del"][1] <= 40 and m["border"] == "1px"
+        assert m["bg"] not in ("rgba(0, 0, 0, 0)", "transparent")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+_TEXT_UNDER_CUE_JS = """() => {
+  const cues = Array.from(document.querySelectorAll('.k-cue--fixed.is-show'));
+  const hits = [], rg = document.createRange();
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) {
+    const t = n.nodeValue.trim(), el = n.parentElement;
+    if (!t || !el || el.closest('.k-cue, script, style, noscript, [hidden]')) continue;
+    rg.selectNodeContents(n);
+    for (const b of rg.getClientRects()) {
+      for (const c of cues) {
+        const q = c.getBoundingClientRect();
+        if (b.width < 1 || b.right <= q.left || b.left >= q.right || b.bottom <= q.top
+            || b.top >= q.bottom) continue;
+        const x = Math.max(b.left, q.left) + 1, y = Math.max(b.top, q.top) + 1;
+        const seen = document.elementsFromPoint(
+          Math.min(x, q.right - 1), Math.min(y, q.bottom - 1));
+        if (seen.includes(el)) hits.push(t.slice(0, 30));
+      }
+    }
+  }
+  // A control or image under a shown cue is covered content too, not only text.
+  const sel = 'a, button, input, select, textarea, label, img, svg, video, iframe, '
+    + '[role="button"]';
+  for (const el of document.querySelectorAll(sel)) {
+    if (el.closest('.k-cue, [hidden]')) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || cs.pointerEvents === 'none') {
+      continue;
+    }
+    for (const b of el.getClientRects()) {
+      for (const c of cues) {
+        const q = c.getBoundingClientRect();
+        if (b.width < 1 || b.height < 1 || b.right <= q.left || b.left >= q.right
+            || b.bottom <= q.top || b.top >= q.bottom) continue;
+        const x = Math.min(Math.max(b.left, q.left) + 1, q.right - 1);
+        const y = Math.min(Math.max(b.top, q.top) + 1, q.bottom - 1);
+        if (document.elementsFromPoint(x, y).includes(el)) {
+          hits.push('<' + el.tagName.toLowerCase() + '> ' + (el.className.baseVal
+            ?? el.className ?? '').toString().slice(0, 30));
+        }
+      }
+    }
+  }
+  return {shown: cues.length, hits};
+}"""
+
+
+def test_the_scroll_cue_never_sits_over_text_or_a_control_on_documents(live):
+    """The shared fixed scroll cue steps aside (or stays hidden) where text, a button, a field,
+    a link or an image sits under it: at 1280 it used to cover a role card's "2 bullets" line."""
+    base, browser, master_id = live
+    _grow_resume(master_id, 12)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 760})
+    page = ctx.new_page()
+    try:
+        page.goto(_url(base, "documents", master_id))
+        page.wait_for_selector("#preview [data-pf-page] iframe")
+        wait_for_layout(page)
+        total = page.evaluate("document.documentElement.scrollHeight - innerHeight")
+        assert total > 600
+        seen_cue = 0
+        for y in range(0, int(total) + 1, 120):
+            page.evaluate("y => window.scrollTo(0, y)", y)
+            page.wait_for_timeout(900)  # the cue shows again once the page has been still
+            got = page.evaluate(_TEXT_UNDER_CUE_JS)
+            seen_cue += got["shown"]
+            assert got["hits"] == [], (y, got)
+        assert seen_cue > 0, "the cue never showed, so the check proved nothing"
+    finally:
+        ctx.close()
+
+
+_COUNT_SCANS_JS = """() => {
+  window.__cueScans = 0;
+  const real = Document.prototype.elementsFromPoint;
+  document.elementsFromPoint = function (...a) { window.__cueScans++; return real.apply(this, a); };
+}"""
+
+
+def test_the_scroll_cue_does_not_rescan_while_the_page_is_idle(live):
+    """The cue looks under itself only after a scroll ends, a resize or a change to the content
+    (the spy counts elementsFromPoint, which every look uses): seven idle seconds cost none."""
+    base, browser, master_id = live
+    _grow_resume(master_id, 12)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 760})
+    page = ctx.new_page()
+    try:
+        page.goto(_url(base, "documents", master_id))
+        page.wait_for_selector("#preview [data-pf-page] iframe")
+        wait_for_layout(page)
+        page.evaluate("window.scrollTo(0, 200)")  # both cues may show: the scan has work to do
+        page.wait_for_timeout(1500)
+        page.evaluate(_COUNT_SCANS_JS)
+        page.wait_for_timeout(7000)
+        assert page.evaluate("window.__cueScans") == 0, "the cue rescanned on a timer"
+        # It still looks when something real happens, so the zero above means something.
+        page.evaluate("window.scrollTo(0, 320)")
+        page.wait_for_timeout(1200)
+        after_scroll = page.evaluate("window.__cueScans")
+        assert after_scroll > 0, "no look after a scroll"
+        page.evaluate("""() => { const p = document.createElement('p'); p.textContent = 'new';
+                        document.querySelector('.k-main').appendChild(p); }""")
+        page.wait_for_timeout(800)
+        assert page.evaluate("window.__cueScans") > after_scroll, "no look after a content change"
+    finally:
+        ctx.close()

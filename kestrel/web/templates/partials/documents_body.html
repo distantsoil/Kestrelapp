@@ -1,5 +1,88 @@
 {% import "ui/macros.html" as ui %}
 {% include "partials/employer_banner.html" %}
+{% if choices_result %}<p class="pf-hint" role="status" data-testid="doc-delete-result">{{ choices_result }}</p>{% endif %}
+
+{# D-UI-229: the import panel sits in the left column under Optional sections, or alone when no
+   document is selected. #}
+{% macro import_panel() %}
+<section class="k-card pf-import" id="pf-import">
+<header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ui.icon('up') }}</span>
+  <div class="k-grow"><h3>Import a resume or capability statement</h3></div></header>
+<p class="muted">Upload a file (.md, .txt, .pdf, .docx, .doc) or paste markdown. The text that was
+read is shown first, then the proposal for review, with any bullet that is not verbatim from your
+source flagged. Nothing is written until you accept.</p>
+<p class="muted"><b>Word (.docx) gives the cleanest result.</b> PDF works, but its text is laid
+out by position, so check the extracted text before accepting.</p>
+<form id="import-form" hx-post="/api/documents/import/read" hx-target="#import-proposal"
+      hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data"
+      hx-disabled-elt="find button[type=submit]" data-no-busy>
+  <div class="formgrid">
+    <label>Track</label>
+    <select name="track"><option value="employment">Job search</option>{% if consulting_enabled() %}<option value="consulting">Consulting</option>{% endif %}</select>
+    <label>Kind</label>
+    <select name="doc_kind"><option value="resume">Resume</option>{% if consulting_enabled() %}<option value="capability_statement">Capability statement</option>{% endif %}</select>
+    <label for="import-file">File</label>
+    <input id="import-file" type="file" name="file" accept=".md,.txt,.pdf,.docx,.doc">
+  </div>
+  <p class="muted" style="margin:.5rem 0 0">Or paste markdown (a chosen file takes precedence):</p>
+  <textarea name="text" rows="8" style="width:100%; margin:.5rem 0" placeholder="Paste here…"></textarea>
+  <button class="btn" type="submit">Propose import</button>
+  <div class="import-status" role="status" aria-live="polite" data-testid="import-reading">
+    <span class="spin" aria-hidden="true"></span><span class="import-stage">Uploading…</span>
+  </div>
+</form>
+<div id="import-proposal" class="import-result"></div>
+</section>
+<script>
+  // Import status (D-IMPORT-2). Step one reports Uploading with a percentage, then Reading once
+  // the bytes are sent; step two (partials/import_processing.html) counts the seconds it has run.
+  // The listeners sit on this section, not on the document (D-UI-210): a request from inside it
+  // bubbles up through it, and a swap that brings a new section leaves nothing of the old one
+  // listening. Running this again for the same section replaces its set. The seconds counter
+  // stops by itself once its line has left the page.
+  (function () {
+    var form = document.getElementById('import-form');
+    var host = form.closest('#pf-import') || form;
+    var stage = form.querySelector('.import-stage');
+    if (host.kImport) host.kImport.abort();
+    var ac = host.kImport = new AbortController();
+    var sig = { signal: ac.signal };
+    form.addEventListener('htmx:beforeRequest', function () {
+      var f = form.querySelector('input[type=file]');
+      stage.textContent = (f && f.files && f.files.length) ? 'Uploading…' : 'Reading…';
+    }, sig);
+    form.addEventListener('htmx:xhr:progress', function (evt) {
+      var d = evt.detail;
+      if (!d || !d.lengthComputable || !d.total) return;
+      stage.textContent = d.loaded < d.total
+        ? 'Uploading… ' + Math.floor(100 * d.loaded / d.total) + '%'
+        : 'Reading the file and extracting its text…';
+    }, sig);
+    var timers = new WeakMap();
+    host.addEventListener('htmx:beforeRequest', function (evt) {
+      var el = evt.detail && evt.detail.elt;
+      if (!el || !el.classList || !el.classList.contains('import-processing')) return;
+      // One import at a time: a second click would orphan a billed call still running.
+      var btn = form.querySelector('button[type=submit]');
+      if (btn) btn.disabled = true;
+      var out = el.querySelector('.import-elapsed'), t0 = Date.now();
+      var tick = setInterval(function () {
+        if (!el.isConnected) { clearInterval(tick); timers.delete(el); return; }
+        if (out) out.textContent = Math.round((Date.now() - t0) / 1000) + ' s elapsed.';
+      }, 1000);
+      timers.set(el, tick);
+    }, sig);
+    host.addEventListener('htmx:afterRequest', function (evt) {
+      var el = evt.detail && evt.detail.elt;
+      if (el && timers.has(el)) {
+        clearInterval(timers.get(el)); timers.delete(el);
+        var btn = form.querySelector('button[type=submit]');
+        if (btn) btn.disabled = false;
+      }
+    }, sig);
+  })();
+</script>
+{% endmacro %}
 
 <div class="pf-drow">
   <div class="pf-doccards" role="tablist" aria-label="Your documents" data-testid="doc-cards">
@@ -12,8 +95,40 @@
     {% endfor %}
     {% if not masters %}<span class="pf-hint">No documents yet. Start a blank one or import one below.</span>{% endif %}
   </div>
-  <a class="k-btn k-btn--sm" href="#import-form" data-testid="pf-import-jump">{{ ui.icon('up', 'k-ic--sm') }}Import a resume</a>
+  <div class="pf-drow__acts">
+    <a class="k-btn k-btn--sm" href="#import-form" data-testid="pf-import-jump">{{ ui.icon('up', 'k-ic--sm') }}Import a resume</a>
+    {% if selected and delete_info and not delete_info.blocked %}
+    {# D-UI-230: a small danger button beside Import, like Clear all drafts in a section header. #}
+    <button class="k-btn k-btn--sm k-btn--danger" type="button" data-testid="doc-delete-btn"
+            data-k-modal="#doc-delete-dialog">Delete this {{ delete_info.kind }}</button>
+    {% endif %}
+  </div>
 </div>
+{% if selected and delete_info and not delete_info.blocked %}
+{# D-DOC-7: the confirmation is a panel, not a browser dialog, so it can offer to forget what Kestrel learned. #}
+{% set di = delete_info %}
+<div class="k-modal" id="doc-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="doc-delete-dialog-t" aria-hidden="true" data-k-static data-testid="doc-delete-dialog">
+  <form hx-post="/documents/{{ selected.id }}/delete" hx-target="#doc-delete-status" hx-swap="innerHTML">
+    <div class="k-modal__head"><h2 id="doc-delete-dialog-t">Delete this {{ di.kind }}?</h2></div>
+    <div class="k-modal__body">
+      <p class="pf-hint" data-testid="doc-delete-what">Delete this {{ di.kind }}, &ldquo;{{ di.name }}&rdquo;? This removes {{ di.sections }} section{{ '' if di.sections == 1 else 's' }}, {{ di.variants }} wording{{ '' if di.variants == 1 else 's' }} and {{ di.renders }} saved render{{ '' if di.renders == 1 else 's' }}. Proof points you already accepted into your profile stay. This cannot be undone.</p>
+      {% if di.learned %}
+      <label class="pf-forget" for="doc-forget-choices">
+        <input type="checkbox" id="doc-forget-choices" name="forget_choices" value="1" data-testid="doc-forget-choices">
+        <span><b>Also forget the {{ di.learned }} choice{{ '' if di.learned == 1 else 's' }} Kestrel learned from this {{ di.kind }}</b>
+        <span class="pf-hint">Kestrel uses these choices to pick wordings for new roles. Forgetting them cannot be undone.</span></span>
+      </label>
+      {% endif %}
+      <div id="doc-delete-status" aria-live="polite"></div>
+    </div>
+    <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close>Cancel</button>
+      <button type="submit" class="k-btn k-btn--danger" data-testid="doc-delete-go">Delete this {{ di.kind }}</button></div>
+  </form>
+</div>
+{% endif %}
+{% if selected and delete_info and delete_info.blocked %}
+<p class="pf-hint pf-delnote" data-testid="doc-delete-blocked">This {{ delete_info.kind }} was attached to {{ delete_info.blocked }} application{{ '' if delete_info.blocked == 1 else 's' }}. Kestrel keeps what you sent, so it cannot be deleted while that record exists.</p>
+{% endif %}
 <details class="pf-details new-document" data-testid="new-document" {% if not masters %}open{% endif %}>
   <summary>Start a blank document without an import</summary>
   <form hx-post="/documents/new" hx-swap="none" class="formgrid section-form">
@@ -97,6 +212,7 @@
     {% include "partials/doc_basics.html" %}
     <div id="tree">{% include "partials/doc_tree.html" %}</div>
     {% include "partials/doc_optional_sections.html" %}
+    {{ import_panel() }}
   </div>
 
   <div class="pf-dprev" data-testid="doc-preview-col">
@@ -181,82 +297,6 @@
     </div>
   </div>
 </div>
+{% else %}
+{{ import_panel() }}
 {% endif %}
-
-<section class="k-card pf-import" id="pf-import">
-<header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ui.icon('up') }}</span>
-  <div class="k-grow"><h3>Import a resume or capability statement</h3></div></header>
-<p class="muted">Upload a file (.md, .txt, .pdf, .docx, .doc) or paste markdown. The text that was
-read is shown first, then the proposal for review, with any bullet that is not verbatim from your
-source flagged. Nothing is written until you accept.</p>
-<p class="muted"><b>Word (.docx) gives the cleanest result.</b> PDF works, but its text is laid
-out by position, so check the extracted text before accepting.</p>
-<form id="import-form" hx-post="/api/documents/import/read" hx-target="#import-proposal"
-      hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data"
-      hx-disabled-elt="find button[type=submit]" data-no-busy>
-  <div class="formgrid">
-    <label>Track</label>
-    <select name="track"><option value="employment">Job search</option>{% if consulting_enabled() %}<option value="consulting">Consulting</option>{% endif %}</select>
-    <label>Kind</label>
-    <select name="doc_kind"><option value="resume">Resume</option>{% if consulting_enabled() %}<option value="capability_statement">Capability statement</option>{% endif %}</select>
-    <label for="import-file">File</label>
-    <input id="import-file" type="file" name="file" accept=".md,.txt,.pdf,.docx,.doc">
-  </div>
-  <p class="muted" style="margin:.5rem 0 0">Or paste markdown (a chosen file takes precedence):</p>
-  <textarea name="text" rows="8" style="width:100%; margin:.5rem 0" placeholder="Paste here…"></textarea>
-  <button class="btn" type="submit">Propose import</button>
-  <div class="import-status" role="status" aria-live="polite" data-testid="import-reading">
-    <span class="spin" aria-hidden="true"></span><span class="import-stage">Uploading…</span>
-  </div>
-</form>
-<div id="import-proposal" class="import-result"></div>
-</section>
-<script>
-  // Import status (D-IMPORT-2). Step one reports Uploading with a percentage, then Reading once
-  // the bytes are sent; step two (partials/import_processing.html) counts the seconds it has run.
-  // The listeners sit on this section, not on the document (D-UI-210): a request from inside it
-  // bubbles up through it, and a swap that brings a new section leaves nothing of the old one
-  // listening. Running this again for the same section replaces its set. The seconds counter
-  // stops by itself once its line has left the page.
-  (function () {
-    var form = document.getElementById('import-form');
-    var host = form.closest('#pf-import') || form;
-    var stage = form.querySelector('.import-stage');
-    if (host.kImport) host.kImport.abort();
-    var ac = host.kImport = new AbortController();
-    var sig = { signal: ac.signal };
-    form.addEventListener('htmx:beforeRequest', function () {
-      var f = form.querySelector('input[type=file]');
-      stage.textContent = (f && f.files && f.files.length) ? 'Uploading…' : 'Reading…';
-    }, sig);
-    form.addEventListener('htmx:xhr:progress', function (evt) {
-      var d = evt.detail;
-      if (!d || !d.lengthComputable || !d.total) return;
-      stage.textContent = d.loaded < d.total
-        ? 'Uploading… ' + Math.floor(100 * d.loaded / d.total) + '%'
-        : 'Reading the file and extracting its text…';
-    }, sig);
-    var timers = new WeakMap();
-    host.addEventListener('htmx:beforeRequest', function (evt) {
-      var el = evt.detail && evt.detail.elt;
-      if (!el || !el.classList || !el.classList.contains('import-processing')) return;
-      // One import at a time: a second click would orphan a billed call still running.
-      var btn = form.querySelector('button[type=submit]');
-      if (btn) btn.disabled = true;
-      var out = el.querySelector('.import-elapsed'), t0 = Date.now();
-      var tick = setInterval(function () {
-        if (!el.isConnected) { clearInterval(tick); timers.delete(el); return; }
-        if (out) out.textContent = Math.round((Date.now() - t0) / 1000) + ' s elapsed.';
-      }, 1000);
-      timers.set(el, tick);
-    }, sig);
-    host.addEventListener('htmx:afterRequest', function (evt) {
-      var el = evt.detail && evt.detail.elt;
-      if (el && timers.has(el)) {
-        clearInterval(timers.get(el)); timers.delete(el);
-        var btn = form.querySelector('button[type=submit]');
-        if (btn) btn.disabled = false;
-      }
-    }, sig);
-  })();
-</script>

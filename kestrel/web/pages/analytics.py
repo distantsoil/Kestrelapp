@@ -38,7 +38,7 @@ from kestrel.analytics.metrics import collect_metrics
 from kestrel.analytics.summary import honest_summary
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Pursuit, Setting, StatusEvent
-from kestrel.llm.client import LLMClient
+from kestrel.llm import client as llm_client
 from kestrel.pipeline._shared import tier_is_hosted
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates
@@ -125,7 +125,7 @@ async def _context(
     try:
         if ask_model:
             async with httpx.AsyncClient() as http:
-                client = LLMClient(settings, http=http)
+                client = llm_client.LLMClient(settings, http=http)
                 summary = await honest_summary(s, client, track, period=period)
             if summary.from_model:  # a real model answer; an empty one_thing_to_change is fine
                 narrative = await _save_narrative(s, track, range_key, summary)

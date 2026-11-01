@@ -833,7 +833,7 @@ def test_quarantine_copy_follows_the_stored_error():
     assert "not in the required format" in asks
 
 
-def test_today_help_and_escalate_use_the_operator_words(monkeypatch):
+def test_today_help_and_escalate_use_the_operator_words(monkeypatch, example_operator_profile):
     from kestrel.pipeline.tier3 import EscalationResult
     from kestrel.web.pages import escalate
 

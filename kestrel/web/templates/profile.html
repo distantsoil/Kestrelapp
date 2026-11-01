@@ -33,6 +33,12 @@
     {% endfor %}
   </div>
 
+  {% if readiness.show_notice or rescoring %}
+  <div class="pf-note pf-note--warn" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
+    {% set back = 'profile' %}{% include "partials/profile_next_step.html" %}
+  </div>
+  {% endif %}
+
   {% if track in about_missing and not profile_problem and tab not in ('stories',) %}
   <div class="pf-note pf-note--warn" data-testid="about-missing">
     <b>About you ({{ track }}) has no name yet{% if tab == 'about' %}.{% else %}:{% endif %}</b>
@@ -61,8 +67,11 @@
         {% endif %}
         {% if profile_problem %}
         <div class="pf-note pf-note--bad" role="alert" data-testid="profile-unreadable">
-          <b>profile.yml cannot be read, so nothing here can be saved.</b> {{ profile_problem }}
-          Fix the file, or restore a backup from Settings &gt; Your data, then reload.
+          <b>{{ profile_problem }}</b>
+          Or restore a backup from Settings &gt; Your data, then reload.
+          <button type="button" class="k-btn k-btn--sm" data-testid="profile-start-fresh"
+                  hx-post="/profile/start-fresh" hx-swap="none"
+                  hx-confirm="Start fresh? Kestrel keeps your current file next to it as profile.yml.broken-(date and time) and begins an empty profile.">Start fresh</button>
         </div>
         {% elif not profile_exists %}
         <div class="pf-note pf-note--warn" data-testid="no-profile">

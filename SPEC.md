@@ -181,6 +181,15 @@ SQLAlchemy 2.x async declarative. Timestamps UTC ISO8601 text. JSON blobs as `JS
 
 **`profile`** — one row per track. The operator has two.
 
+**No profile, no persona (D-PROF-4, issue #70).** The only profile the app reads is the operator's
+own `profile.yml`. When there is none (a fresh install before setup writes it, or an unreadable
+file), every consumer sees an **empty** profile: no proof points, narrative, target or excluded
+titles, pay floor or must-haves; the prompts render "unspecified" and Tier 0 filters nothing on
+it (empty lists and no floor never reject; hard rule 4). The shipped fictional
+`profile.example.yml` is documentation, placeholder hints and test data; it is never the
+fallback, so no role is scored, sketched or storied against a fictional person. One loader,
+`kestrel.pipeline.profile`, reads the file for every caller.
+
 | column | type | notes |
 |---|---|---|
 | id | int pk | |
@@ -1098,6 +1107,18 @@ directly and nesting it inside `blocks` would make that path awkward. Prose else
 to "Block G" for the employment track means this top-level `legitimacy` object. The consulting
 track does nest its equivalent as `blocks.g_risk` **and** carries the top-level object; on that
 track the top-level object is authoritative for post-processing and `g_risk` is narrative detail.
+
+**Stub postings are not scored.** A scraped job or contract posting with under 40 words of
+description (after whitespace normalization; text in an unspaced script such as Chinese, Japanese
+or Thai is counted by characters, under 120) and no trigger event is not sent to the model. It is
+not a failure: no quarantine row, no Retry. It stays at `t1_pass` with `stage_reason` "t2 posting
+has no description" and reads **Not scored: the posting has no description** in Pipeline and on the
+role page (the D-UI-225 pattern). A manual paste, an RFP, a referral and a trigger event are
+exempt. A re-scrape that brings a body re-queues Tier 2 (`changed`); a re-scrape of a role already
+scored to a stub keeps its score and stage. A Glassdoor pay band (JobSpy's p10-p90
+`payPeriodAdjustedPay`) is stored with `comp_source = inferred`, reaches the model labelled as a
+job-board estimate, and is not posted pay: no Tier 0 pay rule compares it with the floor
+(uncertainty escalates, never rejects), and the company pay range and the comp corpus leave it out.
 
 Blocks:
 

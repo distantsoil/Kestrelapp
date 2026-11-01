@@ -210,6 +210,7 @@ def pay_view(opps: list[Opportunity]) -> dict[str, Any]:
     listed = [
         o for o in opps
         if o.comp_interval == "year" and (o.comp_min is not None or o.comp_max is not None)
+        and getattr(o, "comp_source", None) != "inferred"  # a job-board estimate is not posted pay
     ]
     # One role reposted is one observation: count each (title, range) once.
     seen: set[tuple] = set()

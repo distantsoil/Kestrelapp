@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from html import escape
+from urllib.parse import urlencode
 
 import structlog
 from fastapi import APIRouter, Request
@@ -138,6 +140,28 @@ async def _confidential_ctx(note: str | None = None, problem: str | None = None)
         "inferred": bool(first and first["inferred"]), "note": note, "problem": problem}}
 
 
+async def readiness_ctx(request: Request, track: str) -> dict:
+    """What the next-step notice (partials/profile_next_step.html) prints, for any page that
+    renders profile.html."""
+    from kestrel.services.profile_readiness import load_readiness
+    from kestrel.web.deps import sessionmaker
+    from kestrel.web.pages.today import _rescoring
+
+    rescoring = _rescoring(request)
+    async with sessionmaker()() as s:
+        readiness = await load_readiness(s, track)
+        ask = await _ask_for(s, readiness) if rescoring == "confirm" else None
+    return {"readiness": readiness, "rescoring": rescoring, "ask": ask}
+
+
+async def _ask_for(session, readiness):
+    """The in-place send confirmation for Score again, when scoring would go online."""
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web.score_again_ask import ask_context
+
+    return await ask_context(session, await load_settings_with_db(session), readiness)
+
+
 @router.get("/profile", response_class=HTMLResponse)
 async def profile(request: Request):
     tab = request.query_params.get("tab") or "about"
@@ -160,7 +184,53 @@ async def profile(request: Request):
     if tab == "stories":
         ctx.update(await _stories_ctx())
     ctx["story_count"] = await _story_count()
+    ctx.update(await readiness_ctx(request, ctx["track"]))
     return templates().TemplateResponse(request, "profile.html", ctx)
+
+
+@router.post("/api/profile/score-again")
+async def score_again(request: Request):
+    """Queue the roles scored before the profile's proof points for scoring again (issues #67,
+    #71). The list is read here again, never taken from the form, and `enqueue_rescore` is
+    idempotent, so a second press queues nothing new. On an online model the first press only
+    asks (in place, the same ask-first panel as the other online actions); nothing is queued or
+    sent until the operator confirms it."""
+    from fastapi.responses import RedirectResponse
+
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web import score_again_ask as ask
+    from kestrel.web.deps import sessionmaker
+
+    form = await request.form()
+    track = str(form.get("track") or "employment")
+    if track not in pe.TRACKS:
+        track = "employment"
+    # `back` is a short token mapped to a server-side path; the redirect is never built from the
+    # form's text (open-redirect safe). Query values are validated enums, then URL-encoded.
+    back = "profile" if str(form.get("back")) == "profile" else "today"
+    tab = str(form.get("tab") or "")
+    tab = tab if tab in _TAB_KEYS else "about"
+    target = "/?" + urlencode({"track": track}) if back == "today" else (
+        "/profile?" + urlencode({"tab": tab, "track": track}))
+    sep = "&"
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        out = await ask.run(s, settings, track, form)
+    hx = bool(request.headers.get("HX-Request"))
+    if "ask" in out:
+        if not hx:
+            return RedirectResponse(f"{target}{sep}rescore=confirm", status_code=303)
+        ctx = {"readiness": None, "rescoring": "confirm", "track": track, "back": back,
+               "tab": tab, "ask": out["ask"], "inplace": True}
+        return templates().TemplateResponse(request, "partials/profile_next_step.html", ctx)
+    queued = out["queued"]
+    if hx:
+        ctx = {"readiness": None, "rescoring": str(queued) if queued else "", "track": track,
+               "back": back, "tab": tab, "inplace": True}
+        return templates().TemplateResponse(request, "partials/profile_next_step.html", ctx)
+    return RedirectResponse(
+        f"{target}{sep}rescoring={queued}" if queued else target, status_code=303
+    )
 
 
 async def _queue_recheck(tracks: list[str]) -> int:
@@ -324,7 +394,9 @@ async def confidential_save(request: Request):
 
 
 # ----------------------------------------------------------------------------------- stories
-async def _stories_ctx(notice: str | None = None, error: str | None = None) -> dict:
+async def _stories_ctx(
+    notice: str | None = None, error: str | None = None, undo_url: str | None = None
+) -> dict:
     """The Stories tab: the same canonical story bank as /stories and Interview prep. Every
     word shown is the person's own; a draft the model proposed is marked as one."""
     from kestrel.web.deps import sessionmaker
@@ -334,7 +406,8 @@ async def _stories_ctx(notice: str | None = None, error: str | None = None) -> d
     async with sessionmaker()() as s:
         stories = await _canonical_stories(s)
         build = await _build_ctx(s)
-    return {"stories": stories, "story_notice": notice, "story_error": error, **build}
+    return {"stories": stories, "story_notice": notice, "story_error": error,
+            "story_undo_url": undo_url, **build}
 
 
 def _stories_response(request: Request, ctx: dict):
@@ -381,6 +454,37 @@ async def stories_build(request: Request):
     return _stories_response(request, await _stories_ctx(notice=(
         "Building stories in the background. They appear here as drafts when it finishes."
         if queued else "A build is already running. Drafts appear here when it finishes.")))
+
+
+@router.post("/profile/stories/dismiss-all", response_class=HTMLResponse)
+async def story_dismiss_all(request: Request):
+    """Clear all drafts (#65): dismiss every proposed story so Build never proposes it again. A
+    story the operator saved is never touched. The button asks first (hx-confirm)."""
+    from kestrel.interview.stories import dismiss_all_drafts
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        count, group = await dismiss_all_drafts(s)
+    notice = (
+        f"Cleared {count} draft{'' if count == 1 else 's'}. Build stories will not propose them "
+        "again." if count else None
+    )
+    return _stories_response(request, await _stories_ctx(
+        notice=notice, error=None if count else "There are no drafts to clear.",
+        undo_url=f"/profile/stories/undo-dismiss-all/{group}" if group else None))
+
+
+@router.post("/profile/stories/undo-dismiss-all/{group}", response_class=HTMLResponse)
+async def story_undo_dismiss_all(request: Request, group: str):
+    """Undo Clear all drafts from Profile: the same ten-minute undo as the bank, then the list."""
+    from kestrel.interview.stories import undo_dismissal_group
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        ok = await undo_dismissal_group(s, group)
+    return _stories_response(request, await _stories_ctx(
+        notice="Drafts restored." if ok else None,
+        error=None if ok else "This can no longer be undone."))
 
 
 @router.post("/profile/stories/{story_id}/delete", response_class=HTMLResponse)
@@ -441,6 +545,25 @@ async def profile_save(request: Request, track: str, section: str):
         if section == "employment":
             events["titleVariantsChanged"] = True
         resp.headers["HX-Trigger"] = json.dumps(events)
+    return resp
+
+
+@router.post("/profile/start-fresh", response_class=HTMLResponse)
+async def profile_start_fresh(request: Request):
+    """Replace an unreadable profile.yml with a new one, keeping the broken file beside it as
+    profile.yml.broken-<timestamp>. The page reloads on success."""
+    try:
+        pe.start_fresh()
+    except pe.ProfileEditError as exc:
+        # A fixed sentence chosen by which refusal it was, never the exception's text (D-SEC-4).
+        said = pe.FRESH_NOT_NEEDED if str(exc) == pe.FRESH_NOT_NEEDED else pe.FRESH_NO_COPY
+        log.info("profile_start_fresh_refused", not_needed=said == pe.FRESH_NOT_NEEDED)
+        return HTMLResponse(escape(said), status_code=409)
+    except OSError as exc:
+        log.warning("profile_start_fresh_failed", error_type=type(exc).__name__)
+        return HTMLResponse("Kestrel could not start a new profile file.", status_code=500)
+    resp = HTMLResponse("", status_code=204)
+    resp.headers["HX-Redirect"] = "/profile"
     return resp
 
 

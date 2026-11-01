@@ -4,7 +4,7 @@ five observations (constraint 6). Fully offline."""
 from __future__ import annotations
 
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import CompObservation
+from kestrel.db.models import CompObservation, Opportunity
 from kestrel.intelligence.comp import comp_range
 
 _TITLE = "vp of it"
@@ -80,3 +80,41 @@ async def test_refuses_below_five(sm):
     d = rng.as_dict()
     assert d["sufficient"] is False
     assert "not enough data yet" in d["insufficient_message"]
+
+
+async def _src_obs(sm, mids, source) -> None:
+    async with sm() as s:
+        for m in mids:
+            s.add(CompObservation(
+                normalized_title=_TITLE, geo_bucket="CA", org_size_band="mid", min=m, max=m,
+                currency="USD", interval="year", source=source, observed_at=utcnow_iso(),
+            ))
+        await s.commit()
+
+
+async def test_job_board_estimates_are_not_market_pay(sm):
+    # Three posted + four job-board estimates is three observations, not seven (hard rule 6).
+    await _src_obs(sm, [200000, 250000, 300000], "posting")
+    await _src_obs(sm, [90000, 95000, 99000, 99500], "inferred")
+    async with sm() as s:
+        rng = await comp_range(s, normalized_title=_TITLE, geo_bucket="CA", org_size_band="mid")
+    assert rng.sufficient is False and rng.n == 3
+
+
+async def test_estimates_never_move_a_sufficient_range_and_null_source_counts(sm):
+    await _src_obs(sm, [200000, 250000, 300000, 350000], "posting")
+    await _src_obs(sm, [300000], None)
+    await _src_obs(sm, [1000, 1000, 1000], "inferred")
+    async with sm() as s:
+        rng = await comp_range(s, normalized_title=_TITLE, geo_bucket="CA", org_size_band="mid")
+    assert rng.sufficient is True and rng.n == 5 and rng.low == 200000
+
+
+async def test_calibrate_pay_line_marks_an_estimate(sm):
+    from kestrel.web.calibrate_view import pay_line
+
+    opp = Opportunity(comp_min=90000, comp_max=110000, comp_currency="USD",
+                      comp_interval="year", comp_source="inferred")
+    assert pay_line(opp).endswith("est.")
+    opp.comp_source = "structured"
+    assert not pay_line(opp).endswith("est.")

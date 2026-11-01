@@ -55,13 +55,15 @@ def comp_display(opp: Any) -> str:
     lo, hi = _get(opp, "comp_min"), _get(opp, "comp_max")
     if lo is None and hi is None:
         return ""
+    est = _get(opp, "comp_source") == "inferred"
     currency = _get(opp, "comp_currency") or "USD"
     interval = _INTERVAL_LABEL.get(_get(opp, "comp_interval") or "year", "year")
     sym = {"USD": "$", "GBP": "£", "EUR": "€"}.get(currency, currency + " ")
+    tail = " (a job-board estimate, not pay the employer posted)" if est else ""
     if lo is not None and hi is not None and lo != hi:
-        return f"{sym}{lo:,.0f} - {sym}{hi:,.0f} / {interval}"
+        return f"{sym}{lo:,.0f} - {sym}{hi:,.0f} / {interval}{tail}"
     one = hi if hi is not None else lo
-    return f"{sym}{one:,.0f} / {interval}"
+    return f"{sym}{one:,.0f} / {interval}{tail}"
 
 
 def _geo_summary(profile: Any) -> str:
@@ -143,6 +145,17 @@ def _work_modes_line(terms: Any) -> list[str]:
     Nothing when none is chosen, so a profile that never set it reads exactly as before."""
     modes = [str(m) for m in (_get(terms, "work_modes") or []) if m]
     return [f"Work modes wanted: {', '.join(modes)}."] if modes else []
+
+
+def profile_is_thin(profile: Any) -> bool:
+    """True when the profile has no proof points and an empty narrative: Tier 2 then sees almost
+    nothing about the operator, so every requirement comes back unverified (issue #64). A missing
+    profile is thin. Works on the pydantic profile, a namespace or a dict."""
+    if profile is None:
+        return True
+    proofs = _get(profile, "proof_points") or []
+    narrative = _get(profile, "narrative") or ""
+    return not list(proofs) and not str(narrative).strip()
 
 
 def profile_full(profile: Any) -> str:
@@ -240,7 +253,9 @@ async def comp_intel_stats(session: AsyncSession, opp: Opportunity) -> dict[str,
     rows = (
         (
             await session.execute(
-                select(CompObservation).where(CompObservation.normalized_title == title)
+                select(CompObservation).where(
+                    CompObservation.normalized_title == title, CompObservation.source != "inferred"
+                )
             )
         )
         .scalars()
@@ -288,7 +303,10 @@ async def comp_intel_count(session: AsyncSession, opp: Opportunity) -> int:
             await session.execute(
                 select(func.count())
                 .select_from(CompObservation)
-                .where(CompObservation.normalized_title == title)
+                .where(
+                    CompObservation.normalized_title == title,
+                    CompObservation.source != "inferred",
+                )
             )
         ).scalar_one()
     )

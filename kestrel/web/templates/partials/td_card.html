@@ -9,13 +9,13 @@
    decides). Shortlist and Save use the Pipeline's own routes, so Undo works as there. #}
 {% import "ui/macros.html" as ui %}
 {% macro card(c, consulting) -%}
-<article class="td-card" role="listitem" data-id="{{ c.id }}" data-testid="td-card"{% if c.pending %} data-pending="1"{% endif %}>
+<article class="td-card" role="listitem" data-id="{{ c.id }}" data-testid="td-card"{% if c.pending %} data-pending="1"{% endif %}{% if c.rescoring %} data-rescoring="{{ c.rescoring.state }}"{% endif %}>
   <div class="td-row">
     {% if c.pending %}<span class="k-pill" data-fit="new">Being scored</span>
     {% elif c.tone == 'good' %}<span class="k-pill k-pill--good" data-fit="{{ c.word }}">{{ ui.icon('check') }}{{ c.word|capitalize }}</span>
     {% elif c.tone == 'warn' %}<span class="k-pill k-pill--warn" data-fit="{{ c.word }}">{{ ui.icon('alert') }}{{ c.word|capitalize }}</span>
     {% else %}<span class="k-pill" data-fit="{{ c.word }}">{{ c.word|capitalize }}</span>{% endif %}
-    <span class="td-score td-score--{{ c.tone }}" data-testid="td-score">{% if c.score is not none and not c.pending %}{{ '%.1f'|format(c.score) }} <small>/ 5</small>{% else %}<small>Not scored yet</small>{% endif %}</span>
+    <span class="td-score td-score--{{ c.tone }}" data-testid="td-score">{% if c.score is not none and not c.pending %}{{ '%.1f'|format(c.score) }} <small>/ 5{% if c.rescoring and c.rescoring.again %} <span class="td-earlier" data-testid="td-earlier">earlier</span>{% endif %}</small>{% else %}<small>Not scored yet</small>{% endif %}</span>
     <button type="button" class="td-save" title="Save for later" aria-label="Save for later" data-testid="td-save"
             hx-post="/opportunities/{{ c.id }}/decide/save" hx-swap="none">{{ ui.icon('bm') }}</button>
   </div>
@@ -23,6 +23,7 @@
   <div class="td-t" data-testid="td-title">{{ c.title }}</div>
   <div class="td-o"><span class="td-mono td-mono-{{ c.mono.tone }}" aria-hidden="true">{{ c.mono.letters }}</span><span class="td-o__n">{{ c.org }}</span></div>
   <div class="td-row td-loc">{{ ui.icon('pin') }}<span>{{ c.place or 'Place not listed' }}</span></div>
+  {% if c.rescoring %}<div class="td-again" role="status" data-testid="td-rescoring"><span class="k-dot k-dot--live" aria-hidden="true"></span><span><b>{{ c.rescoring.title }}.</b> {{ c.rescoring.hint }}</span></div>{% endif %}
   {% if c.pending %}
     <div class="td-pending"><span class="k-dot k-dot--live"></span>Full review in progress. Pay and details appear when it finishes.</div>
   {% else %}

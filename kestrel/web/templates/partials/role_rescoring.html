@@ -1,0 +1,8 @@
+{# Being scored again (issue #74): shown above the score while a Score again is queued or running.
+   Context: `rescoring` (kestrel.web.rescoring.Rescoring). role.js polls /role/rescoring while
+   this is on the page and fills the two [data-rs] spans in place; when the task is gone it asks
+   for the pane again, so the new score arrives without a reload. #}
+<div class="rl-rescore" role="status" data-testid="rescoring" data-rescoring="{{ rescoring.state }}" data-stalled="{{ 1 if rescoring.stalled else 0 }}">
+  <span class="k-dot k-dot--live" aria-hidden="true"></span>
+  <div><b data-rs="title">{{ rescoring.title }}</b> <span data-rs="hint" data-testid="rescoring-hint">{{ rescoring.hint }}</span></div>
+</div>

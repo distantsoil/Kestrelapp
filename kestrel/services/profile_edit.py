@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
+import threading
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -160,7 +163,25 @@ def _reconcile(block: dict, merged: dict, track: str, section: str) -> None:
 
 PROFILE_NAME = "profile.yml"
 PROFILE_BAK = "profile.yml.bak"
-_INCOMING = "profile.yml.editing"
+BROKEN_PREFIX = "profile.yml.broken-"
+UNREADABLE = (
+    "Kestrel could not read your profile file, so it did not save over it. "
+    "Fix or remove config/profile.yml, or choose Start fresh."
+)
+_INCOMING = "profile.yml.editing"  # the prefix of a save's temp file; each save gets its own
+
+# One lock for every read-modify-write of profile.yml. Saves run on request threads and the
+# import thread (asyncio.to_thread), and two of them reading the same file would lose one's
+# change. Re-entrant because add_target_title / add_proof_points hold it across their read and
+# the save_section they end in.
+_WRITE_LOCK = threading.RLock()
+
+
+def _temp_beside(target: Path) -> Path:
+    """A new, unique, empty file next to `target` for a write that ends in os.replace."""
+    fd, name = tempfile.mkstemp(prefix=_INCOMING + ".", dir=target.parent)
+    os.close(fd)
+    return Path(name)
 
 
 class ProfileEditError(UserFacingError, ValueError):
@@ -171,6 +192,7 @@ class ProfileEditError(UserFacingError, ValueError):
 # The two ways Undo can be refused, one subclass and one sentence each. The Undo route answers
 # from the sentence of the class it caught, never from the exception it holds, so the page text
 # is a constant a code scanner can follow (D-SEC-4).
+UNKNOWN_TRACK = "That track is not one Kestrel knows, so nothing was added."
 NO_EARLIER_VERSION = "There is no earlier version to go back to."
 EARLIER_VERSION_UNREADABLE = "The earlier version could not be loaded; nothing was changed."
 
@@ -221,19 +243,32 @@ def profile_path() -> Path:
 
 
 def _read(path: Path | None) -> dict:
-    """The file as a mapping. Raises ProfileEditError when it exists but cannot be read or
-    parsed: that is never "no profile", it is a file the operator must look at."""
+    """The file as a mapping. An empty file is no profile. Raises ProfileEditError (always
+    UNREADABLE, never the parser's or the system's own words, which quote the file) when it exists
+    but cannot be read, is not UTF-8 text, is not valid YAML, or is not a mapping: that is never
+    "no profile", it is a file the operator must look at, and nothing may save over it. The same
+    cases the loader calls `profile_unreadable`."""
     if path is None or not path.is_file():
         return {}
+    # Our own words for each case (the reason, the YAML line), never the parser's or the
+    # system's, which quote the file; the log gets only the error type for the same reason.
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        log.warning("profile_read_failed", error_type=type(exc).__name__, error=str(exc))
-        raise ProfileEditError(f"{path.name} could not be read: {plain_os_reason(exc)}") from exc
+        log.warning("profile_unreadable", error_type=type(exc).__name__)
+        raise ProfileEditError(f"{path.name} could not be read: {plain_os_reason(exc)}") from None
     except yaml.YAMLError as exc:
-        log.warning("profile_yaml_invalid", error=str(exc))
-        raise ProfileEditError(f"{path.name} is not valid YAML{yaml_where(exc)}.") from exc
-    return data if isinstance(data, dict) else {}
+        log.warning("profile_unreadable", error_type=type(exc).__name__)
+        raise ProfileEditError(f"{path.name} is not valid YAML{yaml_where(exc)}.") from None
+    except UnicodeDecodeError:
+        log.warning("profile_unreadable", error_type="UnicodeDecodeError")
+        raise ProfileEditError(UNREADABLE) from None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        log.warning("profile_unreadable", error_type="NotAMapping")
+        raise ProfileEditError(UNREADABLE)
+    return data
 
 
 def _read_example(name: str) -> dict:
@@ -269,7 +304,10 @@ def load_state() -> ProfileState:
     try:
         data = _read(profile_path())
     except ProfileEditError as exc:
-        data, problem = {}, str(exc)
+        # The reason in our words (the YAML line, a permission problem), then what to do and
+        # that nothing was saved over the file.
+        reason = str(exc)
+        data, problem = {}, reason if reason == UNREADABLE else f"{reason} {UNREADABLE}"
     exists = bool(data) or problem is not None
     tracks: dict[str, dict] = {}
     present: list[str] = []
@@ -425,11 +463,18 @@ def section_from_form(section: str, form: Any) -> dict:
 
 
 # ------------------------------------------------------------------------------------ writing
-def save_section(track: str, section: str, values: dict) -> Path:
+def save_section(track: str, section: str, values: dict, *, keep_undo: bool = True) -> Path:
     """Merge one section into the track's block and write profile.yml atomically. A first save
     creates the file with only this track block (the other track stays absent until it is
     saved, so Today keeps saying that track has no profile). The previous file is kept as
-    profile.yml.bak and restored if the loader refuses the result."""
+    profile.yml.bak and restored if the loader refuses the result. `keep_undo=False` (the proof
+    point import) leaves profile.yml.bak alone, so the Profile tab's Undo still goes back to the
+    last save the operator made there and never rolls back an import."""
+    with _WRITE_LOCK:
+        return _save_section(track, section, values, keep_undo)
+
+
+def _save_section(track: str, section: str, values: dict, keep_undo: bool) -> Path:
     from kestrel.pipeline.profile import load_profile
 
     if track not in TRACKS:
@@ -453,27 +498,77 @@ def save_section(track: str, section: str, values: dict) -> Path:
     data[track] = block
 
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
-    incoming = target.with_name(_INCOMING)
     bak = target.with_name(PROFILE_BAK)
-    incoming.write_text(text, encoding="utf-8")
-    had_previous = target.is_file()
-    if had_previous:
-        shutil.copy2(target, bak)
-    else:
-        bak.unlink(missing_ok=True)  # a first save has nothing to undo to; no stale backup
-    os.replace(incoming, target)
+    previous = target.read_bytes() if target.is_file() else None
+    incoming = _temp_beside(target)
+    try:
+        incoming.write_text(text, encoding="utf-8")
+        if keep_undo:
+            if previous is not None:
+                shutil.copy2(target, bak)
+            else:
+                bak.unlink(missing_ok=True)  # a first save has nothing to undo to; no stale backup
+        os.replace(incoming, target)
+    finally:
+        incoming.unlink(missing_ok=True)
     try:
         ok = load_profile(track) is not None
     except (TypeError, ValueError):
         ok = False
     if not ok:
-        if had_previous:
-            shutil.copy2(bak, target)
+        if previous is not None:
+            _write_bytes_atomic(target, previous)
         else:
             target.unlink(missing_ok=True)
         raise ProfileEditError(NOT_LOADED)
     log.info("profile_saved", track=track, section=section)
     return target
+
+
+def _write_bytes_atomic(target: Path, data: bytes) -> None:
+    tmp = _temp_beside(target)
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+# The only two refusals Start fresh raises; the route shows these constants, never exception text.
+FRESH_NOT_NEEDED = "Your profile file can be read, so there is nothing to replace."
+FRESH_NO_COPY = "Kestrel could not keep a copy of your profile file, so it left it as it was."
+
+
+def start_fresh() -> Path | None:
+    """Replace an unreadable profile.yml with a new empty profile. The broken file is first copied
+    to profile.yml.broken-<UTC timestamp> beside it (never overwritten, never deleted), and the
+    copy is checked before anything is replaced. Returns that copy's path, or None when there was
+    no file. Refuses (ProfileEditError) a file that reads fine: Start fresh is not a way to wipe
+    a working profile."""
+    with _WRITE_LOCK:
+        target = profile_path()
+        if not target.is_file():
+            return None
+        try:
+            _read(target)
+        except ProfileEditError:
+            pass
+        else:
+            raise ProfileEditError(FRESH_NOT_NEEDED)
+        paths.ensure_dirs()
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        keep = target.with_name(BROKEN_PREFIX + stamp)
+        n = 2
+        while keep.exists():
+            keep = target.with_name(f"{BROKEN_PREFIX}{stamp}-{n}")
+            n += 1
+        shutil.copy2(target, keep)
+        if keep.read_bytes() != target.read_bytes():
+            keep.unlink(missing_ok=True)
+            raise ProfileEditError(FRESH_NO_COPY)
+        _write_bytes_atomic(target, b"{}\n")
+        log.info("profile_started_fresh")
+        return keep
 
 
 def undo_token() -> str:
@@ -491,6 +586,11 @@ def undo_token() -> str:
 def restore_backup() -> Path:
     """Undo of the last save: put profile.yml.bak back as profile.yml (D-UI-119). Refused when
     there is no backup or the loader would not read it; the current file is untouched then."""
+    with _WRITE_LOCK:
+        return _restore_backup()
+
+
+def _restore_backup() -> Path:
     from kestrel.pipeline.profile import load_profile
 
     target = profile_path()
@@ -498,9 +598,12 @@ def restore_backup() -> Path:
     if not bak.is_file():
         raise NoEarlierVersion(NO_EARLIER_VERSION)
     current = target.read_bytes() if target.is_file() else None
-    incoming = target.with_name(_INCOMING)
-    shutil.copy2(bak, incoming)
-    os.replace(incoming, target)  # atomic, like a save: a failed copy never truncates the file
+    incoming = _temp_beside(target)
+    try:
+        shutil.copy2(bak, incoming)
+        os.replace(incoming, target)  # atomic, like a save: a failed copy never truncates the file
+    finally:
+        incoming.unlink(missing_ok=True)
     try:
         data = _read(target)
         ok = all(load_profile(t) is not None for t in TRACKS if isinstance(data.get(t), dict))
@@ -529,6 +632,11 @@ def add_target_title(title: str) -> bool:
     title = " ".join(title.split())
     if not title:
         raise ProfileEditError("A title cannot be empty.")
+    with _WRITE_LOCK:  # the read below and the save it ends in are one step
+        return _add_target_title(title)
+
+
+def _add_target_title(title: str) -> bool:
     state = load_state()
     if state.problem:
         raise ProfileEditError(state.problem)
@@ -544,3 +652,54 @@ def add_target_title(title: str) -> bool:
         terms.setdefault(key, None)
     save_section("employment", "employment", {"employment_terms": terms})
     return True
+
+
+def _norm_claim(text: Any) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
+def add_proof_points(track: str, points: list[dict]) -> int:
+    """Add proof points to a track's block in profile.yml, the file scoring reads (issue #68).
+    The same atomic write, .bak and loader check as every other profile save. A point whose claim
+    is already there (ignoring case and spacing) is skipped, so importing the same resume twice
+    adds nothing; a new point whose key is taken gets a fresh one (`r1_cost_2`) instead of
+    replacing the old. Returns how many were added; 0 writes nothing. Raises ProfileEditError
+    when profile.yml cannot be read or written, or when `track` is not a known track.
+
+    The write keeps the Profile tab's Undo backup as it was (`keep_undo=False`): Undo goes back
+    one save the operator made there, and an import in between must not become the thing it
+    rolls back."""
+    if track not in TRACKS:
+        raise ProfileEditError(UNKNOWN_TRACK)
+    with _WRITE_LOCK:
+        return _add_proof_points(track, points)
+
+
+def _add_proof_points(track: str, points: list[dict]) -> int:
+    state = load_state()
+    if state.problem:
+        raise ProfileEditError(state.problem)
+    existing = [
+        dict(p) for p in (state.tracks[track].get("proof_points") or []) if isinstance(p, dict)
+    ]
+    taken = {str(p.get("key")) for p in existing}
+    claims = {_norm_claim(p.get("claim")) for p in existing}
+    new: list[dict] = []
+    for p in points:
+        claim = " ".join(str(p.get("claim") or "").split())
+        if not claim or _norm_claim(claim) in claims:
+            continue
+        claims.add(_norm_claim(claim))
+        base = str(p.get("key") or "").strip() or f"p{len(existing) + len(new) + 1}"
+        key, n = base, 2
+        while key in taken:
+            key, n = f"{base}_{n}", n + 1
+        taken.add(key)
+        new.append({
+            "key": key, "claim": claim, "evidence": str(p.get("evidence") or "").strip(),
+            "metric": p.get("metric") or None,
+        })
+    if not new:
+        return 0
+    save_section(track, "proof_points", {"proof_points": [*existing, *new]}, keep_undo=False)
+    return len(new)

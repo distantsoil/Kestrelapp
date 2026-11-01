@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import median, quantiles
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import CompObservation
@@ -117,14 +117,19 @@ async def comp_range(
     Never pools across currencies: only the requested currency is kept (a null-currency legacy row
     is assumed to match), since a median over mixed currencies would look solid but mean nothing.
     Never pools across intervals either: a mixed corpus is reduced to its annual subset, and the
-    returned n is that subset's (hard rule 6: under five stays insufficient)."""
+    returned n is that subset's (hard rule 6: under five stays insufficient). Job-board estimates
+    (source "inferred") are excluded: they are not market pay."""
     title = (normalized_title or "").lower().strip()
     if not title:
         return CompRange(n=0, sufficient=False, scope="no title", currency=currency)
     rows = (
         (
             await session.execute(
-                select(CompObservation).where(CompObservation.normalized_title == title)
+                select(CompObservation).where(
+                    CompObservation.normalized_title == title,
+                    # A job-board estimate (source "inferred") is not market pay.
+                    or_(CompObservation.source.is_(None), CompObservation.source != "inferred"),
+                )
             )
         )
         .scalars()

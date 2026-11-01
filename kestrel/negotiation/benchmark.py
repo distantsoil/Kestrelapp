@@ -85,7 +85,9 @@ async def benchmark_offer(session: AsyncSession, pursuit_id: int) -> OfferBenchm
     )
     stated_band = None
     inside = None
-    if opp and (opp.comp_min is not None or opp.comp_max is not None):
+    # A job-board estimate (comp_source "inferred") is not a stated band to hold an offer against.
+    if (opp and opp.comp_source != "inferred"
+            and (opp.comp_min is not None or opp.comp_max is not None)):
         stated_band = (opp.comp_min, opp.comp_max)
         base = getattr(offer, "base", None) if offer else None
         if base is not None:

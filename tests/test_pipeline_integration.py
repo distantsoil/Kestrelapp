@@ -18,6 +18,8 @@ from kestrel.pipeline.tier2 import handle_t2
 from kestrel.pipeline.worker import Worker
 from tests.pipeline_fakes import FakeLLM
 
+_PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
+
 
 # A posting date that is always inside max_posting_age_days, so the stale blocker never
 # time-bombs this gate (it did: a hardcoded July date went red on 2026-09-13).
@@ -50,7 +52,8 @@ async def _seed(sm) -> tuple[int, int]:
                     title=_title(i, "VP of IT"), comp_max=250000, comp_source="parsed",
                     remote_type="hybrid", state="OH", city="Columbus", location_raw="Columbus, OH",
                     date_posted=_recent(), seen_count=1, ghost_score=0.1, stage="new",
-                    description_md="Own IT leadership, budget and vendor accountability, security.",
+                    description_md="Own IT leadership, budget and vendor accountability, security."
+                    + _PAD,
                 )
             )
         for i in range(30):
@@ -64,7 +67,8 @@ async def _seed(sm) -> tuple[int, int]:
                     org_id=org.id, title=_title(i, "Fractional CIO"), comp_max=2500,
                     comp_interval="day", comp_source="parsed", remote_type="remote", country="US",
                     location_raw="Remote (US)", seen_count=1, ghost_score=0.1, stage="new",
-                    description_md="Interim IT leadership after an acquisition; consolidate.",
+                    description_md="Interim IT leadership after an acquisition; consolidate."
+                    + _PAD,
                 )
             )
         await s.commit()

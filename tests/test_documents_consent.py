@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from kestrel.config import HostedMode
 from kestrel.db.models import DocSlot, Setting
+from kestrel.web.pages import analytics, escalate, offers  # noqa: F401  (imported before any stub)
 from tests.test_documents_editor import _app
 
 

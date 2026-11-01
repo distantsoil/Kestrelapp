@@ -1,0 +1,16 @@
+{# Proof points the import found (issue #68). Shown before Accept so the operator approves them;
+   an unticked one is not added. They go to profile.yml, which scoring reads. #}
+{% if proposal.value.proof_points %}
+<fieldset class="k-proof-list" data-testid="import-proof-points">
+  <legend>Proof points to add to your profile</legend>
+  <p class="k-proof-list__hint">Kestrel scores roles against these, so check each one is true. Untick any you do not want. Ones already in your profile are skipped.</p>
+  <input type="hidden" name="proof_shown" value="1">
+  {% for pp in proposal.value.proof_points %}
+  <label class="k-proof-list__row">
+    <input type="checkbox" name="proof_keep" value="{{ pp.key }}" checked>
+    <span><b>{{ pp.claim }}</b>{% if pp.metric %} ({{ pp.metric }}){% endif %}
+      <span class="k-proof-list__ev">{{ pp.evidence }}</span></span>
+  </label>
+  {% endfor %}
+</fieldset>
+{% endif %}

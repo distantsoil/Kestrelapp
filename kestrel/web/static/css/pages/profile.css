@@ -114,6 +114,11 @@
 /* ------------------------------------------------------------------------------ documents */
 .pf-drow { display: flex; gap: 16px; align-items: center; justify-content: space-between;
   min-height: 60px; flex-wrap: wrap; }
+.pf-drow__acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pf-delnote { margin: 0; }
+.pf-forget { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 4px; cursor: pointer; }
+.pf-forget input { margin-top: 3px; flex: none; }
+.pf-forget .pf-hint { display: block; margin-top: 2px; }
 .pf-doccards { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; min-width: 0; }
 .pf-doccard { display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; min-width: 0;
   background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-lg);
@@ -122,7 +127,7 @@
 .pf-doccard small { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
 .pf-doccard.is-on { border-color: var(--brand); outline: 1px solid var(--brand); }
 .pf-docs { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
-.pf-dgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: var(--sp-4);
+.pf-dgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, min(520px, 42%)); gap: var(--sp-4);
   align-items: start; }
 .pf-dmain { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
 .pf-dprev { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 10px;
@@ -132,9 +137,9 @@
 .pf-look > summary::-webkit-details-marker { display: none; }
 .pf-preview__wait { padding: 16px; margin: 0; }
 .pf-tb { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pf-tb b { flex: 1; min-width: 0; white-space: nowrap; }
+.pf-tb b { flex: 1; min-width: max-content; white-space: nowrap; }
 .pf-tb .k-btn { white-space: nowrap; flex: none; }
-.pf-import { margin-top: 4px; }
+.pf-import { margin-top: 0; min-width: 0; }
 
 /* The preview is ONE true-size Letter page (816 x 1056 CSS px) scaled with a transform and
    never re-flowed, so the card and Enlarge match line for line (D-UI-126). profile.js sets the
@@ -155,9 +160,20 @@
 
 /* The mockup's own steps measure the window (.win), so they use the named kwin container:
    the Documents grid stacks at 1400 and the two-column forms at 1300. */
-/* The mockup stacks at 1400, but beside the 320px help column that leaves the editor about 280px
-   wide at 1440 (roles wrap to three lines), so it stacks at 1600 here. */
-@container kwin (max-width: 1600px) {
+/* D-UI-230: the editor and the live preview stay side by side down to a 1100px window (measured:
+   at 1200 the editor is about 510px and the scaled page about 380px). The preview column is
+   capped at 42% so the editor keeps the room; the page inside it scales to fit. Beside the 330px
+   help column that leaves the editor too narrow, so on this tab the help column drops below the
+   pair (two columns of cards) at 1500 and under, the same move the other tabs make at 1300.
+   Below 1100 the grid stacks. */
+@container kwin (max-width: 1500px) {
+  .k-layout:has(.pf-dgrid) { grid-template-columns: minmax(0, 1fr); }
+  .k-layout:has(.pf-dgrid) > .k-help-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container kwin (max-width: 1000px) {
+  .k-layout:has(.pf-dgrid) > .k-help-col { grid-template-columns: minmax(0, 1fr); }
+}
+@container kwin (max-width: 1100px) {
   .pf-dgrid { grid-template-columns: minmax(0, 1fr); }
   .pf-dprev { position: static; }
 }
@@ -183,7 +199,11 @@
     visibility 0s linear var(--dur-2); }
 .pf-sugg.is-open .pf-sugg__panel { grid-template-rows: 1fr; visibility: visible; opacity: 1;
   transition-delay: 0s; }
-.pf-sugg__clip { min-height: 0; overflow: hidden; }
+/* clip, not hidden: a hidden box is still scrollable by script, and focusing or scrolling to a
+   control in the half-open box (a keyboard user, a test click) slid the content up by the
+   hidden height, then back down as the box finished opening, so the control moved under the
+   pointer and the click was lost. A clipped box cannot scroll. */
+.pf-sugg__clip { min-height: 0; overflow: clip; }
 .pf-sugg__box.k-card { margin-top: 10px; background: var(--soft); box-shadow: none;
   padding: 12px; }
 .pf-sugg__box .k-badge { display: none; }
@@ -357,8 +377,10 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
 .pf-look__chev { display: inline-flex; color: var(--muted); transition: transform .2s; }
 .pf-look[open] .pf-look__chev { transform: rotate(90deg); }
 .pf-look__body { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
-.pf-lookrow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+.pf-lookrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 14px 20px; }
 .pf-lookrow > .pf-f { margin-top: 0; }
+/* The six-layout picker needs 496px; at a 1200 window the editor body gives it 471. */
+@container kwin (max-width: 1300px) { .pf-dgrid .pf-seg button { padding-inline: 8px; } }
 .pf-seg { flex-wrap: nowrap; max-width: 100%; align-self: flex-start; overflow-x: auto; }
 /* Level: the mockup's picker (soft tray, three to a row, the choice raised on paper) over the
    filter's full ladder, which the owner kept (D-UI-200). */

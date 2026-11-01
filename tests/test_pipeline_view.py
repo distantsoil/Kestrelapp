@@ -306,12 +306,13 @@ def test_the_sql_grouping_agrees_with_fit_for_row_for_row():
         assert row.fit.word == model.word and row.fit.group == want
     groups = [row.fit.group for row in pg.rows]
     order = [fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED, fit.GROUP_NOT_FIT,
-             fit.GROUP_NEW, fit.GROUP_FAILED]
+             fit.GROUP_NEW, fit.GROUP_UNSCORED, fit.GROUP_FAILED]
     assert groups == sorted(groups, key=order.index)  # rows arrive in group order
     assert by_id[m_id].fit.word == fit.MAYBE and by_id[t1_id].fit.word == fit.NEW
     assert by_id[r_id].fit.why == "title rule" and by_id[p_id].fit.why == "pay rule"
     assert pg.group_counts == {fit.GROUP_WORTH: 3, fit.GROUP_MAYBE: 1, fit.GROUP_APPLIED: 1,
-                               fit.GROUP_NOT_FIT: 3, fit.GROUP_NEW: 2, fit.GROUP_FAILED: 1}
+                               fit.GROUP_NOT_FIT: 3, fit.GROUP_NEW: 2, fit.GROUP_UNSCORED: 0,
+                               fit.GROUP_FAILED: 1}
     # The paged total leaves Not a fit out (D-UI-62); its note covers the whole filter set.
     assert pg.rule_rejects == 2 and pg.total == 8
     assert sorted(pg.not_fit_rules) == [("pay", 1), ("title", 1)]
@@ -1684,4 +1685,5 @@ def test_pipeline_group_order_puts_not_a_fit_before_being_scored():
     from kestrel.web.queries import GROUP_ORDER
 
     assert GROUP_ORDER == (fit.GROUP_WORTH, fit.GROUP_MAYBE, fit.GROUP_APPLIED,
-                           fit.GROUP_NOT_FIT, fit.GROUP_NEW, fit.GROUP_FAILED)
+                           fit.GROUP_NOT_FIT, fit.GROUP_NEW, fit.GROUP_UNSCORED,
+                           fit.GROUP_FAILED)

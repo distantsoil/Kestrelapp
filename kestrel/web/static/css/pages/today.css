@@ -224,6 +224,10 @@
 .td-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
 .td-tag { font-size: 11px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px; padding: 1px 7px; color: var(--muted); font-weight: 500; }
+.td-again { font-size: 12px; color: var(--muted); display: flex; align-items: flex-start; gap: 6px; margin: 4px 0; }
+.td-again b { color: var(--ink); font-weight: 600; }
+.td-again .k-dot { margin-top: 4px; flex: none; }
+.td-earlier { color: var(--muted); font-weight: 400; }
 .td-pending { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px;
   min-height: 58px; }
 .td-btns { display: flex; gap: 8px; margin-top: auto; padding-top: 8px; }

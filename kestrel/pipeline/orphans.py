@@ -27,6 +27,7 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Evaluation, Opportunity, Quarantine, Setting, Task
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.services import run_model, tier0_override
+from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON
 
 log = structlog.get_logger()
 
@@ -56,7 +57,12 @@ def _unscored_waiting():
             Quarantine.opportunity_id == Opportunity.id,
             Quarantine.tier.between(tier, 3),  # scoring tiers only; 14 and 15 are P14/P15
         )
-        clauses.append(and_(Opportunity.stage == stage, ~has_eval, ~has_q))
+        # A posting with no body is parked on purpose (issue #66): nothing is waiting on it.
+        parked = and_(
+            Opportunity.stage == "t1_pass",
+            func.coalesce(Opportunity.stage_reason, "") == EMPTY_POSTING_STAGE_REASON,
+        )
+        clauses.append(and_(Opportunity.stage == stage, ~has_eval, ~has_q, ~parked))
     return and_(Opportunity.archived_at.is_(None), or_(*clauses))
 
 

@@ -44,6 +44,9 @@ class RawPosting:
     comp_max: float | None = None
     comp_currency: str | None = None
     comp_interval: str | None = None  # 'year' | 'month' | 'day' | 'hour'
+    # The board's own estimate (Glassdoor's p10-p90 pay band), not pay the employer posted:
+    # stored with comp_source 'inferred' so it is labelled an estimate everywhere (issue #66).
+    comp_is_estimate: bool = False
     date_posted: str | None = None  # ISO date/datetime string
     # Org attribute hints inferred from the payload (Greenhouse metadata[], JobSpy company_* labels,
     # etc.). Left None rather than guessed; four consulting Tier 0 rules key off these.

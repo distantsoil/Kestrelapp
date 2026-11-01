@@ -48,6 +48,20 @@ def _isolate_data_home(tmp_path_factory):
     forget_engine()  # drop the cached engine WITHOUT awaiting dispose (its owning loop may be gone)
 
 
+@pytest.fixture
+def example_operator_profile():
+    """Install the shipped fictional profile.example.yml as this test's operator profile.yml.
+    With no profile.yml the app reads an EMPTY profile (D-PROF-4, issue #70), so a test that
+    needs a populated profile (proof points, narrative, target titles) asks for this."""
+    from kestrel import paths
+
+    paths.ensure_dirs()
+    src = paths.config_file("profile.example.yml")
+    target = paths.config_dir() / "profile.yml"
+    target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    yield target
+
+
 @pytest.fixture(autouse=True)
 def _no_first_run_redirect(monkeypatch):
     """A fresh install's GET / redirects to the onboarding wizard (D-UI-30). Almost every test

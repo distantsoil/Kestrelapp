@@ -29,9 +29,11 @@ from kestrel.interview import prep_state
 from kestrel.interview.coverage import COMMON_THEMES
 from kestrel.interview.stories import (
     delete_story,
+    dismiss_all_drafts,
     dismiss_draft,
     dismissal_token,
     undo_dismissal,
+    undo_dismissal_group,
 )
 from kestrel.interview.story_task import request_build
 from kestrel.web import prep_view as pv
@@ -264,6 +266,35 @@ async def undo_add(request: Request):
     return HTMLResponse(
         f'<span data-undo-msg data-ok="{1 if ok else 0}">'
         f"{'Undone.' if ok else 'This can no longer be undone.'}</span>"
+    )
+
+
+@router.post("/stories/dismiss-all", response_class=HTMLResponse)
+async def dismiss_all(request: Request):
+    """Clear all drafts: dismiss every proposed story the way Keep separate does, so Build
+    stories does not propose them again. A story the operator saved is never touched. The button
+    asks first (hx-confirm); the toast offers an undo for ten minutes."""
+    form = await request.form()
+    async with sessionmaker()() as s:
+        count, group = await dismiss_all_drafts(s)
+    return await refresh(
+        request, _from(form), _opp(form),
+        message=(
+            f"Cleared {count} draft{'' if count == 1 else 's'}. Build stories will not propose "
+            "them again." if count else "There are no drafts to clear."
+        ),
+        tone=None if count else "warn",
+        undo_url=f"/stories/undo-dismiss-all/{group}" if group else None,
+    )
+
+
+@router.post("/stories/undo-dismiss-all/{group}", response_class=HTMLResponse)
+async def restore_cleared_drafts(request: Request, group: str):
+    async with sessionmaker()() as s:
+        ok = await undo_dismissal_group(s, group)
+    return HTMLResponse(
+        f'<span data-undo-msg data-ok="{1 if ok else 0}">'
+        f'{"Undone." if ok else "This can no longer be undone."}</span>'
     )
 
 

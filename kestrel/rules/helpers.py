@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 from simpleeval import EvalWithCompoundTypes
 
-from kestrel.rules.margin import comp_max_near_floor, margin_floor
+from kestrel.rules.margin import comp_max_near_floor, margin_floor, posted_comp_max
 
 AGE_NONE_SENTINEL = 999999  # SPEC.md 6.1 helper table: age_days(None)
 
@@ -169,14 +169,14 @@ def source_kind_in(source: Any, kinds: Any) -> bool:
 
 
 def comp_max_below(opp: Any, n: Any) -> bool:
-    cap = getattr(opp, "comp_max", None)
+    cap = posted_comp_max(opp)
     if cap is None or n is None:
         return False
     return cap < n
 
 
 def comp_max_at_least(opp: Any, n: Any) -> bool:
-    cap = getattr(opp, "comp_max", None)
+    cap = posted_comp_max(opp)
     if cap is None or n is None:
         return False
     return cap >= n

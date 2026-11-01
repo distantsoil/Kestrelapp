@@ -638,7 +638,7 @@ async def _advance_problem(key: str, tracks: tuple[str, ...]) -> str | None:
     elif key == "about":
         pstate = pe.load_state()
         if pstate.problem:
-            return f"Your profile file cannot be read: {pstate.problem}"
+            return pstate.problem
         if not pstate.exists or pe.about_missing(pstate):
             return (
                 "Add your first name and save before you continue. "
@@ -816,7 +816,7 @@ async def onboarding_save_about(request: Request):
     elif not picked:
         problem = "Choose at least one: jobs, consulting, or both."
     elif pstate.problem:
-        problem = f"Your profile file cannot be read: {pstate.problem}"
+        problem = pstate.problem
     tracks = tuple(picked)
     if problem is None:
         try:
@@ -870,7 +870,7 @@ async def onboarding_save_wants(request: Request):
     elif not places and not remote:
         problem = "Add a place or turn on remote first."
     elif pstate.problem:
-        problem = f"Your profile file cannot be read: {pstate.problem}"
+        problem = pstate.problem
     elif not pstate.exists or any(t not in pstate.present for t in tracks):
         problem = "Add your first name under About you first."
     if problem is None:

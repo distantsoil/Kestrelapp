@@ -42,6 +42,8 @@ from kestrel.pipeline.tier1 import handle_t1
 from kestrel.pipeline.tier2 import handle_t2
 from tests.pipeline_fakes import _p1, _p2
 
+_PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
+
 _OR_CHAT = "https://openrouter.ai/api/v1/chat/completions"
 _ACK = "2026-10-12T10:00:00+00:00"
 _EMPLOYER = "SecretCo"
@@ -90,7 +92,7 @@ async def _seed(sm, *, stage: str, with_map: bool) -> int:
         opp = Opportunity(
             track="employment", opp_type="job_posting", source_id=src.id, org_id=org.id,
             org_name="Acme Corp", title="VP of Information Technology", url="https://x/1",
-            description_md=f"Own IT strategy. Candidates from {_EMPLOYER} welcome.",
+            description_md=f"Own IT strategy. Candidates from {_EMPLOYER} welcome." + _PAD,
             stage=stage, version=1, seen_count=1, ghost_score=0.0, pre_score=0.5,
         )
         s.add(opp)

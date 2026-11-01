@@ -211,6 +211,26 @@ async def online_route(
     }
 
 
+STEP_LABELS = {"tier1": "Quick screen", "tier2": "Full review"}
+
+
+def step_disclosures(settings: Settings, tiers: Iterable[str]) -> list[dict[str, str]]:
+    """One entry per online tier in `tiers`, in order: the step's name, provider, configured model
+    and the Hosted mode line it sends (the text the operator acknowledged). Every ask-first panel
+    for an action that reaches several tiers lists these, so the disclosure covers exactly the
+    tiers `approval_for` asks the operator to approve."""
+    terms = settings.llm.hosted_mode.disclosure_terms()["sends"]
+    out = []
+    for tier in approval_for(settings, tiers):
+        sends = terms.get(tier, "")
+        out.append({
+            "tier": tier, "label": STEP_LABELS.get(tier, tier),
+            "provider": _provider_label(settings, tier), "model": configured_model(settings, tier),
+            "sends": sends[:1].upper() + sends[1:],
+        })
+    return out
+
+
 def consent_problem(route: Mapping[str, Any], form: Mapping[str, Any]) -> str | None:
     """None when the action may go ahead; else the plain reason nothing was sent. A local route
     always passes. An online one needs confirmed=1, the posted model equal to the configured one,

@@ -24,6 +24,8 @@ from kestrel.queue.rescore import enqueue_rescore, parse_ids
 from kestrel.web.pages.rescore import comparison, history_rows, short_model
 from tests.pipeline_fakes import FakeLLM
 
+_PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
+
 
 def _recent() -> str:
     return (datetime.now(UTC) - timedelta(days=3)).date().isoformat()
@@ -51,7 +53,8 @@ async def _opp(sm, *, stage: str, title: str = "VP of IT", first_seen: str | Non
             track="employment", opp_type="job_posting", title=title, comp_max=250000,
             comp_source="parsed", remote_type="hybrid", state="TX", city="Austin",
             location_raw="Austin, TX", date_posted=_recent(), seen_count=1, ghost_score=0.1,
-            stage=stage, description_md="Own IT leadership, budget and vendor accountability.",
+            stage=stage, description_md="Own IT leadership, budget and vendor accountability."
+                    + _PAD,
         )
         if first_seen:
             o.first_seen_at = first_seen
@@ -135,6 +138,25 @@ async def test_progress_mid_run_with_an_estimate(sm):
     # Tier 1's reject stays in the batch as set aside, so the denominator never shrinks.
     assert p["set_aside"] == 1 and p["total"] == 12
     assert p["eta_minutes"] == 4  # 4 left at a minute each
+
+
+async def test_progress_counts_a_posting_with_no_body_in_the_total(sm):
+    from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON
+
+    async with sm() as s:
+        s.add(Run(name="desktop", status="running", started_at=_ago(hours=1), counts={}))
+        await s.commit()
+    stub = await _opp(sm, stage="t1_pass")
+    done = await _opp(sm, stage="t2_done")
+    async with sm() as s:
+        (await s.get(Opportunity, stub)).stage_reason = EMPTY_POSTING_STAGE_REASON
+        await s.commit()
+    await _eval(sm, done, model="m", score=4.0, created=_ago(minutes=5))
+    await _finished_task(sm, done)
+    await _finished_task(sm, stub, status="done")
+    async with sm() as s:
+        p = await scoring_progress(s, get_settings())
+    assert p["scored"] == 1 and p["set_aside"] == 1 and p["total"] == 2
 
 
 async def test_progress_batch_without_an_open_run_is_only_what_is_being_scored(sm):
