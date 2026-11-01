@@ -4,6 +4,10 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-01
+
+Scoring now uses the proof points from your resume, setup tells you the next step, and you can see when a role is being scored.
+
 ### Fixed
 
 - **Import past applications** works again with a large tracker. A file over about 1 MB made Next do nothing; it now goes through every step, and the same fix covers importing your connections.
