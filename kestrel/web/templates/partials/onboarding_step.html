@@ -4,7 +4,7 @@
    onboarding-mockup-locked.html). #}
 {% import "ui/macros.html" as ui %}
 {% set labels = {'welcome': 'Welcome', 'models': 'Thinking', 'about': 'You', 'resume': 'Resume', 'wants': 'Wants', 'searches': 'Searches'} %}
-<div id="ob-step" class="ob-wiz" data-step="{{ key }}" hx-get="/onboarding/step" hx-trigger="ob-refresh from:body" hx-swap="outerHTML">
+<div id="ob-step" class="ob-wiz" data-step="{{ key }}" hx-get="/onboarding/step" hx-trigger="ob-refresh from:body" hx-headers='{"X-Kestrel-Background": "1"}' hx-swap="outerHTML">
   <div class="ob-top pywebview-drag-region" data-k-drag>
     <div class="ob-brand">
       <img class="ob-mark" src="{{ static_url('icon.svg') }}" alt="" width="32" height="32">

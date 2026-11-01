@@ -162,6 +162,39 @@ def test_resume_answers_for_the_tray_and_redraws_the_panel():
         set_paused(False)
 
 
+def test_resume_clears_the_stop_request_before_the_worker_wakes(monkeypatch):
+    """Final review of D-UI-234: unpausing first let the worker drop its held run before the
+    stop request was cleared, leaving a "running" run nothing held. The write comes first, and
+    the worker still wakes when the write fails."""
+    from kestrel.web import app as web_app
+    asyncio.run(_seed())
+    order: list[str] = []
+    real_clear = runlog.clear_stop_request
+
+    async def recording_clear(s, **kw):
+        order.append(f"clear paused={web_app.is_paused()}")
+        return await real_clear(s, **kw)
+
+    monkeypatch.setattr(runlog, "clear_stop_request", recording_clear)
+    web_app.set_paused(True)
+    try:
+        with _client() as c:
+            c.post("/api/worker/resume", headers=HX)
+        assert order == ["clear paused=True"]
+        assert not web_app.is_paused()
+
+        async def failing_clear(s, **kw):
+            raise RuntimeError("write failed")
+
+        monkeypatch.setattr(runlog, "clear_stop_request", failing_clear)
+        web_app.set_paused(True)
+        with _client() as c, pytest.raises(RuntimeError):
+            c.post("/api/worker/resume", headers=HX)
+        assert not web_app.is_paused(), "a failed write must still wake the worker"
+    finally:
+        web_app.set_paused(False)
+
+
 def test_a_resume_never_cuts_an_open_runs_window():
     """Counts never drop on resume: the open run's start is the window, not the resume stamp."""
     asyncio.run(_seed([

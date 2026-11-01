@@ -28,6 +28,7 @@ from kestrel.learning.ledger import delete_label
 from kestrel.pipeline.scoring import verdict_from_score
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import calibrate_view as cv
+from kestrel.web.db_retry import write_with_retry
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.errors import plain_error
 
@@ -108,7 +109,10 @@ async def _page_ctx(
     tune = None
     if len(await labeled_examples(s, track)) >= settings.learning.min_labels_for_calibration:
         try:
-            cal = await cv.tune_proposal(s, track, settings)
+            # May create the proposal row, a write: it waits out a lock like any other save.
+            cal = await write_with_retry(
+                lambda ws: cv.tune_proposal(ws, track, settings), path="/calibrate"
+            )
         except Exception as exc:  # the suggestion must never take the rating card down with it
             log.warning("tune_proposal_failed", error_type=type(exc).__name__, error=str(exc))
             cal = None
@@ -288,17 +292,24 @@ async def calibrate_rate(request: Request):
             if step:
                 nudged[d["key"]] = {"score": max(1, min(5, d["score"] + step)), "why": d["why"]}
         dims = {**dict(ev.dimensions or {}), **nudged} if nudged and ev is not None else None
-        row = await record_label(
-            s,
-            opportunity_id=opp_id,
-            track=opp.track,
-            score=float(score),
-            verdict=verdict_from_score(float(score), opp.track, settings),
-            dimensions=dims,
-            rationale=("Reasons: " + ", ".join(reasons) + ".") if reasons else None,
-            source="manual" if change else "active_learning",
-        )
+        label_args = {
+            "opportunity_id": opp_id,
+            "track": opp.track,
+            "score": float(score),
+            "verdict": verdict_from_score(float(score), opp.track, settings),
+            "dimensions": dims,
+            "rationale": ("Reasons: " + ", ".join(reasons) + ".") if reasons else None,
+            "source": "manual" if change else "active_learning",
+        }
+
+        async def _save(ws: AsyncSession):
+            return await record_label(ws, **label_args)
+
+        # The save waits out a worker's write in a fresh session instead of failing (D-DB-1).
+        row = await write_with_retry(_save, path="/calibrate/rate")
         close = cv.is_close(ev.score if ev else None, float(score))
+    # Render from a fresh session: the first one read before the write and may hold stale state.
+    async with sessionmaker()() as s:
         ctx = await _page_ctx(request, s, since=since, skip=skip, full=False)
         strips = ctx["strips"]
         if change:
@@ -332,8 +343,7 @@ async def calibrate_rate(request: Request):
 @router.post("/calibrate/undo/{label_id}")
 async def calibrate_undo(label_id: int):
     """Undo of a save: the rating goes, the role and its evaluations stay."""
-    async with sessionmaker()() as s:
-        ok = await delete_label(s, label_id)
+    ok = await write_with_retry(lambda ws: delete_label(ws, label_id), path="/calibrate/undo")
     return JSONResponse(
         {"undone": ok, "message": "Undone." if ok else "This can no longer be undone."},
         status_code=200 if ok else 404,
@@ -386,8 +396,14 @@ async def calibrate_tune(request: Request, cal_id: int, decision: str):
     async with sessionmaker()() as s:
         decide = calib.accept_calibration if decision == "accept" else calib.reject_calibration
         cal = await s.get(Calibration, cal_id)
-        if cal is None or cal.track != active_track(request) or not await decide(s, cal_id):
+        if (
+            cal is None
+            or cal.track != active_track(request)
+            or not await write_with_retry(lambda ws: decide(ws, cal_id), path="/calibrate/tune")
+        ):
             return JSONResponse({"error": "no such proposal waiting"}, status_code=404)
+    # Render from a fresh session, after the retried write.
+    async with sessionmaker()() as s:
         ctx = await _page_ctx(request, s, since=since, skip=skip, full=False)
         msg = (
             "New weights in use from the next scoring run."
@@ -419,7 +435,9 @@ async def calibrate_tune_undo(request: Request, cal_id: int):
         cal = await s.get(Calibration, cal_id)
         if cal is None or cal.track != active_track(request):
             return JSONResponse({"undone": False}, status_code=404)
-        ok = await calib.undo_calibration(s, cal_id)
+    ok = await write_with_retry(
+        lambda ws: calib.undo_calibration(ws, cal_id), path="/calibrate/tune-undo"
+    )
     return JSONResponse(
         {"undone": ok, "message": "Undone." if ok else "This can no longer be undone."},
         status_code=200 if ok else 404,

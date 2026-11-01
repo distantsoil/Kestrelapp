@@ -14,7 +14,7 @@
 {% block content %}
 <div class="rn-wrap"><div class="rn-page">
   {% call ui.scene_band('Runs') %}
-    <span class="rn-hdr" data-region="header" data-sig="{{ state }}">{% include "partials/runs_header.html" %}</span>
+    <span class="rn-hdr" data-region="header" data-sig="{{ 'stopping' if stopping else state }}">{% include "partials/runs_header.html" %}</span>
     <button type="button" class="k-btn k-btn--sm" data-k-flyout="#rn-steps-fly" aria-controls="rn-steps-fly" aria-expanded="false" data-testid="rn-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
   {% endcall %}
   {# The poller: it fetches the fragment; runs.js patches the regions. Never replaced. #}

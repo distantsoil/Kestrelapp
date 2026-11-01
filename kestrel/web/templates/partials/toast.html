@@ -189,7 +189,7 @@
       var btn = box('scan-btn');
       if (fresh && btn && window.htmx
           && btn.getAttribute('data-scanning') !== sig.getAttribute('data-scanning')) {
-        htmx.ajax('GET', '/scan/button', {target: '#scan-btn', swap: 'outerHTML'});
+        htmx.ajax('GET', '/scan/button', {target: '#scan-btn', swap: 'outerHTML', headers: {'X-Kestrel-Background': '1'}});
       }
       fresh = false;
     }

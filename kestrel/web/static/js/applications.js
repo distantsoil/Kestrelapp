@@ -638,7 +638,7 @@
   // Undo from a toast: ask for the board again, and the panel when one is open. The listener goes
   // with the page, so an Undo pressed after leaving asks for nothing of this page.
   function onUndone() {
-    root.htmx.ajax('GET', '/status/counts', { swap: 'none' });
+    root.htmx.ajax('GET', '/status/counts', { swap: 'none', headers: {'X-Kestrel-Background': '1'} });
     var b = board();
     var view = b && b.getAttribute('data-view') === 'table' ? 'table' : 'kanban';
     root.htmx.ajax('GET', '/pursuits?view=' + view + '&track=' + track(), { target: '#apps-board', swap: 'outerHTML' });

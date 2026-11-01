@@ -777,6 +777,10 @@
       var d = e.detail || {};
       var ev = d.requestConfig && d.requestConfig.triggeringEvent;
       if (!ev || !PERSON.test(ev.type)) return;
+      // An error answer that carries its own toast (HX-Trigger k-toast, e.g. the "busy saving"
+      // 503) has already said what happened: a second, generic toast would double it (#89).
+      var hdr = d.xhr && d.xhr.getResponseHeader ? d.xhr.getResponseHeader('HX-Trigger') : '';
+      if (hdr && hdr.indexOf('k-toast') >= 0) d.kHandled = true;
       setTimeout(function () {
         if (d.kHandled) return;
         toast(e.type === 'htmx:sendError'

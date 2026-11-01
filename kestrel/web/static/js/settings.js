@@ -210,7 +210,7 @@
     $$('[data-st-lazy]').forEach(function (h) {
       if (h.getAttribute('data-st-loaded')) return;
       h.setAttribute('data-st-loaded', '1');
-      root.htmx.ajax('GET', h.getAttribute('data-st-lazy'), { target: '#' + h.id, swap: 'innerHTML' });
+      root.htmx.ajax('GET', h.getAttribute('data-st-lazy'), { target: '#' + h.id, swap: 'innerHTML', headers: {'X-Kestrel-Background': '1'} });
     });
   }
   function onHash() { var r = route(); show(r.sec, r.find); }
@@ -500,7 +500,7 @@
   // The top bar shows the same picture: ask for it again and swap it in place (it fades in).
   function refreshTopAvatar() {
     if (root.htmx && $('#k-topavatar')) {
-      root.htmx.ajax('GET', '/ui/avatar', { target: '#k-topavatar', swap: 'outerHTML' });
+      root.htmx.ajax('GET', '/ui/avatar', { target: '#k-topavatar', swap: 'outerHTML', headers: {'X-Kestrel-Background': '1'} });
     }
   }
   function uploadPhoto(input) {

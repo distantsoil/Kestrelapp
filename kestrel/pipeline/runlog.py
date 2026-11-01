@@ -92,16 +92,67 @@ async def finish_run(
     """Close a run that is still `running`. A row already closed (by a restart sweep, say) is
     left as it is."""
     async with sm() as s:
+        await finish_run_in(s, run_id, status=status, counts=counts, notes=notes)
+
+
+async def finish_run_in(
+    s: AsyncSession,
+    run_id: int,
+    *,
+    status: str,
+    counts: dict[str, Any] | None = None,
+    notes: str | None = None,
+) -> None:
+    """finish_run in a session the caller owns (the web retry helper's fresh one). Commits."""
+    run = await s.get(Run, run_id)
+    if run is None or run.status != "running":
+        return
+    run.status = status
+    run.finished_at = utcnow_iso()
+    if counts is not None:
+        run.counts = counts
+    if notes:
+        run.notes = notes[:500]
+    await s.commit()
+
+
+async def record_stop_request(s: AsyncSession, run_id: int | None) -> None:
+    """The Stop press, kept with the run it stopped (#91). In the caller's session, so it rides in
+    the same retried unit as the status write. Only this request makes the Runs card say
+    Stopping; a plain pause, or a quit that writes "stopping", never does."""
+    from kestrel.analytics.run_summary import STOP_KEY
+    from kestrel.db.models import Setting
+
+    row = await s.get(Setting, STOP_KEY)
+    if row is None:
+        s.add(Setting(key=STOP_KEY, value={"run_id": run_id}))
+    else:
+        row.value = {"run_id": run_id}
+    await s.commit()
+
+
+async def clear_stop_request(s: AsyncSession, *, carried_run_id: int | None = None) -> bool:
+    """Resume and Run now: forget the request. A stopped run the worker still carries is put back
+    to running (it was only held, and the worker carries on in it); a stopped run nobody carries
+    stays stopped. True when a run was reopened."""
+    from kestrel.analytics.run_summary import STOP_KEY
+    from kestrel.db.models import Setting
+
+    row = await s.get(Setting, STOP_KEY)
+    if row is None:
+        return False
+    await s.delete(row)
+    run_id = (row.value or {}).get("run_id") if isinstance(row.value, dict) else None
+    reopened = False
+    if run_id and run_id == carried_run_id:
         run = await s.get(Run, run_id)
-        if run is None or run.status != "running":
-            return
-        run.status = status
-        run.finished_at = utcnow_iso()
-        if counts is not None:
-            run.counts = counts
-        if notes:
-            run.notes = notes[:500]
-        await s.commit()
+        if run is not None and run.name == APP_RUN_NAME and run.status == "stopping":
+            run.status = "running"
+            run.finished_at = None
+            run.notes = None
+            reopened = True
+    await s.commit()
+    return reopened
 
 
 async def close_orphaned_runs(
@@ -119,6 +170,13 @@ async def close_orphaned_runs(
                 notes="Closed at startup: the app stopped before this run finished.",
             )
         )
+        # A stop request belongs to a process that no longer exists (a restart is not a stop).
+        from kestrel.analytics.run_summary import STOP_KEY
+        from kestrel.db.models import Setting
+
+        stale = await s.get(Setting, STOP_KEY)
+        if stale is not None:
+            await s.delete(stale)
         await s.commit()
     n = result.rowcount or 0
     if n:

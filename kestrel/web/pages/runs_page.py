@@ -499,6 +499,7 @@ async def context(session) -> dict[str, Any]:
     else:
         online = bool(v.get("active")) and settings.llm.mode == "hosted"
     state = "active" if v.get("active") else "paused" if v.get("paused") else "idle"
+    stopping = int(v.get("stopping") or 0)
     shown = await _model_in_use(session, settings, bool(v.get("active")))
     model = await _model_card(session, settings, run_row, online, v)
     rows = await _quarantine_rows(session, open_cap=200, resolved_cap=0)
@@ -520,7 +521,9 @@ async def context(session) -> dict[str, Any]:
         "v": v,
         "state": state,
         "latest": history_row(run_row, None, latest_facts) if run_row is not None else None,
-        "live_sig": f"{state}:{v.get('run_id') or 0}:{v.get('status') or ''}",
+        "stopping": stopping,
+        "live_sig": f"{'stopping' if stopping else state}:{v.get('run_id') or 0}:"
+        f"{v.get('status') or ''}",
         "hist_sig": f"{first['id'] if first else 0}:{first['status']['key'] if first else ''}"
         f":{hist['total']}",
         "quar_sig": f"{len(waiting_views)}:"
@@ -730,20 +733,39 @@ async def stop():
     from kestrel.ingest.scheduler import cancel_pending_scrapes
     from kestrel.pipeline import runlog
     from kestrel.web.app import set_paused
+    from kestrel.web.db_retry import write_with_retry
 
-    sm = sessionmaker()
-    async with sm() as s:
-        summary = rsum.view(await rsum.run_summary(s, None))
+    global _stop_in_flight
+    if _stop_in_flight:
+        return _refresh()  # a second press while the first is still stopping: nothing more to do
+    _stop_in_flight = True  # before the first await, so two presses cannot both pass the check
+    try:
+        async with sessionmaker()() as s:
+            summary = rsum.view(await rsum.run_summary(s, None))
         if not (summary.get("active") or summary.get("paused")):
-            return _refresh()  # a stale tab or a double click: nothing is open, so nothing changes
+            return _refresh()  # a stale tab or a double click: nothing is open, nothing changes
+        # The in-memory flag first: nothing new starts even if the database writes below have to
+        # wait out another writer (D-DB-1).
         set_paused(True)
-        await cancel_pending_scrapes(s)
-    step = (summary.get("headline") or "").replace("Paused", "").strip(": ")
-    run_id = summary.get("run_id")
-    if run_id:
+        step = (summary.get("headline") or "").replace("Paused", "").strip(": ")
+        run_id = summary.get("run_id")
         note = f"Stopped by you{' at ' + step if step else ''}."
-        await runlog.finish_run(sm, run_id, status="stopping", notes=note)
+
+        async def _stop_writes(ws):
+            # One retried unit. Both parts are safe to run again: a second cancel finds nothing
+            # to cancel, and finish_run_in leaves a run that is no longer `running` as it is.
+            await cancel_pending_scrapes(ws)
+            if run_id:
+                await runlog.finish_run_in(ws, run_id, status="stopping", notes=note)
+                await runlog.record_stop_request(ws, run_id)
+
+        await write_with_retry(_stop_writes, path="/runs/stop")
+    finally:
+        _stop_in_flight = False
     return _refresh()
+
+
+_stop_in_flight = False
 
 
 @router.get("/runs/start/choose", response_class=HTMLResponse)

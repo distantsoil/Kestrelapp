@@ -13,6 +13,7 @@
   if (!doc || !root.KUI || !root.KUI.page) return;
 
   var EVENTS_SHOWN = 6;
+  var stopPending = false;  // the Stop request is out and unanswered
   var cx = null;  // the mounted page's context (KUI.page), set in mount
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -52,6 +53,9 @@
     $$('[data-live]', newRegion).forEach(function (n) {
       var o = $('[data-live="' + n.getAttribute('data-live') + '"]', oldRegion);
       if (!o) return;
+      // Stop was pressed and the server has not said so yet: the card keeps its own words.
+      if (n.getAttribute('data-live') === 'step' && o.closest('[data-stopping]') &&
+          !$('[data-stopping]', newRegion)) return;
       if (o.innerHTML !== n.innerHTML) o.innerHTML = n.innerHTML;
       if (o.className !== n.className) o.className = n.className;
       var tid = n.getAttribute('data-testid');
@@ -112,11 +116,15 @@
       var region = $('[data-region="' + name + '"]', doc);
       if (!region) return;
       if (name === 'history' && $('#runs-tl [data-expanded="1"]', region)) return; // keep Show more open
+      // Stop was pressed and its request is still out: the card keeps saying Stopping, and the
+      // answer (or the failure) decides what it says next.
+      if (name === 'live' && stopPending) return;
       if (region.getAttribute('data-sig') === fresh.getAttribute('data-sig')) {
-        patch(region, fresh);
+        // A step line that wraps differently changes the card's height: it eases, never jumps.
+        easeHeight(region, function () { patch(region, fresh); });
         return;
       }
-      var wasActive = !!$('[data-run="active"], [data-run="paused"]', region);
+      var wasActive = !!$('[data-run="active"], [data-run="paused"], [data-run="stopping"]', region);
       var nowIdle = !!$('[data-run="idle"]', fresh);
       swapInside(region, fresh, name === 'live' && wasActive && nowIdle);
     });
@@ -164,9 +172,78 @@
     var keep = t.closest && t.closest('[data-rn-keep]');
     if (stop || keep) {
       var acts = (stop || keep).closest('.rn-acts');
-      $('.rn-acts__main', acts).hidden = !!stop;
-      $('.rn-acts__ask', acts).hidden = !stop;
+      // The question is taller than the buttons it replaces: the card eases, never jumps.
+      easeHeight((stop || keep).closest('.rn-live-in') || acts, function () {
+        $('.rn-acts__main', acts).hidden = !!stop;
+        $('.rn-acts__ask', acts).hidden = !stop;
+      });
       if (stop) { var no = $('[data-rn-keep]', acts); if (no) no.focus(); }
+    }
+  }
+  /* Stop (#91): the press changes the card at once, before the server answers, and a second
+     press is swallowed here, so a slow or busy server never looks like a press that did nothing.
+     The words come from data attributes on the card. A failed send puts everything back. */
+  function stopCard(el) { return el && el.closest ? el.closest('.rn-live-in') : null; }
+  // The card eases to its new height when the confirm question folds away, as it does on a swap.
+  function easeHeight(card, change) {
+    var from = card.offsetHeight;
+    change();
+    var to = card.offsetHeight;
+    if (!reduced() && card.animate && Math.abs(to - from) > 2) {
+      card.animate([{ height: from + 'px', overflow: 'hidden' }, { height: to + 'px', overflow: 'hidden' }],
+                   { duration: 260, easing: 'cubic-bezier(.22,.8,.3,1)' });
+    }
+  }
+  function enterStopping(yes) {
+    var card = stopCard(yes);
+    if (!card || card.hasAttribute('data-stopping')) return;
+    easeHeight(card, function () { setStopping(yes, card); });
+  }
+  function setStopping(yes, card) {
+    var acts = $('.rn-acts', card), title = $('h3', card), step = $('[data-live="step"]', card);
+    card.setAttribute('data-stopping', '');
+    stopPending = true;
+    card.__kback = { title: title && title.textContent, step: step && step.textContent };
+    $('.rn-acts__ask', acts).hidden = true;
+    $('.rn-acts__main', acts).hidden = true;
+    var span = $('.rn-acts__stop', acts), btn = $('.is-stopping', span);
+    span.hidden = false;
+    if (btn && !reduced()) {
+      btn.classList.add('is-pressing');
+      btn.addEventListener('animationend', function () { btn.classList.remove('is-pressing'); }, { once: true });
+    }
+    yes.disabled = true;
+    if (title) title.textContent = card.getAttribute('data-stopping-title');
+    if (step) step.textContent = card.getAttribute('data-stopping-step');
+  }
+  function leaveStopping(yes) {
+    var card = stopCard(yes);
+    if (!card || !card.hasAttribute('data-stopping') || !card.__kback) return;
+    easeHeight(card, function () { unsetStopping(yes, card); });
+  }
+  function unsetStopping(yes, card) {
+    var acts = $('.rn-acts', card), title = $('h3', card), step = $('[data-live="step"]', card);
+    card.removeAttribute('data-stopping');
+    yes.disabled = false;
+    $('.rn-acts__stop', acts).hidden = true;
+    $('.rn-acts__main', acts).hidden = false;
+    if (title) title.textContent = card.__kback.title;
+    if (step) step.textContent = card.__kback.step;
+    card.__kback = null;
+  }
+  function onStopClickCapture(e) {
+    var yes = e.target.closest && e.target.closest('[data-testid="run-stop-yes"]');
+    var card = stopCard(yes);
+    if (card && card.hasAttribute('data-stopping')) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }
+  function onStopDone(e) {
+    var el = e.detail && e.detail.elt;
+    if (!el || !el.matches || !el.matches('[data-testid="run-stop-yes"]')) return;
+    stopPending = false;
+    if (e.detail.successful === false) {
+      // The stop did not go through: show what is true now (Paused, Stop pressable again).
+      leaveStopping(el);
+      if (root.htmx) root.htmx.trigger(doc.body, 'run-refresh');
     }
   }
   function onKeyDown(e) { if (e.key === 'Escape') closeMenu(); }
@@ -211,6 +288,7 @@
   // A Needs another try row folds out as soon as Try again is pressed; the poll then redraws.
   function onBeforeRequest(e) {
     var el = e.detail && e.detail.elt;
+    if (el && el.matches && el.matches('[data-testid="run-stop-yes"]')) enterStopping(el);
     if (el && el.matches && el.matches('[data-testid="rn-retry"]')) {
       var li = el.closest('li');
       if (li) li.classList.add('is-going');
@@ -236,6 +314,7 @@
   root.KUI.page.define('runs', {
     mount: function (main, ctx) {
       cx = ctx;
+      stopPending = false;
       ctx.on(doc, 'htmx:afterRequest', onPollDone);
       ctx.on(root, 'scroll', closeMenu, true);
       ctx.on(root, 'resize', closeMenu);
@@ -246,6 +325,8 @@
       ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
       ctx.on(doc, 'htmx:beforeRequest', onBeforeRequest);
       ctx.on(doc, 'htmx:afterRequest', onRetryDone);
+      ctx.on(doc, 'htmx:afterRequest', onStopDone);
+      ctx.on(doc, 'click', onStopClickCapture, true);
       ctx.on(doc, 'htmx:responseError', onResponseError);
     },
     // Runs before the listeners are dropped: the split button's menu closes with the page.

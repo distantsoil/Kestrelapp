@@ -66,8 +66,8 @@ STATE_KEYS = frozenset({
     "titles.last_run",
     # Stamps and choices the app keeps for itself, never configuration (review finding 15):
     # run_schedule.LAST_AT_KEY, run_summary.RESUMED_KEY, generated.SEC_TITLES_KEY.
-    "scheduler.last_scheduled_at", "worker.resumed_at", "sources.sec_use_titles",
-    "sources.title_variants_removed",
+    "scheduler.last_scheduled_at", "worker.resumed_at", "worker.stop_request",
+    "sources.sec_use_titles", "sources.title_variants_removed",
 })
 # Sections where configuration and state rows share a prefix: only the section's own fields are
 # configuration (`ui.scheme`, `stories.merge_threshold`); anything else under them is state.

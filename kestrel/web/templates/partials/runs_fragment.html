@@ -1,7 +1,7 @@
 {# What the poll returns: each region with a signature. runs.js patches a region in place when its
    signature is unchanged and swaps its inside (with a short fade) when it changed. #}
 <div id="runs-fragment">
-  <span data-region="header" data-sig="{{ state }}">{% include "partials/runs_header.html" %}</span>
+  <span data-region="header" data-sig="{{ 'stopping' if stopping else state }}">{% include "partials/runs_header.html" %}</span>
   <section data-region="live" data-sig="{{ live_sig }}">{% include "partials/runs_live.html" %}</section>
   <section data-region="history" data-sig="{{ hist_sig }}">{% include "partials/runs_history_card.html" %}</section>
   <section data-region="quar" data-sig="{{ quar_sig }}">{% include "partials/runs_nat.html" %}</section>
