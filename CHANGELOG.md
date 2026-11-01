@@ -15,6 +15,7 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ### Changed
 
+- **See which titles a scan skipped.** On Runs, a scan that skipped unrelated titles now has Show details under its skipped line, listing up to 25 of them with their companies so you can check the filter did not leave out a good role. Diagnostics bundles never include them.
 - **Tap or click a card on Today** to see the role summary, the same as pressing Review role. Swiping and dragging the cards work as before.
 
 ### Security

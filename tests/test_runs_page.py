@@ -260,6 +260,139 @@ def test_run_details_show_recorded_skips_only_when_positive(idle, suffix, area, 
         assert 'data-testid="rn-skipped"' not in response.text
 
 
+def _set_samples(samples_by_row: dict[int, list[dict] | None], titles: dict[int, int]):
+    async def record(session):
+        rows = (await session.execute(select(ScrapeRun).order_by(ScrapeRun.id))).scalars().all()
+        for index, row in enumerate(rows):
+            counts = dict(row.counts or {})
+            counts.pop("dropped_title_sample", None)
+            counts.pop("dropped_unrelated_title", None)
+            if index in titles:
+                counts["dropped_unrelated_title"] = titles[index]
+            if samples_by_row.get(index):
+                counts["dropped_title_sample"] = samples_by_row[index]
+            row.counts = counts
+
+    _write(record)
+
+
+def _dropped_block(html: str) -> str:
+    assert html.count('data-testid="rn-dropped-titles"') == 1
+    return html.split('data-testid="rn-dropped-titles"')[1].split("</details>")[0]
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_dropped_titles_disclosure_lists_titles_and_orgs_and_says_when_capped(idle, suffix):
+    client, seed = idle
+    sample = [{"title": f"Pastry Chef {i}", "org": f"Fictional Bakery {i}"} for i in range(24)]
+    sample.append({"title": "Night Baker", "org": None})
+    _set_samples({0: sample}, {0: 40})
+    html = client.get(f"/runs/{seed['runs'][0]}{suffix}").text
+    assert 'data-testid="rn-skipped"' in html
+    # Right under the skipped line, before anything else of the run.
+    assert html.index('data-testid="rn-skipped"') < html.index('data-testid="rn-dropped-titles"')
+    opening = html[html.rindex("<details", 0, html.index('data-testid="rn-dropped-titles"')) :]
+    opening = opening[: opening.index(">") + 1]
+    assert "data-k-fold" in opening and "rn-details" in opening
+    assert not re.search(r"\bopen\b", opening)
+    block = _dropped_block(html)
+    assert "<summary>Show details</summary>" in block
+    assert block.count("<li") == 25
+    text = html_mod.unescape(re.sub(r"<[^>]+>", "", block))
+    assert "Pastry Chef 0, Fictional Bakery 0" in text
+    assert "Pastry Chef 23, Fictional Bakery 23" in text
+    assert re.search(r"<li[^>]*>\s*Night Baker\s*</li>", block)
+    count = block.split('data-testid="rn-dropped-count"')[1].split("</p>")[0]
+    assert "Showing 25 of 40." in count
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_dropped_titles_say_nothing_about_showing_when_all_are_listed(idle, suffix):
+    client, seed = idle
+    sample = [{"title": f"Pastry Chef {i}", "org": "Fictional Bakery"} for i in range(3)]
+    _set_samples({0: sample}, {0: 3})
+    block = _dropped_block(client.get(f"/runs/{seed['runs'][0]}{suffix}").text)
+    count = block.split('data-testid="rn-dropped-count"')[1].split("</p>")[0]
+    assert "Showing" not in count
+    assert block.count("<li") == 3
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_no_sample_means_no_disclosure(idle, suffix):
+    client, seed = idle
+    _set_samples({}, {0: 12})
+    html = client.get(f"/runs/{seed['runs'][0]}{suffix}").text
+    assert 'data-testid="rn-skipped"' in html
+    assert "rn-dropped-titles" not in html and "rn-dropped-count" not in html
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_samples_from_several_searches_are_interleaved(idle, suffix):
+    client, seed = idle
+    first = [{"title": f"Alpha {i}", "org": None} for i in range(3)]
+    second = [{"title": f"Beta {i}", "org": None} for i in range(3)]
+    _set_samples({0: first, 1: second}, {0: 3, 1: 3})
+    block = _dropped_block(client.get(f"/runs/{seed['runs'][0]}{suffix}").text)
+    titles = re.findall(r"(Alpha \d|Beta \d)", block)
+    assert titles == ["Alpha 0", "Beta 0", "Alpha 1", "Beta 1", "Alpha 2", "Beta 2"]
+    count = block.split('data-testid="rn-dropped-count"')[1].split("</p>")[0]
+    assert "Showing" not in count
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_interleaved_samples_stop_at_25_in_total(idle, suffix):
+    client, seed = idle
+    first = [{"title": f"Alpha {i}", "org": None} for i in range(25)]
+    second = [{"title": f"Beta {i}", "org": None} for i in range(25)]
+    _set_samples({0: first, 1: second}, {0: 25, 1: 25})
+    block = _dropped_block(client.get(f"/runs/{seed['runs'][0]}{suffix}").text)
+    assert block.count("<li") == 25
+    count = block.split('data-testid="rn-dropped-count"')[1].split("</p>")[0]
+    assert "Showing 25 of 50." in count
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_dropped_titles_are_html_escaped(idle, suffix):
+    client, seed = idle
+    sample = [{"title": "<script>alert(1)</script> Chef", "org": "<b>Org</b>"}]
+    _set_samples({0: sample}, {0: 1})
+    html = client.get(f"/runs/{seed['runs'][0]}{suffix}").text
+    block = _dropped_block(html)
+    assert "<script>alert(1)" not in html and "<b>Org</b>" not in block
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; Chef" in block
+
+
+@pytest.mark.parametrize("suffix", ["", "/drawer"])
+def test_dropped_titles_redact_the_current_employer_in_confidential_mode(
+    idle, suffix, monkeypatch
+):
+    """Confidential mode redacts the current employer in every list view, this one included."""
+    from kestrel.privacy import Employer, EmployerMap
+    from kestrel.web import redact
+
+    async def conf(_s):
+        return True, EmployerMap([Employer(name="Northwind Freight", shown_as="[Prior employer]")])
+
+    monkeypatch.setattr(redact, "confidential", conf)
+    client, seed = idle
+    sample = [{"title": "Northwind Freight Driver Lead", "org": "Northwind Freight"}]
+    _set_samples({0: sample}, {0: 3})
+    html = client.get(f"/runs/{seed['runs'][0]}{suffix}").text
+    block = _dropped_block(html)
+    assert "Northwind" not in html
+    assert "[Prior employer] Driver Lead" in block and ", [Prior employer]" in block
+
+
+def test_full_run_page_searches_table_never_dumps_the_sample(idle):
+    """The searches table prints each run's counts; the sample lives only in its disclosure."""
+    client, seed = idle
+    sample = [{"title": f"Pastry Lead {i}", "org": "Crumb Co"} for i in range(3)]
+    _set_samples({0: sample}, {0: 3})
+    html = client.get(f"/runs/{seed['runs'][0]}").text
+    assert "dropped_title_sample" not in html
+    assert html.count("Pastry Lead 0") == 1  # once, in the disclosure
+
+
 @pytest.mark.parametrize("suffix", ["", "/drawer"])
 def test_skip_totals_include_searches_beyond_display_cap_and_exclude_other_runs(idle, suffix):
     client, seed = idle

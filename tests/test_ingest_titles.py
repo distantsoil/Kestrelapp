@@ -62,7 +62,11 @@ async def test_titles_are_screened_for_every_source_and_track(sm, monkeypatch, k
         assert set(await session.scalars(select(Opportunity.external_id))) == set("12345")
         assert await session.scalar(select(func.count()).select_from(Org)) == 5
         assert await session.scalar(select(func.count()).select_from(Task)) == 5
-        assert (await session.get(ScrapeRun, first.scrape_run_id)).counts == first.counts
+        stored = dict((await session.get(ScrapeRun, first.scrape_run_id)).counts)
+        # D-SRC-17: the dropped-title sample is kept on the stored row only, never the outcome.
+        sample = stored.pop(runner.DROPPED_SAMPLE_KEY)
+        assert stored == first.counts and runner.DROPPED_SAMPLE_KEY not in first.counts
+        assert len(sample) == 1 and set(sample[0]) == {"title", "org"}
 
 
 async def test_manual_unrelated_title_bypasses_ingest_filter(sm):

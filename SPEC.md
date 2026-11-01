@@ -493,6 +493,7 @@ Greenhouse short links (`grnh.se`) are followed with one request each, redirects
 per run. All fetched roles, from searches and company boards alike, pass the existing smart
 filter before storage (D-SRC-13, superseding D-SRC-8 and D-SRC-12): a rejected title is skipped
 and counted as `dropped_unrelated_title` on its scrape run. The matching rule is unchanged.
+The first 25 such titles of each run are kept as a sample (D-SRC-17, below).
 Hand-pasted roles bypass this filter. The background lane remains only for previously stored
 rows. Before release and scoring, those rows are rechecked against the current country rule and
 smart filter; clear mismatches become `t0_reject` with an explanation, without a model call.
@@ -813,6 +814,11 @@ change. Every rejection records the rule that fired.
 and `dropped_unrelated_title` in its counts. The Runs history drawer and full run detail
 sum those counts across the searches in the run's existing time window and, when either
 is positive, show one muted summary: "Skipped 42: 30 outside your area, 12 unrelated titles".
+Under that summary, when the searches recorded a title sample (D-SRC-17), a "Show details"
+disclosure (the app's `data-k-fold` fold: animates open and closed, off under reduced motion)
+lists the sampled titles as "Title, Org", interleaving the searches (first of each, then second
+of each) up to 25, with "Showing X of N" when X is less than the summed
+`dropped_unrelated_title`. Runs recorded before the sample existed show no disclosure.
 Zero or missing counts show no summary. The summary uses all matching searches, including
 those beyond the source list's display limit. Diagnostics exports both counts on each
 scrape-run row, with missing counts exported as zero. This accounting does not change
@@ -931,6 +937,14 @@ not update an existing row either.
 and track from the profile's target titles, their phrasings, seniority floor and words learned
 from at least two pursuits. If the unchanged `smart_filter.keep(title, context)` returns false,
 skip the posting before storage and increment `dropped_unrelated_title` on the scrape run.
+**Dropped-title sample (D-SRC-17, amends D-SRC-13).** The first 25 postings a run skips for an
+unrelated title are recorded, in the order seen, in that scrape run's `counts` as
+`dropped_title_sample`: a list of `{"title", "org"}`, each string cut at 200 characters. No
+posting text, URLs or other fields; no migration. The sample is written only to the stored
+counts, never to the run outcome the CLI, Run now and the worker progress line print, so it never
+reaches a log. Diagnostics bundles strip it (they never carry opportunity titles). The filter
+rule itself is unchanged; it is tuned only after the operator reviews real samples. Signal
+sources have no title drop and keep no sample.
 The country check runs first, so a posting skipped for both reasons is counted outside the area
 only. Every fetched source uses this screen; manual paste bypasses it. Titles the filter cannot
 judge keep its existing treatment: blank titles, no field words and nothing to compare against

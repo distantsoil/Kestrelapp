@@ -44,6 +44,9 @@ from kestrel.web.redact import redact_text
 
 log = structlog.get_logger()
 
+# kestrel.ingest.runner.DROPPED_SAMPLE_KEY, spelled here so bundles never import ingest (D-SRC-17)
+_TITLE_SAMPLE_KEY = "dropped_title_sample"
+
 REDACTED = "<redacted>"
 # A key whose name carries one of these words holds a secret when its value is a string.
 # `max_tokens` and friends are integers and stay; `api_key_env` names a variable, not a value.
@@ -442,6 +445,8 @@ def recent_scrape_runs(conn: sqlite3.Connection, scrub: Scrubber) -> list[dict[s
     for r in rows:
         loaded = _loads(r["counts"])
         counts = loaded if isinstance(loaded, dict) else {}
+        # D-SRC-17: the dropped-title sample holds opportunity titles; a bundle never does.
+        counts = {k: v for k, v in counts.items() if k != _TITLE_SAMPLE_KEY}
         out.append({
             "id": r["id"],
             "source_kind": r["kind"],
