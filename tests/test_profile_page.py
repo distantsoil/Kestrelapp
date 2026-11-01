@@ -356,7 +356,8 @@ def test_start_fresh_keeps_the_broken_file_and_begins_an_empty_profile():
         # A readable file is never wiped by it.
         pe.save_section("employment", "about", {"full_name": "Pat"})
         before = pe.profile_path().read_bytes()
-        assert c.post("/profile/start-fresh").status_code == 409
+        refused = c.post("/profile/start-fresh")
+        assert refused.status_code == 409 and refused.text == pe.FRESH_NOT_NEEDED  # fixed words
         assert pe.profile_path().read_bytes() == before
         pe.save_section("employment", "about", {"full_name": "Pat Q"})
 

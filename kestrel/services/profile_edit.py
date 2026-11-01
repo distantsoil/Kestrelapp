@@ -534,6 +534,11 @@ def _write_bytes_atomic(target: Path, data: bytes) -> None:
         tmp.unlink(missing_ok=True)
 
 
+# The only two refusals Start fresh raises; the route shows these constants, never exception text.
+FRESH_NOT_NEEDED = "Your profile file can be read, so there is nothing to replace."
+FRESH_NO_COPY = "Kestrel could not keep a copy of your profile file, so it left it as it was."
+
+
 def start_fresh() -> Path | None:
     """Replace an unreadable profile.yml with a new empty profile. The broken file is first copied
     to profile.yml.broken-<UTC timestamp> beside it (never overwritten, never deleted), and the
@@ -549,7 +554,7 @@ def start_fresh() -> Path | None:
         except ProfileEditError:
             pass
         else:
-            raise ProfileEditError("Your profile file can be read, so there is nothing to replace.")
+            raise ProfileEditError(FRESH_NOT_NEEDED)
         paths.ensure_dirs()
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         keep = target.with_name(BROKEN_PREFIX + stamp)
@@ -560,8 +565,7 @@ def start_fresh() -> Path | None:
         shutil.copy2(target, keep)
         if keep.read_bytes() != target.read_bytes():
             keep.unlink(missing_ok=True)
-            raise ProfileEditError(
-                "Kestrel could not keep a copy of your profile file, so it left it as it was.")
+            raise ProfileEditError(FRESH_NO_COPY)
         _write_bytes_atomic(target, b"{}\n")
         log.info("profile_started_fresh")
         return keep

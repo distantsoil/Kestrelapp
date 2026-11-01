@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from html import escape
 from urllib.parse import urlencode
 
 import structlog
@@ -554,7 +555,10 @@ async def profile_start_fresh(request: Request):
     try:
         pe.start_fresh()
     except pe.ProfileEditError as exc:
-        return HTMLResponse(plain_error(exc), status_code=409)
+        # A fixed sentence chosen by which refusal it was, never the exception's text (D-SEC-4).
+        said = pe.FRESH_NOT_NEEDED if str(exc) == pe.FRESH_NOT_NEEDED else pe.FRESH_NO_COPY
+        log.info("profile_start_fresh_refused", not_needed=said == pe.FRESH_NOT_NEEDED)
+        return HTMLResponse(escape(said), status_code=409)
     except OSError as exc:
         log.warning("profile_start_fresh_failed", error_type=type(exc).__name__)
         return HTMLResponse("Kestrel could not start a new profile file.", status_code=500)
