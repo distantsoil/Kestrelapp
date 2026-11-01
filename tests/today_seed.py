@@ -3,8 +3,8 @@
 
 `seed(...)` assumes the `_isolate_data_home` fixture (a throwaway data directory) and returns the
 ids by short name, so a test can post to the row it wants. Nothing here touches the network or a
-model. Roles found "today" are first seen a few minutes ago, so they are today's on any clock
-except in the first minutes after local midnight."""
+model. Roles found "today" are first seen a few minutes ago, kept inside today on any clock,
+including the first minutes after local midnight (`clock_seed`, D-TEST-2)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from kestrel.db.models import (
     ScrapeRun,
     Source,
 )
-from tests import throwaway
+from tests import clock_seed, throwaway
 
 DESC = (
     "We are hiring to improve how work moves across distribution centers. You will own weekly "
@@ -50,8 +50,16 @@ TODAY = [
 ]
 
 
+# Gaps below this are "found today": kept inside today even one minute after midnight.
+_TODAY_HORIZON = timedelta(minutes=10)
+
+
 def _local_midnight_safe(delta: timedelta) -> str:
-    return iso(datetime.now(UTC) - delta)
+    """`now - delta`, except that a gap under ten minutes never reaches back past local midnight
+    (D-TEST-2): just after midnight the gaps shrink in proportion, keeping their order."""
+    now = datetime.now(UTC)
+    return iso(clock_seed.ago_within(
+        delta, clock_seed.local_day_start(now), horizon=_TODAY_HORIZON, now=now))
 
 
 def _guard() -> None:

@@ -21,6 +21,7 @@ from sqlalchemy import select
 from kestrel.config import HostedMode, get_settings
 from kestrel.db.models import FrontierTransmission, Opportunity, Setting
 from kestrel.services import hosted_balance as hb
+from tests import clock_seed
 
 KEY_URL = "https://openrouter.ai/api/v1/key"
 SECRET = "sk-or-v1-supersecretvalue1234567890"
@@ -191,7 +192,10 @@ async def _spend(sm, *costs, ago_days=0.0, provider="anthropic"):
                           stage="t2_done")
         s.add(opp)
         await s.flush()
-        when = (datetime.now(UTC) - timedelta(days=ago_days)).isoformat()
+        # Under a day ago stays inside this UTC month, even on the 1st (D-TEST-2).
+        now = datetime.now(UTC)
+        when = clock_seed.ago_within(timedelta(days=ago_days), clock_seed.utc_month_start(now),
+                                     horizon=timedelta(days=1), now=now).isoformat()
         for n, cost in enumerate(costs):
             s.add(FrontierTransmission(
                 opportunity_id=opp.id, created_at=when, provider=provider,
@@ -366,3 +370,22 @@ async def test_month_spend_counts_every_billed_send_not_only_sent(sm):
         row = await hb.local_spend(s)
     assert row is not None and "$0.15" in row["label"]
     assert "unreported" not in row["label"]  # the unsent row is neither cost nor unknown
+
+
+# ------------------------------------------------------------ clock boundary (D-TEST-2)
+@pytest.mark.parametrize("at", clock_seed.JUST_AFTER_MIDNIGHT_ON_THE_1ST[:1], ids=["utc"])
+async def test_spend_seeded_hours_ago_counts_as_this_month_one_minute_into_the_1st(
+        sm, monkeypatch, at):
+    """`_spend(ago_days=0.1)` put the spend 2.4 hours back, in last month, for the first 2.4 hours
+    of every 1st (Windows CI on UTC). Frozen at 00:01 UTC on the 1st, the app's own month count
+    sees each seeded spend this month, and the 40-days-ago one still in an earlier month."""
+    frozen = clock_seed.frozen_datetime(at)
+    monkeypatch.setattr(hb, "datetime", frozen)
+    monkeypatch.setattr(f"{__name__}.datetime", frozen)
+    other = _settings(key=None, anthropic_key="sk-ant-xyz")
+    await _spend(sm, 0.40)
+    await _spend(sm, 0.25, ago_days=0.1)
+    await _spend(sm, 0.05, ago_days=0.5)
+    await _spend(sm, 9.0, ago_days=40)
+    async with sm() as s:
+        assert (await hb.rail_row(s, other))["label"] == "$0.70 spent this month on deeper reads"

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from kestrel import paths
+from kestrel.db.base import iso
 from kestrel.db.engine import forget_engine, make_async_engine
 from kestrel.db.models import (
     DocMaster,
@@ -32,7 +33,7 @@ from kestrel.db.models import (
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import today_view as tv
 from kestrel.web.deps import templates
-from tests import today_seed
+from tests import clock_seed, today_seed
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -886,3 +887,35 @@ def test_a_decision_row_tone_follows_the_strong_match_cutoff():
     assert _db(rows)["Customer Operations Lead"] == "good"  # 4.2 against 4.0
     _db(raise_cutoff)
     assert _db(rows)["Customer Operations Lead"] == "warn"  # 4.2 against 4.5
+
+
+# --------------------------------------------------------------- clock boundary (D-TEST-2)
+@pytest.mark.parametrize("at", clock_seed.JUST_AFTER_MIDNIGHT_ON_THE_1ST, ids=["utc", "local"])
+def test_roles_seeded_as_found_today_count_as_today_one_minute_after_midnight(monkeypatch, at):
+    """Windows CI failed ~15 Today tests between 00:00 and 00:05 UTC: the seed put "found five
+    minutes ago" on the previous day. Frozen one minute after midnight, every role the seed finds
+    today, and its evaluation, sit inside today by the app's own cut, in the order seeded."""
+    from kestrel.db.models import Evaluation, Opportunity
+    from kestrel.web.queries import local_day_start_iso
+
+    frozen = clock_seed.frozen_datetime(at)
+    monkeypatch.setattr(today_seed, "datetime", frozen)
+    monkeypatch.setattr(clock_seed, "datetime", frozen)
+    ids = _seed()
+    since, now = local_day_start_iso(at), iso(at)
+    found = [ids[row[0]] for row in today_seed.TODAY]
+
+    async def read(s):
+        opps = (await s.execute(select(Opportunity).where(Opportunity.id.in_(found)))).scalars()
+        evs = (await s.execute(select(Evaluation).where(Evaluation.opportunity_id.in_(found))))
+        return [o.first_seen_at for o in opps], [e.created_at for e in evs.scalars()]
+
+    seen, scored = _db(read)
+    assert len(seen) == len(found) and scored
+    assert all(since < t < now for t in seen + scored), (since, seen, scored)
+    assert max(seen) < min(scored)  # found before it was scored, as seeded
+    # The consulting card's "four minutes ago" lands between the two, still today.
+    four = today_seed._local_midnight_safe(timedelta(minutes=4))
+    assert max(seen) < four < min(scored)
+    # Rows meant for an earlier day stay there.
+    assert today_seed._local_midnight_safe(timedelta(days=2)) < since
