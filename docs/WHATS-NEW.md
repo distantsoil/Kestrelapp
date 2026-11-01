@@ -1,7 +1,7 @@
 # What's new in Kestrel
 
-This page covers the current release, 0.7.0, the Release Candidate for 1.0. The full list is in
-[CHANGELOG.md](../CHANGELOG.md).
+This page covers 0.7.0, the Release Candidate for 1.0. The current release, 0.7.1, adds fixes on
+top of it. The full list is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## A new look
 

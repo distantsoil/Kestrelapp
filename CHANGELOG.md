@@ -4,6 +4,10 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-01
+
+Fixes for importing, Today, Analytics and failed steps, a way to check which titles a scan skipped, and a PDF security update.
+
 ### Fixed
 
 - **Import past applications** works again with a large tracker. A file over about 1 MB made Next do nothing; it now goes through every step, and the same fix covers importing your connections.
