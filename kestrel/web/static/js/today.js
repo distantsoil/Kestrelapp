@@ -398,7 +398,12 @@
     el.style.width = old.style.width;
     old.replaceWith(el);
     if (root.htmx) root.htmx.process(el);
-    if (!reduced() && el.animate) el.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 300 });
+    // Queued becoming running only changes a line of text: no fade for that (issue #74).
+    var stillAgain = old.hasAttribute('data-rescoring') && el.hasAttribute('data-rescoring');
+    // A new score replacing an earlier one eases in from most of the way, never from near-blank.
+    var from = old.hasAttribute('data-rescoring') ? .65 : .4;
+    if (!stillAgain && !reduced() && el.animate) el.animate([{ opacity: from }, { opacity: 1 }], { duration: 300 });
+    startPoll();
   }
   function reorder(ids) {
     var tr = $('#td-track');
@@ -432,8 +437,10 @@
     var have = cards().map(function (c) { return c.getAttribute('data-id'); }).join(',');
     var pend = cards().filter(function (c) { return c.getAttribute('data-pending') === '1'; })
       .map(function (c) { return c.getAttribute('data-id'); }).join(',');
+    var again = cards().filter(function (c) { return c.hasAttribute('data-rescoring'); })
+      .map(function (c) { return c.getAttribute('data-id') + ':' + c.getAttribute('data-rescoring'); }).join(',');
     root.fetch('/today/matches/new?track=' + encodeURIComponent(track()) + '&have=' + have +
-               '&pending=' + pend,
+               '&pending=' + pend + '&again=' + encodeURIComponent(again),
       { credentials: 'same-origin', signal: signal })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
@@ -460,7 +467,8 @@
   // restarted by each swap would never fire. Only a change of period replaces it.
   function startPoll() {
     var top = $('#td-top');
-    var busy = !!top && /active/.test(top.getAttribute('data-state') || '');
+    var busy = (!!top && /active/.test(top.getAttribute('data-state') || '')) ||
+      !!$('#td-track [data-rescoring]');
     var ms = busy ? 6000 : 30000;
     if (S.poll && S.pollMs === ms) return;
     cx.clear(S.poll);

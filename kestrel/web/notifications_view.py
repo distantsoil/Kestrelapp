@@ -54,6 +54,7 @@ def context_action(
         "calibration_ready": ("Open Calibrate", "/calibrate", False),
         "credit_low": ("Open Models", "/models", False),
         "model_check": ("Open Models", "/models", False),
+        "stories_built": ("Review drafts", "/stories", False),
         "update": ("Get it from kestrelapp.co", DOWNLOAD_PAGE, True),
     }
     found = table.get(kind)

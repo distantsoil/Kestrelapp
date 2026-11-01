@@ -119,7 +119,7 @@ async def enqueue_rescore(
     too (Score this role anyway); otherwise they are refused, and `explain` (when given) says why
     for each one. `score_stubs` is the operator's explicit Score again (or Score anyway) on a
     role: the task carries `score_stub`, so Tier 2 scores a posting with next to no description
-    (D-SRC-14) instead of leaving it Not scored. Automatic callers leave it off."""
+    (D-SRC-18) instead of leaving it Not scored. Automatic callers leave it off."""
     result = RescoreResult()
     ids = list(dict.fromkeys(opp_ids))[:MAX_ROLES]
     rows = {

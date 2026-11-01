@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Evaluation, Opportunity, Setting, Story, StoryUsage
+from kestrel.db.models import Evaluation, Notification, Opportunity, Setting, Story, StoryUsage
 from kestrel.llm.embeddings import cosine
 from kestrel.llm.guard import QuarantineHook
 from kestrel.llm.prompts import load_prompt
@@ -573,6 +573,13 @@ async def _merge_cluster(
 
 
 # ------------------------------------------------------------------------------ orchestration
+DRAFTS_NOTIFY_KIND = "stories_built"
+
+
+def drafts_notice(n: int) -> str:
+    return f"{n} new story draft{'s' if n != 1 else ''} to review"
+
+
 async def consolidate_stories(
     session: AsyncSession, client: Any, settings: Settings
 ) -> ConsolidationResult:
@@ -676,6 +683,13 @@ async def consolidate_stories(
         merged = await _get_refused(session, fresh=True)
         merged.update(newly_refused)
         await _set_setting(session, REFUSED_KEY, merged)
+    if result.created_story_ids:
+        # Same commit as the drafts and the watermark: a killed build notifies neither twice nor
+        # never. Attached-only builds create no drafts, so they say nothing.
+        session.add(Notification(
+            kind=DRAFTS_NOTIFY_KIND, severity="info", delivered_channels=[],
+            title=drafts_notice(len(result.created_story_ids)),
+        ))
     await session.commit()
     return result
 

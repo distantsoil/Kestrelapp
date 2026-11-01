@@ -159,6 +159,9 @@ class OppRow:
     removed: bool = False
     # Hidden as applied before any model read it (issue #59): why it has no score, else None.
     hidden_why: str | None = None
+    # A live scoring task for this role (kestrel.web.rescoring, issue #74): queued or running,
+    # with its place in line. On a scored row it is Being scored again; the earlier score stays.
+    rescoring: Any = None
     # Kept with Save for later (kestrel.services.saved_roles).
     saved: bool = False
     # What the Pipeline template prints for the row (kestrel.web.pipeline_view.row_view), set
@@ -578,7 +581,7 @@ def _group_expr():
     mine = VerdictOverride.operator_verdict
     return case(
         (failed_scoring_clause(), _G[GROUP_FAILED]),
-        # A posting with no body that nothing is scoring: Not scored (D-SRC-14), not Being scored.
+        # A posting with no body that nothing is scoring: Not scored (D-SRC-18), not Being scored.
         (
             and_(
                 Opportunity.stage == "t1_pass",
@@ -727,6 +730,19 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
             r.scoring = "stuck"
         else:
             r.scoring = "not_queued"
+
+
+async def attach_rescoring(session: AsyncSession, rows: list[OppRow]) -> None:
+    """Fill `rescoring` on the rows that have a live scoring task (issue #74). Scored rows read
+    Being scored again; an unscored one uses it for the place in line. One more statement per
+    page, and only when a row can have one."""
+    from kestrel.web.rescoring import rescoring_states
+
+    cand = [r for r in rows if r.fit and r.fit.group != GROUP_FAILED
+            and (r.fit.word != "new" or r.scoring in ("queued", "running"))]
+    found = await rescoring_states(session, [r.opp.id for r in cand])
+    for r in cand:
+        r.rescoring = found.get(r.opp.id)
 
 
 async def hidden_unscored(session: AsyncSession, opps: list[Opportunity]) -> dict[int, str]:
@@ -1085,6 +1101,7 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
         for (o, e, on, sn, pid, closed, pstatus, ov, os_, lv, rm, sv) in rows
     ]
     await scoring_states(session, out)
+    await attach_rescoring(session, out)
     failed_ids: list[int] = []
     if group_counts.get(GROUP_FAILED):
         failed_ids = [

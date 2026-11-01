@@ -130,6 +130,13 @@
 .pl-tag { font-size: 11px; font-weight: 700; border-radius: 5px; padding: 0 6px; background: var(--soft); color: var(--brand); white-space: nowrap; }
 .pl-tag--on { background: var(--soft); color: var(--brand); }
 .pl-tag--warn { background: var(--warn-bg); color: var(--warn-ink); }
+/* Being scored again (issue #74): the earlier score stays, labeled, until the new one lands. */
+.pl-tag--again { background: var(--soft); color: var(--muted); }
+.pl-tag--again[data-state="running"] { color: var(--brand); }
+.pl-again { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; margin: 0 0 10px; background: var(--soft);
+  border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink); }
+.pl-again .k-dot { margin-top: 5px; flex: none; }
+.pl-earlier, .pl-hint-again { color: var(--muted); font-weight: 400; }
 .pl-pill-new { background: var(--soft); color: var(--brand); }
 .pl-pill-new[data-scoring="running"]::before, .pl-pill-new[data-scoring="queued"]::before {
   content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: k-pulse 1.4s infinite; }

@@ -25,6 +25,7 @@ import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -162,6 +163,11 @@ def _reconcile(block: dict, merged: dict, track: str, section: str) -> None:
 
 PROFILE_NAME = "profile.yml"
 PROFILE_BAK = "profile.yml.bak"
+BROKEN_PREFIX = "profile.yml.broken-"
+UNREADABLE = (
+    "Kestrel could not read your profile file, so it did not save over it. "
+    "Fix or remove config/profile.yml, or choose Start fresh."
+)
 _INCOMING = "profile.yml.editing"  # the prefix of a save's temp file; each save gets its own
 
 # One lock for every read-modify-write of profile.yml. Saves run on request threads and the
@@ -237,19 +243,32 @@ def profile_path() -> Path:
 
 
 def _read(path: Path | None) -> dict:
-    """The file as a mapping. Raises ProfileEditError when it exists but cannot be read or
-    parsed: that is never "no profile", it is a file the operator must look at."""
+    """The file as a mapping. An empty file is no profile. Raises ProfileEditError (always
+    UNREADABLE, never the parser's or the system's own words, which quote the file) when it exists
+    but cannot be read, is not UTF-8 text, is not valid YAML, or is not a mapping: that is never
+    "no profile", it is a file the operator must look at, and nothing may save over it. The same
+    cases the loader calls `profile_unreadable`."""
     if path is None or not path.is_file():
         return {}
+    # Our own words for each case (the reason, the YAML line), never the parser's or the
+    # system's, which quote the file; the log gets only the error type for the same reason.
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        log.warning("profile_read_failed", error_type=type(exc).__name__, error=str(exc))
-        raise ProfileEditError(f"{path.name} could not be read: {plain_os_reason(exc)}") from exc
+        log.warning("profile_unreadable", error_type=type(exc).__name__)
+        raise ProfileEditError(f"{path.name} could not be read: {plain_os_reason(exc)}") from None
     except yaml.YAMLError as exc:
-        log.warning("profile_yaml_invalid", error=str(exc))
-        raise ProfileEditError(f"{path.name} is not valid YAML{yaml_where(exc)}.") from exc
-    return data if isinstance(data, dict) else {}
+        log.warning("profile_unreadable", error_type=type(exc).__name__)
+        raise ProfileEditError(f"{path.name} is not valid YAML{yaml_where(exc)}.") from None
+    except UnicodeDecodeError:
+        log.warning("profile_unreadable", error_type="UnicodeDecodeError")
+        raise ProfileEditError(UNREADABLE) from None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        log.warning("profile_unreadable", error_type="NotAMapping")
+        raise ProfileEditError(UNREADABLE)
+    return data
 
 
 def _read_example(name: str) -> dict:
@@ -285,7 +304,10 @@ def load_state() -> ProfileState:
     try:
         data = _read(profile_path())
     except ProfileEditError as exc:
-        data, problem = {}, str(exc)
+        # The reason in our words (the YAML line, a permission problem), then what to do and
+        # that nothing was saved over the file.
+        reason = str(exc)
+        data, problem = {}, reason if reason == UNREADABLE else f"{reason} {UNREADABLE}"
     exists = bool(data) or problem is not None
     tracks: dict[str, dict] = {}
     present: list[str] = []
@@ -510,6 +532,39 @@ def _write_bytes_atomic(target: Path, data: bytes) -> None:
         os.replace(tmp, target)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def start_fresh() -> Path | None:
+    """Replace an unreadable profile.yml with a new empty profile. The broken file is first copied
+    to profile.yml.broken-<UTC timestamp> beside it (never overwritten, never deleted), and the
+    copy is checked before anything is replaced. Returns that copy's path, or None when there was
+    no file. Refuses (ProfileEditError) a file that reads fine: Start fresh is not a way to wipe
+    a working profile."""
+    with _WRITE_LOCK:
+        target = profile_path()
+        if not target.is_file():
+            return None
+        try:
+            _read(target)
+        except ProfileEditError:
+            pass
+        else:
+            raise ProfileEditError("Your profile file can be read, so there is nothing to replace.")
+        paths.ensure_dirs()
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        keep = target.with_name(BROKEN_PREFIX + stamp)
+        n = 2
+        while keep.exists():
+            keep = target.with_name(f"{BROKEN_PREFIX}{stamp}-{n}")
+            n += 1
+        shutil.copy2(target, keep)
+        if keep.read_bytes() != target.read_bytes():
+            keep.unlink(missing_ok=True)
+            raise ProfileEditError(
+                "Kestrel could not keep a copy of your profile file, so it left it as it was.")
+        _write_bytes_atomic(target, b"{}\n")
+        log.info("profile_started_fresh")
+        return keep
 
 
 def undo_token() -> str:

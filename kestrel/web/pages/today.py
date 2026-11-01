@@ -27,10 +27,11 @@ from kestrel.analytics.today import (
     switched_off_work,
     worth_a_look,
 )
-from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.services import setting_overrides
 from kestrel.web import today_view as tv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.routes_control import scan_outcome_text, scan_state
+from kestrel.web.score_again_ask import ask_context
 
 router = APIRouter()
 
@@ -69,7 +70,7 @@ def _tour_wanted(request: Request) -> bool:
 async def today(request: Request):
     track = _track_param(request)
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
+        settings = await setting_overrides.load_settings_with_db(s)
         ctx = await page_context(s, request, track, settings)
     return templates().TemplateResponse(request, "dashboard.html", ctx)
 
@@ -87,6 +88,8 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
     first_run = (not panel["run"]["has_run"]) or _tour_wanted(request)
     name = await asyncio.to_thread(tv.first_name_for, track)
     matches = await tv.top_matches(s, track, settings=settings)
+    readiness = await _readiness(s, track)
+    rescoring = _rescoring(request)
     return {
         "title": "Today",
         "query": dict(request.query_params),
@@ -108,8 +111,9 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
         "scan_msg": scan_outcome_text(request.query_params),
         "confidential": settings.confidential_mode,
         "finish": await tv.finish_setup(s),
-        "readiness": await _readiness(s, track),
-        "rescoring": _rescoring(request),
+        "readiness": readiness,
+        "rescoring": rescoring,
+        "ask": await ask_context(s, settings, readiness) if rescoring == "confirm" else None,
     }
 
 
@@ -193,7 +197,7 @@ async def run_panel(s, track: str, settings=None) -> dict:
     from kestrel.web.queries import open_quarantine_count
 
     if settings is None:
-        settings = await load_settings_with_db(s)
+        settings = await setting_overrides.load_settings_with_db(s)
     run = run_view(await run_summary(s, None))
     review = await worth_a_look(s, track, top=3)
     eta = model = None
@@ -255,7 +259,7 @@ async def today_now(request: Request):
     """The "Now" line (D-UI-37). Today shows the run panel instead (D-UI-59); the partial stays
     for any surface that embeds it."""
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
+        settings = await setting_overrides.load_settings_with_db(s)
         ctx = {"now": await _now(s, settings)}
     return templates().TemplateResponse(request, "partials/today_now.html", ctx)
 
@@ -296,7 +300,7 @@ async def today_strip(request: Request):
     or a role is being rated, every 30 s otherwise) without redrawing the page."""
     track = _track_param(request)
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
+        settings = await setting_overrides.load_settings_with_db(s)
         panel = await run_panel(s, track, settings)
         first_run = (not panel["run"]["has_run"]) or request.query_params.get("tour") == "1"
         ctx = {
@@ -315,7 +319,7 @@ async def today_matches(request: Request):
     """The Top matches section alone, asked again after an Undo."""
     track = _track_param(request)
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
+        settings = await setting_overrides.load_settings_with_db(s)
         panel = await run_panel(s, track, settings)
         matches = await tv.top_matches(s, track, settings=settings)
         ctx = {
@@ -325,8 +329,19 @@ async def today_matches(request: Request):
     return templates().TemplateResponse(request, "partials/td_matches.html", ctx)
 
 
+def _again_states(raw: str) -> dict[int, str]:
+    """`12:queued,15:running` from the page: the Being scored again state each card shows."""
+    out: dict[int, str] = {}
+    for part in raw.split(","):
+        key, _, state = part.partition(":")
+        if key.strip().isdigit() and state in ("queued", "running"):
+            out[int(key)] = state
+    return out
+
+
 @router.get("/today/matches/new")
-async def today_matches_new(request: Request, have: str = "", pending: str = ""):
+async def today_matches_new(request: Request, have: str = "", pending: str = "",
+                            again: str = ""):
     """Cards the page does not have yet (a role finished rating during a scan), each with the
     card it sits before, as rendered HTML. The page opens a gap at that position, so the view
     does not jump (live updates, D-UI-156)."""
@@ -336,8 +351,9 @@ async def today_matches_new(request: Request, have: str = "", pending: str = "")
     ids = {int(x) for x in have.split(",") if x.strip().isdigit()}
     waiting = {int(x) for x in pending.split(",") if x.strip().isdigit()}
     async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
-        data = await tv.cards_after(s, track, ids, settings, pending=waiting)
+        settings = await setting_overrides.load_settings_with_db(s)
+        data = await tv.cards_after(s, track, ids, settings, pending=waiting,
+                                    again=_again_states(again))
         panel = await run_panel(s, track, settings)
         matches = await tv.top_matches(s, track, settings=settings)
     tpl = templates().get_template("partials/td_card.html")

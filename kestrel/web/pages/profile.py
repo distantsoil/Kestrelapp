@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from urllib.parse import urlencode
 
 import structlog
 from fastapi import APIRouter, Request
@@ -145,9 +146,19 @@ async def readiness_ctx(request: Request, track: str) -> dict:
     from kestrel.web.deps import sessionmaker
     from kestrel.web.pages.today import _rescoring
 
+    rescoring = _rescoring(request)
     async with sessionmaker()() as s:
         readiness = await load_readiness(s, track)
-    return {"readiness": readiness, "rescoring": _rescoring(request)}
+        ask = await _ask_for(s, readiness) if rescoring == "confirm" else None
+    return {"readiness": readiness, "rescoring": rescoring, "ask": ask}
+
+
+async def _ask_for(session, readiness):
+    """The in-place send confirmation for Score again, when scoring would go online."""
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web.score_again_ask import ask_context
+
+    return await ask_context(session, await load_settings_with_db(session), readiness)
 
 
 @router.get("/profile", response_class=HTMLResponse)
@@ -178,36 +189,46 @@ async def profile(request: Request):
 
 @router.post("/api/profile/score-again")
 async def score_again(request: Request):
-    """Queue the roles scored before the profile's proof points for scoring again (issue #67).
-    The list is read here again, never taken from the form, and `enqueue_rescore` is idempotent,
-    so a second press queues nothing new. Plain redirect back; nothing is sent anywhere new:
-    an online model still needs the operator's confirmation, which this route cannot give."""
+    """Queue the roles scored before the profile's proof points for scoring again (issues #67,
+    #71). The list is read here again, never taken from the form, and `enqueue_rescore` is
+    idempotent, so a second press queues nothing new. On an online model the first press only
+    asks (in place, the same ask-first panel as the other online actions); nothing is queued or
+    sent until the operator confirms it."""
     from fastapi.responses import RedirectResponse
 
-    from kestrel.queue.rescore import enqueue_rescore
-    from kestrel.services.online_consent import approval_problem
-    from kestrel.services.profile_readiness import load_readiness
     from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web import score_again_ask as ask
     from kestrel.web.deps import sessionmaker
 
     form = await request.form()
     track = str(form.get("track") or "employment")
-    back = str(form.get("back") or "/")
-    if not back.startswith("/") or back.startswith("//"):
-        back = "/"
-    sep = "&" if "?" in back else "?"
-    queued = 0
+    if track not in pe.TRACKS:
+        track = "employment"
+    # `back` is a short token mapped to a server-side path; the redirect is never built from the
+    # form's text (open-redirect safe). Query values are validated enums, then URL-encoded.
+    back = "profile" if str(form.get("back")) == "profile" else "today"
+    tab = str(form.get("tab") or "")
+    tab = tab if tab in _TAB_KEYS else "about"
+    target = "/?" + urlencode({"track": track}) if back == "today" else (
+        "/profile?" + urlencode({"tab": tab, "track": track}))
+    sep = "&"
     async with sessionmaker()() as s:
-        readiness = await load_readiness(s, track)
-        if readiness.role_ids:
-            settings = await load_settings_with_db(s)
-            if await approval_problem(s, settings, ("tier1", "tier2"), {}):
-                return RedirectResponse(f"{back}{sep}rescore=confirm", status_code=303)
-            result = await enqueue_rescore(s, readiness.role_ids)
-            await s.commit()
-            queued = len(result.queued) + len(result.already)
+        settings = await load_settings_with_db(s)
+        out = await ask.run(s, settings, track, form)
+    hx = bool(request.headers.get("HX-Request"))
+    if "ask" in out:
+        if not hx:
+            return RedirectResponse(f"{target}{sep}rescore=confirm", status_code=303)
+        ctx = {"readiness": None, "rescoring": "confirm", "track": track, "back": back,
+               "tab": tab, "ask": out["ask"], "inplace": True}
+        return templates().TemplateResponse(request, "partials/profile_next_step.html", ctx)
+    queued = out["queued"]
+    if hx:
+        ctx = {"readiness": None, "rescoring": str(queued) if queued else "", "track": track,
+               "back": back, "tab": tab, "inplace": True}
+        return templates().TemplateResponse(request, "partials/profile_next_step.html", ctx)
     return RedirectResponse(
-        f"{back}{sep}rescoring={queued}" if queued else back, status_code=303
+        f"{target}{sep}rescoring={queued}" if queued else target, status_code=303
     )
 
 
@@ -523,6 +544,22 @@ async def profile_save(request: Request, track: str, section: str):
         if section == "employment":
             events["titleVariantsChanged"] = True
         resp.headers["HX-Trigger"] = json.dumps(events)
+    return resp
+
+
+@router.post("/profile/start-fresh", response_class=HTMLResponse)
+async def profile_start_fresh(request: Request):
+    """Replace an unreadable profile.yml with a new one, keeping the broken file beside it as
+    profile.yml.broken-<timestamp>. The page reloads on success."""
+    try:
+        pe.start_fresh()
+    except pe.ProfileEditError as exc:
+        return HTMLResponse(plain_error(exc), status_code=409)
+    except OSError as exc:
+        log.warning("profile_start_fresh_failed", error_type=type(exc).__name__)
+        return HTMLResponse("Kestrel could not start a new profile file.", status_code=500)
+    resp = HTMLResponse("", status_code=204)
+    resp.headers["HX-Redirect"] = "/profile"
     return resp
 
 

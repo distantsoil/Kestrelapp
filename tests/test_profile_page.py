@@ -288,8 +288,11 @@ def test_a_blank_number_clears_the_stored_one():
 def test_an_unreadable_profile_blocks_every_save_and_says_so():
     pe.profile_path().write_text("employment: [unclosed\n", encoding="utf-8")
     st = pe.load_state()
-    assert st.exists and st.problem and "not valid YAML" in st.problem
-    with pytest.raises(pe.ProfileEditError, match="not valid YAML"):
+    assert st.exists and st.problem.startswith("profile.yml is not valid YAML (line ")
+    assert st.problem.endswith(pe.UNREADABLE)
+    # The save names the reason in our words (an older, deliberate rule); the page notice adds
+    # what to do. Either way the file is untouched.
+    with pytest.raises(pe.ProfileEditError, match=r"not valid YAML \(line \d+\)"):
         pe.save_section("employment", "about", {"full_name": "Pat"})
     assert pe.profile_path().read_text(encoding="utf-8").startswith("employment: [unclosed")
     with _client() as c:
@@ -299,6 +302,71 @@ def test_an_unreadable_profile_blocks_every_save_and_says_so():
         r = c.post("/profile/employment/about", data={"full_name": "Pat"})
         assert 'data-testid="profile-problem"' in r.text
     assert "Pat" not in pe.profile_path().read_text(encoding="utf-8")
+
+
+_BROKEN = {
+    "not UTF-8": b"employment: \xff\xfe\x00 caf\xe9\n",
+    "not a mapping": b"- just\n- a list\n",
+    "a bare scalar": b"hello\n",
+    "invalid YAML": b"employment: [unclosed\n",
+}
+
+
+@pytest.mark.parametrize("kind", list(_BROKEN))
+def test_an_unreadable_profile_is_never_a_500_and_never_overwritten(kind):
+    raw = _BROKEN[kind]
+    pe.profile_path().write_bytes(raw)
+    st = pe.load_state()
+    assert st.exists and st.problem.endswith(pe.UNREADABLE)
+    with pytest.raises(pe.ProfileEditError, match="not valid YAML|Start fresh"):
+        pe.save_section("employment", "about", {"full_name": "Pat"})
+    with _client() as c:
+        page = c.get("/profile")
+        assert page.status_code == 200
+        assert 'data-testid="profile-unreadable"' in page.text
+        assert 'data-testid="profile-start-fresh"' in page.text
+        assert "Traceback" not in page.text and "codec" not in page.text
+        notice = page.text.lower().split('profile-unreadable"')[1][:600]
+        # Our own words may name YAML and a line; the parser's own text never appears.
+        for parser_word in ("while parsing", "expected", "unclosed", "column", "codec", "byte"):
+            assert parser_word not in notice
+        r = c.post("/profile/employment/about", data={"full_name": "Pat"})
+        assert 'data-testid="profile-problem"' in r.text or "pf-save-refused" in r.headers.get(
+            "HX-Trigger", "")
+        said = (r.text + r.headers.get("HX-Trigger", "")).replace("\\u0027", "'")
+        # Invalid YAML names its line in our words; the other cases use the fixed sentence.
+        assert pe.UNREADABLE in said or "is not valid YAML (line " in said
+    assert pe.profile_path().read_bytes() == raw
+
+
+def test_start_fresh_keeps_the_broken_file_and_begins_an_empty_profile():
+    raw = _BROKEN["not UTF-8"]
+    pe.profile_path().write_bytes(raw)
+    with _client() as c:
+        r = c.post("/profile/start-fresh")
+        assert r.status_code == 204 and r.headers["HX-Redirect"] == "/profile"
+        kept = sorted(pe.profile_path().parent.glob("profile.yml.broken-*"))
+        assert len(kept) == 1 and kept[0].read_bytes() == raw
+        assert pe.load_state().problem is None and not pe.load_state().exists
+        # A second broken file does not overwrite the first copy.
+        pe.profile_path().write_bytes(b"- x\n")
+        assert c.post("/profile/start-fresh").status_code == 204
+        assert len(list(pe.profile_path().parent.glob("profile.yml.broken-*"))) == 2
+        assert kept[0].read_bytes() == raw
+        # A readable file is never wiped by it.
+        pe.save_section("employment", "about", {"full_name": "Pat"})
+        before = pe.profile_path().read_bytes()
+        assert c.post("/profile/start-fresh").status_code == 409
+        assert pe.profile_path().read_bytes() == before
+        pe.save_section("employment", "about", {"full_name": "Pat Q"})
+
+
+def test_the_doctor_fix_sentence_names_start_fresh():
+    import inspect
+
+    from kestrel import doctor
+
+    assert "Start fresh" in inspect.getsource(doctor._check_profile)
 
 
 def test_overflowing_numbers_are_refused_not_a_500():

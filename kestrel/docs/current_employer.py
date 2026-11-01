@@ -79,7 +79,7 @@ def _profile_stamp() -> tuple:
     from kestrel import paths
 
     stamp = []
-    for name in ("profile.yml", "profile.example.yml"):
+    for name in ("profile.yml",):
         path = paths.config_file(name)
         try:
             stamp.append((str(path), path.stat().st_mtime_ns) if path is not None else None)

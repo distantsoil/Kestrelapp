@@ -179,7 +179,7 @@ async def handle_t2(
     score_stub: bool = False,
 ) -> HandlerOutcome:
     """`score_stub` is the operator's explicit Score again: a posting with next to no
-    description is scored anyway (D-SRC-14); an automatic path never sets it.
+    description is scored anyway (D-SRC-18); an automatic path never sets it.
 
     `rescore` marks a score-again task (D-UI-50): the role is evaluated again whatever its
     stage, a NEW Evaluation row is written beside the old ones, and a role already scored keeps

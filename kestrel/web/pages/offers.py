@@ -52,7 +52,7 @@ from kestrel.db.models import (
     Setting,
 )
 from kestrel.intelligence.comp import MIN_OBSERVATIONS, comp_range
-from kestrel.llm.client import LLMClient
+from kestrel.llm import client as llm_client
 from kestrel.negotiation.benchmark import benchmark_offer
 from kestrel.negotiation.compare import QUAL_AXES
 from kestrel.negotiation.scripts import ScriptResult, _pp, draft_scripts
@@ -1002,7 +1002,7 @@ async def scripts(request: Request, pursuit_id: int):
                     kwargs["scenarios"] = [chosen]
                 if ask:
                     kwargs["ask"] = ask
-                client = LLMClient(settings, http=http)
+                client = llm_client.LLMClient(settings, http=http)
                 result = await draft_scripts(s, client, pursuit_id, walk_away=walk_away, **kwargs)
                 await s.commit()  # persists a quarantine row if the model call failed validation
                 conf_on, emp_map = await confidential_once(s)

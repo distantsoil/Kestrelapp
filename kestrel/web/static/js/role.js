@@ -343,11 +343,70 @@
       { target: '#rl-pane', swap: 'innerHTML' });
   }
 
+  /* ------------------------------------------------------------ Being scored again (issue #74)
+     While the pane shows the Being scored again line, one ctx timer asks where the score stands.
+     A change from queued to running only rewrites the two spans, so nothing is redrawn. When the
+     task is gone (scored, failed or cancelled) the pane is asked for again and swapped whole in
+     one step, and the new score card eases in from the earlier one. With no such line on the page
+     there is no timer at all, and the next swap that brings one starts it. The timer also stops
+     when nothing can move the score on (`stalled`: the task was deferred, e.g. an online key out of
+     credit, so it cannot run now; a task that merely failed and was requeued keeps polling), and after
+     two minutes of watching it slows from 3 seconds to 15. */
+  var RS_FAST = 3000, RS_SLOW = 15000, RS_SLOW_AFTER = 120000;
+  var rsTimer = 0, rsBusy = false, rsLanding = false, rsStart = 0, rsSlow = false;
+  function rsBanner() { return $('.rl-rescore[data-rescoring]'); }
+  function syncRescore() {
+    if (!cx) return;
+    var b = rsBanner();
+    if (b && b.getAttribute('data-stalled') !== '1') {
+      if (!rsTimer) { rsStart = Date.now(); rsSlow = false; rsTimer = cx.every(RS_FAST, pollRescore); }
+    } else if (rsTimer) {
+      cx.clear(rsTimer); rsTimer = 0;
+    }
+  }
+  function pollRescore() {
+    var b = rsBanner();
+    if (!b || rsBusy || doc.hidden || !root.fetch || !cx) return;
+    var signal = cx.signal;
+    if (!rsSlow && Date.now() - rsStart > RS_SLOW_AFTER) {
+      rsSlow = true; cx.clear(rsTimer); rsTimer = cx.every(RS_SLOW, pollRescore);
+    }
+    rsBusy = true;
+    root.fetch('/opportunities/' + oppId() + '/role/rescoring', { credentials: 'same-origin', signal: signal })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        rsBusy = false;
+        var cur = rsBanner();
+        if (!d || signal.aborted || !cur) return;
+        if (d.state === 'none') { rsLanding = true; onRefresh(); return; }
+        cur.setAttribute('data-rescoring', d.state);
+        cur.setAttribute('data-stalled', d.stalled ? '1' : '0');
+        if (d.stalled && rsTimer) { cx.clear(rsTimer); rsTimer = 0; }
+        $$('[data-rs]', cur).forEach(function (n) {
+          var t = d[n.getAttribute('data-rs')];
+          if (t != null && n.textContent !== t) n.textContent = t;
+        });
+      })
+      .catch(function () { rsBusy = false; /* offline or restarting: the next tick asks again */ });
+  }
+  function onRescoreSwap(e) {
+    var t = e.target;
+    if (rsLanding && t && t.id === 'rl-pane') {
+      rsLanding = false;
+      var card = $('.rl-card--score', t);
+      if (card && card.animate && !reduced()) {
+        card.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: 320, easing: 'cubic-bezier(.22,.8,.3,1)' });
+      }
+    }
+    syncRescore();
+  }
+
   /* ------------------------------------------------------------------------------ the page */
   root.KUI.page.define('role', {
     mount: function (main, ctx) {
       cx = ctx;
       pendingDir = 0; pendingKind = ''; focusKey = null; dialogWatch = null;
+      rsTimer = 0; rsBusy = false; rsLanding = false;
       // The order the file added them in: the capture-phase tab click stays ahead of the rest.
       ctx.on(root, 'resize', onInkResize);
       if (doc.fonts && doc.fonts.ready) {
@@ -369,6 +428,8 @@
       ctx.on(doc, 'k-closed', onClosed);
       ctx.on(doc, 'kestrel:undone', onUndone);
       ctx.on(doc, 'rl-refresh', onRefresh);
+      ctx.on(doc, 'htmx:afterSwap', onRescoreSwap);
+      syncRescore();
       ctx.onUnmount(function () { if (cx === ctx) cx = null; });
     }
   });

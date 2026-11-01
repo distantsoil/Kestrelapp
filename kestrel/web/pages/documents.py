@@ -14,10 +14,18 @@ from html import escape
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant
+from kestrel.db.models import (
+    DocMaster,
+    DocRender,
+    DocSection,
+    DocSlot,
+    DocVariant,
+    Pursuit,
+    SelectionOverride,
+)
 from kestrel.docs import convert as convert_mod
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
@@ -29,6 +37,10 @@ log = structlog.get_logger()
 
 _ROLE_PREFIX = re.compile(r"^r\d+_")
 # What the import page says when the write boundary refuses a proposal (the reason is in the log).
+IMPORT_TRACK_REFUSED = (
+    "Nothing was imported: the track on this form is not one Kestrel offers. Reload the page "
+    "and choose Employment or Consulting."
+)
 IMPORT_REJECTED = (
     "Rejected at the write boundary: the proposal did not pass its own check, so nothing was "
     "saved. Read the resume again, or fix the text and try again."
@@ -128,6 +140,7 @@ async def documents_context(request: Request) -> dict:
         assess_host = await _assess_hosted_backend(s)
         conf = await _confidential(s)
         banner = await _employer_banner(s) if conf else []
+        delete_info = await _delete_info(s, selected.id) if selected else None
     from kestrel.docs.current_employer import suggested_placeholder
 
     # ?section=<id> (the Settings "Choose your current employer" link) opens that role's details.
@@ -141,7 +154,8 @@ async def documents_context(request: Request) -> dict:
             "font_saved": saved_look.get("font") or "",
             "align_saved": saved_look.get("header_align") or "",
             "open_section": int(wanted) if wanted.isdigit() else None,
-            "employer_banner": banner,
+            "employer_banner": banner, "delete_info": delete_info,
+            "choices_result": choices_result(request.query_params),
             "edit_open_id": int(wanted) if wanted.isdigit() else None,
             "placeholder_hint": suggested_placeholder(selected.track if selected else None),
             "assess_host": assess_host, **_style_choices(layouts),
@@ -861,6 +875,139 @@ async def _basics_response(request: Request, master_id: int, *, note: str | None
 def _split_items(raw: object) -> list[str]:
     items = [i.strip()[:_ITEM_MAX] for i in re.split(r"[,\n]", str(raw or "")) if i.strip()]
     return items[:_ITEMS_MAX]
+
+
+# ---------------------------------------------------------------- delete a whole document
+# Issue #73. A pursuit keeps the render it sent (Pursuit.document_id / cover_letter_id), and a
+# render needs its master, so a document that an application used is kept (refused, in plain
+# words) rather than leaving a pursuit pointing at a render with no source or dropping history.
+# Everything else goes in one transaction; PDFs are removed after the commit.
+DELETE_GONE = "That document is already gone. Reload the page to see what is left."
+DELETE_FAILED = "Nothing was deleted: the document could not be removed. Try again."
+
+
+def _delete_blocked(n: int) -> str:
+    apps = "1 application" if n == 1 else f"{n} applications"
+    return (f"Not deleted: this document was attached to {apps}. Kestrel keeps what you sent, "
+            "so it stays while that record exists. Nothing was changed.")
+
+
+async def _pursuits_using(s: AsyncSession, master_id: int) -> int:
+    ids = select(DocRender.id).where(DocRender.doc_master_id == master_id)
+    return int((await s.execute(
+        select(func.count()).select_from(Pursuit)
+        .where(or_(Pursuit.document_id.in_(ids), Pursuit.cover_letter_id.in_(ids)))
+    )).scalar_one())
+
+
+async def _delete_info(s: AsyncSession, master_id: int) -> dict:
+    """What the delete button would remove, for its confirmation panel. `learned` is the number of
+    choices Kestrel learned from this document (SelectionOverride rows on its renders): a delete
+    keeps them unless the person ticks the option to forget them (D-DOC-7)."""
+    master = await s.get(DocMaster, master_id)
+    sections = int((await s.execute(select(func.count()).select_from(DocSection)
+                                    .where(DocSection.doc_master_id == master_id))).scalar_one())
+    sec_ids = select(DocSection.id).where(DocSection.doc_master_id == master_id)
+    slot_ids = select(DocSlot.id).where(DocSlot.doc_section_id.in_(sec_ids))
+    variants = int((await s.execute(select(func.count()).select_from(DocVariant)
+                                    .where(DocVariant.doc_slot_id.in_(slot_ids)))).scalar_one())
+    renders = int((await s.execute(select(func.count()).select_from(DocRender)
+                                   .where(DocRender.doc_master_id == master_id))).scalar_one())
+    learned = int((await s.execute(
+        select(func.count()).select_from(SelectionOverride).where(
+            SelectionOverride.doc_render_id.in_(
+                select(DocRender.id).where(DocRender.doc_master_id == master_id)))
+    )).scalar_one())
+    kind = "capability statement" if master and master.doc_kind == "capability_statement" \
+        else "resume"
+    return {"kind": kind, "name": master.name if master else "", "sections": sections,
+            "variants": variants, "renders": renders, "learned": learned,
+            "blocked": await _pursuits_using(s, master_id)}
+
+
+def _unlink_render_files(paths_to_remove: list[str]) -> None:
+    from pathlib import Path
+
+    from kestrel import paths
+
+    root = (paths.data_dir() / "documents").resolve()
+    for raw in paths_to_remove:
+        try:
+            target = Path(raw).resolve()
+            if target.is_relative_to(root):
+                target.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("doc_delete_file_left", error=fixed_reason(exc))
+
+
+def choices_result(query) -> str | None:
+    """The sentence the Documents page shows after a delete that touched learned choices, from the
+    two counts the delete put in the redirect (whole numbers only, never text)."""
+    for key, text in (("choices_forgot", "Forgot {n} choice{s}."),
+                      ("choices_kept", "Kept {n} choice{s} Kestrel learned from.")):
+        raw = str(query.get(key) or "")
+        if raw.isdigit() and 0 < int(raw) < 1_000_000:
+            n = int(raw)
+            return text.format(n=n, s="" if n == 1 else "s")
+    return None
+
+
+def _hx_redirect(url: str) -> HTMLResponse:
+    resp = HTMLResponse("")
+    resp.headers["HX-Redirect"] = url
+    return resp
+
+
+@router.post("/documents/{master_id}/delete", response_class=HTMLResponse)
+async def delete_document(request: Request, master_id: str):
+    """Delete a whole imported document (resume or capability statement), even the last one."""
+    from sqlalchemy import delete, update
+
+    msg = lambda text: HTMLResponse(  # noqa: E731
+        f'<p class="pf-hint" role="status" data-testid="doc-delete-msg">{escape(text)}</p>')
+    if not master_id.isdigit():
+        return msg(DELETE_GONE)
+    mid = int(master_id)
+    forget = str((await request.form()).get("forget_choices")) == "1"
+    try:
+        async with sessionmaker()() as s:
+            master = await s.get(DocMaster, mid)
+            if master is None:
+                return msg(DELETE_GONE)
+            used = await _pursuits_using(s, mid)
+            if used:
+                return msg(_delete_blocked(used))
+            files = [p for p in (await s.execute(
+                select(DocRender.pdf_path).where(DocRender.doc_master_id == mid)
+            )).scalars().all() if p]
+            render_ids = select(DocRender.id).where(DocRender.doc_master_id == mid)
+            sec_ids = select(DocSection.id).where(DocSection.doc_master_id == mid)
+            slot_ids = select(DocSlot.id).where(DocSlot.doc_section_id.in_(sec_ids))
+            # D-DOC-7: the choices Kestrel learned from stay (detached from the render, which
+            # goes) unless the person ticked the option to forget them.
+            mine = SelectionOverride.doc_render_id.in_(render_ids)
+            # The number this delete forgets or keeps, counted here in the transaction: the
+            # panel's count was read when the page rendered and may be out of date.
+            n_choices = int((await s.execute(
+                select(func.count()).select_from(SelectionOverride).where(mine))).scalar_one())
+            if forget:
+                await s.execute(delete(SelectionOverride).where(mine))
+            else:
+                await s.execute(update(SelectionOverride).where(mine)
+                                .values(doc_render_id=None))
+            await s.execute(delete(DocRender).where(DocRender.doc_master_id == mid))
+            await s.execute(delete(DocVariant).where(DocVariant.doc_slot_id.in_(slot_ids)))
+            await s.execute(delete(DocSlot).where(DocSlot.doc_section_id.in_(sec_ids)))
+            await s.execute(delete(DocSection).where(DocSection.doc_master_id == mid))
+            await s.execute(delete(DocMaster).where(DocMaster.id == mid))
+            await s.commit()
+    except Exception as exc:  # noqa: BLE001 - fixed sentence on the page, the cause in the log
+        log.warning("doc_delete_failed", master_id=mid, error=fixed_reason(exc))
+        return msg(DELETE_FAILED)
+    _unlink_render_files(files)
+    if n_choices:
+        return _hx_redirect(f"/documents?choices_{'forgot' if forget else 'kept'}={n_choices}")
+    return _hx_redirect("/documents")
 
 
 @router.post("/documents/new", response_class=HTMLResponse)
@@ -1750,7 +1897,8 @@ async def import_accept(request: Request):
         log.warning("import_accept_rejected", error_type=type(exc).__name__)
         return HTMLResponse(f'<div class="warnbox">{escape(IMPORT_REJECTED)}</div>')
     except ImportTrackRefused as exc:
-        return HTMLResponse(f'<div class="warnbox">{escape(str(exc))}</div>')
+        log.warning("import_accept_track_refused", error_type=type(exc).__name__)
+        return HTMLResponse(f'<div class="warnbox">{escape(IMPORT_TRACK_REFUSED)}</div>')
     except ProofPointsNotSaved as exc:
         # The resume is saved; only the profile.yml write failed. One authored sentence plus a
         # fixed reason (D-SEC-4), never the exception text.

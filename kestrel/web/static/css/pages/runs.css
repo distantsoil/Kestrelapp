@@ -159,6 +159,10 @@
 .rn-details p { margin: 6px 0 0; color: var(--muted); }
 .rn-details pre { margin: 8px 0 0; background: var(--soft); border-radius: var(--r-sm); padding: 10px 12px; font: 12px/1.5 var(--mono);
   white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); max-height: 240px; overflow: auto; }
+.rn-skip > p { margin: 0; }
+.rn-dropped__list { list-style: none; margin: 8px 0 0; padding: 10px 12px; background: var(--soft); border-radius: var(--r-sm);
+  color: var(--ink); max-height: 240px; overflow: auto; }
+.rn-dropped__list li { padding: 2px 0; overflow-wrap: anywhere; }
 .rn-awake { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .rn-awake form { display: flex; flex-direction: column; gap: 4px; }
 .rn-awake .k-switch { align-items: flex-start; }

@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from kestrel.llm.client import LLMClient
+from kestrel.llm import client as llm_client
 from kestrel.llm.service_name import service_name
 from kestrel.pipeline.tier3 import build_escalation_preview, transmit_escalation
 from kestrel.services.setting_overrides import load_settings_with_db
@@ -99,7 +99,7 @@ async def escalate_confirm(opp_id: int, request: Request):
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         async with httpx.AsyncClient() as http:
-            client = LLMClient(settings, http=http)
+            client = llm_client.LLMClient(settings, http=http)
             res = await transmit_escalation(
                 s, client, settings, opp_id, confirmation_token=token
             )

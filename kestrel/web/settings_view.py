@@ -393,6 +393,8 @@ NOTIFY_KINDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
                 ("new_strong_match", "high_score")),
     "followups": ("Follow-ups due", "Applications waiting on your next step.",
                   ("next_action_due", "ghosting")),
+    "stories": ("New story drafts", "When a build makes drafts to review.",
+                ("stories_built",)),
     "runs": ("Run finished", "When a search run is done.", ("run_finished",)),
     "attention": ("Something needs attention", "A source, model or backup problem.",
                   ("source_disabled", "liveness_closed", "update", "model_problem",

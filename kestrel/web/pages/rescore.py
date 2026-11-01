@@ -189,7 +189,7 @@ async def _consent(session, settings) -> dict:
     import json
 
     from kestrel.services import hosted_balance
-    from kestrel.services.online_consent import merge_approvals
+    from kestrel.services.online_consent import merge_approvals, step_disclosures
     from kestrel.web.pages.needs_try import _employer_state, _sentence
 
     sends = settings.llm.hosted_mode.disclosure_terms()["sends"]
@@ -214,6 +214,9 @@ async def _consent(session, settings) -> dict:
             continue
     return {
         "sends": _sentence(sends["tier2"]),
+        # Every online tier the approval covers, from the one shared helper (the quick screen
+        # runs first and is approved with the full review).
+        "steps": step_disclosures(settings, ("tier1", "tier2")),
         "employer": await _employer_state(session, settings),
         "credit": credit_row["label"] if credit_row else None,
         "approval_json": json.dumps(merge_approvals(*approvals), separators=(",", ":")),

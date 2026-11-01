@@ -589,8 +589,12 @@ built up front; the models it trains come online as data accumulates.
 `operator_score`, `reason` text, `dimension_corrections` json (optional per-dimension), `created_at`.
 
 **`selection_override`** — a resume or capability slot changed after model selection.
-`id`, `doc_render_id`, `opportunity_id`, `slot_key`, `model_choice`, `operator_choice`,
-`created_at`.
+`id`, `doc_render_id` (nullable, FK ON DELETE SET NULL), `opportunity_id`, `slot_key`,
+`model_choice`, `operator_choice`, `model_choice_text`, `operator_choice_text` (the wording each
+choice key stood for, copied when the row is written), `created_at`. A row outlives its render
+(D-DOC-7): deleting a resume detaches the rows (null `doc_render_id`) and keeps them unless the
+person ticks "Also forget the N choices Kestrel learned from this resume". Readers skip the
+render-dependent parts of a detached row and keep the learning signal.
 
 **`label`** — an explicit gold judgment, usually from the active-learning queue.
 `id`, `opportunity_id`, `track`, `score`, `verdict`, `dimensions` json nullable, `rationale`,

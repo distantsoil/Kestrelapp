@@ -12,6 +12,9 @@ from kestrel.pipeline import recheck
 from kestrel.pipeline.tier0 import run_tier0_batch
 from kestrel.services import tier0_override
 
+# These tests need a populated profile; with no profile.yml it is empty (D-PROF-4).
+pytestmark = pytest.mark.usefixtures("example_operator_profile")
+
 _KW = dict(track="employment", opp_type="job_posting", remote_type="remote", seen_count=1,
            ghost_score=0.1, country="US")
 

@@ -453,7 +453,7 @@ def test_few_shot_block_is_compact_and_never_repeats_the_rationale():
     assert few_shot_block([]) == ""
 
 
-def test_consulting_profile_compact_carries_target_size_and_sectors():
+def test_consulting_profile_compact_carries_target_size_and_sectors(example_operator_profile):
     from kestrel.pipeline.context import profile_compact
 
     text = profile_compact(load_profile("consulting"))

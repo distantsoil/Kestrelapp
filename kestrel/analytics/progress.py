@@ -315,7 +315,7 @@ async def scoring_progress(
         def _n(stages: tuple[str, ...]):
             return func.coalesce(func.sum(case((Opportunity.stage.in_(stages), 1), else_=0)), 0)
 
-        # A posting with no body is left at t1_pass, Not scored (D-SRC-14): it left the queue
+        # A posting with no body is left at t1_pass, Not scored (D-SRC-18): it left the queue
         # without a score, so it counts with the roles set aside, never out of the total.
         no_body = func.coalesce(
             func.sum(

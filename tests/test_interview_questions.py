@@ -198,7 +198,9 @@ async def test_a_repair_that_works_is_stored(sm):
     assert await _count(sm, InterviewQuestionSet) == 1 and await _count(sm, Quarantine) == 0
 
 
-async def test_the_schema_enums_hold_only_real_ids_and_an_invented_id_is_quarantined(sm):
+async def test_the_schema_enums_hold_only_real_ids_and_an_invented_id_is_quarantined(
+    sm, example_operator_profile
+):
     opp, pid = await _seed(sm, stories=2)
     async with sm() as s:
         ids = [r for (r,) in (await s.execute(select(Story.id).order_by(Story.id))).all()]

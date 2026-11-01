@@ -24,6 +24,9 @@ from kestrel.services import profile_edit as pe
 from kestrel.services import profile_readiness as pr
 from kestrel.web.deps import templates
 
+# These tests need a populated profile; with no profile.yml it is empty (D-PROF-4).
+pytestmark = pytest.mark.usefixtures("example_operator_profile")
+
 SOURCE = "Cut spend by a third."
 NOTICE = 'data-testid="thin-profile-notice"'
 
@@ -242,15 +245,15 @@ def test_score_again_notice_and_post_queue_once(fresh):
         assert "2 roles were scored before your proof points." in html
         assert 'action="/api/profile/score-again"' in html
         before = _task_count()
-        r = c.post("/api/profile/score-again", data={"track": "employment", "back": "/"},
+        r = c.post("/api/profile/score-again", data={"track": "employment", "back": "today"},
                    follow_redirects=False)
-        assert r.status_code == 303 and r.headers["location"] == "/?rescoring=2"
+        assert r.status_code == 303 and r.headers["location"] == "/?track=employment&rescoring=2"
         queued = _task_count() - before
         assert queued == 2
-        c.post("/api/profile/score-again", data={"track": "employment", "back": "/"},
+        c.post("/api/profile/score-again", data={"track": "employment", "back": "today"},
                follow_redirects=False)
         assert _task_count() - before == queued  # idempotent: no double queue
-        assert "2 roles are waiting to be scored again." in c.get("/?rescoring=2").text
+        assert "Queued 2 roles to score again." in c.get("/?rescoring=2").text
     assert ids
 
 
@@ -259,7 +262,7 @@ def test_score_again_refuses_an_offsite_return_path(fresh):
         r = c.post("/api/profile/score-again",
                    data={"track": "employment", "back": "//evil.example"},
                    follow_redirects=False)
-        assert r.headers["location"] == "/"
+        assert r.headers["location"] == "/?track=employment"
 
 
 # ------------------------------------------------------------ review round: selection and safety
@@ -452,9 +455,9 @@ def test_score_again_keeps_the_consulting_track(fresh):
             await s.commit()
     asyncio.run(seed())
     with _client() as c:
-        for url, back in (("/?track=consulting", 'value="/?track=consulting"'),
+        for url, back in (("/?track=consulting", 'name="back" value="today"'),
                           ("/profile?tab=documents&track=consulting",
-                           'value="/profile?tab=documents&amp;track=consulting"')):
+                           'name="back" value="profile"')):
             html = c.get(url).text
             assert 'data-next-step="score_again"' in html, url
             assert back in html, (url, back)

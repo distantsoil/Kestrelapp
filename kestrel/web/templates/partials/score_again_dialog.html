@@ -84,7 +84,9 @@
         {% endif %}
         <div class="sf-card sf-card--info sf-what" id="score-again-desc">
           {% if current_online %}
-          <div class="sf-ln">{{ kicon('cloud') }}<span>The usual model is online, so the full review goes to your online service as it does for any scan. {{ consent.sends }}.</span></div>
+          <div class="sf-ln">{{ kicon('cloud') }}<span>The usual model is online, so the full review goes to your online service as it does for any scan. {{ consent.sends }}.{% for st in consent.steps if st.tier == 'tier1' %} The quick screen also goes to {{ st.provider }}: {{ st.sends }}.{% endfor %}</span></div>
+          {% elif consent.steps %}
+          <div class="sf-ln">{{ kicon('cloud') }}<span data-testid="score-again-online-steps">The full review stays on this computer.{% for st in consent.steps %} The {{ st.label | lower }} goes to {{ st.provider }}: {{ st.sends }}.{% endfor %}</span></div>
           {% else %}
           <div class="sf-ln">{{ kicon('shield') }}<span>The usual model stays on this computer. Nothing is sent anywhere.</span></div>
           {% endif %}
@@ -102,7 +104,7 @@
         <div class="sf-card sf-card--warn sf-what">
           <b>Send this to {{ hosted_label or 'the online service' }}?</b>
           <div class="sf-ln">{{ kicon('check') }}<span>Model: <b data-sf-model></b>, using your own key.</span></div>
-          <div class="sf-ln">{{ kicon('check') }}<span data-testid="score-again-sends">Sent: {{ consent.sends }}.</span></div>
+          <div class="sf-ln">{{ kicon('check') }}<span data-testid="score-again-sends">Sent: {% if current_online or not consent.steps %}{{ consent.sends }}.{% endif %}{% for st in consent.steps if not (current_online and st.tier == 'tier2') %} <span data-testid="score-again-sends-{{ st.tier }}">The {{ st.label | lower }} goes to {{ st.provider }} (model {{ st.model }}): {{ st.sends }}.</span>{% endfor %}</span></div>
           {% if consent.employer == 'hidden' %}
           <div class="sf-ln">{{ kicon('lock') }}<span data-testid="score-again-employer">Confidential mode is on: your current employer is hidden before anything is sent.</span></div>
           {% elif consent.employer == 'held' %}

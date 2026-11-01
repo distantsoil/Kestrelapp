@@ -31,6 +31,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from kestrel.analytics import run_summary as rsum
 from kestrel.db.models import Evaluation, Run, ScrapeRun, Source
+from kestrel.ingest.runner import DROPPED_SAMPLE_KEY
 from kestrel.pipeline.runlog import INTERRUPTED
 from kestrel.services import hosted_balance, run_model
 from kestrel.services.setting_overrides import load_settings_with_db
@@ -584,12 +585,52 @@ def throughput(run: Run) -> list[dict[str, Any]]:
     ]
 
 
-async def skipped_in(session: AsyncSession, run: Run) -> dict[str, int]:
-    counts = {"dropped_outside_area": 0, "dropped_unrelated_title": 0}
+SAMPLE_SHOWN = 25  # D-SRC-17: at most this many dropped titles in one scan's disclosure
+
+
+def _interleave(samples: list[list[dict[str, str]]], cap: int) -> list[dict[str, str]]:
+    """First of each search, then second of each, ... so one board does not fill the list."""
+    out: list[dict[str, str]] = []
+    depth = max((len(s) for s in samples), default=0)
+    for i in range(depth):
+        for sample in samples:
+            if i < len(sample) and len(out) < cap:
+                out.append(sample[i])
+    return out
+
+
+def _sample_of(recorded: dict[str, Any]) -> list[dict[str, str]]:
+    raw = recorded.get(DROPPED_SAMPLE_KEY)
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if isinstance(item, dict) and str(item.get("title") or "").strip():
+            out.append({"title": str(item["title"]), "org": str(item.get("org") or "")})
+    return out
+
+
+async def skipped_in(session: AsyncSession, run: Run) -> dict[str, Any]:
+    """Skip totals for the run's window, plus the dropped-title sample (D-SRC-13, D-SRC-17)."""
+    counts: dict[str, Any] = {"dropped_outside_area": 0, "dropped_unrelated_title": 0}
+    samples: list[list[dict[str, str]]] = []
     stmt = _scrapes_stmt(select(ScrapeRun.counts), run, await run_window(session, run))
-    for recorded in (await session.execute(stmt)).scalars():
-        for key in counts:
-            counts[key] += int((recorded or {}).get(key, 0) or 0)
+    for recorded in (await session.execute(stmt.order_by(ScrapeRun.started_at))).scalars():
+        recorded = recorded if isinstance(recorded, dict) else {}
+        for key in ("dropped_outside_area", "dropped_unrelated_title"):
+            counts[key] += int(recorded.get(key, 0) or 0)
+        samples.append(_sample_of(recorded))
+    # Confidential mode redacts the current employer in every list view (CLAUDE.md, Privacy).
+    from kestrel.web.redact import confidential_once, redact_text
+
+    conf, mapping = await confidential_once(session)
+    counts["title_sample"] = [
+        {
+            "title": redact_text(t["title"], mapping, enabled=conf) or "",
+            "org": redact_text(t["org"], mapping, enabled=conf) or "",
+        }
+        for t in _interleave(samples, SAMPLE_SHOWN)
+    ]
     return counts
 
 

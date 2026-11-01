@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from sqlalchemy import select
 
 from kestrel import paths
@@ -18,6 +19,9 @@ from kestrel.services import tier0_override
 from tests.test_pipeline_tier0 import _opt_in
 from tests.test_score_again import _drain, _recent, _RecordingLLM, _tasks
 
+# These tests need a populated profile; with no profile.yml it is empty (D-PROF-4).
+pytestmark = pytest.mark.usefixtures("example_operator_profile")
+
 _REASON = "blocker:seniority_floor: Below seniority floor"
 
 
@@ -29,7 +33,7 @@ async def _director(sm, **kw) -> int:
             location_raw="Remote (US)", date_posted=_recent(), seen_count=1, ghost_score=0.1,
             stage="t0_reject", stage_reason=_REASON,
             description_md="Own IT services, budget and vendor accountability."
-            + " Details follow." * 20,  # over the Tier 2 stub floor (D-SRC-14)
+            + " Details follow." * 20,  # over the Tier 2 stub floor (D-SRC-18)
         )
         for k, v in kw.items():
             setattr(o, k, v)

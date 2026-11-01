@@ -30,7 +30,7 @@
   </div>
 {%- endmacro %}
 
-<div class="pl-panel__in" data-kind="{{ kind }}"{% if opp is defined %} data-id="{{ opp.id }}"{% endif %}>
+<div class="pl-panel__in" data-kind="{{ kind }}"{% if opp is defined %} data-id="{{ opp.id }}"{% endif %}{% if rescoring %} data-rescoring="{{ rescoring.state }}"{% endif %}>
 {% if kind == 'missing' %}
   <div class="pl-dh"><div class="pl-dh__t"><b>That role is gone</b></div><button type="button" class="pl-xbtn" data-pl-close aria-label="Close">{{ ui.icon('x', 'k-ic--sm') }}</button></div>
   <div class="pl-db"><p class="pl-pending">It may have been deleted. Go back to the list.</p></div>
@@ -101,6 +101,7 @@
       {% elif scoring == 'held' %}This track is switched off, so the role waits until you switch it back on.
       {% elif scoring == 'background' %}This company-board role scores in the background when Kestrel is idle.
       {% elif scoring == 'stuck' %}Scoring stopped before it finished. Score it again.
+      {% elif rescoring %}<span data-testid="panel-rescoring">{{ rescoring.hint }} Details appear when the review finishes.</span>
       {% else %}Being scored now. Details appear when the review finishes.{% endif %}</div>
     {% if scoring == 'hidden' and opp.archive_reason == 'applied' %}
       <button type="button" class="k-btn pl-fit-content" hx-post="/opportunities/{{ opp.id }}/decide/put-back" hx-swap="none" data-testid="panel-put-back">Put it back</button>
@@ -118,6 +119,7 @@
 {% elif kind == 'role' %}
   {{ head(({'contract_posting': 'Contract posting', 'rfp': 'RFP', 'referral': 'Referral'}.get(opp.opp_type, 'Opportunity') if consulting else 'Role summary'), title, org_name ~ (' · ' ~ place if place else '')) }}
   <div class="pl-db">
+    {% if rescoring %}<div class="pl-again" role="status" data-testid="panel-rescoring" data-state="{{ rescoring.state }}"><span class="k-dot k-dot--live" aria-hidden="true"></span><span><b>{{ rescoring.title }}.</b> {{ rescoring.hint }} {% if rescoring.again %}<span class="pl-hint-again" data-testid="panel-earlier">The score below is the earlier one.</span>{% endif %}</span></div>{% endif %}
     <div class="pl-ringrow">
       {{ ring(score if score is not none else 0, ring_pct, tone) }}
       <div class="pl-dims">

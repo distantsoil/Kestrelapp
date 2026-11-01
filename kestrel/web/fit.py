@@ -298,7 +298,7 @@ def fit_for(
     needs_review / tier. `stage` is the opportunity's stage string. `live` is whether the role
     has a pending or leased scoring task: a parked role queued to score again is Being scored,
     one with nothing queued is Scoring failed (D-UI-56). A posting with no body (`stage_reason`,
-    EMPTY_POSTING_STAGE_REASON) with nothing queued is Not scored, not Being scored (D-SRC-14)."""
+    EMPTY_POSTING_STAGE_REASON) with nothing queued is Not scored, not Being scored (D-SRC-18)."""
     verdict = _get(evaluation, "verdict")
     tier = _get(evaluation, "tier")
     score = _get(evaluation, "score")

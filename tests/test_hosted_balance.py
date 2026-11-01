@@ -219,7 +219,7 @@ async def test_an_unreported_cost_is_unknown_never_zero(sm):
     async with sm() as s:
         assert (await hb.rail_row(s, other))["label"] == (
             "Deeper reads this month: cost not reported")
-    await _spend(sm, 0.5, None, provider="openai", ago_days=0.1)
+    await _spend(sm, 0.5, None, provider="openai")  # now: never last month
     async with sm() as s:
         assert (await hb.rail_row(s, other))["label"] == (
             "$0.50 spent this month on deeper reads, plus some unreported")

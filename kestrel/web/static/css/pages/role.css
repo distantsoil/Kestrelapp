@@ -85,6 +85,12 @@
 .rl-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; }
 .rl-kv dt { color: var(--muted); } .rl-kv dd { margin: 0; color: var(--ink); }
 
+/* Being scored again (issue #74): above the earlier score until the new one lands. */
+.rl-rescore { display: flex; gap: 10px; align-items: center; padding: 10px 14px; margin: 0 0 12px;
+  background: var(--soft); border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--fs-md);
+  color: var(--ink); }
+.rl-rescore span:not(.k-dot) { color: var(--muted); }
+.rl-earlier { font-size: var(--fs-sm); color: var(--muted); }
 /* ------------------------------------------------------------------------------ the score card */
 @property --p { syntax: "<number>"; inherits: false; initial-value: 0; }
 .rl-score { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.1fr); gap: 22px; align-items: center; }

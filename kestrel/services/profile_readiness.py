@@ -31,7 +31,10 @@ log = structlog.get_logger()
 
 KEY = "proof_points_changed_at"
 DOCS_HREF = "/profile?tab=documents"
+UNREADABLE_LINE = ("Your profile file could not be read, so Kestrel is scoring without it. "
+                   "Open Profile to fix it.")
 
+PROFILE_UNREADABLE = "profile_unreadable"
 IMPORT_RESUME = "import_resume"
 REVIEW_IMPORT = "review_import"
 ADD_TITLES = "add_titles"
@@ -73,7 +76,7 @@ def _roles(n: int) -> str:
 
 def assess(
     profile: Any, *, track: str = "employment", has_resume: bool,
-    scored: list[tuple[int, str]], changed_at: str | None,
+    scored: list[tuple[int, str]], changed_at: str | None, unreadable: bool = False,
 ) -> Readiness:
     """`scored` is (role id, when its latest Tier 2 score was made) for the track's scored roles."""
     proofs = list(_get(profile, "proof_points") or [])
@@ -92,7 +95,11 @@ def assess(
 
     thin = not has_proof and not has_narrative
     link_label = link_href = ""
-    if thin and not has_resume:
+    if unreadable:
+        step = PROFILE_UNREADABLE
+        line = UNREADABLE_LINE
+        link_label, link_href = "Open Profile", "/profile"
+    elif thin and not has_resume:
         step = IMPORT_RESUME
         line = "Add your resume so Kestrel can score roles against your real results."
         link_label, link_href = "Add your resume", DOCS_HREF
@@ -140,19 +147,19 @@ async def mark_proof_points_changed(session: AsyncSession, track: str) -> None:
 
 
 def operator_profile(track: str) -> dict | None:
-    """The track's block from the operator's own profile.yml, or None when there is no such file,
-    it cannot be read, or it has no block for the track. Unlike `load_profile` this never falls
-    back to the fictional profile.example.yml: a fresh install must read as empty, not as ready."""
-    import yaml
+    """The track's raw block from the operator's own profile.yml, or None when there is no such
+    file, it cannot be read, or it has no block for the track. Reads through
+    `kestrel.pipeline.profile` (the one loader); never the fictional profile.example.yml, so a
+    fresh install reads as empty, not as ready."""
+    from kestrel.pipeline.profile import operator_block
 
-    from kestrel.services import profile_edit
+    return operator_block(track)
 
-    try:
-        data = yaml.safe_load(profile_edit.profile_path().read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return None
-    block = data.get(track) if isinstance(data, dict) else None
-    return block if isinstance(block, dict) else None
+
+def operator_profile_unreadable() -> bool:
+    from kestrel.pipeline.profile import profile_unreadable
+
+    return profile_unreadable()
 
 
 def operator_profile_is_thin(track: str) -> bool:
@@ -164,14 +171,18 @@ def operator_profile_is_thin(track: str) -> bool:
 
 async def load_readiness(session: AsyncSession, track: str) -> Readiness:
     profile = await asyncio.to_thread(operator_profile, track)
+    unreadable = await asyncio.to_thread(operator_profile_unreadable)
     try:
-        return await _gather(session, track, profile)
+        return await _gather(session, track, profile, unreadable)
     except SQLAlchemyError as exc:  # a page never fails because the database could not be read
         log.warning("profile_readiness_unreadable", error_type=type(exc).__name__)
-        return assess(profile, track=track, has_resume=False, scored=[], changed_at=None)
+        return assess(profile, track=track, has_resume=False, scored=[], changed_at=None,
+                      unreadable=unreadable)
 
 
-async def _gather(session: AsyncSession, track: str, profile: Any) -> Readiness:
+async def _gather(
+    session: AsyncSession, track: str, profile: Any, unreadable: bool = False,
+) -> Readiness:
     has_resume = bool((await session.execute(
         select(func.count()).select_from(DocMaster)
         .where(DocMaster.track == track, DocMaster.doc_kind == "resume")
@@ -203,5 +214,5 @@ async def _gather(session: AsyncSession, track: str, profile: Any) -> Readiness:
     return assess(
         profile, track=track, has_resume=has_resume,
         scored=[(int(oid), str(at)) for oid, at in rows if int(oid) not in waiting],
-        changed_at=await changed_at(session, track),
+        changed_at=await changed_at(session, track), unreadable=unreadable,
     )

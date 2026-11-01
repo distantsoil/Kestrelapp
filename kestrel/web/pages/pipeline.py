@@ -38,6 +38,7 @@ from kestrel.web.fit import GROUP_FAILED, GROUP_NEW, GROUP_UNSCORED, NOT_FIT, ve
 from kestrel.web.queries import (
     OppRow,
     _retry_removed,
+    attach_rescoring,
     live_scoring_exists,
     saved_clause,
     scoring_states,
@@ -143,6 +144,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         fit=fit_for(ev0, opp0.stage, live=live, stage_reason=opp0.stage_reason),
     )
     await scoring_states(s, [probe])
+    await attach_rescoring(s, [probe])
     detail = await _detail_context(s, opp_id)
     if detail is None:
         return None
@@ -173,6 +175,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         "saved": saved,
         "removed": removed,
         "scoring": probe.scoring,
+        "rescoring": probe.rescoring,
         "failed_reason": probe.failed_reason,
         "hidden_why": probe.hidden_why,
         "posted": pv.posted_words(opp.date_posted),

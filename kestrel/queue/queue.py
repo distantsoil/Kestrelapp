@@ -94,6 +94,16 @@ def in_flight(now: str) -> ColumnElement[bool]:
     )
 
 
+DEFERRED_KEY = "deferred"
+
+
+def is_deferred() -> ColumnElement[bool]:
+    """A pending task given back unstarted by `defer` (a key out of credit, a local-only hold):
+    it cannot run now, whatever its attempts. A task that merely failed and was requeued is not
+    deferred; it is next in line again. `lease` and `fail` clear the mark."""
+    return func.coalesce(func.json_extract(Task.payload, f"$.{DEFERRED_KEY}"), 0) == 1
+
+
 def requested_by_operator() -> ColumnElement[bool]:
     """A task the operator explicitly asked for (Score again, a quarantine retry, an MCP scan):
     payload `requested` or `rescore` is true. The track switch never holds these (finding 10)."""
@@ -208,6 +218,7 @@ class TaskQueue:
                             ),
                             else_=Task.attempts + 1,
                         ),
+                        payload=func.json_remove(Task.payload, f"$.{DEFERRED_KEY}"),
                         updated_at=now,
                     )
                 )
@@ -255,6 +266,8 @@ class TaskQueue:
                 return "not_owned"
             task.last_error = (error or "")[:4000]
             task.updated_at = utcnow_iso()
+            if task.payload and DEFERRED_KEY in task.payload:
+                task.payload = {k: v for k, v in task.payload.items() if k != DEFERRED_KEY}
             if retry and task.attempts < task.max_attempts:
                 task.status = "pending"
                 task.worker_id = None
@@ -277,6 +290,7 @@ class TaskQueue:
                 return "not_owned"
             task.last_error = (note or "")[:4000]
             task.updated_at = utcnow_iso()
+            task.payload = {**(task.payload or {}), DEFERRED_KEY: True}
             task.status = "pending"
             task.worker_id = None
             task.lease_until = None

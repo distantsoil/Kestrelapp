@@ -16,7 +16,7 @@ from kestrel.db.models import Offer, Opportunity, Org, Pursuit, Source
 from kestrel.privacy import Employer, EmployerMap
 from kestrel.web.deps import format_money, format_typed_amount
 
-pytestmark = pytest.mark.usefixtures("_isolate_data_home")
+pytestmark = pytest.mark.usefixtures("_isolate_data_home", "example_operator_profile")
 
 
 def _client() -> TestClient:

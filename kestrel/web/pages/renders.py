@@ -59,6 +59,7 @@ from kestrel.docs.catalog import (
     resolve,
 )
 from kestrel.docs.render import render_html
+from kestrel.learning.capture import choice_texts
 from kestrel.pipeline._shared import tier_is_hosted
 from kestrel.services import pursuit_undo
 from kestrel.services.setting_overrides import load_settings_with_db
@@ -800,6 +801,7 @@ async def _do_swap(request: Request, render_id: int, slot_key: str, variant_key:
             slot_key=slot_key,
             model_choice=model_choice,
             operator_choice=variant_key,
+            **await choice_texts(s, render.doc_master_id, slot_key, model_choice, variant_key),
         )
         s.add(row)
         await s.flush()
@@ -950,6 +952,7 @@ async def edit_wording(request: Request, render_id: int):
             s.add(SelectionOverride(
                 doc_render_id=render.id, opportunity_id=render.opportunity_id,
                 slot_key="summary", model_choice=model_choice, operator_choice=key,
+                **await choice_texts(s, render.doc_master_id, "summary", model_choice, key),
             ))
             render.config = _apply_choice(config, "summary", key)
             notice = "Saved as a new summary wording. The original is still available."
@@ -978,11 +981,11 @@ async def edit_wording(request: Request, render_id: int):
                 doc_slot_id=slot.id, key=key, text=text,
                 tags=list(base.tags or []) if base else [], derived=False,
             ))
+            model_pick = await _model_choice(s, render, slot_key, chosen)
             s.add(SelectionOverride(
                 doc_render_id=render.id, opportunity_id=render.opportunity_id,
-                slot_key=slot_key,
-                model_choice=await _model_choice(s, render, slot_key, chosen),
-                operator_choice=key,
+                slot_key=slot_key, model_choice=model_pick, operator_choice=key,
+                **await choice_texts(s, render.doc_master_id, slot_key, model_pick, key),
             ))
             render.config = _apply_choice(config, slot_key, key)
             notice = "Saved as a new wording of your own. The original is still available."

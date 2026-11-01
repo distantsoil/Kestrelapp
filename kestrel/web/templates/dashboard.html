@@ -28,7 +28,7 @@
   {% if readiness.show_notice or rescoring %}
   <link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
   <div class="sf-notice" role="status" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
-    {% set back = '/?track=' ~ track %}{% include "partials/profile_next_step.html" %}
+    {% set back = 'today' %}{% include "partials/profile_next_step.html" %}
   </div>
   {% endif %}
 

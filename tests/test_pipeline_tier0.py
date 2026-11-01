@@ -16,6 +16,9 @@ from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tier0 import evaluate_tier0, run_tier0_batch
 from kestrel.rules import helpers
 
+# These tests need a populated profile; with no profile.yml it is empty (D-PROF-4).
+pytestmark = pytest.mark.usefixtures("example_operator_profile")
+
 
 # A posting date that is always inside max_posting_age_days, so the stale blocker never
 # time-bombs this gate (it did: a hardcoded July date went red on 2026-09-13).

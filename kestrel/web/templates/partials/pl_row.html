@@ -37,7 +37,7 @@
   {% set tone = 'wait' if unscored else ft.tone %}
   <div class="pl-row is-{{ 'failed' if ft.group == 'failed' else ('new' if unscored else ('nf' if nf else tone)) }}{% if nf %} pl-row--nf{% endif %}" role="listitem" tabindex="0"
        id="row-{{ o.id }}" data-id="{{ o.id }}" data-group="{{ ft.group }}" data-testid="pl-row"
-       data-title="{{ o.title or '(untitled)' }}"{% if r.saved %} data-saved="1"{% endif %}>
+       data-title="{{ o.title or '(untitled)' }}"{% if r.saved %} data-saved="1"{% endif %}{% if r.rescoring %} data-rescoring="{{ r.rescoring.state }}"{% endif %}>
     {% if nf %}<span class="pl-ck-gap"></span>{% else %}{{ check_box(o.title or 'this role') }}{% endif %}
     <span class="pl-mono pl-mono-{{ v.mono.tone }}" aria-hidden="true">{{ v.mono.letters }}</span>
     <div class="pl-main">
@@ -48,7 +48,7 @@
         <span class="pl-title__t">{{ o.title or '(untitled)' }}</span>
         {% if unscored %}
           {% set st = r.scoring or 'not_queued' %}
-          <span class="k-pill pl-pill-new" title="{{ scoring_tip.get(st, '') }}" data-fit="new" data-scoring="{{ st }}">{{ scoring_pill.get(st, 'queued') }}</span>
+          <span class="k-pill pl-pill-new" title="{{ r.rescoring.hint if r.rescoring else scoring_tip.get(st, '') }}" data-fit="new" data-scoring="{{ st }}">{{ scoring_pill.get(st, 'queued') }}</span>
         {% elif ft.tone == 'good' %}
           <span class="k-pill k-pill--good" data-fit="{{ ft.word }}">{{ ui.icon('check') }}{{ ft.word|capitalize }}</span>
         {% elif ft.tone == 'warn' %}
@@ -56,6 +56,7 @@
         {% else %}
           <span class="k-pill" data-fit="{{ ft.word }}">{{ ft.word|capitalize }}</span>
         {% endif %}
+        {% if r.rescoring and not unscored %}<span class="pl-tag pl-tag--again" data-testid="row-rescoring" data-state="{{ r.rescoring.state }}" title="{{ r.rescoring.hint }}">{{ r.rescoring.title }}</span>{% endif %}
         {% if r.mine and r.mine != ft.word %}<span class="pl-tag" data-mine="{{ r.mine }}" title="The word you picked">you said {{ r.mine }}</span>{% endif %}
         {% if r.pursuit_id and r.pursuit_status and ft.group == 'applied' %}<span class="pl-tag pl-tag--on" title="Where this application stands" data-testid="pursuit-status">{{ r.pursuit_status|replace('_', ' ') }}</span>
         {% elif r.pursuit_id %}<span class="pl-tag pl-tag--on" data-testid="on-shortlist">{{ 'In my leads' if o.track == 'consulting' else 'On my shortlist' }}</span>{% endif %}
@@ -82,7 +83,7 @@
         <div class="pl-score"><small>{{ {'running': 'scoring…', 'queued': 'waiting', 'removed': 'not scored', 'hidden': 'not scored'}.get(r.scoring, '') }}</small>
           <span class="pl-age{% if v.found.fresh %} is-fresh{% endif %}" title="{{ v.found.title }}">{{ v.found.text }}</span></div>
       {% else %}
-        <div class="pl-score pl-score--{{ ft.tone }}" data-fit-score>{{ '%.1f'|format(ft.score) if ft.score is not none else '' }} <small>/ 5</small>
+        <div class="pl-score pl-score--{{ ft.tone }}" data-fit-score>{{ '%.1f'|format(ft.score) if ft.score is not none else '' }} <small>/ 5{% if r.rescoring and r.rescoring.again %}<span class="pl-earlier" data-testid="row-earlier"> earlier</span>{% endif %}</small>
           <span class="pl-age{% if v.found.fresh %} is-fresh{% endif %}" title="{{ v.found.title }}">{{ v.found.text }}</span></div>
       {% endif %}
       {% if not nf %}{{ more_menu(o.id, o.org_id, r.saved) }}{% endif %}

@@ -17,6 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import (
+    DocMaster,
+    DocSection,
+    DocSlot,
+    DocVariant,
     Evaluation,
     Label,
     Opportunity,
@@ -91,22 +95,56 @@ async def record_outcome(
     return row
 
 
+async def choice_texts(
+    session: AsyncSession, master_id: int | None, slot_key: str,
+    model_choice: str | None, operator_choice: str | None,
+) -> dict[str, str | None]:
+    """The wording behind each choice key, for `selection_override.*_choice_text`. A bullet key
+    names a variant of the slot, "summary" a summary variant of the master; show/hide choices
+    (skills) have no wording. Unknown or missing keys give None."""
+    out: dict[str, str | None] = {"model_choice_text": None, "operator_choice_text": None}
+    if master_id is None or slot_key == "skills" or slot_key.startswith("skills:"):
+        return out
+    texts: dict[str, str] = {}
+    if slot_key == "summary":
+        master = await session.get(DocMaster, master_id)
+        for v in (master.summary_variants if master else None) or []:
+            if v.get("key") is not None and v.get("text"):
+                texts[str(v["key"])] = str(v["text"])
+    else:
+        rows = (await session.execute(
+            select(DocVariant.key, DocVariant.text)
+            .join(DocSlot, DocSlot.id == DocVariant.doc_slot_id)
+            .join(DocSection, DocSection.id == DocSlot.doc_section_id)
+            .where(DocSection.doc_master_id == master_id, DocSlot.key == slot_key)
+        )).all()
+        texts = {k: t for k, t in rows if t}
+    out["model_choice_text"] = texts.get(model_choice) if model_choice else None
+    out["operator_choice_text"] = texts.get(operator_choice) if operator_choice else None
+    return out
+
+
 async def record_selection_override(
     session: AsyncSession,
     *,
-    doc_render_id: int,
+    doc_render_id: int | None,
     slot_key: str,
     model_choice: str | None,
     operator_choice: str | None,
     opportunity_id: int | None = None,
+    model_choice_text: str | None = None,
+    operator_choice_text: str | None = None,
 ) -> SelectionOverride:
-    """A resume/capability slot changed after model selection (consumed in Phase 8)."""
+    """A resume/capability slot changed after model selection (consumed in Phase 8). The row
+    outlives its render (D-DOC-7): the opportunity and the wordings are copied onto it."""
     row = SelectionOverride(
         doc_render_id=doc_render_id,
         opportunity_id=opportunity_id,
         slot_key=slot_key,
         model_choice=model_choice,
         operator_choice=operator_choice,
+        model_choice_text=model_choice_text,
+        operator_choice_text=operator_choice_text,
         created_at=utcnow_iso(),
     )
     session.add(row)

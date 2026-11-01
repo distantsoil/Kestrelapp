@@ -208,6 +208,8 @@ def _card(opp, ev, fit, org_name, *, mapping, conf, skills: list[str],
         "why": "" if pending else redact_text(why_it_fits(opp, ev_json), mapping, enabled=conf),
         "tags": [] if pending else skill_tags(skills, text),
         "consulting": consulting,
+        # Queued or running to score again (kestrel.web.rescoring); top_matches fills it in.
+        "rescoring": None,
         "strong": bool(settings is not None and not pending
                        and is_strong_match(fit.score, settings)),
     }
@@ -256,11 +258,19 @@ async def top_matches(s, track: str, *, limit: int = CARD_LIMIT, settings=None) 
                   skills=skills, settings=settings)
         )
     cards.sort(key=_rank)
-    return {"cards": cards[:limit], "found": len(rows), "n": len(cards), "pending": pending}
+    total = len(cards)  # every match, not only the ones shown (the "N matches" count)
+    cards = cards[:limit]
+    from kestrel.web.rescoring import rescoring_states
+
+    found = await rescoring_states(s, [c["id"] for c in cards])
+    for c in cards:
+        c["rescoring"] = found.get(c["id"])
+    return {"cards": cards, "found": len(rows), "n": total, "pending": pending}
 
 
 async def cards_after(
-    s, track: str, have: set[int], settings=None, pending: set[int] | None = None
+    s, track: str, have: set[int], settings=None, pending: set[int] | None = None,
+    again: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """The cards the page does not have yet, each with the id of the card it sits before (None:
     at the end), so a new match opens a gap at its ranked position (live updates, D-UI-156).
@@ -276,6 +286,14 @@ async def cards_after(
         before = next((x["id"] for x in cards[i + 1:] if x["id"] in have), None)
         out.append({"card": c, "before": before})
     done = [c for c in cards if c["id"] in (pending or set()) and not c["pending"]]
+    # A card whose Being scored again state moved on since the page drew it (queued became
+    # running, a rescore began, or the new score landed) is redrawn (issue #74). `again` holds the
+    # states the page shows; a card it does not list shows none.
+    for c in cards:
+        if c["id"] in have and c not in done:
+            now = c["rescoring"].state if c["rescoring"] else ""
+            if now != (again or {}).get(c["id"], ""):
+                done.append(c)
     return {"new": out, "done": done, "found": data["found"], "ids": [c["id"] for c in cards]}
 
 

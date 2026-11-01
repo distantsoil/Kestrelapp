@@ -748,11 +748,17 @@ class VerdictOverride(Base):
 class SelectionOverride(Base):
     __tablename__ = "selection_override"
     id: Mapped[int] = mapped_column(primary_key=True)
-    doc_render_id: Mapped[int] = mapped_column(ForeignKey("doc_render.id"), index=True)
+    # Null once the render is gone (D-DOC-7: deleting a resume keeps what Kestrel learned).
+    doc_render_id: Mapped[int | None] = mapped_column(
+        ForeignKey("doc_render.id", ondelete="SET NULL"), index=True, nullable=True)
     opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("opportunity.id"), nullable=True)
     slot_key: Mapped[str] = mapped_column(String)
     model_choice: Mapped[str | None] = mapped_column(String, nullable=True)
     operator_choice: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The wording each choice key stood for, copied when the row is written: the keys name
+    # variants that go with their resume, the text keeps the row meaningful without it.
+    model_choice_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operator_choice_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
 
 

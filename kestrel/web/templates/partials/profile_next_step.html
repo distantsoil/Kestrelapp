@@ -1,15 +1,32 @@
-{# The one next step for a thin or stale profile (issues #67, #68), shared by Today and Profile.
-   `readiness` is kestrel.services.profile_readiness.Readiness; `back` is where Score again returns. #}
-{% if rescoring == 'confirm' %}
-<span class="sf-msg" data-testid="rescoring-confirm">Scoring uses an online model, so nothing was queued. Choose Score again on the Pipeline page to confirm it.</span>
-{% elif rescoring %}
-<span class="sf-msg" data-testid="rescoring-note">{{ rescoring }} {{ 'role is' if rescoring == '1' else 'roles are' }} waiting to be scored again.</span>
-{% else %}
+{# The one next step for a thin or stale profile (issues #67, #68, #71), shared by Today and Profile.
+   `readiness` is kestrel.services.profile_readiness.Readiness; `back` is where Score again returns.
+   `ask` (kestrel.web.score_again_ask.ask_context) is set when scoring would go to an online model:
+   the same ask-first panel the other online actions use, in place; nothing is queued until it is
+   confirmed. The forms swap this block in place; without script they redirect back. #}
+{% import "partials/online_ask.html" as online_ask %}
+{% if rescoring == 'confirm' and ask %}
+<form class="k-form-inline" method="post" action="/api/profile/score-again" data-testid="score-again-ask-form"
+      hx-post="/api/profile/score-again" hx-target="closest [data-testid=thin-profile-notice]" hx-swap="innerHTML">
+  <input type="hidden" name="track" value="{{ track }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  <input type="hidden" name="tab" value="{{ tab|default('') }}">
+  <input type="hidden" name="online_approval" value='{{ ask.approval_json }}'>
+  {% if ask.problem %}<p role="alert" data-testid="score-again-problem">{{ ask.problem }}</p>{% endif %}
+  {{ online_ask.ask(ask.route, 'score-again', 'score these roles again') }}
+  <button class="k-btn k-btn--sm" type="submit" data-testid="score-again-send">Score again</button>
+</form>
+{% elif rescoring and rescoring != 'confirm' %}
+<span class="sf-msg" data-testid="rescoring-note">Queued {{ rescoring }} {{ 'role' if rescoring == '1' else 'roles' }} to score again.</span>
+{% elif inplace %}
+<span class="sf-msg" data-testid="rescoring-note">No roles need scoring again.</span>
+{% elif readiness %}
 <span class="sf-msg">{{ readiness.line }}
   {% if readiness.next_step == 'score_again' %}
-  <form class="k-form-inline" method="post" action="/api/profile/score-again" data-testid="score-again-form">
+  <form class="k-form-inline" method="post" action="/api/profile/score-again" data-testid="score-again-form"
+        hx-post="/api/profile/score-again" hx-target="closest [data-testid=thin-profile-notice]" hx-swap="innerHTML">
     <input type="hidden" name="track" value="{{ track }}">
     <input type="hidden" name="back" value="{{ back }}">
+  <input type="hidden" name="tab" value="{{ tab|default('') }}">
     <button class="k-btn k-btn--sm" type="submit" data-testid="score-again-go">Score again</button>
   </form>
   {% else %}
