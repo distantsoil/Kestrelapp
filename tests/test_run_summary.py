@@ -31,10 +31,11 @@ from kestrel.db.models import (
 from kestrel.pipeline import runlog
 from kestrel.services import tracks
 from kestrel.web import deps
+from tests import clock_seed
 
 
 def _ago(**kw) -> str:
-    return iso(datetime.now(UTC) - timedelta(**kw))
+    return iso(clock_seed.ago(horizon=timedelta(minutes=30), **kw))  # stalls of 30+ min stay exact
 
 
 def _fresh_engine():

@@ -18,7 +18,7 @@ The Match map groups posting requirements as met, partly met, or not met. **+ I 
 
 In **Your view**, choose **Yes** to agree with Kestrel or **Adjust** to rate the match yourself. Adjust also offers optional nudges to any dimension score and an optional note of up to 500 characters. Select **Save my rating** to keep it. After saving, use **Change** to revise it.
 
-If review is underway, the page says **Being scored** and offers **Score again**. If a rule set the role aside, the card names the rule, links to it, and may offer **Score this role anyway**. If model or service details changed while approval was pending, **Waiting for your confirmation** says nothing was sent and offers **Score again** to review the destination.
+If review is underway, the page says **Being scored** and offers **Score again**. If a rule set the role aside, the card names the rule, links to it, and may offer **Score this role anyway**. If the posting had no description, the card reads **Won't be scored unless you act**, says there is nothing to read, and offers **Paste the description** (Kestrel checks the text against your rules, then scores it), **Open posting**, and **Score anyway**. A hidden role asks you to unhide it first. If model or service details changed while approval was pending, **Waiting for your confirmation** says nothing was sent and offers **Score again** to review the destination.
 
 ## Decide and prepare
 

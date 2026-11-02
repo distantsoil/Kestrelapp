@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -564,5 +565,208 @@ def test_track_switch_pill_keeps_air_around_label_and_badge(live, monkeypatch):
         }""")
         assert got["left"] >= 6 and got["gap"] >= 4 and got["right"] >= 6 and got["fits"], got
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------------- the bell badge (#95, D-UI-236)
+def _set_unread(n: int) -> None:
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Notification
+
+    async def go() -> None:
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            await s.execute(delete(Notification))
+            s.add_all(Notification(kind="run_finished", severity="info", title=f"Run {i}")
+                      for i in range(n))
+            await s.commit()
+        await engine.dispose()
+
+    # Playwright's sync API keeps a loop running on this thread, so asyncio.run needs its own.
+    with ThreadPoolExecutor(1) as pool:
+        pool.submit(asyncio.run, go()).result()
+
+
+_BADGE_JS = """() => {
+  const q = s => document.querySelector(s);
+  const b = q('#bellcount'), btn = q('[data-testid="bell"]');
+  const br = b.getBoundingClientRect(), cr = btn.getBoundingClientRect();
+  const cs = getComputedStyle(b);
+  // Share of the badge's own area (a capsule) that lies inside the bell circle.
+  const r = br.height / 2, cx = cr.left + cr.width / 2, cy = cr.top + cr.height / 2;
+  let inBadge = 0, both = 0;
+  for (let x = br.left; x < br.right; x += 0.5) for (let y = br.top; y < br.bottom; y += 0.5) {
+    const nx = Math.min(Math.max(x, br.left + r), br.right - r);
+    if (Math.hypot(x - nx, y - (br.top + r)) > r) continue;
+    inBadge++;
+    if (Math.hypot(x - cx, y - cy) <= cr.width / 2) both++;
+  }
+  const others = Array.from(document.querySelectorAll('.k-tools > *, .k-tools button, .k-avatar'))
+    .filter(e => e !== btn && !btn.contains(e) && !e.contains(btn) && e.offsetParent !== null)
+    .map(e => e.getBoundingClientRect()).filter(o => o.width > 0 && o.height > 0);
+  const hit = (x, y) => {
+    const e = document.elementFromPoint(x, y); return e === b || b.contains(e); };
+  return {
+    text: b.textContent, aria: btn.getAttribute('aria-label'),
+    hidden: b.getAttribute('aria-hidden'),
+    color: cs.color, bg: cs.backgroundColor, shadow: cs.boxShadow, fontSize: cs.fontSize,
+    box: [br.left, br.top, br.right, br.bottom], w: br.width, h: br.height,
+    overlap: both / inBadge, vw: innerWidth, vh: innerHeight,
+    paper: getComputedStyle(btn).backgroundColor,
+    clash: others.some(o => br.left < o.right && o.left < br.right
+                          && br.top < o.bottom && o.top < br.bottom),
+    visibleCorners: [hit(br.left + r, br.top + 3), hit(br.right - r, br.bottom - 3),
+                     hit(br.left + 3, br.top + r), hit(br.right - 3, br.top + r)],
+    textFits: b.scrollWidth <= b.clientWidth + 1,
+    glyph: getComputedStyle(btn.querySelector('svg')).color,
+  };
+}"""
+
+
+def _rgb(css: str) -> tuple[float, float, float]:
+    import re
+
+    nums = [float(x) for x in re.findall(r"[\d.]+", css)[:3]]
+    return nums[0], nums[1], nums[2]
+
+
+def _ratio(fg: str, bg: str) -> float:
+    def lum(c: tuple[float, float, float]) -> float:
+        lin = [(v / 255) / 12.92 if v / 255 <= 0.03928 else (((v / 255) + 0.055) / 1.055) ** 2.4
+               for v in c]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+    hi, lo = sorted((lum(_rgb(fg)), lum(_rgb(bg))), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 1440), ("light", 760),
+                                         ("dark", 760)])
+@pytest.mark.parametrize("unread,label", [(3, "3"), (12, "9+")])
+def test_bell_badge_contrast_and_geometry(live, theme, width, unread, label):
+    base, browser, _bridge = live
+    _set_unread(unread)
+    ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/help")
+        page.wait_for_function(
+            "document.getElementById('bellcount').textContent.trim() !== ''")
+        page.wait_for_function("document.getElementById('bellcount').getAnimations().length === 0")
+        d = page.evaluate(_BADGE_JS)
+        assert d["text"] == label and d["hidden"] == "true"
+        assert d["aria"] == f"Notifications, {unread} unread"  # the true count, not "9+"
+        assert _ratio(d["color"], d["bg"]) >= 4.5, d  # the number on the badge
+        assert _ratio(d["bg"], d["paper"]) >= 3, d  # the badge against its ring and circle
+        assert _ratio(d["glyph"], d["paper"]) >= 3, d  # the bell glyph on its circle
+        assert d["paper"] in d["shadow"] and "2px" in d["shadow"], d  # the 2 px ring
+        assert d["fontSize"] == "11px"
+        assert d["w"] >= 18 and d["h"] >= 18 and abs(d["h"] - 18) < 0.5, d
+        assert 0.30 <= d["overlap"] <= 0.50, d  # on the circle's edge, not floating off it
+        left, top, right, bottom = d["box"]
+        assert left >= 0 and top >= 0 and right <= d["vw"] and bottom <= d["vh"], d
+        assert not d["clash"], d  # no neighbouring control under the badge or its ring
+        assert all(d["visibleCorners"]) and d["textFits"], d  # not clipped by an ancestor
+    finally:
+        ctx.close()
+
+
+_POLL = "htmx.ajax('GET', '/notifications/bell', {target: '#bellcount', swap: 'innerHTML'})"
+_STYLE = "getComputedStyle(document.getElementById('bellcount')).{}"
+_ANIMS = """() => { const b = document.getElementById('bellcount');
+  return b.classList.contains('CLS') && b.getAnimations().map(a => a.animationName) }"""
+_NO_ANIM = """() => { const b = document.getElementById('bellcount');
+  return !b.classList.contains('is-in') && !b.classList.contains('is-tick')
+    && b.getAnimations().length === 0 }"""
+_FRAMES = """
+window.__frames = [];
+document.addEventListener('DOMContentLoaded', () => {
+  const sample = () => {
+    const b = document.getElementById('bellcount');
+    const btn = document.querySelector('[data-testid=bell]');
+    const cs = getComputedStyle(b);
+    window.__frames.push({text: b.textContent, display: cs.display, opacity: cs.opacity,
+      anims: b.getAnimations().length, aria: btn.getAttribute('aria-label')});
+    if (window.__frames.length < 40) requestAnimationFrame(sample);
+  };
+  requestAnimationFrame(sample);
+});
+"""
+
+
+def test_bell_badge_is_hidden_at_zero_and_ticks_when_the_count_changes(live):
+    base, browser, _bridge = live
+    _set_unread(0)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/help")
+        page.wait_for_load_state("networkidle")
+        assert page.evaluate(_STYLE.format("display")) == "none"
+        assert page.get_attribute('[data-testid="bell"]', "aria-label") == "Notifications"
+        # Hidden to shown replays the entry animation, not the tick.
+        _set_unread(2)
+        page.evaluate(_POLL)
+        names = page.wait_for_function(_ANIMS.replace("CLS", "is-in")).json_value()
+        assert names == ["k-badge-in"], names
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"bell\"]').getAttribute('aria-label')"
+            " === 'Notifications, 2 unread'")
+        # Both classes clear on animationend, so the next change is a real, observable tick.
+        page.wait_for_function(_NO_ANIM)
+        _set_unread(3)
+        page.evaluate(_POLL)
+        names = page.wait_for_function(_ANIMS.replace("CLS", "is-tick")).json_value()
+        assert names == ["k-tick"], names
+        page.wait_for_function(_NO_ANIM)
+        # Gone again at zero, and back with the entry animation.
+        _set_unread(0)
+        page.evaluate(_POLL)
+        page.wait_for_function("document.getElementById('bellcount').textContent === ''")
+        assert page.evaluate(_STYLE.format("display")) == "none"
+        _set_unread(1)
+        page.evaluate(_POLL)
+        names = page.wait_for_function(_ANIMS.replace("CLS", "is-in")).json_value()
+        assert names == ["k-badge-in"], names
+    finally:
+        ctx.close()
+
+
+def test_bell_badge_is_final_in_the_first_painted_frame(live):
+    base, browser, _bridge = live
+    _set_unread(3)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    page.add_init_script(_FRAMES)
+    try:
+        page.goto(base + "/help")
+        page.wait_for_function("(window.__frames || []).length >= 40")
+        frames = page.evaluate("window.__frames")
+        first = frames[0]
+        assert first["text"] == "3" and first["display"] != "none", first
+        assert first["opacity"] == "1", first
+        assert first["aria"] == "Notifications, 3 unread", first
+        # No frame shows an entry or tick animation: nothing changed after load.
+        assert all(f["text"] == "3" and f["anims"] == 0 and f["opacity"] == "1" for f in frames), \
+            frames
+    finally:
+        ctx.close()
+
+
+def test_bell_badge_motion_is_off_under_reduced_motion(live):
+    base, browser, _bridge = live
+    _set_unread(3)
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce")
+    page = ctx.new_page()
+    try:
+        page.goto(base + "/help")
+        page.wait_for_function("document.getElementById('bellcount').textContent === '3'")
+        assert page.evaluate(_STYLE.format("animationName")) == "none"
     finally:
         ctx.close()

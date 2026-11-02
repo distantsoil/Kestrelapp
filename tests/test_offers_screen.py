@@ -1134,3 +1134,284 @@ def test_parse_amount_is_linear_on_long_runs_of_digits():
     ov.parse_amount("0" * 50_000 + "x" + "0," * 25_000)
     assert time.perf_counter() - start < 1.0
     assert ov._find_numbers("1,234,567 and 2.5m") == [("1,234,567", ""), ("2.5", "m")]
+
+
+# ------------------------------------------------- Negotiate before an offer arrives (D-UI-236)
+@pytest.fixture
+def prep_profile(monkeypatch):
+    """A floor and target on the Profile, for the page and the draft path."""
+    import types
+
+    def profile(_track):
+        return types.SimpleNamespace(
+            proof_points=[],
+            employment_terms=types.SimpleNamespace(comp_floor_usd=120000, comp_target_usd=150000),
+            consulting_terms=types.SimpleNamespace(day_rate_floor=450, day_rate_target=600),
+        )
+
+    monkeypatch.setattr("kestrel.web.pages.offers.load_profile", profile)
+
+
+async def _no_offers() -> None:
+    await offers_seed.seed_async(consulting=False, past=False)
+    async with _sm()() as s:
+        for o in (await s.execute(select(Offer))).scalars().all():
+            await s.delete(o)
+        await s.commit()
+
+
+async def test_negotiate_with_no_offer_is_a_preparation_page_not_a_copy_of_compare(prep_profile):
+    await _no_offers()
+    with _client() as c:
+        neg = c.get("/offers?tab=negotiate").text
+        cmp_ = c.get("/offers?tab=compare").text
+    assert 'data-testid="of-negotiate-prep"' in neg and 'data-testid="of-market"' not in neg
+    assert 'data-testid="of-market"' in cmp_ and 'data-testid="of-negotiate-prep"' not in cmp_
+    assert "Get ready to negotiate" in neg
+    assert "Drafts stay on this computer and Kestrel never sends them." in neg
+    assert 'data-testid="of-record-empty"' in neg and 'data-testid="of-prep-compare"' in neg
+    # The floor and target are Profile's, read only, with the way to change them.
+    assert re.search(r'of-prep-floor">\s*\$120k', neg)
+    assert re.search(r'of-prep-target">\s*\$150k', neg)
+    assert 'href="/profile"' in neg and "Change in Profile" in neg
+    for ask in ("Bonus", "Equity", "Signing bonus", "Start date", "Level or title",
+                "Remote days", "Time off", "Review timing"):
+        assert ask in neg
+    # No chart and no market numbers, so no sample size is claimed.
+    assert 'data-testid="of-group"' not in neg and "What roles like yours pay" not in neg
+
+
+async def test_only_the_first_number_question_can_be_drafted_without_an_offer(prep_profile):
+    await _no_offers()
+    with _client() as c:
+        t = c.get("/offers?tab=negotiate").text
+    cards = re.findall(r'<button[^>]*data-testid="of-prep-sit"[^>]*>.*?</button>', t, re.S)
+    assert len(cards) == 7
+    open_ = [x for x in cards if 'data-open="1"' in x]
+    assert len(open_) == 1 and "Deflecting the first-number question" in open_[0]
+    assert "disabled" not in open_[0].split(">")[0]
+    locked = [x for x in cards if 'data-open="0"' in x]
+    assert len(locked) == 6 and all("disabled" in x.split(">")[0] for x in locked)
+    assert all("Record an offer to draft this" in x for x in locked)
+    # The walk-away starts from the Profile floor, which the operator can change; nothing is saved.
+    assert 'id="of-walk-val" value="120000"' in t and 'value="$120,000"' in t
+    assert 'data-locked="0"' in t and "Filled in from your Profile floor" in t
+    assert "Kestrel never picks it for you" in t
+    # /mock needs an opportunity, so the page links nowhere to it.
+    assert "/mock" not in t
+    assert "—" not in t
+
+
+async def test_consulting_preparation_has_its_own_asks_and_nothing_to_draft(prep_profile):
+    await _no_offers()
+    with _client() as c:
+        t = c.get("/offers?tab=negotiate&track=consulting").text
+    assert 'data-testid="of-negotiate-prep"' in t
+    for ask in ("Scope", "Payment terms", "Renewal", "Exclusivity"):
+        assert ask in t
+    assert "Bonus" not in t and "Equity" not in t
+    assert re.search(r'of-prep-floor">\s*\$450', t) and "a day" in t
+    assert 'data-open="1"' not in t and 'id="of-walk"' not in t
+    assert "—" not in t
+
+
+async def test_with_an_offer_recorded_negotiate_is_the_offer_form_unchanged(prep_profile):
+    await offers_seed.seed_async()
+    with _client() as c:
+        t = c.get("/offers?tab=negotiate").text
+    assert 'data-testid="of-negotiate"' in t and 'data-testid="of-negotiate-prep"' not in t
+    assert t.count('data-testid="of-sit"') == 7
+
+
+async def test_the_preparation_draft_asks_the_model_for_the_one_situation_and_stores_nothing(
+    drafts, prep_profile
+):
+    await _no_offers()
+    async def counts():
+        async with _sm()() as s:
+            return [len((await s.execute(select(m))).scalars().all()) for m in (Offer, Pursuit)]
+
+    before = await counts()
+    with _client() as c:
+        r = c.post("/offers/prep/scripts",
+                   data={"walk_away": "140000", "situation": "first_number_deflection"})
+    assert len(drafts) == 1
+    call = drafts[0]
+    assert call["pid"] is None and call["walk_away"] == "140000"
+    assert call["scenarios"] == ["first_number_deflection"] and call["track"] == "employment"
+    assert "Draft only" in r.text and "Kestrel never sends it" in r.text
+    assert await counts() == before
+
+
+async def test_the_preparation_draft_refuses_everything_that_needs_an_offer(drafts, prep_profile):
+    await _no_offers()
+    with _client() as c:
+        other = c.post("/offers/prep/scripts",
+                       data={"walk_away": "140000", "situation": "counter_below_target"})
+        none = c.post("/offers/prep/scripts", data={"walk_away": "140000"})
+        con = c.post("/offers/prep/scripts?track=consulting",
+                     data={"walk_away": "500", "situation": "first_number_deflection"})
+        blank = c.post("/offers/prep/scripts",
+                       data={"walk_away": " ", "situation": "first_number_deflection"})
+        low = c.post("/offers/prep/scripts", data={
+            "walk_away": "140000", "ask": "100000", "situation": "first_number_deflection"})
+    assert "Record an offer to draft this one." in other.text
+    assert "Record an offer to draft this one." in none.text
+    assert "Record an offer to draft this one." in con.text
+    assert "A walk-away number is required" in blank.text
+    assert "below" in low.text.lower()
+    assert drafts == []  # the model was never asked
+
+
+async def test_drafting_with_no_pursuit_tells_the_model_there_is_no_offer(monkeypatch):
+    from kestrel.negotiation import scripts as sc
+
+    seen: dict = {}
+
+    async def fake_run(_s, _c, _spec, messages, **_kw):
+        seen["user"] = messages[1]["content"]
+        return type("R", (), {"ok": False, "value": None})()
+
+    class _S:
+        async def commit(self):
+            pass
+
+    monkeypatch.setattr(sc, "run_prompt_hosted", fake_run)
+    monkeypatch.setattr(sc, "load_profile", lambda _t: None)
+    out = await sc.draft_scripts(_S(), None, None, walk_away="140000",
+                                 scenarios=["first_number_deflection", "competing_offer"])
+    assert out is None
+    assert "no offer recorded yet" in seen["user"]
+    assert "Deflecting the first-number question" in seen["user"]
+    assert "competing offer without bluffing" not in seen["user"]  # never a bluff
+
+
+async def test_without_a_profile_floor_the_walk_away_is_blank_and_locked(monkeypatch):
+    import types
+
+    monkeypatch.setattr("kestrel.web.pages.offers.load_profile", lambda _t: types.SimpleNamespace(
+        proof_points=[], employment_terms=types.SimpleNamespace(
+            comp_floor_usd=None, comp_target_usd=None)))
+    await _no_offers()
+    with _client() as c:
+        t = c.get("/offers?tab=negotiate").text
+    assert 'id="of-walk-val" value=""' in t and 'data-locked="1"' in t
+    assert 'placeholder="For example 140,000"' in t and "Filled in from your Profile" not in t
+    assert "Not set" in t
+
+
+async def test_online_preparation_names_the_model_and_never_says_local(drafts, monkeypatch,
+                                                                       prep_profile):
+    _route(monkeypatch, online=True, employer="hidden")
+    await _no_offers()
+    with _client() as c:
+        t = c.get("/offers?tab=negotiate").text
+    head = t[t.index('data-testid="of-negotiate-prep"'):]
+    assert "Drafts stay on this computer" not in head.split('data-testid="of-prep-numbers"')[0]
+    assert "vendor/draft-model, an online model, only after you confirm" in t
+    assert 'data-testid="of-send"' in t and 'name="confirmed"' in t
+    # Its own what-is-sent line: no offer terms, no pay data.
+    assert "your walk-away, your proof points, and that no offer is recorded yet" in t
+    send = t[t.index('data-testid="of-send"'):t.index('name="confirmed"')]
+    assert "offer terms" not in send and "pay data" not in send
+
+
+async def test_local_preparation_says_drafts_stay_on_this_computer(drafts, monkeypatch,
+                                                                   prep_profile):
+    _route(monkeypatch, online=False)
+    await _no_offers()
+    with _client() as c:
+        t = c.get("/offers?tab=negotiate").text
+    assert "Drafts stay on this computer and Kestrel never sends them." in t
+    assert "an online model, only after you confirm" not in t
+    assert 'data-testid="of-send"' not in t
+
+
+@pytest.fixture
+def no_client(monkeypatch):
+    """The model client must never even be built for a send that is not allowed."""
+    built: list[int] = []
+
+    def boom(*_a, **_k):
+        built.append(1)
+        raise AssertionError("the model client was built")
+
+    monkeypatch.setattr("kestrel.web.pages.offers.llm_client.LLMClient", boom)
+    return built
+
+
+_PREP = {"walk_away": "140000", "situation": "first_number_deflection"}
+
+
+async def test_prep_draft_online_send_is_refused_unconfirmed_and_never_reaches_the_model(
+    drafts, no_client, monkeypatch, prep_profile
+):
+    _route(monkeypatch, online=True)
+    await _no_offers()
+    with _client() as c:
+        none = c.post("/offers/prep/scripts", data=_PREP)
+        unticked = c.post("/offers/prep/scripts", data={
+            **_PREP, "model": "vendor/draft-model", "dest": _dest()})
+    assert "Nothing was sent" in none.text and "Nothing was sent" in unticked.text
+    assert drafts == [] and no_client == []
+
+
+async def test_prep_draft_confirmed_for_another_model_is_refused(
+    drafts, no_client, monkeypatch, prep_profile
+):
+    _route(monkeypatch, online=True)
+    await _no_offers()
+    with _client() as c:
+        other = c.post("/offers/prep/scripts", data={
+            **_PREP, "confirmed": "1", "model": "some/other-model", "dest": _dest()})
+        elsewhere = c.post("/offers/prep/scripts", data={
+            **_PREP, "confirmed": "1", "model": "vendor/draft-model",
+            "dest": "other|https://elsewhere.example/v1|vendor/draft-model"})
+    assert "Nothing was sent" in other.text and "Nothing was sent" in elsewhere.text
+    assert drafts == [] and no_client == []
+
+
+async def test_prep_draft_is_held_when_confidential_mode_has_no_employer(
+    drafts, no_client, monkeypatch, prep_profile
+):
+    _route(monkeypatch, online=True, employer="held")
+    await _no_offers()
+    with _client() as c:
+        page = c.get("/offers?tab=negotiate").text
+        r = c.post("/offers/prep/scripts", data={
+            **_PREP, "confirmed": "1", "model": "vendor/draft-model", "dest": _dest()})
+    assert "This send will be held" in page
+    assert "Nothing was sent" in r.text and "Settings" in r.text
+    assert drafts == [] and no_client == []
+
+
+async def test_prep_draft_confirmed_online_send_reaches_the_model(drafts, monkeypatch,
+                                                                  prep_profile):
+    _route(monkeypatch, online=True)
+    await _no_offers()
+    with _client() as c:
+        ok = c.post("/offers/prep/scripts", data={
+            **_PREP, "confirmed": "1", "model": "vendor/draft-model", "dest": _dest()})
+    assert "Draft only" in ok.text and len(drafts) == 1 and drafts[0]["pid"] is None
+
+
+async def test_a_model_failure_on_the_prep_path_is_plain_not_no_pursuit(drafts, prep_profile):
+    await _no_offers()
+    drafts_result = drafts  # the fake returns None to stand for a quarantined response
+    from kestrel.web.pages import offers as page
+
+    async def none(*_a, **_k):
+        return None
+
+    import pytest as _p
+
+    mp = _p.MonkeyPatch()
+    mp.setattr(page, "draft_scripts", none)
+    try:
+        with _client() as c:
+            r = c.post("/offers/prep/scripts", data=_PREP)
+    finally:
+        mp.undo()
+    assert "Kestrel could not draft this right now. Try again." in r.text
+    assert "No pursuit found" not in r.text
+    assert drafts_result == []

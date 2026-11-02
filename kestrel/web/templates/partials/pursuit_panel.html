@@ -16,7 +16,7 @@
 </div>
 <div class="k-flyout__body">
   <div class="ap-pmeta">
-    {% if c.fit.score %}<span class="k-pill k-pill--good">{{ ic.icon('check') }}Fit {{ c.fit.score }}</span>{% else %}<span class="k-pill k-pill--info"{% if c.fit.unscored %} title="{{ c.fit.unscored }}" data-testid="unscored-why"{% endif %}>{{ 'Not scored' if c.fit.unscored else 'Being scored' }}</span>{% endif %}
+    {% if c.fit.score %}<span class="k-pill k-pill--good">{{ ic.icon('check') }}Fit {{ c.fit.score }}</span>{% else %}<span class="k-pill k-pill--info"{% if c.fit.unscored %} title="{{ c.fit.unscored }}" data-testid="unscored-why"{% endif %}>{{ unscored_label if c.fit.unscored else 'Being scored' }}</span>{% endif %}
     <button type="button" class="ap-stg" data-stage-menu aria-haspopup="menu" aria-label="Stage: {{ c.stage_label }}. Change stage">{{ c.stage_label }}{{ ic.icon('down', 'k-ic--sm') }}</button>
     {% if c.priority %}<span class="k-pill k-pill--bad">High priority</span>{% endif %}
     {% if c.pay %}<span class="ap-v">{{ c.pay }}</span>{% endif %}

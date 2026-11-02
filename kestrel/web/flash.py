@@ -33,6 +33,14 @@ FLASH_MESSAGES: dict[str, str] = {
         "Hosted mode will apply once step 6 is complete under Settings > Hosted."
     ),
     "profile_recorded": "Hardware profile recorded.",
+    "description_saved": (
+        "Description saved. Kestrel will check it against your rules and score it."
+    ),
+    "description_hidden": "Unhide it first, then paste the description.",
+    "description_short": "That is too short to score. Paste the whole posting.",
+    "description_long": "That is too long to paste. Keep it under 50,000 characters.",
+    "description_has": "This role already has its description.",
+    "description_gone": "That role is gone.",
 }
 
 

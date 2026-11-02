@@ -14,7 +14,7 @@ from kestrel import paths
 from kestrel.db.base import iso
 from kestrel.db.engine import forget_engine, make_async_engine
 from kestrel.db.models import Evaluation, Opportunity, Run, ScrapeRun, Source, Task
-from tests import retry_seed
+from tests import clock_seed, retry_seed
 
 # (hours ago it started, minutes it took, status, mode, scrape counts, tier1, tier2, note)
 HISTORY = [
@@ -153,7 +153,9 @@ async def seed_async(*, active: bool = False) -> dict:
                         )
                     )
         if active:
-            start = now - timedelta(minutes=8)
+            start = clock_seed.ago_within(
+                timedelta(minutes=8), clock_seed.local_day_start(now),
+                horizon=timedelta(minutes=10), now=now)
             run = Run(
                 name="desktop",
                 status="running",

@@ -602,14 +602,25 @@ right-aligned.
   leads on a signal opens an inline form (next step, prefilled "Research the company"; due Today,
   This week or Next week) and creates a pursuit from existing fields only (status, `next_action`,
   `next_action_at`); there are no contacts, stages or amounts, and Kestrel is not a CRM.
-- Fit groups in order (D-UI-198): Worth a look, Maybe, Applied, Not a fit, Being scored, Scoring
-  failed. All but Not a fit page together, 25 rows per group with "Show 25 more" and state kept in the URL. **Applied**
+- Fit groups in order (D-UI-198): Worth a look, Maybe, Applied, Not a fit, Being scored, Won't be
+  scored unless you act, Scoring failed. All but Not a fit page together, 25 rows per group with "Show 25 more" and state kept in the URL. **Applied**
   (D-UI-51 amended, #37) holds a role with an open pursuit at `applied` or
   later (`APPLIED_OR_LATER`): it leaves Worth a look, Today's Decisions waiting and the Pipeline badge,
   and its row shows the pursuit status as a pill ("applied", "interviewing") instead of "on my
-  shortlist". A merely shortlisted role stays in Worth a look. An unscored row's pill says why
-  (D-UI-81, #34): scoring now, queued, background (a company-board role waiting in the lane),
-  held (its track is switched off), not queued, failed or stuck. Under the Being scored header a
+  shortlist". A merely shortlisted role stays in Worth a look. An unscored row's chip says why
+  (D-UI-81, #34, issue #90, D-UI-236), one chip per reason and none of them says rejected or
+  failed: **Waiting** (not queued yet or queued; "N ahead" when known; muted, dashed), **Paused**
+  (its track is off, or it waits for a free slot in the background lane; action Turn track on),
+  **Scoring** (a model is reading it), **No description**, **Hidden: applied** and **Taken off
+  retry list**. The first three sit in **Being scored**. The last three sit in a second group,
+  **Won't be scored unless you act** (it was "Not scored", which read as "not scored yet"), because
+  nothing scores them until the operator acts: **Paste the description** (stores the text on the
+  role, sends it back to Tier 0 and scores it through the normal pipeline) and **Open posting**
+  for an empty posting, **Put it back** for a hidden-applied role, **Undo** for a retry removal.
+  Hidden-applied roles are listed only in the hidden view. A role that stopped is a **Stopped** chip
+  (muted, dashed, in Being scored) with Score again. A pasted description is capped at 50,000
+  characters, is refused for a hidden role ("Unhide it first"), and the role page offers the same
+  Paste the description for an empty posting. Chips fade when their state changes; reduced motion turns it off. Under the Being scored header a
   note counts legacy background roles and links to Sources to recheck and score current matches
   locally. When either scoring tier uses an online model, they wait for local models instead
   (D-SRC-13). The
@@ -966,7 +977,14 @@ dialog. Tabs: **Prep pack**, **Practice**, **Story bank**.
 - *Story bank*: eight theme tiles (strong, one story, no story yet), a merge proposal card
   (Review and merge opens the story in the sheet; Keep separate offers Undo for ten minutes,
   restoring the exact proposal and its links while leaving later changes alone), and story cards whose edit
-  opens the sheet prefilled with the operator's words (saving keeps them unchanged).
+  opens the sheet prefilled with the operator's words (saving keeps them unchanged). A draft the
+  model wrote can carry small inline marks in that sheet (issue #93, D-UI-232): under a field,
+  a stock phrase the plain-writing check found or a number no sketch or proof point
+  states ("Check ...: not in your sketches or proof points"); under the fields, questions for the
+  person. The note "Kestrel will not rewrite your story" stays beside them. Marks show on drafts
+  only, never on the person's own words, and clear when they save. Marks are on stories only: the
+  other generated-prose surfaces record their flags (cover, mock critique, negotiation,
+  analytics, questions, company summary, follow-up) and showing them is a follow-up.
   Debrief capture stays on the role page. An empty state offers Build prep pack with a
   local-time estimate.
 
@@ -995,8 +1013,12 @@ out the trade-offs, never advises, never sends; stated once), and Record an offe
   terms, renewal, exclusivity). The draft is written on the operator's computer, proof-point
   phrases are highlighted with their source, and the operator can Draft again, edit inline, and
   **Copy draft** ("Paste it into your own email. Kestrel never sends it.").
+- *Negotiate, before an offer arrives*: a preparation page, not a copy of Compare. It shows the
+  floor and target from Profile, what to ask for beyond pay, and a card for each situation
+  Kestrel can draft. Only "Deflecting the first-number question" can be drafted now; the rest say
+  "Record an offer to draft this". No market chart. Nothing is sent.
 - *History*: past offers, with "Too few to show a pattern" under five.
-- *Before an offer arrives* (the empty state): "What roles like yours pay" (ranges against the
+- *Before an offer arrives* (the empty state of Compare only): "What roles like yours pay" (ranges against the
   floor and target, sample sizes in words, Too few under five) and a "Before an offer arrives"
   preparation list. The Record an offer sheet groups fields (offer, pay, dates and terms;
   Consulting: engagement, money, terms) and says "Leave unknown amounts blank. Zero means zero."
@@ -1091,7 +1113,7 @@ per row: **Try again** (same model), **Try with a different model...** (a menu: 
 and free, labeled quicker or more careful; online, uses your credit, and asks before sending),
 **Score it anyway** (skips the rules check, with a sentence that a role normally set aside may
 get a score, D-UI-74), and **Remove** (takes it off this list only; the role stays in Pipeline
-marked not scored; Undo brings it back). Rows can be selected for "Try all again". An online
+marked "Taken off retry list" in the group Won't be scored unless you act; Undo brings it back). Rows can be selected for "Try all again". An online
 retry shows a dialog first: the provider, the posting text and the short profile summary that
 would be sent, what is not sent (name, contact details, the resume file), the approximate cost
 and the credit left, and waits for a yes. A refused key points to Models. A failure that did not come

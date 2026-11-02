@@ -52,7 +52,7 @@ async def build_pending(session: AsyncSession) -> bool:
     return bool(n)
 
 
-TIER = "tier2"  # prompt story_consolidate/v1 runs on this tier
+TIER = "tier2"  # prompt story_consolidate/v2 runs on this tier
 BUILD_SENDS = "your interview notes and the interview sketches saved with each scored role"
 
 

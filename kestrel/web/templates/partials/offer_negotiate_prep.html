@@ -1,0 +1,68 @@
+{# Negotiate before an offer arrives (D-UI-236): a preparation page, not a copy of Compare. The
+   floor and target come from Profile (read only), then what else to ask for, then a card for each
+   situation Kestrel can draft. Only the first-number question can be drafted now; it uses the
+   same form, ids and draft panel as the offer form, so the same script drives both. Nothing here
+   is sent. #}
+{% from "ui/macros.html" import icon %}
+{% set open_sit = prep.sits|selectattr('open')|list %}
+{% set sends_line = prep.sends %}
+<section class="k-card of-hello of-np" data-testid="of-negotiate-prep">
+  <span class="k-badge">{{ icon('offers') }}</span>
+  <div class="k-grow"><b>Get ready to negotiate</b><p class="k-muted">{% if route.online %}Drafts are written by {{ route.model }}, an online model, only after you confirm. Kestrel never sends them.{% else %}Drafts stay on this computer and Kestrel never sends them.{% endif %}</p></div>
+  <a class="k-btn" data-testid="of-prep-compare" href="/offers?tab=compare" hx-get="/offers?tab=compare" hx-target="#of-body" hx-swap="innerHTML" hx-push-url="true">See market ranges</a>
+  <button type="button" class="k-btn k-btn--primary" data-testid="of-record-empty" hx-get="/offers/new" hx-target="#of-dialog" hx-swap="innerHTML">+ Record an offer</button>
+</section>
+<div class="of-two of-np">
+  <section class="k-card" data-testid="of-prep-numbers">
+    <header class="k-sec-head"><span class="k-badge k-badge--good">{{ icon('analytics') }}</span><div class="k-grow"><h3>Your numbers</h3><p>From your Profile</p></div></header>
+    <dl class="of-nums-list">
+      <div><dt>Your floor</dt><dd><b data-testid="of-prep-floor">{{ prep.floor or 'Not set' }}</b>{% if prep.floor %} <small>{{ prep.unit }}</small>{% endif %}</dd></div>
+      <div><dt>Your target</dt><dd><b data-testid="of-prep-target">{{ prep.target or 'Not set' }}</b>{% if prep.target %} <small>{{ prep.unit }}</small>{% endif %}</dd></div>
+    </dl>
+    <p class="of-foot">Your walk-away is the lowest {{ prep.walk_word }} you would accept. You type it when you ask for a draft, and Kestrel never picks it for you.</p>
+    <a class="k-link of-more" href="/profile">Change in Profile {{ icon('arrow', 'k-ic--sm') }}</a>
+  </section>
+  <section class="k-card" data-testid="of-prep-asks">
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ icon('profile') }}</span><div class="k-grow"><h3>What else to ask for</h3><p>Pay is not the only lever. Rank these so a trade is easy.</p></div></header>
+    <ul class="of-asks">
+      {%- for a in prep.asks %}<li>{{ a }}</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+<form id="of-neg-form" class="k-card of-np" data-testid="of-prep-drafts" data-pursuit=""
+      hx-post="/offers/prep/scripts" hx-target="#of-draft" hx-swap="innerHTML"
+      hx-trigger="submit" hx-disabled-elt="find .of-act" data-busy-text="{{ 'Writing your draft with ' ~ route.model ~ '.' if route.online else 'Writing your draft on your computer.' }}">
+  <header class="k-sec-head"><span class="k-badge">{{ icon('tune') }}</span><div class="k-grow"><h3>What Kestrel can draft</h3><p>One of these needs no offer. The rest open when you record one.</p></div></header>
+  {%- if open_sit %}
+  <label class="of-fld">Your walk-away: the lowest {{ prep.walk_word }} you would accept
+    <input type="hidden" name="walk_away" id="of-walk-val" value="{{ prep.walk }}">
+    <input class="k-input" id="of-walk" data-plain="of-walk-val" autocomplete="off" data-testid="of-walk" placeholder="For example 140,000" value="{{ prep.walk|typed_amount if prep.walk else '' }}">
+    <span class="of-hint">{% if prep.walk %}Filled in from your Profile floor. Change it if you would accept less. {% endif %}You set this. Kestrel never picks it for you, and every draft stays above it.</span>
+  </label>
+  <input type="hidden" name="situation" id="of-situation" value="{{ open_sit[0].key }}">
+  {%- endif %}
+  <div class="of-sitgrid" role="group" aria-label="Situations">
+    {%- for s in prep.sits %}
+    {%- if s.open %}
+    <button type="button" class="of-sit of-act is-on" data-sit="{{ s.key }}" data-testid="of-prep-sit" data-open="1" aria-pressed="true">{{ s.name }}<small>{{ s.hint }}</small></button>
+    {%- else %}
+    <button type="button" class="of-sit" data-testid="of-prep-sit" data-open="0" disabled>{{ s.name }}<small>Record an offer to draft this</small></button>
+    {%- endif %}
+    {%- endfor %}
+  </div>
+  {%- if open_sit %}
+  <div class="of-draft of-np-draft" id="of-draft-wrap" data-locked="{{ '0' if prep.walk else '1' }}" data-testid="of-draft-wrap">
+    <div class="of-locked" data-testid="of-locked">
+      <div>{{ icon('tune', 'k-ic--lg') }}<b>Set your walk-away first</b><p>Kestrel writes every draft within the number you set, so it starts there.</p></div>
+    </div>
+    <div class="of-writing" role="status">{{ 'Writing your draft with ' ~ route.model ~ '…' if route.online else 'Writing your draft on your computer…' }}</div>
+    {% include "partials/offer_send_notice.html" %}
+    <div id="of-draft" data-testid="of-draft" aria-live="polite">
+      <div class="of-ready">
+        <div>{{ icon('prep', 'k-ic--lg') }}<b>Ready when you are</b>{% if route.online %}<p>Press the first card and an online model writes the draft. Read what is sent first, above.</p>{% else %}<p>Press the first card and Kestrel writes the draft on your computer. Nothing leaves it.</p>{% endif %}
+        <button type="submit" class="k-btn k-btn--primary of-act" data-testid="of-write">Write the draft</button></div>
+      </div>
+    </div>
+  </div>
+  {%- endif %}
+</form>

@@ -3,6 +3,15 @@
    the words exactly as typed, and Kestrel will not rewrite them. #}
 {% import "partials/pp_icons.html" as i %}
 {% set s = story %}
+{# Marks left by the plain-writing and grounding checks on a draft Kestrel wrote (issue #93).
+   Shown only on a draft, never on text the person wrote; Kestrel does not rewrite either. #}
+{% macro marks(field) -%}
+  {%- if s and not s.operator_edited and s.style_flags -%}
+  {%- for f in s.style_flags if f.field == field %}
+  <span class="pp-mark" data-testid="pp-style-mark" data-kind="{{ f.kind }}" title="{{ 'Not in your sketches or proof points. Is it right?' if f.kind == 'ungrounded' else ('Stock phrasing' if f.kind == 'style' else '') }}">{{ i.pi('alert', 'k-ic--sm') }}<span>{% if f.kind == 'ungrounded' %}Check &ldquo;{{ f.phrase }}&rdquo;: this number is not in your sketches or proof points.{% else %}Stock phrasing: &ldquo;{{ f.phrase }}&rdquo;{% endif %}</span></span>
+  {%- endfor -%}
+  {%- endif -%}
+{%- endmacro %}
 <div class="k-modal pp-sheet" id="pp-story-sheet" role="dialog" aria-modal="true" aria-labelledby="pp-story-sheet-t" aria-hidden="true" data-k-static data-testid="pp-story-sheet">
   <form hx-post="{{ ('/stories/' ~ s.id) if s else '/stories' }}" hx-swap="none" hx-disabled-elt="find button[type=submit]" data-busy-text="Saving your story.">
     <input type="hidden" name="from" value="{{ from }}">
@@ -14,10 +23,19 @@
     <div class="k-modal__body pp-sheet__body">
       <div><span class="pp-sub">For</span> <span class="k-pill k-pill--info" data-testid="pp-sheet-for">{{ label }}</span></div>
       <div class="pp-wsheet">
-        <label class="pp-wp"><span class="pp-wpl">What was the situation?</span><textarea class="pp-wpt" name="situation" rows="2" data-k-autofocus placeholder="Our three sites reported differently, so leadership never saw one picture.">{{ s.situation if s and s.situation else '' }}</textarea></label>
-        <label class="pp-wp"><span class="pp-wpl">What did you do?</span><textarea class="pp-wpt" name="action" rows="2" placeholder="I built one weekly report and ran the review with the site leads.">{{ s.action if s and s.action else '' }}</textarea></label>
-        <label class="pp-wp"><span class="pp-wpl">What changed?</span><textarea class="pp-wpt" name="result" rows="2" placeholder="Late shipments fell 15% in a quarter.">{{ s.result if s and s.result else '' }}</textarea></label>
+        <label class="pp-wp"><span class="pp-wpl">What was the situation?</span><textarea class="pp-wpt" name="situation" rows="2" data-k-autofocus placeholder="Our three sites reported differently, so leadership never saw one picture.">{{ s.situation if s and s.situation else '' }}</textarea>{{ marks('situation') }}</label>
+        <label class="pp-wp"><span class="pp-wpl">What did you do?</span><textarea class="pp-wpt" name="action" rows="2" placeholder="I built one weekly report and ran the review with the site leads.">{{ s.action if s and s.action else '' }}</textarea>{{ marks('action') }}</label>
+        <label class="pp-wp"><span class="pp-wpl">What changed?</span><textarea class="pp-wpt" name="result" rows="2" placeholder="Late shipments fell 15% in a quarter.">{{ s.result if s and s.result else '' }}</textarea>{{ marks('result') }}</label>
       </div>
+      {%- if s and not s.operator_edited and s.style_flags %}
+      {%- set loose = s.style_flags | selectattr('field', 'equalto', '') | list %}
+      {%- if loose %}
+      <ul class="pp-marks" data-testid="pp-style-questions">
+        {%- for f in loose %}<li class="pp-mark" data-testid="pp-style-mark" data-kind="{{ f.kind }}">{{ i.pi('alert', 'k-ic--sm') }}<span>{% if f.kind == 'question' %}For you to answer: {{ f.phrase }}{% elif f.kind == 'style_dropped' %}{{ f.phrase }} stock phrases are not marked.{% else %}No source for: {{ f.phrase }}{% endif %}</span></li>{% endfor %}
+      </ul>
+      {%- endif %}
+      <p class="pp-sub" data-testid="pp-style-note">Marked text is Kestrel's draft. Kestrel will not rewrite your story; change it yourself, or save it as it is.</p>
+      {%- endif %}
       <p class="pp-sub">A sentence or two under each prompt, in your own words. Include a number if you have one. Kestrel will not rewrite your story.</p>
     </div>
     <div class="k-modal__foot">

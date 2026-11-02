@@ -6,6 +6,7 @@ Before the fix the role page, the Pipeline panel and the Applications list all s
 from __future__ import annotations
 
 import asyncio
+import html as htmllib
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,7 @@ from kestrel import paths
 from kestrel.db.base import utcnow_iso
 from kestrel.db.engine import make_async_engine
 from kestrel.db.models import Opportunity, Pursuit, Task
-from kestrel.web.fit import IMPORTED_REASON, hidden_unscored_why
+from kestrel.web.fit import IMPORTED_REASON, UNSCORED_LABEL, hidden_unscored_why
 from tests import role_seed
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
@@ -88,7 +89,7 @@ def test_the_role_page_says_not_scored_with_the_reason_and_offers_no_score_again
     with _client() as c:
         html = c.get(f"/opportunities/{oid}").text
     assert 'data-testid="not-scored"' in html
-    assert "<h3>Not scored</h3>" in html
+    assert f"<h3>{UNSCORED_LABEL}</h3>" in htmllib.unescape(html)
     assert "Imported from your applied history. Kestrel does not score roles you already" in html
     assert "Being scored" not in html
     assert 'data-testid="score-anyway"' not in html
@@ -123,7 +124,8 @@ def test_the_pipeline_panel_says_not_scored(hidden):
     oid, _ = hidden
     with _client() as c:
         html = c.get(f"/opportunities/{oid}/panel").text
-    assert "Not scored" in html and 'data-testid="panel-hidden-why"' in html
+    assert UNSCORED_LABEL in htmllib.unescape(html) and 'data-testid="panel-hidden-why"' in html
+    assert 'data-scoring="hidden"' in html and "Hidden: applied" in html
     assert "Imported from your applied history." in html
     assert 'data-testid="panel-put-back"' in html
     assert "Being scored" not in html
@@ -152,7 +154,7 @@ def test_the_pipeline_hidden_list_row_says_not_scored_with_the_reason(hidden):
         html = c.get("/opportunities?hidden=1").text
     i = html.index(f'data-id="{oid}"')
     row = html[i:html.index("</article>", i) if "</article>" in html[i:] else i + 4000]
-    assert 'data-scoring="hidden"' in row and ">not scored<" in row
+    assert 'data-scoring="hidden"' in row and ">Hidden: applied<" in row
     assert "Imported from your applied history." in row
 
 
@@ -172,9 +174,9 @@ def test_the_applications_list_says_not_scored(hidden):
     with _client() as c:
         page = c.get("/pursuits").text
         panel = c.get(f"/pursuits/{pid}/panel").text
-    assert "Not scored" in page and "Being scored" not in page
+    assert UNSCORED_LABEL in htmllib.unescape(page) and "Being scored" not in page
     assert 'title="Imported from your applied history."' in page
-    assert "Not scored" in panel and "Being scored" not in panel
+    assert UNSCORED_LABEL in htmllib.unescape(panel) and "Being scored" not in panel
 
 
 def test_applications_says_being_scored_once_score_again_is_queued(hidden):
@@ -186,7 +188,7 @@ def test_applications_says_being_scored_once_score_again_is_queued(hidden):
     _with_session(queue)
     with _client() as c:
         page = c.get("/pursuits").text
-    assert "Being scored" in page and "Not scored" not in page
+    assert "Being scored" in page and UNSCORED_LABEL not in htmllib.unescape(page)
 
 
 def test_a_lead_speaks_of_leads():

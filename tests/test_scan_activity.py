@@ -22,6 +22,7 @@ from kestrel.db.engine import forget_engine, make_async_engine, reset_engine
 from kestrel.db.models import Quarantine, Run, ScrapeRun, Source, Task
 from kestrel.pipeline import runlog
 from kestrel.web import deps
+from tests import clock_seed
 
 
 def _fresh_engine():
@@ -85,7 +86,7 @@ def _no_ollama(monkeypatch):
 
 
 def _ago_iso(**kw) -> str:
-    return iso(datetime.now(UTC) - timedelta(**kw))
+    return iso(clock_seed.ago(**kw))
 
 
 def _src(name: str = "Board", **kw) -> Source:

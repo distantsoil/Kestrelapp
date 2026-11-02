@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import UTC, datetime, timedelta
 from html import unescape
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from kestrel.db.engine import forget_engine, get_sessionmaker, reset_engine
 from kestrel.db.models import Opportunity, Org, Pursuit, ScrapeRun, Source, Task
 from kestrel.services import tracks
 from kestrel.web import source_view as sv
+from tests import clock_seed
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HX = {"HX-Request": "true"}
@@ -73,7 +73,7 @@ def _both():
 
 
 def _iso(**ago) -> str:
-    return (datetime.now(UTC) - timedelta(**ago)).isoformat()
+    return clock_seed.ago(**ago).isoformat()
 
 
 def _add(**kw) -> int:

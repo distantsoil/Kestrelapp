@@ -88,6 +88,13 @@ SITUATIONS: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
 }
 
+# What else to ask for, before an offer arrives (D-UI-236). Static; the operator ranks them.
+PREP_ASKS: dict[str, tuple[str, ...]] = {
+    "employment": ("Bonus", "Equity", "Signing bonus", "Start date", "Level or title",
+                   "Remote days", "Time off", "Review timing"),
+    "consulting": ("Scope", "Payment terms", "Renewal", "Exclusivity"),
+}
+
 OUTCOME_WORDS = {"accepted": "Accepted", "declined": "Declined", "expired": "Expired"}
 
 

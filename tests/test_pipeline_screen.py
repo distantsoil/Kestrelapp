@@ -103,10 +103,11 @@ def test_a_failed_role_says_why_and_a_removed_one_says_it_was_removed():
         quiet = c.get(f"/opportunities/{ids['e']}/panel").status_code
     # Kept out of Scoring failed, labeled honestly: not scored, with the way back to undo.
     e = T._row(html, ids["e"])
-    assert 'data-group="new"' in e and 'data-scoring="removed">not scored</span>' in e
+    assert 'data-group="unscored"' in e and 'data-scoring="removed"' in e
+    assert ">Taken off retry list</span>" in e
     assert "removed from Needs another try" in e
     assert 'href="/quarantine" data-testid="removed-undo">Undo in Needs another try</a>' in e
-    assert "Scoring failed ·" not in html and "Being scored · 2" in html
+    assert "Scoring failed ·" not in html and "Being scored · 1" in html
     assert "Needs another try" in html and 'data-testid="failed-open"' not in html
     assert quiet == 200 and "You removed this role from Needs another try" in panel
     assert 'href="/quarantine"' in panel and "Scoring failed" not in panel

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -29,13 +28,14 @@ from kestrel.web.queries import (
     open_quarantine_count,
     scoring_failed_count,
 )
+from tests import clock_seed
 
 FAILED_MODEL = "nvidia/nemotron-3.5-super-vl:free"
 GOOD_MODEL = "~deepseek/deepseek-pro-latest"
 
 
 def _ago(**kw) -> str:
-    return iso(datetime.now(UTC) - timedelta(**kw))
+    return iso(clock_seed.ago(**kw))
 
 
 async def _role(sm, *, stage: str = "quarantined", title: str = "Director of Operations") -> int:

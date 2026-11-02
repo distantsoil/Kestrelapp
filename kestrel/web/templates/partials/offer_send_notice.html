@@ -1,0 +1,17 @@
+{# What an online draft sends and the confirmation (shared by Negotiate and its preparation page). #}
+{%- if route.online %}
+<div class="of-send" data-testid="of-send">
+  <b>This draft is written by an online model</b>
+  <p class="k-muted">{{ route.provider }}, using your own credit. Model: {{ route.model }}.</p>
+  <ul>
+    <li data-testid="of-sends">{{ route.sends[:1]|upper }}{{ route.sends[1:] }}.</li>
+    <li>For this draft that means {{ sends_line or route.draft_sends }}.</li>
+  </ul>
+  {%- if route.employer == 'hidden' %}<p data-testid="of-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+  {%- elif route.employer == 'held' %}<p data-testid="of-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
+  <p><b>Not sent:</b> your name, contact details and your resume file. {{ route.provider }} handles what it receives under its own terms.</p>
+  <label class="of-confirm"><input type="checkbox" name="confirmed" value="1" data-testid="of-confirm"> Send this to {{ route.provider }} to write the draft</label>
+  <input type="hidden" name="model" value="{{ route.model }}">
+  <input type="hidden" name="dest" value="{{ route.dest }}">
+</div>
+{%- endif %}

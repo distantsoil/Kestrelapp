@@ -53,18 +53,20 @@ from kestrel.llm import credit
 from kestrel.llm import providers as prov
 from kestrel.research import jobs as research_jobs
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.urls import safe_web_url
 from kestrel.web import calibrate_view as cv
 from kestrel.web import pipeline_view as pv
 from kestrel.web import role_view as rv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
-from kestrel.web.fit import fit_word_for_verdict
+from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON, fit_word_for_verdict
 from kestrel.web.pages.pipeline import _events, _toast
 from kestrel.web.queries import (
     hidden_unscored,
     opportunity_history,
     opportunity_renders,
     org_context,
+    scoring_task_exists,
 )
 from kestrel.web.redact import redact_json, redact_text
 from kestrel.web.rescoring import EARLIER, rescoring_states
@@ -299,6 +301,12 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         # Hidden as applied with nothing queued: Not scored, never Being scored (issue #59).
         # Score again queues a live task, and then it is Being scored after all.
         detail["hidden_why"] = (await hidden_unscored(s2, [opp])).get(opp.id)
+        detail["empty_posting"] = (opp.stage == "t1_pass"
+                                   and opp.stage_reason == EMPTY_POSTING_STAGE_REASON)
+        detail["posting_url"] = safe_web_url(opp.url)
+        # Any scoring task, held or not: the role is Being scored then (issue #90).
+        detail["queued"] = bool((await s2.execute(
+            select(scoring_task_exists()).where(Opportunity.id == opp_id))).scalar())
         # Queued or running to score again (issue #74); a task held for approval is not in line.
         detail["rescoring"] = (
             None if detail["scoring_held"]

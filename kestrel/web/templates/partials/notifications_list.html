@@ -9,7 +9,7 @@
 {% from "ui/macros.html" import icon %}
 <link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <div id="sf-np" class="sf-np" data-testid="notifications-panel" data-tab="{{ tab }}">
-  <span id="bellcount" class="k-icon__n" hx-swap-oob="true">{{ unread if unread else '' }}</span>
+  <span id="bellcount" hx-swap-oob="innerHTML">{{ bell_label }}</span>
   <div class="sf-tabs" role="tablist" aria-label="Notifications">
     {% for key, label in [('all', 'All'), ('attention', 'Needs attention')] %}
     <button type="button" role="tab" class="sf-tab{% if tab == key %} is-on{% endif %}" aria-selected="{{ 'true' if tab == key else 'false' }}"

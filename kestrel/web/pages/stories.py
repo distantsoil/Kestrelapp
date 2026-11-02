@@ -363,4 +363,5 @@ async def _apply_edit(s: AsyncSession, story: Story, form) -> None:
         if f in form:
             setattr(story, f, str(form[f]))
     story.operator_edited = True
+    story.style_flags = []  # the words are the person's now; the draft's marks no longer apply
     await s.commit()

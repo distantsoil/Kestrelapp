@@ -468,6 +468,7 @@ async def _market_groups(session: AsyncSession, track: str) -> list[dict]:
     return groups
 
 
+PREP_SITUATION = "first_number_deflection"  # the one draft that needs no offer (D-UI-236)
 NEGOTIATE_TIER = "tier3"  # prompt negotiate/v1 runs on this tier (llm/prompts/negotiate.v1.md)
 _DRAFT_SENDS = (
     "the offer terms, your walk-away and ask, your proof points and the pay data Kestrel holds "
@@ -497,6 +498,34 @@ async def _negotiate_route(session: AsyncSession, settings: Any) -> dict[str, An
         "sends": settings.llm.hosted_mode.disclosure_terms()["sends"][NEGOTIATE_TIER],
         "draft_sends": _DRAFT_SENDS,
         "employer": await _employer_state(session, settings),
+    }
+
+
+def prep_context(track: str) -> dict[str, Any]:
+    """What the Negotiate tab shows before any offer is recorded (D-UI-236): the floor and target
+    from Profile (read only; no new storage), what else to ask for, and a card for each situation
+    Kestrel can draft. Only the first-number question can be drafted without an offer. Nothing
+    here is a number from the market, so no sample size is stated."""
+    floor, target = _floor_target(track)
+    con = track == "consulting"
+    sits = []
+    for key, name, hint in ov.SITUATIONS[track]:
+        open_now = key == PREP_SITUATION
+        sits.append({
+            "key": key,
+            "name": "Deflecting the first-number question" if open_now else name,
+            "hint": hint,
+            "open": open_now,
+        })
+    return {
+        "floor": ov.money_k(floor), "target": ov.money_k(target),
+        "unit": "a day" if con else "a year",
+        "asks": ov.PREP_ASKS[track],
+        "sits": sits,
+        "walk_word": "day rate" if con else "base",
+        # The Profile floor, offered as the walk-away to start from; the operator still chooses.
+        "walk": "" if con or floor is None else f"{floor:.0f}",
+        "sends": "your walk-away, your proof points, and that no offer is recorded yet",
     }
 
 
@@ -542,6 +571,8 @@ async def _offers_ctx(request: Request, *, oob: bool = False) -> dict:
             ctx["groups"] = await _market_groups(s, track)
             floor, target = _floor_target(track)
             ctx["floor"], ctx["target"] = ov.money_k(floor), ov.money_k(target)
+            if tab == "negotiate":
+                ctx["prep"] = prep_context(track)
         if tab == "negotiate" and open_cards:
             want = str(q.get("pursuit") or "")
             chosen = next((c for c in open_cards if str(c["pursuit_id"]) == want), open_cards[0])
@@ -950,15 +981,34 @@ def _draft_panel(request: Request, **ctx: Any) -> Any:
     return templates().TemplateResponse(request, "partials/offer_scripts.html", ctx)
 
 
+@router.post("/offers/prep/scripts", response_class=HTMLResponse)
+async def prep_scripts(request: Request):
+    """The one draft that needs no offer: deflecting the first-number question (D-UI-236). It
+    stores nothing (no pursuit, no offer) and sends nothing; every other situation is refused."""
+    return await _write_draft(request, None)
+
+
 @router.post("/offers/{pursuit_id}/scripts", response_class=HTMLResponse)
 async def scripts(request: Request, pursuit_id: int):
-    """Draft the reply for one pursuit's offer, for one situation. `walk_away` is REQUIRED and
+    return await _write_draft(request, pursuit_id)
+
+
+async def _write_draft(request: Request, pursuit_id: int | None):
+    """Draft the reply for one pursuit's offer, for one situation (no pursuit: the preparation
+    draft). `walk_away` is REQUIRED and
     supplied by the operator as plain text; there is no code path here that computes or defaults
     it, and draft_scripts echoes it back unchanged. An ask below it is refused. A model that is
     not running degrades to a message, never a 500."""
     form = await request.form()
     walk_away = str(form.get("walk_away") or "").strip()
     ask = _opt_str(form, "ask")
+    if pursuit_id is None and (
+        str(form.get("situation") or "").strip() != PREP_SITUATION
+        or active_track(request) != "employment"
+    ):
+        return _draft_panel(
+            request, error="Record an offer to draft this one.", result=None
+        )
     if not walk_away:
         return _draft_panel(
             request, error="A walk-away number is required before drafting scripts.", result=None
@@ -993,8 +1043,9 @@ async def scripts(request: Request, pursuit_id: int):
     try:
         async with httpx.AsyncClient() as http:
             async with sessionmaker()() as s:
-                pursuit = await s.get(Pursuit, pursuit_id)
-                track = (pursuit.track if pursuit else None) or "employment"
+                pursuit = await s.get(Pursuit, pursuit_id) if pursuit_id is not None else None
+                track = (pursuit.track if pursuit else None) or (
+                    active_track(request) if pursuit_id is None else "employment")
                 names = {k: n for k, n, _ in ov.SITUATIONS.get(track, ())}
                 chosen = situation if situation in names else None
                 kwargs: dict[str, Any] = {}
@@ -1003,6 +1054,8 @@ async def scripts(request: Request, pursuit_id: int):
                 if ask:
                     kwargs["ask"] = ask
                 client = llm_client.LLMClient(settings, http=http)
+                if pursuit_id is None:
+                    kwargs["track"] = track  # the preparation draft: no offer to read it from
                 result = await draft_scripts(s, client, pursuit_id, walk_away=walk_away, **kwargs)
                 await s.commit()  # persists a quarantine row if the model call failed validation
                 conf_on, emp_map = await confidential_once(s)
@@ -1011,12 +1064,16 @@ async def scripts(request: Request, pursuit_id: int):
                     # else on this page does, so it is redacted the same way.
                     result = _redact_scripts(result, emp_map, enabled=conf_on)
                 points: list[tuple[str, str]] = []
-                profile = load_profile(track) if pursuit else None
+                profile = load_profile(track) if (pursuit or pursuit_id is None) else None
                 for p in getattr(profile, "proof_points", None) or []:
                     claim = redact_text(_pp(p, "claim") or "", emp_map, enabled=conf_on)
                     evid = redact_text(_pp(p, "evidence") or "", emp_map, enabled=conf_on)
                     if claim:
                         points.append((claim, evid or ""))
+        if result is None and pursuit_id is None:
+            return _draft_panel(
+                request, error="Kestrel could not draft this right now. Try again.", result=None
+            )
         if result is None:
             return _draft_panel(
                 request,

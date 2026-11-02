@@ -80,7 +80,7 @@ async def _quarantine(sm) -> list[Quarantine]:
 
 # ------------------------------------------------------------------------------ the prompt
 def test_prompt_is_registered_with_the_specified_settings():
-    spec = load_prompt("org_summary/v1")
+    spec = load_prompt("org_summary/v2")
     assert (spec.tier, spec.temperature, spec.max_tokens, spec.reasoning) == (
         "tier2",
         0.2,
@@ -124,7 +124,7 @@ async def test_valid_reply_is_stored_with_sources_model_and_date(sm):
     async with sm() as s:
         rec = await osum.load_record(s, org_id)
     assert rec["status"] == "ok" and rec["insufficient_sources"] is False
-    assert rec["source_count"] == 3 and rec["prompt_version"] == "org_summary/v1"
+    assert rec["source_count"] == 3 and rec["prompt_version"] == "org_summary/v2"
     assert rec["model"] == get_settings().llm.tiers["tier2"].model and rec["generated_at"]
     assert [s["source_indexes"] for s in rec["sentences"]] == [[1], [1, 2], [2, 3]]
     assert {t["key"] for t in rec["tags"]} == {"does", "hiring"}

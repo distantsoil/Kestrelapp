@@ -34,11 +34,14 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Evaluation, Notification, Opportunity, Setting, Story, StoryUsage
 from kestrel.llm.embeddings import cosine
 from kestrel.llm.guard import QuarantineHook
+from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 from kestrel.pipeline.profile import load_profile
+from kestrel.writing_check import operator_spans, ungrounded_details
 
 log = structlog.get_logger()
 
+PROMPT = "story_consolidate/v2"
 _WATERMARK_KEY = "consolidation.stories_watermark"
 _PROOF_MARKER = '{for each: "- {claim} | evidence: {evidence} | metric: {metric}"}'
 _SKETCH_MARKER = (
@@ -495,6 +498,39 @@ def _pp(p: Any, attr: str) -> Any:
     return p.get(attr) if isinstance(p, dict) else getattr(p, attr, None)
 
 
+def _reask_is_a_story(original: Any, reasked: Any) -> bool:
+    """A plain-writing re-ask must still be a story: not an unusable merge, and no field that was
+    real turned into placeholder or refusal text (D-UI-236 amendment)."""
+    if is_unusable_story(
+        reasked.title, situation=reasked.situation, task=reasked.task, action=reasked.action,
+        result=reasked.result, reflection=reasked.reflection,
+    ):
+        return False
+    return not any(
+        _empty_or_self_referential(getattr(reasked, f))
+        and not _empty_or_self_referential(getattr(original, f))
+        for f in _STAR_FIELDS
+    )
+
+
+def _grounding_sources(sketches: list[Sketch], proof_points: list) -> list[str]:
+    """Everything a story may state: the sketches it merges and the proof points."""
+    out = [s.text() for s in sketches]
+    for p in proof_points:
+        out.append(" ".join(str(_pp(p, a) or "") for a in ("claim", "evidence", "metric")))
+    return out
+
+
+def _operator_spans(sketches: list[Sketch]) -> list[str]:
+    """The person's own words (notes): quoted back in a story they are copied bytes, not model
+    prose, so the writing check skips them by span."""
+    spans: list[str] = []
+    for s in sketches:
+        if s.kind == "note":
+            spans += operator_spans(s.situation)
+    return spans
+
+
 def _quarantine_hook(session: AsyncSession) -> QuarantineHook:
     async def hook(messages: list[dict], raw_response: str, error: str, model: str) -> None:
         prompt_text = "\n\n".join(f"[{m.get('role')}]\n{m.get('content')}" for m in messages)
@@ -531,10 +567,15 @@ async def _merge_cluster(
     # redacted before the send, or the send is refused when nothing is marked.
     from kestrel.pipeline._shared import run_prompt_hosted
 
-    result = await run_prompt_hosted(
-        session, client, spec, messages, quarantine_tier=2,
-        on_quarantine=_quarantine_hook(session),
-    )
+    hook = _quarantine_hook(session)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, spec, msgs, quarantine_tier=2,
+            on_quarantine=None if reask else hook,  # a failed re-ask leaves no quarantine row
+        )
+
+    result = await run(messages)
     if not result.ok or result.value is None:
         log.warning("story_merge_failed", error=result.error, sketches=[s.id for s in sketches])
         return None
@@ -549,6 +590,24 @@ async def _merge_cluster(
             "story_merge_discarded", title=(v.title or "")[:80], sketches=[s.id for s in sketches]
         )
         return UNUSABLE
+    sources = _grounding_sources(sketches, proof_points)
+    plain = await enforce(
+        spec, v, messages=messages, run=run, exempt=_operator_spans(sketches),
+        extra_check=lambda val: ungrounded_details(
+            {f: getattr(val, f) for f in _STAR_FIELDS}, sources
+        ),
+        accept=lambda val, _fresh: _reask_is_a_story(v, val),
+    )
+    v = plain.value
+    style_flags = list(plain.flags)
+    style_flags += [
+        {"kind": "unsupported", "field": "", "phrase": c.strip()}
+        for c in v.unsupported_claims if c and c.strip()
+    ]
+    style_flags += [
+        {"kind": "question", "field": "", "phrase": q.strip()}
+        for q in v.uncertain_details if q and q.strip()
+    ]
     keys = {s.proof_point_key for s in sketches if s.proof_point_key}
     story = Story(
         title=v.title,
@@ -562,6 +621,7 @@ async def _merge_cluster(
         is_canonical=True,
         operator_edited=False,
         use_count=len(sketches),
+        style_flags=style_flags,
     )
     # Not added to the session here: the caller holds it in memory and writes it, with its usage
     # rows, after the last model call (D-DB-1), so no write lock is held across a model call.
@@ -638,7 +698,7 @@ async def consolidate_stories(
 
         profile = load_profile("employment")
         proof_points = list(getattr(profile, "proof_points", None) or []) if profile else []
-        spec = load_prompt("story_consolidate/v1")
+        spec = load_prompt(PROMPT)
 
         done_ids: set[int] = set()  # sketches actually consolidated (created or attached) this run
         newly_refused: dict[str, str] = {}

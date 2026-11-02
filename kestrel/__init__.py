@@ -7,7 +7,7 @@ import sys
 
 # Single source of truth for the version (SPEC-INTERFACES.md 1.4): pyproject reads this via
 # hatch, and it feeds /health, the window title, and the About page.
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 
 
 def _pin_native_thread_pools() -> None:

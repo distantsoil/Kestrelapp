@@ -565,6 +565,7 @@ def decision_extras(detail: dict) -> dict:
         pursued=detail.get("pursuit") is not None and detail["pursuit"].closed_at is None,
         pursuit_status=detail["pursuit"].status if detail.get("pursuit") is not None else None,
         operator_verdict=override.operator_verdict if override is not None else None,
+        queued=bool(detail.get("queued")),
     )
     model_word = rules_word = None
     if ev is not None and (

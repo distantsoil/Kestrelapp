@@ -4,6 +4,20 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-02
+
+Pipeline explains every role without a score, drafts read plainly, the bell shows a real count, and Negotiate helps before an offer arrives.
+
+### Changed
+
+- **Pipeline says why a role has no score.** Each one carries a chip: Waiting, Paused, Scoring, No description, Hidden: applied, or Taken off retry list. The three that nothing will score on their own now sit in a second group, "Won't be scored unless you act" (it was "Not scored", which read as "not scored yet"). A role with no description has a **Paste the description** button: Kestrel checks the text against your rules and scores it.
+- **Drafts read plainly.** Cover letters, story drafts, mock interview feedback, negotiation notes, the analytics summary, interview questions, company summaries and follow-ups follow plain-writing rules. A draft that breaks them is asked again once, and a story draft marks any detail your notes and proof points do not support so you can check it. Your own words are never changed, and existing scores are not affected.
+- **The notification count on the bell is now a real badge.** An 18 px indigo pill with a ring that separates it from the bell, readable in light and dark and in every color scheme. It shows 1 to 9, then "9+", and disappears at zero. A screen reader hears "Notifications, N unread" with the true count. The bell itself is a darker amber in light mode so it clears the contrast minimum. The count ticks gently when it changes, and not at all if you reduce motion.
+
+### Fixed
+
+- **Negotiate works before an offer arrives.** The Negotiate tab no longer repeats the Offers empty screen. It shows your floor and target from Profile, what to ask for beyond pay, and the drafts Kestrel can write for you.
+
 ## [0.7.2] - 2026-11-02
 
 Local AI models stop thinking out loud, resume import keeps every line, and several screens hold steady under repeat use.

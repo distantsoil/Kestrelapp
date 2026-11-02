@@ -639,6 +639,9 @@ class P8Story(_Base):
     uncertain_details: list[str]
     spoken_seconds_estimate: int
     source_sketch_ids: list[int]
+    # story_consolidate/v2: sentences the model says no sketch or proof point supports. The
+    # default keeps v1 replies valid.
+    unsupported_claims: list[str] = []
 
 
 # ===== P9 — mock critique
@@ -847,6 +850,15 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "triage_consulting/v2": P1CTriage,
     "evaluate/v2": P2Eval,
     "evaluate_consulting/v2": P2CEval,
+    "cover/v2": P4Cover,
+    "engagement_outline/v2": P4CEngagement,
+    "story_consolidate/v2": P8Story,
+    "mock_critique/v2": P9Mock,
+    "negotiate/v2": P11Negotiate,
+    "analytics_summary/v2": P12Analytics,
+    "interview_questions/v2": P14InterviewQuestions,
+    "org_summary/v2": P16OrgSummary,
+    "follow_up/v2": P17FollowUp,
     "doc_select/v1": P3DocSelect,
     "cover/v1": P4Cover,
     "engagement_outline/v1": P4CEngagement,

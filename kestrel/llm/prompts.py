@@ -46,6 +46,15 @@ def global_rules() -> str:
     return _PROMPTS.joinpath("_global_rules.md").read_text(encoding="utf-8").strip()
 
 
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def plain_writing() -> str:
+    """The shared plain-writing block (issue #93), without its header comment."""
+    raw = _PROMPTS.joinpath("_plain_writing.md").read_text(encoding="utf-8")
+    return _COMMENT_RE.sub("", raw).strip()
+
+
 def load_prompt(version: str) -> PromptSpec:
     raw = _PROMPTS.joinpath(_version_filename(version)).read_text(encoding="utf-8")
     m = _FM_RE.match(raw)
@@ -58,6 +67,7 @@ def load_prompt(version: str) -> PromptSpec:
     system = _SYSTEM_RE.split(parts[0], maxsplit=1)[-1].strip()
     user = parts[1].strip() if len(parts) > 1 else ""
     system = system.replace("{GLOBAL_RULES}", global_rules())
+    system = system.replace("{PLAIN_WRITING}", plain_writing())
 
     return PromptSpec(
         id=str(meta.get("id", "")),

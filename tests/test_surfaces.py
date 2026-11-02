@@ -331,6 +331,7 @@ def test_bell_count_is_unread_and_read_toggles_in_place():
     assert client.get("/notifications/bell").text == "3"
     r = client.post(f"/notifications/{ids['src']}/read?tab=all")
     assert 'id="bellcount"' in r.text and ">2<" in r.text  # the count swaps out of band
+    assert 'hx-swap-oob="innerHTML"' in r.text  # into the same badge, which stays in place
     assert client.get("/notifications/bell").text == "2"
     client.post(f"/notifications/{ids['src']}/unread?tab=all")
     assert client.get("/notifications/bell").text == "3"

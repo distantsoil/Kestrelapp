@@ -20,6 +20,7 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Evaluation, Notification, Opportunity, Org, Pursuit
 from kestrel.services.tracks import enabled_tracks_cached
 from kestrel.web import notifications_view as nv
+from kestrel.web.deps import bell_label as _bell_label
 from kestrel.web.deps import sessionmaker, static_token, static_url, templates
 from kestrel.web.words import words
 
@@ -103,17 +104,27 @@ async def _panel_ctx(s, tab: str) -> dict:
     if tab == "attention":
         shown = [i for i in items if i["unresolved"]]
     groups = [(g, [i for i in shown if i["group"] == g]) for g in ("Today", "Yesterday", "Earlier")]
+    unread = await _unread(s)
     return {
         "tab": tab,
         "groups": [(g, xs) for g, xs in groups if xs],
         "attention_n": sum(1 for i in items if i["unresolved"]),
-        "unread": await _unread(s),
+        "unread": unread,
+        "bell_label": _bell_label(unread),
         "count": len(shown),
     }
 
 
+def _bell_headers(n: int) -> dict[str, str]:
+    """Hands the true count to the page (HX-Trigger-After-Swap), which sets the bell button's
+    aria-label and ticks the badge; the visible label is capped, the spoken one is not."""
+    return {"HX-Trigger-After-Swap": json.dumps({"bellCount": max(n, 0)})}
+
+
 def _panel(request: Request, ctx: dict) -> HTMLResponse:
-    return templates().TemplateResponse(request, "partials/notifications_list.html", ctx)
+    resp = templates().TemplateResponse(request, "partials/notifications_list.html", ctx)
+    resp.headers.update(_bell_headers(ctx["unread"]))
+    return resp
 
 
 @router.get("/notifications/bell", response_class=HTMLResponse)
@@ -122,7 +133,7 @@ async def bell():
     the badge hides (CSS :empty)."""
     async with sessionmaker()() as s:
         n = await _unread(s)
-    return HTMLResponse(str(n) if n else "")
+    return HTMLResponse(_bell_label(n), headers=_bell_headers(n))
 
 
 @router.get("/notifications/list", response_class=HTMLResponse)

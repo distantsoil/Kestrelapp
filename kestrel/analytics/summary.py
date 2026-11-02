@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.analytics.metrics import collect_metrics
 from kestrel.db.models import Quarantine
 from kestrel.llm.guard import QuarantineHook
+from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 
 _MIN_OUTCOMES = 10  # P12 rule 5: below this there is not yet enough signal to draw conclusions
@@ -43,6 +44,8 @@ class AnalyticsSummary:
     # True when the send was refused before it left (confidential mode on, no current employer
     # chosen to redact with): nothing went to the model, which is not "no usable answer".
     held: bool = False
+    # Plain-writing marks left after the one re-ask (issue #93); the text is never rewritten.
+    style_flags: list[dict] = field(default_factory=list)
 
     @property
     def not_discriminating(self) -> bool:
@@ -107,17 +110,22 @@ async def honest_summary(
             narrative_pending=not insufficient,
         )
 
-    spec = load_prompt("analytics_summary/v1")
+    spec = load_prompt("analytics_summary/v2")
     user = spec.user.replace("{metrics_json}", json.dumps(metrics, default=str))
     messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
     # Through the Hosted mode plan (D-PRIV-1): on an online tier the confidential employer is
     # redacted before the send, or the send is refused when nothing is marked.
     from kestrel.pipeline._shared import HOSTED_REFUSAL, run_prompt_hosted
 
-    result = await run_prompt_hosted(
-        session, client, spec, messages, quarantine_tier=2,
-        on_quarantine=_quarantine_hook(session),
-    )
+    hook = _quarantine_hook(session)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, spec, msgs, quarantine_tier=2,
+            on_quarantine=None if reask else hook,  # a failed re-ask leaves no quarantine row
+        )
+
+    result = await run(messages)
 
     if not result.ok or result.value is None:
         await session.commit()  # persist any quarantine row
@@ -129,7 +137,8 @@ async def honest_summary(
             held=result.error == HOSTED_REFUSAL,
         )
 
-    v = result.value
+    plain = await enforce(spec, result.value, messages=messages, run=run)
+    v = plain.value
     # The CODE verdicts win over the model's prose, and not only as a boolean: when the score is not
     # discriminating (or the sample is too thin), the honest finding LEADS the narrative and becomes
     # the headline, so the page can never read cheerful while the numbers say the score is not
@@ -148,4 +157,5 @@ async def honest_summary(
         evidence_for_it=v.evidence_for_it,
         sample_size_warnings=list(v.sample_size_warnings),
         from_model=True,
+        style_flags=plain.flags,
     )

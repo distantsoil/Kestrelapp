@@ -253,17 +253,24 @@ html::-webkit-scrollbar-track { background: transparent; }
 /* An icon swapped by state (the theme toggle's moon and sun) sits in a span; centre that too,
    or the inline box's baseline lifts the glyph toward the top of the circle. */
 .k-icon > span { display: grid; place-items: center; line-height: 0; }
-.k-icon__n { position: absolute; top: -4px; right: -4px; background: var(--brand);
-  color: var(--brand-ink); font-size: 10px; line-height: 1.5; border-radius: 9px; padding: 0 5px;
-  font-weight: 700; }
-.k-icon__n:empty { display: none; }
-.k-icon__n.is-tick { animation: k-tick .45s ease; }
+/* The unread badge (#95, D-UI-236): an 18 px pill, 2 px ring in the circle's own color, brand fill
+   and ink. Scoped under .k-icon so it outranks `.k-icon > span` (which centres the glyph and
+   zeroes line-height). Hidden when empty; the server caps the label at "9+". */
+.k-icon .k-icon__n { position: absolute; top: -5px; right: -6px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
+  padding: 0 5px; border-radius: 9px; background: var(--brand); color: var(--brand-ink);
+  box-shadow: 0 0 0 2px var(--paper); font-size: 11px; font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums; }
+.k-icon .k-icon__n:empty { display: none; }
+.k-icon .k-icon__n.is-in { animation: k-badge-in .2s var(--ease); }
+.k-icon .k-icon__n.is-tick { animation: k-tick .3s var(--ease); }
 .k-bell .k-ic { color: var(--bell); }
 .k-bell.is-wiggle .k-ic { animation: k-wig .9s ease; }
 @keyframes k-wig { 0%, 100% { transform: rotate(0); } 15% { transform: rotate(16deg); }
   30% { transform: rotate(-13deg); } 45% { transform: rotate(9deg); } 60% { transform: rotate(-6deg); }
   75% { transform: rotate(3deg); } }
-@keyframes k-tick { 50% { transform: scale(1.45); } }
+@keyframes k-tick { 50% { transform: scale(1.3); } }
+@keyframes k-badge-in { from { opacity: 0; transform: scale(.6); } }
 .k-bellwrap { position: relative; }
 /* Tooltips on the top row are drawn in the page, right-aligned under their control, so the
    last ones never run past the window's right edge (a native tooltip there was clipped). */
@@ -1008,6 +1015,8 @@ html[data-reduce-motion="1"] *::after { animation: none !important; transition: 
     transition: none !important;
   }
   .mainnav > a:hover { transform: none; }
+  .k-icon .k-icon__n.is-in, .k-icon .k-icon__n.is-tick, .k-bell.is-wiggle .k-ic {
+    animation: none !important; transition: none !important; }
 }
 
 /* Model picker and combobox (D-UI-69), shared by Models and Model check. Copied from kestrel.css
@@ -1069,3 +1078,16 @@ html[data-reduce-motion="1"] *::after { animation: none !important; transition: 
 .k-proof-list__hint { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-sm); }
 .k-proof-list__row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; }
 .k-proof-list__ev { display: block; color: var(--muted); font-size: var(--fs-sm); }
+
+/* Paste the description (issue #90): the form opens in place, eased, never snapping. */
+.pl-paste { display: flex; flex-direction: column; gap: 8px; }
+.pl-paste__btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.pl-paste__wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s var(--ease); }
+.pl-paste.is-open .pl-paste__wrap { grid-template-rows: 1fr; }
+.pl-paste__in { overflow: hidden; min-height: 0; opacity: 0; transition: opacity .25s var(--ease); }
+.pl-paste.is-open .pl-paste__in { opacity: 1; }
+.pl-paste__form { display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
+.pl-paste__l { font-size: var(--fs-sm); font-weight: 700; }
+.pl-paste__form textarea { width: 100%; resize: vertical; min-height: 120px; }
+@media (prefers-reduced-motion: reduce) { .pl-paste__wrap, .pl-paste__in { transition: none !important; } }
+.pl-paste__form .k-btn { align-self: flex-start; }

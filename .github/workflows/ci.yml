@@ -31,6 +31,8 @@ concurrency:
 jobs:
   test:
     name: ${{ matrix.os }}
+    # CI runs only in the public repo; the private copy spends no minutes (D-CI-11).
+    if: github.repository == 'distantsoil/Kestrelapp'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

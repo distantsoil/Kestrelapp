@@ -28,13 +28,21 @@ from sqlalchemy import delete, or_, select
 
 from kestrel.date_display import format_display
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Opportunity, Org, Pursuit, Setting, VerdictOverride
+from kestrel.db.models import Opportunity, Org, Pursuit, Setting, Task, VerdictOverride
 from kestrel.services import hidden_orgs, saved_views
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.urls import safe_web_url
 from kestrel.web import pipeline_view as pv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
-from kestrel.web.fit import GROUP_FAILED, GROUP_NEW, GROUP_UNSCORED, NOT_FIT, verdict_for_fit
+from kestrel.web.fit import (
+    EMPTY_POSTING_STAGE_REASON,
+    GROUP_FAILED,
+    GROUP_NEW,
+    GROUP_UNSCORED,
+    NOT_FIT,
+    verdict_for_fit,
+)
 from kestrel.web.queries import (
     OppRow,
     _retry_removed,
@@ -42,6 +50,7 @@ from kestrel.web.queries import (
     live_scoring_exists,
     saved_clause,
     scoring_states,
+    scoring_task_exists,
 )
 from kestrel.web.words import words
 
@@ -92,18 +101,22 @@ def parse_ids(raw: str | list[str] | None) -> list[int]:
 
 
 # ---------------------------------------------------------------------------------- the panel
-async def _flags(s, opp_id: int) -> tuple[bool, bool, bool]:
-    """(a scoring task is live or the role was removed from Needs another try, removed, saved)."""
+async def _flags(s, opp_id: int) -> tuple[bool, bool, bool, bool]:
+    """(a scoring task can run now, the role was removed from Needs another try, saved, any
+    scoring task is queued, held or not)."""
     row = (
         await s.execute(
             select(
-                or_(live_scoring_exists(), _retry_removed(Opportunity.id)),
+                live_scoring_exists(),
                 _retry_removed(Opportunity.id),
                 saved_clause(),
+                scoring_task_exists(),
             ).where(Opportunity.id == opp_id)
         )
     ).one_or_none()
-    return (bool(row[0]), bool(row[1]), bool(row[2])) if row else (False, False, False)
+    if not row:
+        return False, False, False, False
+    return bool(row[0]), bool(row[1]), bool(row[2]), bool(row[3])
 
 
 def _panel_kind(opp, fit) -> str:
@@ -135,13 +148,15 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     opp0 = await s.get(Opportunity, opp_id)
     if opp0 is None:
         return None
-    live, removed, saved = await _flags(s, opp_id)
+    live, removed, saved, queued = await _flags(s, opp_id)
     ev0 = await latest_evaluation(s, opp_id)
     # Where an unscored role is in the queue (running, queued, failed, removed ...), before the
     # detail context edits any ORM field for display.
     probe = OppRow(
         opp=opp0, ev=ev0, org_name=None, source_name=None, removed=removed,
-        fit=fit_for(ev0, opp0.stage, live=live, stage_reason=opp0.stage_reason),
+        fit=fit_for(ev0, opp0.stage, live=live, stage_reason=opp0.stage_reason,
+                    removed=removed, hidden_applied=opp0.archive_reason == "applied",
+                    queued=queued),
     )
     await scoring_states(s, [probe])
     await attach_rescoring(s, [probe])
@@ -156,7 +171,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         opp, ev, pursued=open_pursuit,
         pursuit_status=pursuit.status if pursuit is not None else None,
         operator_verdict=override.operator_verdict if override is not None else None,
-        live=live,
+        live=live, removed=removed, queued=queued,
     )
     kind = _panel_kind(opp, fit)
     track_words = words(opp.track)
@@ -181,6 +196,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         "posted": pv.posted_words(opp.date_posted),
         "liveness": pv.liveness_fact(opp),
         "open_href": f"/opportunities/{opp.id}",
+        "posting_url": safe_web_url(opp.url),
         "reasons_list": pv.reasons_for(opp.track),
         "ai_disclaimer": detail.get("ai_disclaimer"),
         "tone": pv.ring_tone(fit.word),
@@ -489,6 +505,78 @@ async def decide_put_back(request: Request, opp_id: int):
     return _answer(
         {"pl-gone": {"ids": [opp_id]}, "pl-close": opp_id,
          "k-toast": _toast("Back in Pipeline.")}, oob,
+    )
+
+
+# Shown when pasted text is too short to score; the same bar the pipeline holds a scraped
+# posting to (pipeline.tier2.is_stub_posting).
+PASTE_TOO_SHORT = "That is too short to score. Paste the whole posting."
+PASTE_MAX_CHARS = 50_000
+PASTE_TOO_LONG = "That is too long to paste. Keep it under 50,000 characters."
+PASTE_HIDDEN = "Unhide it first, then paste the description."
+_PASTE_TEXT = {
+    "description_hidden": PASTE_HIDDEN,
+    "description_short": PASTE_TOO_SHORT,
+    "description_long": PASTE_TOO_LONG,
+    "description_has": "This role already has its description.",
+    "description_gone": "That role is gone.",
+}
+
+
+@router.post("/opportunities/{opp_id}/description", response_class=HTMLResponse)
+async def paste_description(request: Request, opp_id: int):
+    """Paste the description for a posting that came with none (issue #90, D-UI-236). The text is
+    stored on the role the way a re-scrape that brings a body stores it
+    (ingest.normalize.attach_description), and the role goes back to `new`, so Tier 0 runs again
+    on it with your rules and the normal pipeline scores it (the same reset the MCP re-evaluation
+    and Show it anyway use). Only an active role with no description takes it, and the text is
+    capped at PASTE_MAX_CHARS. The Pipeline panel posts with htmx and gets a toast and the panel;
+    the role page posts a plain form (`back=role`) and gets a redirect with a notice. Nothing is
+    fetched or sent anywhere (hard rule 1); the text stays on this computer until you score it
+    online."""
+    from types import SimpleNamespace
+
+    from kestrel.ingest.normalize import attach_description
+    from kestrel.pipeline.tier2 import is_stub_posting
+    from kestrel.services import run_model
+    from kestrel.web.flash import flash_redirect
+
+    form = await request.form()
+    text = str(form.get("text") or "").strip()
+    to_role = str(form.get("back") or "") == "role"
+
+    def refuse(code: str) -> Response:
+        if to_role:
+            return flash_redirect(f"/opportunities/{opp_id}", code)
+        return _answer({"k-toast": _toast(_PASTE_TEXT[code], tone="warn")})
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return refuse("description_gone")
+        if opp.archived_at:
+            return refuse("description_hidden")
+        if not (opp.stage == "t1_pass" and opp.stage_reason == EMPTY_POSTING_STAGE_REASON):
+            return refuse("description_has")
+        if len(text) > PASTE_MAX_CHARS:
+            return refuse("description_long")
+        stand_in = SimpleNamespace(trigger_data=None, event_date=None, opp_type=opp.opp_type,
+                                   description_md=text)
+        if is_stub_posting(stand_in):
+            return refuse("description_short")
+        await attach_description(s, opp, text)
+        opp.stage = "new"
+        opp.stage_reason = None
+        # The configured models score it: no one-run pick rides along.
+        await run_model.discard(s, opp_id)
+        s.add(Task(type="embed", payload={"opportunity_id": opp_id}))
+        await s.commit()
+    if to_role:
+        return flash_redirect(f"/opportunities/{opp_id}", "description_saved")
+    return await _panel_after(
+        request, opp_id,
+        {"k-toast": _toast("Description saved. Kestrel will check it against your rules and "
+                           "score it.")},
     )
 
 
