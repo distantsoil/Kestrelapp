@@ -13,6 +13,9 @@
 {% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
 {% block head_extra %}
 <link rel="stylesheet" href="{{ static_url('css/pages/today.css') }}">
+{# Today's own notices and its update, what's-new and announcement cards all use .sf-*: declared
+   in the head so a full load and an in-place arrival (which moves body sheets there) agree. #}
+<link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 {% endblock %}
 {# The page lifecycle (D-UI-210): today.js defines the page "today"; base.html mounts it. #}
 {% block page_name %}today{% endblock %}
@@ -26,7 +29,6 @@
   <div id="announcement-slot" hx-get="/announcements" hx-trigger="load" hx-swap="innerHTML"></div>
 
   {% if readiness.show_notice or rescoring %}
-  <link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
   <div class="sf-notice" role="status" data-testid="thin-profile-notice" data-next-step="{{ readiness.next_step }}">
     {% set back = 'today' %}{% include "partials/profile_next_step.html" %}
   </div>

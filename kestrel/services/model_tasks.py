@@ -48,7 +48,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Task
+from kestrel.db.models import Setting, Task
+from kestrel.errors import shown_failure
 from kestrel.llm import profiles
 
 log = structlog.get_logger()
@@ -242,19 +243,69 @@ async def queue_builds(session: AsyncSession, profile: str, reason: str = "") ->
     dest = setup_cli.modelfiles_dir()
     await asyncio.to_thread(profiles.write_modelfiles, profile, dest)
     batch = uuid.uuid4().hex[:12]
-    for tier in profiles.TIERS:
+    for tier in profiles.DERIVED_TIERS:
         session.add(Task(
             type=CREATE_TYPE,
             payload={
                 "name": profiles.derived_name(tier), "tier": tier,
                 "modelfile": profiles.render_modelfile(tier, profile),
+                "base": profiles.plan_bases(profile).get(tier, ""),
                 "profile": profile, "reason": reason, "batch": batch,
             },
             max_attempts=MAX_ATTEMPTS,
         ))
     await session.commit()
-    log.info("setup_builds_queued", count=len(profiles.TIERS), profile=profile)
-    return len(profiles.TIERS)
+    log.info("setup_builds_queued", count=len(profiles.DERIVED_TIERS), profile=profile)
+    return len(profiles.DERIVED_TIERS)
+
+
+REBUILD_OWED_KEY = "setup.rebuild_owed"
+
+
+async def rebuild_owed(session: AsyncSession) -> bool:
+    row = await session.get(Setting, REBUILD_OWED_KEY)
+    return bool(row is not None and row.value)
+
+
+async def set_rebuild_owed(session: AsyncSession, owed: bool) -> None:
+    """Remember (in the database, so a restart keeps it) that the derived kestrel-* models must be
+    rebuilt once the corrected base model is present. Commits."""
+    row = await session.get(Setting, REBUILD_OWED_KEY)
+    if row is None:
+        session.add(Setting(key=REBUILD_OWED_KEY, value=bool(owed)))
+    else:
+        row.value = bool(owed)
+        row.updated_at = utcnow_iso()
+    await session.commit()
+
+
+async def finish_owed_rebuild(sm: async_sessionmaker[AsyncSession]) -> bool:
+    """Complete the rebuild owed after the corrected download (D-LLM-9). Run from the idle loop:
+    one cheap row read when nothing is owed. When the pulls are present, queue the builds (a
+    clean Modelfile from render_modelfile each) and clear the row; while they are not, leave it.
+    Returns True when the builds were queued."""
+    from kestrel.services import setup_state as ss
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sm() as s:
+        if not await rebuild_owed(s):
+            return False
+        if await live_tasks(s):
+            return False  # still pulling or building
+        settings = await load_settings_with_db(s)
+        found = await s.execute(
+            select(Setting.key, Setting.value).where(Setting.key.in_((ss.MODE_KEY, ss.CHOICE_KEY)))
+        )
+        rows = dict(found.all())
+    state = await asyncio.to_thread(ss.assess, settings, rows)
+    if state.ollama_version is None or state.missing_tags:
+        return False
+    async with sm() as s:
+        if state.stale_derived or state.missing_derived:
+            await queue_builds(s, state.profile, state.profile_reason)
+        await set_rebuild_owed(s, False)
+    log.info("setup_owed_rebuild_queued", profile=state.profile)
+    return True
 
 
 async def cancel_all(session: AsyncSession) -> int:
@@ -313,7 +364,7 @@ def _row_view(t: Task) -> dict[str, Any]:
     if t.status == "pending":
         view["step"] = "Waiting" if not t.attempts else "Trying again shortly"
         if t.attempts and t.last_error:
-            view["error"] = t.last_error[:300]
+            view["error"] = shown_failure(t.last_error)[:300]
     elif t.status == "leased":
         view["step"] = step_text(prog) if prog else "Starting"
         view["percent"] = prog.percent if prog else None
@@ -323,7 +374,7 @@ def _row_view(t: Task) -> dict[str, Any]:
         view["step"] = "Stopping…" if t.id in _running else "Cancelled"
     else:  # dead or failed
         view["step"] = "Failed"
-        view["error"] = (t.last_error or "it stopped before it finished")[:300]
+        view["error"] = (shown_failure(t.last_error) or "it stopped before it finished")[:300]
     return view
 
 
@@ -446,8 +497,12 @@ async def _record_profile_if_batch_done(
 
     profile = str(payload.get("profile") or "")
     reason = str(payload.get("reason") or "") or "chosen on the Setup page"
+    bases = {
+        str(t.payload.get("tier")): str(t.payload.get("base"))
+        for t in mine if (t.payload or {}).get("tier") and (t.payload or {}).get("base")
+    }
     await asyncio.to_thread(
-        profiles.save_active_profile, profile, reason, ss.detected_hardware()
+        profiles.save_active_profile, profile, reason, ss.detected_hardware(), bases or None
     )
     log.info("setup_profile_recorded", profile=profile)
     return True
@@ -490,7 +545,11 @@ async def drain_once(
     except (httpx.HTTPError, OllamaApiError, ValueError, OSError) as exc:
         reason = _reason(exc, base)
         prog.error = reason
-        status = await queue.fail(task.id, reason, worker_id=WORKER_ID, retry=True)
+        from kestrel.errors import DETAIL_MARK
+
+        status = await queue.fail(
+            task.id, f"{reason}{DETAIL_MARK}{type(exc).__name__}: {exc}",
+            worker_id=WORKER_ID, retry=True)
         log.warning("setup_task_failed", task=task.id, kind=kind, target=target,
                     error=reason, now=status)
         if status == "pending":
@@ -521,7 +580,9 @@ def _reason(exc: Exception, base: str) -> str:
         return "The download stalled (no data for ten minutes). Press Try again to continue it."
     if isinstance(exc, OllamaApiError):
         return str(exc)
-    return f"{type(exc).__name__}: {exc}"[:500]
+    from kestrel.errors import task_failure_text
+
+    return task_failure_text(exc)[:500]
 
 
 async def run_loop(
@@ -545,5 +606,9 @@ async def run_loop(
                 log.warning("setup_task_loop_error", error=f"{type(exc).__name__}: {exc}")
                 did = False
             if not did:
+                try:
+                    await finish_owed_rebuild(sm)
+                except Exception as exc:  # noqa: BLE001 - the loop must outlive one bad cycle
+                    log.warning("setup_owed_rebuild_failed", error=f"{type(exc).__name__}: {exc}")
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=IDLE_POLL_S)

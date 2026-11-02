@@ -85,10 +85,10 @@ def test_dry_run_prints_every_step_and_runs_nothing(calls):
     assert "Hardware: windows, NVIDIA GPU 16 GB VRAM, 128 GB RAM" in out
     assert "Recommended profile: gpu_16gb" in out
     assert "winget install --id Ollama.Ollama -e" in out  # install command printed, not run
-    assert "would run: ollama pull qwen3:4b" in out
+    assert "would run: ollama pull qwen3:4b-instruct-2507-q4_K_M" in out
     assert "would run: ollama pull qwen3:14b" in out
     assert "would run: ollama pull nomic-embed-text" in out
-    for tier in profiles.TIERS:
+    for tier in profiles.DERIVED_TIERS:
         assert f"would run: ollama create kestrel-{tier} -f " in out
     assert "would run: write" in out and "hardware_profile.json" in out
     assert "would run: kestrel doctor" in out
@@ -206,7 +206,8 @@ def test_yes_runs_install_then_fails_cleanly_when_ollama_never_answers(calls):
 
 # --------------------------------------------------------------------------- ollama present
 def test_yes_pulls_missing_bases_builds_models_and_records_profile(calls, monkeypatch):
-    _ollama_answers(monkeypatch, calls, tags=["qwen3:4b", "nomic-embed-text:latest"])
+    _ollama_answers(
+        monkeypatch, calls, tags=["qwen3:4b-instruct-2507-q4_K_M", "nomic-embed-text:latest"])
     monkeypatch.setattr(setup_mod.shutil, "which", lambda name: "/usr/bin/ollama")
 
     class _Report:
@@ -222,11 +223,12 @@ def test_yes_pulls_missing_bases_builds_models_and_records_profile(calls, monkey
     out = result.output
     assert result.exit_code == 0, out
     assert "Ollama 0.9.0 running" in out
-    assert "qwen3:4b already pulled" in out and "nomic-embed-text already pulled" in out
+    assert "qwen3:4b-instruct-2507-q4_K_M already pulled" in out
+    assert "nomic-embed-text already pulled" in out
     pulls = [c for c in calls.run if c[:2] == ["ollama", "pull"]]
     assert pulls == [["ollama", "pull", "qwen3:14b"]]
     creates = [c for c in calls.run if c[:2] == ["ollama", "create"]]
-    assert [c[2] for c in creates] == [f"kestrel-{t}" for t in profiles.TIERS]
+    assert [c[2] for c in creates] == [f"kestrel-{t}" for t in profiles.DERIVED_TIERS]
     models_dir = paths.config_dir() / "models"
     for c in creates:
         assert c[3] == "-f" and c[4].startswith(str(models_dir))

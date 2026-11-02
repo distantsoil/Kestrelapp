@@ -336,8 +336,8 @@ def test_diagnostics_zip_has_the_members_and_no_secret_or_posting_text(monkeypat
     assert "OPENROUTER_API_KEY" in settings["environment"]["set"]
 
     log = members["logs/kestrel.log"].decode()
-    assert log.startswith("# kestrel.log: last 2000 of 2102 lines")
-    assert '"old line 99"' not in log and '"old line 2099"' in log
+    assert log.startswith("# kestrel.log: all 2102 lines")
+    assert '"old line 0"' in log and '"old line 2099"' in log
     assert log.count("<redacted>") >= 2
 
     quarantine = yaml.safe_load(members["quarantine.json"])

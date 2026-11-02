@@ -89,9 +89,9 @@ Ollama installed.
 ## Models and guardrails
 
 **Which models.** The profile picks the base models per tier. Default (16 GB GPU): Tier 1
-`qwen3:4b` for fast keep/reject, Tier 2 `qwen3:14b` for the six-block evaluation, document
-selection `qwen3:4b`, embeddings `nomic-embed-text`. Smaller profiles step Tier 2 down to
-`qwen3:8b`; 24 GB and 64 GB Mac profiles step it up to `qwen3:30b-a3b`. Edit
+`qwen3:4b-instruct-2507-q4_K_M` for fast keep/reject, Tier 2 `qwen3:14b` for the six-block evaluation, document
+selection (the import and tailoring model) calls the same `kestrel-tier2` model, embeddings `nomic-embed-text`. Smaller profiles step Tier 2 down to
+`qwen3:8b`; 24 GB and 64 GB Mac profiles step it up to `qwen3:30b-a3b-instruct-2507-q4_K_M`. Edit
 `kestrel/resources/config/models.yml` (or the copy in your config folder) to use anything else that
 Ollama serves; `kestrel bench` measures a candidate against the gold set before you commit to it.
 

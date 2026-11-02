@@ -268,8 +268,9 @@ async def test_the_keys_never_reach_a_structlog_event_or_an_error():
 @respx.mock
 @pytest.mark.usefixtures("_isolate_data_home")
 async def test_the_keys_do_not_reach_kestrel_log_even_through_httpxs_own_request_line():
-    """httpx logs each request line at INFO with the full URL, and Adzuna's keys ride in the query
-    string, so the log file's handler masks them."""
+    """Adzuna's keys ride in the query string. httpx's per-request INFO lines are off (#105), so a
+    normal request writes no URL at all; a request line that does get through (httpx at WARNING)
+    still has its keys masked by the log file's handler."""
     from kestrel import logging_setup
 
     root = logging.getLogger()
@@ -283,6 +284,14 @@ async def test_the_keys_do_not_reach_kestrel_log_even_through_httpxs_own_request
             await AdzunaAdapter().fetch(CFG, http)
         for h in root.handlers:
             h.flush()
+        quiet = (paths.logs_dir() / "kestrel.log").read_text(encoding="utf-8")
+        # A request line that still reaches the log (httpx logs failures at WARNING).
+        logging.getLogger("httpx").warning(
+            "HTTP Request: GET https://api.adzuna.com/v1/api/jobs/us/search/1"
+            f"?app_id={APP_ID}&app_key={APP_KEY} \"HTTP/1.1 500\""
+        )
+        for h in root.handlers:
+            h.flush()
         text = (paths.logs_dir() / "kestrel.log").read_text(encoding="utf-8")
     finally:
         for h in list(root.handlers):
@@ -293,8 +302,10 @@ async def test_the_keys_do_not_reach_kestrel_log_even_through_httpxs_own_request
         logging_setup._configured = False
         structlog.reset_defaults()
     # Compare each logged URL's parsed host exactly, not a substring of the log text.
+    quiet_hosts = [urlparse(u).hostname for u in re.findall(r"https?://[^\s\"']+", quiet)]
+    assert "api.adzuna.com" not in quiet_hosts, "httpx request lines are off at INFO (#105)"
     logged_hosts = [urlparse(u).hostname for u in re.findall(r"https?://[^\s\"']+", text)]
-    assert logged_hosts.count("api.adzuna.com") >= 1, "the request line should still be logged"
+    assert logged_hosts.count("api.adzuna.com") == 1, "the WARNING request line is logged"
     assert APP_KEY not in text and APP_ID not in text and "app_key=***" in text
 
 

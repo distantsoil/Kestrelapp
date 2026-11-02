@@ -74,10 +74,10 @@ def request_quit() -> bool:
     return True
 
 
-_reveal_handler: Callable[[Path], None] | None = None
+_reveal_handler: Callable[[Path], bool | None] | None = None
 
 
-def set_reveal_handler(fn: Callable[[Path], None] | None) -> None:
+def set_reveal_handler(fn: Callable[[Path], bool | None] | None) -> None:
     """The shell registers a handler that shows a saved file in the OS file manager (D-UI-41):
     Explorer with the file selected on Windows. Headless serve registers nothing, so the web
     layer knows it is in a plain browser and keeps the normal download."""
@@ -95,17 +95,19 @@ def request_reveal(path: Path) -> bool:
     if _reveal_handler is None:
         return False
     try:
-        _reveal_handler(path)
-        return True
+        # A handler that reports failure returns False (the shell does, #100); one that returns
+        # nothing took the request.
+        return _reveal_handler(path) is not False
     except Exception as exc:  # a file-manager quirk must not fail the request
-        log.warning("reveal_failed", path=str(path), error=f"{type(exc).__name__}: {exc}")
+        log.warning("reveal_failed", error_type=type(exc).__name__,
+                    errno=getattr(exc, "errno", None), winerror=getattr(exc, "winerror", None))
         return False
 
 
-_folder_handler: Callable[[Path], None] | None = None
+_folder_handler: Callable[[Path], bool | None] | None = None
 
 
-def set_folder_handler(fn: Callable[[Path], None] | None) -> None:
+def set_folder_handler(fn: Callable[[Path], bool | None] | None) -> None:
     """The shell registers a handler that opens a folder in the OS file manager (About's Open
     buttons for the data and logs folders). A plain browser registers nothing."""
     global _folder_handler
@@ -122,10 +124,10 @@ def request_open_folder(path: Path) -> bool:
     if _folder_handler is None:
         return False
     try:
-        _folder_handler(path)
-        return True
+        return _folder_handler(path) is not False
     except Exception as exc:  # a file-manager quirk must not fail the request
-        log.warning("open_folder_failed", path=str(path), error=f"{type(exc).__name__}: {exc}")
+        log.warning("open_folder_failed", error_type=type(exc).__name__,
+                    errno=getattr(exc, "errno", None), winerror=getattr(exc, "winerror", None))
         return False
 
 

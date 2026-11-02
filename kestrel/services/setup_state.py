@@ -152,7 +152,7 @@ class SetupState:
     base_tags: list[str]
     missing_tags: list[str]
     derived_names: list[str]
-    missing_derived: list[str]
+    missing_derived: list[str]  # not built, or built from an older base (see stale_derived)
     verified: str  # ok | failed | none
     verified_detail: str
     hosted_keys: dict[str, bool]  # backend name -> key present
@@ -161,6 +161,7 @@ class SetupState:
     profile_yml: bool
     first_run: bool
     steps: list[StepState] = field(default_factory=list)
+    stale_derived: list[str] = field(default_factory=list)  # built, but from an older base
     low_spec_warning: str | None = None  # LOW_SPEC_WARNING when it applies, else None
 
     @property
@@ -314,6 +315,35 @@ def is_first_run(settings: Settings, rows: dict[str, Any] | None = None) -> bool
     return not settings.llm.hosted_mode.acknowledged_at
 
 
+# A plan base that carries this mark replaced a bare tag that now resolves to a Thinking build
+# (D-LLM-9). An install whose derived models were built from anything else is rebuilt once.
+PINNED_MARK = "-instruct-2507"
+
+
+def stale_derived(
+    prof: profiles.Profile, active: profiles.ActiveProfile | None, tags: list[str]
+) -> list[str]:
+    """Derived kestrel-* models that exist but were built from a base other than the plan's now.
+    Only the base models the person has are never touched; these are Kestrel's own models, and
+    the rebuild writes a clean Modelfile (render_modelfile: FROM and PARAMETER lines only)."""
+    out: list[str] = []
+    recorded = active.bases if active is not None else {}
+    for tier in profiles.DERIVED_TIERS:
+        base = prof.models.for_tier(tier)
+        name = profiles.derived_name(tier)
+        if not base or not setup_cli._tag_present(name, tags):
+            continue
+        built_from = recorded.get(tier)
+        # A recorded profile without bases was built before the record existed: a derived model
+        # whose plan base is a pinned tag is rebuilt once. With no recorded profile at all there
+        # is nothing to compare, so nothing is called stale.
+        if (built_from is not None and built_from != base) or (
+            built_from is None and active is not None and PINNED_MARK in base
+        ):
+            out.append(name)
+    return out
+
+
 # ------------------------------------------------------------------------------------ assess
 def assess(settings: Settings, rows: dict[str, Any] | None = None) -> SetupState:
     """Every step's state, read-only. `rows` is the raw setting table for MODE_KEY and
@@ -329,7 +359,14 @@ def assess(settings: Settings, rows: dict[str, Any] | None = None) -> SetupState
     # onboarding and Settings render up to a second waiting on a refused connect (D-UI-40).
     version, tags = (None, []) if choice == "hosted" else probe_ollama(settings)
     active = profiles.load_active_profile()
-    if active is not None and active.profile in cat.profiles:
+    # A recorded hosted profile has nothing to pull or build. When the person has since chosen
+    # to run locally it is treated like no profile at all (#103), so the local fallback or the
+    # recommendation lists real models instead of "0 of 0 ready".
+    recorded_usable = (
+        active is not None and active.profile in cat.profiles
+        and not (choice != "hosted" and cat.profile(active.profile).hosted)
+    )
+    if active is not None and recorded_usable:
         profile, recorded, profile_reason = active.profile, True, active.reason
     elif choice != "hosted" and cat.profile(recommended).hosted:
         # The operator chose to run locally on a machine where Hosted is the recommendation.
@@ -341,10 +378,12 @@ def assess(settings: Settings, rows: dict[str, Any] | None = None) -> SetupState
     prof = cat.profile(profile)
     base_tags = prof.models.base_tags()
     missing_tags = [t for t in base_tags if not setup_cli._tag_present(t, tags)]
-    derived = [profiles.derived_name(t) for t in profiles.TIERS]
+    derived = [profiles.derived_name(t) for t in profiles.DERIVED_TIERS]
     missing_derived = (
         [] if prof.hosted else [n for n in derived if not setup_cli._tag_present(n, tags)]
     )
+    stale = [] if prof.hosted else stale_derived(prof, active, tags)
+    missing_derived = missing_derived + [n for n in stale if n not in missing_derived]
     verified, verified_detail = _verification(load_report())
     hosted_keys = {
         name: bool(b.api_key) or prov.secret_present(b.api_key_env)
@@ -366,6 +405,7 @@ def assess(settings: Settings, rows: dict[str, Any] | None = None) -> SetupState
         missing_tags=missing_tags,
         derived_names=derived,
         missing_derived=missing_derived,
+        stale_derived=stale,
         verified=verified,
         verified_detail=verified_detail,
         hosted_keys=hosted_keys,

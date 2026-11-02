@@ -729,7 +729,8 @@ def test_bench_promote_tuning_failure_shows_no_exception_text(monkeypatch):
             side_effect=httpx.ConnectError(PLANTED)
         )
         r = client.post("/bench/promote", data={"tier": "tier2", "model": "qwen3:14b"})
-    assert "could not tune qwen3:14b for this step: " + GENERIC in r.text
+    # A failed call to the model server reads as a fixed sentence by kind (Ollama unreachable).
+    assert "could not tune qwen3:14b for this step: Kestrel could not reach the AI." in r.text
     _nothing_of_it(r.text)
 
 

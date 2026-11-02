@@ -317,6 +317,183 @@
     root.addEventListener('scroll', reanchor, { passive: true });
     root.addEventListener('resize', reanchor);
   }
+  /* ------------------------------------------------------------- the body-level layer
+     A modal or slide-over is rendered inside its page (often deep, or swapped in by htmx), so
+     an ancestor that makes a stacking context (a transform, a fill-forwards arrival, a size
+     container) traps its z-index below the body-level scrim: the dialog looked dimmed and the
+     mouse hit the scrim (#87). So an overlay is moved under <body> (#k-layer) when it opens,
+     and goes back to a comment marker left at its place once its fade-out is done, or is
+     removed if that place was swapped away meanwhile (#94). Any htmx swap into a container that
+     holds the marker closes the overlay first. */
+  var mounts = [];  // {el, mark, timer}
+  var LAYER_MS = 400;  // a little longer than the .3s fade-out
+  function layerEl() {
+    var l = doc.getElementById('k-layer');
+    if (!l) {
+      l = doc.createElement('div');
+      l.id = 'k-layer';
+      l.className = 'k-layer';
+      doc.body.appendChild(l);
+    }
+    return l;
+  }
+  function mountOf(el) {
+    for (var i = 0; i < mounts.length; i++) if (mounts[i].el === el) return mounts[i];
+    return null;
+  }
+  // htmx attributes (hx-target, hx-swap, hx-push-url ...) are inherited down the DOM. A form in
+  // a modal that took its hx-target from a page wrapper would lose it in the layer, so the
+  // modal carries what its old ancestors gave it for as long as it is out there.
+  var HX_INHERITED = ['hx-target', 'hx-swap', 'hx-push-url', 'hx-replace-url', 'hx-select',
+    'hx-select-oob', 'hx-indicator', 'hx-disabled-elt', 'hx-include', 'hx-headers', 'hx-vals',
+    'hx-boost', 'hx-confirm', 'hx-sync', 'hx-ext', 'hx-encoding', 'hx-params', 'hx-prompt',
+    'hx-history', 'hx-request'];
+  // Attributes whose value can name an element relative to the one that carries it (htmx's
+  // `this`, `closest`, `find`, `next`, `previous`). Moved with the modal they would point at the
+  // modal's new neighbors, so they are resolved to the original element first.
+  var HX_RELATIVE = ['hx-target', 'hx-include', 'hx-indicator', 'hx-disabled-elt'];
+  var hxIds = 0;
+  function idOf(node) {
+    if (!node.id) node.id = 'k-hx-' + (++hxIds);
+    return '#' + node.id;
+  }
+  function resolveOne(token, src) {
+    var t = token.trim();
+    var m = /^(closest|find|next|previous)\s+(.+)$/.exec(t);
+    var node = null;
+    if (t === 'this') node = src;
+    else if (m && m[1] === 'closest') node = src.closest(m[2]);
+    else if (m && m[1] === 'find') node = src.querySelector(m[2]);
+    else if (m && (m[1] === 'next' || m[1] === 'previous')) {
+      var all = Array.prototype.slice.call(doc.querySelectorAll(m[2]));
+      var FOLLOWING = 4;  // Node.DOCUMENT_POSITION_FOLLOWING
+      var after = all.filter(function (n) { return src.compareDocumentPosition(n) & FOLLOWING; });
+      node = m[1] === 'next' ? after[0] : all.filter(function (n) { return after.indexOf(n) < 0 && n !== src; }).pop();
+    } else return t;  // an ordinary selector (or window/document/body): already absolute
+    return node ? idOf(node) : t;
+  }
+  function resolveRelative(value, src) {
+    return value.split(',').map(function (tok) { return resolveOne(tok, src); }).join(', ');
+  }
+  function inheritHtmx(el) {
+    var added = [];
+    if (!el.parentElement || !el.parentElement.closest) return added;
+    HX_INHERITED.forEach(function (a) {
+      if (el.hasAttribute(a)) return;
+      var src = el.parentElement.closest('[' + a + ']');
+      if (!src) return;
+      var value = src.getAttribute(a);
+      if (HX_RELATIVE.indexOf(a) >= 0) value = resolveRelative(value, src);
+      el.setAttribute(a, value);
+      added.push(a);
+    });
+    return added;
+  }
+  // How a swap treats its target: the style from the HX-Reswap header, else the nearest hx-swap
+  // (inherited attributes included), else htmx's default innerHTML. Only a style that replaces the
+  // target's content (innerHTML, outerHTML, delete, or their morph forms) removes what is inside.
+  function swapStyleOf(d) {
+    var style = '';
+    try { style = (d.xhr && d.xhr.getResponseHeader('HX-Reswap')) || ''; } catch (err) { style = ''; }
+    if (!style && d.elt && d.elt.closest) {
+      var host = d.elt.closest('[hx-swap]');
+      style = host ? host.getAttribute('hx-swap') : '';
+    }
+    style = (style || 'innerHTML').trim().split(/\s+/)[0];
+    if (style.indexOf('morph') === 0) style = style.indexOf(':') > 0 ? style.split(':')[1] : 'outerHTML';
+    return style;
+  }
+  function replacesContainer(style) {
+    return style === 'innerHTML' || style === 'outerHTML' || style === 'delete';
+  }
+  function mountInLayer(el) {
+    var rec = mountOf(el);
+    if (rec) { clearTimeout(rec.timer); rec.timer = 0; return rec; }
+    el.removeAttribute('data-k-returned');
+    if (!el.parentNode || !doc.body) return null;
+    var layer = layerEl();
+    if (el.parentNode === layer) return null;
+    var mark = doc.createComment('k-overlay:' + (el.id || ''));
+    var inherited = inheritHtmx(el);
+    el.parentNode.insertBefore(mark, el);
+    layer.appendChild(el);
+    void el.offsetWidth;  // settle the hidden style here, so the open transition still runs
+    // A modal that arrives inside an htmx answer opens from its own script, which runs while the
+    // swap inserts it and BEFORE htmx walks the new content. Moved out to the layer by then, its
+    // buttons and forms would never be processed, so a Send inside it did nothing. Process it
+    // where it now is (a no-op for an overlay htmx already knows).
+    // htmx keeps what it knows about a node under 'htmx-internal-data'; re-processing a known one
+    // would re-initialize it after inheritHtmx changed its attributes.
+    if (root.htmx && root.htmx.process && !el['htmx-internal-data']) root.htmx.process(el);
+    rec = { el: el, mark: mark, timer: 0, inherited: inherited };
+    mounts.push(rec);
+    return rec;
+  }
+  function unmountFromLayer(rec) {
+    clearTimeout(rec.timer);
+    var i = mounts.indexOf(rec);
+    if (i >= 0) mounts.splice(i, 1);
+    var m = rec.mark;
+    if (m.parentNode && m.isConnected) m.parentNode.insertBefore(rec.el, m);
+    else if (rec.el.parentNode) rec.el.parentNode.removeChild(rec.el);
+    if (m.parentNode) m.parentNode.removeChild(m);
+    rec.inherited.forEach(function (a) { rec.el.removeAttribute(a); });
+    rec.el.setAttribute('data-k-returned', '');
+  }
+  function sweepStale() {
+    stack.slice().forEach(function (o) { if (!o.el.isConnected) close(o); });
+  }
+  function isOpenEl(el) { return stack.some(function (o) { return o.el === el; }); }
+  function releaseSoon(el) {
+    var rec = mountOf(el);
+    if (!rec || isOpenEl(el)) return;
+    clearTimeout(rec.timer);
+    rec.timer = setTimeout(function () { if (!isOpenEl(rec.el)) unmountFromLayer(rec); }, LAYER_MS);
+  }
+  // Close every layered overlay now and give each back (page unmount).
+  function flushLayer() {
+    mounts.slice().forEach(function (rec) {
+      stack.filter(function (o) { return o.el === rec.el; }).forEach(close);
+      unmountFromLayer(rec);
+    });
+  }
+  // A swap into a container that holds an overlay's marker would drop its place: close the
+  // overlay first (it fades out in the layer, then is removed).
+  function onBeforeSwapLayer(e) {
+    var d = e.detail || {};
+    var t = d.target;
+    if (!t || d.shouldSwap === false || !t.contains) return;
+    var reply = typeof d.serverResponse === 'string' ? d.serverResponse : '';
+    var style = swapStyleOf(d);
+    if (!replacesContainer(style)) return;  // none, beforeend, afterbegin ...: nothing is replaced
+    mounts.slice().forEach(function (rec) {
+      if (!rec.mark.parentNode || !t.contains(rec.mark)) return;
+      var entries = stack.filter(function (o) { return o.el === rec.el; });
+      if (entries.length && rec.el.id && reply.indexOf('id="' + rec.el.id + '"') >= 0) {
+        // Replaced in place: the answer brings the same overlay back. It leaves at once and its
+        // stack entry stays, so the scrim does not blink; the page opens the new one, which
+        // closes the stale entry. If nobody does, the sweep below closes it.
+        var i = mounts.indexOf(rec);
+        if (i >= 0) mounts.splice(i, 1);
+        clearTimeout(rec.timer);
+        if (rec.el.parentNode) rec.el.parentNode.removeChild(rec.el);
+        if (rec.mark.parentNode) rec.mark.parentNode.removeChild(rec.mark);
+        setTimeout(sweepStale, 700);
+        return;
+      }
+      entries.forEach(close);
+      releaseSoon(rec.el);
+    });
+    // htmx settle copies class and style from a same-id element it finds in the target onto the
+    // new one, which strips the new overlay's open state (#94). An overlay that was opened,
+    // closed and handed back is dead weight in the target the swap replaces anyway: drop it.
+    if (!t.querySelectorAll) return;
+    Array.prototype.slice.call(t.querySelectorAll('[data-k-returned]')).forEach(function (el) {
+      if (!isOpenEl(el) && el.parentNode) el.parentNode.removeChild(el);
+    });
+  }
+  if (doc && doc.addEventListener) doc.addEventListener('htmx:beforeSwap', onBeforeSwapLayer);
+
   function open(kind, ref, opts) {
     var el = el$(ref);
     opts = opts || {};
@@ -326,6 +503,7 @@
     stack.slice().forEach(function (o) { if (o.kind === kind) close(o); });
     var opener = doc.activeElement;
     var trigger = opts.trigger || null;
+    if (kind === 'modal' || kind === 'slideover') mountInLayer(el);
     settleArrival(el);
     anchor(el);
     if (anchored.indexOf(el) < 0) anchored.push(el);
@@ -351,6 +529,7 @@
     entry.el.setAttribute('aria-hidden', 'true');
     var ai = anchored.indexOf(entry.el);  // keeps its place while it fades out
     if (ai >= 0) anchored.splice(ai, 1);
+    releaseSoon(entry.el);
     lockScroll();
     markTrigger(entry.trigger, false);
     syncScrim();
@@ -827,6 +1006,191 @@
     });
   }
 
+  /* The document import's two sends (the consent dialog's "Send and import", and the processing
+     form that starts on load) share one progress panel and one failure message (D-IMPORT-7).
+     The panel shows in #import-proposal the moment a send starts: a spinner, the seconds
+     elapsed, and after a minute a "taking longer" line. Any failure (an error answer, no answer,
+     a timeout, or an empty answer) ends the spinner and writes a plain message with Try again.
+     A second send while one runs is ignored. The client gives up just above the server's worst
+     case for a proposal. */
+  var IMPORT_PATH = '/api/documents/import';
+  var IMPORT_TIMEOUT_MS = root.__kImportTimeoutMs || 15 * 60 * 1000;  // the override is for tests
+  var IMPORT_LONG_S = 60;
+  var importRun = null;
+
+  function importPath(d) {
+    var p = (d.pathInfo && d.pathInfo.requestPath) || (d.requestConfig && d.requestConfig.path) || '';
+    return String(p).split('?')[0] === IMPORT_PATH;
+  }
+  function importArea() { return doc.getElementById('import-proposal'); }
+  function importClear(area) {
+    Array.prototype.forEach.call(area.querySelectorAll('[data-k-import-panel]'), function (n) {
+      n.remove();
+    });
+  }
+  function importPanel(area, kind) {
+    importClear(area);
+    var box = doc.createElement('div');
+    box.setAttribute('data-k-import-panel', kind);
+    area.insertBefore(box, area.firstChild);
+    return box;
+  }
+  function importProgress(area) {
+    var box = importPanel(area, 'working');
+    box.className = 'import-wait';
+    box.setAttribute('role', 'status');
+    box.setAttribute('aria-live', 'polite');
+    box.setAttribute('data-testid', 'import-working');
+    var spin = doc.createElement('span');
+    spin.className = 'spin';
+    spin.setAttribute('aria-hidden', 'true');
+    var text = doc.createElement('span');
+    var b = doc.createElement('b');
+    b.textContent = 'Processing.';
+    var rest = doc.createElement('span');
+    rest.textContent = ' Mapping roles and bullets, one role at a time. This usually takes under a minute. ';
+    var secs = doc.createElement('span');
+    secs.className = 'muted import-elapsed';
+    secs.setAttribute('data-testid', 'import-elapsed');
+    secs.textContent = '0 s';
+    var long = doc.createElement('span');
+    long.className = 'import-long';
+    long.setAttribute('data-testid', 'import-long');
+    long.hidden = true;
+    long.textContent = ' This is taking longer than usual. A long resume or a slow model can take a few minutes; it is still working.';
+    text.appendChild(b); text.appendChild(rest); text.appendChild(secs); text.appendChild(long);
+    box.appendChild(spin); box.appendChild(text);
+    var started = Date.now();
+    return root.setInterval(function () {
+      var n = Math.max(0, Math.round((Date.now() - started) / 1000));
+      secs.textContent = n + ' s';
+      if (n >= IMPORT_LONG_S) long.hidden = false;
+    }, 1000);
+  }
+  function importFailure(area, message, retry) {
+    var box = importPanel(area, 'failed');
+    box.className = 'warnbox import-fail';
+    box.setAttribute('role', 'alert');
+    box.setAttribute('data-testid', 'import-error');
+    var msg = doc.createElement('span');
+    msg.textContent = message + ' ';
+    box.appendChild(msg);
+    if (retry) {
+      var btn = doc.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn';
+      btn.setAttribute('data-testid', 'import-retry');
+      btn.textContent = 'Try again';
+      btn.addEventListener('click', retry);
+      box.appendChild(btn);
+    }
+  }
+  function importEnd() {
+    if (!importRun) return null;
+    var run = importRun;
+    importRun = null;
+    root.clearInterval(run.timer);
+    var area = importArea();
+    if (area) {
+      Array.prototype.forEach.call(area.querySelectorAll('[data-k-import-panel="working"]'),
+        function (n) { n.remove(); });
+    }
+    return run;
+  }
+  function importRetryFor(elt) {
+    return function () {
+      // Clear the failure message only when there is something to restart; otherwise the
+      // person would be left with an empty area and nothing to press.
+      var start = doc.getElementById('import-form');
+      var isForm = !!(elt && elt.tagName === 'FORM');
+      if (isForm ? !elt.isConnected : !(start && start.requestSubmit)) return;
+      var area = importArea();
+      if (area) importClear(area);
+      if (isForm) {
+        root.htmx.ajax('POST', IMPORT_PATH, {
+          source: elt, target: elt.closest('.import-result') || '#import-proposal',
+          swap: 'innerHTML'
+        });
+      } else {
+        // The send came from the online consent dialog. Never press its Send again: that would
+        // post with confirmed=1 and no dialog. Start over from Propose import, whose answer
+        // shows the consent dialog again (D-SEC-7).
+        start.requestSubmit();
+      }
+    };
+  }
+  var IMPORT_PLAIN = {
+    error: 'The import did not go through. Nothing was saved.',
+    send: 'Kestrel did not answer, so the import did not run. Nothing was saved.',
+    timeout: 'The import took too long and was stopped. Nothing was saved.',
+    empty: 'The import came back with nothing to show. Nothing was saved.'
+  };
+  if (doc && root.htmx) {
+    doc.addEventListener('htmx:beforeRequest', function (e) {
+      var d = e.detail || {};
+      if (!importPath(d)) return;
+      var area = importArea();
+      if (!area) return;
+      if (importRun) { e.preventDefault(); return; }  // one at a time
+      importRun = { elt: d.elt, timer: importProgress(area) };
+      // A send from the consent dialog (it lives in the body-level layer, not in the import
+      // area): the dialog shows its busy text until ITS request completes, then closes, so a
+      // failure's Try again is not blocked by the scrim. Never on a timer (D-SEC-7).
+      var dialog = d.elt && d.elt.closest && d.elt.closest('.k-modal');
+      if (dialog && root.KUI) {
+        var sender = d.elt;
+        sender.addEventListener('htmx:afterRequest', function done(ev) {
+          if (ev.target !== sender) return;
+          sender.removeEventListener('htmx:afterRequest', done);
+          root.KUI.closeOverlay(dialog);  // this dialog only, whatever the outcome
+        });
+      }
+    });
+    doc.addEventListener('htmx:beforeSend', function (e) {
+      var d = e.detail || {};
+      if (importRun && importPath(d) && d.xhr) d.xhr.timeout = IMPORT_TIMEOUT_MS;
+    });
+    var importFailed = function (kind) {
+      return function (e) {
+        var d = e.detail || {};
+        if (!importPath(d) || !importRun) return;
+        d.kHandled = true;  // this message replaces the generic toast
+        var run = importEnd();
+        var area = importArea();
+        if (area) importFailure(area, IMPORT_PLAIN[kind], importRetryFor(run.elt));
+      };
+    };
+    doc.addEventListener('htmx:xhr:abort', function (e) {
+      var d = e.detail || {};
+      if (importRun && (!d.pathInfo || importPath(d))) importEnd();  // cancelled: just clear it
+    });
+    doc.addEventListener('htmx:responseError', importFailed('error'));
+    doc.addEventListener('htmx:sendError', importFailed('send'));
+    doc.addEventListener('htmx:timeout', importFailed('timeout'));
+    doc.addEventListener('htmx:afterRequest', function (e) {
+      var d = e.detail || {};
+      if (!importPath(d) || !importRun) return;
+      var status = d.xhr ? d.xhr.status : 0;
+      var empty = d.successful && (status === 204 || !(d.xhr && d.xhr.responseText));
+      if (d.successful && !empty) { importEnd(); return; }
+      // Whatever the outcome, the run must not outlive its request: once this tick (and the
+      // error events that fire around it) is over, a run still open is ended with a message.
+      var open = importRun;
+      root.setTimeout(function () {
+        if (importRun !== open) return;
+        importEnd();
+        var left = importArea();
+        if (left) importFailure(left, IMPORT_PLAIN.error, importRetryFor(open.elt));
+      }, 0);
+      if (empty) {  // an answer with nothing in it swaps nothing: say so
+        var run = importEnd();
+        var area = importArea();
+        if (area) importFailure(area, IMPORT_PLAIN.empty, importRetryFor(run.elt));
+      }
+      // Error, send error and timeout have their own events (above); they end the run.
+    });
+  }
+
   /* Sidebar memory (owner report 2026-10-26): after each poll, keep the counts and the readout
      so the next page paints them at once (base.html restores them before first paint). */
   function keepSide() {
@@ -1216,6 +1580,7 @@
     if (!m) return false;
     mounted = null;
     try { if (m.def.unmount) m.def.unmount(m.root, m.ctx); } catch (e) { report(e); }
+    flushLayer();  // an overlay the page left open goes back with it
     m.abort();  // every ctx.on listener, and any fetch that was given ctx.signal
     m.timers.splice(0).forEach(function (t) {
       if (t.every) root.clearInterval(t.id); else root.clearTimeout(t.id);
@@ -1871,6 +2236,7 @@
     closeSlideOver: function () { closeKind('slideover'); },
     openModal: function (r, o) { return open('modal', r, o); },
     closeModal: function () { closeKind('modal'); },
+    closeOverlay: function (el) { stack.filter(function (o) { return o.el === el; }).forEach(close); },
     closeAll: closeAll,
     center: center, centerTop: centerTop,
     setText: setText, foldOut: foldOut, arrive: arrive, prepend: prepend, moveTo: moveTo,

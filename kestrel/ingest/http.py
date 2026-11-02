@@ -13,6 +13,8 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from kestrel.errors import RobotsDisallowed
+
 MAX_PUBLIC_BYTES = 2_000_000  # a page or feed the operator pointed at; a posting is far smaller
 PUBLIC_TIMEOUT_S = 15.0
 MAX_PUBLIC_HOPS = 5
@@ -196,7 +198,7 @@ class HttpClient:
         if public_only:
             await assert_public_url(url)
         if check_robots and not await self._robots_ok(url, public_only=public_only):
-            raise PermissionError(f"robots.txt disallows {_safe_url(url)}")
+            raise RobotsDisallowed()
         host = urlparse(url).netloc
         rate = rate_per_sec if rate_per_sec is not None else self.default_rate
         last_exc: Exception | None = None

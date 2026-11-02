@@ -246,7 +246,7 @@ async def test_cancel_all_marks_rows_and_the_snapshot(sm):
 # ------------------------------------------------------------------------------------- builds
 async def test_builds_record_the_profile_only_when_every_one_is_done(sm, monkeypatch):
     async with sm() as s:
-        assert await mt.queue_builds(s, "gpu_16gb", "test reason") == len(profiles.TIERS)
+        assert await mt.queue_builds(s, "gpu_16gb", "test reason") == len(profiles.DERIVED_TIERS)
         assert await mt.queue_builds(s, "gpu_16gb") == 0  # one batch at a time
     ok = _lines({"status": "using already created layer sha256:1"}, {"status": "success"})
     with respx.mock as mock:
@@ -256,7 +256,7 @@ async def test_builds_record_the_profile_only_when_every_one_is_done(sm, monkeyp
         while await mt.drain_once(sm, URL):
             pass
     names = [json.loads(c.request.content)["model"] for c in route.calls]
-    assert names == [profiles.derived_name(t) for t in profiles.TIERS]
+    assert names == [profiles.derived_name(t) for t in profiles.DERIVED_TIERS]
     active = profiles.load_active_profile()
     assert active is not None and active.profile == "gpu_16gb" and active.reason == "test reason"
 

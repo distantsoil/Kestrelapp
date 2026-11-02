@@ -296,6 +296,10 @@ def _needle_prompt(target_tokens: int) -> tuple[str, str]:
     return needle, user
 
 
+NEEDLE_REPLY_TOKENS = 256  # room for a chatty reply (or a little thinking) around the code
+_NOT_READY = "model not ready yet, try again after setup finishes"
+
+
 def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present: set[str]) -> None:
     # One test per unique derived model, filled to the largest budget of the tiers that use it.
     by_model: dict[str, int] = {}
@@ -317,19 +321,33 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                     model,
                     [{"role": "user", "content": prompt}],
                     temperature=0.0,
-                    max_tokens=32,
+                    max_tokens=NEEDLE_REPLY_TOKENS,
                     reasoning_effort="none",
                 )
             )
-            ok = needle in out
-            rep.add(
-                f"needle {model}",
-                PASS if ok else FAIL,
-                f"filled ~{budget} tok; {'recovered' if ok else 'LOST'} the code near the start"
-                + ("" if ok else f" (model got: {out[:60]!r})"),
-                "" if ok else f"effective context is below {budget}; rebuild with a larger num_ctx",
-                blocking=not ok,
-            )
+            if needle in out:  # anywhere in the reply: a chatty model that repeats it still passes
+                rep.add(f"needle {model}", PASS,
+                        f"filled ~{budget} tok; recovered the code near the start")
+            elif not out.strip():
+                # An empty reply is not an answer about the context: the model most likely was
+                # not ready (still loading, or its reply was cut before any text).
+                rep.add(f"needle {model}", WARN,
+                        f"filled ~{budget} tok; the model sent an empty reply; context not "
+                        "verified",
+                        _NOT_READY)
+            elif len(out) >= NEEDLE_REPLY_TOKENS * 3:
+                # About the whole budget used and no code in it: the reply was cut off (a model
+                # that talks first), which says nothing about its context window.
+                rep.add(f"needle {model}", WARN,
+                        f"filled ~{budget} tok; the reply was cut off before the code; context "
+                        "not verified", _NOT_READY)
+            else:
+                rep.add(
+                    f"needle {model}", FAIL,
+                    f"filled ~{budget} tok; LOST the code near the start (model got: {out[:60]!r})",
+                    f"effective context is below {budget}; rebuild with a larger num_ctx",
+                    blocking=True,
+                )
         except httpx.TimeoutException as exc:
             # A timeout is evidence the model was COLD, not evidence its context is short. The
             # first model tested is the one Ollama has to load from disk, so a blocking FAIL here
@@ -340,10 +358,28 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                 f"needle {model}",
                 WARN,
                 f"timed out loading the model ({type(exc).__name__}); context not verified",
-                "re-run with the model warm, or set OLLAMA_KEEP_ALIVE=2h so it stays resident",
+                f"{_NOT_READY}; or set OLLAMA_KEEP_ALIVE=2h so it stays resident",
             )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:  # the server answered "not now": still loading
+                rep.add(f"needle {model}", WARN,
+                        f"the model server answered {exc.response.status_code}; context not "
+                        "verified", _NOT_READY)
+            else:
+                rep.add(f"needle {model}", FAIL, f"{type(exc).__name__}: {exc}", blocking=True)
         except Exception as exc:
             rep.add(f"needle {model}", FAIL, f"{type(exc).__name__}: {exc}", blocking=True)
+
+
+# The thinking check expects the one word "hi" in a few tokens (D-LLM-9). A model that thinks
+# before answering spends the whole small budget on reasoning prose instead.
+THINK_PROMPT = "Reply with just the word hi"
+THINK_MAX_TOKENS = 32
+THINK_TOKEN_LIMIT = 12
+THINK_REMEDY = (
+    "download the corrected model in Settings > Your computer > Download models, then Tune; "
+    "your existing models are not removed"
+)
 
 
 def _check_thinking(
@@ -351,25 +387,36 @@ def _check_thinking(
 ) -> None:
     models = {s.llm.tiers[t].model for t in CTX_TIERS if s.llm.tiers[t].model in present}
     for model in sorted(models):
+        name = f"thinking off {model}"
         try:
-            raw = client.chat(
-                model,
-                [{"role": "user", "content": "Reply with exactly one word: ready"}],
-                temperature=0.0,
-                max_tokens=24,
-                reasoning_effort="none",
-            )
-            if client.has_think(raw):
-                rep.add(
-                    f"thinking off {model}",
-                    WARN,
-                    "a <think> span survived reasoning_effort=none",
-                    "confirm the backend honors reasoning_effort:'none' (Ollama) — SPEC.md 8.4",
+            messages = [{"role": "user", "content": THINK_PROMPT}]
+            used: int | None = None
+            if hasattr(client, "chat_with_usage"):
+                raw, used = client.chat_with_usage(
+                    model, messages, temperature=0.0, max_tokens=THINK_MAX_TOKENS,
+                    reasoning_effort="none",
                 )
             else:
-                rep.add(f"thinking off {model}", PASS, "no <think> span")
+                raw = client.chat(
+                    model, messages, temperature=0.0, max_tokens=THINK_MAX_TOKENS,
+                    reasoning_effort="none",
+                )
+            answer = client.strip_think(raw).strip().strip(".!\"' \n").lower()
+            if answer == "hi" and (used is None or used <= THINK_TOKEN_LIMIT):
+                rep.add(name, PASS, "answers directly")
+            else:
+                shown = f"{used} tokens" if used is not None else "no token count"
+                rep.add(
+                    name, FAIL,
+                    "this model thinks before answering, so Kestrel's answers get cut off "
+                    f"(asked for one word, got {raw.strip()[:50]!r}; {shown})",
+                    THINK_REMEDY,
+                )
+        except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            # A 5xx or a timeout says nothing about thinking: warn, never fail (as the needle test).
+            rep.add(name, WARN, f"could not check ({type(exc).__name__}); thinking not verified")
         except Exception as exc:
-            rep.add(f"thinking off {model}", WARN, f"{type(exc).__name__}: {exc}")
+            rep.add(name, WARN, f"{type(exc).__name__}: {exc}")
 
 
 _PROBE_SCHEMA = {
@@ -942,6 +989,89 @@ def _settings_for_doctor(rep: DoctorReport) -> Settings:
 
 
 # ---------------------------------------------------------------------------------- entrypoint
+RUN_GOING = "A run is going; check again when it finishes."
+
+
+def _run_is_active() -> bool:
+    """Whether a search or scoring run is queued or running (the same tasks the nav ring counts).
+    Any failure to read the database (none yet, a locked file) means not active."""
+    import asyncio
+
+    async def read() -> bool:
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from kestrel.analytics.run_summary import _live_where
+        from kestrel.db.engine import make_async_engine
+        from kestrel.db.models import Task
+
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine)() as s:
+                found = await s.execute(
+                    select(Task.id).where(_live_where("scrape", "t1", "t2")).limit(1))
+                return found.scalar_one_or_none() is not None
+        finally:
+            await engine.dispose()
+
+    try:
+        return asyncio.run(read())
+    except Exception:  # noqa: BLE001 - no database yet, a running loop, a locked file
+        return False
+
+
+def _run_probes(rep: DoctorReport, client: OllamaClient, s: Settings, present: set[str]) -> None:
+    """The per-model probes. Not while a run is active: they load models of their own, which
+    would fight the run's model for memory (#112). Otherwise each model's probes unload the
+    others first."""
+    if _run_is_active():
+        rep.add("Model probes", WARN, RUN_GOING)
+        return
+    probe = _ProbeClient(client)
+    _check_needle(rep, probe, s, present)
+    _check_thinking(rep, probe, s, present)
+    _check_schema(rep, probe, s, present)
+
+
+class _ProbeClient:
+    """The doctor's per-model probes (#112). Ollama can crash loading a second model while the
+    first is still resident (HTTP 500 "llama-server process has terminated", 0xc0000005), and
+    every probe after the first failed that way on a machine where each model passes alone. So the
+    other loaded models are unloaded (memory only, via OllamaClient.unload_others, the same
+    logic as the LLM client's recovery) before a model's first probe, and a load crash is
+    retried once after unloading everything. Wraps the client; the probe functions are unchanged."""
+
+    def __init__(self, client: OllamaClient) -> None:
+        self._client = client
+        self._last: str | None = None
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+    def _call(self, fn, model: str, *args, **kwargs):
+        from kestrel.llm.client import is_load_crash
+
+        unload = getattr(self._client, "unload_others", None)
+        if unload is not None and model != self._last:
+            unload(keep=model)
+        self._last = model
+        try:
+            return fn(model, *args, **kwargs)
+        except httpx.HTTPStatusError as exc:
+            if unload is None or not is_load_crash(
+                exc.response.status_code, exc.response.text or ""
+            ):
+                raise
+            unload(keep=None)
+            return fn(model, *args, **kwargs)
+
+    def chat(self, model, *args, **kwargs):
+        return self._call(self._client.chat, model, *args, **kwargs)
+
+    def chat_with_usage(self, model, *args, **kwargs):
+        return self._call(self._client.chat_with_usage, model, *args, **kwargs)
+
+
 def run_doctor(*, quick: bool = False) -> DoctorReport:
     rep = DoctorReport()
     _check_python(rep)
@@ -967,9 +1097,7 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         check_model_fit(rep, s, client)
         _check_num_ctx(rep, client, s, present)
         if not quick:
-            _check_needle(rep, client, s, present)
-            _check_thinking(rep, client, s, present)
-            _check_schema(rep, client, s, present)
+            _run_probes(rep, client, s, present)
         else:
             rep.add("Needle + thinking probes", INFO, "skipped (--quick)")
     # The hosted branch reports the in-process engine itself; every other branch reports it here,

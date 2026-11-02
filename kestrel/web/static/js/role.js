@@ -297,7 +297,8 @@
   function openLoaded() {
     var host = $('#rl-dialog'); if (!host) return;
     var m = $('.k-modal', host);
-    if (m && !m.classList.contains('is-open')) {
+    // A dialog KUI gave back after it closed (data-k-returned) is done: only a new one opens.
+    if (m && !m.classList.contains('is-open') && !m.hasAttribute('data-k-returned')) {
       openModal(m);
       if (m.classList.contains('rl-preview')) {
         var frame = $('.rl-pvframe', m);

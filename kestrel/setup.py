@@ -427,7 +427,7 @@ def modelfiles_dir() -> Path:
 def step_build(st: SetupState) -> bool:
     dest = modelfiles_dir()
     if st.dry_run:
-        for tier in profiles.TIERS:
+        for tier in profiles.DERIVED_TIERS:
             st.would(f"ollama create {profiles.derived_name(tier)} -f {dest / f'Modelfile.{tier}'}")
         return True
     try:
@@ -912,7 +912,9 @@ def step_record(st: SetupState) -> None:
         st.would(f"write {p} (profile {st.profile})")
         return
     try:
-        profiles.save_active_profile(st.profile, st.reason, st.hardware)
+        profiles.save_active_profile(
+            st.profile, st.reason, st.hardware, profiles.plan_bases(st.profile)
+        )
     except OSError as exc:
         st.fail("Record profile", f"could not write {p}: {exc}")
         return

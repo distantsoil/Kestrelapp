@@ -24,13 +24,41 @@ def _as_ids(value: object) -> list[str]:
     return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
 
 
+async def _model_upgrade_notice() -> dict | None:
+    from kestrel.analytics.today import model_upgrade_gb
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    gb = await model_upgrade_gb(settings)
+    return announcements.model_upgrade_notice(gb) if gb else None
+
+
+@router.post("/announcements/model-upgrade/download", response_class=HTMLResponse)
+async def model_upgrade_download(request: Request):
+    """The notice's button: queue the pulls exactly as Settings > Download models does (start_action
+    also owes the rebuild of the derived models for when they are present)."""
+    from kestrel.web.pages.setup import start_action
+
+    _state, message, _status = await start_action("pull")  # also owes the rebuild when stale
+    note = message or ("Downloading the corrected model. Kestrel rebuilds its models from it "
+                       "when it finishes; you can follow it in Settings.")
+    return templates().TemplateResponse(
+        request, "partials/announcement.html",
+        {"notice": {"id": announcements.MODEL_UPGRADE_ID, "text": note}},
+    )
+
+
 @router.get("/announcements", response_class=HTMLResponse)
 async def banner(request: Request):
     notice = None
     try:
         async with sessionmaker()() as s:
             row = await s.get(Setting, announcements.DISMISSED_KEY)
-        notice = announcements.pending(_as_ids(row.value if row else None))
+        dismissed = _as_ids(row.value if row else None)
+        notice = announcements.pending(dismissed)
+        if notice is None and announcements.MODEL_UPGRADE_ID not in dismissed:
+            notice = await _model_upgrade_notice()
     except SQLAlchemyError as exc:
         log.warning("announcement_read_failed", error_type=type(exc).__name__)
     return templates().TemplateResponse(

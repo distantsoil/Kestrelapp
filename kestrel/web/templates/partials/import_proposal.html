@@ -36,12 +36,17 @@
     {% else %}
       <p class="covered">✓ Every bullet is verbatim from your source. Safe to accept.</p>
     {% endif %}
-    {% if proposal.flags.unverified %}
+    {% if proposal.flags.unverified or proposal.flags.dates_taken %}
       <div class="warnbox" data-testid="import-unverified">
         <b>Check these role details.</b> They do not appear as written in the role's header
         line, so they may have been misread. After you accept, each role on the Documents page
         has an "Edit role details" line where company, title and dates can be corrected.
         <ul>{% for item in proposal.flags.unverified %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% if proposal.flags.dates_taken %}
+          <p data-testid="import-dates-taken"><b>Dates taken from the role's header line.</b> The
+          model gave a different date, so the one written in the header is used:</p>
+          <ul>{% for item in proposal.flags.dates_taken %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% endif %}
       </div>
     {% endif %}
     <form hx-post="/api/documents/import/accept" hx-target="#import-proposal" hx-swap="innerHTML">
@@ -52,6 +57,23 @@
       <input type="hidden" name="track" value="{{ track }}">
       <input type="hidden" name="doc_kind" value="{{ doc_kind }}">
       {% include "partials/import_proof_points.html" %}
+      {% if proposal.flags.split_roles %}
+        <div class="warnbox" data-testid="import-split-roles">
+          <b>Kestrel split {{ proposal.flags.split_roles }} role{{ '' if proposal.flags.split_roles == 1 else 's' }} the model had merged.</b>
+          Each job header starts its own role. Check the company, title and dates of every role below.
+        </div>
+      {% endif %}
+      {% if proposal.flags.missed_roles %}
+        {# #102: lines that look like role headers but sit in no role, even after a second try. #}
+        <div class="warnbox" data-testid="import-missed-roles">
+          <b>Kestrel may have missed {{ proposal.flags.missed_roles | length }} role{{ '' if proposal.flags.missed_roles | length == 1 else 's' }}.</b>
+          These lines look like job headers but were not read as roles. Add each one by hand after
+          importing, or run the import again.
+          <ul style="margin:.4rem 0 0 1rem">
+          {% for line in proposal.flags.missed_roles %}<li>{{ line }}</li>{% endfor %}
+          </ul>
+        </div>
+      {% endif %}
       {% if proposal.flags.unplaced %}
         {# Coverage (D-IMPORT-3, D-IMPORT-6): lines no slot took. Shown so nothing is dropped
            silently, and the operator decides where each goes. The text stays as written. #}
@@ -72,22 +94,23 @@
           </table>
         </div>
       {% endif %}
-      {% if current_offer %}
-        {# D-PRIV-1: the newest role has no end date, so it is probably the current employer.
-           Opt-in only: nothing is marked unless the box is ticked. #}
+      {% for offer in current_offer or [] %}
+        {# D-PRIV-1, D-PRIV-2: a role with no end date is probably a current employer, and a
+           second concurrent job is offered too. Opt-in only: nothing is marked unless its box is
+           ticked; each ticked role keeps its own "Show it as". #}
         <div class="import-current" data-testid="import-current-employer"
              x-data="{ current: false }">
           <label class="current-employer">
-            <input type="checkbox" name="current_employer" value="on" x-model="current">
-            Mark {{ current_offer.company }} as my current employer
+            <input type="checkbox" name="current_employer" value="{{ offer.index }}" x-model="current">
+            Mark {{ offer.company }} as my current employer
           </label>
           <label x-show="current">Shown as
-            <input type="text" name="current_employer_as" value="{{ current_offer.hint }}"
-                   maxlength="200" aria-label="Show your current employer as"></label>
+            <input type="text" name="current_employer_as_{{ offer.index }}" value="{{ offer.hint }}"
+                   maxlength="200" aria-label="Show {{ offer.company }} as"></label>
           <span class="muted current-employer-help">Confidential mode (Settings > Privacy and access) shows this
           in its place. You can change it later under Edit role details.</span>
         </div>
-      {% endif %}
+      {% endfor %}
       {% if ob %}
         {# The setup wizard (D-UI-65): one approval, then the step's one primary button, which
            saves the resume and moves on. Disabled, with a hint, until the text is approved. #}

@@ -36,6 +36,7 @@ from xml.etree import ElementTree
 
 import httpx
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.ingest.country_names import country_name
 from kestrel.ingest.http import UnsafeURLError
@@ -148,10 +149,8 @@ class TeamtailorAdapter:
 
 
 def _robots_message(domain: str) -> str:
-    return (
-        f"The robots.txt of {domain} does not allow reading its job feed, so Kestrel leaves it "
-        "alone. Add roles you want with One posting."
-    )
+    """The authored robots sentence; the site is never named in it."""
+    return ROBOTS_SENTENCE
 
 
 # ----------------------------------------------------------------------------------- JSON Feed

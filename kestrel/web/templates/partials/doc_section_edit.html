@@ -1,9 +1,9 @@
 {# A role's own details, editable (D-UI-18). The import copies these from the header line and
    flags any it could not verify; this is where they are corrected. Saves itself in place.
    The current-employer box (D-PRIV-1) is what confidential mode hides: ticking it sets the
-   name shown instead, and at most one employer per document is current. #}
+   name shown instead. Any number of employers can be current at once. #}
 {% set is_employer = section.section_kind in ("role", "proof_engagement") %}
-{% set is_current = section.org_label_redacted is not none %}
+{% set is_current = (section.org_label_redacted or "")|length > 0 %}
 {% if employer_error %}{% set is_current = true %}{% endif %}
 <details data-k-fold class="section-edit" {% if saved or edit_open %}open{% endif %}>
   <summary class="muted">Edit role details</summary>

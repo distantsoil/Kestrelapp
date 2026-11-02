@@ -15,14 +15,20 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, ValidationError
 
-from kestrel.llm.client import LLMClient, ModelDeclined, _never_left, json_schema_for
+from kestrel.errors import classify_model_failure
+from kestrel.llm.client import (
+    LLMClient,
+    ModelDeclined,
+    _never_left,
+    json_schema_for,
+    strip_think_text,
+)
 from kestrel.llm.credit import OutOfCredit
 from kestrel.llm.docselect import build_doc_select_schema, validate_doc_selection
 from kestrel.llm.schemas import P3DocSelect
 
 log = structlog.get_logger()
 
-_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 QuarantineHook = Callable[[list[dict], str, str, str], Awaitable[None]]
@@ -101,7 +107,7 @@ def _add_cost(total: float | None, part: float | None) -> float | None:
 
 
 def strip_think(text: str) -> str:
-    return _THINK_RE.sub("", text)
+    return strip_think_text(text)
 
 
 def extract_json(content: str, *, lenient: bool = True) -> str:
@@ -417,8 +423,11 @@ async def run_guarded(
                 latency_ms=latency, cost_usd=cost,
             )
         except Exception as exc:  # request/transport error: not a quarantine, the caller can retry
+            code, status, sentence = classify_model_failure(exc)
+            log.warning("llm_request_failed", error_type=type(exc).__name__, status=status,
+                        reason=code)
             return GuardResult(
-                ok=False, error=f"request error: {type(exc).__name__}: {exc}",
+                ok=False, error=f"request error: {sentence}",
                 # Whether the payload EVER REACHED the provider, as a separate fact rather than
                 # something a caller has to infer from the message. The `request error:` prefix is
                 # written for EVERY exception that is not a `ModelDeclined` -- including
@@ -526,10 +535,13 @@ async def run_guarded(
     except Exception as exc:
         # The first attempt already went out, so a failure on the REPAIR is never a "never left"
         # case: the payload has been sent at least once regardless of what this attempt did.
+        code, status, sentence = classify_model_failure(exc)
+        log.warning("llm_repair_request_failed", error_type=type(exc).__name__, status=status,
+                    reason=code)
         return GuardResult(
             ok=False,
             raw=first_content,
-            error=f"repair request error: {type(exc).__name__}: {exc}",
+            error=f"repair request error: {sentence}",
             egressed=True,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,

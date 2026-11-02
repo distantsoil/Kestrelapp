@@ -149,15 +149,244 @@ def test_downloads_dir_prefers_the_known_folder_then_home_then_exports(tmp_path,
     assert paths.downloads_dir() == home / "Downloads"
 
 
-def test_shell_reveal_uses_explorer_select_on_windows(monkeypatch, tmp_path):
+class _Fn:
+    """One persistent stand-in for a DLL function: ctypes code sets argtypes and restype on it,
+    and each call is recorded and answered from `results`."""
+
+    def __init__(self, name: str, calls: list, results: dict):
+        self.name, self._calls, self._results = name, calls, results
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        self._calls.append((self.name, args))
+        r = self._results.get(self.name, 0)
+        if isinstance(r, BaseException):
+            raise r
+        return r
+
+
+class _Dll:
+    def __init__(self, calls: list, results: dict):
+        self._calls, self._results, self.fns = calls, results, {}
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return self.fns.setdefault(name, _Fn(name, self._calls, self._results))
+
+
+def _windows_shell(monkeypatch, shell_mod, calls, *, shell=None, ole=None, startfile=None):
+    """Windows as the shell module sees it: private WinDLL instances, os.startfile, all stubbed.
+    Returns (opened folders, the two DLL stand-ins)."""
+    import ctypes
+
+    monkeypatch.setattr(shell_mod, "IS_WINDOWS", True)
+    monkeypatch.setattr(shell_mod, "_win_dlls", None)
+    dlls = {
+        "shell32": _Dll(calls, {"ILCreateFromPathW": 1234, "SHOpenFolderAndSelectItems": 0,
+                                **(shell or {})}),
+        "ole32": _Dll(calls, {"CoInitializeEx": 0, **(ole or {})}),
+    }
+    monkeypatch.setattr(ctypes, "WinDLL", lambda name, *a, **k: dlls[name], raising=False)
+    opened: list = []
+    monkeypatch.setattr(shell_mod.os, "startfile",
+                        startfile or (lambda p: opened.append(p)), raising=False)
+    return opened, dlls
+
+
+def test_shell_reveal_selects_the_file_through_the_shell_api_on_windows(monkeypatch, tmp_path):
+    import ctypes
+
+    from structlog.testing import capture_logs
+
     from kestrel.desktop import shell as shell_mod
 
-    started: list = []
-    monkeypatch.setattr(shell_mod, "IS_WINDOWS", True)
-    monkeypatch.setattr(shell_mod.subprocess, "Popen", lambda cmd, **k: started.append(cmd))
+    calls: list = []
+    opened, dlls = _windows_shell(monkeypatch, shell_mod, calls)
+    monkeypatch.setattr(shell_mod.subprocess, "Popen", lambda *a, **k: pytest.fail("explorer"))
     target = tmp_path / "My Downloads" / NAME
+    with capture_logs() as logs:
+        assert shell_mod.reveal_file(target) is True
+    assert logs == [] and opened == []  # success: nothing logged, no folder fallback
+    names = [n for n, _ in calls]
+    assert names == ["CoInitializeEx", "ILCreateFromPathW", "SHOpenFolderAndSelectItems",
+                     "ILFree", "CoUninitialize"]
+    assert calls[1][1] == (str(target),) and calls[3][1] == (1234,)
+    make = dlls["shell32"].fns["ILCreateFromPathW"]
+    assert make.argtypes == [ctypes.c_wchar_p] and make.restype is ctypes.c_void_p
+    # The DLL objects are made once and cached, and are the code's own, not the shared windll.
     shell_mod.reveal_file(target)
-    assert started == [f'explorer /select,"{target}"']
+    assert shell_mod._win_dlls == (dlls["shell32"], dlls["ole32"])
+
+
+def test_shell_reveal_falls_back_to_the_folder_and_reports_what_happened(monkeypatch, tmp_path):
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell as shell_mod
+
+    target = tmp_path / "Downloads" / NAME
+    calls: list = []
+    opened, _ = _windows_shell(monkeypatch, shell_mod, calls,
+                               shell={"SHOpenFolderAndSelectItems": -2147467259})  # E_FAIL
+    with capture_logs() as logs:
+        assert shell_mod.reveal_file(target) is True
+    assert opened == [str(target.parent)]
+    assert any(e["event"] == "reveal_file_select_failed" for e in logs)
+    assert "ILFree" in [n for n, _ in calls]
+    assert str(target) not in repr(logs)
+
+    # NULL item id for the path: fall back to the folder, and free nothing.
+    calls.clear()
+    opened, _ = _windows_shell(monkeypatch, shell_mod, calls, shell={"ILCreateFromPathW": 0})
+    assert shell_mod.reveal_file(target) is True and opened == [str(target.parent)]
+    assert "ILFree" not in [n for n, _ in calls]
+
+    # Every way fails: the answer is False, so the page shows where the file is.
+    def _fail(_p):
+        raise OSError(2, "gone", "C:\\secret\\path")
+
+    calls.clear()
+    _windows_shell(monkeypatch, shell_mod, calls, shell={"SHOpenFolderAndSelectItems": -1},
+                   startfile=_fail)
+    with capture_logs() as logs:
+        assert shell_mod.reveal_file(target) is False
+    assert any(e["event"] == "reveal_file_failed" and e["errno"] == 2 for e in logs)
+
+
+@pytest.mark.parametrize(("init", "paired"), [(0, True), (1, True), (-2147417850, False)])
+def test_shell_reveal_pairs_couninitialize_with_a_successful_coinitialize(
+        monkeypatch, tmp_path, init, paired):
+    from kestrel.desktop import shell as shell_mod
+
+    calls: list = []
+    _windows_shell(monkeypatch, shell_mod, calls, ole={"CoInitializeEx": init})
+    assert shell_mod.reveal_file(tmp_path / NAME) is True
+    assert [n for n, _ in calls].count("CoUninitialize") == (1 if paired else 0)
+
+
+def test_failure_logs_carry_the_error_type_and_code_never_text_or_a_path(monkeypatch, tmp_path):
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell as shell_mod
+
+    def _boom(*_a, **_k):
+        raise OSError(2, "gone", "C:\\secret\\path")
+
+    with capture_logs() as logs:
+        # Windows: the select call and the folder fallback both raise with a path in the error.
+        _windows_shell(monkeypatch, shell_mod, [],
+                       shell={"ILCreateFromPathW": OSError(2, "gone", "C:\\secret\\path")},
+                       startfile=_boom)
+        assert shell_mod.reveal_file(tmp_path / NAME) is False
+        # Linux and macOS: the opener cannot start.
+        monkeypatch.setattr(shell_mod, "IS_WINDOWS", False)
+        monkeypatch.setattr(shell_mod.subprocess, "run", _boom)
+        monkeypatch.setattr(shell_mod.sys, "platform", "linux")
+        assert shell_mod._open_folder(tmp_path) is False
+        monkeypatch.setattr(shell_mod.sys, "platform", "darwin")
+        assert shell_mod.reveal_file(tmp_path / NAME) is False
+        # The bridge: a handler that raises.
+        desktop_bridge.set_reveal_handler(_boom)
+        desktop_bridge.set_folder_handler(_boom)
+        try:
+            assert desktop_bridge.request_reveal(tmp_path / NAME) is False
+            assert desktop_bridge.request_open_folder(tmp_path) is False
+        finally:
+            desktop_bridge.set_reveal_handler(None)
+            desktop_bridge.set_folder_handler(None)
+    assert len(logs) >= 5
+    text = repr(logs).lower()
+    assert "secret" not in text and "gone" not in text and str(tmp_path).lower() not in text
+
+
+def test_linux_open_folder_checks_xdg_open_like_macos(monkeypatch, tmp_path):
+    import subprocess
+    import types
+
+    from structlog.testing import capture_logs
+
+    from kestrel.desktop import shell as shell_mod
+
+    monkeypatch.setattr(shell_mod, "IS_WINDOWS", False)
+    monkeypatch.setattr(shell_mod.sys, "platform", "linux")
+    seen: list = []
+    code = {"rc": 0}
+
+    def _run(argv, **kw):
+        seen.append((argv, kw.get("timeout")))
+        return types.SimpleNamespace(returncode=code["rc"])
+
+    monkeypatch.setattr(shell_mod.subprocess, "run", _run)
+    monkeypatch.setattr(shell_mod.subprocess, "Popen", lambda *a, **k: pytest.fail("unchecked"))
+    assert shell_mod._open_folder(tmp_path) is True
+    assert seen == [(["xdg-open", str(tmp_path)], 10)]
+    assert shell_mod.reveal_file(tmp_path / NAME) is True  # opens the folder
+    code["rc"] = 3
+    with capture_logs() as logs:
+        assert shell_mod._open_folder(tmp_path) is False
+    assert logs and logs[0]["exit_code"] == 3 and str(tmp_path) not in repr(logs)
+
+    def _slow(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 10)
+
+    monkeypatch.setattr(shell_mod.subprocess, "run", _slow)
+    with capture_logs() as slow_logs:
+        # The launcher is still running (a foreground file manager): the folder is open.
+        assert shell_mod._open_folder(tmp_path) is True
+    assert slow_logs and slow_logs[0]["log_level"] == "info"
+    assert str(tmp_path) not in repr(slow_logs)
+
+    def _missing(argv, **kw):
+        raise FileNotFoundError(2, "No such file", "xdg-open")
+
+    monkeypatch.setattr(shell_mod.subprocess, "run", _missing)
+    assert shell_mod._open_folder(tmp_path) is False
+
+
+def test_macos_reveal_and_open_report_a_failed_command(monkeypatch, tmp_path):
+    import subprocess
+    import types
+
+    from kestrel.desktop import shell as shell_mod
+
+    monkeypatch.setattr(shell_mod, "IS_WINDOWS", False)
+    monkeypatch.setattr(shell_mod.sys, "platform", "darwin")
+    code = {"rc": 0}
+    seen: list = []
+
+    def _run(argv, **kw):
+        seen.append(argv)
+        return types.SimpleNamespace(returncode=code["rc"])
+
+    monkeypatch.setattr(shell_mod.subprocess, "run", _run)
+    assert shell_mod.reveal_file(tmp_path / NAME) is True
+    assert seen[-1][:2] == ["open", "-R"]
+    code["rc"] = 1
+    assert shell_mod.reveal_file(tmp_path / NAME) is False
+    assert shell_mod._open_folder(tmp_path) is False
+
+    def _boom(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 10)
+
+    monkeypatch.setattr(shell_mod.subprocess, "run", _boom)
+    assert shell_mod.reveal_file(tmp_path / NAME) is False
+
+
+def test_a_handler_that_reports_failure_makes_the_page_say_where_the_file_is(downloads,
+                                                                              stub_build):
+    desktop_bridge.set_reveal_handler(lambda _p: False)
+    try:
+        c = _client()
+        c.post("/about/diagnostics/save")
+        r = c.post("/about/diagnostics/reveal", data={"name": NAME})
+        assert "Opened the folder" not in r.text
+        assert "Could not open the folder" in r.text and str(downloads / NAME) in r.text
+        desktop_bridge.set_reveal_handler(lambda _p: True)
+        assert "Opened the folder." in c.post("/about/diagnostics/reveal",
+                                              data={"name": NAME}).text
+    finally:
+        desktop_bridge.set_reveal_handler(None)
 
 
 def test_a_database_error_during_the_build_is_shown_not_swallowed(downloads, monkeypatch, shell):
@@ -196,3 +425,47 @@ def test_a_failed_build_leaves_no_partial_zip_and_saves_never_overwrite(tmp_path
     second = diagnostics.build_bundle(settings, out_dir=out)
     assert first != second and first.is_file() and second.is_file()
     assert zipfile.ZipFile(first).testzip() is None
+
+
+def test_tray_open_folder_runs_off_the_tray_thread(monkeypatch, tmp_path):
+    import threading
+
+    from kestrel.desktop import shell as shell_mod
+
+    done = threading.Event()
+    seen: dict = {}
+    release = threading.Event()
+
+    def _slow_open(p):
+        seen["thread"], seen["path"] = threading.current_thread(), p
+        release.wait(5)
+        done.set()
+        return True
+
+    monkeypatch.setattr(shell_mod, "_open_folder", _slow_open)
+    shell_mod._open_folder_async(tmp_path)  # returns at once although the opener is blocked
+    assert not done.is_set()
+    release.set()
+    assert done.wait(5)
+    assert seen["thread"] is not threading.current_thread() and seen["thread"].daemon
+
+
+def _info(i: int) -> str:
+    return f'2026-11-01 10:00:00,000 INFO MainThread {{"event": "tick {i}"}}'
+
+
+
+
+
+
+def test_a_ctypes_argument_error_falls_back_to_the_folder(monkeypatch, tmp_path):
+    import ctypes
+
+    from kestrel.desktop import shell as shell_mod
+
+    calls: list = []
+    opened, _ = _windows_shell(
+        monkeypatch, shell_mod, calls,
+        shell={"ILCreateFromPathW": ctypes.ArgumentError("argument 1: bad type")})
+    assert shell_mod.reveal_file(tmp_path / NAME) is True
+    assert opened == [str(tmp_path)]

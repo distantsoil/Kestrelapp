@@ -26,6 +26,15 @@ from kestrel.llm import credit
 from kestrel.llm.credit import OutOfCredit
 
 _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
+# Qwen3's template opens <think> in the PROMPT, so a reply can be reasoning, a lone </think>, then
+# the answer, with no opening tag (D-LLM-9). Everything up to and including it is reasoning.
+_LONE_CLOSE_RE = re.compile(r"^.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
+
+
+def strip_think_text(text: str) -> str:
+    """Drop reasoning spans: paired <think>...</think> first, then everything up to and
+    including a lone </think> (defensive; the instruct models do not think at all)."""
+    return _LONE_CLOSE_RE.sub("", _THINK_RE.sub("", text))
 
 
 # ============================================================ sync preflight client (doctor)
@@ -44,6 +53,27 @@ class OllamaClient:
         r = httpx.get(f"{self.native_url}/api/tags", timeout=timeout)
         r.raise_for_status()
         return [m["name"] for m in r.json().get("models", [])]
+
+    def unload_others(self, keep: str | None = None, timeout: float = 30.0) -> int:
+        """Unload every loaded model except `keep` (the doctor's probes; #112). Same logic as the
+        async client's recovery: /api/ps, then keep_alive 0 per model. Never raises."""
+        try:
+            r = httpx.get(f"{self.native_url}/api/ps", timeout=timeout)
+            r.raise_for_status()
+            names = loaded_model_names(r.json())
+        except (httpx.HTTPError, ValueError):
+            return 0
+        sent = 0
+        for name in names:
+            if same_model(name, keep):
+                continue
+            try:
+                httpx.post(f"{self.native_url}/api/generate", json=unload_body(name),
+                           timeout=timeout)
+                sent += 1
+            except httpx.HTTPError:
+                continue
+        return sent
 
     def show(self, model: str, timeout: float = 15.0) -> dict:
         r = httpx.post(f"{self.native_url}/api/show", json={"name": model}, timeout=timeout)
@@ -98,9 +128,41 @@ class OllamaClient:
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"] or ""
 
+    def chat_with_usage(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+        timeout: float = 180.0,
+    ) -> tuple[str, int | None]:
+        """Like chat(), also returning the completion_tokens the server reports (None if absent).
+        The doctor's thinking check judges the reply and the tokens it cost (D-LLM-9)."""
+        body: dict = {"model": model, "messages": messages}
+        if temperature is not None:
+            body["temperature"] = temperature
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        if reasoning_effort is not None:
+            body["reasoning_effort"] = reasoning_effort
+        r = httpx.post(
+            f"{self.base_url}/chat/completions",
+            json=body,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+        used = (data.get("usage") or {}).get("completion_tokens")
+        return data["choices"][0]["message"]["content"] or "", (
+            int(used) if isinstance(used, int | float) else None
+        )
+
     @staticmethod
     def strip_think(text: str) -> str:
-        return _THINK_RE.sub("", text)
+        return strip_think_text(text)
 
     @staticmethod
     def has_think(text: str) -> bool:
@@ -853,6 +915,121 @@ class ProviderError(RuntimeError):
         self.codes = codes
 
 
+class ModelLoadCrashed(ProviderError):
+    """Ollama's model server died while loading a model (HTTP 500 "llama-server process has
+    terminated", exit 0xc0000005) and the one retry after unloading the other models failed too
+    (#112). A ProviderError, so the worker's existing failure handling still applies; the page
+    maps this type to: "The local AI stopped while loading the model. Kestrel tried again;
+    restart Ollama if it keeps happening." """
+
+    PLAIN_MESSAGE = (
+        "The local AI stopped while loading the model. Kestrel tried again; restart Ollama if "
+        "it keeps happening."
+    )
+
+
+LOAD_CRASH_MARKS = (
+    "llama-server process has terminated", "process has terminated", "0xc0000005")
+
+
+def is_load_crash(status: int, body: str) -> bool:
+    """A 500 whose body says Ollama's model server terminated while loading."""
+    low = (body or "").lower()
+    return status == 500 and any(m in low for m in LOAD_CRASH_MARKS)
+
+
+def same_model(a: str | None, b: str | None) -> bool:
+    """Ollama names a model with or without ":latest"; compare them as the same."""
+    def norm(x: str | None) -> str:
+        x = (x or "").strip()
+        return x[:-7] if x.endswith(":latest") else x
+
+    return bool(a) and bool(b) and norm(a) == norm(b)
+
+
+# Requests in flight per local model, so an unload (the crash recovery, the worker's tier switch)
+# never frees a model another request is using (#112). Keyed without ":latest".
+_IN_FLIGHT: dict[str, int] = {}
+
+
+def _flight_key(model: str) -> str:
+    return model[:-7] if model.endswith(":latest") else model
+
+
+def enter_flight(model: str) -> None:
+    _IN_FLIGHT[_flight_key(model)] = _IN_FLIGHT.get(_flight_key(model), 0) + 1
+
+
+def leave_flight(model: str) -> None:
+    k = _flight_key(model)
+    n = _IN_FLIGHT.get(k, 0) - 1
+    if n > 0:
+        _IN_FLIGHT[k] = n
+    else:
+        _IN_FLIGHT.pop(k, None)
+
+
+def in_flight(model: str) -> int:
+    return _IN_FLIGHT.get(_flight_key(model), 0)
+
+
+def loaded_model_names(ps_json: Any) -> list[str]:
+    """The model names in an /api/ps answer (shared by the async client and the sync doctor)."""
+    models = ps_json.get("models", []) if isinstance(ps_json, dict) else []
+    return [str(m.get("model") or m.get("name")) for m in models
+            if isinstance(m, dict) and (m.get("model") or m.get("name"))]
+
+
+def unload_body(name: str) -> dict:
+    """The /api/generate body that unloads a model: memory only, nothing is deleted or pulled."""
+    return {"model": name, "keep_alive": 0}
+
+
+async def unload_model(
+    client: httpx.AsyncClient, native_url: str, name: str, timeout: float = 30.0
+) -> bool:
+    """Unload one model. False (and a log line) when Ollama did not take the request, or when
+    another request is using the model right now (it is never unloaded under a running call)."""
+    import structlog
+
+    if in_flight(name):
+        structlog.get_logger().info("ollama_unload_skipped_in_use", model=name)
+        return False
+    try:
+        await client.post(
+            f"{native_url.rstrip('/')}/api/generate", json=unload_body(name), timeout=timeout
+        )
+        return True
+    except httpx.HTTPError as exc:
+        structlog.get_logger().warning(
+            "ollama_unload_failed", model=name, error=type(exc).__name__
+        )
+        return False
+
+
+async def unload_loaded_models(
+    client: httpx.AsyncClient, native_url: str, timeout: float, *, keep: str | None = None
+) -> int:
+    """Ask Ollama which models are loaded (/api/ps) and unload each except `keep`. Returns how
+    many unload requests were sent. A failure to list or unload one is logged and skipped."""
+    import structlog
+
+    try:
+        r = await client.get(f"{native_url.rstrip('/')}/api/ps", timeout=timeout)
+        r.raise_for_status()
+        names = loaded_model_names(r.json())
+    except (httpx.HTTPError, ValueError) as exc:
+        structlog.get_logger().warning("ollama_unload_list_failed", error=type(exc).__name__)
+        return 0
+    sent = 0
+    for name in names:
+        if same_model(name, keep):
+            continue
+        if await unload_model(client, native_url, name, timeout):
+            sent += 1
+    return sent
+
+
 _HTTP_HINTS = {
     401: "API key rejected; add a working key in Settings > Hosted",
     402: "insufficient credits or balance; top up at the provider",
@@ -1180,6 +1357,7 @@ class LLMClient:
             raise OutOfCredit(backend.provider, sent=False)
         t0 = time.perf_counter()
         client = self._http or httpx.AsyncClient()
+        enter_flight(tcfg.model)
 
         def _credit_check(exc: ProviderError) -> None:
             if credit.is_out_of_credit(backend.provider, exc.status, exc.codes, exc.message):
@@ -1193,6 +1371,27 @@ class LLMClient:
 
         try:
             r = await client.post(url, json=body, headers=headers, timeout=timeout)
+            if not backend.external and is_load_crash(r.status_code, r.text or ""):
+                # Ollama's model server died loading this model, usually with another model
+                # still loaded (#112). Free the memory and try once more. Logged: model and
+                # status only, never the prompt.
+                import structlog
+
+                slog = structlog.get_logger()
+                slog.warning("ollama_load_crash", model=tcfg.model, status=r.status_code)
+                unloaded = await unload_loaded_models(
+                    client, self.settings.llm.ollama_native_url, timeout, keep=tcfg.model
+                )
+                r = await client.post(url, json=body, headers=headers, timeout=timeout)
+                if is_load_crash(r.status_code, r.text or ""):
+                    slog.warning(
+                        "ollama_load_crash_retry_failed", model=tcfg.model, status=r.status_code,
+                        unloaded=unloaded,
+                    )
+                    raise ModelLoadCrashed(
+                        r.status_code, ModelLoadCrashed.PLAIN_MESSAGE, url
+                    )
+                slog.info("ollama_load_crash_recovered", model=tcfg.model, unloaded=unloaded)
             try:
                 raise_for_provider_status(r)
             except ProviderError as exc:
@@ -1211,6 +1410,7 @@ class LLMClient:
                 raise
             data = r.json()
         finally:
+            leave_flight(tcfg.model)
             if self._http is None:
                 await client.aclose()
         if isinstance(data, dict) and data.get("error"):
@@ -1344,4 +1544,4 @@ class LLMClient:
 
     @staticmethod
     def strip_think(text: str) -> str:
-        return _THINK_RE.sub("", text)
+        return strip_think_text(text)

@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 import httpx
 import structlog
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest import board_discovery
 from kestrel.ingest import jobposting as jp
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
@@ -113,10 +114,7 @@ class CareersPageAdapter:
                 "GET", url, rate_per_sec=_RATE, check_robots=True, retries=1, public_only=True
             )
         except PermissionError as exc:
-            raise AdapterError(
-                f"{_site(url)} asks not to be read automatically (robots.txt), so Kestrel "
-                "will not read this page."
-            ) from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         except UnsafeURLError as exc:
             raise AdapterError(f"Kestrel cannot read that link: {exc}") from exc
         except httpx.HTTPStatusError as exc:  # the client retried 429/403/503 and gave up

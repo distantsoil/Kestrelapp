@@ -26,8 +26,8 @@ from kestrel.services import model_tasks as mt
 from kestrel.services import setup_state as ss
 
 HW_4080 = profiles.Hardware(os="windows", gpu_vendor="nvidia", vram_gb=16.0, ram_gb=128.0)
-BASE = ["qwen3:4b", "qwen3:14b", "nomic-embed-text"]
-DERIVED = [f"kestrel-{t}" for t in profiles.TIERS]
+BASE = ["qwen3:4b-instruct-2507-q4_K_M", "qwen3:14b", "nomic-embed-text"]
+DERIVED = [f"kestrel-{t}" for t in profiles.DERIVED_TIERS]
 
 
 class FakeOllama:
@@ -183,7 +183,7 @@ def test_assess_with_ollama_down(quiet):
 
 
 def test_assess_with_models_missing(quiet):
-    _ollama(True, ["qwen3:4b"])
+    _ollama(True, ["qwen3:4b-instruct-2507-q4_K_M"])
     st = ss.assess(get_settings(), {})
     assert st.ollama_version == "0.9.0"
     assert _step(st, "ollama").status == "ok"
@@ -200,7 +200,8 @@ def test_assess_with_models_missing(quiet):
 
 def test_assess_with_everything_present_and_verified(quiet):
     _ollama(True, BASE + DERIVED)
-    profiles.save_active_profile("gpu_16gb", "NVIDIA GPU with 16 GB VRAM", HW_4080)
+    profiles.save_active_profile(  # built from the plan's own bases (a rebuilt install)
+        "gpu_16gb", "NVIDIA GPU with 16 GB VRAM", HW_4080, profiles.plan_bases("gpu_16gb"))
     st = ss.assess(get_settings(), {"llm.mode": "local"})
     assert st.profile_recorded and not st.first_run
     assert _step(st, "pull").status == "ok" and _step(st, "pull").detail == "3 of 3 present"
@@ -286,14 +287,14 @@ def test_local_on_a_no_gpu_machine_falls_back_to_the_cpu_profile(quiet, monkeypa
     assert st.profile == "hosted_only"
 
 
-def test_recorded_hosted_profile_under_local_says_nothing_to_pull(quiet):
+def test_recorded_hosted_profile_under_local_falls_back_to_a_local_plan(quiet):
+    """#103 (was: "Nothing to pull"): the hosted profile has no models, so a local choice treats
+    it as unrecorded and lists the recommended local models."""
     profiles.save_active_profile("hosted_only", "chosen on the Setup page", HW_4080)
     st = ss.assess(get_settings(), {"setup.run_choice": "local"})
-    assert st.profile == "hosted_only"
+    assert st.profile == "gpu_16gb" and not st.profile_recorded
     pull = _step(st, "pull")
-    assert pull.action_label == "Nothing to pull" and not pull.action_enabled
-    prof = _step(st, "profile")
-    assert prof.explanation == "Recorded: chosen on the Setup page."
+    assert pull.action_label != "Nothing to pull" and st.base_tags
 
 
 def test_run_choice_is_derived_when_no_row_exists(quiet, monkeypatch):
@@ -325,7 +326,7 @@ HX = {"HX-Request": "true"}
 
 
 def test_system_panel_renders_cards_and_steps(quiet):
-    _ollama(True, ["qwen3:4b"])
+    _ollama(True, ["qwen3:4b-instruct-2507-q4_K_M"])
     client = _fresh_app()
     body = client.get("/settings/system").text
     assert "1. How will Kestrel run?" in body
@@ -406,7 +407,7 @@ def test_setup_profile_records_a_catalog_profile(quiet):
 
 # ---------------------------------------------------------------------------- 3. the actions
 def test_pull_button_queues_tasks_that_run_through_the_ollama_api(quiet):
-    _ollama(True, ["qwen3:4b"])
+    _ollama(True, ["qwen3:4b-instruct-2507-q4_K_M"])
     client = _fresh_app()
     r = client.post("/setup/action/pull")
     assert r.status_code == 200
@@ -449,11 +450,11 @@ def test_build_button_creates_each_derived_model_and_records_the_profile(quiet):
             {"status": "reading model metadata"}, {"status": "writing manifest"},
             {"status": "success"},
         ))
-        assert _drain() == 4
+        assert _drain() == 3
     bodies = [json.loads(c.request.content) for c in route.calls]
     assert [b["model"] for b in bodies] == DERIVED
     first = bodies[0]
-    assert first["from"] == "qwen3:4b" and first["stream"] is True
+    assert first["from"] == "qwen3:4b-instruct-2507-q4_K_M" and first["stream"] is True
     assert isinstance(first["parameters"]["num_ctx"], int)
     assert first["modelfile"].startswith("# kestrel-tier1")
     for mf in (paths.config_dir() / "models").iterdir():  # the Show details commands stay true
@@ -671,3 +672,90 @@ def test_setup_redirects_to_onboarding_then_to_settings_system(quiet):
     )
     r = client.get("/setup", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/settings#system"
+
+
+# ----------------------------------------------------- #103: hosted profile, local choice
+HW_NO_GPU = profiles.Hardware(os="windows", gpu_vendor=None, vram_gb=0.0, ram_gb=8.0)
+
+
+def _record(profile: str) -> None:
+    profiles.save_active_profile(profile, "test", HW_NO_GPU)
+
+
+def _choose_local() -> None:
+    async def _go():
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from kestrel.db.engine import make_async_engine
+
+        engine = make_async_engine(paths.db_path())
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+                await s.merge(Setting(key=ss.CHOICE_KEY, value="local"))
+                await s.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_go())
+
+
+def _checklist_rows(client) -> dict[str, str]:
+    html = client.get("/settings/computer/checklist").text
+    out = {}
+    for key in ("download", "tune"):
+        m = re.search(rf'data-step="{key}".*?(?=data-step=|st-profile)', html, flags=re.DOTALL)
+        out[key] = m.group(0) if m else ""
+    return out
+
+
+def test_a_recorded_hosted_profile_with_a_local_choice_lists_real_models(quiet, monkeypatch):
+    """#103: a recorded hosted profile has no models, so "Download models" said 0 of 0 ready and
+    Done. With the choice set to Ollama it is treated like no profile: the local fallback."""
+    monkeypatch.setattr(profiles, "detect_hardware", lambda: HW_NO_GPU)
+    ss.forget_hardware()
+    _ollama(True, [])
+    client = _fresh_app()
+    _record("hosted_only")
+    _choose_local()
+    st = ss.assess(get_settings(), _db_rows())
+    assert st.base_tags, "the plan must not be empty"
+    assert st.profile != "hosted_only"
+    rows = _checklist_rows(client)
+    assert "is-done" not in rows["download"].split(">")[0] and "Done" not in rows["download"]
+    assert f"0 of {len(st.base_tags)} ready" in rows["download"]
+    assert "Done" not in rows["tune"]
+
+
+def test_choosing_a_gpu_profile_after_that_shows_the_real_model_count(quiet):
+    _ollama(True, [])
+    client = _fresh_app()
+    _record("hosted_only")
+    _choose_local()
+    _record("gpu_16gb")
+    st = ss.assess(get_settings(), _db_rows())
+    assert st.profile == "gpu_16gb" and len(st.base_tags) >= 2
+    rows = _checklist_rows(client)
+    assert f"0 of {len(st.base_tags)} ready" in rows["download"]
+    assert "Done" not in rows["download"]
+
+
+def test_an_empty_plan_is_never_done_and_points_to_the_setup_choice(quiet, monkeypatch):
+    import dataclasses
+
+    _ollama(True, [])
+    client = _fresh_app()
+    real = ss.assess
+
+    def empty(settings, rows=None):
+        return dataclasses.replace(
+            real(settings, rows), base_tags=[], missing_tags=[], derived_names=[],
+            missing_derived=[])
+
+    monkeypatch.setattr(ss, "assess", empty)
+    rows = _checklist_rows(client)
+    for key in ("download", "tune"):
+        assert "Done" not in rows[key] and "is-done" not in rows[key], key
+        assert "Choose your computer&#39;s setup first" in rows[key] or \
+            "Choose your computer's setup first" in rows[key], key
+        assert "disabled" in rows[key], key
+    assert "0 of 0" not in rows["download"]

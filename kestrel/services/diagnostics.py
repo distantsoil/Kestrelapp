@@ -52,7 +52,11 @@ REDACTED = "<redacted>"
 # `max_tokens` and friends are integers and stay; `api_key_env` names a variable, not a value.
 SECRET_KEY_WORDS: tuple[str, ...] = ("key", "secret", "token", "password")
 KEEP_KEYS: frozenset[str] = frozenset({"api_key_env"})
-LOG_TAIL_LINES = 2000
+# The log window (D-IMPORT-6 addition, revised): the newest lines of a log, up to either limit,
+# plus every warning and error from anything older (#105).
+LOG_WINDOW_LINES = 20_000
+LOG_WINDOW_BYTES = 5_000_000
+LOG_EARLIER_BYTES = 2_000_000  # the cap on the earlier warnings and errors (newest kept)
 QUARANTINE_ROWS = 20
 ROLE_ROWS = 500  # roles.json: the newest roles by ID (owner round 14)
 RAW_RESPONSE_CHARS = 500
@@ -90,8 +94,10 @@ CONTENTS: tuple[tuple[str, str], ...] = (
     ),
     (
         "logs/",
-        f"the last {LOG_TAIL_LINES} lines of each log file, with bearer and API tokens masked "
-        "and, in confidential mode, the current employer replaced by your placeholder",
+        f"each log, whole up to {LOG_WINDOW_LINES:,} lines or {LOG_WINDOW_BYTES // 1_000_000} MB "
+        "(the newest if it is longer), plus every warning and error line from anything older, "
+        "with bearer and API tokens masked and, in confidential mode, the current employer "
+        "replaced by your placeholder",
     ),
     (
         "quarantine.json",
@@ -700,26 +706,90 @@ def _backend_addresses(settings: Settings) -> set[str]:
     return values
 
 
+_ROTATED = re.compile(r"^(?P<base>.+?)\.(?P<n>\d+)$")
+# "2026-11-01 09:30:00,123 WARNING MainThread ..." (logging_setup's format). A line that does not
+# start this way is a continuation (a traceback) and follows the entry above it.
+_LEVEL_LINE = re.compile(r"^\S+(?: \S+)? (?P<level>[A-Z]+)\b")
+_KEEP_LEVELS = frozenset({"WARNING", "ERROR", "CRITICAL"})
+_ENTRY_START = re.compile(r"^\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d")
+
+
+def _earlier_warnings(lines: list[str]) -> tuple[list[str], bool]:
+    """(the WARNING, ERROR and CRITICAL entries of `lines`, in order, each with its continuation
+    lines (a traceback belongs to the error above it); whether the oldest were dropped to stay
+    under LOG_EARLIER_BYTES)."""
+    kept: list[str] = []
+    keeping = False
+    for line in lines:
+        if _ENTRY_START.match(line):
+            m = _LEVEL_LINE.match(line)
+            keeping = bool(m and m.group("level") in _KEEP_LEVELS)
+        if keeping:
+            kept.append(line)
+    total = sum(len(x.encode("utf-8")) + 1 for x in kept)
+    if total <= LOG_EARLIER_BYTES:
+        return kept, False
+    drop = 0
+    while total > LOG_EARLIER_BYTES:
+        total -= len(kept[drop].encode("utf-8")) + 1
+        drop += 1
+    # Never start on the tail of a cut entry: skip to the next entry's first line.
+    while drop < len(kept) and not _ENTRY_START.match(kept[drop]):
+        drop += 1
+    return kept[drop:], True
+
+
+def window_log(lines: list[str]) -> tuple[list[str], str]:
+    """(lines to keep, header) for one log, oldest line first. The newest lines are kept up to
+    LOG_WINDOW_LINES lines or LOG_WINDOW_BYTES bytes; older lines are dropped except their
+    warnings and errors, which come first, so the result stays in time order."""
+    size = 0
+    start = len(lines)
+    while start > 0 and len(lines) - start < LOG_WINDOW_LINES:
+        size += len(lines[start - 1].encode("utf-8")) + 1
+        if size > LOG_WINDOW_BYTES:
+            break
+        start -= 1
+    if start == 0:
+        return lines, f"all {len(lines)} lines"
+    earlier, capped = _earlier_warnings(lines[:start])
+    cap_note = (
+        f" (oldest dropped above {LOG_EARLIER_BYTES // 1_000_000} MB)" if capped else ""
+    )
+    header = (
+        f"newest {len(lines) - start} of {len(lines)} lines plus {len(earlier)} earlier "
+        f"warnings and errors{cap_note}"
+    )
+    return earlier + lines[start:], header
+
+
 def log_tails(scrub: Scrubber) -> list[tuple[str, str]]:
-    """(zip member name, scrubbed text) for each file under the log folder."""
+    """(zip member name, scrubbed text) for each log under the log folder. A rotated file
+    (kestrel.log.1, .2 ...) is older text of the same log, so it is folded in ahead of the current
+    file rather than listed apart. Every included line, header too, goes through `scrub`."""
     folder = paths.logs_dir()
     if not folder.is_dir():
         return []
-    out: list[tuple[str, str]] = []
+    groups: dict[str, list[tuple[int, Path]]] = {}
     for f in sorted(folder.iterdir()):
         if not f.is_file():
             continue
-        try:
-            text = f.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            out.append((f"logs/{f.name}", f"unreadable: {exc}\n"))
-            continue
-        lines = text.splitlines()
-        tail = lines[-LOG_TAIL_LINES:]
-        header = ""
-        if len(lines) > len(tail):
-            header = f"# {f.name}: last {len(tail)} of {len(lines)} lines\n"
-        out.append((f"logs/{f.name}", scrub(header + "\n".join(tail) + "\n")))
+        m = _ROTATED.match(f.name)
+        base, n = (m.group("base"), int(m.group("n"))) if m else (f.name, 0)
+        groups.setdefault(base, []).append((n, f))
+    out: list[tuple[str, str]] = []
+    for base in sorted(groups):
+        lines: list[str] = []
+        notes: list[str] = []  # never windowed away: a file that could not be read is always said
+        # Highest number is the oldest rotation; number 0 is the current file, written last.
+        for _n, f in sorted(groups[base], key=lambda item: -item[0]):
+            try:
+                lines.extend(f.read_text(encoding="utf-8", errors="replace").splitlines())
+            except OSError as exc:
+                notes.append(f"# {f.name} unreadable: {exc}")
+        kept, why = window_log(lines)
+        head = "\n".join([f"# {base}: {why}", *notes])
+        out.append((f"logs/{base}", scrub(head + "\n" + "\n".join(kept) + "\n")))
     return out
 
 

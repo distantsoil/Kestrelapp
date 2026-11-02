@@ -253,6 +253,9 @@ async def free_save(request: Request):
 
 
 # ---------------------------------------------------------------------------- the checklist
+CHOOSE_SETUP = "Choose your computer's setup first, in the list below."
+
+
 async def checklist_ctx(message: str = "", ok: bool = True) -> dict:
     from kestrel.web.pages.setup import action_ctx, models_snapshot, setup_state
 
@@ -278,7 +281,10 @@ async def checklist_ctx(message: str = "", ok: bool = True) -> dict:
         return "good" if done else ("info" if now else "muted")
 
     engine_ok = st.ollama_version is not None
-    dl_done = engine_ok and not st.missing_tags
+    # An empty plan (no profile that runs locally) is never "Done": there is nothing to download
+    # or tune yet, so the rows say what to do next (#103).
+    no_plan = n_total == 0
+    dl_done = engine_ok and not no_plan and not st.missing_tags
     tune_done = dl_done and not st.missing_derived
     check_done = tune_done and st.verified == "ok"
     rows = [
@@ -293,32 +299,37 @@ async def checklist_ctx(message: str = "", ok: bool = True) -> dict:
          "commands": (steps["ollama"].commands if "ollama" in steps else []),
          "show_progress": False},
         {"key": "download", "title": "Download models",
-         "line": (f"{n_ready} of {n_total} ready." if engine_ok else "Needs the engine first.")
+         "line": (CHOOSE_SETUP if no_plan else
+                  f"{n_ready} of {n_total} ready." if engine_ok else "Needs the engine first.")
                  + (f" About {gb:.1f} GB to download once." if st.missing_tags and engine_ok
                     and not live else "")
                  + (f" Getting the last one, {pct}%." if live and kind == "pull"
                     and pct is not None else ""),
          "done": dl_done,
          "chip": (("Done", "good") if dl_done else ("Downloading", "info")
-                  if live and kind == "pull" else ("Up next", "muted")),
+                  if live and kind == "pull" else ("Needs you", "warn") if no_plan
+                  else ("Up next", "muted")),
          "button": (("Pause", "pause") if live and kind == "pull" else
                     ("Download", "download") if st.missing_tags else ("Check again", "engine")),
          "primary": bool(engine_ok and st.missing_tags and not live),
-         "disabled": not engine_ok, "pct": pct if live and kind == "pull" else None,
+         "disabled": not engine_ok or no_plan, "pct": pct if live and kind == "pull" else None,
          "show_progress": live and kind == "pull",
          "note": "Pause now and resume on a faster network. It picks up where it stopped."
                  if live and kind == "pull" else
                  ("Downloads resume if they are interrupted." if st.missing_tags else ""),
          "commands": [f"ollama pull {t}" for t in st.missing_tags]},
         {"key": "tune", "title": "Tune them for Kestrel",
-         "line": ("Gives each model room for a whole job posting, so nothing is cut off."
+         "line": (CHOOSE_SETUP if no_plan else
+                  "Gives each model room for a whole job posting, so nothing is cut off."
                   + (f" {built} of {len(st.derived_names)} done." if dl_done else "")),
          "done": tune_done,
          "chip": (("Done", "good") if tune_done else ("Tuning", "info")
-                  if live and kind == "build" else ("Up next", "muted")),
+                  if live and kind == "build" else ("Needs you", "warn") if no_plan
+                  else ("Up next", "muted")),
          "button": ("Tune", "tune") if not tune_done else ("Tune again", "tune"),
          "primary": bool(dl_done and not tune_done and not live),
-         "disabled": not dl_done or live, "show_progress": live and kind == "build",
+         "disabled": not dl_done or live or no_plan,
+         "show_progress": live and kind == "build",
          "pct": None, "commands": steps["build"].commands if "build" in steps else []},
         {"key": "check", "title": "Check everything works",
          "line": ("Tests that Kestrel reads whole postings. " + st.verified_detail

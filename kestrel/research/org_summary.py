@@ -743,9 +743,11 @@ async def drain_org_summaries(
                         outcome = await summarize(s, approved_client, org, excerpts)
         except Exception as exc:  # noqa: BLE001 - a failed task is retried, never fatal
             beat.cancel()
-            reason = f"{type(exc).__name__}: {exc}"
-            log.warning("org_summary_failed", task=task.id, error=reason)
-            if await queue.fail(task.id, reason, worker_id=wid, retry=True) == "dead":
+            from kestrel.errors import classify_model_failure, failure_record
+
+            log.warning("org_summary_failed", task=task.id, error_type=type(exc).__name__,
+                        reason=classify_model_failure(exc)[0])
+            if await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True) == "dead":
                 await _note_dead(sm, int((task.payload or {}).get("org_id") or 0))
             continue
         finally:

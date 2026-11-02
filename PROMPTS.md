@@ -970,7 +970,10 @@ by construction. Output is bounded by the number of bullets, never by their leng
    `summary_blocks[].lines`, `roles[]` (`header_lines`, `first_line`, `last_line`, and
    `company_label`, `title`, `start_date`, `end_date` copied from the header), `skill_groups[]`
    (`label`, `lines`). A promotion at one employer is one role with every title line in
-   `header_lines`. Before the strict range check, code merges a role that starts inside another
+   `header_lines`, but only when the lines name the same employer and the later title lines have no
+   company-and-date header of their own; a line that names a company with its own date range
+   always starts a new role (D-IMPORT-6: Kestrel re-asks once when such a header sits inside
+   another role's range, then splits on the headers itself and says so). Before the strict range check, code merges a role that starts inside another
    role's header block (a promotion answered as two roles) and pulls back a role that runs into
    the next one; only what remains overlapping is re-asked (D-IMPORT-5). A heading outside any
    role over a list or grid of capabilities is a skills group labeled by that heading.

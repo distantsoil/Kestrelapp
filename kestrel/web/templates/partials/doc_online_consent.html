@@ -1,8 +1,8 @@
 {% import "ui/macros.html" as ui %}
-{% set send_attrs = {'data-testid': 'doc-online-send', 'hx-post': post_url, 'hx-include': '#' ~ dialog_id ~ '-form', 'hx-target': target, 'hx-swap': 'innerHTML'} %}
+{% set send_attrs = {'data-testid': 'doc-online-send', 'hx-post': post_url, 'hx-include': '#' ~ dialog_id ~ '-form', 'hx-target': target, 'hx-swap': 'innerHTML', 'hx-sync': 'this:drop', 'hx-disabled-elt': '#' ~ dialog_id ~ ' button', 'data-busy-text': 'Sent. Waiting for the answer.'} %}
 {% set actions = [{'label': 'Cancel', 'close': True}] %}
 {% if route.employer != 'held' %}
-  {% set actions = actions + [{'label': action, 'kind': 'primary', 'close': True, 'attrs': send_attrs, 'vals': {'confirmed': '1', 'model': route.model, 'dest': route.dest}}] %}
+  {% set actions = actions + [{'label': action, 'kind': 'primary', 'attrs': send_attrs, 'vals': {'confirmed': '1', 'model': route.model, 'dest': route.dest}}] %}
 {% endif %}
 {% call ui.modal(dialog_id, action ~ ' with an online model?', actions, static=True) %}
   <p class="k-muted">{{ route.provider }}, using your own credit. This action would use <b>{{ route.model }}</b>, for this run only.</p>

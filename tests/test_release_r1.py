@@ -246,3 +246,20 @@ def test_onboarding_shows_the_linux_panel_too(monkeypatch, no_gap):
     linux_check.record_fallback("no backend", "linux")
     c = _app()
     assert 'data-testid="linux-webkit"' in c.get("/onboarding").text
+
+
+def test_saving_a_pasted_sentence_as_a_key_is_refused_and_writes_nothing(monkeypatch):
+    """#62 on Settings: the Your keys Save and the older key form apply the setup key check."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client = _fresh_app()
+    sentence = "this is half a paragraph of prose \u2014 not a key"
+    with respx.mock(assert_all_called=False) as mock:
+        r = client.post("/settings/hosted/keybox",
+                        data={"provider": "openrouter", "op": "save", "api_key": sentence})
+        assert not mock.calls
+    assert r.status_code == 200 and 'data-key-ok="false"' in r.text
+    assert "does not look like an API key" in r.text and "Nothing was saved" in r.text
+    assert sentence not in r.text and not paths.dotenv_path().exists()
+    r = client.post("/settings/hosted/key", data={"backend": "frontier", "api_key": sentence})
+    assert "does not look like an API key" in r.text and sentence not in r.text
+    assert not paths.dotenv_path().exists()

@@ -578,8 +578,7 @@ async def _create_derived(
         async with httpx.AsyncClient(timeout=180.0) as client:
             (await client.post(url, json=body)).raise_for_status()
     except httpx.HTTPError as exc:
-        log.warning("model_tune_failed", tier=tier, base=base, error_type=type(exc).__name__,
-                    error=str(exc))
+        log.warning("model_tune_failed", tier=tier, base=base, error_type=type(exc).__name__)
         return f"Kestrel could not tune {base} for this step: {fixed_reason(exc)}"
     await asyncio.to_thread(ss.forget_ollama_probe)
     return None

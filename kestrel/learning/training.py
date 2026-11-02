@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
 from kestrel.db.models import MlModel, Task
+from kestrel.errors import failure_record, shown_failure
 from kestrel.learning import reranker
 from kestrel.learning.capture import labeled_examples
 from kestrel.queue.queue import TaskQueue
@@ -36,7 +37,7 @@ async def state(session: AsyncSession, track: str) -> dict:
         return {"pending": True, "message": "Training queued or running on this computer."}
     if task.status == "dead":
         return {"pending": False, "message": "Training could not finish. Try again.",
-                "detail": task.last_error}
+                "detail": shown_failure(task.last_error)}
     result = (task.payload or {}).get("result", {})
     return {"pending": False, "message": (
         "This training attempt passed the checks and was selected for scoring."
@@ -119,7 +120,7 @@ async def run_cycle(
             done += 1
         except Exception as exc:
             log.warning("sorting_model_training_failed", task=task.id, error=str(exc))
-            await queue.fail(task.id, str(exc), worker_id="sorting-model", retry=True)
+            await queue.fail(task.id, failure_record(exc), worker_id="sorting-model", retry=True)
             break  # retry next cycle, never spin through all attempts on one transient failure
         finally:
             beat.cancel()

@@ -833,6 +833,11 @@ async def hosted_save_key(request: Request):
                 s, settings, message="Unknown hosted backend.", ok=False, return_to=back
             )
             return _hosted_partial(request, ctx)
+        shape = prov.key_shape_problem(value)
+        if shape:
+            ctx = await _hosted_ctx(s, settings, message=f"{shape}. Nothing was saved.", ok=False,
+                                    return_to=back)
+            return _hosted_partial(request, ctx)
         try:
             prov.write_secret(backend.api_key_env, value)
         except ValueError as exc:
@@ -897,6 +902,9 @@ async def _keybox_op(op: str, backend, label: str, value: str) -> dict:
         if not value:
             return {"ok": False, "text": f"Paste your {label} key first. The saved one is "
                     "unchanged."}
+        shape = prov.key_shape_problem(value)
+        if shape:
+            return {"ok": False, "text": f"{shape}. Nothing was saved."}
         try:
             prov.write_secret(backend.api_key_env, value)
         except ValueError as exc:
@@ -949,8 +957,8 @@ async def hosted_test(request: Request):
                 models = prov.models_fit_for_tier3(await prov.list_models(backend), backend)
             except (RuntimeError, ValueError, KeyError) as exc:
                 log.info("hosted_models_list_failed", backend=backend_name,
-                         error_type=type(exc).__name__, error=str(exc))
-                model_error = f"{type(exc).__name__}: {plain_error(exc)}"
+                         error_type=type(exc).__name__)
+                model_error = plain_error(exc)
         if free_only:
             # Zero-priced for both prompt and completion. Only OpenRouter reports pricing, so
             # on any other backend this filter empties the list and the partial says so.

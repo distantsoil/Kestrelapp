@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting, Task
+from kestrel.errors import failure_record, shown_failure, task_failure_text
 
 log = structlog.get_logger()
 
@@ -87,7 +88,7 @@ async def build_state(session: AsyncSession) -> dict:
     if task.status in _LIVE:
         return {"state": "building", "attempt": task.attempts or 0}
     if task.status == "dead":
-        return {"state": "failed", "reason": (task.last_error or _STOPPED)[:300]}
+        return {"state": "failed", "reason": (shown_failure(task.last_error) or _STOPPED)[:300]}
     return {"state": None}
 
 
@@ -139,12 +140,13 @@ async def drain_story_builds(
                 res = await consolidate_stories(s, client, settings)
         except Exception as exc:  # a failed build is reported on the page, never fatal
             beat.cancel()
-            reason = f"{type(exc).__name__}: {exc}"
-            log.warning("build_stories_failed", task=task.id, error=reason)
-            status = await queue.fail(task.id, reason, worker_id=wid, retry=True)
+            log.warning("build_stories_failed", task=task.id,
+                        error=f"{type(exc).__name__}: {exc}")
+            status = await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
             if status == "dead":
                 with contextlib.suppress(Exception):
-                    await _record(sm, {"at": utcnow_iso(), "ok": False, "error": reason[:300]})
+                    await _record(sm, {"at": utcnow_iso(), "ok": False,
+                                       "error": task_failure_text(exc)[:300]})
             continue
         finally:
             beat.cancel()

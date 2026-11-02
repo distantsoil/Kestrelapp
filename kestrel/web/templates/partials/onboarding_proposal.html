@@ -21,11 +21,15 @@
     {% if proposal.flags.too_many_derived %}<span class="ob-dsm">Too many derived variants in: {{ proposal.flags.too_many_derived | join(', ') }}.</span>{% endif %}
   </div></div>
   {% endif %}
-  {% if proposal.flags.unverified %}
+  {% if proposal.flags.unverified or proposal.flags.dates_taken %}
   <div class="ob-note ob-note--warn" data-testid="import-unverified">{{ ui.icon('info') }}<div>
     <b>Check these role details.</b>
     <span class="ob-dsm">They do not appear as written in the role's header line, so they may have been misread. After you save, each role in Profile, Documents has an "Edit role details" line where company, title and dates can be corrected.</span>
     <ul class="ob-gaps">{% for item in proposal.flags.unverified %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% if proposal.flags.dates_taken %}
+    <span class="ob-dsm" data-testid="import-dates-taken"><b>Dates taken from the role's header line.</b> The model gave a different date, so the one written in the header is used:</span>
+    <ul class="ob-gaps">{% for item in proposal.flags.dates_taken %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% endif %}
   </div></div>
   {% endif %}
   <div class="ob-split">
@@ -68,6 +72,19 @@
     <input type="hidden" name="track" value="{{ track }}">
     <input type="hidden" name="doc_kind" value="{{ doc_kind }}">
     {% include "partials/import_proof_points.html" %}
+    {% if proposal.flags.split_roles %}
+    <div class="ob-note ob-note--warn" data-testid="import-split-roles">{{ ui.icon('info') }}<div>
+      <b>Kestrel split {{ proposal.flags.split_roles }} role{{ '' if proposal.flags.split_roles == 1 else 's' }} the model had merged.</b>
+      <span class="ob-dsm">Each job header starts its own role. Check the company, title and dates of every role below.</span>
+    </div></div>
+    {% endif %}
+    {% if proposal.flags.missed_roles %}
+    <div class="ob-note ob-note--warn" data-testid="import-missed-roles">{{ ui.icon('alert') }}<div>
+      <b>Kestrel may have missed {{ proposal.flags.missed_roles | length }} role{{ '' if proposal.flags.missed_roles | length == 1 else 's' }}.</b>
+      <span class="ob-dsm">These lines look like job headers but were not read as roles. Add each one by hand after importing, or run the import again.</span>
+      {% for line in proposal.flags.missed_roles %}<div class="ob-ln"><div class="k-grow">{{ line }}</div></div>{% endfor %}
+    </div></div>
+    {% endif %}
     {% if proposal.flags.unplaced %}
     <div class="ob-note ob-note--warn" data-testid="import-unplaced">{{ ui.icon('info') }}<div>
       <b>{{ proposal.flags.unplaced | length }} line(s) were not placed in any slot.</b>
@@ -82,17 +99,17 @@
       {% endfor %}
     </div></div>
     {% endif %}
-    {% if current_offer %}
-    {# D-PRIV-1: the newest role has no end date, so it is probably the current employer.
+    {% for offer in current_offer or [] %}
+    {# D-PRIV-1, D-PRIV-2: every role with no end date is offered, each with its own "Show it as".
        Opt-in only: nothing is marked unless the box is ticked. #}
     <div class="ob-ck" data-testid="import-current-employer" x-data="{ current: false }">
-      <label class="ob-check"><input type="checkbox" name="current_employer" value="on" x-model="current">
-        <span><b>Mark {{ current_offer.company }} as my current employer</b>
+      <label class="ob-check"><input type="checkbox" name="current_employer" value="{{ offer.index }}" x-model="current">
+        <span><b>Mark {{ offer.company }} as my current employer</b>
         <span class="ob-dsm">Confidential mode (Settings > Privacy and access) shows this in its place. You can change it later under Edit role details.</span></span></label>
       <label class="ob-f" x-show="current">Shown as
-        <input class="k-input" type="text" name="current_employer_as" value="{{ current_offer.hint }}" maxlength="200" aria-label="Show your current employer as"></label>
+        <input class="k-input" type="text" name="current_employer_as_{{ offer.index }}" value="{{ offer.hint }}" maxlength="200" aria-label="Show {{ offer.company }} as"></label>
     </div>
-    {% endif %}
+    {% endfor %}
     <input type="hidden" name="ob" value="1">
     <div x-data="{ ok: false }" class="ob-approve" data-testid="ob-resume-approve">
       <label class="ob-check"><input type="checkbox" name="approved" value="1" x-model="ok" {% if not proposal.flags.clean %}disabled{% endif %}> <span><b>I approve this resume text</b><span class="ob-dsm">Kestrel only uses these lines, exactly as shown. It never rewrites them.</span></span></label>

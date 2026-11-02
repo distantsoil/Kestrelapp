@@ -3,6 +3,9 @@
 <link rel="stylesheet" href="{{ static_url('css/pages/surfaces.css') }}">
 <div class="sf-notice" role="status" data-testid="announcement" data-announcement-id="{{ notice.id }}">
   <span class="sf-msg">{{ notice.text }}</span>
+  {% if notice.action %}<button class="k-btn k-btn--sm k-btn--primary" type="button"
+          hx-post="{{ notice.action.post }}" hx-target="#announcement-slot" hx-swap="innerHTML"
+          data-testid="announcement-action">{{ notice.action.label }}</button>{% endif %}
   <button class="k-btn k-btn--sm" type="button" aria-label="Got it, hide this notice"
           hx-post="/announcements/{{ notice.id }}/dismiss"
           hx-target="#announcement-slot" hx-swap="innerHTML">Got it</button>

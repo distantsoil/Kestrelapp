@@ -274,10 +274,10 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(liv
         ask = "htmx.ajax('GET', '/analytics/narrative/online?track=employment', " \
               "{target: '#an-dialog', swap: 'innerHTML'})"
         page.evaluate(ask)
-        page.wait_for_selector("#an-dialog .k-modal.is-open")
+        page.wait_for_selector(".k-modal.is-open")
         assert page.evaluate("window.__opens") == 1
         page.keyboard.press("Escape")
-        page.wait_for_function("!document.querySelector('#an-dialog .k-modal.is-open')")
+        page.wait_for_function("!document.querySelector('.k-modal.is-open')")
         page.click('[data-testid="an-tab-remote"]')
         assert page.is_visible('[data-panel="remote"]')
         assert not page.is_visible('[data-panel="src"]')
@@ -293,7 +293,7 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(liv
         assert not page.query_selector(".an-tip.is-on")
         page.evaluate("window.__opens = 0")
         page.evaluate(ask)
-        page.wait_for_selector("#an-dialog .k-modal", state="attached")
+        page.wait_for_selector("#k-layer .k-modal, #an-dialog .k-modal", state="attached")
         page.wait_for_timeout(200)
         assert page.evaluate("window.__opens") == 0
         assert not errors, errors

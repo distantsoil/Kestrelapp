@@ -200,14 +200,25 @@ def validate_bench_args(models: Sequence[str], prompt_versions: Sequence[str]) -
 # reporting its number beside a real tier-2 candidate is the exact error AFTERACTION 3.2 records:
 # kestrel-tier1 is a fast triage model, and its 70% structured-output rate was read as a tier-1
 # "quality signal" when it was really an off-label model on a placeholder gold set.
-def off_tier_models(settings: Settings) -> dict[str, str]:
-    """Model name -> the tier role it is actually configured for, for every non-tier2 role."""
-    out: dict[str, str] = {}
+def model_roles(settings: Settings) -> dict[str, set[str]]:
+    """Model name -> every role it serves. One model can serve several (docsel shares
+    kestrel-tier2, D-LLM-10), so a plain model -> role map would let the later role win."""
+    out: dict[str, set[str]] = {}
     for role, tier in settings.llm.tiers.items():
-        if role in ("tier2", "embed"):
-            continue
-        if tier.model:
-            out.setdefault(tier.model, role)
+        if role != "embed" and tier.model:
+            out.setdefault(tier.model, set()).add(role)
+    return out
+
+
+def off_tier_models(settings: Settings) -> dict[str, str]:
+    """Model name -> a tier role it is configured for, for every model that does NOT serve tier2.
+
+    A model that serves tier2 among other roles is a real tier-2 candidate and is never flagged;
+    it is off-tier only if none of its roles is the one being benched."""
+    out: dict[str, str] = {}
+    for model, roles in model_roles(settings).items():
+        if "tier2" not in roles:
+            out[model] = sorted(roles)[0]
     return out
 
 

@@ -93,9 +93,14 @@
       li.hidden = !radio || li.getAttribute('data-provider') !== radio.value;
     });
     var saved = !!(radio && radio.hasAttribute('data-saved'));
-    var typed = key ? key.value.trim().length : 0;
+    var pasted = key ? key.value.trim() : '';
+    var typed = pasted.length;
     var why = '';
     if (!typed && !saved) why = 'Paste your key first';
+    else if (typed && (/\s/.test(pasted) || /[^\x21-\x7e]/.test(pasted))) {
+      // A key is one unbroken run of plain characters; the server refuses anything else.
+      why = 'That is not a key: it has spaces or unusual characters';
+    }
     else if (typed && typed < 8) why = 'That key looks too short';
     else if (!ack || !ack.checked) why = 'Tick the box first';
     else if (free && free.checked && !(train && train.checked) && radio && radio.value === 'openrouter') {

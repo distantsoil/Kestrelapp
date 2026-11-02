@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 
 _BASE = "https://{slug}.recruitee.com/api/offers/"
@@ -71,7 +72,7 @@ class RecruiteeAdapter:
         except httpx.HTTPError as exc:
             raise AdapterError(f"Recruitee fetch failed for {slug}: {exc}") from exc
         except PermissionError as exc:
-            raise AdapterError(f"Recruitee robots.txt does not allow reading {slug}") from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         except ValueError as exc:
             raise AdapterError(f"Recruitee reply for {slug} was not valid JSON") from exc
         offers = data.get("offers") if isinstance(data, dict) else None

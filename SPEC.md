@@ -1522,6 +1522,16 @@ PARAMETER num_ctx 16384
 ollama create kestrel-tier2 -f kestrel/resources/models/Modelfile.tier2
 ```
 
+**Base tags are pinned, never bare (D-LLM-9, 2026-11-01).** Tier 1 uses
+`qwen3:4b-instruct-2507-q4_K_M`; document selection calls the profile's own `kestrel-tier2` derived model
+(D-LLM-10: the 4B model is too small for resume import, and a separate `kestrel-docsel` with a
+smaller `num_ctx` would load as a second runner; an existing `kestrel-docsel` is left alone); the 24 GB and 64 GB profiles' Tier 2 and 3 use
+`qwen3:30b-a3b-instruct-2507-q4_K_M`. The bare tags `qwen3:4b` and `qwen3:30b-a3b` now resolve to
+Thinking-2507 builds that cannot stop thinking, so every call spent its output budget on hidden
+reasoning. The rebuild of an existing install writes a clean Modelfile from `render_modelfile`
+(FROM plus PARAMETER lines only) and never copies a TEMPLATE, SYSTEM or stop line from the old
+model, and never deletes or untags the person's existing models.
+
 Ship `kestrel/resources/models/` with a Modelfile per tier and a `kestrel models build`
 command (also a button in the setup window) that creates them. Preflight must:
 

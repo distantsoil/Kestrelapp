@@ -8,6 +8,8 @@ updates that persist, and a form (import) whose proposal is reviewed before anyt
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
 from html import escape
 
@@ -1561,7 +1563,8 @@ async def _read_source(form) -> dict:
     doc_kind = str(form.get("doc_kind") or "resume")
     ctx: dict = {"ob": form.get("ob") == "1",  # in the setup wizard (D-UI-65)
                  "proposal": None, "markdown": "", "track": track, "doc_kind": doc_kind,
-                 "warnings": [], "source_format": None, "filename": None, "error": None}
+                 "warnings": [], "source_format": None, "filename": None, "error": None,
+                 "reason": None}  # reason: a fixed code for the import log, never text
     upload = form.get("file")
     filename = str(getattr(upload, "filename", "") or "")
     if upload is not None and filename:
@@ -1580,16 +1583,18 @@ async def _read_source(form) -> dict:
                 )
             except ConvertError as exc:
                 ctx["error"] = plain_error(exc)  # authored; the library text is in the log
+                ctx["reason"] = _convert_reason(exc)
                 return ctx
             except Exception as exc:  # a parser crash on a hostile file is a message, not a 500
-                log.warning("import_upload_unreadable", error_type=type(exc).__name__,
-                            error=str(exc))
+                log.warning("import_upload_unreadable", error_type=type(exc).__name__)
                 ctx["error"] = f"Could not read {filename!r}: {plain_error(exc)}"
+                ctx["reason"] = "unreadable"
                 return ctx
             ctx.update(markdown=converted.markdown.strip(), warnings=list(converted.warnings),
                        source_format=converted.source_format)
             if not ctx["markdown"]:
                 ctx["error"] = f"{filename!r} contained no text to import."
+                ctx["reason"] = "no_text"
         return ctx
     # Pasted text, or the second (processing) step re-posting what the first step read.
     ctx["markdown"] = str(form.get("text") or "").strip()
@@ -1597,7 +1602,115 @@ async def _read_source(form) -> dict:
     ctx["filename"] = str(form.get("filename") or "") or None
     if not ctx["markdown"]:
         ctx["error"] = "Paste some text or choose a file to import first."
+        ctx["reason"] = "empty_text"
     return ctx
+
+
+def _convert_reason(exc: BaseException) -> str:
+    """A fixed reason code for a refused upload, picked by the error's type."""
+    if isinstance(exc, convert_mod.FileTooLarge):
+        return "too_large"
+    if isinstance(exc, convert_mod.UnsupportedFormat):
+        return "unsupported_type"
+    if isinstance(exc, convert_mod.NoExtractableText):
+        return "no_text"
+    return "unreadable"
+
+
+IMPORT_SERVER_CAP_S = 12 * 60  # below the client's 15 minutes (kestrel-ui.js IMPORT_TIMEOUT_MS)
+_DISCONNECT_POLL_S = 2.0
+
+
+async def _run_capped(coro, request: Request, cap: float | None = None):
+    """Run the proposal with a total time cap and stop it when the browser goes away, so the page
+    never says "stopped" while the server keeps working (D-IMPORT-6). Raises TimeoutError at the
+    cap; a client that disconnects cancels the work (the route logs it as cancelled)."""
+    task = asyncio.ensure_future(coro)
+
+    async def watch() -> None:
+        while not task.done():
+            if await request.is_disconnected():
+                task.cancel()
+                return
+            await asyncio.sleep(_DISCONNECT_POLL_S)
+
+    watcher = asyncio.ensure_future(watch())
+    try:
+        done, _pending = await asyncio.wait(
+            {task}, timeout=IMPORT_SERVER_CAP_S if cap is None else cap)
+        if not done:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise TimeoutError("import time cap")
+        return task.result()  # CancelledError here means the client went away
+    finally:
+        watcher.cancel()
+        if not task.done():
+            task.cancel()
+
+
+class _ImportLog:
+    """One scheme for the import's log lines (#102): a start line when a stage begins and one
+    outcome line when it ends, in a `finally`, so a request the browser abandons (cancelled) is
+    logged too. Fields: stage ("read" or "propose"), outcome (ok, refused, error or cancelled)
+    with a fixed reason code, the HTTP status, duration, file type and line count, and for a
+    proposal the role, re-ask, missed-role and unplaced counts. Counts and codes only: never
+    resume text, a file name or a path."""
+
+    def __init__(self, stage: str, request: Request | None = None) -> None:
+        import time
+
+        self.stage, self.event = stage, f"import_{stage}"
+        self._t0, self.logged = time.monotonic(), False
+        self._request = request
+        log.info("import_started", stage=stage)
+
+    def done(self, outcome: str, reason: str | None, ctx: dict, proposal=None,
+             status: int = 200) -> None:
+        import time
+
+        if self.logged:
+            return
+        self.logged = True
+        if self._request is not None:
+            self._request.state.import_logged = True
+        fields: dict = {
+            "stage": self.stage, "outcome": outcome, "reason": reason, "status": status,
+            "ms": round((time.monotonic() - self._t0) * 1000),
+            "file_type": ctx.get("source_format") or _extension(ctx.get("filename")) or "paste",
+            "lines": sum(1 for ln in (ctx.get("markdown") or "").splitlines() if ln.strip()),
+        }
+        value = getattr(proposal, "value", None)
+        if value is not None:
+            flags = proposal.flags
+            fields.update(roles=len(value.roles), reasked=flags.reasked,
+                          missed_roles=len(flags.missed_roles), unplaced=len(flags.unplaced))
+        quiet = outcome == "ok" or reason == "needs_confirmation"
+        (log.info if quiet else log.warning)(self.event, **fields)
+
+    def close(self) -> None:
+        """Called from the route's `finally`: a stage that never reached `done` was cancelled
+        (the browser went away) or failed with an exception; either way it is logged."""
+        import sys
+
+        from starlette.exceptions import HTTPException
+
+        if self.logged:
+            return
+        exc = sys.exc_info()[1]
+        if exc is None or isinstance(exc, asyncio.CancelledError):
+            self.done("cancelled", "client_gone", {}, status=499)
+        elif isinstance(exc, HTTPException):  # the form could not be read (too big, malformed)
+            self.done("refused", "bad_form", {}, status=exc.status_code)
+        else:
+            self.done("error", "unexpected", {}, status=500)
+
+
+def _extension(filename: str | None) -> str:
+    """The file's extension only (never its name), lower case, or empty."""
+    name = filename or ""
+    return name.rsplit(".", 1)[1].lower()[:8] if "." in name else ""
 
 
 async def _import_model_label(version: str = "resume_outline/v1") -> str:
@@ -1629,6 +1742,14 @@ async def _import_model_label(version: str = "resume_outline/v1") -> str:
 
 @router.post("/api/documents/import/read", response_class=HTMLResponse)
 async def import_read(request: Request):
+    track = _ImportLog("read", request)
+    try:
+        return await _import_read(request, track)
+    finally:
+        track.close()
+
+
+async def _import_read(request: Request, track: _ImportLog):
     """Step one of the import (D-IMPORT-2): upload and convert, then show the text that was read
     with a processing panel that starts step two (/api/documents/import) on load. Splitting the
     two makes the status honest (the operator sees Uploading, then Reading, then Processing with
@@ -1636,7 +1757,10 @@ async def import_read(request: Request):
     without uploading again."""
     form = await request.form()
     ctx = await _read_source(form)
-    if ctx["error"] is None:
+    if ctx["error"] is not None:
+        track.done("refused", ctx["reason"] or "unreadable", ctx)
+    else:
+        track.done("ok", None, ctx)
         from kestrel.llm.prompts import load_prompt
 
         ctx["model_label"] = await _import_model_label()
@@ -1724,6 +1848,14 @@ async def _import_confidential_send(markdown: str = "") -> dict | None:
 
 @router.post("/api/documents/import", response_class=HTMLResponse)
 async def import_markdown(request: Request):
+    track = _ImportLog("propose", request)
+    try:
+        return await _import_markdown(request, track)
+    finally:
+        track.close()
+
+
+async def _import_markdown(request: Request, track: _ImportLog):
     """Run the P7 import proposal and show it for review with verbatim flagging. Writes NOTHING: a
     variant whose text is not verbatim from the source is flagged (hard rule 2), and the operator
     accepts only after reviewing. A failed model call returns the error, never prose, with a
@@ -1746,6 +1878,7 @@ async def import_markdown(request: Request):
     ctx = await _read_source(form)
     ctx["extracted_shown"] = bool(form.get("extracted_shown"))
     if ctx["error"] is not None:
+        track.done("refused", ctx["reason"] or "unreadable", ctx)
         return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
     import hmac
 
@@ -1767,6 +1900,7 @@ async def import_markdown(request: Request):
             }
             if send and send["needs_confirm"]:
                 extra["confirm_unredacted"] = send["confirm"]
+            track.done("refused", "needs_confirmation", ctx)
             return templates().TemplateResponse(
                 request, "partials/doc_online_consent.html",
                 {
@@ -1778,6 +1912,7 @@ async def import_markdown(request: Request):
         if problem:
             ctx["error"] = problem
             ctx["retryable"] = False
+            track.done("refused", "consent_invalid", ctx)
             return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
     posted = str(form.get("confirm_unredacted") or "")
     if send and send["needs_confirm"] and not hmac.compare_digest(posted, send["confirm"]):
@@ -1787,21 +1922,35 @@ async def import_markdown(request: Request):
         ctx["error"] = (f"Not sent. {_UNREDACTED_WARNING.format(provider=send['provider'])} "
                         "Press Send and import to confirm.")
         ctx["retryable"] = True  # the form below carries a FRESH confirmation
+        track.done("refused", "unredacted_not_confirmed", ctx)
         return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
     try:
         async with sessionmaker()() as s:
             settings = await load_settings_with_db(s)  # the setting-table layer: hosted rows
         async with httpx.AsyncClient() as http:
             client = LLMClient(settings, http=http)
-            proposal = await propose_import(
+            proposal = await _run_capped(propose_import(
                 client, ctx["markdown"], source_format=ctx["source_format"],
                 mapping=send["mapping"] if send else None,
-            )
+            ), request)
         ctx.update({"proposal": proposal, "error": proposal.error})
         ctx["current_offer"] = _current_offer(proposal, ctx["track"])
+        if proposal.error is None:
+            track.done("ok", None, ctx, proposal)
+        else:
+            lowered = proposal.error.lower()
+            reason = ("empty_text" if "no text to import" in lowered
+                      else "timeout" if "too long" in lowered or "timed out" in lowered
+                      else "schema_failed")
+            track.done("error", reason, ctx)
     except Exception as exc:  # a model that is not running must not 500 the page
-        log.warning("import_propose_failed", error_type=type(exc).__name__, error=str(exc))
-        ctx["error"] = f"Import could not reach the model: {plain_error(exc)}"
+        log.warning("import_propose_failed", error_type=type(exc).__name__)
+        if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+            ctx["error"] = "The import took too long and was stopped. Nothing was saved."
+        else:
+            ctx["error"] = f"Import could not reach the model: {plain_error(exc)}"
+        track.done("error", "timeout" if isinstance(exc, (TimeoutError, httpx.TimeoutException))
+                   else "model_error", ctx)
     ctx["retryable"] = ctx["error"] is not None
     return templates().TemplateResponse(request, "partials/import_proposal.html", ctx)
 
@@ -1812,16 +1961,16 @@ _UNREDACTED_WARNING = (
 )
 
 
-def _current_offer(proposal, track: str) -> dict | None:
-    """The proposal's opt-in "Mark <company> as my current employer" (D-PRIV-1), offered only
-    when the newest role is open-ended. Unticked by default: the import sets nothing on its own."""
+def _current_offer(proposal, track: str) -> list[dict]:
+    """The proposal's opt-in "Mark <company> as my current employer" (D-PRIV-1), one offer for
+    EVERY open-ended role that names a company (D-PRIV-2), each with its own "Show it as". All are
+    unticked by default: the import sets nothing on its own."""
     from kestrel.docs.current_employer import suggested_placeholder
-    from kestrel.docs.imports import open_ended_newest_role
+    from kestrel.docs.imports import open_ended_roles
 
-    role = open_ended_newest_role(getattr(proposal, "value", None))
-    if role is None:
-        return None
-    return {"company": role.company_label.strip(), "hint": suggested_placeholder(track)}
+    hint = suggested_placeholder(track)
+    return [{"index": i, "company": role.company_label.strip(), "hint": hint}
+            for i, role in open_ended_roles(getattr(proposal, "value", None))]
 
 
 @router.post("/api/documents/import/accept", response_class=HTMLResponse)
@@ -1870,16 +2019,22 @@ async def import_accept(request: Request):
         from kestrel.docs.current_employer import clean_placeholder, suggested_placeholder
 
         current = None
-        if "on" in form.getlist("current_employer"):
-            # Ticked with the field cleared: the suggestion that was prefilled, never nothing,
-            # so a ticked box always takes effect.
-            current = (clean_placeholder(form.get("current_employer_as"))
-                       or suggested_placeholder(track))
+        marks: dict[int, str] = {}
+        for ticked in form.getlist("current_employer"):
+            # Each offered role has its own box (value: the role's index) and its own "Show it
+            # as". Ticked with the field cleared: the suggestion that was prefilled, never
+            # nothing, so a ticked box always takes effect. A bare "on" is the older single form.
+            if ticked == "on":
+                current = (clean_placeholder(form.get("current_employer_as"))
+                           or suggested_placeholder(track))
+            elif ticked.isdigit():
+                marks[int(ticked)] = (clean_placeholder(form.get(f"current_employer_as_{ticked}"))
+                                      or suggested_placeholder(track))
         async with sessionmaker()() as s:
             master_id = await accept_import(
                 s, value, track=track, doc_kind=doc_kind,
                 name=f"Imported {doc_kind}", source_markdown=markdown,
-                current_employer=current,
+                current_employer=current, current_employers=marks,
             )
         if form.get("ob") == "1":
             # The wizard's "Save resume and continue" (D-UI-65): saved, so the step moves on.

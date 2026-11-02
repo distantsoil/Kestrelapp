@@ -42,6 +42,7 @@ from kestrel.bench import harness
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Label, Setting, Task
+from kestrel.errors import failure_record, shown_failure
 
 log = structlog.get_logger()
 
@@ -674,7 +675,8 @@ async def status(session: AsyncSession) -> dict[str, Any]:
         view["state"] = {"pending": "waiting", "leased": "running", "done": "done",
                          "cancelled": "cancelled"}.get(newest.status, "failed")
         if newest.status in ("dead", "failed"):
-            view["error"] = (newest.last_error or "it stopped before it finished")[:300]
+            shown = shown_failure(newest.last_error)
+            view["error"] = (shown or "it stopped before it finished")[:300]
     return view
 
 
@@ -798,7 +800,7 @@ async def run_check(
         try:
             res = await runner(step, model, settings, backend)
         except harness.GoldSetMissing as exc:
-            return RunOutcome("error", error=str(exc), ran=ran)
+            return RunOutcome("error", error=failure_record(exc), ran=ran)
         except (OSError, RuntimeError, ValueError, httpx.HTTPError) as exc:
             log.warning("model_check_model_failed", step=step, model=model,
                         error_type=type(exc).__name__, error=str(exc))
@@ -892,9 +894,8 @@ async def drain_checks(
             outcome = await run_check(sm, task, settings, run, found, stop)
         except Exception as exc:  # noqa: BLE001 - a failed task is retried, never fatal
             beat.cancel()
-            reason = f"{type(exc).__name__}: {exc}"
-            log.warning("model_check_failed", task=task.id, error=reason)
-            await queue.fail(task.id, reason, worker_id=wid, retry=True)
+            log.warning("model_check_failed", task=task.id, error=f"{type(exc).__name__}: {exc}")
+            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
             continue
         finally:
             beat.cancel()

@@ -38,6 +38,7 @@ from xml.etree import ElementTree
 import httpx
 import structlog
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 
 log = structlog.get_logger(__name__)
@@ -152,9 +153,7 @@ class WeWorkRemotelyAdapter:
         except httpx.HTTPStatusError as exc:
             r = exc.response
         except PermissionError as exc:
-            raise AdapterError(
-                "We Work Remotely's robots.txt does not allow this request, so Kestrel skipped it"
-            ) from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         except httpx.HTTPError as exc:
             log.warning("wwr_unreachable", error=type(exc).__name__)
             raise AdapterError("Could not reach We Work Remotely; try again later") from exc

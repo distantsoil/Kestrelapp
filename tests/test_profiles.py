@@ -30,7 +30,7 @@ def test_catalog_loads_with_every_profile_and_shipped_budgets():
             continue
         assert prof.models.embed == "nomic-embed-text"
         assert prof.models.tier3 == prof.models.tier2, name
-        assert prof.models.docsel == prof.models.tier1, name
+        assert prof.models.docsel == prof.models.tier2, name  # D-LLM-10
         assert prof.concurrency.tier1 >= prof.concurrency.tier2
         for tag in prof.models.base_tags():
             assert tag in cat.model_sizes_gb, f"{name}: {tag} missing from model_sizes_gb"
@@ -64,7 +64,8 @@ def test_hosted_only_profile_has_no_local_model_and_nothing_to_build():
 
 def test_reference_profile_matches_the_rtx_4080_super():
     prof = p.load_catalog().profile("gpu_16gb")
-    assert prof.models.tier1 == "qwen3:4b" and prof.models.tier2 == "qwen3:14b"
+    assert prof.models.tier1 == "qwen3:4b-instruct-2507-q4_K_M"
+    assert prof.models.tier2 == "qwen3:14b"
     assert (prof.concurrency.tier1, prof.concurrency.tier2) == (4, 2)
 
 
@@ -182,7 +183,7 @@ def test_render_modelfile_has_from_num_ctx_and_every_guardrail():
     text = p.render_modelfile("tier2", "gpu_24gb")
     lines = [ln for ln in text.splitlines() if not ln.startswith("#")]
     assert lines == [
-        "FROM qwen3:30b-a3b",
+        "FROM qwen3:30b-a3b-instruct-2507-q4_K_M",
         "PARAMETER num_ctx 16384",
         "PARAMETER num_predict 4500",
         "PARAMETER temperature 0.1",
@@ -200,7 +201,7 @@ def test_render_modelfile_rejects_tiers_without_a_derived_model():
         p.render_modelfile("tier1", "no_such_profile")
 
 
-@pytest.mark.parametrize("tier", p.TIERS)
+@pytest.mark.parametrize("tier", p.DERIVED_TIERS)
 def test_shipped_modelfiles_are_the_default_profile_rendered(tier):
     """The packaged Modelfile.* are generated; a hand edit that drifts from models.yml fails."""
     cat = p.load_catalog()
@@ -209,7 +210,7 @@ def test_shipped_modelfiles_are_the_default_profile_rendered(tier):
 
 def test_write_modelfiles_renders_every_tier(tmp_path):
     written = p.write_modelfiles("mac_16gb", tmp_path / "models")
-    assert [w.name for w in written] == [f"Modelfile.{t}" for t in p.TIERS]
+    assert [w.name for w in written] == [f"Modelfile.{t}" for t in p.DERIVED_TIERS]
     assert "FROM qwen3:8b" in (tmp_path / "models" / "Modelfile.tier2").read_text()
 
 
@@ -260,7 +261,7 @@ def test_fit_check_passes_when_the_model_fits_vram(monkeypatch):
     p.check_model_fit(rep, get_settings(), client)
     (row,) = rep.rows
     assert row[0] == "Model fit" and row[1] == "PASS"
-    assert set(client.asked) == {f"kestrel-{t}" for t in p.TIERS}
+    assert set(client.asked) == {f"kestrel-{t}" for t in p.DERIVED_TIERS}
 
 
 def test_fit_check_warns_never_fails_and_names_the_profile_to_switch_to(monkeypatch):
