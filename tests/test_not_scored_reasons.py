@@ -593,3 +593,20 @@ def test_a_stand_in_is_a_stub_only_below_the_bar():
     long = SimpleNamespace(trigger_data=None, event_date=None, opp_type="job_posting",
                            description_md=_LONG)
     assert is_stub_posting(short) and not is_stub_posting(long)
+
+
+def test_pasted_text_cannot_make_the_dedup_or_team_patterns_slow():
+    """A pasted description reaches normalize_desc and the team check; neither pattern may go
+    polynomial on hostile text (CodeQL py/polynomial-redos on #90's paste route)."""
+    import time
+
+    from kestrel.ingest.dedup import normalize_desc
+    from kestrel.ingest.normalize import mentions_team
+
+    t0 = time.monotonic()
+    normalize_desc("&utm_" * 20_000)
+    mentions_team("0" * 50_000)
+    assert time.monotonic() - t0 < 1.0
+    kept = normalize_desc("Go https://x.test/j?utm_source=a&utm_medium=b now ?ref=c ok")
+    assert kept == "go now ok"
+    assert mentions_team("a 12-person team") and mentions_team("a 12345 person team")

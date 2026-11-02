@@ -514,6 +514,11 @@ PASTE_TOO_SHORT = "That is too short to score. Paste the whole posting."
 PASTE_MAX_CHARS = 50_000
 PASTE_TOO_LONG = "That is too long to paste. Keep it under 50,000 characters."
 PASTE_HIDDEN = "Unhide it first, then paste the description."
+def _role_path(role_id: int | None) -> str:
+    """The role page's local path, from a stored id only; Pipeline when there is none."""
+    return f"/opportunities/{int(role_id)}" if role_id is not None else "/opportunities"
+
+
 _PASTE_TEXT = {
     "description_hidden": PASTE_HIDDEN,
     "description_short": PASTE_TOO_SHORT,
@@ -545,9 +550,11 @@ async def paste_description(request: Request, opp_id: int):
     text = str(form.get("text") or "").strip()
     to_role = str(form.get("back") or "") == "role"
 
-    def refuse(code: str) -> Response:
+    def refuse(code: str, role_id: int | None = None) -> Response:
         if to_role:
-            return flash_redirect(f"/opportunities/{opp_id}", code)
+            # Built from the stored row's id, never from the request (CodeQL py/url-redirection);
+            # a role that is gone goes back to Pipeline.
+            return flash_redirect(_role_path(role_id), code)
         return _answer({"k-toast": _toast(_PASTE_TEXT[code], tone="warn")})
 
     async with sessionmaker()() as s:
@@ -555,15 +562,16 @@ async def paste_description(request: Request, opp_id: int):
         if opp is None:
             return refuse("description_gone")
         if opp.archived_at:
-            return refuse("description_hidden")
+            return refuse("description_hidden", opp.id)
         if not (opp.stage == "t1_pass" and opp.stage_reason == EMPTY_POSTING_STAGE_REASON):
-            return refuse("description_has")
+            return refuse("description_has", opp.id)
         if len(text) > PASTE_MAX_CHARS:
-            return refuse("description_long")
+            return refuse("description_long", opp.id)
         stand_in = SimpleNamespace(trigger_data=None, event_date=None, opp_type=opp.opp_type,
                                    description_md=text)
         if is_stub_posting(stand_in):
-            return refuse("description_short")
+            return refuse("description_short", opp.id)
+        role_id = opp.id
         await attach_description(s, opp, text)
         opp.stage = "new"
         opp.stage_reason = None
@@ -572,7 +580,7 @@ async def paste_description(request: Request, opp_id: int):
         s.add(Task(type="embed", payload={"opportunity_id": opp_id}))
         await s.commit()
     if to_role:
-        return flash_redirect(f"/opportunities/{opp_id}", "description_saved")
+        return flash_redirect(_role_path(role_id), "description_saved")
     return await _panel_after(
         request, opp_id,
         {"k-toast": _toast("Description saved. Kestrel will check it against your rules and "

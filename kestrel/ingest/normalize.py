@@ -33,7 +33,11 @@ from kestrel.ingest.orgs import infer_org_attrs, resolve_org
 from kestrel.ingest.tokens import count_tokens
 from kestrel.rules.helpers import seniority_rank
 
-_TEAM_RE = re.compile(r"team of|direct reports|manage a team|\d+[- ]person team|lead a team", re.I)
+# \d{1,4}, not \d+: a run of digits made a search on pasted text polynomial (CodeQL
+# py/polynomial-redos); a search still finds the last four digits of a longer number.
+_TEAM_RE = re.compile(
+    r"team of|direct reports|manage a team|\d{1,4}[- ]person team|lead a team", re.I
+)
 
 
 @dataclass
