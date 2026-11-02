@@ -1,3 +1,4 @@
+{% import "partials/style_marks.html" as smk %}
 <div class="ap-draft" data-testid="follow-up-dialog"{% if pending %}
      hx-get="/pursuits/{{ pid }}/follow-up" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{% endif %}>
   <p>You review, edit and copy the draft. Kestrel never sends it.</p>
@@ -7,7 +8,8 @@
   {% elif result %}
   <label class="ap-fl">Subject<input class="k-input" id="ap-draft-subject" value="{{ result.subject }}" maxlength="160"></label>
   <label class="ap-fl">Draft<textarea class="ap-note ap-draft-text" id="ap-draft-text">{{ result.body }}</textarea></label>
-  {% if result.checks %}<p>Before you use it:</p><ul>{% for check in result.checks %}<li>{{ check }}</li>{% endfor %}</ul>{% endif %}
+  {% if style_flags %}<div data-follow-up-marks data-testid="follow-up-style-marks">{{ smk.marks(style_flags, 'body') }}{{ smk.note(style_flags, ['body'], ['checks[']) }}</div>{% endif %}
+  {% if result.checks %}<p>Before you use it:</p><ul>{% for check in result.checks %}<li>{{ check }}{{ smk.marks(style_flags, 'checks[' ~ loop.index0 ~ ']') }}</li>{% endfor %}</ul>{% endif %}
   <button type="button" class="k-btn k-btn--primary" data-follow-up-copy>Copy draft</button>
   <p class="ap-v" role="status" id="ap-copy-status"></p>
   {% elif task and task.status == 'dead' %}

@@ -211,23 +211,27 @@ async def enforce(
 
     violations, extra = look(value)
     blocking = [v for v in violations if v.blocking]
-    if not blocking and not extra:
+    # A named-detail flag (#113) is a mark only, never a re-ask: a false one would make the model
+    # delete a real fact. Number grounding keeps its re-ask.
+    reask_extra = [f for f in extra if f.get("detail") != "name"]
+    if not blocking and not reask_extra:
         return PlainResult(value, _flags(violations, extra))
 
-    ask = reask_messages(messages, value, repair_request(blocking, extra))
+    ask = reask_messages(messages, value, repair_request(blocking, reask_extra))
     if not reask_fits(spec, ask):
         log.info("plain_writing_reask_skipped", prompt=spec.version, reason="context")
         return PlainResult(value, _flags(violations, extra))
     result = await run(ask, reask=True)
     if getattr(result, "ok", False) and getattr(result, "value", None) is not None:
-        paths = [v.field for v in blocking] + [f.get("field", "") for f in extra]
+        paths = [v.field for v in blocking] + [f.get("field", "") for f in reask_extra]
         merged = take_fields(
             value, result.value, [p for p in paths if p], version=spec.version
         )
         if merged is not None and (accept is None or accept(merged, result.value)):
             new_violations, new_extra = look(merged)
             log.info(
-                "plain_writing_reasked", prompt=spec.version, before=len(blocking) + len(extra),
+                "plain_writing_reasked", prompt=spec.version,
+                before=len(blocking) + len(reask_extra),
                 after=len([v for v in new_violations if v.blocking]) + len(new_extra),
             )
             return PlainResult(merged, _flags(new_violations, new_extra), reasked=True)

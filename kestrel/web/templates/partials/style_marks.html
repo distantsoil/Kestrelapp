@@ -1,0 +1,22 @@
+{# The small inline mark for a plain-writing or grounding flag on text Kestrel wrote (issue #93,
+   #113). One macro for every surface: the story sheet, mock interview feedback, negotiation
+   drafts, the analytics summary, the company summary, likely questions and follow-up drafts.
+   `flags` is the stored list ({kind, field, phrase}); `field` picks the flags for one exact field,
+   `prefix` for every field that starts with it (for example "improvements["). Nothing here
+   rewrites text. The caller never passes flags for text the person edited. #}
+{% import "partials/pp_icons.html" as i %}
+{% macro marks(flags, field='', prefix='') -%}
+  {%- for f in (flags or []) if f.kind in ('style', 'ungrounded') and ((prefix and (f.field or '').startswith(prefix)) or (not prefix and f.field == field)) %}
+  <span class="pp-mark" data-testid="pp-style-mark" data-kind="{{ f.kind }}" title="{{ ('Not in your sketches, proof points or resume. Is it right?' if f.detail == 'name' else 'Not in your sketches or proof points. Is it right?') if f.kind == 'ungrounded' else 'Stock phrasing' }}">{{ i.pi('alert', 'k-ic--sm') }}<span>{% if f.kind == 'ungrounded' %}Check &ldquo;{{ f.phrase }}&rdquo;: {% if f.detail == 'name' %}this name is not in your sketches, proof points or resume{% else %}this number is not in your sketches or proof points{% endif %}.{% else %}Stock phrasing: &ldquo;{{ f.phrase }}&rdquo;{% endif %}</span></span>
+  {%- endfor -%}
+{%- endmacro %}
+{# One line under a block of marked text, said once per surface, and only when at least one mark
+   on that surface actually shows: pass the same `fields` (exact) and `prefixes` the marks use. #}
+{% macro note(flags, fields=(), prefixes=()) -%}
+  {%- set seen = namespace(shown=0) -%}
+  {%- for f in (flags or []) if f.kind in ('style', 'ungrounded') -%}
+    {%- set fld = f.field or '' -%}
+    {%- if fld in fields %}{% set seen.shown = seen.shown + 1 %}{% else %}{% for p in prefixes if fld.startswith(p) %}{% set seen.shown = seen.shown + 1 %}{% endfor %}{% endif -%}
+  {%- endfor -%}
+  {%- if seen.shown %}<p class="pp-sub" data-testid="pp-style-note">Marked text is Kestrel's draft. Kestrel will not rewrite this; change it yourself, or use it as it is.</p>{% endif -%}
+{%- endmacro %}

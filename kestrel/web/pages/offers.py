@@ -974,8 +974,25 @@ def _redact_scripts(result: ScriptResult, mapping: EmployerMap, *, enabled: bool
         scripts=redact_json(result.scripts, mapping, enabled=True),
         leverage_inventory=redact_json(result.leverage_inventory, mapping, enabled=True),
         risks=redact_json(result.risks, mapping, enabled=True),
+        style_flags=redact_json(result.style_flags, mapping, enabled=True),
         unsupported_scenarios=redact_json(result.unsupported_scenarios, mapping, enabled=True),
     )
+
+
+def _script_flags(flags: list[dict], picked: dict) -> list[dict]:
+    """The plain-writing marks that belong to the script shown (issue #113). The model's scripts
+    are indexed in its own order and a bluff is dropped from the list, so a flag is matched to the
+    shown script by its field name and by the phrase being in that text, never by position."""
+    keep: list[dict] = []
+    for f in flags or []:
+        field = str(f.get("field") or "")
+        if not field.startswith("scripts[") or "]." not in field:
+            continue
+        name = field.split("].", 1)[1]
+        text = str(picked.get(name) or "")
+        if str(f.get("phrase") or "").lower() in text.lower():
+            keep.append({**f, "field": name})
+    return keep
 
 
 def _draft_panel(request: Request, **ctx: Any) -> Any:
@@ -1097,6 +1114,7 @@ async def _write_draft(request: Request, pursuit_id: int | None):
         paras = [ov.highlight(t, points) for t in ov.paragraphs(picked.get("script"))]
         return _draft_panel(
             request, error=None, result=result, script=picked, paras=paras,
+            script_flags=_script_flags(result.style_flags, picked),
             situation_name=names.get(picked.get("scenario"), "")
             or str(picked.get("scenario", "")).replace("_", " ").capitalize(),
         )

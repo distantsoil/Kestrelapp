@@ -607,6 +607,11 @@
       });
     }
   }
+  function onDraftInput(event) {
+    if (!event.target.closest('#ap-draft-text, #ap-draft-subject')) return;
+    var marks = $('[data-follow-up-marks]');
+    if (marks && root.KUI) root.KUI.fadeOut(marks); else if (marks) marks.hidden = true;  // marks belong to Kestrel's draft, not to the person's words
+  }
   function onBeforeSwap(e) {
     var tgt = e.detail && e.detail.target;
     if (tgt && tgt.id === 'apps-board') {
@@ -659,6 +664,7 @@
       apply();
       ctx.on(doc, 'htmx:afterSwap', onViewSwap);
       ctx.on(doc, 'click', onFollowUpClick);
+      ctx.on(doc, 'input', onDraftInput);
       var autoDraft = $('[data-auto-draft]');
       if (autoDraft) openDraft(autoDraft.getAttribute('data-auto-draft'));
       ctx.on(doc, 'click', onClick);

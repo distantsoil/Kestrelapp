@@ -164,7 +164,7 @@ async def _seed(*, confidential: bool = False, with_run: bool = True) -> dict[st
                     opportunity_id=f.id, track="employment", status="applied",
                     next_action="Chase the recruiter",
                     next_action_at=(_today() - timedelta(days=2)).isoformat(),
-                    last_activity_at=_ago(days=30),
+                    last_activity_at=iso(clock_seed.local_days_ago(30, _now())),  # days_quiet
                 ),
                 Pursuit(
                     opportunity_id=g.id, track="employment", status="rejected",

@@ -2,6 +2,7 @@
    question at a time; the answer is typed. A finished session opens read-only. #}
 {% import "ui/macros.html" as ui %}
 {% import "partials/pp_icons.html" as i %}
+{% import "partials/style_marks.html" as smk %}
 {% macro feedback(t, mid, opp, i) -%}
 {%- set sc = t.scores or {} %}
 <section class="k-card pp-crit" data-testid="pp-feedback">
@@ -16,8 +17,9 @@
     {%- endfor %}
   </div>
   {%- if t.critique %}
-  <p class="pp-body">{{ t.critique.worked_well }}</p>
-  {%- if t.critique.improvements %}<ul class="pp-impr">{% for imp in t.critique.improvements %}<li>{{ imp }}</li>{% endfor %}</ul>{% endif %}
+  <p class="pp-body">{{ t.critique.worked_well }}</p>{{ smk.marks(t.style_flags, 'worked_well') }}
+  {%- if t.critique.improvements %}<ul class="pp-impr">{% for imp in t.critique.improvements %}<li>{{ imp }}{{ smk.marks(t.style_flags, 'improvements[' ~ loop.index0 ~ ']') }}</li>{% endfor %}</ul>{% endif %}
+  {{ smk.note(t.style_flags, ['worked_well'], ['improvements[']) }}
   {%- endif %}
   {%- for c in (t.unsupported_claims or []) %}
   {%- if loop.index0 not in (t.claims_seen or []) %}

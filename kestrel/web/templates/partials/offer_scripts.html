@@ -1,6 +1,7 @@
 {# The draft panel's content (D-UI-122). A draft for the operator to edit and deliver themselves:
    there is no send action. Highlighted phrases are the operator's own proof points, with their
    source on hover. A draft that rests on nothing supplied is flagged. #}
+{% import "partials/style_marks.html" as smk %}
 {% if error %}
   <div class="of-ready of-err" data-testid="of-draft-error" role="status"><div><span class="k-pill k-pill--warn">{{ error }}</span></div></div>
 {% elif result %}
@@ -16,16 +17,17 @@
   <div class="of-db" id="of-dbody" data-testid="of-dbody" tabindex="0" aria-label="Draft, editable">
     {%- for para in paras %}<p>{% for text, src in para %}{% if src %}<span class="of-claim" title="{{ src }}" tabindex="0">{{ text }}</span>{% else %}{{ text }}{% endif %}{% endfor %}</p>{% endfor -%}
   </div>
+  {%- if script_flags %}<div class="of-pad" data-testid="of-style-marks" data-of-marks>{{ smk.marks(script_flags, 'script') }}{{ smk.note(script_flags, ['script']) }}</div>{% endif %}
   <p class="of-foot of-pad">Highlighted phrases come from your resume or stories. Paste it into your own email. Kestrel never sends it.</p>
   <p class="of-foot of-pad">Your walk-away, unchanged: <span class="of-mono-text" data-exact="{{ result.walk_away }}">{{ result.walk_away|typed_amount }}</span></p>
   <details class="of-det of-pad">
     <summary>Show details</summary>
-    <p><strong>Situation read:</strong> {{ result.situation_read }}</p>
+    <p><strong>Situation read:</strong> {{ result.situation_read }}</p>{{ smk.marks(result.style_flags, 'situation_read') }}
     <p><strong>Basis:</strong> {{ script.justification_basis }}</p>
-    <p><strong>Likely pushback:</strong> {{ script.likely_pushback }}</p>
-    {%- if script.response_to_pushback %}<p><strong>If they push back:</strong> {{ script.response_to_pushback }}</p>{% endif %}
+    <p><strong>Likely pushback:</strong> {{ script.likely_pushback }}</p>{{ smk.marks(script_flags, 'likely_pushback') }}
+    {%- if script.response_to_pushback %}<p><strong>If they push back:</strong> {{ script.response_to_pushback }}</p>{{ smk.marks(script_flags, 'response_to_pushback') }}{% endif %}
     {%- if result.leverage_inventory %}<p><strong>Leverage:</strong> {{ result.leverage_inventory|join('; ') }}</p>{% endif %}
-    {%- if result.risks %}<p><strong>Risks:</strong> {{ result.risks|join('; ') }}</p>{% endif %}
+    {%- if result.risks %}<p><strong>Risks:</strong> {{ result.risks|join('; ') }}</p>{{ smk.marks(result.style_flags, prefix='risks[') }}{% endif %}
   </details>
 {% else %}
   <div class="of-ready"><div><b>No draft yet</b></div></div>

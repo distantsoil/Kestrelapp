@@ -1091,3 +1091,12 @@ html[data-reduce-motion="1"] *::after { animation: none !important; transition: 
 .pl-paste__form textarea { width: 100%; resize: vertical; min-height: 120px; }
 @media (prefers-reduced-motion: reduce) { .pl-paste__wrap, .pl-paste__in { transition: none !important; } }
 .pl-paste__form .k-btn { align-self: flex-start; }
+
+/* Fade and collapse (KUI.fadeOut), the way the marks leave once the person edits the text. */
+.k-fadeout { opacity: 0; max-height: 0 !important; overflow: hidden; margin: 0; padding-top: 0;
+  padding-bottom: 0; transition: opacity var(--dur-2), max-height var(--dur-2) var(--ease), padding var(--dur-2); }
+/* The small inline mark on generated text (issue #93, #113); shared by every surface. */
+.pp-mark { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.pp-marks { list-style: none; margin: 8px 0 0; padding: 0; }
+.co-marks { margin-top: 8px; }  /* the plain-writing marks under a company summary (#113) */
+.pp-sub { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }

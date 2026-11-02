@@ -82,6 +82,16 @@ async def _saved_narrative(s: AsyncSession, track: str, range_key: str) -> dict 
     return row.value if row is not None and isinstance(row.value, dict) else None
 
 
+def _flag_is_shown(flag: dict, text: str, summary: Any) -> bool:
+    """A mark is kept only for text the card shows: the phrase must be in that text, so a flag on
+    a headline that was stripped from the summary is not saved under it."""
+    shown = {
+        "summary_md": text, "one_thing_to_change": summary.one_thing_to_change,
+        "evidence_for_it": summary.evidence_for_it,
+    }.get(flag.get("field"))
+    return bool(shown) and str(flag.get("phrase") or "").lower() in str(shown).lower()
+
+
 async def _save_narrative(s: AsyncSession, track: str, range_key: str, summary: Any) -> dict:
     text = summary.summary_md or ""
     lead = summary.headline_finding or ""
@@ -92,6 +102,11 @@ async def _save_narrative(s: AsyncSession, track: str, range_key: str, summary: 
         "generated_at": utcnow_iso(), "summary_md": text,
         "one_thing": summary.one_thing_to_change, "evidence": summary.evidence_for_it,
         "warnings": list(summary.sample_size_warnings),
+        # Plain-writing marks on this text (issue #113); the person cannot edit it here.
+        "style_flags": [
+            f for f in summary.style_flags
+            if _flag_is_shown(f, text, summary)
+        ],
     }
     row = await s.get(Setting, _narrative_key(track, range_key))
     if row is None:

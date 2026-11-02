@@ -7,6 +7,7 @@ seeded "13 hours ago" landed 8 hours before the app's frozen now and five Today 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import timedelta
 
@@ -50,3 +51,32 @@ def test_the_instants_are_the_most_recent_past_ones():
     assert all(v <= now for v in got.values())
     later = datetime(2026, 12, 2, 12, 0, tzinfo=UTC)
     assert all(v <= later for v in _instants(later).values())
+
+
+def test_local_days_ago_counts_calendar_days_across_daylight_saving(monkeypatch):
+    # T14: 23:17 CST on the night DST ended; 30 x 24 h back is only 29 local calendar days.
+    import time
+
+    import pytest
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("TZ switching is POSIX only")
+    from datetime import UTC, datetime
+
+    from tests.clock_seed import local_days_ago
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Chicago"
+    time.tzset()
+    try:
+        now = datetime(2026, 11, 2, 5, 17, tzinfo=UTC)  # 23:17 CST, Nov 1
+        seeded = local_days_ago(30, now).astimezone().date()
+        assert (now.astimezone().date() - seeded).days == 30
+        assert ((now - timedelta(days=30)).astimezone().date() - seeded).days == 1  # the old seed
+    finally:
+        # Restore the zone the process had (not just drop TZ) and re-read it.
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()

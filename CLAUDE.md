@@ -76,10 +76,10 @@ in a spec file, it is deferred, not put into the code.
 every capability has a place in the interface. If something can only be done from the command line,
 fix the interface; do not change the spec to describe the CLI-only path (D-UI-129).
 
-**The locked mockups are the master for every screen (owner rule, 2026-10-26).**
-`the private overhaul notes*-mockup-locked.html` define layout, sizes, color, copy, states and motion.
-Where the built app differs, the app is wrong; change the mockup only with the owner's sign-off.
-- Every transition, save and button press has at least a mild animation, taken from the mockup:
+**The mockups are a starting point, not the master (owner, 2026-11-02, D-UI-238).**
+`the private overhaul notes*-mockup-locked.html` set the visual language, but the app has evolved
+past them and will keep deviating as it is iterated. The format still applies:
+- Every transition, save and button press has at least a mild animation:
   page and tab changes, sections opening and closing, toggles, saves (a short confirmation),
   presses (a brief state change), list changes. Nothing snaps from one state to the next.
   Every change and transition is smooth (owner, 2026-10-26: "This is a visual forward
@@ -87,11 +87,8 @@ Where the built app differs, the app is wrong; change the mockup only with the o
   motion frame by frame in a recording, not only in a still screenshot.
   The OS reduced-motion setting turns all of it off.
 - No overlapping or clipped text at any supported window size, in light or dark.
-- If any part of a mockup cannot be built as drawn, say so to the owner before shipping: what, why,
-  and the closest alternative, recorded in the private decision log. Silently building something different is
-  never acceptable. "Not achievable" is an allowed answer; "not mentioned" is not.
-- A UI change is done only when a side-by-side screenshot against its locked mockup (light, dark
-  and narrow) matches and the overlap check reports nothing. Tests passing is not enough.
+- A UI change is done only when screenshots of it (light, dark and narrow) are delivered and the
+  overlap check reports nothing. Tests passing is not enough.
 
 **Commit at every phase boundary**, conventional-commit style (`feat:`, `fix:`, `test:`, `chore:`).
 
@@ -139,8 +136,8 @@ PR branch runs CI. So CI confirms; it does not discover.
   versions are off-limits unless the task is about scoring.
 - **Tests are public.** Tests and fixtures are exported to the public repo: invented text only, and
   never a private phrase in any form, including split or encoded.
-- **Every UI brief requires the side-by-side mockup screenshots** (light, dark, narrow) as a
-  deliverable, with paths in the report.
+- **Every UI brief requires screenshots** (light, dark, narrow) as a deliverable, with paths in
+  the report.
 - **Use the owner's machine for heavy testing from the start** of a session when one is available
   (D-CI-9); cloud builders run targeted unit tests only.
 - **Clocks in tests.** Patch a module's own clock alias, never the global one; seed "minutes ago" rows
