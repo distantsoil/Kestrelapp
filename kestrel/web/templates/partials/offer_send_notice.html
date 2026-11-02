@@ -7,6 +7,7 @@
     <li data-testid="of-sends">{{ route.sends[:1]|upper }}{{ route.sends[1:] }}.</li>
     <li>For this draft that means {{ sends_line or route.draft_sends }}.</li>
   </ul>
+  {% import "partials/online_ask.html" as online_ask %}{{ online_ask.reask_note(route.reask, 'of') }}
   {%- if route.employer == 'hidden' %}<p data-testid="of-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
   {%- elif route.employer == 'held' %}<p data-testid="of-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
   <p><b>Not sent:</b> your name, contact details and your resume file. {{ route.provider }} handles what it receives under its own terms.</p>

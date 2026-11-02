@@ -246,6 +246,9 @@ def test_refresh_on_an_online_model_asks_first_and_sends_only_on_confirm(monkeyp
     assert 'data-testid="co-ask"' in asked.text
     assert "the company name and short excerpts of the 2 public pages" in asked.text
     assert "Not sent: your resume, your profile, your contacts or your name." in asked.text
+    # Issue 113a: the plain-writing re-ask is a second send to the same model, so it is disclosed.
+    assert 'data-testid="co-reask"' in asked.text
+    assert "asks the same model once more to fix them" in asked.text
     assert _tasks() == []  # nothing queued, nothing sent, until the dialog is confirmed
     assert htmllib.escape(json.dumps(model)) in asked.text or json.dumps(model) in asked.text
     done = client.post(

@@ -497,6 +497,7 @@ async def _negotiate_route(session: AsyncSession, settings: Any) -> dict[str, An
         "provider": (label or tcfg.backend or "the online service"),
         "sends": settings.llm.hosted_mode.disclosure_terms()["sends"][NEGOTIATE_TIER],
         "draft_sends": _DRAFT_SENDS,
+        "reask": True,
         "employer": await _employer_state(session, settings),
     }
 

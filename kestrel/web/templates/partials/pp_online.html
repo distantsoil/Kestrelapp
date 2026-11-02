@@ -17,6 +17,7 @@
       <li data-testid="pp-sends">{{ route.sends }}.</li>
       <li>For practice that means {{ route.practice_sends }}.</li>
     </ul>
+    {% import "partials/online_ask.html" as online_ask %}{{ online_ask.reask_note(route.reask, 'pp') }}
     {%- if route.employer == 'hidden' %}
     <p data-testid="pp-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
     {%- elif route.employer == 'held' %}

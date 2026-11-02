@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -40,19 +40,25 @@ def _instants(now: datetime | None = None) -> dict[str, datetime]:
     clock): 00:03 on this machine's own midnight, and 00:01 UTC on the 1st of this month."""
     now = now or datetime.now(UTC)
     midnight = now.astimezone().replace(hour=0, minute=3, second=0, microsecond=0)
+    if midnight > now:  # started between 00:00 and 00:03: yesterday's is the most recent
+        midnight = (midnight - timedelta(days=1)).replace(hour=0, minute=3)
     first = now.replace(day=1, hour=0, minute=1, second=0, microsecond=0)
+    if first > now:  # started in the first minute of a month: last month's 1st
+        first = (first - timedelta(days=1)).replace(day=1)
     return {"00:03 local": midnight.astimezone(UTC), "00:01 UTC on the 1st": first}
 
 
-INSTANTS = _instants()
+# Labels only at collection; the instants are read when each test runs (D-TEST-3), so a gate that
+# crosses midnight freezes at the right day.
+INSTANT_LABELS = ["00:03 local", "00:01 UTC on the 1st"]
 # The month-start instant is a day behind the real date, which skews anything that also reads the
 # real "today", so it runs only the modules that count a month.
 MONTH_MODULES = ["tests/test_hosted_balance.py", "tests/test_analytics.py"]
 
 
-@pytest.mark.parametrize("label", list(INSTANTS))
+@pytest.mark.parametrize("label", INSTANT_LABELS)
 def test_time_sensitive_modules_pass_just_after_midnight(label):
-    env = {**os.environ, "KESTREL_FROZEN_AT": INSTANTS[label].isoformat()}
+    env = {**os.environ, "KESTREL_FROZEN_AT": _instants()[label].isoformat()}
     env.pop("KESTREL_BOUNDARY", None)
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-n", "0", "-q", "-p", "tests.boundary_clock",

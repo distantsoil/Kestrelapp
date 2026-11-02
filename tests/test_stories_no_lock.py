@@ -6,6 +6,7 @@ that fails with "database is locked". Offline: the model is a fake."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -211,3 +212,38 @@ async def test_an_attach_target_deleted_during_the_build_is_skipped_not_fatal(sm
     async with sm() as s:
         second = await consolidate_stories(s, _ProbingClient(_db_file(sm)), get_settings())
     assert second.sketches == 1 and len(second.created_story_ids) == 1
+
+
+async def test_no_write_lock_is_held_across_the_plain_writing_reask(sm, monkeypatch):
+    # Issue #113 (D-DB-1): the re-ask is a second model call in the same build. A hosted tier
+    # reads settings before it, which would autoflush any pending row into a write transaction.
+    from tests.test_story_plain_writing import _reply
+
+    monkeypatch.setattr("kestrel.pipeline._shared.tier_is_hosted", lambda *_a, **_k: True)
+    replies = [_reply(action="I led it — fast."), _reply()]  # an em dash, then the fixed text
+
+    class _Reasking(_ProbingClient):
+        def __init__(self, db_file: str) -> None:
+            super().__init__(db_file)
+            self.calls = 0
+
+        async def complete(self, *, tier, messages, schema=None, schema_name="response", **kw):
+            self._probe()
+            self.calls += 1
+            return ChatResult(
+                content=json.dumps(replies[min(self.calls, len(replies)) - 1]),
+                prompt_tokens=1, completion_tokens=1, latency_ms=1,
+                model=self.settings.llm.tiers[tier].model,
+            )
+
+    opp = await _seed_opp(sm)
+    await _add_eval(sm, opp, [_sketch("Tell me about a turnaround.", "delta")])
+    client = _Reasking(_db_file(sm))
+    async with sm() as s:
+        result = await consolidate_stories(s, client, get_settings())
+    assert client.calls == 2  # the merge and its one re-ask
+    assert client.locked == []
+    assert len(result.created_story_ids) == 1
+    async with sm() as s:
+        story = (await s.execute(select(Story))).scalar_one()
+    assert story.action == "I led the delta turnaround."

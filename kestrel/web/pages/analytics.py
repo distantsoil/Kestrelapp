@@ -213,6 +213,7 @@ async def analytics_online_dialog(request: Request):
         "dest": destination_id(settings, "tier2"),
         "sends": sends[:1].upper() + sends[1:], "employer": employer,
         "hosted": tier_is_hosted(settings, "tier2"),
+        "reask": True,
     }
     return templates().TemplateResponse(request, "partials/analytics_online.html", ctx)
 

@@ -365,7 +365,7 @@ async def summarize(
     async def run(msgs: list[dict], reask: bool = False) -> Any:
         return await run_prompt_hosted(
             session, client, call_spec, msgs, quarantine_tier=QUARANTINE_TIER,
-            on_quarantine=None if reask else hook, schema=summary_schema(model_cls),
+            on_quarantine=hook, reask=reask, schema=summary_schema(model_cls),
         )
 
     result = await run(messages)

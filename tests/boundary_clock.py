@@ -15,10 +15,28 @@ import datetime as _dt
 import os
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 _REAL = _dt.datetime
+_ROOT = Path(__file__).resolve().parent.parent
+_OURS = (_ROOT / "kestrel", _ROOT / "tests")
+
+
+def _is_ours(name: str, mod: object) -> bool:
+    """A `kestrel` or test module. Test files are imported by basename (`test_today`, not
+    `tests.test_today`: tests/ has no __init__.py), so the file path decides, not the name."""
+    if name.split(".")[0] in {"kestrel", "tests"}:
+        return True
+    file = getattr(mod, "__file__", None)
+    if not file:  # Path("") would resolve to the working directory
+        return False
+    try:
+        path = Path(file).resolve()
+    except (OSError, ValueError):
+        return False
+    return any(path.is_relative_to(base) for base in _OURS)
 
 
 class _Meta(type):
@@ -52,8 +70,14 @@ def _frozen_clock(monkeypatch):
     if not raw:
         yield
         return
-    frozen = _frozen(_REAL.fromisoformat(raw))
-    for name, mod in list(sys.modules.items()):
-        if name.split(".")[0] in {"kestrel", "tests"} and getattr(mod, "datetime", None) is _REAL:
-            monkeypatch.setattr(mod, "datetime", frozen)
+    freeze_modules(monkeypatch, _REAL.fromisoformat(raw))
     yield
+
+
+def freeze_modules(monkeypatch, at: _REAL) -> type:  # noqa: ANN001
+    """Rebind `datetime` in every loaded module of ours that imported the real class."""
+    frozen = _frozen(at)
+    for name, mod in list(sys.modules.items()):
+        if getattr(mod, "datetime", None) is _REAL and _is_ours(name, mod):
+            monkeypatch.setattr(mod, "datetime", frozen)
+    return frozen

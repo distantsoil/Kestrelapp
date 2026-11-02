@@ -680,6 +680,9 @@ def test_rewrite_summary_on_an_online_model_asks_first_and_states_what_is_sent(w
     assert t2[:1].upper() + t2[1:] in body  # the disclosure the operator acknowledged
     assert 'data-testid="an-sends-page"' in body and "Not sent:" in body
     assert "vendor/model-a" in body and 'data-testid="an-send"' in body
+    # Issue 113a: the second request the plain-writing re-ask can make is disclosed here too.
+    assert 'data-testid="an-reask"' in body
+    assert "asks the same model once more to fix them" in body
 
 
 def test_an_online_rewrite_is_refused_server_side_without_the_confirmation(web, monkeypatch):

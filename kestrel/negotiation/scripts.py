@@ -233,7 +233,7 @@ async def draft_scripts(
     async def run(msgs: list[dict], reask: bool = False) -> Any:
         return await run_prompt_hosted(
             session, client, spec, msgs, quarantine_tier=11,
-            on_quarantine=None if reask else hook,  # a failed re-ask leaves no quarantine row
+            on_quarantine=hook, reask=reask,  # a failed or refused re-ask leaves no row
         )
 
     result = await run(messages)

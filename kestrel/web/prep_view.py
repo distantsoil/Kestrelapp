@@ -400,7 +400,8 @@ async def build_ctx(session: AsyncSession) -> dict:
     state = await build_state(session)
     return {
         "build_route": await online_route(
-            session, await load_settings_with_db(session), TIER, this_send=BUILD_SENDS
+            session, await load_settings_with_db(session), TIER, this_send=BUILD_SENDS,
+            reask=True,
         ),
         "building": state["state"] == "building",
         "build_failed": state.get("reason") if state["state"] == "failed" else None,
@@ -557,6 +558,7 @@ async def route_info(session: AsyncSession, settings, *, with_models: bool = Fal
         "online": False, "native": False, "can_switch": settings.llm.hosted_mode.active,
         "employer": await _employer_state(session, settings),
         "practice_sends": _PRACTICE_SENDS,
+        "reask": True,
     }
     sends = settings.llm.hosted_mode.disclosure_terms()["sends"]
     if tier_is_hosted(settings, PRACTICE_TIER):

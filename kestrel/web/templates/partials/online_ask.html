@@ -2,6 +2,11 @@
    kestrel.services.online_consent.online_route). What is sent comes from the Hosted mode
    disclosure (route.sends), never hand-written here. Put it inside a form that posts `confirmed`
    and `model`; the server checks both again. #}
+{# The plain-writing re-ask disclosure, shared by every panel for an action that can re-ask. #}
+{% macro reask_note(on, tid) %}
+{%- if on %}<p data-testid="{{ tid }}-reask">If the reply has writing problems, Kestrel asks the same model once more to fix them. That second request sends the same material plus the model's first reply.</p>{% endif %}
+{% endmacro %}
+
 {% macro ask(route, tid, verb) %}
 {%- if route and route.online %}
 <div class="k-card" data-testid="{{ tid }}-ask">
@@ -21,6 +26,7 @@
     {%- if route.this_send %}<li>For this request that means {{ route.this_send }}.</li>{% endif %}
   </ul>
   {%- endif %}
+  {{ reask_note(route.reask, tid) }}
   {%- if route.employer == 'hidden' %}<p data-testid="{{ tid }}-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
   {%- elif route.employer == 'held' %}<p data-testid="{{ tid }}-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
   <p><b>Not sent:</b> your name, contact details and your resume file. {% if route.many_providers %}Each provider handles{% else %}{{ route.provider }} handles{% endif %} what it receives under its own terms.</p>

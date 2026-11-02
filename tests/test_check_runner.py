@@ -37,7 +37,8 @@ def test_serial_and_parallel_run_identical_selection(runner, monkeypatch, worker
     monkeypatch.setattr(runner.sys, "argv", ["check.py", "--workers", workers,
                                            "--junitxml", "outcomes.xml"])
     monkeypatch.setattr(runner, "_run", lambda *args: True)
-    monkeypatch.setattr(runner, "_run_pytest", lambda cmd: (commands.append(cmd) or True, []))
+    monkeypatch.setattr(runner, "_run_pytest",
+                        lambda cmd, **_kw: (commands.append(cmd) or True, []))
     monkeypatch.setattr(runner.subprocess, "run",
                         lambda *args, **kwargs: argparse.Namespace(stdout=""))
     assert runner.main() == 0
@@ -52,7 +53,7 @@ def test_serial_and_parallel_run_identical_selection(runner, monkeypatch, worker
 def test_parallel_failures_never_report_ready(runner, monkeypatch, capsys):
     monkeypatch.setattr(runner.sys, "argv", ["check.py"])
     monkeypatch.setattr(runner, "_run", lambda *args: True)
-    monkeypatch.setattr(runner, "_run_pytest", lambda cmd: (False, []))
+    monkeypatch.setattr(runner, "_run_pytest", lambda cmd, **_kw: (False, []))
     assert runner.main() == 1
     assert "Ready to push." not in capsys.readouterr().out
 
@@ -65,7 +66,8 @@ def test_worker_default_respects_environment(runner, monkeypatch, configured, ex
     monkeypatch.setattr(runner.sys, "argv", ["check.py"])
     monkeypatch.setattr(runner, "_run", lambda *args: True)
     commands = []
-    monkeypatch.setattr(runner, "_run_pytest", lambda cmd: (commands.append(cmd) or False, []))
+    monkeypatch.setattr(runner, "_run_pytest",
+                        lambda cmd, **_kw: (commands.append(cmd) or False, []))
     assert runner.main() == 1
     assert commands[0][commands[0].index("-n") + 1] == expected
 
@@ -75,7 +77,8 @@ def test_explicit_worker_count_overrides_environment(runner, monkeypatch):
     monkeypatch.setattr(runner.sys, "argv", ["check.py", "--workers", "2"])
     monkeypatch.setattr(runner, "_run", lambda *args: True)
     commands = []
-    monkeypatch.setattr(runner, "_run_pytest", lambda cmd: (commands.append(cmd) or False, []))
+    monkeypatch.setattr(runner, "_run_pytest",
+                        lambda cmd, **_kw: (commands.append(cmd) or False, []))
     assert runner.main() == 1
     assert commands[0][commands[0].index("-n") + 1] == "2"
 
@@ -95,3 +98,16 @@ def test_parallel_skip_summary_preserves_counts_and_reasons(runner, capsys):
     runner._report_skips([(2, "tests/test_example.py:1", "platform only"),
                           (1, "tests/test_other.py:2", "platform only")])
     assert "3  platform only" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("quick", [False, True])
+def test_only_the_full_gate_runs_the_midnight_boundary_run(runner, monkeypatch, quick):
+    seen = []
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", *(["--quick"] if quick else [])])
+    monkeypatch.setattr(runner, "_run", lambda *args: True)
+    monkeypatch.setattr(runner, "_run_pytest",
+                        lambda cmd, extra_env=None: (seen.append(extra_env) or True, []))
+    monkeypatch.setattr(runner.subprocess, "run",
+                        lambda *args, **kwargs: argparse.Namespace(stdout=""))
+    assert runner.main() == 0
+    assert (seen[0] or {}).get("KESTREL_BOUNDARY") == (None if quick else "1")

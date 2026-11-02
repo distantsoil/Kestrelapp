@@ -526,9 +526,18 @@ async def _count(session: AsyncSession, stmt) -> int:
 async def ghosting_count(
     session: AsyncSession, track: str | None, *, days: int = 21, today: date | None = None
 ) -> int:
-    """Open pursuits whose last activity is older than the ghosting threshold."""
+    """Open pursuits whose last activity is older than the ghosting threshold.
+
+    `last_activity_at` is a UTC timestamp and `today` is the LOCAL day (D-UI-9), so the cut is
+    the local midnight that starts day `today - days + 1`, as stored UTC text: a pursuit last
+    touched at 22:00 local, 21 days ago, is 21 days quiet even though its UTC date is the next
+    day (#116 review; the same off-by-one `_local_date_of` fixed for the day counts)."""
     today = today or date.today()
-    cutoff = (today - timedelta(days=days)).isoformat()
+    first_fresh_day = today - timedelta(days=days - 1)
+    local_midnight = datetime(
+        first_fresh_day.year, first_fresh_day.month, first_fresh_day.day
+    ).astimezone()
+    cutoff = iso(local_midnight.astimezone(UTC))
     g_stmt = (
         select(func.count())
         .select_from(Pursuit)
@@ -538,7 +547,7 @@ async def ghosting_count(
             Pursuit.closed_at.is_(None),
             Pursuit.status.not_in(_TERMINAL),
             Pursuit.last_activity_at.is_not(None),
-            func.substr(Pursuit.last_activity_at, 1, 10) <= cutoff,
+            Pursuit.last_activity_at < cutoff,
         )
     )
     if track:
