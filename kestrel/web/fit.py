@@ -45,13 +45,17 @@ GROUP_NOT_FIT = "not_fit"
 GROUP_NEW = "new"
 GROUP_UNSCORED = "unscored"
 GROUP_FAILED = "failed"
+# The group of roles nothing will score unless the operator acts (issue #90, D-UI-236): no
+# description, hidden as applied, taken off Needs another try. It was "Not scored", which read as
+# "not scored yet". Waiting, paused and scoring roles stay in Being scored.
+UNSCORED_LABEL = "Won't be scored unless you act"
 GROUP_LABELS = {
     GROUP_WORTH: "Worth a look",
     GROUP_MAYBE: "Maybe",
     GROUP_APPLIED: "Applied",
     GROUP_NOT_FIT: "Not a fit",
     GROUP_NEW: "Being scored",
-    GROUP_UNSCORED: "Not scored",
+    GROUP_UNSCORED: UNSCORED_LABEL,
     GROUP_FAILED: "Scoring failed",
 }
 # The one-line explanation under the Scoring failed header (D-UI-56).
@@ -79,6 +83,40 @@ IMPORTED_REASON = "Imported applied history"
 EMPTY_POSTING_STAGE_REASON = "t2 posting has no description"
 EMPTY_POSTING_WHY = "The posting has no description."
 _REPOST = re.compile(r"Re-post of (pursuit|hidden opportunity) #(\d+)")
+
+
+# One chip per reason a role has no score yet (issue #90, D-UI-236): (label, tooltip, kind).
+# `kind` is the style: "wait" (muted dashed: it will be scored on its own), "live" (a model is
+# reading it now) or "final" (quiet: nothing scores it unless the operator acts). No chip says
+# rejected or failed (hard rule 4). Keys are queries.scoring_states values; the Pipeline row and
+# panel read this table, so the words are the same everywhere.
+SCORING_CHIPS: dict[str, tuple[str, str, str]] = {
+    "not_queued": ("Waiting", "Kestrel has not reached this role. It scores on its own.", "wait"),
+    "queued": ("Waiting", "Kestrel has not reached this role. It scores on its own.", "wait"),
+    "stuck": ("Stopped", "Scoring stopped before it finished. Score it again.", "wait"),
+    "held": ("Paused", "Its track is off, so it waits until you turn the track on.", "wait"),
+    "background": ("Paused", "It waits for a free slot and scores when Kestrel is idle.", "wait"),
+    "running": ("Scoring", "A model is reading it now.", "live"),
+    "empty": ("No description",
+              "The posting had no text, so there is nothing to score. Paste the description to "
+              "score it.", "final"),
+    "hidden": ("Hidden: applied",
+               "You marked this applied, so Kestrel skips it. Put it back to score it.", "final"),
+    "removed": ("Taken off retry list",
+                "You took this off the list. It was not rejected. Undo to put it back in line.",
+                "final"),
+    "failed": ("Scoring failed", "Scoring failed.", "final"),
+}
+
+
+def scoring_chip(state: str | None, ahead: int | None = None) -> dict[str, str]:
+    """The chip for a role with no score: label, tooltip and style for `state` (a
+    queries.scoring_states value; None reads as not queued). A waiting role adds "N ahead" when
+    its place in line is known."""
+    label, tip, kind = SCORING_CHIPS.get(state or "not_queued", SCORING_CHIPS["not_queued"])
+    if label == "Waiting" and ahead and ahead > 0 and state == "queued":
+        label = f"Waiting, {ahead} ahead"
+    return {"label": label, "tip": tip, "kind": kind}
 
 
 def hidden_unscored_why(opp: Any) -> str | None:
@@ -290,7 +328,8 @@ def rule_word(rules: Any) -> str:
 
 def fit_for(
     evaluation: Any, stage: str | None, *, t0_rules: Any = None, live: bool = False,
-    stage_reason: str | None = None,
+    stage_reason: str | None = None, removed: bool = False, hidden_applied: bool = False,
+    queued: bool = False,
 ) -> Fit:
     """Translate the latest evaluation plus the opportunity stage into the operator's word.
 
@@ -298,7 +337,13 @@ def fit_for(
     needs_review / tier. `stage` is the opportunity's stage string. `live` is whether the role
     has a pending or leased scoring task: a parked role queued to score again is Being scored,
     one with nothing queued is Scoring failed (D-UI-56). A posting with no body (`stage_reason`,
-    EMPTY_POSTING_STAGE_REASON) with nothing queued is Not scored, not Being scored (D-SRC-18)."""
+    EMPTY_POSTING_STAGE_REASON) with nothing queued is in the unscored group, not Being scored
+    (D-SRC-18), and so is a parked role the operator `removed` from Needs another try (D-UI-133)
+    and a `hidden_applied` role no model will read (D-UI-225), each with no scoring task at all.
+    `live` is a task that can run now (a failure with one is Being scored again); `queued` is
+    any pending or leased task, including one a switched-off track holds
+    (queries.scoring_task_exists). A role with either is Being scored (reading Paused when held),
+    never unscored. Issue #90."""
     verdict = _get(evaluation, "verdict")
     tier = _get(evaluation, "tier")
     score = _get(evaluation, "score")
@@ -312,8 +357,14 @@ def fit_for(
         # kestrel.web.queries.row_fit) said. Hard rule 4: never shown as a no.
         if live:
             return Fit(NEW, GROUP_NEW, _TONE[NEW], None, "")
+        if removed and not queued:
+            return Fit(NEW, GROUP_UNSCORED, _TONE[NEW], None, "")
+        if removed:
+            return Fit(NEW, GROUP_NEW, _TONE[NEW], None, "")
         return Fit(NEW, GROUP_FAILED, _TONE[NEW], None, FAILED_WHY)
-    if stage == "t1_pass" and stage_reason == EMPTY_POSTING_STAGE_REASON and not live:
+    if stage == "t1_pass" and stage_reason == EMPTY_POSTING_STAGE_REASON and not (live or queued):
+        return Fit(NEW, GROUP_UNSCORED, _TONE[NEW], None, "")
+    if stage == "new" and hidden_applied and not (live or queued):
         return Fit(NEW, GROUP_UNSCORED, _TONE[NEW], None, "")
     if stage == "t0_reject":
         return Fit(NOT_FIT, GROUP_NOT_FIT, _TONE[NOT_FIT], None, f"{rule_word(t0_rules)} rule")

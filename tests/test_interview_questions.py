@@ -168,7 +168,7 @@ async def test_drain_stores_a_set_and_completes_the_task(sm):
         row = (await s.execute(select(InterviewQuestionSet))).scalar_one()
         task = (await s.execute(select(Task).where(Task.type == qt.TASK_TYPE))).scalar_one()
     assert (row.opportunity_id, row.pursuit_id) == (opp, pid)
-    assert row.prompt_version == "interview_questions/v1" and row.superseded_at is None
+    assert row.prompt_version == "interview_questions/v2" and row.superseded_at is None
     assert [q["question"] for q in row.questions] == [q["question"] for q in _QUESTIONS]
     assert task.status == "done"
     assert client.calls[0]["tier"] == "tier2"
@@ -443,7 +443,7 @@ async def test_debrief_scores_against_the_p14_set_else_block_f(sm):
 
 # ------------------------------------------------------------------------ prompt and page
 def test_the_p14_prompt_loads_and_registers():
-    spec = load_prompt("interview_questions/v1")
+    spec = load_prompt("interview_questions/v2")
     assert spec.id == "P14" and spec.tier == "tier2" and spec.temperature == 0.3
     assert spec.model_cls is not None and "{GLOBAL_RULES}" not in spec.system
     for marker in ("{PROFILE_FULL}", "{description}", "{STORIES}", "{PROOF_KEYS}", "{GAPS}"):
@@ -552,7 +552,7 @@ def test_the_card_lists_the_set_and_a_role_off_the_list_has_no_card(web):
         sm = get_sessionmaker()
         async with sm() as s:
             s.add(InterviewQuestionSet(
-                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v1",
+                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v2",
                 questions=_QUESTIONS, created_at=utcnow_iso(),
             ))
             lone = Opportunity(track="employment", opp_type="job_posting", title="Other",
@@ -595,7 +595,7 @@ def test_the_prep_page_leads_with_the_likely_questions_and_the_same_control(web)
     async def store():
         async with get_sessionmaker()() as s:
             s.add(InterviewQuestionSet(
-                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v1",
+                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v2",
                 questions=_QUESTIONS, created_at=utcnow_iso(),
             ))
             await s.commit()
@@ -638,7 +638,7 @@ def test_remove_from_list_deletes_the_question_set_too(web):
     async def store():
         async with get_sessionmaker()() as s:
             s.add(InterviewQuestionSet(
-                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v1",
+                opportunity_id=opp, pursuit_id=pid, prompt_version="interview_questions/v2",
                 questions=_QUESTIONS, created_at=utcnow_iso(),
             ))
             await s.commit()

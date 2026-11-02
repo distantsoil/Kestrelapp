@@ -10,8 +10,10 @@ def test_prompts_registered():
     # P7 became three prompts (outline, role map, per-slot wordings) in D-IMPORT-3; P13, the
     # resume assessment, was added in D-DOC-2; P14 (interview questions) in D-INTERVIEW-1 and
     # P15 (suggested titles) in D-TTL-3 and P16 (company summary) in D-LLM-9.
-    # Plus the /v1 of triage, triage_consulting and evaluate, kept beside their /v2 (D-LLM-12).
-    assert len(all_versions()) == 25
+    # The nine free-prose prompts gained a /v2 with the plain-writing block (issue #93); their
+    # /v1 files stay. Plus the /v1 of triage, triage_consulting and
+    # evaluate, kept beside their /v2 (D-LLM-12).
+    assert len(all_versions()) == 34
 
 
 def test_every_prompt_loads_and_substitutes_global_rules():

@@ -602,6 +602,9 @@ class Story(Base):
     is_canonical: Mapped[bool] = mapped_column(Boolean, default=False)
     operator_edited: Mapped[bool] = mapped_column(Boolean, default=False)
     embedding_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Marks the plain-writing and grounding checks left on a PROPOSED story (issue #93): a list of
+    # {kind, field, phrase[, rule]}. Cleared when the person edits the story, since it is theirs.
+    style_flags: Mapped[list | None] = mapped_column(JSON, default=list)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso, onupdate=utcnow_iso)
 

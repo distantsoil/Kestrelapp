@@ -49,7 +49,7 @@ from kestrel.pipeline.tasks import enqueue_once
 log = structlog.get_logger()
 
 TASK_TYPE = "interview_questions"
-PROMPT = "interview_questions/v1"
+PROMPT = "interview_questions/v2"
 TIER = "tier2"  # prompt interview_questions/v1 runs on this tier
 QUESTIONS_SENDS = "the posting, your profile, your stories and the notes Kestrel holds on the role"
 QUARANTINE_TIER = 14  # the quarantine row's `tier` names the prompt, as P8, P9 and P13 do
@@ -254,12 +254,17 @@ async def generate_question_set(
         {"role": "system", "content": spec.system},
         {"role": "user", "content": inputs.user},
     ]
-    result = await run_prompt_hosted(
-        session, client, replace(spec, model_cls=model_cls), messages,
-        quarantine_tier=QUARANTINE_TIER, opportunity_id=opp.id,
-        on_quarantine=make_quarantine_hook(session, tier=QUARANTINE_TIER, opportunity_id=opp.id),
-        schema=question_schema(model_cls),
-    )
+    call_spec = replace(spec, model_cls=model_cls)
+    hook = make_quarantine_hook(session, tier=QUARANTINE_TIER, opportunity_id=opp.id)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, call_spec, msgs,
+            quarantine_tier=QUARANTINE_TIER, opportunity_id=opp.id,
+            on_quarantine=None if reask else hook, schema=question_schema(model_cls),
+        )
+
+    result = await run(messages)
     if result.quarantined:
         await session.commit()  # the quarantine row (raw reply kept) staged by the hook
         log.warning("interview_questions_quarantined", opportunity_id=opp.id, error=result.error)
@@ -270,15 +275,22 @@ async def generate_question_set(
             "error", error=result.error or "no reply", out_of_credit=result.out_of_credit
         )
 
+    from kestrel.llm.plain_repair import enforce
+
+    plain = await enforce(spec, result.value, messages=messages, run=run)
+    result.value = plain.value
     questions = [
         {
+            "style_flags": [
+                f for f in plain.flags if f.get("field", "").startswith(f"questions[{n}].")
+            ],
             "question": q.question,
             "category": q.category,
             "why_asked": q.why_asked,
             "proof_point_key": getattr(q, "proof_point_key", None),
             "story_id": getattr(q, "story_id", None),
         }
-        for q in result.value.questions
+        for n, q in enumerate(result.value.questions)
         if q.question.strip()
     ]
     if not questions:

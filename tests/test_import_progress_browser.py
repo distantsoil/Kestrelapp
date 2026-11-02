@@ -9,7 +9,6 @@ machine. Gated like the other live-browser tests: set KESTREL_LIVE_BROWSER=1."""
 from __future__ import annotations
 
 import os
-import time
 
 import pytest
 
@@ -198,10 +197,27 @@ def test_the_online_path_shows_the_processing_panel_within_300_ms_of_send(live):
     try:
         page.route(_PROPOSE, lambda route: None)
         _start_online_without_click(page)
-        t0 = time.monotonic()
+        # Timed inside the page, from the press to the panel showing, so Playwright's own round
+        # trips on a busy machine do not count against the 300 ms the person would see.
+        page.evaluate("""() => {
+          window.__kt = {};
+          document.addEventListener('click', (e) => {
+            const send = e.target.closest('[data-testid="doc-online-send"]');
+            if (send) window.__kt.press = performance.now();
+          }, true);
+          const seen = () => {
+            const el = document.querySelector('[data-testid="import-working"]');
+            if (el && !window.__kt.shown && el.getClientRects().length) {
+              window.__kt.shown = performance.now();
+            }
+          };
+          const opts = {subtree: true, childList: true, attributes: true};
+          new MutationObserver(seen).observe(document.body, opts);
+        }""")
         page.click('[data-testid="doc-online-send"]')
-        page.wait_for_selector('[data-testid="import-working"]', state="visible", timeout=300)
-        assert (time.monotonic() - t0) < 0.6
+        page.wait_for_selector('[data-testid="import-working"]', state="visible", timeout=5000)
+        took = page.evaluate("() => window.__kt.shown - window.__kt.press")
+        assert took < 300, f"the processing panel took {took:.0f} ms after the press"
         assert not errors, errors
     finally:
         ctx.close()

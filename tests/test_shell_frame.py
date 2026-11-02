@@ -167,7 +167,8 @@ def test_top_row_has_search_bell_theme_and_avatar_and_no_page_title():
         html = c.get("/settings").text
     tools = html.split('<header class="k-tools"')[1].split("</header>")[0]
     assert 'class="k-search"' in tools and "Search or jump to..." in tools
-    assert 'class="k-icon k-bell"' in tools and 'id="bellcount" class="k-icon__n"' in tools
+    assert 'class="k-icon k-bell"' in tools
+    assert 'id="bellcount" class="k-icon__n" aria-hidden="true"' in tools
     assert 'data-testid="theme-toggle"' in tools and 'class="k-avatar' in tools
     assert 'class="title"' not in html and "&#9681;" not in tools and "◑" not in tools
     assert "\U0001f514" not in tools  # the bell is the drawn icon, not an emoji

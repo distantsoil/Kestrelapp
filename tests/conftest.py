@@ -177,10 +177,125 @@ def _testclient_presents_a_loopback_host(monkeypatch):
     monkeypatch.setattr(TestClient, "__init__", _init)
 
 
+# Test modules whose job is to exercise Alembic itself (the real upgrade path, older revisions,
+# restore and doctor against real migrations). They always run the real migration; every other test
+# gets a copy of one database that the real migration built (see _migrated_template_db).
+_REAL_MIGRATION_MODULES = frozenset(
+    {
+        "test_overhaul_migration",
+        "test_db_schema",
+        "test_doctor_schema",
+        "test_cli_db",
+        "test_restore_while_open",
+    }
+)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _migrated_template_db(tmp_path_factory):
+    """Run the real Alembic upgrade ONCE per xdist worker and hand every later "migrate an empty
+    database" call a byte copy of the result, instead of replaying every revision per test
+    (about 150 to 250 ms each, in roughly a third of the suite's tests).
+
+    Per-test isolation is unchanged: each test still gets its own new file. Only a call whose
+    target is missing or empty is served from the template; a database that already has content
+    (an older-revision fixture, a restore) always goes through the real upgrade, and so does every
+    test in _REAL_MIGRATION_MODULES. tests/test_migration_template.py proves the copy equals a
+    real migration. KESTREL_REAL_MIGRATIONS=1 turns this off for a whole run."""
+    import shutil
+    from pathlib import Path
+
+    from alembic import command
+
+    from kestrel import paths
+    from kestrel.db import engine as engine_mod
+    from kestrel.db import migrate
+
+    real = migrate.run_migrations
+
+    # The pieces a real upgrade runs through. If a test has replaced any of them when it calls
+    # run_migrations (to inject a failure, count calls, or point at other scripts), the copy would
+    # hide that, so such a call always takes the real path.
+    def _current() -> tuple:
+        return (
+            migrate.command,
+            command.upgrade,
+            migrate._config,
+            migrate.paths,
+            engine_mod._apply_pragmas,
+        )
+
+    pristine = _current()
+
+    def _untouched() -> bool:
+        return all(a is b for a, b in zip(pristine, _current(), strict=True))
+
+    # Built here, in the fixture's own setup before any test runs, so no test's patches or
+    # environment can reach it. The real upgrade calls paths.ensure_dirs(), so point the data home
+    # at a scratch directory for the build and never at an operator's real one.
+    template = tmp_path_factory.mktemp("migrated_template") / "template.db"
+    with pytest.MonkeyPatch.context() as build_env:
+        build_env.setenv("KESTREL_DATA_HOME", str(template.parent / "home"))
+        real(template)
+
+    def run_migrations(db_path=None):
+        target = Path(db_path) if db_path else paths.db_path()
+        test = os.environ.get("PYTEST_CURRENT_TEST", "")
+        module = test.split("::", 1)[0].replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".py")
+        empty = not target.exists() or target.stat().st_size == 0
+        if (
+            not empty
+            or module in _REAL_MIGRATION_MODULES
+            or os.environ.get("KESTREL_REAL_MIGRATIONS") == "1"
+            or not _untouched()
+        ):
+            return real(db_path)
+        paths.ensure_dirs()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        for suffix in ("-wal", "-shm"):  # never pair a fresh file with a stale journal
+            target.with_name(target.name + suffix).unlink(missing_ok=True)
+        shutil.copyfile(template, target)
+
+    run_migrations.real = real  # type: ignore[attr-defined]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(migrate, "run_migrations", run_migrations)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _yaml_settings_parse_cache():
+    """Settings are rebuilt on every get_settings() call (SPEC 4.6) and each build parses
+    settings.yml with pure-Python PyYAML, about 30 ms, many times per test. Cache the parsed result
+    by the file's exact text and hand out a deep copy: a changed file has different text, so it is
+    always re-read, and no test can see another's mutations. A file that fails to parse is not
+    cached and raises exactly as before."""
+    import copy
+
+    from pydantic_settings.sources.providers.yaml import YamlConfigSettingsSource
+
+    original = YamlConfigSettingsSource._read_file
+    cache: dict[tuple[str, str], object] = {}
+
+    def _read_file(self, file_path):
+        try:
+            text = file_path.read_text(encoding=self.yaml_file_encoding or "utf-8")
+        except OSError:
+            return original(self, file_path)
+        key = (self.yaml_file_encoding or "", text)
+        if key not in cache:
+            cache[key] = original(self, file_path)
+        return copy.deepcopy(cache[key])
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(YamlConfigSettingsSource, "_read_file", _read_file)
+        yield
+
+
 @pytest_asyncio.fixture
 async def sm(tmp_path):
-    """A fresh, migrated SQLite database per test. Uses the REAL programmatic migration so every
-    test also exercises the schema, and a WAL engine so concurrency behaves like production."""
+    """A fresh, migrated SQLite database per test: a copy of the database the real programmatic
+    migration built once for this worker (see _migrated_template_db), so every test gets the full
+    schema in its own file, and a WAL engine so concurrency behaves like production."""
     from kestrel.db import migrate
     from kestrel.db.engine import make_async_engine
 

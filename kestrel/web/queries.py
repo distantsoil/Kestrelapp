@@ -41,6 +41,7 @@ from kestrel.services.hidden_orgs import not_hidden_org_clause, opp_visible_clau
 from kestrel.urls import safe_web_url
 from kestrel.web.fit import (
     EMPTY_POSTING_STAGE_REASON,
+    EMPTY_POSTING_WHY,
     GROUP_APPLIED,
     GROUP_FAILED,
     GROUP_MAYBE,
@@ -299,6 +300,22 @@ def live_scoring_exists():
     return (
         select(Task.id)
         .where(Task.type.in_(_RESCORING_TASKS), _in_flight_now(), oid == Opportunity.id)
+        .correlate(Opportunity)
+        .exists()
+    )
+
+
+def scoring_task_exists():
+    """EXISTS any pending or leased task that would score this Opportunity, held or not (correlated
+    to the enclosing statement's Opportunity). The one "a task is queued" test for the unscored
+    group (issue #90): _group_expr, the grouped list, the panel and queries.hidden_unscored all
+    use it, so a Score anyway task a switched-off track holds keeps the role in Being scored,
+    reading Paused, instead of leaving it among the roles nothing will score."""
+    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    return (
+        select(Task.id)
+        .where(Task.type.in_(_RESCORING_TASKS), Task.status.in_(("pending", "leased")),
+               oid == Opportunity.id)
         .correlate(Opportunity)
         .exists()
     )
@@ -581,12 +598,22 @@ def _group_expr():
     mine = VerdictOverride.operator_verdict
     return case(
         (failed_scoring_clause(), _G[GROUP_FAILED]),
-        # A posting with no body that nothing is scoring: Not scored (D-SRC-18), not Being scored.
+        # Nothing will score these unless the operator acts (issue #90, D-UI-236): a posting with
+        # no body (D-SRC-18), a role hidden as applied that no model reads (D-UI-225), and a
+        # parked role taken off Needs another try (D-UI-133), each with nothing scoring it.
+        # fit_for is the Python twin.
         (
             and_(
-                Opportunity.stage == "t1_pass",
-                Opportunity.stage_reason == EMPTY_POSTING_STAGE_REASON,
+                or_(
+                    and_(
+                        Opportunity.stage == "t1_pass",
+                        Opportunity.stage_reason == EMPTY_POSTING_STAGE_REASON,
+                    ),
+                    and_(Opportunity.stage == "new", Opportunity.archive_reason == "applied"),
+                    and_(stage.in_(_PARKED_STAGES), _retry_removed(Opportunity.id)),
+                ),
                 ~live_scoring_exists(),
+                ~scoring_task_exists(),
             ),
             _G[GROUP_UNSCORED],
         ),
@@ -639,13 +666,17 @@ def row_fit(
     pursuit_status: str | None = None,
     operator_verdict: str | None = None,
     live: bool = False,
+    removed: bool = False,
+    queued: bool = False,
 ) -> Fit:
     """The row's fit word from the model (fit_for), in the group the operator's own decision
     puts it in when there is one (fit.operator_group, D-UI-51), except that a role not scored
-    yet stays in Being scored or Scoring failed. `live` is live_scoring_exists for the row.
-    _group_expr is the SQL twin."""
+    yet stays in Being scored or Scoring failed, and a role nothing will score unless the
+    operator acts (no description, hidden as applied, `removed` from Needs another try) is in
+    the unscored group. `live` is live_scoring_exists for the row. _group_expr is the SQL twin."""
     fit = fit_for(ev, opp.stage, t0_rules=t0_rules(opp), live=live,
-                  stage_reason=opp.stage_reason)
+                  stage_reason=opp.stage_reason, removed=removed,
+                  hidden_applied=opp.archive_reason == "applied", queued=queued)
     # These outrank the operator's label (_group_expr).
     if fit.group in (GROUP_NEW, GROUP_UNSCORED, GROUP_FAILED):
         return fit
@@ -666,7 +697,10 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
     - "queued": a task is pending and the worker will claim it.
     - "stuck": the startup orphan sweep already re-queued it once and nothing is queued
       (pipeline.orphans, D-UI-56).
-    - "not_queued": no task yet (it awaits its first pass through the pipeline)."""
+    - "not_queued": no task yet (it awaits its first pass through the pipeline).
+
+    A row in the unscored group (nothing scores it unless the operator acts) reads "empty" (no
+    description), "hidden" (hidden as applied) or "removed" (off Needs another try)."""
     failed = [r for r in rows if r.fit and r.fit.group == GROUP_FAILED]
     if failed:
         reasons = await failure_reasons(session, [r.opp.id for r in failed])
@@ -713,6 +747,11 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
         if o not in state or rank[this] < rank[state[o]]:
             state[o] = this
     for r in todo:
+        if r.fit.group == GROUP_UNSCORED:
+            # Nothing will score it unless the operator acts (issue #90): the reason leads, and
+            # a task that only refreshes a vector (a re-post's embed) never changes it.
+            r.scoring, r.hidden_why = _unscored_reason(r)
+            continue
         if r.opp.id in hidden:
             # Hidden as applied and nothing queued to score it (D-UI-225); checked first because
             # a re-post's embed task is live but never leads to a score.
@@ -730,6 +769,18 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
             r.scoring = "stuck"
         else:
             r.scoring = "not_queued"
+
+
+def _unscored_reason(r: OppRow) -> tuple[str, str | None]:
+    """(scoring state, why) for a row in the unscored group (fit.GROUP_UNSCORED): "empty" (no
+    description), "hidden" (hidden as applied) or "removed" (off Needs another try). The same
+    three tests as _group_expr, so a row there always has one."""
+    opp = r.opp
+    if opp.stage == "t1_pass" and opp.stage_reason == EMPTY_POSTING_STAGE_REASON:
+        return "empty", EMPTY_POSTING_WHY
+    if opp.stage == "new" and opp.archive_reason == "applied":
+        return "hidden", hidden_unscored_why(opp) or "Hidden as applied before it was scored."
+    return "removed", None
 
 
 async def attach_rescoring(session: AsyncSession, rows: list[OppRow]) -> None:
@@ -753,17 +804,11 @@ async def hidden_unscored(session: AsyncSession, opps: list[Opportunity]) -> dic
     cand = {o.id: why for o in opps if (why := hidden_unscored_why(o)) is not None}
     if not cand:
         return {}
-    oid = func.json_extract(Task.payload, "$.opportunity_id")
     queued = await session.execute(
-        select(oid).where(
-            Task.type.in_(_RESCORING_TASKS),
-            Task.status.in_(("pending", "leased")),
-            oid.in_(list(cand)),
-        )
+        select(Opportunity.id).where(Opportunity.id.in_(list(cand)), scoring_task_exists())
     )
     for (o,) in queued.all():
-        if o is not None:
-            cand.pop(int(o), None)
+        cand.pop(int(o), None)
     return cand
 
 
@@ -1053,8 +1098,10 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
     cols = (
         Opportunity, Evaluation, Org.name, Source.name, Pursuit.id, Pursuit.closed_at,
         Pursuit.status, VerdictOverride.operator_verdict, VerdictOverride.operator_score,
-        # A removed role reads as not scored and not failed, as _group_expr does (D-UI-133).
-        or_(live_scoring_exists(), _retry_removed(Opportunity.id)).label("live"),
+        # A removed role is neither scored nor failed: it sits in the unscored group unless a
+        # task is scoring it, as _group_expr does (D-UI-133, issue #90).
+        live_scoring_exists().label("live"),
+        scoring_task_exists().label("queued"),
         _retry_removed(Opportunity.id).label("removed"),
         saved_clause().label("saved"),
     )
@@ -1094,11 +1141,12 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
             pursuit_id=pid,
             pursuit_status=pstatus if pid is not None and closed is None else None,
             fit=row_fit(o, e, pursued=pid is not None and closed is None,
-                        pursuit_status=pstatus, operator_verdict=ov, live=bool(lv)),
+                        pursuit_status=pstatus, operator_verdict=ov, live=bool(lv),
+                        removed=bool(rm), queued=bool(qd)),
             mine=fit_word_for_verdict(ov, os_),
             removed=bool(rm), saved=bool(sv),
         )
-        for (o, e, on, sn, pid, closed, pstatus, ov, os_, lv, rm, sv) in rows
+        for (o, e, on, sn, pid, closed, pstatus, ov, os_, lv, qd, rm, sv) in rows
     ]
     await scoring_states(session, out)
     await attach_rescoring(session, out)

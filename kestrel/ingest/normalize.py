@@ -33,7 +33,11 @@ from kestrel.ingest.orgs import infer_org_attrs, resolve_org
 from kestrel.ingest.tokens import count_tokens
 from kestrel.rules.helpers import seniority_rank
 
-_TEAM_RE = re.compile(r"team of|direct reports|manage a team|\d+[- ]person team|lead a team", re.I)
+# \d{1,4}, not \d+: a run of digits made a search on pasted text polynomial (CodeQL
+# py/polynomial-redos); a search still finds the last four digits of a longer number.
+_TEAM_RE = re.compile(
+    r"team of|direct reports|manage a team|\d{1,4}[- ]person team|lead a team", re.I
+)
 
 
 @dataclass
@@ -282,6 +286,40 @@ async def _handle_reseen(session, existing, raw, description, now, *, source) ->
         "reseen_changed" if material else "reseen_minor",
         enqueue_embed=True,
         requeue_t2=material,
+    )
+
+
+async def attach_description(session: AsyncSession, opp: Opportunity, text: str) -> None:
+    """The operator pasted the posting text for a role that came with none (issue #90). The same
+    changes a re-scrape that brings a body makes (_handle_reseen): the text, its token count, the
+    content hash and a new version with the earlier text kept; pay read from the text only when
+    the role has none, recorded as a comp observation; and the ghost score recomputed. The caller
+    moves the stage back to `new` (Tier 0 sweeps it again), queues the embed and commits. Nothing
+    is fetched and nothing leaves the machine."""
+    body = text.strip()
+    opp.previous_description_md = opp.description_md
+    opp.description_md = body
+    opp.description_tokens = count_tokens(body)
+    opp.content_hash = content_hash(opp.org_name, opp.title, body)
+    opp.version = (opp.version or 1) + 1
+    if opp.comp_min is None and opp.comp_max is None:
+        comp, comp_source = _resolve_comp(RawPosting(external_id="pasted"), body, opp.track)
+        if comp is not None:
+            opp.comp_min, opp.comp_max = comp.min, comp.max
+            opp.comp_currency, opp.comp_interval = comp.currency, comp.interval
+            opp.comp_source = comp_source
+            org = await session.get(Org, opp.org_id) if opp.org_id else None
+            session.add(
+                _comp_observation(opp, org, comp, comp_source, opp.country, opp.state, opp.city)
+            )
+    opp.ghost_score = compute_ghost_score(
+        seen_count=opp.seen_count,
+        first_seen_at=opp.first_seen_at,
+        last_seen_at=opp.last_seen_at,
+        version=opp.version,
+        has_comp=opp.comp_min is not None,
+        has_location=bool(opp.location_raw),
+        has_team=_mentions_team(opp.description_md),
     )
 
 

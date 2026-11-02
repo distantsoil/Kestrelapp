@@ -18,6 +18,7 @@ from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Org, Pursuit, Task
 from kestrel.docs.current_employer import load_employer_map
+from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 from kestrel.llm.service_name import service_name
 from kestrel.pipeline._shared import run_prompt_hosted
@@ -26,6 +27,7 @@ from kestrel.services import pursuit_board
 from kestrel.services.setting_overrides import load_settings_with_db
 
 TASK_TYPE = "follow_up"
+PROMPT = "follow_up/v2"
 TIER = "tier3"
 log = structlog.get_logger()
 
@@ -134,7 +136,7 @@ async def request_draft(
         "pursuit_id": pursuit.id, "opportunity_id": pursuit.opportunity_id,
         "requested": True, "facts": facts, "route": route,
         "confirmed": form.confirmed == "1", "model": form.model,
-        "prompt_version": "follow_up/v1",
+        "prompt_version": PROMPT,
     }))
     await session.flush()
     return None
@@ -159,20 +161,30 @@ async def _write(session: AsyncSession, client: Any, task: Task) -> dict[str, An
         if problem := await send_problem(session, settings):
             return {"error": problem}
         settings.llm.hosted_mode.redact_confidential = True
-    spec = load_prompt(payload.get("prompt_version", "follow_up/v1"))
-    result = await run_prompt_hosted(
-        session, client, spec,
-        [{"role": "system", "content": spec.system},
-         {"role": "user", "content": spec.user.replace(
-             "{PURSUIT_FACTS}", json.dumps(payload["facts"], ensure_ascii=False))}],
-        quarantine_tier=17, opportunity_id=pursuit.opportunity_id,
-        on_quarantine=make_quarantine_hook(session, tier=17, opportunity_id=pursuit.opportunity_id),
-    )
+    # A task queued before the plain-writing rules (follow_up/v1) is written with the current
+    # prompt; the stored version only names what the task was created with.
+    spec = load_prompt(PROMPT)
+    messages = [
+        {"role": "system", "content": spec.system},
+        {"role": "user", "content": spec.user.replace(
+            "{PURSUIT_FACTS}", json.dumps(payload["facts"], ensure_ascii=False))},
+    ]
+    hook = make_quarantine_hook(session, tier=17, opportunity_id=pursuit.opportunity_id)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, spec, msgs, quarantine_tier=17,
+            opportunity_id=pursuit.opportunity_id,
+            on_quarantine=None if reask else hook,
+        )
+
+    result = await run(messages)
     if result.quarantined:
         return {"error": "The reply could not be validated. It was set aside in Needs another try."}
     if not result.ok or result.value is None:
         raise RuntimeError("The model could not write this draft. Check Models, then try again.")
-    return {"result": result.value.model_dump()}
+    plain = await enforce(spec, result.value, messages=messages, run=run)
+    return {"result": plain.value.model_dump(), "style_flags": plain.flags}
 
 
 async def drain(

@@ -34,6 +34,8 @@ jobs:
     name: Preflight
     # Cheap checks that would otherwise fail only after the three installers are built: the
     # changelog section for this version, and (real stable tag only) the website token.
+    # Releases build only in the public repo; every later job needs this one (D-CI-11).
+    if: github.repository == 'distantsoil/Kestrelapp'
     runs-on: ubuntu-latest
     env:
       # A boolean, never the secret itself, so the token value cannot reach this job's environment.

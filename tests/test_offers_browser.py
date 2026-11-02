@@ -247,6 +247,116 @@ def test_the_empty_state_is_clean(monkeypatch, theme, width):
             browser.close()
 
 
+def _wipe_offers() -> None:
+    """Take the offers away, keep the pursuits: the "no offers yet" view."""
+    import asyncio
+
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.engine import forget_engine, make_async_engine
+    from kestrel.db.models import Offer
+
+    async def wipe():
+        engine = make_async_engine(paths.db_path())
+        async with async_sessionmaker(engine)() as s:
+            await s.execute(delete(Offer))
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    asyncio.run(wipe())
+
+
+@pytest.fixture
+def live_empty(monkeypatch):
+    """A server with no offers recorded, a Profile floor and target, and a stand-in model."""
+    import types
+
+    from playwright.sync_api import sync_playwright
+
+    from kestrel.web.serve import running_server
+
+    monkeypatch.setattr("kestrel.web.pages.offers.draft_scripts", _no_draft)
+    monkeypatch.setattr(
+        "kestrel.web.pages.offers.load_profile",
+        lambda track: types.SimpleNamespace(
+            proof_points=[],
+            employment_terms=types.SimpleNamespace(comp_floor_usd=120000, comp_target_usd=150000),
+            consulting_terms=types.SimpleNamespace(day_rate_floor=450, day_rate_target=600),
+        ),
+    )
+    offers_seed.seed(consulting=False, past=False)
+    _wipe_offers()
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        yield base, browser, None
+        browser.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [390, 1280, 1680])
+def test_negotiate_with_no_offer_is_a_clean_preparation_page_and_drafts(live_empty, theme, width):
+    ctx, page, errors = _page(live_empty, theme, width, "/offers?tab=compare",
+                              '[data-testid="of-empty"]')
+    try:
+        # From Compare, the Negotiate tab swaps in its own page, not the same card.
+        page.click('[data-testid="of-tab-negotiate"]')
+        page.wait_for_selector('[data-testid="of-negotiate-prep"]')
+        wait_for_layout(page)
+        assert page.is_hidden('[data-testid="of-market"]') or \
+            page.query_selector('[data-testid="of-market"]') is None
+        assert "$120k" in page.inner_text('[data-testid="of-prep-floor"]')
+        assert "$150k" in page.inner_text('[data-testid="of-prep-target"]')
+        _clean(page, (".of-nums-list dd b",))
+        _shot(page, f"negotiate-empty-{theme}-{width}")
+        cards = page.query_selector_all('[data-testid="of-prep-sit"]')
+        assert [c.is_enabled() for c in cards].count(True) == 1
+        assert "Record an offer to draft this" in cards[0 if not cards[0].is_enabled() else 1] \
+            .inner_text()
+        # The draft stays locked until the walk-away is typed; then the one card writes a draft.
+        # The Profile floor starts the walk-away, so the draft is open; the operator can change it.
+        assert page.input_value('[data-testid="of-walk"]') == "$120,000"
+        assert page.get_attribute('[data-testid="of-draft-wrap"]', "data-locked") == "0"
+        page.fill('[data-testid="of-walk"]', "140000")
+        page.dispatch_event('[data-testid="of-walk"]', "change")
+        assert page.get_attribute('[data-testid="of-draft-wrap"]', "data-locked") == "0"
+        page.click('[data-testid="of-prep-sit"][data-open="1"]')
+        page.wait_for_selector('[data-testid="of-dbody"]')
+        wait_for_layout(page)
+        assert "Draft only" in page.inner_text('[data-testid="of-draft"]')
+        assert "Kestrel never sends it" in page.inner_text('[data-testid="of-draft"]')
+        assert page.query_selector('[data-of-copy]') is not None
+        _clean(page, (".of-nums-list dd b",))
+        _shot(page, f"negotiate-empty-draft-{theme}-{width}")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_preparation_page_rises_in_and_stops_for_reduced_motion(live_empty):
+    base, browser, _ = live_empty
+    for reduce, expect in (("no-preference", True), ("reduce", False)):
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion=reduce)
+        page = ctx.new_page()
+        try:
+            page.goto(f"{base}/offers?tab=compare")
+            page.wait_for_selector('[data-testid="of-empty"]')
+            page.click('[data-testid="of-tab-negotiate"]')
+            page.wait_for_selector('[data-testid="of-negotiate-prep"]')
+            # The pane rise class is added by KUI.paneIn for 400ms; hold it to read the rule.
+            names = page.evaluate(
+                "(() => { const p = document.querySelector('#of-pane');"
+                " p.classList.add('k-pane-in');"
+                " return Array.from(document.querySelectorAll('.of-np'))"
+                ".map(e => getComputedStyle(e).animationName); })()")
+            assert len(names) == 3
+            assert all((n != "none") is expect for n in names), (reduce, names)
+        finally:
+            ctx.close()
+
+
 def test_menu_outcome_undo_stars_and_weights(live):
     ctx, page, errors = _page(live, "light", 1680, wait='[data-testid="of-card"]')
     try:

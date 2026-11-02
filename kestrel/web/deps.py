@@ -22,6 +22,7 @@ from kestrel.config import UI_SCHEMES
 from kestrel.date_display import format_display
 from kestrel.db.engine import get_sessionmaker
 from kestrel.intelligence.liveness import closed_reason_text
+from kestrel.web.fit import UNSCORED_LABEL, scoring_chip
 from kestrel.web.flash import flash_text
 from kestrel.web.words import PLAIN, words
 
@@ -314,6 +315,29 @@ def _read_ui_rows() -> dict[str, object]:
     return out
 
 
+def bell_unread() -> int:
+    """Unread notifications, read the way /notifications/bell counts them, so the top row prints
+    the badge on the server and its first paint is final (#95). 0 before the database exists."""
+    db = paths.db_path()
+    if not db.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(db), timeout=2.0)
+        try:
+            conn.execute("PRAGMA busy_timeout=2000")
+            return int(conn.execute(
+                "SELECT count(*) FROM notification WHERE read_at IS NULL").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+
+
+def bell_label(n: int) -> str:
+    """The bell badge's text: empty at zero (the badge hides), 1 to 9 as is, "9+" above that."""
+    return "" if n <= 0 else str(n) if n <= 9 else "9+"
+
+
 def ui_prefs() -> dict[str, object]:
     """What the shell needs from Settings > Preferences, already validated (a stored value that
     no longer validates reads as the default). Keys: text_size, reduce_motion, avatar, photo
@@ -458,7 +482,11 @@ def templates() -> Jinja2Templates:
         t.env.globals["nav_title"] = nav_title
         t.env.globals["ui_scheme"] = ui_scheme
         t.env.globals["ui_prefs"] = ui_prefs
+        t.env.globals["bell_unread"] = bell_unread
+        t.env.globals["bell_label"] = bell_label
         t.env.globals["words"] = words
+        t.env.globals["scoring_chip"] = scoring_chip
+        t.env.globals["unscored_label"] = UNSCORED_LABEL
         t.env.globals["flash_text"] = flash_text
         t.env.globals["closed_reason_text"] = closed_reason_text
         from kestrel.ingest.generated import US_NOTE

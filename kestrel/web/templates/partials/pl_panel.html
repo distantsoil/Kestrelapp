@@ -6,6 +6,7 @@
    kestrel.web.pages.pipeline.panel_context. The Not for me footer swaps in place to its four
    one-click reasons (data-pl-ask, no request until one is chosen). #}
 {% import "ui/macros.html" as ui %}
+{% from "partials/pl_paste.html" import paste_block %}
 {% macro head(eyebrow, title, sub) -%}
   <div class="pl-dh">
     <div class="pl-dh__t"><div class="pl-eyebrow">{{ eyebrow }}</div><b>{{ title }}</b><div class="pl-dh__sub">{{ sub }}</div></div>
@@ -90,26 +91,39 @@
 
 {# ------------------------------------------------------------------------------- pending #}
 {% elif kind == 'pending' %}
+  {# Every reason a role has no score yet has one chip and one way forward (issue #90, D-UI-236):
+     waiting, paused and scoring sit in Being scored; no description, hidden as applied and taken
+     off Needs another try sit in Won't be scored unless you act. Chip words: fit.SCORING_CHIPS. #}
   {% set failed = fit.group == 'failed' %}
-  {{ head('Scoring failed' if failed else ('Not scored' if scoring in ('removed', 'hidden') else 'Being scored'), title, org_name ~ (' · ' ~ place if place else '')) }}
+  {% set final = fit.group == 'unscored' %}
+  {% set chip = scoring_chip(scoring, rescoring.ahead if rescoring else None) %}
+  {{ head('Scoring failed' if failed else (unscored_label if final else 'Being scored'), title, org_name ~ (' · ' ~ place if place else '')) }}
   <div class="pl-db">
     {% if override_note %}<div class="pl-dsm" data-testid="panel-override-note">{{ override_note }}</div>{% endif %}
-    <div class="pl-pending"><span class="k-dot {{ 'k-dot--bad' if failed else ('k-dot--idle' if scoring in ('removed', 'hidden') else 'k-dot--live') }}"></span>
+    {% if not failed %}<div><span class="k-pill pl-chip pl-chip--{{ chip.kind }}" data-testid="panel-chip" data-scoring="{{ scoring }}" title="{{ chip.tip }}">{{ chip.label }}</span></div>{% endif %}
+    <div class="pl-pending"><span class="k-dot {{ 'k-dot--bad' if failed else ('k-dot--idle' if final else 'k-dot--live') }}"></span>
       {% if failed %}{{ failed_reason }} Kestrel kept the raw answer for review.
-      {% elif scoring == 'removed' %}You removed this role from Needs another try, so it has no score. <a href="/quarantine">Undo it there</a> to put it back in line.
-      {% elif scoring == 'hidden' %}<span data-testid="panel-hidden-why">{{ hidden_why }}{% if opp.archive_reason == 'applied' %} Kestrel does not score {{ w.roles }} you already applied for. Put it back to score it.{% else %} Kestrel did not send it to a model. It is scored when a later scrape brings the full text.{% endif %}</span>
-      {% elif scoring == 'held' %}This track is switched off, so the role waits until you switch it back on.
+      {% elif scoring == 'removed' %}You removed this role from Needs another try, so it has no score. It was not rejected. <a href="/quarantine">Undo it there</a> to put it back in line.
+      {% elif scoring == 'empty' %}<span data-testid="panel-hidden-why">{{ hidden_why }} Kestrel did not send it to a model, because there is nothing to read. Paste the description to score it, or open the posting to read it yourself.</span>
+      {% elif scoring == 'hidden' %}<span data-testid="panel-hidden-why">{{ hidden_why }} Kestrel does not score {{ w.roles }} you already applied for. Put it back to score it.</span>
+      {% elif scoring == 'held' %}This track is switched off, so the role waits until you turn the track back on.
       {% elif scoring == 'background' %}This company-board role scores in the background when Kestrel is idle.
       {% elif scoring == 'stuck' %}Scoring stopped before it finished. Score it again.
       {% elif rescoring %}<span data-testid="panel-rescoring">{{ rescoring.hint }} Details appear when the review finishes.</span>
+      {% elif scoring == 'not_queued' %}Kestrel has not reached this role yet. It scores on its own.
       {% else %}Being scored now. Details appear when the review finishes.{% endif %}</div>
-    {% if scoring == 'hidden' and opp.archive_reason == 'applied' %}
+    {% if scoring == 'hidden' %}
       <button type="button" class="k-btn pl-fit-content" hx-post="/opportunities/{{ opp.id }}/decide/put-back" hx-swap="none" data-testid="panel-put-back">Put it back</button>
     {% endif %}
-    {% if failed or scoring in ('stuck', 'removed', 'not_queued') %}
+    {% if scoring == 'held' %}
+      <a class="k-btn pl-fit-content" href="/settings#preferences" data-testid="panel-turn-on">Turn track on</a>
+    {% endif %}
+    {% if failed or scoring in ('stuck', 'removed') %}
       <a class="k-btn k-btn--primary pl-fit-content" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities">Score again</a>
-    {% elif scoring == 'hidden' and opp.archive_reason != 'applied' %}
-      <a class="k-btn pl-fit-content" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities" data-testid="panel-score-anyway">Score anyway</a>
+    {% endif %}
+    {% if scoring == 'removed' %}<a class="k-btn pl-fit-content" href="/quarantine" data-testid="panel-undo-removed">Undo</a>{% endif %}
+    {% if scoring == 'empty' %}
+      {% call paste_block(opp, posting_url, 'panel') %}<a class="k-btn" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities" data-testid="panel-score-anyway">Score anyway</a>{% endcall %}
     {% endif %}
     {% if failed %}<a class="k-btn pl-fit-content" href="/quarantine" data-testid="panel-needs-try">Open Needs another try</a>{% endif %}
   </div>

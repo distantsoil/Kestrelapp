@@ -22,6 +22,7 @@ from kestrel.pipeline.tier2 import handle_t2
 from kestrel.pipeline.worker import TierStats, Worker
 from kestrel.queue.rescore import enqueue_rescore, parse_ids
 from kestrel.web.pages.rescore import comparison, history_rows, short_model
+from tests import clock_seed
 from tests.pipeline_fakes import FakeLLM
 
 _PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
@@ -44,7 +45,7 @@ class _RecordingLLM(FakeLLM):
 
 
 def _ago(**kw) -> str:
-    return iso(datetime.now(UTC) - timedelta(**kw))
+    return iso(clock_seed.ago(**kw))
 
 
 async def _opp(sm, *, stage: str, title: str = "VP of IT", first_seen: str | None = None) -> int:

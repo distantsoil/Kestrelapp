@@ -176,8 +176,8 @@ async def _whole_list(s, **kw):
     main = await list_opportunities(s, f)
     nf = await list_opportunities(s, _replace(f, section="not_fit"))
     # D-UI-198: Not a fit sits between Applied and Being scored.
-    scoring = [r for r in main.rows if r.fit.group in ("new", "failed")]
-    scored = [r for r in main.rows if r.fit.group not in ("new", "failed")]
+    scoring = [r for r in main.rows if r.fit.group in ("new", "unscored", "failed")]
+    scored = [r for r in main.rows if r.fit.group not in ("new", "unscored", "failed")]
     main.rows = scored + nf.rows + scoring
     return main
 
@@ -252,11 +252,11 @@ def test_list_groups_rows_by_fit_with_one_word_and_one_number_per_row():
     d = _row(html, ids["d"])
     # Unscored: grey with a dashed stripe and a pill that says where it is, never a dash.
     assert 'class="pl-row is-new"' in d and 'data-fit="new"' in d
-    assert 'data-scoring="not_queued">not queued</span>' in d
+    assert 'data-scoring="not_queued">Waiting</span>' in d
     assert "data-fit-score" not in d  # no score, and no dash standing in for one
     k = _row(html, ids["k"])
     assert 'data-fit="not a fit"' in k and "data-fit-score" not in k
-    assert 'data-scoring="failed">failed</span>' in _row(html, ids["e"])
+    assert 'data-scoring="failed">Scoring failed</span>' in _row(html, ids["e"])
     # The header counts every open role, Not a fit's included. Score again is the bulk bar's
     # (and Needs another try's): the old toolbar button is gone (D-UI-96).
     assert "5 open · 1 still being scored" in html and "1 needs another try</a>" in html
@@ -1220,8 +1220,8 @@ def test_unscored_rows_say_scoring_waiting_or_failed():
     with _client() as c:
         html = _get(c, "/opportunities")
     d = _row(html, ids["d"])
-    assert 'data-scoring="running">scoring…</span>' in d and 'class="pl-row is-new"' in d
-    assert 'data-scoring="failed">failed</span>' in _row(html, ids["e"])
+    assert 'data-scoring="running">Scoring</span>' in d and 'class="pl-row is-new"' in d
+    assert 'data-scoring="failed">Scoring failed</span>' in _row(html, ids["e"])
     assert "Being scored · 1" in html and "Scoring failed · 1" in html
 
 
@@ -1348,7 +1348,7 @@ def test_a_stuck_orphan_says_stuck_with_score_again():
     with _client() as c:
         html = _get(c, "/opportunities")
     d = _row(html, ids["d"])
-    assert 'data-scoring="stuck">stuck</span>' in d and "scoring stopped" in d
+    assert 'data-scoring="stuck">Stopped</span>' in d and "scoring stopped" in d
     assert 'data-testid="row-score-again"' in d and "Being scored · 1" in html
 
 
@@ -1529,9 +1529,9 @@ def test_unscored_rows_say_why_background_queued_running_and_not_queued():
     bg_id, qd_id = asyncio.run(_with_session(more))
     with _client() as c:
         html = _get(c, "/opportunities")
-    assert 'data-scoring="background">background</span>' in _row(html, bg_id)
-    assert 'data-scoring="queued">queued</span>' in _row(html, qd_id)
-    assert 'data-scoring="running">scoring…</span>' in _row(html, ids["d"])
+    assert 'data-scoring="background">Paused</span>' in _row(html, bg_id)
+    assert 'data-scoring="queued">Waiting' in _row(html, qd_id)
+    assert 'data-scoring="running">Scoring</span>' in _row(html, ids["d"])
     # No task at all: it says so instead of "waiting".
     async def lone(s):
         org = (await s.execute(select(Org))).scalars().first()
@@ -1544,7 +1544,7 @@ def test_unscored_rows_say_why_background_queued_running_and_not_queued():
     nq = asyncio.run(_with_session(lone))
     with _client() as c:
         html = _get(c, "/opportunities")
-    assert 'data-scoring="not_queued">not queued</span>' in _row(html, nq)
+    assert 'data-scoring="not_queued">Waiting</span>' in _row(html, nq)
 
 
 def test_a_role_on_a_switched_off_track_reads_held():
@@ -1568,7 +1568,7 @@ def test_a_role_on_a_switched_off_track_reads_held():
                 tracks.switched_off_tracks = orig  # type: ignore[assignment]
     finally:
         tracks.forget_cache()
-    assert 'data-scoring="held">held</span>' in _row(html, ids["d"])
+    assert 'data-scoring="held">Paused</span>' in _row(html, ids["d"])
 
 
 def test_being_scored_header_explains_the_background_roles(monkeypatch):

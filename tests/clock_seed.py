@@ -37,6 +37,15 @@ def ago_within(delta: timedelta, period_start: datetime, *, horizon: timedelta,
     return max(now - delta, period_start + (horizon - delta) / 600)
 
 
+def ago(now: datetime | None = None, *, horizon: timedelta = timedelta(hours=1),
+        **delta: float) -> datetime:
+    """`now - timedelta(**delta)` kept inside today (this machine's day) when the gap is under
+    `horizon` (an hour by default); older rows are untouched.
+    For the `_ago(minutes=5)` helpers that seed "a moment ago"."""
+    now = now or datetime.now(UTC)
+    return ago_within(timedelta(**delta), local_day_start(now), horizon=horizon, now=now)
+
+
 # The instants the boundary tests freeze the clock at: one minute into the 1st of a month in UTC
 # (what Windows CI runs on) and on this machine's own clock (where "today" is decided).
 JUST_AFTER_MIDNIGHT_ON_THE_1ST = (

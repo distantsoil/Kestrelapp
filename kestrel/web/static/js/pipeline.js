@@ -456,15 +456,39 @@
   // closed, under the pointer, and the item being reached for would vanish. The open menu is
   // remembered by row and opened again in the new list.
   var menuRow = null;
+  // Each row's reason chip before a refresh, so only a chip whose state changed fades in.
+  var chipBefore = {};
+  function noteChips(list) {
+    var m = {};
+    $$('.pl-row[data-id]', list).forEach(function (r) {
+      var c = $('.pl-chip', r);
+      if (c) m[r.dataset.id] = c.getAttribute('data-scoring');
+    });
+    return m;
+  }
+  function markChangedChips(list) {
+    var before = chipBefore;
+    chipBefore = {};
+    if (reduced()) return;
+    $$('.pl-row[data-id]', list).forEach(function (r) {
+      var c = $('.pl-chip', r);
+      var was = before[r.dataset.id];
+      if (!c || was === undefined || was === c.getAttribute('data-scoring')) return;
+      c.classList.add('is-changed');
+      cx.after(700, function () { c.classList.remove('is-changed'); });
+    });
+  }
   function onMenuBeforeSwap(e) {
     var t = e.target;
     if (!t || t.id !== 'pipeline-list') return;
+    chipBefore = noteChips(t);
     var d = t.querySelector('details.pl-more[open]');
     var row = d && d.closest('.pl-row');
     menuRow = row ? row.getAttribute('data-id') : null;
   }
   function onMenuAfterSwap(e) {
     var t = e.target;
+    if (t && t.id === 'pipeline-list') markChangedChips(t);
     if (t && t.id === 'pipeline-list' && menuRow) {
       var d = t.querySelector('.pl-row[data-id="' + menuRow + '"] details.pl-more');
       if (d) d.open = true;

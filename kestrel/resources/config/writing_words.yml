@@ -1,0 +1,28 @@
+# Words the plain-writing check looks for in generated prose (issue #93). Kestrel never rewrites
+# your text with this list; it only marks where generated text uses one of these words.
+#
+# tier1: marked, and Kestrel asks the model once to say it another way.
+# tier2: fine once; marked only when two or more appear in the same piece of writing.
+# add_tier1 / add_tier2: your own words, added to the lists above. Edit these two.
+tier1:
+  - robust
+  - seamless
+  - pivotal
+  - delve
+  - tapestry
+  - landscape
+  - journey
+  - synergy
+  - passionate
+  - thrilled
+  - unlock
+  - elevate
+tier2:
+  - ecosystem
+  - holistic
+  - streamline
+  - foster
+  - navigate
+  - drive
+add_tier1: []
+add_tier2: []

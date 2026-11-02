@@ -21,7 +21,7 @@ _P8 = {
     "situation": "The platform was failing under peak load.",
     "task": "Restore reliability without a rewrite.",
     "action": "I triaged, re-architected the hot path, and shipped in stages.",
-    "result": "Error rate fell from 4 percent to under 0.1 percent.",
+    "result": "Error rate fell sharply.",
     "reflection": "I would have invested in load testing far sooner.",
     "themes": ["turnaround", "technical_judgment"],
     "uncertain_details": [],

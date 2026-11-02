@@ -1112,8 +1112,11 @@ track the top-level object is authoritative for post-processing and `g_risk` is 
 description (after whitespace normalization; text in an unspaced script such as Chinese, Japanese
 or Thai is counted by characters, under 120) and no trigger event is not sent to the model. It is
 not a failure: no quarantine row, no Retry. It stays at `t1_pass` with `stage_reason` "t2 posting
-has no description" and reads **Not scored: the posting has no description** in Pipeline and on the
-role page (the D-UI-225 pattern). A manual paste, an RFP, a referral and a trigger event are
+has no description" and reads **No description** in Pipeline, in the group **Won't be scored unless
+you act**, with the reason "The posting has no description." and a **Paste the description**
+action (D-UI-236); on the role page it reads Not scored with the same reason (the D-UI-225
+pattern). Pasted text re-runs Tier 0 and the normal pipeline scores it; it must clear the same
+40-word bar. A manual paste, an RFP, a referral and a trigger event are
 exempt. A re-scrape that brings a body re-queues Tier 2 (`changed`); a re-scrape of a role already
 scored to a stub keeps its score and stage. A Glassdoor pay band (JobSpy's p10-p90
 `payPeriodAdjustedPay`) is stored with `comp_source = inferred`, reaches the model labelled as a

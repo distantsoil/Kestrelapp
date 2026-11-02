@@ -1,0 +1,29 @@
+{# Paste the description (issue #90, D-UI-236): the action for a posting that came with no text.
+   Shared by the Pipeline panel and the role page. Needs `opp`, `posting_url` (may be empty), `base`
+   (the role page's return path) and `where` ('panel' posts with htmx and refills the panel;
+   'role' posts a plain form and comes back to the role page with a notice). A hidden role cannot
+   take it: it says to unhide first. The text is capped at 50,000 characters here and on the
+   server. The open and close is pipeline's data-pl-paste-open hook in kestrel-ui.js. #}
+{% macro paste_block(opp, posting_url, where='panel') -%}
+  {% if opp.archived_at %}
+    <p class="pl-dsm" data-testid="paste-hidden">Unhide it first, then paste the description.</p>
+  {% else %}
+  <div class="pl-paste" data-testid="panel-paste" data-pl-paste>
+    <div class="pl-paste__btns">
+      <button type="button" class="k-btn k-btn--primary" data-pl-paste-open aria-expanded="false" aria-controls="pl-paste-form" data-testid="panel-paste-open">Paste the description</button>
+      {% if posting_url %}<a class="k-btn" href="{{ posting_url }}" target="_blank" rel="noopener noreferrer" data-testid="panel-open-posting">Open posting</a>{% endif %}
+      {{ caller() if caller else '' }}
+    </div>
+    <div class="pl-paste__wrap"><div class="pl-paste__in">
+      {% if where == 'role' %}<form id="pl-paste-form" class="pl-paste__form" method="post" action="/opportunities/{{ opp.id }}/description">
+        <input type="hidden" name="back" value="role">
+      {% else %}<form id="pl-paste-form" class="pl-paste__form" hx-post="/opportunities/{{ opp.id }}/description" hx-target="#pl-panel" hx-swap="innerHTML">{% endif %}
+        <label for="pl-paste-text" class="pl-paste__l">Posting text</label>
+        <textarea id="pl-paste-text" name="text" class="k-input" rows="7" required maxlength="50000" placeholder="Paste the whole posting here."></textarea>
+        <div class="pl-dsm">The text stays on this computer. Kestrel checks it against your rules, then scores it.</div>
+        <button type="submit" class="k-btn k-btn--primary" data-testid="panel-paste-save">Save and score</button>
+      </form>
+    </div></div>
+  </div>
+  {% endif %}
+{%- endmacro %}

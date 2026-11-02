@@ -137,9 +137,19 @@
   border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink); }
 .pl-again .k-dot { margin-top: 5px; flex: none; }
 .pl-earlier, .pl-hint-again { color: var(--muted); font-weight: 400; }
-.pl-pill-new { background: var(--soft); color: var(--brand); }
-.pl-pill-new[data-scoring="running"]::before, .pl-pill-new[data-scoring="queued"]::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: k-pulse 1.4s infinite; }
+/* The reason chip on a role with no score yet (issue #90, D-UI-236). Waiting is muted and dashed,
+   scoring is the active brand tint, and the final states are quiet: nothing here looks like a
+   rejection or an error. A chip fades in only when its state changed (pipeline.js adds
+   .is-changed after a list refresh), so a poll never redraws one that did not. */
+.pl-chip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; line-height: 1.5;
+  border: 1px solid transparent; transition: background-color .25s var(--ease), color .25s var(--ease), border-color .25s var(--ease); }
+.pl-chip--wait { background: transparent; color: var(--muted); border: 1px dashed var(--muted); }
+.pl-chip--live { background: var(--soft); color: var(--brand); }
+.pl-chip--live::before { content: ""; display: inline-block; margin-right: 5px; vertical-align: middle; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: k-pulse 1.4s infinite; }
+.pl-chip--final { background: transparent; color: var(--muted); border-color: var(--line); }
+.pl-chip.is-changed { animation: pl-chip-in .3s var(--ease) both; }
+@keyframes pl-chip-in { from { opacity: 0; transform: scale(.92); } }
+.pl-row.is-new[data-group="unscored"] { --rc: var(--muted); }
 .pl-end { display: flex; align-items: center; gap: 8px; justify-self: end; }
 .pl-score { text-align: right; font-weight: 800; font-size: 17px; white-space: nowrap; color: var(--muted); }
 .pl-score small { font-size: var(--fs-sm); color: var(--muted); font-weight: 500; }
@@ -333,7 +343,7 @@
 @media (prefers-reduced-motion: reduce) {
   .pl-cue svg, .pl-arrive > * { animation: none !important; }
   .pl-panel, .pl-panel__in > *, .pl-bulk, .pl-foot, .pl-foot__a, .pl-fr, .pl-fl, .pl-mf, .pl-row, .pl-ring, .pl-dim u,
-  .pl-list .pl-rows, .pl-drop, .pl-more__menu { animation: none !important; transition: none !important; }
+  .pl-list .pl-rows, .pl-drop, .pl-more__menu, .pl-chip { animation: none !important; transition: none !important; }
 }
 
 /* "On my shortlist" footer button: the mockup's .btn.done is a full-strength green, not a dimmed

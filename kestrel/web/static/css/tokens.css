@@ -55,7 +55,7 @@
   --scrim:rgba(10,14,34,.18);--scrim-strong:rgba(10,14,34,.42);--wash:rgba(255,255,255,.2);--toast-bg:#1B8552;--toast-ink:#FFFFFF;--toast-action:#FFFFFF;
   /* The shell (D-UI-88, D-UI-91): the bell glyph, and the Windows close hover, the one place the
      operating system's own color is mimicked. */
-  --bell:#E0A100;--wc-close:#C42B1C;--wc-close-ink:#FFFFFF;
+  --bell:#8A5A00;--wc-close:#C42B1C;--wc-close-ink:#FFFFFF;
   --main-bg:linear-gradient(180deg,#E1E8FF 0,#F5F7FC 460px);--side-bg:#FFFFFF;--frame-strip:#FFFFFF;
   --sky-top:#F5F7FC;--sky-bot:#E1E8FF;--m1:#D3DCFB;--m1s:#BCC8F6;--m2:#AFBDF3;--m2s:#93A3EC;--m3:#7F8FE4;--m3s:#6A7BDB;--snow:#FFFFFF;--tree:#4E5CD2;--tree2:#6B79DE;--tree3:#8B97E8;--orb:#F7C873;--glow:#FBE3AE;--mist:#FFFFFF;--bird:#5E6584;--z1:#E8857D;--z2:#EDBF55;--z3:#5DBB8A;
   --water:#C3CFF8;--water2:#9FB0F0;--lite:#F7C873;--sand:#E6E1F7;--sand2:#CFC6EE;--leaf:#8E9BE6;--aur1:#7FD8C4;--aur2:#B49BF0;

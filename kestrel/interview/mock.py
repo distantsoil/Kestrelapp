@@ -18,8 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import MockSession, Quarantine, Story
 from kestrel.llm.guard import QuarantineHook
+from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 from kestrel.pipeline.profile import load_profile
+from kestrel.writing_check import operator_spans
 
 MODES = ("behavioral", "technical_leadership", "executive_panel", "consulting_discovery")
 _MODE_OPENERS = {
@@ -154,7 +156,7 @@ async def submit_answer(
         stories = await _canonical_stories(session)
     proof_block, story_block = build_mock_context(proof_points, stories)
 
-    spec = load_prompt("mock_critique/v1")
+    spec = load_prompt("mock_critique/v2")
     user = _render_user(
         spec.user,
         proof_block=proof_block,
@@ -167,20 +169,32 @@ async def submit_answer(
     # redacted before the send, or the send is refused when nothing is marked.
     from kestrel.pipeline._shared import run_prompt_hosted
 
-    result = await run_prompt_hosted(
-        session, client, spec, messages, quarantine_tier=2,
-        on_quarantine=_quarantine_hook(session),
-    )
+    hook = _quarantine_hook(session)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, spec, msgs, quarantine_tier=2,
+            on_quarantine=None if reask else hook,  # a failed re-ask leaves no quarantine row
+        )
+
+    result = await run(messages)
     if not result.ok or result.value is None:
         await session.commit()  # persist the quarantine row the hook staged (hard rule 3)
         return None
 
-    v = result.value
+    # The person's own answer is quoted back in the critique (in revised_opening too): every
+    # sentence and clause of it is skipped by span, never judged.
+    plain = await enforce(
+        spec, result.value, messages=messages, run=run, exempt=operator_spans(answer)
+    )
+    v = plain.value
     scores = v.scores.model_dump()
     pending["answer"] = answer
     pending["critique"] = {"worked_well": v.worked_well, "improvements": list(v.improvements)}
     pending["scores"] = scores
     pending["unsupported_claims"] = list(v.unsupported_claims)
+    if plain.flags:
+        pending["style_flags"] = plain.flags
     if ran_on:
         pending["ran_on"] = ran_on  # "computer" or "online", shown on the feedback
 

@@ -258,6 +258,29 @@
 .of-prep .k-badge { width: 30px; height: 30px; border-radius: 9px; }
 .of-prep b { display: block; }
 
+/* Negotiate before an offer arrives (D-UI-236): the numbers, the asks, the situation cards. Each
+   section rises in with the pane (mockup rise .35s); reduced motion turns it off. */
+.of-np { min-width: 0; }
+.of-hello.of-np { flex-wrap: wrap; }
+.of-hello.of-np .k-grow { flex: 1 1 220px; min-width: 0; }
+.of-two.of-np { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+.of-nums-list { display: flex; gap: 28px; flex-wrap: wrap; margin: 4px 0 10px; }
+.of-nums-list div { min-width: 0; }
+.of-nums-list dt { font-size: var(--fs-sm); font-weight: 700; color: var(--muted); }
+.of-nums-list dd { display: flex; align-items: baseline; gap: 6px; margin: 2px 0 0; font-size: 22px; font-weight: 800; color: var(--ink); }
+.of-nums-list dd small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.of-asks { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.of-asks li { border: 1px solid var(--line); background: var(--soft); border-radius: 999px;
+  padding: 5px 12px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.of-sitgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 10px; margin: 12px 0; }
+.of-sitgrid .of-sit { transition: border-color var(--dur-1), background var(--dur-1); }
+.of-sitgrid .of-sit[disabled] { opacity: .7; }
+.of-np-draft { margin-top: 4px; }
+.k-pane-in .of-np { animation: k-inUp .4s var(--ease) both; }
+.k-pane-in .of-np:nth-child(2) { animation-delay: .05s; }
+.k-pane-in .of-np:nth-child(3) { animation-delay: .1s; }
+
 /* ----------------------------------------------------------------------------- the sheet */
 #of-sheet { --modal-w: 760px; }
 .of-sb { display: flex; flex-direction: column; gap: 14px; }
@@ -300,7 +323,8 @@
 @media (prefers-reduced-motion: reduce) {
   .of-tab { transition: none; }
   .of-card.arrive, .of-draft.unlock { animation: none; }
-  .k-pane-in .of-card, .of-menu { animation: none; }
+  .k-pane-in .of-card, .k-pane-in .of-np, .of-menu { animation: none; }
+  .of-sitgrid .of-sit { transition: none; }
 }
 
 /* "More about this" reads with a chevron (mockup help links). */

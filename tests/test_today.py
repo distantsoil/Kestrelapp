@@ -45,6 +45,7 @@ from kestrel.db.models import (
     Setting,
     Source,
 )
+from tests import clock_seed
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -64,7 +65,7 @@ def _today() -> date:
 
 
 def _ago(**kw) -> str:
-    return iso(_now() - timedelta(**kw))
+    return iso(clock_seed.ago(_now(), **kw))
 
 
 def _fresh_engine():

@@ -58,7 +58,7 @@ Under **Our promises**, select a row to read its details. The promises are **Fre
 
 Kestrel's license is **PolyForm Noncommercial License 1.0.0**. The **The license in plain words** card explains that personal, hobby, research, and similar noncommercial use is allowed. Commercial use requires permission. The full license text is in `LICENSE.md` in the source repository. Each bundled library has its own license; open **Third-party notices** and choose **Open the notices as a page** to read those license texts.
 
-**Built with** credits the AI models that helped write and review Kestrel: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, MiniMax M3, LongCat, Kimi K2.7, and MiMo. **Built on** links to JobSpy, which provides the job-board ingestion layer. **Ideas from** links to career-ops and parametric-resume-builder; Kestrel says it took no code or text from them.
+**Built with** credits the AI models that helped write and review Kestrel: Claude, ChatGPT, Qwen, DeepSeek, NVIDIA Nemotron, MiniMax M3, LongCat, Kimi K2.7, and MiMo. **Built on** links to JobSpy, which provides the job-board ingestion layer. **Ideas from** links to career-ops and parametric-resume-builder; Kestrel says it took no code or text from them. The plain-writing rules for generated text (no dashes as punctuation, no stock words, no invented detail) take their idea from the open source avoid-ai-writing skill by Conor Bronsdon (MIT license). Kestrel copies none of its text or code, and the check that looks over generated text is Kestrel's own.
 
 The **Source and support** card links to the GitHub source and issues, Ko-fi, and kestrelapp.co. Ko-fi support is optional and does not buy features or priority. The **Something wrong?** card offers **Open Help** and bug-report guidance.
 

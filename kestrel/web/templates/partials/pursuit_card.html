@@ -24,7 +24,7 @@
     <button type="button" class="ap-kb" data-more aria-haspopup="menu" aria-label="More actions for {{ c.title }}">{{ ui.icon('more', 'k-ic--sm') }}</button>
   </div>
   <div class="ap-tags">
-    {%- if c.fit.score %}<span class="k-pill k-pill--info">Fit {{ c.fit.score }}</span>{% else %}<span class="k-pill k-pill--info"{% if c.fit.unscored %} title="{{ c.fit.unscored }}" data-testid="unscored-why"{% endif %}>{{ 'Not scored' if c.fit.unscored else 'Being scored' }}</span>{% endif -%}
+    {%- if c.fit.score %}<span class="k-pill k-pill--info">Fit {{ c.fit.score }}</span>{% else %}<span class="k-pill k-pill--info"{% if c.fit.unscored %} title="{{ c.fit.unscored }}" data-testid="unscored-why"{% endif %}>{{ unscored_label if c.fit.unscored else 'Being scored' }}</span>{% endif -%}
     {%- if c.priority %}<span class="k-pill k-pill--bad" data-testid="priority-tag">High priority</span>{% endif -%}
     {%- if c.is_new %}<span class="k-pill ap-newtag">New</span>{% endif -%}
     {%- if c.quiet_days %}<span class="k-pill k-pill--warn" data-testid="quiet">{{ ui.icon('clock') }}{{ c.quiet_days }} day{{ '' if c.quiet_days == 1 else 's' }} quiet</span>{% endif -%}
@@ -60,6 +60,6 @@
   <td><span class="k-pill ap-stagepill" data-col="{{ c.column }}">{{ c.stage_label }}</span></td>
   <td>{% if c.folded %}<span class="k-muted">Closed</span>{% elif c.next.text %}{{ c.next.text }}{% else %}<span class="k-muted">None</span>{% endif %}</td>
   <td class="{% if c.overdue %}ap-late{% endif %}">{% if c.folded %}<span class="k-muted">-</span>{% elif c.quiet_days %}{{ c.quiet_days }} day{{ '' if c.quiet_days == 1 else 's' }} quiet{% elif c.next.when %}{{ c.next.when }}{% else %}<span class="k-muted">-</span>{% endif %}</td>
-  <td>{% if c.fit.score %}{{ c.fit.score }}{% else %}<span class="k-muted"{% if c.fit.unscored %} title="{{ c.fit.unscored }}"{% endif %}>{{ 'Not scored' if c.fit.unscored else 'Being scored' }}</span>{% endif %}</td>
+  <td>{% if c.fit.score %}{{ c.fit.score }}{% else %}<span class="k-muted"{% if c.fit.unscored %} title="{{ c.fit.unscored }}"{% endif %}>{{ unscored_label if c.fit.unscored else 'Being scored' }}</span>{% endif %}</td>
 </tr>
 {%- endmacro %}

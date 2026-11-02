@@ -662,6 +662,17 @@
       e.preventDefault();
       return;
     }
+    if ((n = closest(t, 'data-pl-paste-open'))) {
+      // Paste the description (issue #90): the form beside the button opens in place, eased.
+      var box = n.closest('[data-pl-paste]');
+      if (!box) return;
+      var opening = !box.classList.contains('is-open');
+      box.classList.toggle('is-open', opening);
+      n.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      var ta = box.querySelector('textarea');
+      if (opening && ta) setTimeout(function () { ta.focus(); }, reduced() ? 0 : 280);
+      return;
+    }
     if ((n = closest(t, 'data-k-step'))) { step(n); return; }
     if ((n = t.closest && t.closest('[data-k-seg] button'))) {
       var seg = n.closest('[data-k-seg]');

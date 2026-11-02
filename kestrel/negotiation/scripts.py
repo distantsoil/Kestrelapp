@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.models import Pursuit, Quarantine
 from kestrel.llm.guard import QuarantineHook
+from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import load_prompt
 from kestrel.negotiation.benchmark import benchmark_offer
 from kestrel.negotiation.valuation import bonus_amount, first_year_comp
@@ -94,6 +95,7 @@ class ScriptResult:
     leverage_inventory: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     unsupported_scenarios: list[str] = field(default_factory=list)
+    style_flags: list[dict] = field(default_factory=list)  # plain-writing marks (issue #93)
 
 
 def _offer_summary(offer: Any, track: str) -> str:
@@ -173,25 +175,30 @@ def _quarantine_hook(session: AsyncSession) -> QuarantineHook:
 async def draft_scripts(
     session: AsyncSession,
     client: Any,
-    pursuit_id: int,
+    pursuit_id: int | None,
     *,
     walk_away: str,
     scenarios: list[str] | None = None,
     proof_points: list | None = None,
     ask: str | None = None,
+    track: str = "employment",
 ) -> ScriptResult | None:
     """Draft negotiation scripts for the pursuit's offer. `walk_away` is REQUIRED and supplied by
     the operator; it is passed to the model verbatim and echoed back unchanged. Each returned script
     is grounded-checked and flagged if its justification rests on nothing supplied. `ask` is the
     figure the operator plans to ask for (also theirs); it is told to the model as a plain line of
-    the offer summary and never adjusted."""
-    pursuit = await session.get(Pursuit, pursuit_id)
-    if pursuit is None:
-        return None
-    track = pursuit.track or "employment"
-
-    benchmark = await benchmark_offer(session, pursuit_id)
-    offer = await _load_offer(session, pursuit_id, track)
+    the offer summary and never adjusted. `pursuit_id=None` is the preparation draft (D-UI-236):
+    no offer is recorded, so nothing is stored or read for it and `track` says which profile to
+    use; the model is told "no offer recorded yet" and there is never a competing offer."""
+    benchmark = None
+    offer = None
+    if pursuit_id is not None:
+        pursuit = await session.get(Pursuit, pursuit_id)
+        if pursuit is None:
+            return None
+        track = pursuit.track or "employment"
+        benchmark = await benchmark_offer(session, pursuit_id)
+        offer = await _load_offer(session, pursuit_id, track)
     if proof_points is None:
         profile = load_profile(track)
         proof_points = list(getattr(profile, "proof_points", None) or []) if profile else []
@@ -208,7 +215,7 @@ async def draft_scripts(
     if not competing:
         scenarios = [s for s in scenarios if s != "competing_offer"]
 
-    spec = load_prompt("negotiate/v1")
+    spec = load_prompt("negotiate/v2")
     user = _render_user(
         spec.user,
         offer_summary=_offer_summary(offer, track)
@@ -221,15 +228,21 @@ async def draft_scripts(
         scenarios=scenarios,
     )
     messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
-    result = await run_prompt_hosted(
-        session, client, spec, messages, quarantine_tier=11,
-        on_quarantine=_quarantine_hook(session),
-    )
+    hook = _quarantine_hook(session)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, spec, msgs, quarantine_tier=11,
+            on_quarantine=None if reask else hook,  # a failed re-ask leaves no quarantine row
+        )
+
+    result = await run(messages)
     if not result.ok or result.value is None:
         await session.commit()  # persist any quarantine row the hook staged
         return None
 
-    v = result.value
+    plain = await enforce(spec, result.value, messages=messages, run=run)
+    v = plain.value
     scripts: list[dict] = []
     unsupported: list[str] = []
     for sc in v.scripts:
@@ -251,6 +264,7 @@ async def draft_scripts(
         leverage_inventory=list(v.leverage_inventory),
         risks=list(v.risks),
         unsupported_scenarios=unsupported,
+        style_flags=plain.flags,
     )
 
 

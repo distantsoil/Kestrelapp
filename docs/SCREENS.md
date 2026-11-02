@@ -22,8 +22,7 @@ times.
 
 ![The Today page with the Your next three things list (apply to roles on your list, follow up on an overdue application), the Overnight counts and the setup items, in the sidebar shell.](images/dashboard-dark.png)
 
-**The Pipeline is a triage list in fit groups.** Rows sit under Worth a look, Maybe and Not scored
-yet, with Not a fit collapsed at the bottom and its count split between rules and the model. Each
+**The Pipeline is a triage list in fit groups.** Rows sit under Worth a look, Maybe, Being scored and Won't be scored unless you act, with Not a fit collapsed at the bottom and its count split between rules and the model. Each
 row carries a fit word (strong fit, good fit, your call, maybe), one line of facts and a single fit
 number; chips above filter by state, and a drawer holds the evaluation and actions.
 

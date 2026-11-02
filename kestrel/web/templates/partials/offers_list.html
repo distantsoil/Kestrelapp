@@ -9,6 +9,7 @@
 </nav>
 <div class="of-pane" id="of-pane" data-tab="{{ tab }}">
   {%- if tab == 'history' %}{% include "partials/offer_history.html" %}
+  {%- elif empty and tab == 'negotiate' %}{% include "partials/offer_negotiate_prep.html" %}
   {%- elif empty %}{% include "partials/offer_empty.html" %}
   {%- elif tab == 'negotiate' %}
     {%- if open_n %}{% include "partials/offer_negotiate.html" %}

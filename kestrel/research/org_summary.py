@@ -55,7 +55,7 @@ from kestrel.llm.schemas import (
 log = structlog.get_logger()
 
 TASK_TYPE = "org_summary"
-PROMPT = "org_summary/v1"
+PROMPT = "org_summary/v2"
 QUARANTINE_TIER = 16
 MAX_ATTEMPTS = 3
 MIN_SOURCES = 2
@@ -359,15 +359,16 @@ async def summarize(
     user = spec.user.replace("{org_name}", org.name)
     user = user.replace("{EXCERPTS}", render_excerpts(excerpts))
     messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
-    result = await run_prompt_hosted(
-        session,
-        client,
-        replace(spec, model_cls=model_cls),
-        messages,
-        quarantine_tier=QUARANTINE_TIER,
-        on_quarantine=make_quarantine_hook(session, tier=QUARANTINE_TIER, opportunity_id=None),
-        schema=summary_schema(model_cls),
-    )
+    call_spec = replace(spec, model_cls=model_cls)
+    hook = make_quarantine_hook(session, tier=QUARANTINE_TIER, opportunity_id=None)
+
+    async def run(msgs: list[dict], reask: bool = False) -> Any:
+        return await run_prompt_hosted(
+            session, client, call_spec, msgs, quarantine_tier=QUARANTINE_TIER,
+            on_quarantine=None if reask else hook, schema=summary_schema(model_cls),
+        )
+
+    result = await run(messages)
     if result.quarantined:
         # The quarantine row (full prompt, raw reply) is staged by the hook. A previous good
         # summary stays as it was (the attempt time is kept by note_attempt); otherwise the page
@@ -398,13 +399,19 @@ async def summarize(
             model_called=True,
         )
 
-    value = result.value
+    from kestrel.llm.plain_repair import enforce
+
+    plain = await enforce(spec, result.value, messages=messages, run=run)
+    value = plain.value
     sentences = [
         {
             "text": display_text(s.text, max_words=MAX_WORDS),
             "source_indexes": list(s.source_indexes),
+            "style_flags": [
+                f for f in plain.flags if f.get("field") == f"sentences[{n}].text"
+            ],
         }
-        for s in value.sentences[:MAX_SUMMARY_SENTENCES]
+        for n, s in enumerate(value.sentences[:MAX_SUMMARY_SENTENCES])
         if s.text.strip()
     ]
     if 0 < len(sentences) < MIN_SENTENCES:

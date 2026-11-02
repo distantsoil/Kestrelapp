@@ -291,11 +291,13 @@
         {{ kicon('search') }}<span class="k-search__text">Search or jump to...</span><kbd data-k-kbd>Ctrl K</kbd></button>
       <span class="k-tools__gap pywebview-drag-region" data-k-drag aria-hidden="true"></span>
       <div class="k-bellwrap" x-data="bellPanel()" @keydown.escape.window="close()">
-        <button class="k-icon k-bell" type="button" data-k-tip="Notifications" aria-label="Notifications"
+        {% set bell_n = bell_unread() %}
+        <button class="k-icon k-bell" type="button" data-k-tip="Notifications"
+                aria-label="{{ 'Notifications, %d unread' % bell_n if bell_n else 'Notifications' }}"
                 aria-haspopup="dialog" :aria-expanded="open ? 'true' : 'false'" @click="toggle()"
                 data-testid="bell" x-ref="bell"
                 hx-get="/notifications/bell" hx-trigger="load, every 20s" hx-target="#bellcount"
-                hx-swap="innerHTML">{{ kicon('bell') }}<span id="bellcount" class="k-icon__n"></span></button>
+                hx-swap="innerHTML">{{ kicon('bell') }}<span id="bellcount" class="k-icon__n" aria-hidden="true" data-last="{{ bell_label(bell_n) }}">{{ bell_label(bell_n) }}</span></button>
         {# The click-outside layer stays in the top row's own layer, just under the panel; on
            <body> it sat above the whole top row, panel included (owner round 15). #}
         <div class="k-nscrim" x-show="open" x-cloak @click="close()"></div>
@@ -569,6 +571,29 @@
       },
     };
   }
+  // The bell badge (#95): the server sends the true unread count in HX-Trigger-After-Swap, so the
+  // button's aria-label carries it even when the badge shows "9+", and a changed label ticks once.
+  document.body.addEventListener('bellCount', function (e) {
+    var n = Number(e.detail && e.detail.value) || 0;
+    var btn = document.querySelector('[data-testid="bell"]');
+    var badge = document.getElementById('bellcount');
+    if (btn) btn.setAttribute('aria-label', n ? 'Notifications, ' + n + ' unread' : 'Notifications');
+    if (!badge) return;
+    var label = badge.textContent, last = badge.dataset.last;
+    // Only a real change after load moves it: a badge that appears replays its entry, a count
+    // that changes ticks once. Both classes clear on animationend, so the next change replays.
+    var cls = last === label || !label ? '' : (last === '' ? 'is-in' : 'is-tick');
+    if (cls) {
+      badge.classList.remove('is-in', 'is-tick'); void badge.offsetWidth; badge.classList.add(cls);
+    }
+    badge.dataset.last = label;
+  });
+  (function () {
+    var badge = document.getElementById('bellcount');
+    if (badge) badge.addEventListener('animationend', function () {
+      badge.classList.remove('is-in', 'is-tick');
+    });
+  })();
   // The bell panel: opens under the bell over a scrim.
   function bellPanel() {
     return {
