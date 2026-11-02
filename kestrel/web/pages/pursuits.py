@@ -547,12 +547,15 @@ async def _follow_up_view(
     result = payload.get("result")
     if result and conf_on:
         result = mapping.redact_json(result)
+    style_flags = (payload.get("style_flags") or []) if result else []
+    if style_flags and conf_on:
+        style_flags = mapping.redact_json(style_flags)
     shown_facts = mapping.redact_json(facts) if conf_on else facts
     return templates().TemplateResponse(request, "partials/follow_up.html", {
         "pid": pursuit.id, "route": await drafts.disclosure(session, settings),
         "facts": shown_facts, "facts_stamp": drafts.stamp(facts),
         "eligible": drafts.eligible(pursuit), "error": error or payload.get("error"),
-        "task": task, "result": result,
+        "task": task, "result": result, "style_flags": style_flags,
         "pending": pending,
     })
 

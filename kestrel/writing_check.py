@@ -358,14 +358,124 @@ def _number_keys(text: str, *, words_from: int = 1) -> list[set[str]]:
     return out
 
 
-def ungrounded_details(
+# Named details (#113): a run of two or more capitalized words ("Dana Whitfield", "Corvane
+# Systems"). Built to under-flag: a run is flagged only when one of its words appears in NO
+# source at all (any case); a sentence-initial word is ignored (capitalized by position), and words
+# ordinary in prose (months, weekdays, job-title and team words) never count. A name flag is a mark
+# only: it never triggers the re-ask, which could make the model delete a real fact.
+_CAP_WORD = r"[A-Z][A-Za-z0-9]*(?:['\u2019\-][A-Za-z0-9]+)*"
+_CONNECT = r"(?:of|and|&|for|the|de|del|da|di|du|van|von|der|la|le)"
+_NAME_RUN = re.compile(
+    rf"(?<![\w'\u2019-]){_CAP_WORD}(?:[ \t]+(?:{_CONNECT}[ \t]+)?{_CAP_WORD})+(?![\w-])"
+)
+_POOL_WORD = re.compile(r"[A-Za-z0-9]+")
+_ORDINARY = frozenset("""
+a an the this that these those it its i i'm i've i'd we we're our us my me you your he she
+they them their his her in on at by to of for from with without into onto over under after
+before during while when then than once since until as and or but so if because though also
+yet still now later early first next last finally however meanwhile today tomorrow yesterday
+here there what which who whom whose why how where all any each every both either neither no
+not none some many most more less few one only just even once again new old
+january february march april may june july august september october november december
+jan feb mar apr jun jul aug sep sept oct nov dec
+monday tuesday wednesday thursday friday saturday sunday mon tue tues wed thu thur thurs fri sat
+sun spring summer fall autumn winter q1 q2 q3 q4 h1 h2 fy am pm ok
+senior junior lead leader principal staff manager managers management director directors head
+chief officer vice president vp svp evp ceo cto cfo coo cio cmo cpo analyst specialist
+coordinator associate assistant executive executives engineer engineers engineering developer
+consultant architect administrator representative intern owner founder partner member members
+team teams board department division office committee group unit council project projects
+program programs product products operations ops sales marketing finance financial accounting
+legal hr people talent customer customers client clients support success service services
+platform data research design security quality infrastructure strategy business account
+accounts global regional national north south east west central america americas europe asia
+""".split())
+
+
+def _pool_words(texts: Iterable[str]) -> set[str]:
+    words: set[str] = set()
+    for t in texts:
+        words.update(w.casefold() for w in _POOL_WORD.findall(t or ""))
+    return words
+
+
+def _novel(run: str, pool: set[str]) -> bool:
+    """True when the run carries a word found in no source and not ordinary in prose. A
+    possessive is read without its "'s"; a word-and-digits code like a send's placeholder is
+    never novel on its own."""
+    for word in re.split(r"[ \t]+", run):
+        word = re.sub(r"['\u2019]s$", "", word)
+        for part in re.split(r"[-'\u2019]", word):
+            key = part.casefold()
+            if (not key or key in _ORDINARY or key in pool or not part[:1].isalpha()
+                    or (part.isupper() and any(c.isdigit() for c in part))):
+                continue
+            return True
+    return False
+
+
+_SENTENCE_END = ".!?:;\n\r\u2022*-"
+
+
+def _sentence_initial(text: str, start: int) -> bool:
+    """True when the word at `start` opens a sentence, a line or a bullet: it is capitalized by
+    position, so it says nothing about being a name."""
+    before = text[:start].rstrip(" \t\"'\u201c\u2018([")
+    return not before or before[-1] in _SENTENCE_END
+
+
+def _name_phrase(text: str, m: re.Match) -> str | None:
+    """The run as written, without a sentence-initial word (and any connector after it), when
+    it still has two or more capitalized words; else None."""
+    run = m.group(0)
+    toks = list(re.finditer(r"\S+", run))
+    if _sentence_initial(text, m.start()):
+        toks = toks[1:]
+    # A connector left at the front, and the pronoun "I" at either end, are not part of a name.
+    while toks and (not toks[0].group(0)[:1].isupper() or toks[0].group(0) == "I"):
+        toks = toks[1:]
+    while toks and toks[-1].group(0) == "I":
+        toks = toks[:-1]
+    if sum(1 for t in toks if t.group(0)[:1].isupper()) < 2:
+        return None
+    return run[toks[0].start():toks[-1].end()]
+
+
+def ungrounded_names(
     fields: Mapping[str, str], sources: Iterable[str]
+) -> list[dict[str, str]]:
+    """Named details in generated fields grounded in none of `sources`. A caller passes every
+    text the output may name things from: its prompt's material (sketches, proof points, the
+    posting it was given) AND the person's own resume roles, companies, titles and bullets, plus
+    the confidential "Show it as" text, so a real employer, title or name is never flagged.
+    These flags are marks only and never trigger a re-ask (`plain_repair.enforce`). Flags:
+    {"kind": "ungrounded", "detail": "name", "field", "phrase"}, where the phrase is always text
+    from the output itself, as written. Deterministic; reads text only."""
+    pool = _pool_words(sources)
+    flags: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for field, text in fields.items():
+        for m in _NAME_RUN.finditer(text or ""):
+            run = _name_phrase(text, m)
+            if run and _novel(run, pool) and (field, run.casefold()) not in seen:
+                seen.add((field, run.casefold()))
+                flags.append(
+                    {"kind": "ungrounded", "detail": "name", "field": field, "phrase": run}
+                )
+    return flags
+
+
+def ungrounded_details(
+    fields: Mapping[str, str], sources: Iterable[str],
+    *, name_sources: Iterable[str] | None = None,
 ) -> list[dict[str, str]]:
     """Numbers in generated story fields that appear in none of the `sources` (the sketches and
     proof points the story was merged from). Returns flags of kind "ungrounded":
     {"kind", "field", "phrase"}. Numbers are compared by normalized value: $500K, 500,000 and
-    500000 are one number, "three" is 3, "4 percent" is "4%". Named details are NOT checked
-    (D-UI-236 amendment). Deterministic; reads text only."""
+    500000 are one number, "three" is 3, "4 percent" is "4%". With `name_sources` (the person's
+    resume and redaction text), named details are also checked against `sources` plus those
+    (`ungrounded_names`); without it they are not. Deterministic; reads text only."""
+    sources = list(sources)
     pool: set[str] = set()
     for src in sources:
         for keys in _number_keys(src or ""):
@@ -390,6 +500,8 @@ def ungrounded_details(
             if n >= 2 and key not in pool and (field, token.lower()) not in seen:
                 seen.add((field, token.lower()))
                 flags.append({"kind": "ungrounded", "field": field, "phrase": token})
+    if name_sources is not None:
+        flags += ungrounded_names(fields, [*sources, *name_sources])
     return flags
 
 
@@ -409,6 +521,8 @@ def describe(flag: Mapping[str, Any]) -> str:
     """One plain line for a stored flag, for a title attribute or a repair request."""
     kind = flag.get("kind")
     phrase = str(flag.get("phrase") or "")
+    if kind == "ungrounded" and flag.get("detail") == "name":
+        return f"\"{phrase}\" is not in your sketches, proof points or resume. Is it right?"
     if kind == "ungrounded":
         return f"\"{phrase}\" is not in your sketches or proof points. Is it right?"
     if kind == "style_dropped":

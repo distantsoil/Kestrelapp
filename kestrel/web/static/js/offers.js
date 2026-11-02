@@ -201,6 +201,8 @@
       var body = $('#of-dbody');
       if (!body) return;
       body.contentEditable = 'true';
+      var marks = $('[data-of-marks]');
+      if (marks && root.KUI) root.KUI.fadeOut(marks); else if (marks) marks.hidden = true;  // marks belong to Kestrel's draft, not to the person's words
       body.classList.add('is-editing');
       body.focus();
       say('Edit the draft right here. Your changes stay on this computer.');

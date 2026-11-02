@@ -1440,6 +1440,17 @@
     setTimeout(function () { tick.classList.add('is-leaving'); }, 1600);
     setTimeout(function () { if (tick.parentNode) tick.parentNode.removeChild(tick); }, 2100);
   }
+  /* Fade a block out and collapse its height, then hide it (the plain-writing marks, once the
+     person edits the text). Reduced motion hides it at once. */
+  function fadeOut(el) {
+    el = el$(el);
+    if (!el || el.hidden) return;
+    if (reduced()) { el.hidden = true; return; }
+    el.style.maxHeight = el.scrollHeight + 'px';
+    void el.offsetWidth;
+    el.classList.add('k-fadeout');
+    setTimeout(function () { el.hidden = true; }, 320);
+  }
   function fold(details, open) {
     details = el$(details);
     if (!details) return;
@@ -2253,7 +2264,7 @@
     setText: setText, foldOut: foldOut, arrive: arrive, prepend: prepend, moveTo: moveTo,
     init: init, SCHEMES: SCHEMES.slice(), THEMES: THEMES.slice(),
     frame: { init: frameInit, wire: wireFrame, state: frameState, closing: closingScreen, edgeAt: edgeAt },
-    saved: saved, fold: fold, ink: ink, inkPos: inkPos, paneIn: paneIn, cue: cue,
+    saved: saved, fadeOut: fadeOut, fold: fold, ink: ink, inkPos: inkPos, paneIn: paneIn, cue: cue,
     page: page, go: navGo, navigate: navigate
   };
   root.KUI = KUI;

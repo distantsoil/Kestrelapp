@@ -555,7 +555,8 @@ UNUSABLE: Any = object()  # _merge_cluster: the model answered, but not with a s
 
 
 async def _merge_cluster(
-    session: AsyncSession, client: Any, spec: Any, sketches: list[Sketch], proof_points: list
+    session: AsyncSession, client: Any, spec: Any, sketches: list[Sketch], proof_points: list,
+    resume: list[str] | None = None,
 ) -> Story | None | Any:
     """Run P8 over a cluster and build a PROPOSED canonical story (operator_edited stays False
     until the operator rewrites it). The story is returned transient, NOT added to the session:
@@ -572,7 +573,7 @@ async def _merge_cluster(
     async def run(msgs: list[dict], reask: bool = False) -> Any:
         return await run_prompt_hosted(
             session, client, spec, msgs, quarantine_tier=2,
-            on_quarantine=None if reask else hook,  # a failed re-ask leaves no quarantine row
+            on_quarantine=hook, reask=reask,  # a failed or refused re-ask leaves no row
         )
 
     result = await run(messages)
@@ -593,8 +594,11 @@ async def _merge_cluster(
     sources = _grounding_sources(sketches, proof_points)
     plain = await enforce(
         spec, v, messages=messages, run=run, exempt=_operator_spans(sketches),
+        # Named details are grounded in the sketches, proof points AND the person's resume
+        # (roles, companies, titles, bullets, "Show it as" text), which is matched locally and
+        # never added to the prompt (#113).
         extra_check=lambda val: ungrounded_details(
-            {f: getattr(val, f) for f in _STAR_FIELDS}, sources
+            {f: getattr(val, f) for f in _STAR_FIELDS}, sources, name_sources=resume or []
         ),
         accept=lambda val, _fresh: _reask_is_a_story(v, val),
     )
@@ -699,6 +703,9 @@ async def consolidate_stories(
         profile = load_profile("employment")
         proof_points = list(getattr(profile, "proof_points", None) or []) if profile else []
         spec = load_prompt(PROMPT)
+        from kestrel.docs.current_employer import grounding_texts
+
+        resume = await grounding_texts(session)
 
         done_ids: set[int] = set()  # sketches actually consolidated (created or attached) this run
         newly_refused: dict[str, str] = {}
@@ -718,7 +725,7 @@ async def consolidate_stories(
                 attaches.append((match.id, bool(match.operator_edited), members))
                 done_ids.update(s.id for s in members)
                 continue
-            story = await _merge_cluster(session, client, spec, members, proof_points)
+            story = await _merge_cluster(session, client, spec, members, proof_points, resume)
             if story is UNUSABLE:
                 # Nothing is saved and NOTHING IS HIDDEN or dismissed: a refusal can be wrong, so
                 # the sketches stay out of done_ids (like a failed merge). Each non-note one is

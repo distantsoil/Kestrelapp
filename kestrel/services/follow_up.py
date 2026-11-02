@@ -98,6 +98,7 @@ async def disclosure(session: AsyncSession, settings: Settings) -> dict[str, Any
         "sends": settings.llm.hosted_mode.disclosure_terms()["sends"][TIER],
         "problem": await send_problem(session, settings),
         "hidden": settings.confidential_mode and route["online"],
+        "reask": True,
     }
 
 
@@ -175,7 +176,7 @@ async def _write(session: AsyncSession, client: Any, task: Task) -> dict[str, An
         return await run_prompt_hosted(
             session, client, spec, msgs, quarantine_tier=17,
             opportunity_id=pursuit.opportunity_id,
-            on_quarantine=None if reask else hook,
+            on_quarantine=hook, reask=reask,
         )
 
     result = await run(messages)

@@ -13,6 +13,7 @@
       <li data-testid="an-sends">{{ sends }}.</li>
       <li data-testid="an-sends-page">For this summary, that is the counts and rates on this page for the {{ 'consulting' if track == 'consulting' else 'employment' }} track and the date range you chose, each with the number it rests on.</li>
     </ul>
+    {% import "partials/online_ask.html" as online_ask %}{{ online_ask.reask_note(reask, 'an') }}
     {% if employer == 'hidden' %}
     <p data-testid="an-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
     {% elif employer == 'held' %}

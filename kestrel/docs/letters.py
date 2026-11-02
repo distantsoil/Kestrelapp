@@ -81,14 +81,16 @@ def banned_hits(text: str) -> list[str]:
 async def _run(client, spec, messages, *, session, on_quarantine, reask=False):
     """The tier3 prompts go through the Hosted mode plan (redaction or refusal) when the caller
     has a session; without one the call is local-only as before."""
-    if reask:  # a failed re-ask leaves no quarantine row
-        on_quarantine = None
     if session is None:
-        return await run_prompt(client, spec, messages, on_quarantine=on_quarantine)
+        # A failed re-ask leaves no quarantine row.
+        return await run_prompt(
+            client, spec, messages, on_quarantine=None if reask else on_quarantine
+        )
     from kestrel.pipeline._shared import run_prompt_hosted
 
     return await run_prompt_hosted(
-        session, client, spec, messages, quarantine_tier=4, on_quarantine=on_quarantine
+        session, client, spec, messages, quarantine_tier=4, on_quarantine=on_quarantine,
+        reask=reask,
     )
 
 

@@ -3,6 +3,7 @@
    at the public page it rests on (What Kestrel knows). #}
 {% from "partials/company_macros.html" import ci %}
 {% import "ui/macros.html" as ui %}
+{% import "partials/style_marks.html" as smk %}
 {% set busy = sm.state == 'pending' or sm.get('refreshing') %}
 <section class="k-card co-sum" id="co-sum" data-testid="co-summary" data-state="{{ sm.state }}"{% if busy %} hx-get="/orgs/{{ org.id }}/summary" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
   <header class="k-sec-head">
@@ -21,6 +22,7 @@
       <li data-testid="co-sends">Sent: the company name and short excerpts of {% if dialog.pages %}the {{ dialog.pages }} public {{ 'page' if dialog.pages == 1 else 'pages' }} listed below{% else %}its public pages{% endif %}.</li>
       <li>Not sent: your resume, your profile, your contacts or your name.</li>
     </ul>
+    {% import "partials/online_ask.html" as online_ask %}{{ online_ask.reask_note(dialog.reask, 'co') }}
     {% if dialog.tier2_line %}<details class="co-det"><summary>Show details</summary><p class="k-muted">The online setting you agreed to for this step covers: {{ dialog.tier2_line }}.</p></details>{% endif %}
     <div class="co-ask__acts">
       <button type="button" class="k-btn k-btn--sm" hx-get="/orgs/{{ org.id }}/summary" hx-target="#co-sum" hx-swap="outerHTML">Cancel</button>
@@ -32,6 +34,8 @@
   {% if sm.state == 'ok' %}
   <div class="co-ab">
     <p data-testid="co-sentences">{% for s in sm.sentences %}{{ s.text }}{% for m in s.markers %}<a class="co-sup" href="#co-src-{{ m.n }}" data-src="co-src-{{ m.n }}" data-tip="{{ m.tip }}" aria-label="Source {{ m.n }}: {{ m.tip }}">{{ m.n }}</a>{% endfor %}{% if not loop.last %} {% endif %}{% endfor %}</p>
+    {% set all_flags = sm.sentences | map(attribute='style_flags') | select | sum(start=[]) %}
+    {% if all_flags %}<div class="co-marks" data-testid="co-style-marks">{% for s in sm.sentences %}{{ smk.marks(s.style_flags, prefix='sentences[') }}{% endfor %}{{ smk.note(all_flags, [], ['sentences[']) }}</div>{% endif %}
     {% set t = sm.tags %}
     {% if t.get('does') or t.get('serves') or t.get('direction') %}
     <div class="co-ab3">

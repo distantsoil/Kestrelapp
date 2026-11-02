@@ -751,7 +751,9 @@ def test_in_flight_line_says_retries_and_how_long_the_run_has_gone():
     assert rs.stage_line({**base, "active": False, "paused": True, "stage": "paused"},
                          elapsed=125) == "Paused"
     assert rs.stage_line({**rs._empty(), "stage": "idle"}, elapsed=125) == ""
-    v = rs.view({**base, "retrying": 1, "started_at": _ago(minutes=7)})
+    # An elapsed time, not a "today" row: seed it exactly so 00:03 still reads "7 min so far".
+    started = iso(clock_seed.ago(horizon=timedelta(0), minutes=7))
+    v = rs.view({**base, "retrying": 1, "started_at": started})
     assert v["step"] == "Rating 3 of 12 · 1 failed"
     assert v["step_detail"] == "Rating 3 of 12 · 1 failed · 1 retrying · 7 min so far"
 

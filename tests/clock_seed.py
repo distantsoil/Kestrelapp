@@ -63,3 +63,13 @@ def frozen_datetime(at: datetime) -> type[datetime]:
             return at.astimezone(tz) if tz else at.astimezone().replace(tzinfo=None)
 
     return _Frozen
+
+
+def local_days_ago(days: int, now: datetime | None = None) -> datetime:
+    """Noon on the local calendar day `days` before today, in UTC. For rows a test counts in
+    whole local days ("30 days quiet"): `now - timedelta(days=30)` is 30 x 24 h, which is one
+    calendar day short across a daylight-saving change (T14 failed at 23:17 CST on the night
+    DST ended). Noon keeps the row on its day whatever the hour of the run."""
+    now = now or datetime.now(UTC)
+    day = now.astimezone().date() - timedelta(days=days)
+    return datetime(day.year, day.month, day.day, 12).astimezone().astimezone(UTC)

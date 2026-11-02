@@ -308,6 +308,10 @@ def summary_view(
         {
             "text": clean(s.get("text") or ""),
             "markers": [_marker(int(i), sources) for i in s.get("source_indexes") or []],
+            "style_flags": [
+                {**f, "phrase": clean(str(f.get("phrase") or ""))}
+                for f in s.get("style_flags") or [] if isinstance(f, dict)
+            ],
         }
         for s in record.get("sentences") or []
     ]

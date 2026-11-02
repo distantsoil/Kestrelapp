@@ -164,7 +164,7 @@ async def _seed(*, confidential: bool = False, with_run: bool = True) -> dict[st
                     opportunity_id=f.id, track="employment", status="applied",
                     next_action="Chase the recruiter",
                     next_action_at=(_today() - timedelta(days=2)).isoformat(),
-                    last_activity_at=_ago(days=30),
+                    last_activity_at=iso(clock_seed.local_days_ago(30, _now())),  # days_quiet
                 ),
                 Pursuit(
                     opportunity_id=g.id, track="employment", status="rejected",
@@ -917,3 +917,48 @@ def test_hx_trigger_filters_are_valid_htmx():
                 elif gap and not re.search(every, attr[: m.end(1)]):
                     bad.append(f"{path.name}: filter not directly after event name: {attr}")
     assert not bad, bad
+
+
+@pytest.mark.skipif(not hasattr(__import__("time"), "tzset"), reason="TZ switching is POSIX only")
+def test_ghosting_counts_the_local_day_of_the_last_activity():
+    # #116 review: last_activity_at is UTC, "today" is local (D-UI-9). 22:00 in Chicago 21 days
+    # ago is already the next day in UTC; it is still 21 days quiet. 01:00 the next local day is
+    # only 20 days quiet.
+    import os
+    import time
+
+    from sqlalchemy import select
+
+    from kestrel.analytics.today import ghosting_count
+
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Chicago"
+    time.tzset()
+    try:
+        asyncio.run(_seed())
+        day = date(2026, 10, 30)  # CDT, UTC-5
+
+        async def add_and_count(s):
+            base = await ghosting_count(s, None, days=21, today=day)
+            org = (await s.execute(select(Org))).scalars().first()
+            src = (await s.execute(select(Source))).scalars().first()
+            late, early = _opp(org, src, "late"), _opp(org, src, "early")
+            s.add_all([late, early])
+            await s.flush()
+            s.add_all([
+                Pursuit(opportunity_id=late.id, track="employment", status="applied",  # 22:00 CDT
+                        last_activity_at="2026-10-10T03:00:00.000000+00:00"),
+                Pursuit(opportunity_id=early.id, track="employment", status="applied",  # 01:00 CDT
+                        last_activity_at="2026-10-10T06:00:00.000000+00:00"),
+            ])
+            await s.commit()
+            return base, await ghosting_count(s, None, days=21, today=day)
+
+        base, after = asyncio.run(_with_session(add_and_count))
+        assert after == base + 1  # only the 22:00 one, local Oct 9, is 21 days quiet
+    finally:
+        if old is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old
+        time.tzset()

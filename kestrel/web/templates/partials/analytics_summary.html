@@ -3,6 +3,7 @@
    model-written summary, written only when asked, appears beneath them and never replaces them.
    Rewrite summary swaps this card alone. #}
 {% from "ui/macros.html" import icon %}
+{% import "partials/style_marks.html" as smk %}
 <section class="k-card an-card an-sum" id="honest-summary" data-testid="an-summary">
   <header class="an-head"><span class="k-badge">{{ icon('analytics') }}</span><h3>Summary</h3>
     <span class="an-aside">{{ 'Consulting' if track == 'consulting' else 'Employment' }} · {{ report.range_label }}{% if updated %} · {{ updated }}{% endif %}</span></header>
@@ -17,8 +18,9 @@
   </div>
   {% if narrative and (narrative.summary_md or narrative.one_thing or narrative.warnings) %}
   <div class="an-written" data-testid="an-written">
-    {% if narrative.summary_md %}<div class="an-written__txt">{{ narrative.summary_md }}</div>{% endif %}
-    {% if narrative.one_thing %}<p><b>One thing to change:</b> {{ narrative.one_thing }}{% if narrative.evidence %} <span class="an-sub">{{ narrative.evidence }}</span>{% endif %}</p>{% endif %}
+    {% if narrative.summary_md %}<div class="an-written__txt">{{ narrative.summary_md }}</div>{{ smk.marks(narrative.style_flags, 'summary_md') }}{% endif %}
+    {% if narrative.one_thing %}<p><b>One thing to change:</b> {{ narrative.one_thing }}{% if narrative.evidence %} <span class="an-sub">{{ narrative.evidence }}</span>{% endif %}</p>{{ smk.marks(narrative.style_flags, 'one_thing_to_change') }}{{ smk.marks(narrative.style_flags, 'evidence_for_it') }}{% endif %}
+    {{ smk.note(narrative.style_flags, ['summary_md', 'one_thing_to_change', 'evidence_for_it']) }}
     {% if narrative.warnings %}<ul class="an-sub">{% for note in narrative.warnings %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
   </div>
   {% endif %}

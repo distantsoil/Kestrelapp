@@ -1,6 +1,7 @@
 {# Likely interview questions for a role marked Applied (P14, D-INTERVIEW-1), in the Role page's
    decision column. Tokens only. #}
 {% import "partials/online_ask.html" as online_ask %}
+{% import "partials/style_marks.html" as smk %}
 <section class="k-card rl-card" id="questions-card" data-testid="questions-card">
   <header class="k-sec-head"><div class="k-grow"><h3>Likely interview questions</h3></div></header>
   {% if qview.questions %}
@@ -9,11 +10,13 @@
         <li data-testid="question">
           {{ q.question }}
           <span class="k-pill k-pill--info">{{ q.category|replace('_', ' ') }}</span>
-          {% if q.why_asked %}<div class="rl-dsm">{{ q.why_asked }}</div>{% endif %}
+          {% if q.why_asked %}<div class="rl-dsm">{{ q.why_asked }}</div>{{ smk.marks(q.style_flags, prefix='questions[') }}{% endif %}
           {% if q.story_title %}<div class="rl-dsm">Your story: {{ q.story_title }}</div>{% endif %}
         </li>
       {% endfor %}
     </ol>
+    {%- set all_flags = qview.questions | selectattr('why_asked') | map(attribute='style_flags') | select | sum(start=[]) %}
+    {{ smk.note(all_flags, [], ['questions[']) }}
     <p class="rl-dsm">The prep pack, mock interview and debrief use this list.</p>
   {% elif qview.pending %}
     <p class="rl-dsm" data-testid="questions-pending">Writing the list.</p>

@@ -25,8 +25,8 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kestrel.db.models import DocMaster, DocSection
-from kestrel.privacy import Employer, EmployerMap, clean_names, default_names
+from kestrel.db.models import DocMaster, DocSection, DocSlot, DocVariant
+from kestrel.privacy import Employer, EmployerMap, clean_names, default_names, walk_strings
 
 DEFAULT_PLACEHOLDER = "a company in your industry"
 # The kinds whose org_label names an employer.
@@ -383,3 +383,31 @@ async def choose_href(session: AsyncSession) -> str:
         )
     ).scalar_one_or_none()
     return role_href(first) if first is not None else "/documents"
+
+
+async def grounding_texts(session: AsyncSession) -> list[str]:
+    """The person's own resume text, for the named-detail grounding check only (#113): every
+    document's header, summaries, skills, education and the like, each role's company, title,
+    context line and bullet variants, the names to hide, and every "Show it as" text (marked and
+    inferred), so neither a real employer nor its redacted form is ever flagged. Local matching
+    only: nothing here is added to any prompt."""
+    out: list[str] = []
+
+    def take(value: object) -> None:
+        walk_strings(value, lambda t: out.append(t) or t)
+
+    rows = await _rows(session)
+    seen: set[int] = set()
+    for sec, m in rows:
+        if m.id not in seen:
+            seen.add(m.id)
+            take([m.name, m.header, m.summary_variants, m.skill_groups, m.education,
+                  m.certifications, m.licenses, m.projects])
+        take([sec.org_label, sec.org_label_redacted, sec.hide_names, sec.title,
+              sec.context_line])
+    variants = await session.execute(select(DocVariant.text).join(
+        DocSlot, DocSlot.id == DocVariant.doc_slot_id))
+    out += [t for (t,) in variants.all() if t]
+    for e in (await load_employer_map(session)).employers:
+        out += [e.name, e.shown_as, *e.hide()]
+    return [t for t in out if t and t.strip()]

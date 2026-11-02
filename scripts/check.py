@@ -4,7 +4,7 @@ GitHub Actions minutes are metered (Windows 2x, macOS 10x), so CI confirms rathe
 discovers: lint, the full test suite (which includes the workflow, installer-script and
 third-party-notice guards), in that order, stopping at the first failure.
 
-    uv run --extra dev python scripts/check.py          # everything with capped parallelism
+    uv run --extra dev python scripts/check.py          # everything, plus the midnight run
     uv run --extra dev python scripts/check.py --quick  # lint + packaging/workflow guards
     uv run --extra dev python scripts/check.py --workers 0  # serial comparison
 
@@ -26,6 +26,9 @@ QUICK_TESTS = ["tests/test_packaging.py", "tests/test_notices.py"]
 
 # CI's environment (ci.yml `env:`); without it a desktop session takes the tray/browser paths.
 CI_ENV = {"KESTREL_HEADLESS": "1"}
+# The full gate also runs the clock-boundary run (D-TEST-3, #116): the "today" and "this month"
+# modules again with the clock frozen just after midnight. --quick and CI leave it off.
+FULL_GATE_ENV = {"KESTREL_BOUNDARY": "1"}
 
 
 def _run(label: str, cmd: list[str]) -> bool:
@@ -52,13 +55,15 @@ def worker_count(value: str) -> int:
     return count
 
 
-def _run_pytest(cmd: list[str]) -> tuple[bool, list[tuple[int, str, str]]]:
+def _run_pytest(
+    cmd: list[str], *, extra_env: dict[str, str] | None = None
+) -> tuple[bool, list[tuple[int, str, str]]]:
     """Run pytest with -rs, echo its output, and return (ok, [(count, where, reason)])."""
     print(f"==> pytest: {' '.join(cmd)}", flush=True)
     started = time.monotonic()
     proc = subprocess.Popen(
-        cmd, env={**os.environ, **CI_ENV}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, errors="replace",
+        cmd, env={**os.environ, **CI_ENV, **(extra_env or {})}, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, errors="replace",
     )
     skips: list[tuple[int, str, str]] = []
     assert proc.stdout is not None
@@ -112,7 +117,8 @@ def main() -> int:
                    "-n", str(args.workers), "--dist", "worksteal", "--max-worker-restart", "0"]
     if args.junitxml:
         pytest_args.extend(["--junitxml", args.junitxml])
-    ok, skips = _run_pytest([*pytest_args, *tests])
+    ok, skips = _run_pytest([*pytest_args, *tests],
+                            extra_env=None if args.quick else FULL_GATE_ENV)
     _report_skips(skips)
     if not ok:
         print("Not ready to push: fix the failure above first.")

@@ -94,6 +94,7 @@ async def _ask_dialog(session: AsyncSession, org: Org, settings: Any) -> dict[st
         "dest": destination_id(settings, "tier2"),
         "pages": int((record or {}).get("source_count") or 0),
         "tier2_line": terms.get("tier2", ""),
+        "reask": True,
     }
 
 

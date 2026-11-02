@@ -4,6 +4,22 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-02
+
+Today counts quiet applications by your own calendar day, the online ask says when Kestrel may send a second request, and more drafts mark wording to check.
+
+### Changed
+
+- **More drafts mark stock phrasing.** Mock interview feedback, likely questions, the company summary, the analytics summary, negotiation drafts and follow-up drafts now show the same small mark stories have when a phrase reads as stock wording. Kestrel never rewrites the text.
+- **Names in stories are checked against your resume.** A company, person or title in a story draft is marked for you to check when it is in none of your notes, proof points or resume. Kestrel does not ask the model to change it, and your resume is only compared on this computer, never sent.
+
+- **The online ask names the second request.** Before a story build, likely questions, practice, a negotiation or follow-up draft, the analytics summary or a company summary goes to an online model, the dialog now says that Kestrel may send one more request to the same model, with the same material plus its first reply, if the reply needs plain-writing fixes. Scoring and import never send this second request.
+
+### Fixed
+
+- **Quiet applications are counted by your local day.** An application last touched in the evening could read as one day less quiet than it was, because the count used the UTC date. It now uses your own calendar day.
+- **A refused second request leaves nothing behind.** If the second plain-writing request is refused before it is sent, the first reply stands and no refusal or failure entry is recorded.
+
 ## [0.7.3] - 2026-11-02
 
 Pipeline explains every role without a score, drafts read plainly, the bell shows a real count, and Negotiate helps before an offer arrives.

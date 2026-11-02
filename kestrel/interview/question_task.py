@@ -261,7 +261,7 @@ async def generate_question_set(
         return await run_prompt_hosted(
             session, client, call_spec, msgs,
             quarantine_tier=QUARANTINE_TIER, opportunity_id=opp.id,
-            on_quarantine=None if reask else hook, schema=question_schema(model_cls),
+            on_quarantine=hook, reask=reask, schema=question_schema(model_cls),
         )
 
     result = await run(messages)

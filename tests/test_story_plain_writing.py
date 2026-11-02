@@ -275,3 +275,24 @@ async def test_mock_critique_exempts_the_persons_answer_quoted_in_the_revised_op
     async with sm() as s:
         turn = await submit_answer(s, client, ms_id, answer, proof_points=_PROOF_POINTS, stories=[])
     assert len(client.calls) == 1 and "style_flags" not in turn
+
+
+async def test_a_refused_reask_keeps_the_story_and_records_no_row(sm, monkeypatch):
+    # Issue #113: the first send was allowed and its reply passed. If the plan refuses the
+    # re-ask (the person switched confidential mode on mid-build, say), nothing is sent and
+    # nothing is recorded: no refusal row, no quarantine row. The first reply stands, marked.
+    from kestrel.db.models import Quarantine
+    from kestrel.pipeline import _shared
+
+    plans = iter([_shared.HostedPlan(), _shared.HostedPlan(refuse="Hosted mode is off.")])
+
+    async def plan(*_a, **_k):
+        return next(plans)
+
+    monkeypatch.setattr(_shared, "plan_hosted_send", plan)
+    client = _Scripted(_reply(action="I led it — fast."), _reply())
+    (story,) = await _build(sm, client)
+    assert len(client.calls) == 1  # the re-ask was refused before any send
+    assert story.action == "I led it — fast." and story.style_flags
+    async with sm() as s:
+        assert (await s.execute(select(Quarantine))).scalars().all() == []
