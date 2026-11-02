@@ -656,3 +656,34 @@ def test_no_shipped_copy_states_a_count_as_n_equals():
         if re.search(r"\(n=|insufficient \(n", p.read_text(encoding="utf-8"))
     ]
     assert hits == []
+
+
+def test_a_rating_that_hits_a_lock_is_retried_and_saved(monkeypatch):
+    """D-DB-1 / #89: the first attempt finds the file locked; the save still lands, once."""
+    from sqlalchemy.exc import OperationalError
+
+    from kestrel.web import db_retry
+    from kestrel.web import routes_learning as rl
+
+    async def no_wait(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(db_retry, "_sleep", no_wait)
+    real, calls = rl.record_label, []
+
+    async def flaky(s, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OperationalError("INSERT", {}, Exception("database is locked"))
+        return await real(s, **kw)
+
+    monkeypatch.setattr(rl, "record_label", flaky)
+    ids = _seed()
+    with _client() as c:
+        r = c.post(
+            "/calibrate/rate",
+            headers=HX,
+            data={"opportunity_id": ids[0], "score": "4", "since": "2026-01-01", "skip": ""},
+        )
+    assert r.status_code == 200 and len(calls) == 2
+    assert len(_labels()) == 1

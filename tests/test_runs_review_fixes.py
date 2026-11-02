@@ -298,6 +298,41 @@ def test_a_run_does_not_claim_the_next_runs_searches(idle):
     assert "99 new" not in c.get(f"/runs/{rid}/drawer").text
 
 
+def test_stop_survives_a_lock_and_sets_the_flag_before_any_write(active, monkeypatch):
+    """D-DB-1 / #92: Stop pauses in memory first, waits out a locked file, and a second press
+    while it is stopping changes nothing."""
+    from sqlalchemy.exc import OperationalError
+
+    from kestrel.ingest import scheduler
+    from kestrel.web import db_retry
+    from kestrel.web.app import is_paused
+
+    async def no_wait(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(db_retry, "_sleep", no_wait)
+    c, seed = active
+    real, attempts, paused_at_first_write = scheduler.cancel_pending_scrapes, [], []
+
+    async def flaky(session, **kw):
+        attempts.append(1)
+        if len(attempts) == 1:
+            paused_at_first_write.append(is_paused())
+            raise OperationalError("UPDATE", {}, Exception("database is locked"))
+        return await real(session, **kw)
+
+    monkeypatch.setattr(scheduler, "cancel_pending_scrapes", flaky)
+    assert c.post("/runs/stop").status_code == 204
+    assert paused_at_first_write == [True] and len(attempts) == 2
+
+    async def status(s):
+        return (await s.get(Run, seed["active_run"])).status
+
+    assert _read(status) == "stopping"
+    assert c.post("/runs/stop").status_code == 204  # a second press: harmless
+    assert _read(status) == "stopping"
+
+
 # -------------------------------------------------------------------- Run now after Stop
 def test_run_now_after_stop_resumes_and_keeps_the_queued_work(active):
     from kestrel.web.app import is_paused
@@ -327,3 +362,40 @@ def test_the_idle_minis_stay_three_across_unless_online_adds_a_fourth():
     css = _CSS.read_text()
     narrow = css.split("@container kwin (max-width: 1300px)")[1].split("}\n@container")[0]
     assert ".rn-minis--4" in narrow and ".rn-minis {" not in narrow
+
+
+async def test_two_simultaneous_stop_presses_write_once(monkeypatch):
+    """D-DB-1: the in-flight flag is set before the first await, so two presses that arrive
+    together run the stop writes once and the second answers at once."""
+    import asyncio
+
+    from kestrel.web import db_retry
+    from kestrel.web.pages import runs_page
+
+    class _Ctx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc):
+            return None
+
+    async def summary(_s, _x):
+        await asyncio.sleep(0.05)  # the window in which a second press arrives
+        return {"active": True}
+
+    writes = []
+
+    async def fake_write(fn, *, budget_s=12.0, path=""):
+        writes.append(path)
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(runs_page, "sessionmaker", lambda: lambda: _Ctx())
+    monkeypatch.setattr(runs_page.rsum, "run_summary", summary)
+    monkeypatch.setattr(runs_page.rsum, "view", lambda s: s)
+    monkeypatch.setattr(db_retry, "write_with_retry", fake_write)
+    try:
+        a, b = await asyncio.gather(runs_page.stop(), runs_page.stop())
+    finally:
+        set_paused(False)
+    assert a.status_code == b.status_code == 204
+    assert writes == ["/runs/stop"]

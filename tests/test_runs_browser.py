@@ -649,3 +649,430 @@ def test_the_run_detail_page_names_itself_and_starts_nothing():
         finally:
             ctx.close()
             browser.close()
+
+
+# ------------------------------------------------------------------ PR 2: say what Kestrel is doing
+_FRAMES_JS = """() => {
+  window.__frames = []; window.__go = true;
+  const tick = () => {
+    const region = document.querySelector('[data-region="live"]');
+    const acts = document.querySelector('.rn-acts');
+    const latest = document.querySelector('[data-testid="latest-run"]');
+    window.__frames.push({
+      h: region ? Math.round(region.getBoundingClientRect().height * 10) / 10 : null,
+      top: latest ? Math.round(latest.getBoundingClientRect().top * 10) / 10 : null,
+      shown: acts ? Array.from(acts.querySelectorAll('button')).filter(b => b.offsetParent !== null
+        && getComputedStyle(b).visibility !== 'hidden').length : 0,
+      step: (document.querySelector('[data-testid="run-step"]') || {}).textContent || ''});
+    if (window.__go) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}"""
+
+
+def _eased(frames, key="top", what="the card"):
+    """Whenever a value changes by more than 2 px it travels: several in-between values, and no
+    single frame carries more than 60% of the whole move (a jump would carry all of it)."""
+    vals = [f[key] for f in frames if f[key] is not None]
+    moves, run = [], [vals[0]]
+    for v in vals[1:]:
+        if abs(v - run[-1]) > 0.05:
+            run.append(v)
+            continue
+        if len(run) > 1:
+            moves.append(run)
+        run = [v]
+    if len(run) > 1:
+        moves.append(run)
+    for mv in moves:
+        span = abs(mv[-1] - mv[0])
+        if span <= 2:
+            continue
+        biggest = max(abs(b - a) for a, b in zip(mv, mv[1:], strict=False))
+        assert len(mv) >= 4 and biggest <= 0.6 * span, (what, mv)
+    return moves
+
+
+def _stop_flow_with(monkeypatch=None, *, lock_failure: bool = False):
+    """Patch the server (it runs in this process) so the stop write counts calls, and optionally
+    fails the way a held lock does: a driver 'database is locked' past a short retry budget."""
+    import sqlite3
+
+    from sqlalchemy.exc import OperationalError
+
+    from kestrel.pipeline import runlog
+    from kestrel.web import db_retry
+
+    calls = {"writes": 0}
+    orig = db_retry.write_with_retry
+    real_finish = runlog.finish_run_in
+
+    async def short(fn, **kw):
+        calls["writes"] += 1
+        return await orig(fn, **{**kw, "budget_s": 0.3})
+
+    async def locked(*a, **k):
+        raise OperationalError("UPDATE run", {}, sqlite3.OperationalError("database is locked"))
+
+    monkeypatch.setattr(db_retry, "write_with_retry", short)
+    if lock_failure:
+        monkeypatch.setattr(runlog, "finish_run_in", locked)
+    else:
+        monkeypatch.setattr(runlog, "finish_run_in", real_finish)
+    return calls
+
+
+def _unpause():
+    from kestrel.web.app import set_paused
+
+    set_paused(False)
+
+
+# Every animation that ends has ended (the live dot and the like loop for ever: not waited on).
+_ANIMATIONS_DONE = (
+    "document.getAnimations().filter(a => a.playState === 'running'"
+    " && a.effect.getComputedTiming().endTime !== Infinity).length === 0"
+)
+
+
+def _hold(page, pattern: str) -> list:
+    """Park every request that matches `pattern` until the test lets it go (a slow server, with
+    nothing to sleep through): the routes wait in the returned list."""
+    held: list = []
+    page.route(pattern, lambda route: held.append(route))
+    return held
+
+
+def test_stop_says_stopping_at_once_even_when_the_server_is_slow_and_a_second_press_is_a_no_op(
+    running, monkeypatch
+):
+    """#91: the press changes the card before the server answers; the backend sees one stop."""
+    base, browser = running
+    calls = _stop_flow_with(monkeypatch)
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    sent: list[str] = []
+    try:
+        page.on("request", lambda r: sent.append(r.url) if r.url.endswith("/runs/stop") else None)
+        held = _hold(page, "**/runs/stop")
+        page.get_by_test_id("run-stop").click()
+        page.evaluate(_FRAMES_JS)
+        # Two clicks reach the handler before the first response; one request leaves the page.
+        page.evaluate("""() => { const b = document.querySelector('[data-testid="run-stop-yes"]');
+                                  b.click(); b.click(); }""")
+        btn = page.get_by_test_id("run-stopping")
+        assert btn.is_visible(timeout=300) and btn.is_disabled()
+        assert btn.inner_text().strip() == "Stopping…"
+        assert page.get_by_test_id("run-title").inner_text() == "Stopping"
+        assert "Stopping" in page.get_by_test_id("run-step").inner_text()
+        assert page.locator(".rn-acts__main").is_hidden()
+        assert page.locator(".rn-acts__ask").is_hidden()
+        btn.click(force=True)
+        page.evaluate("document.querySelector('[data-testid=\"run-stop-yes\"]').click()")
+        page.wait_for_function(_ANIMATIONS_DONE)
+        assert len(held) == 1 and len(sent) == 1, (held, sent)
+        with page.expect_response(lambda r: r.url.endswith("/runs/stop")):
+            held[0].continue_()
+        page.wait_for_function(_ANIMATIONS_DONE)
+        assert len(sent) == 1 and calls["writes"] == 1, (sent, calls)
+        page.evaluate("window.__go = false")
+        frames = page.evaluate("window.__frames")
+        assert frames and all(f["shown"] >= 1 for f in frames), frames
+        _eased(frames, "h", "the live card")
+        _eased(frames, "top", "the card below it")
+        assert not errors, errors
+    finally:
+        _unpause()
+        ctx.close()
+
+
+def test_the_live_card_height_travels_when_the_confirm_question_folds_away(running):
+    base, browser = running
+    ctx, page, errors = _page(base, browser, "light", 390)
+    try:
+        page.get_by_test_id("run-stop").click()  # the long question opens: the card grows
+        wait_for_layout(page)
+        page.evaluate(_FRAMES_JS)
+        page.get_by_role("button", name="Keep running").click()
+        page.wait_for_function(_ANIMATIONS_DONE)
+        page.evaluate("window.__go = false")
+        moves = _eased(page.evaluate("window.__frames"), "h", "the live card")
+        assert moves, "the card changed height at 390px and the test saw no move"
+    finally:
+        ctx.close()
+
+
+async def _lease_scrape(s):
+    task = (await s.execute(select(Task).where(Task.type == "scrape"))).scalars().one()
+    task.status = "leased"
+    task.lease_until = iso(datetime.now(UTC) + timedelta(minutes=5))
+
+
+def test_a_stop_that_fails_on_a_held_lock_shows_the_true_state_and_can_be_pressed_again(
+    running, monkeypatch
+):
+    """#91: the write is blocked past the retry budget (a real 503 from the server). The worker
+    was held first, so the card reads Paused, and Stop works again."""
+    base, browser = running
+    _stop_flow_with(monkeypatch, lock_failure=True)
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        _db(_lease_scrape)  # a step is under a live lease: a flag-driven card would say Stopping
+        page.get_by_test_id("run-stop").click()
+        with page.expect_response(lambda r: r.url.endswith("/runs/stop")) as resp:
+            page.get_by_test_id("run-stop-yes").click()
+        assert resp.value.status == 503
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"run-live\"]').dataset.run === 'paused'")
+        assert page.get_by_test_id("run-title").inner_text() == "Paused"
+        stop = page.get_by_test_id("run-stop")
+        assert stop.is_visible() and stop.is_enabled()
+        stop.click()  # asks again; nothing is stuck
+        assert page.locator(".rn-acts__ask").is_visible()
+    finally:
+        _unpause()
+        ctx.close()
+
+
+def test_a_restarted_app_never_says_stopping_whatever_the_stored_rows_say(running):
+    """A real restart: the run is stored as stopping, a stop was asked, a step holds a lease, but
+    the new process's worker is not held (nobody paused it). The card says nothing of stopping."""
+    base, browser = running
+
+    async def stored(s):
+        run = (await s.execute(select(Run).where(Run.status == "running"))).scalars().one()
+        run.status = "stopping"
+        run.finished_at = iso(datetime.now(UTC))
+        await _lease_scrape(s)
+        from kestrel.analytics.run_summary import STOP_KEY
+        from kestrel.db.models import Setting
+
+        s.add(Setting(key=STOP_KEY, value={"run_id": run.id}))
+
+    _db(stored)
+    _unpause()  # a fresh process starts with the worker running
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        assert page.get_by_test_id("run-live").get_attribute("data-run") != "stopping"
+        assert not page.get_by_test_id("run-stopping").is_visible()
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_server_says_stopping_from_rows_while_a_step_holds_a_live_lease(running):
+    """Stopping comes from the stored run status plus a live lease; a poll never reverts it."""
+    base, browser = running
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        async def lease(s):
+            task = (await s.execute(select(Task).where(Task.type == "scrape"))).scalars().one()
+            task.status = "leased"
+            task.lease_until = iso(datetime.now(UTC) + timedelta(minutes=5))
+
+        _db(lease)
+        page.get_by_test_id("run-stop").click()
+        page.get_by_test_id("run-stop-yes").click()
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"run-live\"]').dataset.run === 'stopping'")
+        with page.expect_response(lambda r: r.url.endswith("/runs") and r.request.method == "GET"):
+            page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+        wait_for_layout(page)
+        assert page.get_by_test_id("run-title").inner_text() == "Stopping"
+        assert page.get_by_test_id("run-stopping").is_disabled()
+        # The header chip and the status rail say the same word as the card (one derivation).
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"rn-chip\"]').textContent.includes('Stopping')")
+        assert "Paused" not in page.get_by_test_id("rn-chip").inner_text()
+        assert page.get_by_test_id("rn-run-now").count() == 0  # no Run now while stopping
+        page.evaluate("htmx.ajax('GET', '/status/rail', {target: '#rail', swap: 'innerHTML'})")
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"status-readout\"]').textContent"
+            ".includes('Stopping')")
+        assert "Pausing" not in page.get_by_test_id("status-readout").inner_text()
+        # The step finishes: nothing under a lease, so the card stops saying Stopping.
+        async def done(s):
+            task = (await s.execute(select(Task).where(Task.type == "scrape"))).scalars().one()
+            task.status = "done"
+
+        _db(done)
+        with page.expect_response(lambda r: r.url.endswith("/runs") and r.request.method == "GET"):
+            page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+        page.wait_for_function(
+            "document.querySelector('[data-testid=\"run-live\"]').dataset.run !== 'stopping'")
+        assert not errors, errors
+    finally:
+        _unpause()
+        ctx.close()
+
+
+_BUSY_WATCH_JS = """() => {
+  window.__busy = [];
+  new MutationObserver(() => {
+    if (document.body.classList.contains('busy')) window.__busy.push(1); })
+    .observe(document.body, {attributes: true, attributeFilter: ['class']});
+}"""
+
+
+_TWO_FRAMES = "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
+def test_a_poll_and_the_scan_button_refresh_leave_the_busy_bar_idle(running):
+    """#99: what the app asks for on its own never lights the bar."""
+    base, browser = running
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        page.evaluate(_BUSY_WATCH_JS)
+        with page.expect_response(lambda r: r.url.endswith("/runs") and r.request.method == "GET"):
+            page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+        page.evaluate(_TWO_FRAMES)
+        assert page.evaluate("window.__busy") == []
+        # The toast script's own refresh: the rail says one thing, the button another. The
+        # request is held in flight while the bar is read.
+        today = ctx.new_page()
+        today.goto(f"{base}/")
+        today.wait_for_selector("#scan-btn", state="attached")
+        today.evaluate(_BUSY_WATCH_JS)
+        held = _hold(today, "**/scan/button")
+        with today.expect_request("**/scan/button"):
+            today.evaluate("""() => {
+              const sig = document.getElementById('scan-signal');
+              sig.setAttribute('data-ready', '1'); sig.setAttribute('data-scanning', '0');
+              sig.setAttribute('data-event', 'none');
+              document.getElementById('scan-btn').setAttribute('data-scanning', '1');
+              document.dispatchEvent(new Event('htmx:oobAfterSwap'));
+            }""")
+        today.evaluate(_TWO_FRAMES)
+        assert today.evaluate("document.body.classList.contains('busy')") is False
+        held[0].continue_()
+        today.evaluate(_TWO_FRAMES)
+        assert today.evaluate("window.__busy") == []
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_a_press_that_runs_through_htmx_ajax_lights_the_busy_bar():
+    """#99: the Sources drawer opens through htmx.ajax; it is a press, so the bar shows."""
+    from playwright.sync_api import sync_playwright
+
+    from kestrel.web.serve import running_server
+
+    runs_seed.seed(active=False)
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        page = ctx.new_page()
+        try:
+            page.goto(f"{base}/sources")
+            page.wait_for_selector("[data-src-open]", state="attached")
+            held = _hold(page, "**/sources/*/drawer")
+            page.evaluate(_BUSY_WATCH_JS)
+            with page.expect_request("**/sources/*/drawer"):
+                page.evaluate("document.querySelector('[data-src-open]').click()")  # scripted
+            assert page.evaluate("document.body.classList.contains('busy')") is True
+            held[0].continue_()
+            page.wait_for_function("!document.body.classList.contains('busy')")
+        finally:
+            ctx.close()
+            browser.close()
+
+
+def test_aborting_one_of_two_presses_keeps_the_bar_for_the_other(running):
+    """An abort lets go of the request it ended, and only that one: the other press keeps the bar
+    until it answers (no 30 s timer is waited on)."""
+    base, browser = running
+    ctx, page, errors = _page(base, browser, "light", 1280)
+    try:
+        held = _hold(page, "**/runs/history*")
+        page.evaluate("""() => {
+          for (const n of ['a', 'b']) {
+            const b = document.createElement('button');
+            b.id = 'press-' + n; b.textContent = n;
+            b.setAttribute('hx-get', '/runs/history?x=' + n); b.setAttribute('hx-swap', 'none');
+            document.body.appendChild(b); htmx.process(b);
+          }
+        }""")
+        with page.expect_request("**/runs/history?x=a"):
+            page.locator("#press-a").click()
+        with page.expect_request("**/runs/history?x=b"):
+            page.locator("#press-b").click()
+        assert page.evaluate("document.body.classList.contains('busy')") is True
+        page.evaluate("htmx.trigger(document.getElementById('press-a'), 'htmx:abort')")
+        page.evaluate(_TWO_FRAMES)
+        assert page.evaluate("document.body.classList.contains('busy')") is True  # b is waiting
+        next(r for r in held if r.request.url.endswith("x=b")).continue_()
+        # a was released by its abort: when b answers nothing is left, long before any timer.
+        page.wait_for_function("!document.body.classList.contains('busy')", timeout=3000)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_a_busy_count_that_never_comes_back_clears_itself(running):
+    """#99: a counted request with no answer cannot keep the bar running on an idle app."""
+    base, browser = running
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.clock.install()
+        page.goto(f"{base}/runs")
+        page.wait_for_selector('[data-testid="run-live"]')
+        page.evaluate("""() => document.dispatchEvent(new CustomEvent('htmx:beforeRequest', {
+          detail: {xhr: {}, elt: document.body, requestConfig: {headers: {}}}}))""")
+        assert page.evaluate("document.body.classList.contains('busy')") is True
+        page.clock.fast_forward(31000)
+        assert page.evaluate("document.body.classList.contains('busy')") is False
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [390, 700, 1280])
+def test_a_poll_updates_the_work_in_flight_without_moving_the_card(running, width):
+    """#92: retries and elapsed time arrive through the 5 s poll; when the line wraps differently
+    (a retry count appears, 9 min becomes 10) the card eases to its new height, and no frame
+    moves it in one step. The run starts 9 min 30 s back and is moved to 10 min 30 s by hand, so
+    no minute boundary is crossed by the test's own running time."""
+    base, browser = running
+
+    async def started(s, minutes_ago, *, retry=False):
+        run = (await s.execute(select(Run).where(Run.status == "running"))).scalars().one()
+        run.started_at = iso(datetime.now(UTC) - timedelta(minutes=minutes_ago))
+        if retry:
+            task = (await s.execute(select(Task).where(Task.type == "scrape"))).scalars().one()
+            task.status = "pending"
+            task.attempts = 1
+            task.last_error = "timed out"
+
+    async def nine_thirty(s):
+        await started(s, 9.5)
+
+    async def retry_nine_thirty(s):
+        await started(s, 9.5, retry=True)
+
+    async def ten_thirty(s):
+        await started(s, 10.5, retry=True)
+
+    _db(nine_thirty)
+    ctx, page, errors = _page(base, browser, "light", width)
+    try:
+        before = page.get_by_test_id("run-step").inner_text()
+        assert "9 min so far" in before and "retrying" not in before, before
+        page.evaluate(_FRAMES_JS)
+        for change, want in ((retry_nine_thirty, "retrying"), (ten_thirty, "10 min so far")):
+            _db(change)
+            with page.expect_response(
+                lambda r: r.url.endswith("/runs") and r.request.method == "GET"
+            ):
+                page.evaluate("htmx.trigger(document.body, 'run-refresh')")
+            page.wait_for_function(
+                "t => document.querySelector('[data-testid=\"run-step\"]').textContent"
+                ".includes(t)", arg=want)
+            page.wait_for_function(_ANIMATIONS_DONE)
+        page.evaluate("window.__go = false")
+        frames = page.evaluate("window.__frames")
+        assert any("retrying" in f["step"] for f in frames)
+        _eased(frames, "top", "the card below the live card")
+        _eased(frames, "h", "the live card")
+        assert not errors, errors
+    finally:
+        ctx.close()

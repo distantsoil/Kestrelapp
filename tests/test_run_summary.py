@@ -734,3 +734,152 @@ def test_a_prompt_quarantine_beyond_tier_3_is_not_a_scoring_failure():
                                created_at=_ago(minutes=2)))
     asyncio.run(_seed(rows))
     assert _summary("employment")["failed"] == base
+
+
+# ------------------------------------------------------------ #92: work in flight on the card
+def test_in_flight_line_says_retries_and_how_long_the_run_has_gone():
+    base = {**rs._empty(), "active": True, "stage": "full_review", "quick_screen_done": 18,
+            "quick_screen_total": 42, "rated": 2, "to_rate": 12, "failed": 1}
+    assert rs.stage_line(base) == "Rating 3 of 12 · 1 failed"  # the chip and rail stay as drawn
+    assert rs.stage_line({**base, "retrying": 2}, elapsed=125) == (
+        "Rating 3 of 12 · 1 failed · 2 retrying · 2 min so far")
+    assert rs.stage_line({**base, "retrying": 0}, elapsed=20) == (
+        "Rating 3 of 12 · 1 failed · just started")
+    assert rs.stage_line({**base, "retrying": 1}, elapsed=3900).endswith("1 hr 5 min so far")
+    # Paused or idle: no elapsed clock and no retry count.
+    assert rs.stage_line({**base, "active": False, "paused": True, "stage": "paused"},
+                         elapsed=125) == "Paused"
+    assert rs.stage_line({**rs._empty(), "stage": "idle"}, elapsed=125) == ""
+    v = rs.view({**base, "retrying": 1, "started_at": _ago(minutes=7)})
+    assert v["step"] == "Rating 3 of 12 · 1 failed"
+    assert v["step_detail"] == "Rating 3 of 12 · 1 failed · 1 retrying · 7 min so far"
+
+
+def test_run_summary_counts_the_tasks_on_another_try():
+    rows = [r for r in _active_rows() if not (isinstance(r, Task) and r.type in ("scrape", "t1"))]
+    rows += [
+        # failed once and back in the queue: a retry waiting
+        Task(type="t2", status="pending", payload={"opportunity_id": 1}, attempts=1,
+             last_error="the model repeated itself", updated_at=_ago()),
+        # on its second lease: a retry running
+        Task(type="t2", status="leased", payload={"opportunity_id": 2}, attempts=2,
+             lease_until=iso(datetime.now(UTC) + timedelta(minutes=5)), updated_at=_ago()),
+        # a task given back because the key is out of credit is waiting, not retrying
+        Task(type="t2", status="pending", payload={"opportunity_id": 4, "deferred": 1},
+             attempts=1, last_error="out of credit", updated_at=_ago()),
+        # a first lease and a fresh pending task are not retries
+        Task(type="t2", status="leased", payload={"opportunity_id": 3}, attempts=1,
+             lease_until=iso(datetime.now(UTC) + timedelta(minutes=5)), updated_at=_ago()),
+    ]
+    asyncio.run(_seed(rows))
+    s = _summary("employment")
+    assert s["active"] and s["retrying"] == 2
+    asyncio.run(_seed([r for r in rows if not (isinstance(r, Task) and r.attempts)]))
+    assert _summary("employment")["retrying"] == 0
+
+
+# ----------------------------------------------------------- #91: Stopping comes from the rows
+def _live() -> str:
+    """A lease still running when the test reads it. A function, not a module constant: a value
+    taken at collection had expired by the time a slow suite (41 min) reached these tests."""
+    return iso(datetime.now(UTC) + timedelta(minutes=5))
+
+
+def _stopping_rows(*, run_status: str = "stopping", lease_until: str | None = None,
+                   asked: bool | int = True, task_status: str = "leased") -> list:
+    """The newest run, a task under a lease, and (when `asked`) the Stop press kept for run 1
+    (`asked=2` keeps it for another run)."""
+    rows: list = [
+        _src("Ops"),
+        Run(name=runlog.APP_RUN_NAME, status=run_status, started_at=_ago(minutes=20),
+            finished_at=None if run_status == "running" else _ago(minutes=1), counts={}),
+        Task(type="t2", status=task_status, payload={"opportunity_id": 1}, attempts=1,
+             lease_until=lease_until, updated_at=_ago()),
+    ]
+    if asked:
+        rows.append(Setting(key=rs.STOP_KEY, value={"run_id": 1 if asked is True else 99}))
+    return rows
+
+
+def _runs_card(rows: list, *, paused: bool = True) -> str:
+    from kestrel.web.app import set_paused
+
+    asyncio.run(_seed(rows))
+    set_paused(paused)
+    try:
+        with _client() as c:
+            return c.get("/runs").text
+    finally:
+        set_paused(False)
+
+
+def test_the_card_says_stopping_for_a_requested_stop_with_a_live_lease():
+    html = _runs_card(_stopping_rows(lease_until=_live()))
+    assert 'data-run="stopping"' in html and "finishing 1 current step" in html
+    assert 'data-testid="run-stopping"' in html
+
+
+@pytest.mark.parametrize(
+    ("what", "kwargs", "paused"),
+    [
+        ("a lease with no expiry", {"lease_until": None}, True),
+        # A quit writes "stopping" with no request behind it.
+        ("a quit-written stopping row", {"live": True, "asked": False}, True),
+        ("a request for another run", {"live": True, "asked": 2}, True),
+        # The stop write failed: the run is still running.
+        ("a stop whose write failed",
+         {"run_status": "running", "asked": False, "live": True}, True),
+        # A restart: the worker is not held, whatever the rows say.
+        ("a restarted worker", {"live": True}, False),
+    ],
+)
+def test_the_card_never_says_stopping_without_a_requested_stop_on_a_held_worker(
+    what, kwargs, paused
+):
+    kwargs = dict(kwargs)
+    if kwargs.pop("live", False):
+        kwargs["lease_until"] = _live()  # built when the test runs, never at collection
+    rows = _stopping_rows(**kwargs)
+    html = _runs_card(rows, paused=paused)
+    assert 'data-run="stopping"' not in html, what
+
+
+def test_stop_then_resume_then_pause_shows_paused_with_resume_not_stopping():
+    """The worker carries the stopped run, so its row stays "stopping" unless Resume reopens it."""
+    from types import SimpleNamespace
+
+    from kestrel.web import app as web_app
+
+    rows = [r for r in _active_rows() if not (isinstance(r, Task) and r.type == "scrape")]
+    rows.append(Task(type="t2", status="leased", payload={"opportunity_id": 8},
+                     lease_until=_live(), updated_at=_ago()))
+    asyncio.run(_seed(rows))
+    try:
+        with _client() as c:
+            assert c.post("/runs/stop").status_code == 204
+            assert 'data-run="stopping"' in c.get("/runs").text
+            web_app._held_cycle["cycle"] = SimpleNamespace(run_id=1)  # the loop carries it
+            assert c.post("/runs/resume").status_code == 204
+            assert c.post("/runs/pause").status_code == 204
+            html = c.get("/runs").text
+            assert 'data-run="paused"' in html and 'data-testid="run-resume"' in html
+            assert 'data-run="stopping"' not in html
+    finally:
+        web_app._held_cycle["cycle"] = None
+        web_app.set_paused(False)
+
+
+def test_a_restart_forgets_the_stop_request():
+    asyncio.run(_seed(_stopping_rows(lease_until=_live())))
+
+    async def go():
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            await runlog.close_orphaned_runs(sm)
+            async with sm() as s:
+                return await s.get(Setting, rs.STOP_KEY)
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(go()) is None

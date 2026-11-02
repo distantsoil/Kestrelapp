@@ -52,7 +52,13 @@
 .rn-bigdot { width: 12px; height: 12px; }
 .rn-acts { margin-left: auto; display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .rn-acts__main, .rn-acts__ask { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-.rn-acts__ask[hidden], .rn-acts__main[hidden] { display: none; }
+.rn-acts__ask[hidden], .rn-acts__main[hidden], .rn-acts__stop[hidden] { display: none; }
+/* Stop was pressed (#91): the button settles into a disabled "Stopping..." with one short press
+   (the same ease and duration the other buttons use). */
+.rn-acts__stop { display: inline-flex; }
+.k-btn.is-stopping { opacity: .7; cursor: default; }
+.k-btn.is-stopping.is-pressing { animation: rn-press var(--dur-1) var(--ease) both; }
+@keyframes rn-press { 0% { transform: scale(1); opacity: 1; } 40% { transform: scale(.96); } 100% { transform: scale(1); opacity: .7; } }
 .rn-cfm { font-size: 13px; color: var(--ink); max-width: 340px; line-height: 1.35; }
 .rn-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .rn-stg { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px 12px; display: flex;
@@ -226,7 +232,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .rn-hdr, .rn-live-in { transition: none; }
-  .rn-feed li.is-in, .rn-feed li.is-out, .rn-stg .rn-bar i { animation: none !important; transition: none; }
+  .rn-feed li.is-in, .rn-feed li.is-out, .rn-stg .rn-bar i, .k-btn.is-stopping { animation: none !important; transition: none; }
 }
 
 /* Needs another try (runs-mockup-locked.html :758): badge, title and a round help button, then the

@@ -87,3 +87,43 @@ def test_a_toast_and_its_undo_outlive_the_page_that_raised_them(live):
     page.evaluate("KUI.page.unmount()")
     page.click(".k-toast__undo")
     page.wait_for_function("window.__undone === 1")
+
+
+def _press_failing_button(live, handler) -> list[str]:
+    """Press an htmx button whose request fails; return the toast texts that stay on screen."""
+    base, browser = live
+    page = browser.new_page()
+    page.goto(f"{base}/about")
+    page.wait_for_selector("h1")
+    page.route("**/x-save", handler)
+    page.evaluate("""() => {
+      const b = document.createElement('button');
+      b.id = 'x-save'; b.textContent = 'Save'; b.setAttribute('hx-post', '/x-save');
+      b.setAttribute('hx-swap', 'none');
+      document.body.appendChild(b); htmx.process(b); }""")
+    page.click("#x-save")
+    page.wait_for_selector(".k-toast")
+    page.wait_for_timeout(400)  # the generic failure toast is scheduled on a 0ms timer
+    return page.evaluate(
+        "Array.from(document.querySelectorAll('.k-toast span')).map(e => e.textContent)")
+
+
+def test_a_503_with_its_own_toast_shows_exactly_one_toast(live):
+    """#89: the busy answer carries its own HX-Trigger toast; the generic one must not double it."""
+    import json
+
+    own = "Kestrel is busy saving something else. Nothing changed; try again in a moment."
+    texts = _press_failing_button(
+        live,
+        lambda route: route.fulfill(
+            status=503,
+            body=own,
+            headers={"HX-Trigger": json.dumps({"k-toast": {"message": own, "tone": "warn"}})},
+        ),
+    )
+    assert texts == [own]
+
+
+def test_a_failure_with_no_toast_of_its_own_still_gets_the_generic_one(live):
+    texts = _press_failing_button(live, lambda route: route.fulfill(status=500, body="boom"))
+    assert len(texts) == 1 and texts[0].startswith("That did not go through")

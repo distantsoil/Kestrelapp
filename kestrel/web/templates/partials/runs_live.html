@@ -7,13 +7,13 @@
 {%- endmacro %}
 <div class="rn-ctx" data-live="notes">{% for note in credit_notices or [] %}<div class="rn-note is-warn" role="status" data-testid="credit-notice">{{ note }}</div>{% endfor %}</div>
 {% if state in ('active', 'paused') %}
-<div class="rn-live-in" data-testid="run-live" data-run="{{ state }}">
+<div class="rn-live-in" data-testid="run-live" data-run="{{ 'stopping' if stopping else state }}"{% if stopping %} data-stopping{% endif %} data-stopping-title="Stopping" data-stopping-step="Stopping: finishing the current step. Nothing new starts, and nothing is lost.">
   <div class="rn-top">
     {% if state == 'active' %}<span class="k-dot k-dot--live rn-bigdot" aria-hidden="true"></span>{% else %}<span class="k-badge k-badge--muted">{{ glyph('pause') }}</span>{% endif %}
-    <div class="k-grow"><h3>{{ 'Running now' if state == 'active' else 'Paused' }}</h3>
-      <div class="rn-step" data-live="step" data-testid="run-step">{% if state == 'active' %}{{ v.step or 'Starting' }}{% else %}{{ v.headline }}. Nothing new starts until you resume.{% endif %}</div></div>
+    <div class="k-grow"><h3 data-testid="run-title">{{ 'Stopping' if stopping else 'Running now' if state == 'active' else 'Paused' }}</h3>
+      <div class="rn-step" data-live="step" data-testid="run-step">{% if state == 'active' %}{{ v.step_detail or 'Starting' }}{% elif stopping %}Stopping: finishing {{ stopping }} current {{ 'step' if stopping == 1 else 'steps' }}. Nothing new starts, and nothing is lost.{% else %}{{ v.headline }}. Nothing new starts until you resume.{% endif %}</div></div>
     <div class="rn-acts" data-testid="rn-acts">
-      <span class="rn-acts__main">
+      <span class="rn-acts__main"{% if stopping %} hidden{% endif %}>
         {% if state == 'active' %}<button type="button" class="k-btn k-btn--sm" data-testid="run-pause" hx-post="/runs/pause" hx-swap="none">{{ glyph('pause') }}Pause</button>
         {% else %}<button type="button" class="k-btn k-btn--primary k-btn--sm" data-testid="run-resume" hx-post="/runs/resume" hx-swap="none">{{ ui.icon('play', 'k-ic--sm') }}Resume</button>{% endif %}
         {% if v.run_id %}<button type="button" class="k-btn k-btn--sm" data-rn-stop data-testid="run-stop">{{ glyph('stop') }}Stop</button>{% endif %}
@@ -21,6 +21,7 @@
       <span class="rn-acts__ask" hidden><span class="rn-cfm">Stop this run? Everything done so far is kept, and Run now or Resume picks up the rest.</span>
         <button type="button" class="k-btn k-btn--sm" hx-post="/runs/stop" hx-swap="none" data-testid="run-stop-yes">Stop</button>
         <button type="button" class="k-btn k-btn--primary k-btn--sm" data-rn-keep>Keep running</button></span>
+      <span class="rn-acts__stop"{% if not stopping %} hidden{% endif %} role="status"><button type="button" class="k-btn k-btn--sm is-stopping" disabled aria-disabled="true" data-testid="run-stopping">{{ glyph('stop') }}Stopping…</button></span>
     </div>
   </div>
   <div class="rn-stages" role="list">

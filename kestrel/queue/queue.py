@@ -19,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import iso, utcnow, utcnow_iso
+from kestrel.db.locks import is_lock_error
 from kestrel.db.models import Opportunity, Source, Task
 
 log = structlog.get_logger()
@@ -141,8 +142,7 @@ def not_held() -> ColumnElement[bool] | None:
     return ~held_by_track(off) if off else None
 
 
-def _is_lock_error(exc: OperationalError) -> bool:
-    return "database is locked" in str(exc).lower() or "database is busy" in str(exc).lower()
+_is_lock_error = is_lock_error  # the shared check (kestrel/db/locks.py); name kept for callers
 
 
 async def _with_lock_retry[T](op: str, fn: Callable[[], Awaitable[T]]) -> T:

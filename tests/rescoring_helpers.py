@@ -16,6 +16,7 @@ from kestrel import paths
 from kestrel.db.base import iso
 from kestrel.db.engine import make_async_engine
 from kestrel.db.models import Evaluation, Opportunity, Task
+from tests import clock_seed
 
 
 def run(coro_fn, *args, **kw):
@@ -70,7 +71,12 @@ async def _clear(s):
 
 async def _fresh_today(s, opp_id):
     opp = await s.get(Opportunity, opp_id)
-    opp.first_seen_at = iso(datetime.now(UTC) - timedelta(minutes=5))
+    # Found five minutes ago, but never before local midnight (D-TEST-2): CI at 00:03 UTC put
+    # `now - 5 min` on the previous day and the Today card the test reads was empty.
+    now = datetime.now(UTC)
+    opp.first_seen_at = iso(clock_seed.ago_within(
+        timedelta(minutes=5), clock_seed.local_day_start(now), horizon=timedelta(minutes=10),
+        now=now))
     await s.commit()
 
 

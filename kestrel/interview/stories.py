@@ -25,7 +25,7 @@ from typing import Any
 
 import numpy as np
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -521,9 +521,10 @@ UNUSABLE: Any = object()  # _merge_cluster: the model answered, but not with a s
 async def _merge_cluster(
     session: AsyncSession, client: Any, spec: Any, sketches: list[Sketch], proof_points: list
 ) -> Story | None | Any:
-    """Run P8 over a cluster and persist a PROPOSED canonical story (operator_edited stays False
-    until the operator rewrites it). Returns None on a quarantined/failed call rather than
-    fabricating a story from nothing (hard rule 3)."""
+    """Run P8 over a cluster and build a PROPOSED canonical story (operator_edited stays False
+    until the operator rewrites it). The story is returned transient, NOT added to the session:
+    the caller persists it after the model calls (D-DB-1). Returns None on a quarantined/failed
+    call rather than fabricating a story from nothing (hard rule 3)."""
     user = _render_user(spec.user, proof_points=proof_points, sketches=sketches)
     messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
     # Through the Hosted mode plan (D-PRIV-1): on an online tier the confidential employer is
@@ -562,13 +563,8 @@ async def _merge_cluster(
         operator_edited=False,
         use_count=len(sketches),
     )
-    session.add(story)
-    await session.flush()
-    for s in sketches:
-        session.add(
-            StoryUsage(story_id=story.id, opportunity_id=s.opportunity_id,
-                       question=question_text(s.question))
-        )
+    # Not added to the session here: the caller holds it in memory and writes it, with its usage
+    # rows, after the last model call (D-DB-1), so no write lock is held across a model call.
     return story
 
 
@@ -617,66 +613,111 @@ async def consolidate_stories(
         await session.commit()
         return result
 
-    raw = await client.embed([s.text() for s in sketches])
-    vecs = [np.asarray(v, dtype=np.float32) for v in raw]
-    clusters = cluster_sketches(vecs, settings.stories.merge_threshold)
-    result.clusters = len(clusters)
+    # No write may be pending while a model call runs (D-DB-1): everything the loop produces is
+    # collected in memory (`new_stories`) or added without a flush, and written after the last
+    # call. no_autoflush stops a stray SELECT from taking the write lock early.
+    new_stories: list[tuple[Story, list[Sketch]]] = []
+    attaches: list[tuple[int, bool, list[Sketch]]] = []
+    with session.no_autoflush:
+        raw = await client.embed([s.text() for s in sketches])
+        vecs = [np.asarray(v, dtype=np.float32) for v in raw]
+        clusters = cluster_sketches(vecs, settings.stories.merge_threshold)
+        result.clusters = len(clusters)
 
-    existing = (
-        (await session.execute(select(Story).where(Story.is_canonical.is_(True)))).scalars().all()
-    )
-    existing_vecs: dict[int, np.ndarray] = {}
-    if existing:
-        emb = await client.embed([_story_text(s) for s in existing])
-        existing_vecs = {
-            s.id: np.asarray(v, dtype=np.float32) for s, v in zip(existing, emb, strict=False)
-        }
+        existing = (
+            (await session.execute(select(Story).where(Story.is_canonical.is_(True))))
+            .scalars()
+            .all()
+        )
+        existing_vecs: dict[int, np.ndarray] = {}
+        if existing:
+            emb = await client.embed([_story_text(s) for s in existing])
+            existing_vecs = {
+                s.id: np.asarray(v, dtype=np.float32) for s, v in zip(existing, emb, strict=False)
+            }
 
-    profile = load_profile("employment")
-    proof_points = list(getattr(profile, "proof_points", None) or []) if profile else []
-    spec = load_prompt("story_consolidate/v1")
+        profile = load_profile("employment")
+        proof_points = list(getattr(profile, "proof_points", None) or []) if profile else []
+        spec = load_prompt("story_consolidate/v1")
 
-    done_ids: set[int] = set()  # sketches actually consolidated (created or attached) this run
-    newly_refused: dict[str, str] = {}
-    for cl in clusters:
-        members = [sketches[i] for i in cl]
-        centroid = _centroid(vecs, cl)
-        match = _best_match(centroid, existing, existing_vecs, settings.stories.merge_threshold)
-        if match is not None:
-            # A cluster that matches an existing canonical story attaches as usage. This is the
-            # never-overwrite guarantee: an operator-edited story is untouched (its text, themes,
-            # and edits all preserved), and even a prior proposal is not re-synthesized over.
-            for s in members:
-                session.add(
-                    StoryUsage(
-                        story_id=match.id, opportunity_id=s.opportunity_id,
-                        question=question_text(s.question),
-                    )
+        done_ids: set[int] = set()  # sketches actually consolidated (created or attached) this run
+        newly_refused: dict[str, str] = {}
+        for cl in clusters:
+            members = [sketches[i] for i in cl]
+            centroid = _centroid(vecs, cl)
+            match = _best_match(
+                centroid, existing, existing_vecs, settings.stories.merge_threshold
+            )
+            if match is not None:
+                # A cluster that matches an existing canonical story attaches as usage. This is
+                # the never-overwrite guarantee: an operator-edited story is untouched (its text,
+                # themes, and edits all preserved), and even a prior proposal is not re-synthesized
+                # over.
+                # Held in memory and written with the rest after the last model call. The target
+                # is re-checked there: the operator may delete or dismiss it while this runs.
+                attaches.append((match.id, bool(match.operator_edited), members))
+                done_ids.update(s.id for s in members)
+                continue
+            story = await _merge_cluster(session, client, spec, members, proof_points)
+            if story is UNUSABLE:
+                # Nothing is saved and NOTHING IS HIDDEN or dismissed: a refusal can be wrong, so
+                # the sketches stay out of done_ids (like a failed merge). Each non-note one is
+                # remembered in REFUSED_KEY by its text fingerprint, so a later build skips it
+                # while the text is unchanged and reads it again once it changes; a note is always
+                # read again. Placeholder-only sketches are already skipped before this point. The
+                # dismissed map is never written here, so a dismissal made while the build ran
+                # cannot be lost.
+                newly_refused.update(
+                    {str(m.id): sketch_fingerprint(m) for m in members if m.kind != "note"}
                 )
-            match.use_count = (match.use_count or 0) + len(members)
-            result.attached.append(
-                {"story_id": match.id, "sketches": len(members),
-                 "operator_edited": bool(match.operator_edited)}
+                result.skipped += len(members)
+            elif story is not None:
+                new_stories.append((story, members))
+                done_ids.update(s.id for s in members)
+            # A failed merge (quarantine/bad response) leaves its sketches OUT of done_ids, so they
+            # are neither consumed nor stepped over by the watermark; they redo on the next run.
+
+    # Every model call is finished. Write everything now, in the one transaction that also moves
+    # the watermark, so the lock is held for milliseconds and a kill before the commit leaves
+    # nothing behind (the same atomicity as before, minus the long lock).
+    for story_id, edited, members in attaches:
+        # A fresh SELECT by id, inside the final write: a target removed while the build ran is
+        # skipped, its sketches stay out of done_ids (they re-consolidate next build) and the
+        # build carries on. The count is a column UPDATE, so a stale loaded object cannot raise.
+        alive = (
+            await session.execute(
+                select(Story.id).where(Story.id == story_id, Story.is_canonical.is_(True))
             )
-            done_ids.update(s.id for s in members)
+        ).scalar_one_or_none()
+        if alive is None:
+            log.info("story_attach_target_gone", story_id=story_id, sketches=len(members))
+            done_ids.difference_update(m.id for m in members)
             continue
-        story = await _merge_cluster(session, client, spec, members, proof_points)
-        if story is UNUSABLE:
-            # Nothing is saved and NOTHING IS HIDDEN or dismissed: a refusal can be wrong, so the
-            # sketches stay out of done_ids (like a failed merge). Each non-note one is remembered
-            # in REFUSED_KEY by its text fingerprint, so a later build skips it while the text is
-            # unchanged and reads it again once it changes; a note is always read again.
-            # Placeholder-only sketches are already skipped before this point. The dismissed map
-            # is never written here, so a dismissal made while the build ran cannot be lost.
-            newly_refused.update(
-                {str(m.id): sketch_fingerprint(m) for m in members if m.kind != "note"}
+        for m in members:
+            session.add(
+                StoryUsage(
+                    story_id=story_id, opportunity_id=m.opportunity_id,
+                    question=question_text(m.question),
+                )
             )
-            result.skipped += len(members)
-        elif story is not None:
-            result.created_story_ids.append(story.id)
-            done_ids.update(s.id for s in members)
-        # A failed merge (quarantine/bad response) leaves its sketches OUT of done_ids, so they are
-        # neither consumed nor stepped over by the watermark; they re-consolidate on the next run.
+        await session.execute(
+            update(Story)
+            .where(Story.id == story_id)
+            .values(use_count=func.coalesce(Story.use_count, 0) + len(members))
+        )
+        result.attached.append(
+            {"story_id": story_id, "sketches": len(members), "operator_edited": edited}
+        )
+    for story, _members in new_stories:
+        session.add(story)
+    await session.flush()
+    for story, members in new_stories:
+        result.created_story_ids.append(story.id)
+        for s in members:
+            session.add(
+                StoryUsage(story_id=story.id, opportunity_id=s.opportunity_id,
+                           question=question_text(s.question))
+            )
 
     await _advance_progress(session, sketches, done_ids, watermark)
     if newly_refused:  # union with what is stored now, inside this transaction

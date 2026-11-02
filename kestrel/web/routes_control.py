@@ -159,15 +159,25 @@ async def worker_resume():
     from kestrel.analytics.run_summary import RESUMED_KEY
     from kestrel.db.base import utcnow_iso
     from kestrel.db.models import Setting
+    from kestrel.pipeline import runlog
+    from kestrel.web.app import held_run_id
 
-    set_paused(False)
-    async with sessionmaker()() as s:
-        row = await s.get(Setting, RESUMED_KEY)
-        if row is None:
-            s.add(Setting(key=RESUMED_KEY, value=utcnow_iso()))
-        else:
-            row.value = utcnow_iso()
-        await s.commit()
+    # Read the held run and clear the stop request while the worker is still paused, then unpause:
+    # unpausing first let the worker finish an idle cycle and drop the held run before the
+    # (possibly lock-delayed) write reopened it, leaving a "running" run nothing held.
+    carried = held_run_id()
+    try:
+        async with sessionmaker()() as s:
+            # Resume ends a requested stop: the run the worker still holds goes back to running.
+            await runlog.clear_stop_request(s, carried_run_id=carried)
+            row = await s.get(Setting, RESUMED_KEY)
+            if row is None:
+                s.add(Setting(key=RESUMED_KEY, value=utcnow_iso()))
+            else:
+                row.value = utcnow_iso()
+            await s.commit()
+    finally:
+        set_paused(False)
     return JSONResponse({"paused": False}, headers={"HX-Trigger": "run-refresh"})
 
 

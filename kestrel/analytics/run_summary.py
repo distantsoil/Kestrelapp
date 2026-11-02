@@ -88,6 +88,8 @@ from kestrel.web.words import words
 APP_RUN_NAME = "desktop"  # runlog.APP_RUN_NAME
 # Stamped by POST /api/worker/resume: the window never reaches back past it (R3).
 RESUMED_KEY = "worker.resumed_at"
+# The Stop press, tied to the run it stopped ({"run_id": N}): what lets the Runs card say Stopping.
+STOP_KEY = "worker.stop_request"
 _RUN_TASKS = ("scrape", "t1", "t2")
 _WORK_TASKS = ("scrape", "embed", "t1", "t2")
 EVENTS_SHOWN = 10
@@ -136,7 +138,7 @@ def _empty() -> dict[str, Any]:
         "quick_screen_done": 0, "quick_screen_total": 0, "quick_screen_kept": 0,
         "rated": 0, "to_rate": 0, "failed": 0, "rating_now": 0, "waiting": 0,
         "groups": dict.fromkeys(GROUP_KEYS, 0), "groups_by_track": {},
-        "last_activity_at": None, "recent_events": [], "finishing": 0,
+        "last_activity_at": None, "recent_events": [], "finishing": 0, "retrying": 0, "stopping": 0,
     }
 
 
@@ -217,6 +219,31 @@ def _live_where(*types: str):
     from kestrel.queue.queue import in_flight
 
     return and_(Task.type.in_(types), in_flight(utcnow_iso()))
+
+
+async def stopping_count(session: AsyncSession, *, paused: bool) -> int:
+    """Steps still finishing after a Stop the person asked for (#91), read from rows only: a
+    stop request stored for the newest run, that run stored as "stopping", the worker still
+    held, and a task under a live lease. A lease with no expiry does not count. A plain Pause,
+    a quit that wrote "stopping", or a stop whose write failed has no such request, so the card
+    tells the truth (Paused) and keeps Resume."""
+
+    if not paused:
+        return 0
+    newest = (await session.execute(
+        select(Run.id, Run.status).where(Run.name == APP_RUN_NAME)
+        .order_by(Run.started_at.desc(), Run.id.desc()).limit(1)
+    )).first()
+    if newest is None or newest.status != "stopping":
+        return 0
+    asked = await session.get(Setting, STOP_KEY)
+    if asked is None or not isinstance(asked.value, dict) or asked.value.get("run_id") != newest.id:
+        return 0
+    return int((await session.execute(
+        select(func.count()).select_from(Task).where(
+            Task.type.in_(_WORK_TASKS), Task.status == "leased",
+            Task.lease_until.is_not(None), Task.lease_until >= _now_iso())
+    )).scalar_one())
 
 
 def _now_iso() -> str:
@@ -402,6 +429,19 @@ async def run_summary(
     n_t1 = live.get(("t1", "pending"), 0) + live.get(("t1", "leased"), 0)
     t2_leased = live.get(("t2", "leased"), 0)
     n_t2 = live.get(("t2", "pending"), 0) + t2_leased
+    if active:
+        # Work the worker is trying again (#92): a task that failed once and went back to the
+        # queue holds its error, and a leased task past its first lease is on its next try.
+        # A task given back unstarted because a key is out of credit (D-LLM-8) is waiting, not
+        # retrying, so it is left out.
+        from kestrel.queue.queue import is_deferred
+
+        out["retrying"] = int((await session.execute(
+            select(func.count()).select_from(Task).where(
+                _live_where(*_RUN_TASKS), ~is_deferred(),
+                or_(and_(Task.status == "pending", Task.last_error.is_not(None)),
+                    and_(Task.status == "leased", Task.attempts >= 2)))))
+            .scalar_one())
     out["searches_total"] = out["searches_done"] + n_scrape
     if out["current_search"] and not n_scrape:
         out["searches_total"] += 1  # a CLI scan in another process holds no task here
@@ -523,6 +563,9 @@ async def run_summary(
         out["stage"] = "full_review"
     elif active:
         out["stage"] = "finishing"
+    # A requested stop still finishing (#91): the card, the header chip and the status rail all
+    # read this one number, so they cannot disagree.
+    out["stopping"] = await stopping_count(session, paused=bool(out["paused"]))
     out["last_activity_at"] = await _last_activity(session, start, end, run)
     events.sort(key=lambda e: e["at"] or "", reverse=True)
     out["recent_events"] = events[:EVENTS_SHOWN]
@@ -564,6 +607,8 @@ def step_words(summary: dict[str, Any]) -> str:
     2" (paused while tasks still hold a lease), "Paused", "Idle"."""
     s = summary
     if s.get("paused"):
+        if s.get("stopping"):
+            return f"Stopping: finishing {int(s['stopping'])}"
         n = int(s.get("finishing") or 0)
         return f"Pausing: finishing {n}" if n else "Paused"
     if not s.get("active"):
@@ -580,19 +625,38 @@ def step_words(summary: dict[str, Any]) -> str:
     return "Finishing up"
 
 
-def stage_line(summary: dict[str, Any]) -> str:
+def elapsed_words(secs: int | None) -> str:
+    """"just started", "4 min so far", "1 hr 5 min so far": whole minutes, so the line changes
+    once a minute."""
+    if secs is None:
+        return ""
+    m = secs // 60
+    if m < 1:
+        return "just started"
+    return f"{m} min so far" if m < 60 else f"{m // 60} hr {m % 60} min so far"
+
+
+def stage_line(summary: dict[str, Any], *, elapsed: int | None = None) -> str:
     """The current step with its detail (the Runs page Latest run panel): the step words, then
-    the search being run and the roles found, or the failures."""
+    the search being run and the roles found, or the failures. While the run is going it also
+    says how many tasks are on another try and how long the run has been going (#92); both come
+    from rows the worker already writes, and the line is one text, so the card never moves."""
     s = summary
     line = step_words(s)
     stage = s.get("stage")
     if stage == "searching":
         if s.get("current_search"):
             line += f": {s['current_search']}"
-        return line + f" · {s['found_new']} found so far"
-    if stage == "full_review" and s["failed"]:
-        return line + f" · {s['failed']} failed"
-    return "" if line == "Idle" else line
+        line += f" · {s['found_new']} found so far"
+    elif stage == "full_review" and s["failed"]:
+        line += f" · {s['failed']} failed"
+    elif line == "Idle":
+        return ""
+    if s.get("active") and elapsed is not None:
+        if s.get("retrying"):
+            line += f" · {s['retrying']} retrying"
+        line += f" · {elapsed_words(elapsed)}"
+    return line
 
 
 def rail_line(summary: dict[str, Any]) -> str | None:
@@ -687,6 +751,7 @@ def view(summary: dict[str, Any], *, now: datetime | None = None) -> dict[str, A
     n_problems = len(s.get("problems") or [])
     s.update(
         step=stage_line(s),
+        step_detail=stage_line(s, elapsed=seconds_since(s.get("started_at"), now)),
         headline=step_words(s),
         shown_groups=group_list(s),
         last_activity_words=ago_words(secs),

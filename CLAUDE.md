@@ -99,9 +99,10 @@ Where the built app differs, the app is wrong; change the mockup only with the o
 PR branch runs CI. So CI confirms; it does not discover.
 - Batch work: finish a coherent unit locally, then push once. Never push work in progress, and
   never push just to "see what CI says".
-- Before every push run `uv run --extra dev python scripts/check.py` (lint plus the full suite, including
-  the workflow, installer-script and notices guards) and push only when it ends "Ready to push."
-  `--quick` is for iterating, not for pushing. The opt-in hook: `git config core.hooksPath .githooks`.
+- One full gate per PR (owner, D-CI-8): run `uv run --extra dev python scripts/check.py` (lint plus
+  the full suite, including the workflow, installer-script and notices guards) once, after the final
+  review, on the sanitized public tree, and push it only when it ends "Ready to push." The private
+  branch push needs `scripts/check.py --quick`. The opt-in hook: `git config core.hooksPath .githooks`.
 - Exception (owner, D-CI-4): a push whose changes touch only the private decision log and/or `working.log`
   skips `check.py`; no test reads either file. Any other doc (specs, CLAUDE.md, CHANGELOG) still
   runs it, because tests read those.

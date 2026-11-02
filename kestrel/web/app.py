@@ -11,6 +11,7 @@ import contextlib
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import structlog
@@ -30,6 +31,9 @@ from kestrel.web.auth import (
 from kestrel.web.routes_api import router as api_router
 from kestrel.web.routes_learning import router as learning_router
 from kestrel.web.routes_pages import router as pages_router
+
+if TYPE_CHECKING:
+    from kestrel.pipeline import runlog
 
 log = structlog.get_logger()
 
@@ -57,6 +61,16 @@ _paused = asyncio.Event()
 # no cycle is writing while the tables are emptied (review finding 7).
 _cycle_idle = asyncio.Event()
 _cycle_idle.set()
+
+
+# The run the worker loop holds right now (an open cycle, or one a pause cut it short on).
+# Resume reads it to put a stopped run back to running (D-UI-234); the loop alone writes it.
+_held_cycle: dict[str, runlog.CycleRun | None] = {"cycle": None}
+
+
+def held_run_id() -> int | None:
+    cycle = _held_cycle["cycle"]
+    return cycle.run_id if cycle is not None else None
 
 
 async def wait_for_idle_cycle(timeout: float) -> bool:
@@ -401,6 +415,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
                 cycle, carried = carried or runlog.CycleRun(sm, mode=settings.llm.mode), None
+                _held_cycle["cycle"] = cycle
                 if await runlog.has_pipeline_work(sm, skip_types=held_types(settings)):
                     await cycle.ensure_open()
                 # Scheduled scrapes first: the scheduler, tray and MCP only enqueue them, and
@@ -464,6 +479,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 if is_paused() and cycle.run_id is not None and not stop.is_set():
                     carried = cycle  # paused mid-run: the run stays open until resumed
                 else:
+                    _held_cycle["cycle"] = None
                     await cycle.finish("stopping" if stop.is_set() else "done")
                 idle = (
                     counts["pass"] == 0
@@ -475,6 +491,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
             except Exception as exc:  # a serve worker must never die on one bad cycle
                 log.warning("serve_worker_cycle_error", error=str(exc))
                 idle = True
+                _held_cycle["cycle"] = None
                 if cycle is not None:
                     try:
                         await cycle.finish("failed", notes=f"{type(exc).__name__}: {exc}")
@@ -484,6 +501,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 _cycle_idle.set()
             if idle:
                 await _wait(stop, 5.0)
+        _held_cycle["cycle"] = None
         if carried is not None:  # quit while paused: close the run this loop kept open
             try:
                 await carried.finish("stopping")
