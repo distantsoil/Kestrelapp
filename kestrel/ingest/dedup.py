@@ -9,7 +9,7 @@ import hashlib
 import re
 
 _URL_RE = re.compile(r"https?://\S+")
-_TRACK_RE = re.compile(r"[?&](utm_[^=&\s]+|gh_src|src|ref)=[^&\s]*", re.IGNORECASE)
+_TRACK_RE = re.compile(r"[?&](utm_[^=&?\s]+|gh_src|src|ref)=[^&\s]*", re.IGNORECASE)
 _WS_RE = re.compile(r"\s+")
 _TOKEN_RE = re.compile(r"[^a-z0-9]+")
 # Only true stop words. Seniority markers (senior/sr/jr/lead/staff/principal) are KEPT so
