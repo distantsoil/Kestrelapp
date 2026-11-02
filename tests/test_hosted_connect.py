@@ -311,3 +311,44 @@ def test_settings_connect_shows_the_same_clear_result(monkeypatch):
         _mock_openrouter(router, key_status=401)
         r = client.post("/settings/hosted/connect", data={"provider": "openrouter", "ack": "on"})
     assert 'data-connect-ok="false"' in r.text and "Not connected to OpenRouter." in r.text
+
+
+def test_verify_key_refuses_a_key_that_cannot_go_in_a_header_without_echoing_it():
+    import asyncio
+
+    import httpx
+
+    from kestrel.config import load_settings
+
+    backend = prov.external_backends(load_settings())["frontier"]
+    seen: list[str] = []
+
+    def handler(request):  # a mock transport: the key check must never get this far
+        seen.append("sent")
+        return httpx.Response(401, json={})
+
+    for bad in ("a sentence with spaces in it", "café café café", "k—ey1234567"):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        st = asyncio.run(prov.verify_key(backend.model_copy(update={"api_key": bad}), http=client))
+        assert not st.ok and "does not look like an API key" in st.detail
+        assert bad not in st.detail and "Error" not in st.detail
+    assert not seen
+
+
+def test_verify_key_does_not_echo_the_library_message_when_the_header_is_rejected():
+    import asyncio
+
+    import httpx
+
+    from kestrel.config import load_settings
+
+    backend = prov.external_backends(load_settings())["frontier"]
+
+    class Boom(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            raise httpx.LocalProtocolError("Illegal header value b'Bearer SECRET-KEY-VALUE'")
+
+    client = httpx.AsyncClient(transport=Boom())
+    st = asyncio.run(prov.verify_key(
+        backend.model_copy(update={"api_key": "sk-or-plainlookingkey"}), http=client))
+    assert not st.ok and "SECRET-KEY-VALUE" not in st.detail

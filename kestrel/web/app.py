@@ -494,7 +494,9 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 _held_cycle["cycle"] = None
                 if cycle is not None:
                     try:
-                        await cycle.finish("failed", notes=f"{type(exc).__name__}: {exc}")
+                        from kestrel.errors import task_failure_text
+
+                        await cycle.finish("failed", notes=task_failure_text(exc))
                     except Exception as close_exc:  # the restart sweep closes it instead
                         log.warning("cycle_run_close_failed", error=str(close_exc))
             finally:
@@ -899,6 +901,14 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     app.state.bind_all = bind_all  # what this process runs with (Settings > LAN compares it)
     public_hostnames = tuple(h.strip().lower() for h in get_settings().server.public_hostnames if h)
 
+    def _note_import_refusal(request: Request, reason: str, status: int = 403) -> None:
+        """A document-import request the origin checks turned away is still a line in the log
+        (#102): the page showed nothing and the log showed nothing. Path stage and a code only."""
+        path = request.url.path
+        if path.startswith("/api/documents/import"):
+            log.warning("import_refused", stage="read" if path.endswith("/read") else "propose",
+                        outcome="refused", reason=reason, status=status)
+
     @app.middleware("http")
     async def _time_requests(request: Request, call_next: Callable) -> Response:
         """Name a slow answer in the log (D-UI-10). A click that waits about a second is either
@@ -946,10 +956,13 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
                 if _is_extension_origin(origin):
                     refusal = await _extension_refusal(request)
                     if refusal is not None:
+                        _note_import_refusal(request, "extension_refused",
+                                             status=getattr(refusal, "status_code", 403))
                         return refusal
                 elif not _is_own_origin(
                     origin, bind_all=bind_all, public_hostnames=public_hostnames
                 ):
+                    _note_import_refusal(request, "cross_origin")
                     return JSONResponse(
                         {"detail": "cross-origin request refused"},
                         status_code=403,
@@ -963,6 +976,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
                 # which is not ours.
                 site = request.headers.get("sec-fetch-site", "").strip().lower()
                 if site in _FOREIGN_FETCH_SITES:
+                    _note_import_refusal(request, "cross_site")
                     return JSONResponse(
                         {"detail": "cross-site request refused"},
                         status_code=403,

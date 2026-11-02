@@ -302,16 +302,17 @@ def test_the_role_editor_offers_the_box_and_a_suggested_replacement():
     assert f'id="role-{ids["cur"]}"' in html
 
 
-def test_ticking_sets_the_mark_and_only_one_role_per_document_is_current():
+def test_ticking_sets_the_mark_and_marking_another_role_never_unmarks_the_first():
     client, ids = _app()
     with client:
         _mark(client, ids["cur"], _EMPLOYER, _SHOWN)
         assert _labels()[ids["cur"]] == _SHOWN and _hidden()[_EMPLOYER] == _SHOWN
         r = _mark(client, ids["past"], _PAST, "a utility")
     labels = _labels()
-    assert labels[ids["past"]] == "a utility" and labels[ids["cur"]] is None
+    # D-PRIV-2: a person can have two current jobs, so marking one never unmarks the other.
+    assert labels[ids["past"]] == "a utility" and labels[ids["cur"]] == _SHOWN
     assert labels[ids["other"]] == "a logistics firm", "another document's mark was touched"
-    assert r.headers.get("HX-Retarget") == "#tree"
+    assert r.headers.get("HX-Retarget") is None  # no other role changed, so no tree redraw
 
 
 def test_a_ticked_box_needs_a_replacement_and_a_details_post_keeps_the_mark():
@@ -637,10 +638,10 @@ class _ImportFake:
         return ChatResult(content=json.dumps(_ROLES[i]), model="fake")
 
 
-def _proposal(outline=_OUTLINE):
+def _proposal(outline=_OUTLINE, resume=_RESUME):
     from kestrel.docs.imports import propose_import
 
-    return asyncio.run(propose_import(_ImportFake(outline), _RESUME, source_format="md"))
+    return asyncio.run(propose_import(_ImportFake(outline), resume, source_format="md"))
 
 
 def test_import_offers_the_opt_in_only_for_an_open_ended_newest_role():
@@ -650,15 +651,17 @@ def test_import_offers_the_opt_in_only_for_an_open_ended_newest_role():
     prop = _proposal()
     assert prop.value is not None and prop.flags.clean
     offer = _current_offer(prop, "employment")
-    assert offer == {"company": "Acme Media", "hint": "a company in your industry"}
+    assert offer == [{"index": 0, "company": "Acme Media", "hint": "a company in your industry"}]
     html = templates().get_template("partials/import_proposal.html").render(
         proposal=prop, markdown=_RESUME, track="employment", doc_kind="resume",
         current_offer=offer)
     assert "Mark Acme Media as my current employer" in html
     assert "checked" not in html.split('name="current_employer"', 1)[1].split(">", 1)[0]
+    # The end date is read from the header line, so a closed role is a closed header.
     closed = copy.deepcopy(_OUTLINE)
     closed["roles"][0]["end_date"] = "2024"
-    assert _current_offer(_proposal(closed), "employment") is None
+    ended = _RESUME.replace("2019 - Present", "2019 - 2024")
+    assert _current_offer(_proposal(closed, ended), "employment") == []
 
 
 def test_import_sets_nothing_unless_ticked_and_sets_the_newest_role_when_ticked():
@@ -1061,3 +1064,182 @@ def test_wizard_resume_step_approves_then_saves_and_continues():
         r = client.post("/api/documents/import/accept", data={**base, "approved": "1"},
                         headers={"HX-Request": "true"})
     assert r.headers.get("HX-Redirect", "").startswith("/onboarding?step=")
+
+
+# ------------------------------------------------- D-PRIV-2: every open-ended role is current
+_TWO_PRESENT = """# Pat Example
+## Experience
+### Acme Media, Director of IT
+2021 - Present
+- Cut infrastructure costs 20% by consolidating data centers.
+### Side Studio, Advisor
+2022 - Present
+- Advised on studio tooling.
+### Beta Hotels, IT Manager
+2015 - 2019
+- Migrated 12 sites to Microsoft 365.
+"""
+_TWO_PRESENT_OUTLINE = {
+    "summary_blocks": [], "skill_groups": [],
+    "roles": [
+        {"header_lines": [3, 4], "first_line": 3, "last_line": 5, "company_label": "Acme Media",
+         "title": "Director of IT", "start_date": "2021", "end_date": "Present"},
+        {"header_lines": [6, 7], "first_line": 6, "last_line": 8, "company_label": "Side Studio",
+         "title": "Advisor", "start_date": "2022", "end_date": "Present"},
+        {"header_lines": [9, 10], "first_line": 9, "last_line": 11,
+         "company_label": "Beta Hotels", "title": "IT Manager", "start_date": "2015",
+         "end_date": "2019"},
+    ],
+}
+
+
+class _ThreeRoles(_ImportFake):
+    async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
+        from kestrel.llm.client import ChatResult
+
+        if "outline" in schema_name:
+            return ChatResult(content=json.dumps(self.outline), model="fake")
+        n = {"Acme": 5, "Side": 8, "Beta": 11}[next(
+            k for k in ("Acme", "Side", "Beta") if k in messages[1]["content"])]
+        body = {"context_lines": [], "bullets": [
+            {"key": "b", "lines": [n], "optional": False, "tags": []}], "proof_points": []}
+        return ChatResult(content=json.dumps(body), model="fake")
+
+
+def _two_present_proposal():
+    from kestrel.docs.imports import propose_import
+
+    return asyncio.run(propose_import(_ThreeRoles(_TWO_PRESENT_OUTLINE), _TWO_PRESENT,
+                                      source_format="md"))
+
+
+def test_the_import_offers_every_open_ended_role_with_its_own_shown_as():
+    from kestrel.web.deps import templates
+    from kestrel.web.pages.documents import _current_offer
+
+    prop = _two_present_proposal()
+    assert prop.error is None, prop.error
+    offers = _current_offer(prop, "employment")
+    assert [(o["index"], o["company"]) for o in offers] == [(0, "Acme Media"), (1, "Side Studio")]
+    html = templates().get_template("partials/import_proposal.html").render(
+        proposal=prop, markdown=_TWO_PRESENT, track="employment", doc_kind="resume",
+        current_offer=offers)
+    assert "Mark Acme Media as my current employer" in html
+    assert "Mark Side Studio as my current employer" in html
+    assert 'name="current_employer_as_0"' in html and 'name="current_employer_as_1"' in html
+    assert "Beta Hotels as my current" not in html  # a past role is not offered
+
+
+def test_every_ticked_role_stays_marked_and_both_employers_are_hidden_everywhere():
+    """Ticking both concurrent jobs marks both (the second no longer unmarks the first), and in
+    confidential mode both are hidden in a generated output and in a list view."""
+    from kestrel.docs.current_employer import load_employer_map
+    from kestrel.docs.imports import accept_import
+
+    client, _ids = _app(confidential=True, with_docs=False)
+    prop = _two_present_proposal()
+
+    async def fn(s):
+        await accept_import(
+            s, prop.value, track="employment", doc_kind="resume", name="Imported resume",
+            source_markdown=_TWO_PRESENT,
+            current_employers={0: "a media company", 1: "a design studio"})
+        await s.commit()
+        m = await load_employer_map(s)
+        return {e.name: (e.shown_as, e.inferred) for e in m.employers}
+
+    hidden = _db(fn)
+    assert hidden == {"Acme Media": ("a media company", False),
+                      "Side Studio": ("a design studio", False)}
+
+    async def views(s):  # the one map every view and output redacts through
+        m = await load_employer_map(s)
+        return m.redact("Acme Media and Side Studio and Beta Hotels")
+
+    shown = _db(views)
+    assert "Acme Media" not in shown and "Side Studio" not in shown
+    assert "a media company" in shown and "a design studio" in shown and "Beta Hotels" in shown
+    assert client is not None
+
+
+def test_with_nothing_marked_both_concurrent_employers_are_hidden_until_confirmed():
+    """Fail closed (D-PRIV-2): in a generated output and in a list view, neither concurrent
+    employer shows while nothing is marked; a past role still prints as written."""
+    from kestrel.docs.imports import accept_import
+
+    client, _ids = _app(confidential=True, with_docs=False)
+    prop = _two_present_proposal()
+
+    async def fn(s):
+        master_id = await accept_import(
+            s, prop.value, track="employment", doc_kind="resume", name="Imported resume",
+            source_markdown=_TWO_PRESENT)
+        for name in ("Acme Media", "Side Studio", "Beta Hotels"):
+            org = Org(name=name, normalized_name=name.lower())
+            s.add(org)
+            await s.flush()
+            s.add(Opportunity(track="employment", opp_type="job_posting",
+                              title=f"Role at {name}", org_id=org.id, org_name=name,
+                              url=f"https://example.test/{org.id}", stage="t2_done"))
+        render = DocRender(doc_master_id=master_id, config={}, rationale={})
+        s.add(render)
+        await s.commit()
+        return render.id
+
+    render_id = _db(fn)
+    with client:
+        listing = client.get("/opportunities").text
+        output = str(_preview_doc(client.get(f"/renders/{render_id}").text))
+    for page in (listing, output):
+        assert "Acme Media" not in page and "Side Studio" not in page, "a current employer showed"
+    assert "Beta Hotels" in listing  # a past employer is printed as written
+
+
+def test_a_single_current_role_still_behaves_as_before():
+    from kestrel.docs.current_employer import load_employer_map
+    from kestrel.docs.imports import accept_import, open_ended_roles
+
+    _app(confidential=True, with_docs=False)
+    prop = _proposal()
+    assert [i for i, _r in open_ended_roles(prop.value)] == [0]
+
+    async def fn(s):
+        await accept_import(s, prop.value, track="employment", doc_kind="resume",
+                            name="Imported resume", source_markdown=_RESUME,
+                            current_employer="a media company")  # the older single form
+        await s.commit()
+        m = await load_employer_map(s)
+        return {e.name: (e.shown_as, e.inferred) for e in m.employers}
+
+    assert _db(fn) == {"Acme Media": ("a media company", False)}
+
+
+def test_two_open_ended_roles_with_only_one_ticked_are_both_hidden_in_confidential_mode():
+    """D-PRIV-2: an open-ended role is current unless the person marked it NOT current, so
+    ticking one of two concurrent jobs never exposes the other."""
+    from kestrel.docs.current_employer import load_employer_map
+
+    client, ids = _app()
+
+    async def add(s):
+        s.add(DocSection(doc_master_id=ids["resume"], section_kind="role",
+                         org_label="Side Studio", title="Advisor", start_date="2022",
+                         end_date="Present", sort_order=3))
+        await s.commit()
+
+    _db(add)
+    with client:
+        _mark(client, ids["cur"], _EMPLOYER, _SHOWN)  # only the first is ticked
+
+    async def employers(s):
+        m = await load_employer_map(s)
+        return {e.name: (e.shown_as, e.inferred) for e in m.employers}
+
+    got = _db(employers)
+    assert got[_EMPLOYER] == (_SHOWN, False)
+    assert got["Side Studio"][1] is True, "the second open-ended role was left visible"
+    # Unticking a role is an explicit "not current": it is no longer inferred.
+    with client:
+        client.post(f"/documents/section/{ids['cur']}",
+                    data={"current_employer_form": "1", "org_label": _EMPLOYER})
+    assert _EMPLOYER not in _db(employers)

@@ -15,6 +15,11 @@
 
 /* ------------------------------------------------------------------ base and utilities */
 .k-win, .k-win *, .k-flyout, .k-slideover, .k-modal, .k-toasts { box-sizing: border-box; }
+/* The body-level layer every modal and slide-over is moved into while it is open
+   (kestrel-ui.js, mountInLayer). It leaves .k-win, so it carries what .k-win gave its content.
+   It makes no stacking context of its own: the overlay's z-index competes with the scrim. */
+.k-layer, .k-layer * { box-sizing: border-box; }
+.k-layer { font: var(--fs-md)/1.5 var(--font); color: var(--ink); }
 .k-win {
   font: var(--fs-md)/1.5 var(--font);
   color: var(--ink);

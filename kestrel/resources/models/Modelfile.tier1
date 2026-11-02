@@ -4,7 +4,7 @@
 # in here or long inputs are silently truncated. A request that sets temperature or
 # max_tokens wins over the PARAMETER lines below; they are the floor for one that does
 # not.
-FROM qwen3:4b
+FROM qwen3:4b-instruct-2507-q4_K_M
 PARAMETER num_ctx 4096
 PARAMETER num_predict 400
 PARAMETER temperature 0.1

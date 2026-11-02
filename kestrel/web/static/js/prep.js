@@ -142,6 +142,8 @@
     });
     out.textContent = String(n);
   }
+  // Runs on htmx:afterSettle, not afterSwap: settle copies class and style from a same-id element
+  // onto the new one and would strip the open state (#94).
   function onSheetSwap(e) {
     var t = e.target;
     if (t && t.id === 'pp-dialog' && root.KUI) {
@@ -149,7 +151,7 @@
       if (modal) {
         root.KUI.openModal(modal);
         var ta = $('textarea', modal);
-        if (ta) ta.focus();
+        if (ta) { try { ta.focus({ preventScroll: true }); } catch (err) { /* gone */ } }
         scalePages();
         cx.after(60, scalePages);
         cx.after(420, scalePages);
@@ -238,7 +240,7 @@
       ctx.on(doc, 'keydown', onEscape);
       ctx.on(doc, 'input', onInput);
       ctx.on(doc, 'submit', onSubmit, true);
-      ctx.on(doc, 'htmx:afterSwap', onSheetSwap);
+      ctx.on(doc, 'htmx:afterSettle', onSheetSwap);
       ctx.on(doc, 'scroll', onPagesScroll, true);
       ctx.on(root, 'resize', scalePages);
       ctx.on(doc, 'pp-close-sheet', onCloseSheet);

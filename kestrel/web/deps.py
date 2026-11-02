@@ -378,6 +378,18 @@ def ui_prefs() -> dict[str, object]:
     }
 
 
+_QUANT_SUFFIX = re.compile(r"-(?:q\d(?:_[0-9a-z]+)*|fp(?:16|32)|bf16|f16)$", re.IGNORECASE)
+
+
+def short_model_name(tag: object) -> str:
+    """A model tag as the Models table draws it: a trailing quantization suffix (-q4_K_M, -q8_0,
+    -fp16) is dropped, because it is a download detail that makes the name wrap. The full tag
+    stays in the cell's tooltip. A name that is only a suffix is kept whole."""
+    text = str(tag or "")
+    short = _QUANT_SUFFIX.sub("", text)
+    return short or text
+
+
 def tier_label(tier: object) -> str:
     """"Quick screen (Tier 1)" for 1, "1", "tier1" or "t1": the plain label first, the setting
     name beside it. Used only where Tier is a setting name (Models, Bench)."""
@@ -460,6 +472,7 @@ def templates() -> Jinja2Templates:
         t.env.globals["common_word_warning"] = COMMON_WORD_WARNING
         t.env.globals["default_hide_names"] = default_names
         t.env.filters["tier_label"] = tier_label
+        t.env.filters["short_model"] = short_model_name
         # Which tracks are in use (D-UI-26): templates hide consulting when it is off.
         from kestrel.services.tracks import consulting_enabled, enabled_tracks_cached
 

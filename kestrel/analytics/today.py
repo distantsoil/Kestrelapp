@@ -812,6 +812,44 @@ async def _derived_models_missing(settings) -> list[str]:
     return [str(m) for m in (getattr(state, "missing_derived", None) or [])]
 
 
+async def model_upgrade_gb(settings) -> float:
+    """GB still to download when an upgraded local install needs the pinned instruct model
+    (D-LLM-9), else 0. Only an install that already has Kestrel's derived models is told: a new
+    install just sees its normal checklist. A tier the person pointed at their own model is not
+    asked to download a base it does not use. The Today announcement slot shows this notice
+    (web/pages/announcements.py); dismissing it never hides the general models ask."""
+    import asyncio
+
+    from kestrel.llm import profiles
+    from kestrel.llm.profiles import ollama_needed
+
+    if not ollama_needed(settings):
+        return 0.0
+    try:
+        from kestrel.services import setup_state
+
+        state = await asyncio.to_thread(setup_state.assess, settings)
+        cat = profiles.load_catalog()
+        prof = cat.profile(state.profile)
+    except Exception as exc:  # a setup probe must never take the landing page down
+        log.warning("today_upgrade_probe_failed", error=str(exc))
+        return 0.0
+    if state.ollama_version is None or state.choice == "hosted":
+        return 0.0
+    used: set[str] = set()
+    for tier in profiles.DERIVED_TIERS:
+        base = prof.models.for_tier(tier)
+        if base and settings.llm.tiers[tier].model == profiles.derived_name(tier):
+            used.add(base)
+    pinned = [t for t in state.missing_tags if setup_state.PINNED_MARK in t and t in used]
+    has_derived = bool(state.stale_derived) or (
+        len(state.missing_derived) < len(state.derived_names)
+    )
+    if not pinned or not has_derived:
+        return 0.0
+    return sum(cat.model_sizes_gb.get(t, 0.0) for t in pinned)
+
+
 def failing_sources() -> tuple:
     """WHERE clauses for a search the operator must hear about (D-UI-33): it failed its last
     run and is still on, or the runner switched it off after three failures. A source the

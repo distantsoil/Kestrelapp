@@ -40,10 +40,10 @@ guardrails:
 # Approximate on-disk weight size (GB) of each base tag at its default quantization. Used by
 # doctor's fit check only when /api/show cannot report details.parameter_size.
 model_sizes_gb:
-  qwen3:4b: 2.6
+  qwen3:4b-instruct-2507-q4_K_M: 2.5
   qwen3:8b: 5.2
   qwen3:14b: 9.3
-  qwen3:30b-a3b: 18.6
+  qwen3:30b-a3b-instruct-2507-q4_K_M: 19.0
   nomic-embed-text: 0.3
 
 profiles:
@@ -52,10 +52,10 @@ profiles:
     memory_gb: 8
     kind: cpu
     models:
-      tier1: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
       tier2: qwen3:8b
       tier3: qwen3:8b
-      docsel: qwen3:4b
+      docsel: qwen3:8b
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 1, tier2: 1 }
@@ -64,10 +64,10 @@ profiles:
     memory_gb: 12
     kind: gpu
     models:
-      tier1: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
       tier2: qwen3:8b
       tier3: qwen3:8b
-      docsel: qwen3:4b
+      docsel: qwen3:8b
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 2, tier2: 1 }
@@ -76,10 +76,10 @@ profiles:
     memory_gb: 16
     kind: gpu
     models:
-      tier1: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
       tier2: qwen3:14b
       tier3: qwen3:14b
-      docsel: qwen3:4b
+      docsel: qwen3:14b
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 4, tier2: 2 }
@@ -88,10 +88,10 @@ profiles:
     memory_gb: 24
     kind: gpu
     models:
-      tier1: qwen3:4b
-      tier2: qwen3:30b-a3b
-      tier3: qwen3:30b-a3b
-      docsel: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
+      tier2: qwen3:30b-a3b-instruct-2507-q4_K_M
+      tier3: qwen3:30b-a3b-instruct-2507-q4_K_M
+      docsel: qwen3:30b-a3b-instruct-2507-q4_K_M
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 4, tier2: 2 }
@@ -100,10 +100,10 @@ profiles:
     memory_gb: 16
     kind: mac
     models:
-      tier1: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
       tier2: qwen3:8b
       tier3: qwen3:8b
-      docsel: qwen3:4b
+      docsel: qwen3:8b
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 2, tier2: 1 }
@@ -112,10 +112,10 @@ profiles:
     memory_gb: 32
     kind: mac
     models:
-      tier1: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
       tier2: qwen3:14b
       tier3: qwen3:14b
-      docsel: qwen3:4b
+      docsel: qwen3:14b
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 3, tier2: 2 }
@@ -124,10 +124,10 @@ profiles:
     memory_gb: 64
     kind: mac
     models:
-      tier1: qwen3:4b
-      tier2: qwen3:30b-a3b
-      tier3: qwen3:30b-a3b
-      docsel: qwen3:4b
+      tier1: qwen3:4b-instruct-2507-q4_K_M
+      tier2: qwen3:30b-a3b-instruct-2507-q4_K_M
+      tier3: qwen3:30b-a3b-instruct-2507-q4_K_M
+      docsel: qwen3:30b-a3b-instruct-2507-q4_K_M
       embed: nomic-embed-text
     num_ctx: { tier1: 4096, tier2: 16384, tier3: 20480, docsel: 8192 }
     concurrency: { tier1: 4, tier2: 2 }

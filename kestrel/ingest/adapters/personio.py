@@ -39,6 +39,7 @@ from xml.etree import ElementTree
 
 import httpx
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.ingest.country_names import country_name
 
@@ -94,7 +95,7 @@ class PersonioAdapter:
         except httpx.HTTPError as exc:
             raise AdapterError(f"Personio fetch failed for {slug}: {exc}") from exc
         except PermissionError as exc:
-            raise AdapterError(f"Personio robots.txt does not allow reading {slug}") from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         positions = _positions(text, slug)
 
         pages_read = 0

@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 import httpx
 from bs4 import BeautifulSoup
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 
 _RATE = 1.0  # requests/second; one detail request per role
@@ -122,7 +123,7 @@ class BreezyAdapter:
         except httpx.HTTPError as exc:
             raise AdapterError(f"Breezy HR fetch failed for {slug}: {exc}") from exc
         except PermissionError as exc:
-            raise AdapterError(f"Breezy HR robots.txt does not allow reading {slug}") from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         except ValueError as exc:
             raise AdapterError(f"Breezy HR reply for {slug} was not valid JSON") from exc
         if not isinstance(data, list):

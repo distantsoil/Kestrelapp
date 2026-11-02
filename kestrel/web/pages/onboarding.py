@@ -187,7 +187,8 @@ def models_ready(st: ss.SetupState) -> tuple[bool, str]:
     if not st.choice_explicit:
         return False, "Not chosen yet"
     local_ok = (
-        st.ollama_version is not None and not st.missing_tags and not st.missing_derived
+        st.ollama_version is not None and bool(st.base_tags)  # an empty plan is never ready
+        and not st.missing_tags and not st.missing_derived
     )
     has_key = any(st.hosted_keys.values())
     hosted_ok = st.hosted_problem is None and has_key

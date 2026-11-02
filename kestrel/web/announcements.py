@@ -14,8 +14,22 @@ ANNOUNCEMENTS: tuple[dict[str, str], ...] = ()
 DISMISSED_KEY = "ui.announcements_dismissed"
 
 
+# The one announcement that depends on this install's state (D-LLM-9): an upgraded local install
+# is told once that Kestrel now uses a model that answers without thinking out loud.
+MODEL_UPGRADE_ID = "model-upgrade"
+
+
+def model_upgrade_notice(gb: float) -> dict[str, object]:
+    return {
+        "id": MODEL_UPGRADE_ID,
+        "text": ("Kestrel now uses a model that answers without thinking out loud. "
+                 f"About {gb:.1f} GB to download. Your current models stay installed."),
+        "action": {"label": "Download", "post": "/announcements/model-upgrade/download"},
+    }
+
+
 def known_ids() -> set[str]:
-    return {a["id"] for a in ANNOUNCEMENTS}
+    return {a["id"] for a in ANNOUNCEMENTS} | {MODEL_UPGRADE_ID}
 
 
 def pending(dismissed: list[str]) -> dict[str, str] | None:

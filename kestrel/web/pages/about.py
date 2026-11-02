@@ -315,7 +315,7 @@ async def open_folder(which: str = Form("")):
             '<span class="ab-note" role="status" data-testid="folder-open">'
             "That is not a folder Kestrel can open.</span>"
         )  # 200, not 404: htmx 2 does not swap an error response
-    if desktop_bridge.request_open_folder(target):
+    if await asyncio.to_thread(desktop_bridge.request_open_folder, target):
         return HTMLResponse(
             '<span class="ab-note" role="status" data-testid="folder-open">Opened.</span>'
         )
@@ -416,13 +416,14 @@ async def reveal_diagnostics(request: Request, name: str = Form("")):
     operator's own file; anything that is not such a file is refused."""
     target = None
     if _SAVED_NAME.match(name):
-        target = next((d / name for d in _save_dirs() if (d / name).is_file()), None)
+        target = await asyncio.to_thread(
+            lambda: next((d / name for d in _save_dirs() if (d / name).is_file()), None))
     if target is None:
         return HTMLResponse(
             '<div class="ab-saved is-warn" role="status" data-testid="diagnostics-reveal">'
             "That file is not one Kestrel saved here.</div>"
         )  # 200, not 404: htmx 2 does not swap an error response, so the box would never show
-    if desktop_bridge.request_reveal(target):
+    if await asyncio.to_thread(desktop_bridge.request_reveal, target):
         return HTMLResponse(
             '<span class="ab-note" role="status" data-testid="diagnostics-reveal">'
             "Opened the folder.</span>"

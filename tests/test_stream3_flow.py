@@ -519,7 +519,8 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
     assert dead.status == "dead" and "model unreachable" in (dead.last_error or "")
     with c:
         page = c.get("/stories").text
-    assert 'data-testid="build-failed"' in page and "model unreachable" in page
+    # The line says the build failed in plain words; the raw error stays in the log (D-SEC-7).
+    assert 'data-testid="build-failed"' in page and "model unreachable" not in page
     assert "Try again" in page
 
     # Dead with no error recorded (the process died on its last attempt): it still says so.

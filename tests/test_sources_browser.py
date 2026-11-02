@@ -221,7 +221,7 @@ def test_a_row_opens_its_drawer_and_the_add_sheet_opens_centered(live):
     ctx, page, errors = _page(live, "light", 1280)
     try:
         page.locator('[data-testid="source-details"]').first.click()
-        page.wait_for_selector("#src-drawer-slot >> text=Last 10 checks")
+        page.wait_for_selector("text=Last 10 checks")
         page.keyboard.press("Escape")
         page.get_by_test_id("add-source").click()
         sheet = page.locator("#src-sheet")

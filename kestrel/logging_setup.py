@@ -52,6 +52,11 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(level.upper())
     root.addHandler(handler)
+    # httpx logs one INFO line per request (the model, the embeddings, the tray's status poll), and
+    # 805 of one user's last 2000 log lines were those, which pushed the import out of the
+    # diagnostics bundle (#105). Warnings and errors from both still reach the file.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     structlog.configure(
         processors=[

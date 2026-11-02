@@ -35,6 +35,7 @@ from kestrel.db.models import (
     Quarantine,
     Story,
 )
+from kestrel.errors import failure_record
 from kestrel.interview.questions import active_set
 from kestrel.llm.schemas import (
     MAX_QUESTIONS,
@@ -335,9 +336,9 @@ async def drain_interview_questions(
                 )
         except Exception as exc:  # a failed task is retried, never fatal to the cycle
             beat.cancel()
-            reason = f"{type(exc).__name__}: {exc}"
-            log.warning("interview_questions_failed", task=task.id, error=reason)
-            await queue.fail(task.id, reason, worker_id=wid, retry=True)
+            log.warning("interview_questions_failed", task=task.id,
+                        error=f"{type(exc).__name__}: {exc}")
+            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
             continue
         finally:
             beat.cancel()

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from pathlib import Path
 
 from kestrel.docs.imports import (
     LAYOUT_WIDTH,
@@ -428,7 +430,11 @@ def test_role_details_not_in_the_header_are_flagged():
     outline = json.loads(json.dumps(OUTLINE))
     outline["roles"][0]["start_date"] = "2018"  # the header says 2019
     prop = _run(_Fake(outline=outline))
-    assert prop.flags.unverified == ["role 1 start date: '2018'"]
+    # A date comes from the role's own header line, never from the model: the header's is used
+    # and the review says so (the old substring check passed a date found anywhere in the header).
+    assert prop.flags.unverified == []
+    assert prop.flags.dates_taken == ["role 1 start date: 2019 (the model said 2018)"]
+    assert prop.value.roles[0].start_date == "2019"
 
 
 def test_a_raising_role_task_is_reported_not_raised():
@@ -439,7 +445,9 @@ def test_a_raising_role_task_is_reported_not_raised():
             return await super().complete(messages=messages, **kw)
 
     prop = _run(_Boom())
-    assert prop.value is None and "Role 2" in prop.error and "hook failed" in prop.error
+    # The exception's text stays in the log; the page gets a fixed sentence (D-SEC-4).
+    assert prop.value is None and "Role 2" in prop.error and "hook failed" not in prop.error
+    assert "details are in the log" in prop.error
 
 
 def test_a_year_starting_a_line_is_not_a_list_marker():
@@ -495,49 +503,52 @@ def test_pursuits_links_to_the_applied_import_and_render_review_links_back(monke
 
 PROMOTED = """# Pat Example
 ## Experience
-Brightline | Director of IT Columbus, OH | May 2022 - Apr 2023
-Manager, Software, Systems & Support Jun 2021 - May 2022
-Promoted to Director within 12 months.
-- Led successive releases of Rails.
-- Reduced annual IT expense by 20%.
-Northfield | Operations Director Cleveland, OH | Sep 2016 - Mar 2021
-- Served as virtual CIO to more than 50 organizations.
+Harborview Clinics | Clinic Director Springfield, ZZ | May 2022 - Apr 2023
+Senior Nurse Coordinator Jun 2021 - May 2022
+Moved up after one year of steady results.
+- Opened two satellite clinics.
+- Reduced annual supply spend by 20%.
+Tidewater Care | Program Lead Shelbyville, ZZ | Sep 2016 - Mar 2021
+- Trained more than 50 volunteers.
 """
 
 
 def test_a_promotion_mapped_as_two_overlapping_roles_is_merged_into_one():
-    """The operator's import with a free model failed: "role 3 (lines 37-47) overlaps another
-    role". Brightline has two titles on consecutive header lines and the model answered two roles
-    over the same body. That is one role (D-IMPORT-5)."""
+    """A free model answered one promoted role as two roles over the same body, which failed the
+    import with "overlaps another role". Two titles on consecutive header lines are one role
+    (D-IMPORT-5)."""
     outline = {"summary_blocks": [], "skill_groups": [], "roles": [
-        {"header_lines": [3], "first_line": 3, "last_line": 7, "company_label": "Brightline",
-         "title": "Director of IT", "start_date": "May 2022", "end_date": "Apr 2023"},
-        {"header_lines": [4], "first_line": 4, "last_line": 7, "company_label": "Brightline",
-         "title": "Manager, Software, Systems & Support", "start_date": "Jun 2021",
+        {"header_lines": [3], "first_line": 3, "last_line": 7,
+         "company_label": "Harborview Clinics", "title": "Clinic Director",
+         "start_date": "May 2022", "end_date": "Apr 2023"},
+        {"header_lines": [4], "first_line": 4, "last_line": 7,
+         "company_label": "Harborview Clinics", "title": "Senior Nurse Coordinator",
+         "start_date": "Jun 2021",
          "end_date": "May 2022"},
-        {"header_lines": [8], "first_line": 8, "last_line": 9, "company_label": "Northfield",
-         "title": "Operations Director", "start_date": "Sep 2016", "end_date": "Mar 2021"},
+        {"header_lines": [8], "first_line": 8, "last_line": 9, "company_label": "Tidewater Care",
+         "title": "Program Lead", "start_date": "Sep 2016", "end_date": "Mar 2021"},
     ]}
-    rail = {"context_lines": [5], "bullets": [
-        {"key": "rails", "lines": [6], "optional": False, "tags": []},
+    clinic = {"context_lines": [5], "bullets": [
+        {"key": "clinics", "lines": [6], "optional": False, "tags": []},
         {"key": "cost", "lines": [7], "optional": False, "tags": []}], "proof_points": []}
-    inet = {"context_lines": [], "bullets": [
-        {"key": "vcio", "lines": [9], "optional": False, "tags": []}], "proof_points": []}
+    care = {"context_lines": [], "bullets": [
+        {"key": "volunteers", "lines": [9], "optional": False, "tags": []}], "proof_points": []}
+
     class _ByCompany(_Fake):
         async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
             if "outline" in schema_name:
                 return ChatResult(content=json.dumps(self.outline), model="fake")
-            body = rail if "Brightline" in messages[1]["content"] else inet
+            body = clinic if "Harborview" in messages[1]["content"] else care
             return ChatResult(content=json.dumps(body), model="fake")
 
     prop = asyncio.run(propose_import(_ByCompany(outline=outline), PROMOTED))
     assert prop.error is None, prop.error
     roles = prop.value.roles
-    assert [r.company_label for r in roles] == ["Brightline", "Northfield"]
-    assert roles[0].title == "Director of IT" and roles[0].start_date == "Jun 2021"
+    assert [r.company_label for r in roles] == ["Harborview Clinics", "Tidewater Care"]
+    assert roles[0].title == "Clinic Director" and roles[0].start_date == "Jun 2021"
     assert roles[0].end_date == "Apr 2023"
     texts = [v.text for s in roles[0].slots for v in s.variants]
-    assert "Led successive releases of Rails." in texts  # verbatim, nothing invented
+    assert "Opened two satellite clinics." in texts  # verbatim, nothing invented
 
 
 def test_accept_writes_the_operators_placements_and_the_proposal_offers_them(monkeypatch):
@@ -569,3 +580,631 @@ def test_accept_writes_the_operators_placements_and_the_proposal_offers_them(mon
         proposal=prop, markdown=RESUME, track="employment", doc_kind="resume")
     assert 'name="unplaced_to"' in html and 'value="role:1"' in html
     assert 'value="skills"' in html and "Add to Beta Freight" in html
+
+
+def _wrapped_context_import(md: str, header_lines: list[int], context_lines=()):
+    """Run the import on `md` with a model that mapped one promoted role (header lines as given)
+    and left the context lines out, as the owner's free model did."""
+    outline = {"summary_blocks": [], "skill_groups": [], "roles": [
+        {"header_lines": header_lines, "first_line": 3, "last_line": 8,
+         "company_label": "Larkspur Library Network", "title": "Branch Manager",
+         "start_date": "Mar 2017", "end_date": "Jan 2024"},
+        {"header_lines": [9], "first_line": 9, "last_line": 10,
+         "company_label": "Quillfeather Books", "title": "Buyer",
+         "start_date": "Jun 2014", "end_date": "Feb 2017"},
+    ]}
+    lib = {"context_lines": list(context_lines), "bullets": [
+        {"key": "reading", "lines": [7], "optional": False, "tags": []},
+        {"key": "notices", "lines": [8], "optional": False, "tags": []}], "proof_points": []}
+    buyer = {"context_lines": [], "bullets": [
+        {"key": "catalog", "lines": [10], "optional": False, "tags": []}], "proof_points": []}
+
+    class _ByCompany(_Fake):
+        async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
+            if "outline" in schema_name:
+                return ChatResult(content=json.dumps(outline), model="fake")
+            body = lib if "Larkspur" in messages[1]["content"] else buyer
+            return ChatResult(content=json.dumps(body), model="fake")
+
+    return asyncio.run(propose_import(_ByCompany(), md, source_format="md"))
+
+
+def _fixture_md() -> str:
+    from pathlib import Path
+
+    return (Path(__file__).parent / "fixtures" / "docs" / "promotion_wrapped_context.md"
+            ).read_text(encoding="utf-8")
+
+
+_WRAP1 = ("Moved into branch management after three years on the front desk of a nine-branch "
+          "public")
+_WRAP2 = ("library system serving a mid-sized county. Ran a staff of 6 and set the yearly "
+          "programming calendar.")
+
+
+def test_a_wrapped_context_paragraph_under_a_promotion_header_is_one_placed_line():
+    """#84: two header lines (a promotion), then a context paragraph wrapped over two printed
+    lines that the role map left out. It used to be reported as two unplaced lines."""
+    prop = _wrapped_context_import(_fixture_md(), [3, 4])
+    assert prop.error is None, prop.error
+    assert prop.flags.unplaced == []
+    assert prop.value.roles[0].context_line == f"{_WRAP1} {_WRAP2}"
+    assert prop.flags.clean  # verbatim apart from the single-space join
+    assert prop.value.roles[1].context_line == ""  # nothing invented for a role without one
+
+
+def test_a_missed_second_title_line_misplaces_nothing_and_the_warning_still_lists_it():
+    """header_lines=[3]: the model left the second title line (4) out. The line under the header
+    is then a title and date line, which is never context; everything stays in the warning."""
+    prop = _wrapped_context_import(_fixture_md(), [3])
+    assert prop.error is None, prop.error
+    assert prop.value.roles[0].context_line == ""
+    assert prop.flags.unplaced == [
+        "Circulation Supervisor                                                  "
+        "Mar 2017 \u2013 Jan 2020",
+        _WRAP1, _WRAP2,
+    ]
+
+
+def test_a_lone_date_a_location_or_a_sub_heading_under_a_header_stays_unplaced():
+    md = _fixture_md()
+    head = md.splitlines()
+    for replaced in ("Mar 2017 \u2013 Jan 2020", "Dunmore, ZZ", "Key accomplishments:",
+                     "Selected Achievements"):
+        lines = list(head)
+        lines[3] = replaced  # line 4 of the file is the second header line; now the candidate
+        lines[4] = "and ran a staff of 6 in the branch."  # reads as its continuation
+        prop = _wrapped_context_import("\n".join(lines) + "\n", [3], context_lines=())
+        assert prop.error is None, prop.error
+        assert prop.value.roles[0].context_line == "", replaced
+        assert replaced in prop.flags.unplaced, replaced
+    # The same shapes directly: a prose line is context, these are not.
+    from kestrel.docs.imports import _not_context
+
+    assert not _not_context(_WRAP1)
+    assert _not_context("Jun 2021 \u2013 Present") and _not_context("2019 - 2024")
+    assert _not_context("Key accomplishments:") and _not_context("Selected Achievements")
+    assert _not_context("Dunmore, ZZ  |  Feb 2020")
+    # A line that ends on a month and year or a bare year, with or without a dash, is a date line.
+    for dated in ("Senior Manager, Software Systems and Support  Jun 2021 \u2013", "May 2022",
+                  "Coordinator of Intake Services  2019 -", "Lead Planner  Sep 2016"):
+        assert _not_context(dated), dated
+    assert not _not_context("Grew the program from 3 sites to 9 by 2022 with the same staff.")
+
+
+# ------------------------------------------------------------------ #102: a role never vanishes
+def _five_roles():
+    """The invented one-column resume, its numbered lines, and what a correct outline holds."""
+    from kestrel.docs.imports import number_lines
+
+    md = (Path(__file__).parent / "fixtures" / "docs" / "five_roles_one_column.md"
+          ).read_text(encoding="utf-8")
+    lines = number_lines(md)
+    heads = [n for n, t in lines.items() if " | " in t and "20" in t and "@" not in t]
+    heads = [n for n in heads if not t_is_edu(lines[n])]
+    sec = {t.strip(): n for n, t in lines.items() if t.startswith("## ")}
+    ends = [*(h - 1 for h in heads[1:]), sec["## Skills"] - 1]
+    roles = [{"header_lines": [h], "first_line": h, "last_line": e,
+              "company_label": lines[h].split(" | ")[0], "title": "Staff",
+              "start_date": "", "end_date": ""} for h, e in zip(heads, ends, strict=True)]
+    summary = [{"lines": [sec["## Summary"] + 1]}]
+    skills = [{"label": "Planning", "lines": [sec["## Skills"] + 1]}]
+    return md, lines, heads, roles, summary, skills
+
+
+def t_is_edu(text: str) -> bool:
+    return text.startswith("B.S.")
+
+
+class _OutlineFake:
+    """Answers the outline from `answers` (one per call, the last repeating) and every role call
+    from the numbered lines it is shown, so no line numbers are written by hand."""
+
+    def __init__(self, answers):
+        self.answers, self.outline_calls, self.asked = list(answers), 0, []
+
+    async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
+        text = messages[-1]["content"]
+        if "outline" in schema_name:
+            self.asked.append(text)
+            i = min(self.outline_calls, len(self.answers) - 1)
+            self.outline_calls += 1
+            return ChatResult(content=json.dumps(self.answers[i]), model="fake")
+        rows = [(int(a), b) for a, b in re.findall(r"^\[(\d+)\] (.*)$", messages[1]["content"],
+                                                    re.M)]
+        body = {"context_lines": [n for n, t in rows[1:] if not t.startswith("- ")],
+                "bullets": [{"key": f"b{n}", "lines": [n], "optional": False, "tags": []}
+                            for n, t in rows if t.startswith("- ")],
+                "proof_points": []}
+        return ChatResult(content=json.dumps(body), model="fake")
+
+
+def _outline(roles, summary, skills):
+    return {"summary_blocks": summary, "roles": roles, "skill_groups": skills}
+
+
+def test_a_complete_outline_gets_no_reask_and_no_missed_role_warning():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    fake = _OutlineFake([_outline(roles, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert fake.outline_calls == 1 and prop.flags.missed_roles == []
+    assert len(prop.value.roles) == 5
+    # Everything else is still reported, never dropped: the education line is not a group.
+    assert prop.flags.unplaced == ["B.S. in Business, State University, 2009"]
+
+
+def test_a_missed_role_triggers_one_reask_and_the_full_answer_is_placed():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    fake = _OutlineFake([_outline(roles[:1], summary, skills), _outline(roles, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert fake.outline_calls == 2
+    for h in heads[1:]:  # the re-ask names the four lines it is about
+        assert f"[{h}] " in fake.asked[1]
+    assert len(prop.value.roles) == 5 and prop.flags.missed_roles == []
+    assert [r.company_label for r in prop.value.roles][-1] == "Elm Street Hardware"
+
+
+def test_roles_still_missing_after_the_reask_are_warned_and_their_lines_unplaced():
+    from structlog.testing import capture_logs
+
+    md, lines, heads, roles, summary, skills = _five_roles()
+    fake = _OutlineFake([_outline(roles[:1], summary, skills)])
+    with capture_logs() as logs:
+        prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert fake.outline_calls == 2 and len(prop.value.roles) == 1
+    assert prop.flags.missed_roles == [lines[h].strip() for h in heads[1:]]
+    assert len(prop.flags.missed_roles) == 4
+    unplaced = prop.flags.unplaced
+    for h in heads[1:]:
+        assert lines[h].strip() in unplaced
+    assert "- Managed the paper budget for two plants." in unplaced
+    assert "- Kept the paint counter stocked." in unplaced
+    # The import logs counts and outcomes, never resume text.
+    events = {e["event"]: e for e in logs}
+    assert events["resume_import_outline"]["reasked"] is True
+    assert events["resume_import_outline"]["missed_roles"] == 4
+    assert events["resume_import_result"]["unplaced"] == len(unplaced)
+    assert "Alder" not in repr(logs) and "paper budget" not in repr(logs)
+
+
+def test_both_review_templates_show_the_missed_role_warning():
+    tpl_dir = Path(__file__).parent.parent / "kestrel" / "web" / "templates" / "partials"
+    for name in ("import_proposal.html", "onboarding_proposal.html"):
+        src = (tpl_dir / name).read_text(encoding="utf-8")
+        assert "proposal.flags.missed_roles" in src and "import-missed-roles" in src, name
+        assert "may have missed" in src, name
+
+
+# ------------------------------------------- merged roles are split; a real promotion is not
+def test_five_roles_merged_into_one_range_are_reasked_then_split_on_their_headers():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    merged = dict(roles[0], last_line=roles[-1]["last_line"])  # one range over all five
+    fake = _OutlineFake([_outline([merged], summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert fake.outline_calls == 2  # one re-ask, which named the four headers
+    for h in heads[1:]:
+        assert f"[{h}] " in fake.asked[1]
+    assert [r.company_label for r in prop.value.roles] == [
+        "Alder Foods", "Bramble Logistics", "Cobalt Print Works", "Dovetail Supply",
+        "Elm Street Hardware"]
+    assert (prop.value.roles[1].start_date, prop.value.roles[1].end_date) == (
+        "Feb 2018", "Dec 2020")
+    assert prop.flags.split_roles == 4 and prop.flags.missed_roles == []
+    texts = [v.text for s in prop.value.roles[4].slots for v in s.variants]
+    assert "Kept the paint counter stocked." in texts and prop.flags.clean
+
+
+def test_a_reask_that_separates_the_merged_roles_needs_no_split():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    merged = dict(roles[0], last_line=roles[-1]["last_line"])
+    fake = _OutlineFake([_outline([merged], summary, skills), _outline(roles, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert fake.outline_calls == 2 and len(prop.value.roles) == 5
+    assert prop.flags.split_roles == 0
+
+
+def test_a_genuine_promotion_stays_one_role_with_no_reask():
+    md = (
+        "# Pat Example\n## Experience\n"
+        "Harborview Clinics | Springfield, ZZ  May 2022 – Apr 2023\n"
+        "Harborview Clinics | Senior Nurse Coordinator  Jun 2021 – May 2022\n"
+        "Nurse Aide                                          Jan 2019 – May 2021\n"
+        "- Opened two satellite clinics.\n"
+    ).replace("\n", "\n")
+    outline = _outline([{"header_lines": [3, 4, 5], "first_line": 3, "last_line": 6,
+                         "company_label": "Harborview Clinics", "title": "Clinic Director",
+                         "start_date": "Jan 2019", "end_date": "Apr 2023"}], [], [])
+    fake = _OutlineFake([outline])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert fake.outline_calls == 1 and len(prop.value.roles) == 1
+    assert prop.flags.split_roles == 0 and prop.flags.missed_roles == []
+
+
+def test_both_review_templates_note_a_split():
+    tpl_dir = Path(__file__).parent.parent / "kestrel" / "web" / "templates" / "partials"
+    for name in ("import_proposal.html", "onboarding_proposal.html"):
+        src = (tpl_dir / name).read_text(encoding="utf-8")
+        assert "proposal.flags.split_roles" in src and "the model had merged" in src, name
+
+
+def test_the_outline_prompt_states_the_promotion_rule_in_spec_and_prompt():
+    root = Path(__file__).parent.parent
+    prompt = (root / "kestrel/llm/prompts/resume_outline.v1.md").read_text(encoding="utf-8")
+    spec = (root / "PROMPTS.md").read_text(encoding="utf-8")
+    assert "version: resume_outline/v1" in prompt  # no version bump: the file is not hashed
+    assert "always starts a new role" in prompt and "always starts a new role" in spec
+    assert "name the same\n  employer" in prompt
+
+
+# ---------------------------------------------------------- a wrapped proof point is one claim
+_WRAPPED_PROOF = """# Pat Example
+## Experience
+### Acme Retail, Director of IT
+2019 - 2024
+- Closed renewals worth ~
+$450K across twelve accounts.
+- Ran the desk.
+"""
+_PROOF_OUTLINE = {"summary_blocks": [], "skill_groups": [], "roles": [
+    {"header_lines": [3, 4], "first_line": 3, "last_line": 7, "company_label": "Acme Retail",
+     "title": "Director of IT", "start_date": "2019", "end_date": "2024"}]}
+
+
+def _proof_run(bullet_lines, proofs):
+    role = {"context_lines": [], "bullets": [
+        {"key": "renewals", "lines": bullet_lines, "optional": False, "tags": []},
+        {"key": "desk", "lines": [7], "optional": False, "tags": []}],
+        "proof_points": [{"key": f"p{i}", "lines": ln, "metric": None}
+                         for i, ln in enumerate(proofs)]}
+
+    class _One(_Fake):
+        async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
+            body = self.outline if "outline" in schema_name else role
+            return ChatResult(content=json.dumps(body), model="fake")
+
+    return asyncio.run(propose_import(_One(outline=_PROOF_OUTLINE), _WRAPPED_PROOF,
+                                      source_format="md"))
+
+
+def test_a_bullet_wrapped_at_a_dollar_figure_gives_one_proof_point_with_both_lines():
+    claim = "Closed renewals worth ~ $450K across twelve accounts."
+    # The model took only the first printed line of the bullet; the wrap was left unplaced.
+    prop = _proof_run([5], [[5]])
+    assert prop.error is None, prop.error
+    assert [p.claim for p in prop.value.proof_points] == [claim]
+    assert prop.flags.unplaced == [] and prop.flags.clean
+    # The model took the whole bullet but cited only its first line.
+    prop = _proof_run([5, 6], [[5]])
+    assert [p.claim for p in prop.value.proof_points] == [claim]
+    # The model split the one claim into two proof points: one claim remains.
+    prop = _proof_run([5, 6], [[5], [6]])
+    assert [p.claim for p in prop.value.proof_points] == [claim]
+
+
+def test_a_proof_point_that_joins_two_separate_bullets_is_refused_like_a_bullet_would_be():
+    prop = _proof_run([5, 6], [[5, 7]])
+    assert prop.error is not None and "not consecutive" in prop.error
+
+
+# ------------------------------------- a header outside its own range is repaired, not fatal
+def test_a_header_just_outside_its_roles_range_is_repaired_and_the_import_succeeds():
+    """#102: "role 2 header lines [28] fall outside the role" failed the whole import."""
+    md, lines, heads, roles, summary, skills = _five_roles()
+    bad = [dict(r) for r in roles]
+    bad[1] = dict(bad[1], first_line=heads[1] + 1)  # its header sits one line above its range
+    fake = _OutlineFake([_outline(bad, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert [r.company_label for r in prop.value.roles][:3] == [
+        "Alder Foods", "Bramble Logistics", "Cobalt Print Works"]
+    assert len(prop.value.roles) == 5 and prop.flags.missed_roles == []
+
+
+def test_a_header_inside_another_roles_range_pulls_that_role_back_and_splits_the_roles():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    bad = [dict(r) for r in roles]
+    bad[0] = dict(bad[0], last_line=heads[1])  # role 1 runs over role 2's header line
+    bad[1] = dict(bad[1], first_line=heads[1] + 1)
+    fake = _OutlineFake([_outline(bad, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert len(prop.value.roles) == 5 and prop.flags.missed_roles == []
+    first = [v.text for s in prop.value.roles[0].slots for v in s.variants]
+    assert "Moved the weekly order from phone calls to a shared sheet." in first
+    assert prop.value.roles[1].company_label == "Bramble Logistics"
+
+
+def test_an_inconsistent_outline_is_a_warning_with_unplaced_lines_not_a_failed_import():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    bad = [dict(roles[0]), dict(roles[2])]
+    # Role 2's header cannot be reached: role 3's header lies between it and its range.
+    bad.append(dict(roles[3], header_lines=[heads[1]], company_label="Dovetail Supply"))
+    fake = _OutlineFake([_outline(bad, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert lines[heads[1]].strip() in prop.flags.missed_roles  # the unreachable header is named
+    assert "- Reduced late deliveries by 9% in one year." in prop.flags.unplaced
+    assert prop.value is not None and len(prop.value.roles) >= 3
+
+
+# ----------------------------- dates from the header; a header found by its date range alone
+def _headers_fixture():
+    md = (Path(__file__).parent / "fixtures" / "docs" / "five_roles_headers.md"
+          ).read_text(encoding="utf-8")
+    from kestrel.docs.imports import number_lines
+
+    lines = number_lines(md)
+    heads = [n for n, t in lines.items() if re.search(r"\d{4} \u2013 (?:\w+ \d{4}|Present)$", t)
+             and "Example State" not in t]
+    sec = {t.strip(): n for n, t in lines.items() if t.startswith("## ")}
+    return md, lines, heads, sec
+
+
+def _role(lines, head, last, company, start="", end=""):
+    return {"header_lines": [head], "first_line": head, "last_line": last,
+            "company_label": company, "title": "Staff", "start_date": start, "end_date": end}
+
+
+def test_a_two_role_outline_is_split_into_five_with_dates_from_each_header():
+    md, lines, heads, sec = _headers_fixture()
+    assert len(heads) == 5
+    exp_end = sec["## Skills"] - 1
+    outline = _outline(
+        # role 1 carries a start date that belongs to role 2; role 1's range runs over role 2's
+        # header, and role 3's over roles 4 and 5
+        [_role(lines, heads[0], heads[2] - 1, "Marlin Cove Services", "Sep 2019", "Present"),
+         _role(lines, heads[2], exp_end, "Pinewood Labs", "Jun 2017", "Aug 2019")],
+        [{"lines": [sec["## Summary"] + 1]}],
+        [{"label": "Tools", "lines": [sec["## Skills"] + 1]}])
+    fake = _OutlineFake([outline])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    assert fake.outline_calls == 2  # one re-ask, then the split in code
+    roles = prop.value.roles
+    assert len(roles) == 5 and prop.flags.split_roles == 3
+    # The header inside role 1's range is a role of its own.
+    assert roles[1].start_date == "Sep 2019" and roles[1].end_date == "Jan 2022"
+    # "Title | Company, City" is ambiguous (which side is the company?), so the company stays
+    # empty and the review's note asks the person; a title is never taken for a company.
+    assert "Larch Hollow" in lines[heads[1]] and roles[1].company_label == ""
+    assert any(u.startswith("role 2 company: not clear") for u in prop.flags.unverified)
+    # Role 1's date comes from its header, and the review says so.
+    assert (roles[0].start_date, roles[0].end_date) == ("Mar 2022", "Present")
+    assert any(d.startswith("role 1 start date: Mar 2022 (the model said Sep 2019)")
+               for d in prop.flags.dates_taken)
+    assert [r.end_date for r in roles] == ["Present", "Jan 2022", "Aug 2019", "May 2017",
+                                           "Dec 2014"]
+    # The Education line has a date range and is not a job.
+    edu = "B.A. in Communication, Example State University, 2008 \u2013 2012"
+    assert edu in prop.flags.unplaced and prop.flags.missed_roles == []
+    texts = [v.text for s in roles[4].slots for v in s.variants]
+    assert "Kept the stock room tidy." in texts and prop.flags.clean
+
+
+def test_a_start_date_that_is_the_roles_own_end_date_is_replaced_by_the_headers():
+    """The old check looked for the date anywhere in the header, so a start date that was really
+    the end date, or any other date in that header, passed."""
+    md, lines, heads, sec = _headers_fixture()
+    exp_end = sec["## Skills"] - 1
+    bounds = [*heads[1:], exp_end + 1]
+    roles = [_role(lines, h, bounds[i] - 1, lines[h].split(" | ")[0], "", "")
+             for i, h in enumerate(heads)]
+    roles[0] = dict(roles[0], start_date="Present", end_date="Mar 2022")
+    prop = asyncio.run(propose_import(_OutlineFake([_outline(roles, [], [])]), md,
+                                      source_format="md"))
+    assert prop.error is None, prop.error
+    first = prop.value.roles[0]
+    assert (first.start_date, first.end_date) == ("Mar 2022", "Present")
+    assert not any("date" in u for u in prop.flags.unverified)
+    assert len(prop.flags.dates_taken) >= 2
+    assert all("title" in u for u in prop.flags.unverified)  # the invented title "Staff"
+
+
+def test_both_review_templates_show_the_dates_taken_note():
+    tpl_dir = Path(__file__).parent.parent / "kestrel" / "web" / "templates" / "partials"
+    for name in ("import_proposal.html", "onboarding_proposal.html"):
+        src = (tpl_dir / name).read_text(encoding="utf-8")
+        assert "dates_taken" in src and "Dates taken from the role's header line" in src, name
+
+
+def test_a_dated_line_under_education_or_in_prose_is_not_a_job_header():
+    from kestrel.docs.imports import _dated, _non_role_lines
+
+    assert _dated("Help Desk Intern | Paranet Solutions, Addison, TX Sep 2019 \u2013 Jan 2021")
+    assert _dated("Acme Corp  2015 to Present") and _dated("2015 - 2019  Acme Corp")
+    assert not _dated("- Led the 2015 - 2019 migration programme")  # a bullet
+    assert not _dated("From 2015 to 2019 the team grew from three people to forty over time")
+    lines = {1: "## Experience", 2: "Acme | Town  2015 - 2019", 3: "## Education",
+             4: "B.A., X University 2015 - 2019", 5: "Certifications", 6: "Cert A 2016 - 2017"}
+    assert _non_role_lines(lines) == {3, 4, 5, 6}
+
+
+# ------------------------- #102 on a real machine: nothing outside the roles drops silently
+def test_a_summary_the_outline_left_out_is_reported_with_every_other_unplaced_line():
+    """A plain-text resume (no markdown headings): name and contact, a PROFESSIONAL SUMMARY of
+    three lines, five roles, SKILLS, and a trailing section. The outline found no summary and
+    only one skills group; the summary and the last section used to vanish with no warning."""
+    md = (Path(__file__).parent / "fixtures" / "docs" / "plain_text_resume.txt"
+          ).read_text(encoding="utf-8")
+    from kestrel.docs.imports import number_lines
+
+    lines = number_lines(md)
+    assert len(lines) == 35
+    heads = [n for n, t in lines.items() if re.search(r"\d{4} – (?:\w+ \d{4}|Present)$", t)]
+    assert heads == [9, 18, 21, 25, 28]
+    ends = [*(h - 1 for h in heads[1:]), 30]
+    roles = [{"header_lines": [h], "first_line": h, "last_line": e,
+              "company_label": lines[h].split(" | ")[0], "title": "", "start_date": "",
+              "end_date": ""} for h, e in zip(heads, ends, strict=True)]
+    outline = _outline(roles, [], [{"label": "Skills", "lines": [32]}])  # no summary block
+    prop = asyncio.run(propose_import(_OutlineFake([outline]), md, source_format="txt"))
+    assert prop.error is None, prop.error
+    unplaced = prop.flags.unplaced
+    for n in (4, 5, 6, 7, 33, 34, 35):  # the summary and its heading; the trailing section
+        assert lines[n].strip() in unplaced, n
+    # Not noise: name and contact, a heading over a section that was read, and the wrapped tails
+    # that joined their bullets.
+    for n in (1, 2, 3, 8, 31, 32, 11, 15):
+        assert lines[n].strip() not in unplaced, n
+    assert len(prop.value.roles) == 5
+
+
+# ------------------------ #102 on a real machine: wrapped tails, short ranges, education
+_TAILS = """# Pat Example
+## Experience
+### Acme Retail, Director of IT
+2019 - 2024
+- Cut vendor spend across the group by renegotiating our supplier contracts
+IBM and Oracle teams signed the new terms in the second half of the same year
+- Trained the staff
+- Moved the archive to a new platform with no downtime for anyone
+(see the migration notes for the full list of steps taken that week)
+- Closed the audit.
+Another note that is not part of the bullet above.
+"""
+
+
+def test_a_wrapped_tail_joins_its_bullet_whatever_character_it_starts_with():
+    outline = {"summary_blocks": [], "skill_groups": [], "roles": [
+        {"header_lines": [3, 4], "first_line": 3, "last_line": 10, "company_label": "Acme Retail",
+         "title": "Director of IT", "start_date": "2019", "end_date": "2024"}]}
+    role = {"context_lines": [], "proof_points": [], "bullets": [
+        {"key": "spend", "lines": [5], "optional": False, "tags": []},
+        {"key": "staff", "lines": [7], "optional": False, "tags": []},
+        {"key": "archive", "lines": [8], "optional": False, "tags": []},
+        {"key": "audit", "lines": [10], "optional": False, "tags": []}]}
+
+    class _One(_Fake):
+        async def complete(self, *, tier, messages, schema=None, schema_name="", **kw):
+            body = self.outline if "outline" in schema_name else role
+            return ChatResult(content=json.dumps(body), model="fake")
+
+    prop = asyncio.run(propose_import(_One(outline=outline), _TAILS, source_format="md"))
+    assert prop.error is None, prop.error
+    texts = [v.text for s in prop.value.roles[0].slots for v in s.variants]
+    assert ("Cut vendor spend across the group by renegotiating our supplier contracts "
+            "IBM and Oracle teams signed the new terms in the second half of the same year"
+            ) in texts
+    assert ("Moved the archive to a new platform with no downtime for anyone "
+            "(see the migration notes for the full list of steps taken that week)") in texts
+    # A bullet that ended with a full stop is never extended: the next line is listed instead.
+    assert "Closed the audit." in texts
+    assert prop.flags.unplaced == ["Another note that is not part of the bullet above."]
+    assert prop.flags.clean
+
+
+def test_a_role_range_that_stops_one_bullet_early_is_extended_to_the_next_header():
+    md, lines, heads, roles, summary, skills = _five_roles()
+    short = [dict(r) for r in roles]
+    short[2] = dict(short[2], last_line=short[2]["last_line"] - 1)  # drops its last bullet
+    fake = _OutlineFake([_outline(short, summary, skills)])
+    prop = asyncio.run(propose_import(fake, md, source_format="md"))
+    assert prop.error is None, prop.error
+    texts = [v.text for s in prop.value.roles[2].slots for v in s.variants]
+    assert "Coordinated vendor audits." in texts
+    assert "- Coordinated vendor audits." not in prop.flags.unplaced
+    assert len(prop.value.roles) == 5 and prop.flags.missed_roles == []
+
+
+def test_an_education_section_and_its_dated_line_are_reported_not_dropped():
+    md = ("Pat Example\npat@example.com\nSUMMARY\nA short profile line.\nEXPERIENCE\n"
+          "Acme | Town, ST  Jan 2020 – Dec 2022\n- Ran the desk.\nEDUCATION\n"
+          "B.A. in History | State University  Sep 2014 – May 2018\n")
+    outline = _outline([{"header_lines": [6], "first_line": 6, "last_line": 7,
+                         "company_label": "Acme", "title": "", "start_date": "",
+                         "end_date": ""}], [], [])
+    prop = asyncio.run(propose_import(_OutlineFake([outline]), md, source_format="txt"))
+    assert prop.error is None, prop.error
+    unplaced = prop.flags.unplaced
+    # The summary and the education section (heading and dated line) are listed; the name and
+    # contact lines above the first heading and the EXPERIENCE heading over a read role are not.
+    assert unplaced == ["SUMMARY", "A short profile line.", "EDUCATION",
+                        "B.A. in History | State University  Sep 2014 – May 2018"]
+    assert prop.flags.missed_roles == []  # a degree is not a job
+
+
+# ------------------------------------------------------------ Opus review fixes (D-IMPORT-6)
+def test_title_case_section_headings_after_the_last_role_stay_out_of_it():
+    md = ("Pat Example\npat@example.com\nExperience\n"
+          "Acme | Town, ST  Jan 2020 – Dec 2022\n- Ran the desk.\n- Kept the books.\n"
+          "Education\nB.A. in History, State University, 2018\nSkills\nScheduling, budgets\n")
+    outline = _outline([{"header_lines": [4], "first_line": 4, "last_line": 5,
+                         "company_label": "Acme", "title": "", "start_date": "",
+                         "end_date": ""}], [], [{"label": "Skills", "lines": [10]}])
+    prop = asyncio.run(propose_import(_OutlineFake([outline]), md, source_format="txt"))
+    assert prop.error is None, prop.error
+    texts = [v.text for s in prop.value.roles[0].slots for v in s.variants]
+    assert texts == ["Ran the desk.", "Kept the books."]  # the range reached line 6, not 8 or 10
+    assert "B.A. in History, State University, 2018" in prop.flags.unplaced
+    assert "Education" in prop.flags.unplaced
+
+
+def test_a_role_range_that_covers_the_skills_lines_is_refused():
+    md = ("Pat Example\n## Experience\nAcme | Town, ST  Jan 2020 – Dec 2022\n- Ran it.\n"
+          "## Skills\nScheduling\n")
+    outline = _outline([{"header_lines": [3], "first_line": 3, "last_line": 6,
+                         "company_label": "Acme", "title": "", "start_date": "",
+                         "end_date": ""}], [], [{"label": "Skills", "lines": [6]}])
+    prop = asyncio.run(propose_import(_OutlineFake([outline]), md, source_format="md"))
+    assert prop.value is None and "overlaps the summary or skills lines" in prop.error
+
+
+def test_a_dated_sentence_is_not_a_header_and_a_bare_title_gets_no_company():
+    from kestrel.docs.imports import _dated
+
+    assert not _dated("Managed the ERP rollout for finance, 2021 - 2022")
+    assert not _dated("Led a team of nine engineers across two sites and three product lines "
+                      "through the migration, 2020 - 2021")
+    assert _dated("Manager, Operations 2017 - 2019")
+    assert _dated("Director of Operations and Finance  Jan 2018 – Present")
+    md, lines, heads, sec = _headers_fixture()
+    merged = _role(lines, heads[0], sec["## Skills"] - 1, "Marlin Cove Services")
+    # A bare "Title Mon YYYY - Mon YYYY" line in the middle of a role splits with no company.
+    mid = ("Pat\n## Experience\nAcme | Town, ST  Jan 2020 – Dec 2022\n- Ran it.\n"
+           "Manager, Operations 2017 - 2019\n- Ran the floor.\n## Skills\nx\n")
+    outline = _outline([{"header_lines": [3], "first_line": 3, "last_line": 6,
+                         "company_label": "Acme", "title": "", "start_date": "",
+                         "end_date": ""}], [], [{"label": "Skills", "lines": [8]}])
+    prop = asyncio.run(propose_import(_OutlineFake([outline]), mid, source_format="md"))
+    assert prop.error is None, prop.error
+    assert [r.company_label for r in prop.value.roles] == ["Acme", ""]
+    assert any(u.startswith("role 2 company: not clear") for u in prop.flags.unverified)
+    assert merged["company_label"]
+
+
+def test_a_profile_sentence_above_the_first_heading_is_reported_not_exempted():
+    md = ("Morgan Example\nI coordinate operations for small teams and write things down.\n"
+          "morgan@example.com | 555-0100\nEXPERIENCE\n"
+          "Acme | Town, ST  Jan 2020 – Dec 2022\n- Ran the desk.\n")
+    outline = _outline([{"header_lines": [5], "first_line": 5, "last_line": 6,
+                         "company_label": "Acme", "title": "", "start_date": "",
+                         "end_date": ""}], [], [])
+    prop = asyncio.run(propose_import(_OutlineFake([outline]), md, source_format="txt"))
+    assert prop.flags.unplaced == [
+        "I coordinate operations for small teams and write things down."]
+
+
+def test_a_tail_that_starts_with_a_capitalized_word_is_never_fused_into_the_bullet():
+    from kestrel.docs.imports import _not_context, _wraps
+
+    assert not _wraps("- Led the team of five", "Reduced costs by 10%")
+    assert _wraps("- Led the team of five", "and cut costs by 10%")
+    assert _wraps("- Moved the archive to a new platform", "(see the notes)")
+    assert _wraps("- Cut spend with our suppliers", "IBM and Oracle signed the new terms")
+    assert _wraps("- Grew revenue to", "450K a year")
+    # A Title Case sub-heading of six or more words is not context.
+    assert _not_context("Key Accomplishments And Notable Results This Year")
+
+
+def test_new_date_shapes_are_dates():
+    from kestrel.docs.imports import _dated, _header_dates
+
+    for line in ("Acme | Town, ST  01/2019 - 03/2021", "Acme | Town, ST  Summer 2019 – Fall 2020",
+                 "Acme | Town, ST  Jan '19 – Mar '21"):
+        assert _dated(line), line
+    assert _header_dates({1: "Acme | Town, ST  01/2019 - 03/2021"}, [1]) == ("01/2019", "03/2021")

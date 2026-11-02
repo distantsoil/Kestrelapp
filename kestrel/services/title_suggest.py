@@ -389,9 +389,11 @@ async def drain_title_suggestions(
                 )
         except Exception as exc:  # a failed task is retried, never fatal to the cycle
             beat.cancel()
-            reason = f"{type(exc).__name__}: {exc}"
-            log.warning("title_suggestions_failed", task=task.id, error=reason)
-            await queue.fail(task.id, reason, worker_id=wid, retry=True)
+            from kestrel.errors import classify_model_failure, failure_record
+
+            log.warning("title_suggestions_failed", task=task.id, error_type=type(exc).__name__,
+                        reason=classify_model_failure(exc)[0])
+            await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
             await _record_failure(sm)
             continue
         finally:

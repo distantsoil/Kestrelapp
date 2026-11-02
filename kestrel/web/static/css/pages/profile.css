@@ -483,6 +483,18 @@ button.danger { background: var(--bad-tint); border: 1px solid transparent; bord
    (--pf-savebar-h, set by profile.js, so a wrapped message is cleared too); they settle back
    when it leaves. Screens with no save bar (the setup steps) never lift them. */
 .k-toasts { transition: bottom .3s var(--ease); }
+/* The fixed bar must never cover the last of the page: while it shows, the column gets room
+   below its content equal to the bar's height plus its offset, eased in and out with it. At
+   phone width the bar is sticky in the flow and needs none. */
+.pf-wrap { transition: padding-bottom .3s var(--ease); }
+body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .pf-wrap {
+  padding-bottom: calc(14px + var(--pf-savebar-h, 52px) + var(--sp-3)); }
+@media (max-width: 700px) {
+  body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .pf-wrap {
+    padding-bottom: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .pf-wrap { transition: none; } }
+html[data-reduce-motion="1"] .pf-wrap { transition: none; }
 body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .k-toasts {
   bottom: calc(14px + var(--pf-savebar-h, 52px) + var(--sp-2)); }
 @media (max-width: 700px) {

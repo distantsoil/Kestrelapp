@@ -25,6 +25,7 @@ from kestrel import paths
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Label, Opportunity, Org, Pursuit, Setting, Source, Task
+from kestrel.errors import failure_record
 from kestrel.pipeline.profile import _load_yaml, load_profile
 from kestrel.pipeline.tier0 import evaluate_tier0
 from kestrel.rules import helpers
@@ -174,7 +175,7 @@ async def drain(
             got = await recheck_track(sessionmaker, track, settings=settings)
         except Exception as exc:  # one failed re-check must not stop the cycle
             log.warning("tier0_recheck_failed", track=track, error=str(exc))
-            await queue.fail(task.id, f"{type(exc).__name__}: {exc}", worker_id=wid)
+            await queue.fail(task.id, failure_record(exc), worker_id=wid)
             break
         await queue.complete(task.id, worker_id=wid)
         fp = str((task.payload or {}).get("fingerprint") or "")

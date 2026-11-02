@@ -398,37 +398,133 @@ def _status() -> dict:
         return {}
 
 
-def _open_folder(p: Path) -> None:
-    """Open the operator's own data/log folder in the OS file manager."""
+def _fault(exc: BaseException) -> dict[str, Any]:
+    """What a log line may say about a failure: the exception type and its numeric codes. Never
+    the exception text or arguments, because an OSError's text carries the file name."""
+    return {"error_type": type(exc).__name__, "errno": getattr(exc, "errno", None),
+            "winerror": getattr(exc, "winerror", None)}
+
+
+def _open_folder(p: Path) -> bool:
+    """Open the operator's own data/log folder in the OS file manager. Returns whether the
+    request worked; a failure is logged here (type and code only) and reported to the caller."""
     try:
         if IS_WINDOWS:
             os.startfile(str(p))  # noqa: S606
-        else:
-            opener = "open" if sys.platform == "darwin" else "xdg-open"
-            subprocess.Popen([opener, str(p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as exc:
-        log.warning("open_folder_failed", path=str(p), error=str(exc))
-
-
-def reveal_file(p: Path) -> None:
-    """Show a file Kestrel just saved for the operator (the diagnostics zip, D-UI-41): Explorer
-    opens its folder with the file selected. Explorer is a windowed program, so no console
-    flashes. Elsewhere the folder opens (Finder selects the file on macOS)."""
-    try:
-        if IS_WINDOWS:
-            # One command string: explorer parses `/select,"path"` itself and misreads the whole
-            # argument quoted, which is what list-form quoting would produce for a path with
-            # spaces. The path comes from the Downloads Known Folder and cannot contain a quote.
-            subprocess.Popen(f'explorer /select,"{p}"')  # noqa: S603
-        elif sys.platform == "darwin":
-            subprocess.Popen(
-                ["open", "-R", str(p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-        else:
-            _open_folder(p.parent)
+            return True
+        return _run_opener(["open" if sys.platform == "darwin" else "xdg-open", str(p)])
     except OSError as exc:
-        log.warning("reveal_file_failed", path=str(p), error=str(exc))
-        raise
+        log.warning("open_folder_failed", **_fault(exc))
+        return False
+
+
+def _open_folder_async(p: Path) -> None:
+    """Open a folder from the tray without holding the tray thread: the opener can wait on the
+    file manager for several seconds."""
+    threading.Thread(target=_open_folder, args=(p,), name="open-folder", daemon=True).start()
+
+
+def _run_opener(argv: list[str]) -> bool:
+    """Run `open` (macOS) or `xdg-open` (Linux) and report its exit status. Both hand the request
+    to the file manager and return, so waiting is brief; a non-zero exit, a timeout or a missing
+    command is a failure to report, logged without the path."""
+    try:
+        done = subprocess.run(  # noqa: S603
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False
+        )
+    except subprocess.TimeoutExpired:
+        if argv[0] == "xdg-open":
+            # xdg-open stays in the foreground while a file manager it started is running: the
+            # folder is open, so this is a success, not a failure.
+            log.info("open_command_still_running", command=argv[0])
+            return True
+        log.warning("open_command_failed", command=argv[0], reason="timeout")
+        return False
+    except OSError as exc:
+        log.warning("open_command_failed", command=argv[0], **_fault(exc))
+        return False
+    if done.returncode != 0:
+        log.warning("open_command_failed", command=argv[0], exit_code=done.returncode)
+        return False
+    return True
+
+
+_win_dlls: tuple[Any, Any] | None = None
+
+
+def _windows_dlls() -> tuple[Any, Any]:
+    """Private (shell32, ole32) library instances with their signatures set, created once. They
+    are not `ctypes.windll`'s shared ones, so setting argtypes here cannot change how any other
+    code in the process calls the same functions."""
+    global _win_dlls
+    if _win_dlls is None:
+        import ctypes
+        from ctypes import wintypes
+
+        shell32 = ctypes.WinDLL("shell32")  # type: ignore[attr-defined]  # Windows only
+        ole32 = ctypes.WinDLL("ole32")  # type: ignore[attr-defined]
+        ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        ole32.CoInitializeEx.restype = ctypes.c_long
+        ole32.CoUninitialize.argtypes = []
+        ole32.CoUninitialize.restype = None
+        shell32.ILCreateFromPathW.argtypes = [ctypes.c_wchar_p]
+        shell32.ILCreateFromPathW.restype = ctypes.c_void_p  # a pointer: 64-bit on x64
+        shell32.SHOpenFolderAndSelectItems.argtypes = [
+            ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p, wintypes.DWORD]
+        shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
+        shell32.ILFree.argtypes = [ctypes.c_void_p]
+        shell32.ILFree.restype = None
+        _win_dlls = (shell32, ole32)
+    return _win_dlls
+
+
+def _select_in_explorer(p: Path) -> bool:
+    """Open the file's folder in Explorer with the file selected, through the shell API
+    (SHOpenFolderAndSelectItems) rather than `explorer /select,` argument parsing, which opened a
+    blank window that closed itself (#100). Returns whether the call succeeded. COM is initialised
+    for this thread (the web server's, not the UI thread) and released again."""
+    shell32, ole32 = _windows_dlls()
+    # S_OK (0) and S_FALSE (1) both need a matching CoUninitialize; a thread already in another
+    # COM mode (RPC_E_CHANGED_MODE, negative) is usable as it is and must not be uninitialised.
+    hr_init = ole32.CoInitializeEx(None, 2)  # COINIT_APARTMENTTHREADED
+    pidl = None
+    try:
+        pidl = shell32.ILCreateFromPathW(str(p))
+        if not pidl:
+            return False
+        return shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) >= 0
+    finally:
+        if pidl:
+            shell32.ILFree(pidl)
+        if hr_init in (0, 1):
+            ole32.CoUninitialize()
+
+
+def reveal_file(p: Path) -> bool:
+    """Show a file Kestrel just saved for the operator (the diagnostics zip, D-UI-41): the file
+    manager opens its folder with the file selected. Returns whether that worked, so the page
+    reports "Opened" only when it did (#100). On Windows the shell API selects the file; if that
+    fails the folder is opened instead, and only when both fail is the result False. Failures are
+    logged with the error type and code, never the text or a path. macOS selects the file in
+    Finder; elsewhere the folder opens."""
+    if IS_WINDOWS:
+        import ctypes
+
+        try:
+            if _select_in_explorer(p):
+                return True
+            log.warning("reveal_file_select_failed")
+        except (OSError, AttributeError, ValueError, ctypes.ArgumentError) as exc:
+            log.warning("reveal_file_select_failed", **_fault(exc))
+        try:
+            os.startfile(str(p.parent))  # noqa: S606
+            return True
+        except OSError as exc:
+            log.warning("reveal_file_failed", **_fault(exc))
+            return False
+    if sys.platform == "darwin":
+        return _run_opener(["open", "-R", str(p)])
+    return _open_folder(p.parent)
 
 
 # ------------------------------------------------------------------------------ tray (trap 7)
@@ -817,9 +913,11 @@ def _build_tray(pystray: Any, *, with_window: bool) -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Recent notifications", _menu_action(lambda: show_window())),
             pystray.MenuItem(
-                "Open data folder", _menu_action(lambda: _open_folder(paths.data_dir()))
+                "Open data folder", _menu_action(lambda: _open_folder_async(paths.data_dir()))
             ),
-            pystray.MenuItem("Open logs", _menu_action(lambda: _open_folder(paths.logs_dir()))),
+            pystray.MenuItem(
+                "Open logs", _menu_action(lambda: _open_folder_async(paths.logs_dir()))
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", _menu_action(lambda: do_quit())),
         ),

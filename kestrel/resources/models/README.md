@@ -11,19 +11,22 @@ change `models.yml`, regenerate, and never hand-edit a `FROM` line:
 
 ```
 python -c "from pathlib import Path; from kestrel.llm import profiles as p; \
-[(Path('kestrel/resources/models')/f'Modelfile.{t}').write_text(p.render_modelfile(t, 'gpu_16gb')) for t in p.TIERS]"
+[(Path('kestrel/resources/models')/f'Modelfile.{t}').write_text(p.render_modelfile(t, 'gpu_16gb')) for t in p.DERIVED_TIERS]"
 ```
 
 | Derived model | num_ctx | num_predict | Used by (SPEC.md 8.1) | Base (gpu_16gb, placeholder) |
 |---|---|---|---|---|
-| `kestrel-tier1`  | 4096  | 400  | tier1 **and** trigger | `qwen3:4b` |
+| `kestrel-tier1`  | 4096  | 400  | tier1 **and** trigger | `qwen3:4b-instruct-2507-q4_K_M` |
 | `kestrel-tier2`  | 16384 | 4500 | tier2                 | `qwen3:14b` |
 | `kestrel-tier3`  | 20480 | 6500 | tier3                 | `qwen3:14b` |
-| `kestrel-docsel` | 8192  | 1600 | docsel                | `qwen3:4b` |
 
 Every Modelfile also bakes in the `guardrails` block from `models.yml` (`temperature 0.1`,
 `top_p 0.9`, `repeat_penalty 1.1`, `seed 7`). A request that sets `temperature` or `max_tokens`
 wins over these; they are the floor for any call that does not set them.
+
+Document selection (docsel) has no derived model of its own: it calls `kestrel-tier2` (D-LLM-10),
+whose `num_ctx` is larger than docsel's budget. Two derived models with different contexts would
+load as two runners.
 
 The **trigger** tier reuses `kestrel-tier1` (same base, same 4096 budget), so there is no separate
 `kestrel-trigger` model; preflight still validates the trigger tier's budget against

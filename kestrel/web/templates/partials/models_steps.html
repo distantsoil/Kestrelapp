@@ -15,7 +15,7 @@
         <td><b>{{ s.name }}</b>{% if s.asks %} <span class="k-muted mo-asks">{{ ui.icon('lock', 'k-ic--sm') }}Asks you first</span>{% endif %}
           <div class="k-muted mo-does">{{ s.does }}</div></td>
         <td>{% if s.key == 'rules' %}<span class="mo-model">{{ ui.icon('check', 'k-ic--sm') }}<b>No AI model</b></span>
-          {% else %}<span class="mo-model" title="{{ s.model }}, {{ 'online with your key' if s.online else 'on this computer' }}{{ ', your choice' if s.override else '' }}">{{ ui.icon('cloud' if s.online else 'laptop', 'k-ic--sm') }}<b>{{ s.model }}</b>
+          {% else %}<span class="mo-model" title="{{ s.model }}, {{ 'online with your key' if s.online else 'on this computer' }}{{ ', your choice' if s.override else '' }}">{{ ui.icon('cloud' if s.online else 'laptop', 'k-ic--sm') }}<b title="{{ s.model }}">{{ s.model|short_model }}</b>
           <span class="k-muted">· {{ 'Online' if s.online else 'This computer' }}{% if s.override %} · Override{% endif %}</span></span>{% endif %}</td>
         <td>{% if s.can_read %}
           <div class="mo-meter {{ 'is-bad' if s.can_read.tone == 'bad' else '' }}"><i style="width: {{ '45' if s.can_read.tone == 'bad' else '100' }}%"></i></div>

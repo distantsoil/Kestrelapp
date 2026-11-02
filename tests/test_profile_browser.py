@@ -278,6 +278,44 @@ def test_save_bar_appears_on_an_edit_and_a_blocked_tab_switch_nudges(live):
         ctx.close()
 
 
+@pytest.mark.parametrize("width", [1280, 700])
+@pytest.mark.parametrize("tab", ["about", "employment"])
+def test_the_save_bar_never_covers_the_last_hint_at_the_foot_of_the_page(live, tab, width):
+    """With the form dirty and the page scrolled to the bottom, the lowest hint on the page is
+    fully above the Save bar (the bar used to sit over it: the page had no room below)."""
+    ctx, page, errors = _open(live, tab, "light", width)
+    try:
+        page.set_viewport_size({"width": width, "height": 700})
+        wait_for_layout(page)
+        page.evaluate("""() => { const f = document.querySelector('form[data-pf-form]');
+          const i = f.querySelector('input[type=text], input:not([type]), textarea');
+          i.value = i.value + ' '; i.dispatchEvent(new Event('input', {bubbles: true})); }""")
+        page.wait_for_selector("[data-pf-savebar]", state="visible")
+        page.wait_for_timeout(600)  # the bar slides in and the room below eases open
+        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        page.wait_for_timeout(300)
+        got = page.evaluate("""() => {
+          const bar = document.querySelector('[data-pf-savebar]').getBoundingClientRect();
+          // The lowest text on the page column: its last hint or note, whatever card holds it.
+          const hints = Array.from(document.querySelectorAll('.pf-wrap *')).filter(h =>
+            h.offsetParent !== null && !h.closest('[data-pf-savebar]') && !h.children.length &&
+            (h.textContent || '').trim() && getComputedStyle(h).visibility === 'visible');
+          const low = hints.map(h => h.getBoundingClientRect())
+            .sort((a, b) => b.bottom - a.bottom)[0];
+          return {barTop: bar.top, barBottom: bar.bottom, hintBottom: low ? low.bottom : null,
+                  hintTop: low ? low.top : null, inView: low ? low.bottom <= innerHeight : null};
+        }""")
+        assert got["hintBottom"] is not None, "no hint on the tab"
+        assert got["inView"], got
+        # Clear of the bar: either wholly above it, or (phone width, sticky bar in the flow) not
+        # overlapping it.
+        # and with breathing room, so the last line never sits hard against the bar.
+        assert got["hintBottom"] <= got["barTop"] - 8 or got["hintTop"] >= got["barBottom"], got
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 @pytest.mark.parametrize("name", ["target_titles", "anti_titles"])
 def test_chip_remove_updates_saved_titles_before_and_after_swap(live, name):
     from playwright.sync_api import expect

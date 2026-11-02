@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, ScrapeRun, Setting, Source, Task
+from kestrel.errors import failure_record
 from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
 from kestrel.pipeline import lane, recheck, runlog
@@ -275,6 +276,31 @@ class Worker:
             log.warning("embed_sweep_failed", error=str(exc))
         await self.drain_tier("embed", self._settings.concurrency.embed, handle_embed, stats)
 
+    async def _unload_previous_tier(self, task_type: str) -> None:
+        """When the drain moves to another tier, unload the previous tier's local model first
+        (#112). Ollama can crash loading a second model while the first is resident; the drain
+        rule (never alternate tiers) makes this safe: nothing is about to use the old one. Memory
+        only, nothing is deleted. A tier on a hosted backend, or the same model, unloads nothing."""
+        tier = _OVERRIDE_TIER.get(task_type)
+        if tier is None or await self._pending_count(task_type) == 0:
+            return  # only a tier with queued work counts as the next tier
+        cfg = self._settings.llm.tiers[tier]
+        backend = self._settings.llm.backends.get(cfg.backend)
+        model = cfg.model if backend is not None and not backend.external else None
+        previous = getattr(self, "_last_local_model", None)
+        previous_type = getattr(self, "_last_drained_type", None)
+        self._last_drained_type = task_type
+        self._last_local_model = model or previous
+        if model is None or previous is None or previous_type == task_type or previous == model:
+            return
+        import httpx
+
+        from kestrel.llm.client import unload_model
+
+        async with httpx.AsyncClient() as http:
+            await unload_model(http, self._settings.llm.ollama_native_url, previous)
+        log.info("worker_tier_switch_unload", previous=previous, next=model)
+
     async def drain_tier(
         self,
         task_type: str,
@@ -289,6 +315,7 @@ class Worker:
         grouped by the model they will run on (the configured Tier 2 model, or a task's
         `model_override`), the configured model's group first, then the largest, and each group
         is drained to empty before the next starts. A mixed queue never alternates models."""
+        await self._unload_previous_tier(task_type)
         total_at_start = await self._pending_count(task_type)
         started = time.perf_counter()
         window: deque[float] = deque(maxlen=20)
@@ -451,7 +478,7 @@ class Worker:
                 )
             except Exception as exc:  # unexpected handler crash: retry the task, keep draining
                 log.error("handler_crash", task=task.id, type=task_type, error=str(exc))
-                await self._queue.fail(task.id, str(exc), worker_id=wid, retry=True)
+                await self._queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
                 async with done_lock:
                     stats.errors += 1
                 return
@@ -805,7 +832,7 @@ class Worker:
                         )
                 except Exception as exc:  # the source's own run recorded what it could
                     log.error("scrape_task_crash", task=task.id, source=source_id, error=str(exc))
-                    await self._queue.fail(task.id, str(exc), worker_id=wid, retry=False)
+                    await self._queue.fail(task.id, failure_record(exc), worker_id=wid, retry=False)
                     stats.errors += 1
                     try:
                         async with self._sm() as s:

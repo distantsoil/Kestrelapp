@@ -116,6 +116,38 @@ PR branch runs CI. So CI confirms; it does not discover.
 
 ---
 
+## Hard-won rules (owner, 2026-11-02; each one cost real time in 0.7.2)
+
+- **Gates pass on the words, not the exit code.** A gate passes only when its output ends with the
+  literal line "Ready to push." Never infer a pass from a command's exit status.
+- **Never run `ruff format` on an existing file.** The repo is not formatted as a whole, so it rewrites
+  hundreds of unrelated lines. Fix lint by hand; format only new files.
+- **State the invariant in every risky brief.** A brief that touches an online send, consent,
+  privacy or a delete states the invariant in one sentence ("nothing is sent without the confirmed
+  dialog, including retries") and requires a test that proves it.
+- **A builder's "done" includes the full non-browser suite** (run on the owner's PC when the cloud
+  container is busy). Running only the touched files misses older tests pinned to old behavior.
+- **Do not move scope between builders mid-build** without first asking whether the current one has
+  started; if it has, the work stays there.
+- **Combine early when branches share UI plumbing.** Branches that touch kestrel-ui.js, base.html,
+  modals or htmx wiring are combined and browser-tested together before their reviews finish.
+- **Text read off a screenshot is a hypothesis.** Confirm it from the source (extracted text, a log)
+  before filing or fixing anything.
+- **Runtime claims are verified.** A decision that depends on how Ollama or a provider behaves at
+  runtime names its verification (a doc link or a live test) or says it is unverified and adds a test.
+- **Name what must not change.** Briefs list off-limits areas. Scoring prompts, schemas and prompt
+  versions are off-limits unless the task is about scoring.
+- **Tests are public.** Tests and fixtures are exported to the public repo: invented text only, and
+  never a private phrase in any form, including split or encoded.
+- **Every UI brief requires the side-by-side mockup screenshots** (light, dark, narrow) as a
+  deliverable, with paths in the report.
+- **Use the owner's machine for heavy testing from the start** of a session when one is available
+  (D-CI-9); cloud builders run targeted unit tests only.
+- **Clocks in tests.** Patch a module's own clock alias, never the global one; seed "minutes ago" rows
+  through `tests/clock_seed.py`; never read the clock at module level (D-TEST-2, D-TEST-3).
+
+---
+
 ## Subagent strategy
 
 The main agent's context window is the scarcest resource across eighteen phases, more than time
@@ -265,6 +297,7 @@ These were verified against live documentation and live APIs. Do not rediscover 
 - **Disabling thinking is backend-specific.** Ollama: `reasoning_effort: "none"`. oMLX and vLLM:
   `extra_body.chat_template_kwargs.enable_thinking = false`. Sending the wrong one is silently
   ignored and you find out via a 5x token bill. Strip `<think>` spans defensively regardless.
+- **Bare Ollama tags move.** `qwen3:4b` and `qwen3:30b-a3b` now resolve to Thinking-2507 builds that cannot stop thinking. Pin explicit instruct tags and verify thinking with a live call, never by parameter name.
 - **Structured output on Ollama goes through `response_format`**, not the native `format`
   parameter, because every call targets `/v1/chat/completions`.
 - **JSON Schema subset.** Constrained decoding supports `type`, `properties`, `required`,

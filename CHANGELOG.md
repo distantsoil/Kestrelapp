@@ -4,6 +4,34 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-02
+
+Local AI models stop thinking out loud, resume import keeps every line, and several screens hold steady under repeat use.
+
+### Changed
+
+- **Local AI models no longer think out loud.** Kestrel now uses corrected models. An existing install downloads one corrected model of about 2.5 GB the first time it is needed, and nothing already installed is removed.
+- **Diagnostics keep the events that matter.** A diagnostics file now holds the whole recent log, plus every warning and error from earlier, so a problem from an earlier run is still in it.
+- **Stop reacts at once.** Pressing Stop on a run shows "Stopping" straight away, and a second press does nothing extra.
+- **Long model calls show progress.** While a slow model call is in flight, Runs shows what it is doing, so a long wait no longer looks like a stall.
+
+### Fixed
+
+- **Resume import keeps every line and finds more roles.** Import uses your scoring model, no line of your resume is dropped, a role header the first pass misses is checked again, and a wrapped line stays as one line. A small local model can still miss a role in a long resume, so check the roles before you save.
+- **Import shows what it is doing.** A progress panel appears when an import starts, and a failure says what happened and offers Try again, without raw error text or addresses. Try again on an online model asks for your consent again.
+- **Confidential mode hides every current employer.** If you hold more than one open-ended role, each of those employers is hidden, not only the newest.
+- **Setup warns about a bad API key.** A key that does not work now shows a message instead of appearing to succeed.
+- **Switching to a local model asks for your computer's setup.** Settings no longer says "0 of 0 ready" and marks downloads done when no models are chosen yet.
+- **Local model loads recover.** If a model fails to load while another is in memory, Kestrel unloads the others and tries once more before it reports a plain message.
+- **The local model check judges the reply.** A chatty answer or a server error is no longer reported as lost context, and the check no longer passes a reply that is really reasoning.
+- **Open folder works on Windows.** After saving a diagnostics file, Open folder (Windows) opens the folder with the file selected, or says where the file is if it cannot.
+- **Runs holds still.** The page no longer jumps every five seconds, and the top loading bar moves only while Kestrel is working.
+- **An empty Work authorization field looks empty.** It no longer looks filled in with a sample answer.
+- **One save message on Profile.** A save shows a single confirmation, and toasts clear on their own instead of covering the save prompt.
+- **Calibrate saves do not fail twice.** A save made while Kestrel is busy shows at most one plain message, and "Not enough data yet" no longer carries the "(n=2)" note.
+- **The story sheet works every time.** Long stories scroll inside the sheet so Cancel and Save story stay in reach, reopening after Cancel works, and saving keeps your place on the page.
+- **Send and assess opens clickable.** The consent dialog responds to the mouse, and the assessment shows that it is running.
+
 ## [0.7.1] - 2026-11-01
 
 Scoring now uses the proof points from your resume, setup tells you the next step, and you can see when a role is being scored.

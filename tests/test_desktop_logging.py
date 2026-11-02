@@ -30,6 +30,8 @@ def _clean_logging():
             root.removeHandler(h)
             h.close()
     root.setLevel(level)
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.NOTSET)
     logging_setup._configured = False
     structlog.reset_defaults()
 
@@ -126,3 +128,24 @@ def test_serve_logging_twice_leaves_exactly_one_console_handler():
         if getattr(h, "_kestrel_serve_console", False)
     ]
     assert len(console_handlers) == 1
+
+
+@pytest.mark.usefixtures("_clean_logging")
+def test_http_client_request_lines_are_not_in_the_info_log_but_warnings_still_are():
+    """One INFO line per model or embedding request filled the window a diagnostics bundle keeps
+    (805 of 2000 lines in one user's bundle). They are debug detail now; a real warning from the
+    same loggers still reaches the file."""
+    import httpx
+    import respx
+
+    paths.ensure_dirs()
+    logging_setup.configure_logging("INFO")
+    with respx.mock() as router:
+        router.post("http://127.0.0.1:11434/v1/chat/completions").respond(200, json={})
+        httpx.post("http://127.0.0.1:11434/v1/chat/completions", json={})
+    logging.getLogger("httpx").warning("httpx_probe_warning")
+    for h in logging.getLogger().handlers:
+        h.flush()
+    text = (paths.logs_dir() / "kestrel.log").read_text(encoding="utf-8")
+    assert "HTTP Request" not in text
+    assert "httpx_probe_warning" in text

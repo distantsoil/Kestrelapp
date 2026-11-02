@@ -757,7 +757,12 @@ def test_macos_browser_fallback_wires_quit_and_runs_the_tray_loop(shell, monkeyp
 
 def test_open_folder_uses_the_platform_opener(shell, monkeypatch):
     spawned: list[list[str]] = []
-    monkeypatch.setattr(shell.subprocess, "Popen", lambda argv, **k: spawned.append(argv))
+
+    def _run(argv, **k):
+        spawned.append(argv)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(shell.subprocess, "run", _run)
     monkeypatch.setattr(shell, "IS_WINDOWS", False)
     monkeypatch.setattr(sys, "platform", "darwin")
     shell._open_folder(Path("/tmp/x"))

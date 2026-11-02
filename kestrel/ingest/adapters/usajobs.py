@@ -33,6 +33,7 @@ from urllib.parse import urlencode
 import httpx
 import structlog
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.pipeline.profile import load_profile
 
@@ -343,9 +344,7 @@ class UsaJobsAdapter:
         except httpx.HTTPStatusError as exc:  # the client raises this after a 429/403/503
             r = exc.response
         except PermissionError as exc:
-            raise AdapterError(
-                "USAJobs' robots.txt does not allow this request, so Kestrel skipped it"
-            ) from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         except httpx.HTTPError as exc:
             log.warning("usajobs_unreachable", error=type(exc).__name__)
             raise AdapterError("Could not reach USAJobs; try again later") from exc

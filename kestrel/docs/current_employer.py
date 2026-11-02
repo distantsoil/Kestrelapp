@@ -5,17 +5,17 @@ role the operator marked as their current employer. This module is the one write
 role editor, the import opt-in, the Confirm button) and the one reader that turns marks into an
 `kestrel.privacy.EmployerMap`.
 
-* At most one employer is current per document; marking a role unmarks every other employer in
-  that master. Roles in the master with the same normalized name (a promotion split in two) are
-  marked together, and a rename carries the mark to them.
+* Marking one role in the Documents editor unmarks every other employer in that master (the
+  editor asks about one). The import can mark several concurrent jobs at once (D-PRIV-2). Roles in
+  the master with the same normalized name (a promotion split in two) are marked together, and a
+  rename carries the mark to them.
 * Another document is never marked or unmarked from here. When it already marks the same name,
   saving the "Show it as" text updates it, so one name reads one way everywhere.
 * The map is the union of every document's CURRENT marks. Unticking a role removes the name
   unless another document still marks it (the editor says so).
-* Fail closed: with nothing marked anywhere, the newest open-ended role of each document (no end
-  date, Present/Current/Now, or a date that has not passed yet) is treated as current, shown as
-  the suggested text, until the
-  operator confirms or changes it."""
+* Fail closed: with nothing marked in a document, EVERY open-ended role of it (no end date,
+  Present/Current/Now, or a date that has not passed yet) is treated as current, shown as the
+  suggested text, until the operator confirms or changes it (D-PRIV-2)."""
 
 from __future__ import annotations
 
@@ -143,15 +143,18 @@ def names_for(section: DocSection, names: list[str] | None = None,
 
 async def set_current_employer(
     session: AsyncSession, section: DocSection, placeholder: str | None, *,
-    previous_name: str | None = None, names: list[str] | None = None,
+    previous_name: str | None = None, names: list[str] | None = None, exclusive: bool = False,
 ) -> None:
     """Mark `section` as the current employer shown as `placeholder` with its names to hide
     (`names`; default `names_for`), or unmark it (None).
 
     Same master: every employer row whose normalized name matches the section's name, or its
-    `previous_name` (a rename), is marked with it; every other one is unmarked. Other masters:
-    rows that ALREADY mark the name (or the previous one) get the new "Show it as"; nothing there
-    is marked or unmarked. Does not commit."""
+    `previous_name` (a rename), is marked with it. Marking one role never unmarks another (a
+    person can have two current jobs, D-PRIV-2); `exclusive=True` restores the old one-only
+    behavior. Unmarking stores "" (marked NOT current) so the fail-closed inference leaves that
+    role alone, where None means never marked and an open-ended role is then inferred as
+    current. Other masters: rows that ALREADY mark the name (or the previous one) get the new
+    "Show it as"; nothing there is marked or unmarked. Does not commit."""
     hide = names_for(section, names, previous_name) if placeholder else None
     names = {n for n in (_norm(section.org_label), _norm(previous_name)) if n}
     siblings = (
@@ -165,13 +168,15 @@ async def set_current_employer(
     for sec in siblings:
         same = sec.id == section.id or _norm(sec.org_label) in names
         if placeholder:
+            if not same and not exclusive:
+                continue
             sec.org_label_redacted = placeholder if same else None
             sec.hide_names = (clean_names([*hide, *default_names(sec.org_label)])
                               if same and sec.id != section.id else hide if same else None)
         elif same:
-            sec.org_label_redacted = None
+            sec.org_label_redacted = ""  # explicitly not current
             sec.hide_names = None
-    section.org_label_redacted = placeholder or None
+    section.org_label_redacted = placeholder or ""
     section.hide_names = hide
     if placeholder and names:
         others = (
@@ -179,6 +184,7 @@ async def set_current_employer(
                 select(DocSection).where(
                     DocSection.doc_master_id != section.doc_master_id,
                     DocSection.org_label_redacted.is_not(None),
+                    DocSection.org_label_redacted != "",
                 )
             )
         ).scalars().all()
@@ -223,9 +229,10 @@ def _marked(sec: DocSection) -> bool:
 
 
 def _employers_of(master_id: int, rows, cross: dict[str, Employer]) -> list[Employer]:
-    """One document's employers (D-PRIV-1): its own marks; else EVERY open-ended role, inferred;
-    plus another document's mark for a name that is open-ended (current) here. A name that is a
-    past role here is never hidden here by another document's mark."""
+    """One document's employers (D-PRIV-1): its own marks, plus EVERY other open-ended role,
+    inferred as current unless the person marked that role not current (D-PRIV-2), plus another
+    document's mark for a name that is open-ended (current) here. A name that is a past role here
+    is never hidden here by another document's mark."""
     mine = [sec for sec, m in rows if m.id == master_id]
     own = [sec for sec in mine if _marked(sec)]
     current = [sec for sec in mine if sec.section_kind == "role"
@@ -246,7 +253,7 @@ def _employers_of(master_id: int, rows, cross: dict[str, Employer]) -> list[Empl
                                 names=tuple(clean_names([*e.names,
                                                          *default_names(sec.org_label)])),
                                 master_id=master_id)
-        elif not own:
+        elif sec.org_label_redacted != "":  # "" = the person marked this role NOT current
             out[key] = Employer(sec.org_label.strip(), suggested_placeholder(track),
                                 names=tuple(default_names(sec.org_label)),
                                 inferred=True, section_id=sec.id, master_id=master_id)

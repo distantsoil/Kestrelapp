@@ -312,6 +312,30 @@ def test_free_only_needs_the_training_tick_and_a_refusal_scrolls_into_view(live,
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
+def test_a_pasted_sentence_as_the_key_is_stopped_before_and_refused_after(live, theme):
+    """#62: a paragraph of prose pasted as the key. The button says why it will not send; a
+    submit forced past that gets a visible plain refusal from the server, nothing technical."""
+    ctx, page, errors = _open(live, theme, 1280, "models")
+    try:
+        page.check('input[name="provider"][value="openrouter"]', force=True)
+        sentence = "Half a paragraph of written prose, with spaces and an em dash \u2014 in it."
+        page.fill("#ob-key", sentence)
+        page.check("#ob-ack")
+        assert page.query_selector("#ob-connect-btn").is_disabled()
+        assert "not a key" in page.inner_text("[data-ob-connect-hint]")
+        page.evaluate("document.querySelector('[data-ob-connect]').requestSubmit()")
+        page.wait_for_selector('[data-testid="ob-connect-message"][data-connect-ok="false"]')
+        wait_for_layout(page)
+        box = page.inner_text('[data-testid="ob-connect-message"]')
+        assert "Not connected to OpenRouter." in box and "does not look like an API key" in box
+        assert "Error" not in box and "paragraph" not in box
+        assert page.is_visible('[data-testid="ob-connect-message"]')
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_about_you_gate_tracks_summary_and_the_more_details_fold(live, theme):
     ctx, page, errors = _open(live, theme, 1280, "about")
     try:
@@ -439,10 +463,12 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         ctx.close()
 
 
-# Every animation frame from the press until the new step has settled: the most visible step
+# Every animation frame from the press until 1.2 s after it (by the clock, never a frame count:
+# 75 frames last 1.25 s at 60 Hz but only 0.5 s at 144 Hz, which ends the sampling before the
+# 0.36 s slide's copy is gone on a fast display), the most visible step
 # pane's opacity, how many panes are in the frame, the arriving pane's own opacity, and how many
 # animations run inside the leaving copy (its own slide only).
-_PANE_FRAMES = """() => { window.__f = []; let n = 0;
+_PANE_FRAMES = """() => { window.__f = []; const t0 = performance.now();
   const seen = p => { let o = 1;
     for (let e = p; e && e !== document.body; e = e.parentElement)
       o *= +getComputedStyle(e).opacity;
@@ -454,7 +480,7 @@ _PANE_FRAMES = """() => { window.__f = []; let n = 0;
     window.__f.push([panes.length ? Math.max(...panes.map(seen)) : 0, panes.length,
                      fresh ? seen(fresh) : 0,
                      copy ? copy.getAnimations({subtree: true}).length : 0]);
-    if (++n < 75) requestAnimationFrame(tick); };
+    if (performance.now() - t0 < 1200) requestAnimationFrame(tick); };
   requestAnimationFrame(tick); }"""
 
 
@@ -477,7 +503,7 @@ def test_a_step_change_never_leaves_the_wizard_blank(live):
             page.wait_for_selector(f'#ob-step[data-step="{step}"]')
             page.wait_for_timeout(1400)
             frames = page.evaluate("window.__f")
-            assert len(frames) >= 30, frames
+            assert len(frames) >= 30, frames  # 1.2 s at 30 Hz or better
             dimmest = min(f[0] for f in frames)
             assert dimmest >= 0.5, (button, [round(f[0], 2) for f in frames[:40]])
             together = sum(1 for f in frames if f[1] == 2)

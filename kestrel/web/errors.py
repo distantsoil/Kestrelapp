@@ -12,7 +12,14 @@ from collections.abc import Iterable
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from kestrel.errors import UserFacingError, plain_os_reason
+from kestrel.errors import (
+    ROBOTS_SENTENCE,
+    RobotsDisallowed,
+    UserFacingError,
+    classify_model_failure,
+    is_model_failure,
+    plain_os_reason,
+)
 
 GENERIC = "an unexpected problem; the details are in the log"
 
@@ -28,6 +35,8 @@ def plain_error(exc: BaseException) -> str:
     exception."""
     if isinstance(exc, UserFacingError):
         return str(exc)
+    if is_model_failure(exc):
+        return classify_model_failure(exc)[2]
     if isinstance(exc, OSError):
         return plain_os_reason(exc)
     if isinstance(exc, (zipfile.BadZipFile, zipfile.LargeZipFile)):
@@ -61,12 +70,18 @@ def fixed_reason(exc: BaseException) -> str:
     from the source to the page. Use it where a response is built straight from a failure and the
     exception is not one of Kestrel's own authored errors; `plain_error` stays for the places that
     must show an authored message. The exception itself goes to the log by the caller."""
+    if is_model_failure(exc):
+        return classify_model_failure(exc)[2]
+    if isinstance(exc, RobotsDisallowed):
+        return ROBOTS_SENTENCE
     if isinstance(exc, PermissionError):
         return "permission was denied"
     if isinstance(exc, FileNotFoundError):
         return "the file was not found"
     if isinstance(exc, TimeoutError):
         return "it took too long"
+    if isinstance(exc, ConnectionError):
+        return "the network did not answer"
     if isinstance(exc, OSError):
         return _OS_REASONS.get(exc.errno or 0, OS_DEFAULT)
     if isinstance(exc, (zipfile.BadZipFile, zipfile.LargeZipFile)):

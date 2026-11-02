@@ -351,8 +351,12 @@ def test_the_desktop_window_never_keeps_a_service_worker_and_links_navigate(live
         bridge.set_quit_handler(lambda: None)
         bridge.set_window_frame(True)  # now the same server serves the desktop window
         page.goto(base + "/help")
-        assert page.evaluate("document.documentElement.dataset.kDesktop") == "1"
+        # The page reloads itself once to shed the worker (base.html), so nothing is evaluated
+        # until the uncontrolled document is up: the old document is still controlled, the
+        # reloaded one is not.
         page.wait_for_function("!navigator.serviceWorker.controller", timeout=10000)
+        page.wait_for_load_state("load")
+        assert page.evaluate("document.documentElement.dataset.kDesktop") == "1"
         assert page.evaluate("navigator.serviceWorker.getRegistrations().then(r => r.length)") == 0
         page.click('nav.mainnav a[href="/opportunities"]')
         page.wait_for_url("**/opportunities")

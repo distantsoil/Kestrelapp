@@ -35,6 +35,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from kestrel import paths
 
 TIERS: tuple[str, ...] = ("tier1", "tier2", "tier3", "docsel")
+# The derived models Kestrel builds for a profile. Document selection (docsel) has no model of its
+# own: it calls the profile's kestrel-tier2 (D-LLM-10), because two derived models with different
+# contexts load as two runners. Its base is tier2's base and tier2's num_ctx exceeds its budget.
+DERIVED_TIERS: tuple[str, ...] = ("tier1", "tier2", "tier3")
 EMBED_TIER = "embed"
 # The local profile for an operator who chooses Local where Hosted is recommended.
 FALLBACK_PROFILE = "cpu_8gb"
@@ -483,10 +487,10 @@ def derived_name(tier: str) -> str:
 
 
 def write_modelfiles(profile: str, dest: Path, catalog: ModelCatalog | None = None) -> list[Path]:
-    """Render every tier's Modelfile for a profile into `dest` (Modelfile.<tier>)."""
+    """Render every derived model's Modelfile for a profile into `dest` (Modelfile.<tier>)."""
     dest.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for tier in TIERS:
+    for tier in DERIVED_TIERS:
         p = dest / f"Modelfile.{tier}"
         p.write_text(render_modelfile(tier, profile, catalog), encoding="utf-8")
         written.append(p)
@@ -508,19 +512,36 @@ class ActiveProfile(BaseModel):
     reason: str = ""
     chosen_at: str = ""
     hardware: dict[str, Any] = Field(default_factory=dict)
+    # The base tag each kestrel-<tier> was last built from (D-LLM-9). Empty for an install that
+    # predates the record: its derived models are rebuilt once when a plan base is a pinned tag.
+    bases: dict[str, str] = Field(default_factory=dict)
+
+
+def plan_bases(profile: str, catalog: ModelCatalog | None = None) -> dict[str, str]:
+    """{tier: base tag} a profile builds its derived models from (tiers with a local model)."""
+    prof = (catalog or load_catalog()).profile(profile)
+    return {t: b for t in DERIVED_TIERS if (b := prof.models.for_tier(t))}
 
 
 def active_profile_path() -> Path:
     return paths.config_dir() / ACTIVE_PROFILE_FILENAME
 
 
-def save_active_profile(name: str, reason: str, hw: Hardware | None = None) -> Path:
+def save_active_profile(
+    name: str, reason: str, hw: Hardware | None = None, bases: dict[str, str] | None = None
+) -> Path:
+    """Record the chosen profile. `bases` (what the derived models were just built from) is
+    given only when a build finished; otherwise the earlier record's bases are kept."""
     paths.ensure_dirs()
+    if bases is None:
+        before = load_active_profile()
+        bases = dict(before.bases) if before else {}
     rec = ActiveProfile(
         profile=name,
         reason=reason,
         chosen_at=datetime.now(UTC).isoformat(timespec="seconds"),
         hardware=hw.model_dump() if hw else {},
+        bases=bases,
     )
     p = active_profile_path()
     p.write_text(json.dumps(rec.model_dump(), indent=2), encoding="utf-8")

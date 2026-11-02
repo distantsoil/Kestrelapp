@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
+from kestrel.errors import classify_model_failure, is_model_failure
 from kestrel.llm import providers as prov
 from kestrel.llm.service_name import service_name
 
@@ -175,20 +176,31 @@ async def _connect_provider(
             '"Free models only" to use paid models. Nothing was saved.',
             label=label,
         )
+    shape = prov.key_shape_problem(value)
+    if shape:
+        # A pasted sentence or a key with a stray space: refused here in fixed words, before
+        # any request, so the HTTP library's own text (which can carry the key) is never shown.
+        return _refused(provider, "key_malformed", f"{shape}. Nothing was saved.", label=label)
     candidate = backend.model_copy(update={"api_key": value}) if value else backend
     key = await prov.verify_key(candidate)
     if not key.ok:
         kept = " Your saved key was not changed." if value else ""
-        return _refused(provider, "key_rejected", f"{label} rejected the key: {key.detail}.{kept}",
+        detail = key.detail.rstrip(".")
+        return _refused(provider, "key_rejected", f"{label} rejected the key: {detail}.{kept}",
                         label=label, key=key)
     try:
         fit = prov.models_fit_for_tier3(await prov.list_models(candidate), candidate)
     except (httpx.HTTPError, RuntimeError, ValueError, KeyError, TypeError,
             AttributeError) as exc:
+        # A failed call reads as a fixed sentence by kind (never the URL or the provider's text);
+        # any other fault names only its type.
+        why_list_failed = (classify_model_failure(exc)[2] if is_model_failure(exc)
+                           else f"the list could not be read ({type(exc).__name__}).")
+        log.warning("hosted_model_list_failed", provider=provider, error_type=type(exc).__name__)
         return _refused(
             provider, "model_list_failed",
             f"{label} accepted the key, but the model list failed: "
-            f"{type(exc).__name__}: {exc}. Nothing was saved.",
+            f"{why_list_failed} Nothing was saved.",
             label=label,
         )
     if value:

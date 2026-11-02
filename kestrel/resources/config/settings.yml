@@ -63,7 +63,7 @@ llm:
     tier1:   { backend: local, model: "kestrel-tier1",  temperature: 0.0, max_tokens: 300 }
     tier2:   { backend: local, model: "kestrel-tier2",  temperature: 0.2, max_tokens: 4000, timeout_s: 600 }
     tier3:   { backend: local, model: "kestrel-tier3",  temperature: 0.3, max_tokens: 6000 }
-    docsel:  { backend: local, model: "kestrel-docsel", temperature: 0.0, max_tokens: 1500 }
+    docsel:  { backend: local, model: "kestrel-tier2",  temperature: 0.0, max_tokens: 1500 }
     trigger: { backend: local, model: "kestrel-tier1",  temperature: 0.0, max_tokens: 600 }
     # Tier 3 ESCALATION (SPEC 6.4): operator-confirmed, hosted, never automatic. A separate role so
     # nothing local (cover letters, the deep local eval) is ever routed off-machine. `backend` is

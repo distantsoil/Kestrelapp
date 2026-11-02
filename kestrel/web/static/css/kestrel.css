@@ -143,6 +143,15 @@ body.busy::before {
 /* Long requests with their own status (the import): hidden until the request is in flight. */
 .import-status { display: none; align-items: center; gap: .5rem; margin-top: .6rem; }
 .htmx-request > .import-status, .htmx-request.import-status { display: flex; }
+/* The shared import progress panel (D-IMPORT-7): in the import area the moment a send starts. The
+   older in-form status hides while it shows, so there is one spinner, not two. */
+.import-wait { display: flex; align-items: center; gap: .5rem; margin-top: .8rem;
+  animation: import-wait-in .25s var(--ease, ease-out); }
+@keyframes import-wait-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+#import-proposal:has(.import-wait) .import-status { display: none !important; }
+.import-fail { margin-top: .8rem; animation: import-wait-in .25s var(--ease, ease-out); }
+@media (prefers-reduced-motion: reduce) { .import-wait, .import-fail { animation: none; } }
+html[data-reduce-motion="1"] .import-wait, html[data-reduce-motion="1"] .import-fail { animation: none; }
 .spin { width: 1em; height: 1em; flex: none; border-radius: 50%;
   border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

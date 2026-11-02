@@ -428,6 +428,36 @@ def _f(x: object) -> float | None:
 
 
 # ------------------------------------------------------------------------------ network calls
+KEY_SHAPE_REFUSAL = (
+    "That does not look like an API key. A key is one unbroken string with no spaces, line "
+    "breaks or accented characters; paste only the key"
+)
+
+
+def key_shape_problem(key: str) -> str | None:
+    """A fixed sentence when `key` cannot be an API key at all, else None. A key is printable
+    ASCII with no whitespace inside it, so a pasted sentence is refused before anything is sent
+    (it would otherwise fail inside the HTTP library, whose message can carry the key). Checks the
+    trimmed key; the caller trims."""
+    value = key.strip()
+    if not value:
+        return None
+    if not value.isascii() or not value.isprintable() or any(ch.isspace() for ch in value):
+        return KEY_SHAPE_REFUSAL
+    return None
+
+
+def _key_failure(provider: str, exc: BaseException) -> KeyStatus:
+    """A failed key check as a fixed sentence by kind (never the library's text, which carries the
+    URL); the type, status and reason code go to the log."""
+    from kestrel.errors import classify_model_failure
+
+    code, status, sentence = classify_model_failure(exc)
+    log.warning("key_check_failed", provider=provider, error_type=type(exc).__name__,
+                status=status, reason=code)
+    return KeyStatus(False, provider, sentence)
+
+
 async def verify_key(
     backend: BackendConfig, *, http: httpx.AsyncClient | None = None, timeout: float = 20.0
 ) -> KeyStatus:
@@ -437,6 +467,9 @@ async def verify_key(
     provider = backend.provider
     if not (backend.api_key or secret_present(backend.api_key_env)):
         return KeyStatus(False, provider, f"{backend.api_key_env or 'api key'} is not set")
+    shape = key_shape_problem(backend.api_key or secret_value(backend.api_key_env or ""))
+    if shape:
+        return KeyStatus(False, provider, shape)
     client = http or httpx.AsyncClient()
     base = backend.base_url.rstrip("/")
     try:
@@ -458,10 +491,14 @@ async def verify_key(
         raise_for_provider_status(r)
         n = len((r.json() or {}).get("data") or [])
         return KeyStatus(True, provider, f"key accepted; {n} models listed")
+    except (UnicodeError, httpx.LocalProtocolError):
+        # The key could not be put in a header. The library's text can carry the key itself, so
+        # it is neither shown nor logged; the fixed sentence stands in for it.
+        return KeyStatus(False, provider, KEY_SHAPE_REFUSAL)
     except httpx.HTTPError as exc:
-        return KeyStatus(False, provider, f"{type(exc).__name__}: {exc}")
+        return _key_failure(provider, exc)
     except RuntimeError as exc:  # ProviderError
-        return KeyStatus(False, provider, str(exc))
+        return _key_failure(provider, exc)
     except (ValueError, AttributeError, TypeError) as exc:  # a 200 that is not JSON
         return KeyStatus(False, provider, f"unexpected provider response: {type(exc).__name__}")
     finally:

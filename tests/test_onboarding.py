@@ -990,3 +990,46 @@ def test_a_refused_connect_keeps_what_was_ticked(monkeypatch):
     assert not re.search(r'name="allow_training"[^>]*\bchecked', body)
     assert re.search(r'<details class="ob-details" data-ob-more open', body)
     assert not paths.dotenv_path().exists()
+
+
+def test_models_ready_is_false_for_an_empty_plan(monkeypatch):
+    """#103: Ollama running with nothing missing is not "ready" when the plan has no models."""
+    import dataclasses
+
+    from kestrel.config import get_settings
+    from kestrel.services import setup_state as ss
+    from kestrel.web.pages import onboarding
+
+    st = ss.assess(get_settings(), {})
+    empty = dataclasses.replace(
+        st, choice="local", choice_explicit=True, ollama_version="0.9.0", base_tags=[],
+        missing_tags=[], missing_derived=[])
+    assert onboarding.models_ready(empty)[0] is False
+
+
+# ------------------------------------------------------ #62: a pasted sentence is a plain refusal
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "This is half a paragraph of prose, not a key at all",
+        "She said “hello” — and left",
+        "sk-or-abc\ndef-ghi-jkl",
+    ],
+)
+def test_a_pasted_sentence_as_the_key_is_refused_in_plain_words(monkeypatch, bad):
+    from structlog.testing import capture_logs
+
+    monkeypatch.setenv("KESTREL_USE_SYSTEM_KEYS", "")
+    c = _app()
+    _jump("models", visited=["welcome"])
+    c.post("/onboarding/models/mode", data={"mode": "hosted"}, headers=HX)
+    with capture_logs() as logs, respx.mock(assert_all_called=False) as router:
+        r = _connect(c, router, api_key=bad)
+        assert not router.calls  # nothing was sent anywhere
+    body = r.text
+    assert r.status_code == 200
+    assert 'data-connect-ok="false"' in body and "Not connected to OpenRouter." in body
+    assert "does not look like an API key" in body and "Nothing was saved" in body
+    assert "UnicodeEncodeError" not in body and "Traceback" not in body
+    assert "half a paragraph" not in body and "left" not in repr(logs)
+    assert bad not in repr(logs)

@@ -2,7 +2,7 @@
    (straight after reading); without it this is the Try again control after a failed proposal.
    Posts into the nearest .import-result, so a retry replaces the error rather than stacking. #}
 <form class="import-processing" hx-post="/api/documents/import" hx-target="closest .import-result"
-      hx-swap="innerHTML" hx-disabled-elt="find button" data-no-busy
+      hx-swap="innerHTML" hx-disabled-elt="find button" hx-sync="this:drop" data-no-busy
       {% if auto %}hx-trigger="load"{% endif %} style="margin-top:.8rem">
   <input type="hidden" name="text" value="{{ markdown }}">
   <input type="hidden" name="track" value="{{ track }}">

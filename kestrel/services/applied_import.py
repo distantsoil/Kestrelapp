@@ -645,6 +645,7 @@ async def add_found_role(
     the polite HttpClient (descriptive User-Agent, robots.txt, rate limit); the URL is fetched at
     most once. A failed fetch is reported and any pasted text is kept; with nothing to keep, no
     opportunity is created. Pasted text wins over fetched text as the posting body."""
+    from kestrel.errors import RobotsDisallowed
     from kestrel.ingest.manual import manual_ingest
 
     url = (url or "").strip() or None
@@ -678,10 +679,15 @@ async def add_found_role(
             notes.append(f"{exc}, so Kestrel did not read it. Copy the posting text from your "
                          "browser and paste it instead.")
             fetched = None
+        except RobotsDisallowed as exc:
+            notes.append(f"{exc} Copy the posting text from your browser and paste it instead.")
+            fetched = None
         except (httpx.HTTPError, httpx.InvalidURL, ValueError, PermissionError, RuntimeError,
                 OSError) as exc:
             # InvalidURL is not an HTTPError; a malformed link must be a notice, never a 500.
-            notes.append(f"Could not read that page ({exc}).")
+            from kestrel.errors import task_failure_text
+
+            notes.append(f"Could not read that page ({task_failure_text(exc)}).")
             fetched = None
     if not text and fetched is None:
         notes.append("Paste the posting text and try again.")

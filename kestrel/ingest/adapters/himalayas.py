@@ -33,6 +33,7 @@ from urllib.parse import urlencode
 import httpx
 import structlog
 
+from kestrel.errors import ROBOTS_SENTENCE
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.pipeline.profile import load_profile
 
@@ -201,9 +202,7 @@ class HimalayasAdapter:
         except httpx.HTTPStatusError as exc:
             r = exc.response
         except PermissionError as exc:
-            raise AdapterError(
-                "Himalayas' robots.txt does not allow this request, so Kestrel skipped it"
-            ) from exc
+            raise AdapterError(ROBOTS_SENTENCE) from exc
         except httpx.HTTPError as exc:
             log.warning("himalayas_unreachable", error=type(exc).__name__)
             raise AdapterError("Could not reach Himalayas; try again later") from exc

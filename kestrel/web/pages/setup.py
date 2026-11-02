@@ -231,6 +231,10 @@ async def start_action(name: str) -> tuple[ss.SetupState, str | None, str | None
     try:
         async with sessionmaker()() as s:
             if name == "pull":
+                if state.stale_derived:
+                    # The derived models were built from an older base: once the new one is
+                    # present the app rebuilds them, even after a restart (D-LLM-9).
+                    await mt.set_rebuild_owed(s, True)
                 n = await mt.queue_pulls(s, state.missing_tags)
                 if not n:
                     return state, "Every model this profile needs is already downloaded.", None
