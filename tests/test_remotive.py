@@ -6,12 +6,25 @@ import httpx
 import pytest
 import respx
 
+from kestrel.config import get_settings
 from kestrel.ingest.adapters.remotive import RemotiveAdapter
+from kestrel.ingest.base import SourceConfigError
+from kestrel.ingest.http import HttpClient
+
+_BASE = "https://remotive.com/api/remote-jobs"
 
 
-@pytest.mark.anyio
+async def _fetch(config: dict | None = None):
+    s = get_settings().ingest
+    cfg = config or {}
+    async with HttpClient(
+        user_agent=s.user_agent, respect_robots=False, max_attempts=1
+    ) as client:
+        return await RemotiveAdapter().fetch(cfg, client)
+
+
+@respx.mock
 async def test_remotive_maps_jobs_correctly():
-    adapter = RemotiveAdapter()
     fixture = {
         "00-warning": "test",
         "0-legal-notice": "test",
@@ -40,51 +53,111 @@ async def test_remotive_maps_jobs_correctly():
             },
         ],
     }
+    respx.get(f"{_BASE}?limit=50").mock(
+        return_value=httpx.Response(200, json=fixture)
+    )
 
-    with respx.mock(assert_all_called=False) as router:
-        router.get("https://remotive.com/api/remote-jobs?limit=50").mock(
-            return_value=httpx.Response(200, json=fixture)
-        )
-        async with httpx.AsyncClient() as client:
-            postings = await adapter.run(client)
+    batch = await _fetch()
 
-    assert len(postings) == 2
-    p0 = postings[0]
+    assert len(batch) == 2
+    p0 = batch[0]
     assert p0.title == "Senior Developer"
     assert p0.org_name == "Example Corp"
     assert p0.location_raw == "Anywhere"
     assert p0.is_remote is True
-    assert p0.description_html == "Build things."
+    assert p0.description_html == "<p>Build things.</p>"
     assert p0.date_posted == "2026-11-01T12:00:00Z"
     assert p0.url == "https://remotive.com/jobs/12345"
+    assert p0.external_id == "12345"
 
-    p1 = postings[1]
+    p1 = batch[1]
     assert p1.title == "Product Manager"
     assert p1.description_html is None
+    assert p1.external_id == "67890"
 
 
-@pytest.mark.anyio
+@respx.mock
 async def test_remotive_handles_429():
-    from kestrel.ingest.base import AdapterError
+    respx.get(f"{_BASE}?limit=50").mock(return_value=httpx.Response(429))
 
-    adapter = RemotiveAdapter()
-    with respx.mock(assert_all_called=False) as router:
-        router.get("https://remotive.com/api/remote-jobs?limit=50").mock(
-            return_value=httpx.Response(429)
-        )
-        async with httpx.AsyncClient() as client:
-            with pytest.raises(AdapterError, match="rate limit"):
-                await adapter.run(client)
+    batch = await _fetch()
+
+    assert len(batch) == 0
+    assert batch.partial_error is not None
+    assert "rate limit" in batch.partial_error.lower()
 
 
-@pytest.mark.anyio
+@respx.mock
 async def test_remotive_handles_empty_jobs():
+    respx.get(f"{_BASE}?limit=50").mock(
+        return_value=httpx.Response(200, json={"jobs": []})
+    )
+
+    batch = await _fetch()
+
+    assert len(batch) == 0
+    assert batch.partial_error is None
+
+
+@respx.mock
+async def test_remotive_fallback_external_id():
+    """Jobs without an id use the url as the dedup key."""
+    fixture = {
+        "jobs": [
+            {
+                "url": "https://remotive.com/jobs/abc",
+                "title": "No ID Job",
+                "company_name": "Test Corp",
+            },
+        ],
+    }
+    respx.get(f"{_BASE}?limit=50").mock(
+        return_value=httpx.Response(200, json=fixture)
+    )
+
+    batch = await _fetch()
+
+    assert len(batch) == 1
+    assert batch[0].external_id == "https://remotive.com/jobs/abc"
+
+
+@respx.mock
+async def test_remotive_deduplicates_by_id():
+    fixture = {
+        "jobs": [
+            {
+                "id": "111",
+                "url": "https://remotive.com/jobs/111",
+                "title": "First",
+                "company_name": "Corp A",
+            },
+            {
+                "id": "111",
+                "url": "https://remotive.com/jobs/111",
+                "title": "Duplicate",
+                "company_name": "Corp A",
+            },
+        ],
+    }
+    respx.get(f"{_BASE}?limit=50").mock(
+        return_value=httpx.Response(200, json=fixture)
+    )
+
+    batch = await _fetch()
+
+    assert len(batch) == 1
+    assert batch[0].title == "First"
+
+
+def test_validate_config_rejects_bad_limit():
     adapter = RemotiveAdapter()
-    fixture = {"jobs": []}
-    with respx.mock(assert_all_called=False) as router:
-        router.get("https://remotive.com/api/remote-jobs?limit=50").mock(
-            return_value=httpx.Response(200, json=fixture)
-        )
-        async with httpx.AsyncClient() as client:
-            postings = await adapter.run(client)
-    assert postings == []
+    with pytest.raises(SourceConfigError, match="limit"):
+        adapter.validate_config({"limit": 0})
+    with pytest.raises(SourceConfigError, match="limit"):
+        adapter.validate_config({"limit": 101})
+    with pytest.raises(SourceConfigError, match="limit"):
+        adapter.validate_config({"limit": True})
+    # Valid values pass
+    adapter.validate_config({"limit": 1})
+    adapter.validate_config({"limit": 100})
+    adapter.validate_config({})

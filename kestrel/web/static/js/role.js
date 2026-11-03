@@ -402,6 +402,27 @@
     syncRescore();
   }
 
+  /* ---------------------------------------------------------- cover letter dialog (issue #107) */
+  function onCoverLetterClick(e) {
+    var close = e.target.closest && e.target.closest('[data-rl-close]');
+    if (close) {
+      if (root.KUI) root.KUI.closeModal();
+      return;
+    }
+    var edit = e.target.closest && e.target.closest('[data-rl-cover-edit]');
+    if (edit) {
+      // Full edit mode is not yet implemented; close the dialog for now.
+      if (root.KUI) root.KUI.closeModal();
+      return;
+    }
+    var discard = e.target.closest && e.target.closest('[data-rl-cover-discard]');
+    if (discard) {
+      // Full discard is not yet implemented; close the dialog for now.
+      if (root.KUI) root.KUI.closeModal();
+      return;
+    }
+  }
+
   /* ------------------------------------------------------------------------------ the page */
   root.KUI.page.define('role', {
     mount: function (main, ctx) {
@@ -422,6 +443,7 @@
       ctx.on(doc, 'rl-story-saved', onStorySaved);
       ctx.on(doc, 'click', onAdjustClick);
       ctx.on(doc, 'click', onMenuClick);
+      ctx.on(doc, 'click', onCoverLetterClick);
       ctx.on(doc, 'keydown', onEscape);
       watchDialog();
       ctx.on(doc, 'htmx:historyRestore', watchDialog);

@@ -1275,14 +1275,20 @@ async def cover_letter_generate(request: Request, opp_id: int, confirmed: str = 
         # Assemble the user prompt from profile, posting, and selected bullets
         user_prompt = _assemble_letter_prompt(opp, profile, pursuit)
 
+        # Derive valid keys from the profile's proof points for claim verification
+        valid_keys: set[str] = set()
+        if profile and profile.proof_points:
+            for pp in profile.proof_points:
+                if isinstance(pp, dict) and pp.get("key"):
+                    valid_keys.add(str(pp["key"]))
+
         client = LLMClient(settings)
         draft = await generate_cover(
             client,
-            {"opp_id": opp_id},
-            user_prompt,
+            user_prompt=user_prompt,
+            valid_keys=valid_keys,
             session=s,
             on_quarantine=None,
-            reask=True,
         )
 
         if draft.error:
@@ -1314,6 +1320,6 @@ def _assemble_letter_prompt(opp, profile, pursuit) -> str:
         parts.append(f"Job posting: {opp.description[:2000]}")
     if opp.title:
         parts.append(f"Role title: {opp.title}")
-    if opp.organization:
-        parts.append(f"Company: {opp.organization}")
+    if opp.org_name:
+        parts.append(f"Company: {opp.org_name}")
     return "\n\n".join(parts)

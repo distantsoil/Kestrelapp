@@ -395,7 +395,7 @@ _DESCRIPTIONS: dict[str, dict] = {
             "Arbeitnow, where you apply yourself. No compensation is shown."
         ),
         "provide": "Nothing: no key or account. Optional max_pages.",
-        "config_example": {},
+        "config_example": {"max_pages": 2},
         "rate_limit": (
             "At most 1 request/second and at most max_pages requests a check; robots.txt "
             "respected; a 429 or 5xx makes the run partial."
@@ -453,7 +453,7 @@ _DESCRIPTIONS: dict[str, dict] = {
             "included when the feed provides it (salaryMin, salaryMax, currency, period)."
         ),
         "provide": "Nothing: no key or account. Optional count and max_pages.",
-        "config_example": {},
+        "config_example": {"max_pages": 2, "count": 100},
         "rate_limit": (
             "At most 1 request/second and at most max_pages requests a check; robots.txt "
             "respected; a 403, 429 or 5xx makes the run partial."
@@ -471,7 +471,7 @@ _DESCRIPTIONS: dict[str, dict] = {
             "Kestrel fetches at most 4 times per day (enforced in the scheduler)."
         ),
         "provide": "Nothing: no key or account. Optional limit (1-100).",
-        "config_example": {},
+        "config_example": {"limit": 50},
         "rate_limit": (
             "At most 1 request/second and at most 4 fetches per day (the API advises max 4; "
             "excessive requests are blocked); robots.txt respected; a 429 makes the run partial."

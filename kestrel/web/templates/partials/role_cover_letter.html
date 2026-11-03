@@ -17,7 +17,7 @@
         <p class="rl-consent__title">What will be sent</p>
         <ul>
           <li>Your profile summary and skills</li>
-          <li>The job posting for {{ opp.organization if opp else 'this role' }}</li>
+          <li>The job posting for {{ opp.org_name if opp else 'this role' }}</li>
           {% if route.reask %}<li class="rl-consent__reask" data-testid="consent-reask">If the first draft has plain-writing issues, Kestrel will ask the model once more to fix them, keeping your claims intact.</li>{% endif %}
         </ul>
         <p class="rl-consent__meta">Model: {{ route.model }} · Provider: {{ route.provider }}</p>

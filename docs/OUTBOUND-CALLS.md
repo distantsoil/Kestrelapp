@@ -160,6 +160,8 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `www.anthropic.com`: link. Anthropic's privacy policy.
 - `www.apple.com`: reference. A macOS settings-file format name.
 - `www.arbeitnow.com`: call. The Arbeitnow job board.
+- `jobicy.com`: call. The Jobicy remote jobs feed.
+- `remotive.com`: call. The Remotive remote jobs feed.
 - `www.linkedin.com`: reference. A code comment (LinkedIn is never searched).
 - `www.openmodel.ai`: link. OpenModel's privacy policy.
 - `www.remoterocketship.com`: call. RemoteRocketship, the person's paid key.

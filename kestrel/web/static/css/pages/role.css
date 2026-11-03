@@ -362,3 +362,16 @@
 .rl-research-job { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .rl-research-job > div { min-width: 0; }
 .rl-research-job .k-btn { flex: none; white-space: nowrap; }
+
+/* Cover letter dialog and draft (issue #107) */
+.rl-cover-letter, .rl-cover-draft { min-width: 0; }
+.rl-cover-body { min-width: 0; padding: 4px 0; }
+.rl-cover-text { font-size: 14.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 720px; }
+.rl-cover-marks { margin-top: 8px; }
+.rl-cover-unverified { margin-top: 10px; }
+.rl-cover-unverified .rl-warn { font-size: 13.5px; }
+.rl-consent { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); }
+.rl-consent__title { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+.rl-consent ul { margin: 4px 0 6px 18px; padding: 0; font-size: 13px; line-height: 1.6; }
+.rl-consent__reask { color: var(--warn-ink); }
+.rl-consent__meta { font-size: var(--fs-sm); color: var(--muted); margin: 4px 0 0; }

@@ -13,65 +13,99 @@ prohibits submitting to third-party job sites, prohibits using the data to
 collect signups/email addresses, and advises at most 4 fetches per day.
 
 Kestrel enforces the 4-per-day cap in the scheduler (not here); this adapter
-fetches at most `max_pages` pages per run (default 1) and at most 1
-request/second.
+fetches at most `limit` jobs per run (default 50) at most 1 request/second.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import httpx
 import structlog
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import PostingBatch, RawPosting, SourceConfigError
 
 log = structlog.get_logger(__name__)
 
 _BASE = "https://remotive.com/api/remote-jobs"
 _DEFAULT_LIMIT = 50
-_MAX_PAGES = 3  # at most 3 pages per run (50 jobs/page = 150 jobs max)
+_MAX_LIMIT = 100
 _RATE = 1.0  # requests/second
 
 
 class RemotiveAdapter:
     kind = "remotive"
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        self.config = config or {}
-        limit = self.config.get("limit", _DEFAULT_LIMIT)
-        if not isinstance(limit, int) or limit < 1 or limit > 100:
-            raise SourceConfigError("Remotive: 'limit' must be an integer 1-100")
-        self.limit = limit
-        self.max_pages = min(int(self.config.get("max_pages", _MAX_PAGES)), _MAX_PAGES)
+    def validate_config(self, config: dict) -> None:
+        limit = config.get("limit", _DEFAULT_LIMIT)
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _MAX_LIMIT
+        ):
+            raise SourceConfigError(
+                f"'limit' must be a whole number from 1 to {_MAX_LIMIT}"
+            )
 
-    async def run(self, http: httpx.AsyncClient) -> list[RawPosting]:
-        url = f"{_BASE}?limit={self.limit}"
-        log.info("remotive_fetch", url=url, limit=self.limit)
+    async def fetch(self, config: dict, client: Any) -> PostingBatch:
+        self.validate_config(config)
+        limit = config.get("limit", _DEFAULT_LIMIT)
+        url = f"{_BASE}?limit={limit}"
+        log.info("remotive_fetch", url=url, limit=limit)
+
         try:
-            resp = await http.get(url)
-            resp.raise_for_status()
+            r = await client.request(
+                "GET", url, rate_per_sec=_RATE, retries=1, check_robots=True
+            )
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 429:
-                raise AdapterError("Remotive rate limit reached") from exc
-            raise AdapterError(f"Remotive fetch failed: {exc}") from exc
+            r = exc.response
+        except PermissionError:
+            batch = PostingBatch()
+            batch.partial_error = "Remotive's robots.txt disallows this read."
+            return batch
+        except httpx.HTTPError as exc:
+            log.warning("remotive_unreachable", error=type(exc).__name__)
+            batch = PostingBatch()
+            batch.partial_error = "Could not reach Remotive; try again later."
+            return batch
 
-        data = resp.json()
+        if r.status_code == 429:
+            log.warning("remotive_rate_limited")
+            batch = PostingBatch()
+            batch.partial_error = (
+                "Remotive rate limit reached (the API advises at most 4 fetches a day)."
+            )
+            return batch
+        if r.status_code != 200:
+            log.warning("remotive_error", status=r.status_code)
+            batch = PostingBatch()
+            batch.partial_error = f"Remotive returned HTTP {r.status_code}."
+            return batch
+
+        data = r.json()
         jobs = data.get("jobs", [])
         if not isinstance(jobs, list):
-            raise AdapterError("Remotive: 'jobs' is not a list")
+            log.warning("remotive_bad_shape", type=type(jobs).__name__)
+            batch = PostingBatch()
+            batch.partial_error = "Remotive response did not include a jobs list."
+            return batch
 
-        postings: list[RawPosting] = []
+        batch = PostingBatch()
+        seen: set[str] = set()
         for job in jobs:
             if not isinstance(job, dict):
                 continue
             posting = _map_job(job)
-            if posting:
-                postings.append(posting)
+            if posting is None:
+                continue
+            key = posting.external_id or ""
+            if key in seen:
+                continue
+            seen.add(key)
+            batch.append(posting)
 
-        log.info("remotive_done", count=len(postings))
-        return postings
+        log.info("remotive_done", count=len(batch))
+        return batch
 
 
 def _map_job(job: dict[str, Any]) -> RawPosting | None:
@@ -82,10 +116,16 @@ def _map_job(job: dict[str, Any]) -> RawPosting | None:
 
     company = _str(job.get("company_name"))
     location = _str(job.get("candidate_required_location"))
-    description = _strip_html(job.get("description"))
+    description = job.get("description")
+    if description is not None and not isinstance(description, str):
+        description = str(description)
+
+    # Use the job id for dedup; fall back to the url if id is missing.
+    raw_id = job.get("id")
+    external_id = str(raw_id) if raw_id is not None else url
 
     return RawPosting(
-        external_id=str(job.get("id", "")),
+        external_id=external_id,
         title=title,
         org_name=company,
         location_raw=location,
@@ -98,13 +138,3 @@ def _map_job(job: dict[str, Any]) -> RawPosting | None:
 
 def _str(value: Any) -> str | None:
     return str(value) if value not in (None, "") else None
-
-
-def _strip_html(value: Any) -> str | None:
-    if not isinstance(value, str) or not value:
-        return None
-    # Strip HTML tags (simple regex, not a full parser)
-    text = re.sub(r"<[^>]+>", "", value)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&#x27;", "'").replace("&quot;", '"').replace("&nbsp;", " ")
-    return text.strip() or None

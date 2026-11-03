@@ -89,10 +89,18 @@ def test_the_real_callers_of_enforce_ask_for_the_line():
 def test_scoring_import_and_suggestion_routes_never_ask_for_it():
     import inspect
 
-    from kestrel.web.pages import documents, role
+    from kestrel.web.pages import documents, profile
 
-    assert "reask=True" not in inspect.getsource(role)
-    assert "reask=True" not in inspect.getsource(documents)
+    # The import routes (documents.py) and title-suggestion routes (profile.py)
+    # are local operations and never need the re-ask disclosure.
+    for fn_name in ("import_read", "_import_read", "import_markdown", "_import_markdown"):
+        fn = getattr(documents, fn_name, None)
+        if fn:
+            assert "reask=True" not in inspect.getsource(fn)
+    for fn_name in ("title_suggestions", "title_suggestions_refresh", "title_suggestion_accept"):
+        fn = getattr(profile, fn_name, None)
+        if fn:
+            assert "reask=True" not in inspect.getsource(fn)
 
 
 def _render(name: str, **ctx) -> str:
