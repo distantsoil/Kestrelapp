@@ -127,6 +127,18 @@ async def _archived_at(opp_id: int) -> str | None:
     return opp.archived_at if opp else None
 
 
+async def _add_shortlist(opp_id: int) -> int:
+    engine = make_async_engine(paths.db_path())
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    async with sm() as s:
+        p = Pursuit(opportunity_id=opp_id, track="employment", status="shortlisted")
+        s.add(p)
+        await s.commit()
+        pid = p.id
+    await engine.dispose()
+    return pid
+
+
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from kestrel.web import app as app_module
 
@@ -154,6 +166,20 @@ def test_shortlist_creates_pursuit_and_is_idempotent(monkeypatch: pytest.MonkeyP
     assert row is not None
     assert row.track == "employment"
     assert row.status == "shortlisted"
+
+
+def test_actions_panel_offers_an_applied_on_date_defaulting_to_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#129: the role actions panel offers a date for "I applied" (defaulting to and capped at
+    today) instead of always forcing today."""
+    from datetime import date
+
+    ids = asyncio.run(_seed())
+    asyncio.run(_add_shortlist(ids["opp_id"]))
+    with _client(monkeypatch) as c:
+        html = c.get(f"/opportunities/{ids['opp_id']}/actions").text
+    assert 'name="applied_on"' in html and 'data-testid="applied-on-date"' in html
+    today = date.today().isoformat()
+    assert f'value="{today}"' in html and f'max="{today}"' in html
 
 
 def test_shortlist_uses_the_consulting_track_status_not_employment(

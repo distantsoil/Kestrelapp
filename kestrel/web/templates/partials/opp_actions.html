@@ -24,9 +24,17 @@
         <form hx-post="/pursuits/{{ pursuit.id }}/reposts" hx-trigger="change" hx-swap="none" style="margin:.2rem 0 0"><label class="muted" title="Once applied, a new posting of this role is hidden on arrival as a re-post. Tick to see such listings anyway."><input type="checkbox" name="allow" value="on" {% if pursuit.allow_reposts %}checked{% endif %}> allow re-posts</label></form>
         {% if not pursuit.applied_at %}
         <div id="applied-status">
-          <button class="btn" style="margin-top:.5rem" hx-post="/pursuits/{{ pursuit.id }}/act/applied/quick"
-                  hx-target="#applied-status" hx-swap="outerHTML" data-testid="mark-applied">I applied</button>
-          <div class="muted" style="margin-top:.3rem">Records that you applied today, with a follow-up in seven days.</div>
+          <form hx-post="/pursuits/{{ pursuit.id }}/act/applied/quick"
+                hx-target="#applied-status" hx-swap="outerHTML"
+                class="row" style="flex-wrap:wrap;gap:.6rem;align-items:center;margin-top:.5rem">
+            <label class="muted" style="display:flex;align-items:center;gap:.4rem">Applied on
+              <input type="date" name="applied_on" value="{{ applied_on_default }}" max="{{ applied_on_default }}"
+                     data-testid="applied-on-date"
+                     style="font:inherit;padding:.2rem .4rem;border:1px solid var(--border);border-radius:6px">
+            </label>
+            <button class="btn" type="submit" data-testid="mark-applied">I applied</button>
+          </form>
+          <div class="muted" style="margin-top:.3rem">Records that you applied on the date chosen, with a follow-up in seven days.</div>
         </div>
         {% endif %}
     </div>

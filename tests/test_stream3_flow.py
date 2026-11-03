@@ -115,7 +115,9 @@ def test_applied_one_click_records_today_with_a_follow_up():
     assert [(e.from_status, e.to_status) for e in events] == [("shortlisted", "applied")]
 
 
-def test_quick_applied_ignores_posted_dates_and_refuses_another_roles_resume():
+def test_quick_applied_honors_posted_date_and_refuses_another_roles_resume():
+    """#129: the quick path now records the operator's chosen date (it used to force today), and
+    still refuses another role's resume."""
     c = _fresh()
     other, _ = _seed(title="Other")
     foreign = _add_render(other)
@@ -126,7 +128,7 @@ def test_quick_applied_ignores_posted_dates_and_refuses_another_roles_resume():
         assert _pursuit(pid)[0].status == "shortlisted"
         c.post(f"/pursuits/{pid}/act/applied/quick", data={"applied_on": "2020-01-01"})
         assert c.post("/pursuits/9999/act/applied/quick", data={}).status_code == 404
-    assert _pursuit(pid)[0].applied_at.startswith(date.today().isoformat())
+    assert _pursuit(pid)[0].applied_at.startswith("2020-01-01")
 
 
 # ------------------------------------------------------------------------------------ Tailor

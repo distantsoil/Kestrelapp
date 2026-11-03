@@ -170,6 +170,20 @@ def test_leads_board_uses_consulting_words_and_employment_is_unchanged():
     assert pb.stage_label("shortlisted") == "Shortlisted"
 
 
+def test_quick_apply_uses_the_operators_date_when_given():
+    """#129: the role page's quick "I applied" path records the date the operator picked (today or
+    an earlier one), not always today."""
+    c = _fresh()
+    _, pid = _seed(status="shortlisted", title="Quick role")
+    with c:
+        r = c.post(f"/pursuits/{pid}/act/applied/quick", data={"applied_on": "2026-09-15"})
+        assert r.status_code == 200
+    p, events = _pursuit(pid)
+    assert p.status == "applied"
+    assert p.applied_at == "2026-09-15T00:00:00+00:00"
+    assert [(e.from_status, e.to_status) for e in events] == [("shortlisted", "applied")]
+
+
 def test_table_view_still_renders():
     c = _fresh()
     _seed(status="applied", title="Table role")

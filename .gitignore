@@ -30,3 +30,4 @@ kestrel/resources/config/profile.yml
 # The in-process embedding model (D-EMBED-2): fetched and hash-verified at build time by
 # scripts/fetch_embed_model.py, never committed (about 90MB).
 kestrel/resources/embed_model/
+.omp_check.log

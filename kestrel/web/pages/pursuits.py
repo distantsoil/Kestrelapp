@@ -825,11 +825,12 @@ async def act(request: Request, pursuit_id: int, verb: str):
 
 @router.post("/pursuits/{pursuit_id}/act/applied/quick", response_class=HTMLResponse)
 async def applied_quick(request: Request, pursuit_id: int):
-    """The one-click path of "I applied": records applied today with a follow-up in seven days
-    (and the resume chosen for the button). Kept for callers that post it; the card itself now
-    opens the form in the panel."""
+    """The one-click path of "I applied": records applied on the chosen date (today by default,
+    or an earlier one the operator picked), with a fixed seven-day follow-up. Kept for callers that
+    post it; the card itself now opens the form in the panel."""
     form = {k: str(v) for k, v in (await request.form()).items()}
-    form.pop("applied_on", None)
+    # `applied_on` (today or an earlier date) passes through to apply_verb; the quick path keeps
+    # its fixed seven-day follow-up, so a custom follow-up is not accepted here.
     form.pop("follow_up", None)
     async with sessionmaker()() as s:
         p = await s.get(Pursuit, pursuit_id)

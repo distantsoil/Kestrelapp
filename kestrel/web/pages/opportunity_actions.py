@@ -20,6 +20,8 @@ validated model calls, progress, cancellation and atomic result storage (D-UI-16
 
 from __future__ import annotations
 
+from datetime import date
+
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -83,6 +85,8 @@ async def _context(
         "archive_reasons": ARCHIVE_REASONS,
         "message": message,
         "error": error or ("Opportunity not found." if opp is None else None),
+        # Default the "applied on" date to today (the quick path's own default, apply_verb's `on`).
+        "applied_on_default": date.today().isoformat(),
     }
 
 
