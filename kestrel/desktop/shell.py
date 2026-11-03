@@ -1080,8 +1080,8 @@ class _Splash:
     def say(self, text: str, pct: int | None, later: str = "", after_ms: int = 0) -> None:
         self._js("say", text, pct, later, after_ms)
 
-    def fail(self, reason: str, details: str) -> None:
-        self._js("fail", reason, details)
+    def fail(self, reason: str, details: str, code: str = "") -> None:
+        self._js("fail", reason, details, code)
 
     def ready(self) -> None:
         self._js("ready")
