@@ -250,7 +250,8 @@ def _active_rows(*, stall: bool = False) -> list:
 def test_run_summary_from_seeded_rows_names_the_search_and_the_events():
     asyncio.run(_seed(_active_rows()))
     s = _summary("employment")
-    assert s["active"] and s["stage"] == "searching"
+    # Scoring outranks searching (#104): a t2 task is pending, so the stage is full_review
+    assert s["active"] and s["stage"] == "full_review"
     assert s["current_search"] == "Data Analyst on Indeed and Google"
     # Employment only: two finished-or-running searches plus the waiting one; consulting's apart.
     assert (s["searches_done"], s["searches_total"]) == (1, 3)
@@ -268,9 +269,9 @@ def test_run_summary_from_seeded_rows_names_the_search_and_the_events():
         "Rules set aside 2",
     ]
     assert all("interim CFO" not in t for t in texts)  # the consulting search is the other tab
-    assert rs.stage_line(s) == ("Searching 2 of 3 searches: Data Analyst on Indeed and Google · "
-                                "8 found so far")
-    assert rs.rail_line(s) == "Searching 2 of 3 searches"
+    # Scoring outranks searching (#104): stage is full_review, so the line shows rating progress
+    assert rs.stage_line(s) == "Rating 3 of 4 · 1 failed"
+    assert rs.rail_line(s) == "Rating 3 of 4"
 
     both = _summary(None)
     assert both["found_new"] == 11 and both["searches_total"] == 4
@@ -365,11 +366,11 @@ def test_today_run_panel_while_searching_and_the_rail_agree():
     panel = _panel(html)
     assert 'data-run="active"' in panel
     head = panel.split('data-testid="run-headline">')[1].split("<")[0]
-    assert head == "Searching 3 of 4 searches"  # global: both tracks' searches
+    # Scoring outranks searching (#104): a t2 task is pending, so the headline shows rating
+    assert head == "Rating 3 of 4"
     assert f">{head}<" in rail
     assert f'data-testid="run-headline">{head}<' in strip  # the strip says the same words
-    assert 'class="run-prog breathe"' in panel and "last activity " in panel
-    assert 'data-testid="run-current">Data Analyst on Indeed and Google<' in panel
+    assert "last activity " in panel
     assert 'hx-trigger="every 5s, run-refresh from:body"' in part
     assert 'hx-get="/today/run?track=employment"' in part
     # The poll brings the Review card and the Schedule bar along out of band.
@@ -614,7 +615,8 @@ def test_runs_live_panel_shows_the_step_bars_and_events():
         html = c.get("/runs", headers={"HX-Request": "true"}).text
     panel = html.split('data-testid="run-live"')[1]
     step = panel.split('data-testid="run-step"')[1].split("</div>")[0]
-    assert "Searching 3 of 4 searches: Data Analyst on Indeed and Google · 11 found so far" in step
+    # Scoring outranks searching (#104): stage is full_review, so the step shows rating
+    assert "Rating 3 of 4 · 1 failed" in step
     assert 'data-bar="search"' in panel and 'data-bar="quick"' in panel
     assert 'data-bar="rating"' in panel and 'data-bar="deeper"' in panel
     assert "Only when you ask" in panel  # the fifth stage (Deeper read) always reads this
@@ -656,15 +658,17 @@ def test_rail_uses_the_current_step():
     asyncio.run(_seed(_active_rows()))
     with _client() as c:
         rail = c.get("/status/rail").text
-    assert "Searching 3 of 4 searches" in rail
+    # Scoring outranks searching (#104): a t2 task is pending, so the rail shows rating
+    assert "Rating 3 of 4" in rail
 
     def _without(*types: str) -> list:  # fresh rows each time: a seeded row is not re-added
         rows = [r for r in _active_rows() if not (isinstance(r, Task) and r.type in types)]
         return [r for r in rows if not (isinstance(r, ScrapeRun) and r.status == "running")]
 
-    asyncio.run(_seed(_without("scrape")))
+    asyncio.run(_seed(_without("scrape", "t2")))
     with _client() as c:
         rail = c.get("/status/rail").text
+    # Only t1 tasks remain: quick_screen outranks searching (#104)
     assert "Quick screen 4 of 5" in rail
 
     asyncio.run(_seed(_without("scrape", "t1")))

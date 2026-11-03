@@ -555,12 +555,14 @@ async def run_summary(
                 Task.type.in_(_WORK_TASKS), Task.status == "leased",
                 or_(Task.lease_until.is_(None), Task.lease_until >= _now_iso()))))
             .scalar_one())
-    elif active and (n_scrape or out["current_search"]):
-        out["stage"] = "searching"
+    elif active and n_t2:
+        # Scoring outranks searching: a run that has moved to rating should not read as
+        # still searching, even if some search tasks are still leased or pending (#104).
+        out["stage"] = "full_review"
     elif active and n_t1:
         out["stage"] = "quick_screen"
-    elif active and n_t2:
-        out["stage"] = "full_review"
+    elif active and (n_scrape or out["current_search"]):
+        out["stage"] = "searching"
     elif active:
         out["stage"] = "finishing"
     # A requested stop still finishing (#91): the card, the header chip and the status rail all
