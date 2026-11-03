@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -316,11 +316,12 @@ async def export_numbers(request: Request):
 
 @router.get("/analytics/export/applications.csv")
 async def export_applications(request: Request):
-    """Every application on the track with its full status history, oldest first. Optional
-    date range: ?from=YYYY-MM-DD&to=YYYY-MM-DD filters by applied_at."""
+    """Every application on the track with its full status history, oldest first.
+    ?range=30|90|all (the page's own range bar) filters by applied_at."""
     track = _track(request)
-    from_date = request.query_params.get("from", "")
-    to_date = request.query_params.get("to", "")
+    range_key = rpt.normalize_range(request.query_params.get("range"))
+    days = rpt.RANGES[range_key]
+    start_iso = (datetime.now(UTC) - timedelta(days=days)).date().isoformat() if days else None
     async with sessionmaker()() as s:
         if (held := await _held_export(s)) is not None:
             return held
@@ -336,10 +337,8 @@ async def export_applications(request: Request):
             .where(Pursuit.track == track)
             .order_by(Pursuit.id)
         )
-        if from_date:
-            stmt = stmt.where(Pursuit.applied_at >= from_date)
-        if to_date:
-            stmt = stmt.where(Pursuit.applied_at <= to_date + "T23:59:59.999999")
+        if start_iso:
+            stmt = stmt.where(Pursuit.applied_at >= start_iso)
         found = (await s.execute(stmt)).all()
     rows: list[list[Any]] = [["Role", "Company", "Status", "Sent", "Outcome", "Closed", "History"]]
     for p, o in found:
@@ -352,8 +351,6 @@ async def export_applications(request: Request):
             (p.applied_at or "")[:10], p.outcome or "", (p.closed_at or "")[:10], redact(history),
         ])
     stamp = _stamp()
-    if from_date or to_date:
-        stamp += f"-{from_date or 'start'}-{to_date or 'now'}"
     return _csv_response(rows, f"kestrel-applications-{stamp}.csv")
 
 

@@ -559,10 +559,12 @@ async def run_summary(
         # Scoring outranks searching: a run that has moved to rating should not read as
         # still searching, even if some search tasks are still leased or pending (#104).
         out["stage"] = "full_review"
+    elif active and (n_scrape or out["current_search"]):
+        # A search still in flight reads as Searching even with quick-screen tasks queued:
+        # the surface shows what is running, not what is waiting. Scoring outranks both.
+        out["stage"] = "searching"
     elif active and n_t1:
         out["stage"] = "quick_screen"
-    elif active and (n_scrape or out["current_search"]):
-        out["stage"] = "searching"
     elif active:
         out["stage"] = "finishing"
     # A requested stop still finishing (#91): the card, the header chip and the status rail all

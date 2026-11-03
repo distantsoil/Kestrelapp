@@ -15,7 +15,7 @@ import hashlib
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from itertools import chain
 
 import httpx
@@ -386,7 +386,7 @@ def _find_tracked(row: ImportRow, existing) -> tuple[int | None, str]:
                 if app_date is not None:
                     delta = abs((row_date - app_date).days)
                     if delta <= 3:
-                        return pid, f"same org, title and date as pursuit #{pid}"
+                        return pid, f"same org and title, same date as pursuit #{pid}"
                     elif delta <= 14:
                         return pid, f"same org and title, {delta} days apart from pursuit #{pid}"
                     # >14 days: treat as re-application, do not match
@@ -395,12 +395,20 @@ def _find_tracked(row: ImportRow, existing) -> tuple[int | None, str]:
     return None, ""
 
 
-def _parse_date(s: str) -> datetime | None:
-    """Parse a date string; returns None on failure."""
-    from datetime import datetime as _dt
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
+def _parse_date(s: str) -> date | None:
+    """Parse a plain ISO date or an ISO timestamp to a date; returns None on failure."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", s)
+    if m:
         try:
-            return _dt.strptime(s.strip(), fmt)
+            return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
         except (ValueError, AttributeError):
             continue
     return None

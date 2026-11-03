@@ -173,6 +173,8 @@
 .ap-table th { text-align: left; background: var(--bg); font-size: 11px; font-weight: 800;
   color: var(--muted); letter-spacing: .05em; text-transform: uppercase; padding: 9px 14px; }
 .ap-table td { padding: 10px 14px; border-top: 1px solid var(--line); vertical-align: middle; }
+.ap-sortable { cursor: pointer; }
+.ap-sortable:hover { color: var(--brand); }
 .ap-row { cursor: pointer; }
 .ap-row:hover { background: var(--soft); }
 .ap-row.is-sel { background: var(--tint-info); }

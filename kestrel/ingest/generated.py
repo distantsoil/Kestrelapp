@@ -245,7 +245,7 @@ def title_variants(titles: list[str], removed: Any = ()) -> list[str]:
     gone = {str(r).casefold() for r in removed or ()}
     seen = {t.casefold() for t in targets}
     out: list[str] = []
-    
+
     # Generate variants for each title, then interleave them fairly.
     per_title: list[list[str]] = []
     for t in targets:
@@ -257,7 +257,7 @@ def title_variants(titles: list[str], removed: Any = ()) -> list[str]:
             seen.add(key)
             variants.append(v)
         per_title.append(variants)
-    
+
     # Interleave: take one from each title in round-robin order.
     max_variants = max((len(v) for v in per_title), default=0)
     for i in range(max_variants):

@@ -49,13 +49,3 @@ async def test_run_finished_notification_with_failures(sm):
         assert note.kind == "run_finished"
         assert note.severity == "warning"
         assert "2 failed" in note.body
-
-
-@pytest.mark.asyncio
-async def test_stopped_run_no_notification(sm):
-    """A stopped run (status='stopping') does NOT create a 'run_finished' notification.
-
-    This is enforced by the logic in worker.py: the notification is only created
-    when not self._stop.is_set().
-    """
-    assert True

@@ -694,11 +694,15 @@
     rows.forEach(function (r) { tbody.appendChild(r); });
   }
 
+  var STAGE_ORD = { to_apply: 0, to_contact: 0, applied: 1, conversation: 1, interviewing: 2, proposal: 2, closed: 3 };
   function sortVal(row, col) {
     var ds = row.dataset;
     switch (col) {
       case 'role': return (ds.search || '').toLowerCase();
-      case 'stage': return (ds.col || '');
+      case 'stage': {
+        var o = STAGE_ORD[ds.col];
+        return o === undefined ? 99 : o;
+      }
       case 'due': return (ds.quiet === '1') ? 9999 : (Number(ds.quiet_days) || 0);
       case 'applied': return ds.applied || '';
       case 'fit': return Number(ds.fit) || 0;

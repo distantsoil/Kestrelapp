@@ -39,6 +39,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     if not _has_column():
         return
-    op.execute(f"DROP INDEX IF EXISTS ix_title_suggestion_doc_master_id")
+    op.execute("DROP INDEX IF EXISTS ix_title_suggestion_doc_master_id")
     with op.batch_alter_table(TABLE, recreate="never") as batch:
         batch.drop_column("doc_master_id")

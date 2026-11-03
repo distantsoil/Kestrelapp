@@ -466,7 +466,10 @@ html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform
 .k-win.is-side-collapsed .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
 .k-win.is-side-collapsed .k-sstat__l { flex: none; }
 .k-win.is-side-collapsed .k-side-toggle { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) { .k-side-toggle { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .k-side-toggle { transition: none; }
+}
 
 /* The shell's htmx slots (update banner, the disclosure, what's new and announcement cards) are
    empty almost always; an empty slot takes no room and no flex gap above the title (O8). */
@@ -1020,12 +1023,6 @@ details.is-folding > :not(summary) { opacity: 0; transform: translateY(-6px);
 .k-tabink { position: absolute; bottom: -1px; height: 3px; border-radius: 3px; background: var(--brand);
   transition: left .35s var(--ease), width .35s var(--ease); pointer-events: none; }
 .k-pane-in { animation: k-inUp .32s var(--ease) backwards; }
-
-/* Reduced motion (the OS setting) stops every animation and transition, as the mockups do
-   (today-mockup-locked.html :363), on every page and every class, legacy or k-. */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
 
 /* ------------------------------------------------- Preferences: text size, Reduce motion */
 /* base.html sets both on <html> from Settings > Preferences. Default changes nothing. */

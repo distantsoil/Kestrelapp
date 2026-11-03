@@ -306,34 +306,9 @@
     var ids = state.picked.slice();
     if (!ids.length) return;
     if (action === 'score-again') {
-      // Open the themed dialog inline so the per-role outcome is shown in place (#127).
-      var bulk = $('#pl-bulk');
-      if (bulk) {
-        var slot = bulk.querySelector('.score-again-slot');
-        var status = bulk.querySelector('.score-again-status');
-        if (!slot) {
-          slot = document.createElement('span');
-          slot.className = 'score-again-slot';
-          bulk.appendChild(slot);
-        }
-        if (!status) {
-          status = document.createElement('span');
-          status.className = 'score-again-status';
-          status.setAttribute('aria-live', 'polite');
-          bulk.appendChild(status);
-        }
-        fetch('/rescore/choose?opp_ids=' + ids.join(','), { headers: { 'HX-Request': 'true' } })
-          .then(function (r) { return r.text(); })
-          .then(function (html) {
-            slot.innerHTML = html;
-            var dlg = slot.querySelector('dialog');
-            if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
-            else if (dlg) dlg.setAttribute('open', '');
-            // Wire up the same listeners the inline partial uses
-            var script = slot.querySelector('script');
-            if (script) { try { eval(script.textContent); } catch (e) {} }
-          });
-      }
+      // The same model choice every Score again offers, as its own page (#127).
+      go('/rescore/choose?opp_ids=' + ids.join(',') + '&page=1&next=' +
+        encodeURIComponent('/opportunities'));
       return;
     }
     ajax('POST', '/pipeline/bulk/' + action, {

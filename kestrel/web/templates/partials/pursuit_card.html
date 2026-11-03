@@ -54,7 +54,7 @@
     data-search="{{ c.search }}" data-closed="{{ 1 if c.closed else 0 }}" data-folded="{{ 1 if c.folded else 0 }}"
     data-applied="{{ c.applied }}" data-updated="{{ c.updated }}" data-added="{{ c.added }}"
     data-fit="{{ c.fit.value if c.fit.value is not none else '' }}" data-pri="{{ 1 if c.priority else 0 }}"
-    data-work="{{ c.work }}" data-company="{{ (c.org_name or '')|lower }}" data-quiet="{{ 1 if c.overdue else 0 }}"
+    data-work="{{ c.work }}" data-company="{{ (c.org_name or '')|lower }}" data-quiet="{{ 1 if c.overdue else 0 }}" data-quiet_days="{{ c.quiet_days or 0 }}"
     data-activity="{{ p.last_activity_at or '' }}">
   <td><div class="ap-rolecell"><span class="ap-mono" data-slot="{{ c.slot }}" aria-hidden="true">{{ c.letters }}</span><span class="ap-tt"><b>{{ c.title }}</b><small>{{ c.org_name or 'Unknown organization' }}</small></span></div></td>
   <td><span class="k-pill ap-stagepill" data-col="{{ c.column }}">{{ c.stage_label }}</span></td>

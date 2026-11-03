@@ -465,7 +465,7 @@ class Worker:
                         # there too (hard rule 4).
                         kwargs["model_override"] = payload.get("model_override")
                     if payload.get("score_stub"):
-                        # Score again on a stub posting: Tier 1 hands the flag to Tier 2 (issue #128).
+                        # Score again on a stub: Tier 1 passes the flag to Tier 2 (#128).
                         kwargs["score_stub"] = True
                 if payload.get(T2_ONLY_KEY):
                     # A run's one-run model (D-UI-72): Tier 1 stays on the configured model;
@@ -950,29 +950,32 @@ class Worker:
             failed = stats.tier1.errors + stats.tier2.errors
             rated = stats.tier1.completed + stats.tier2.completed
 
-            # Count new roles worth reviewing (strong, good, your_call) (#111)
-            from sqlalchemy import select, func
-            from kestrel.db.models import Opportunity
-            from kestrel.analytics.run_summary import WORTH_KEYS
+            # Count new roles worth reviewing (strong, good, your_call) (#111). "Worth a look"
+            # is a fit of the role's latest Tier 2 evaluation, not a stage: stages have no
+            # strong_pass/good_pass form (db/enums STAGES), so count it the way the run summary
+            # does, via fit_for, rather than a stage string.
+            from kestrel.analytics.run_summary import WORTH_KEYS, run_summary
             async with self._sm() as s:
-                worth_count = (await s.execute(
-                    select(func.count()).select_from(Opportunity).where(
-                        Opportunity.stage.in_([f"{k}_pass" for k in WORTH_KEYS])
-                    )
-                )).scalar_one()
+                summary = await run_summary(s, None)
+                worth_count = sum(
+                    int((summary.get("groups") or {}).get(k, 0)) for k in WORTH_KEYS
+                )
 
             if failed > 0:
+                role_word = "role" if failed == 1 else "roles"
+                need_word = "needs" if failed == 1 else "need"
                 await notifier.notify(
                     "run_finished",
-                    f"Run finished: {failed} role{'s' if failed > 1 else ''} need{'s' if failed == 1 else ''} another try",
-                    body=f"{rated} rated · {failed} failed. Review the failed roles and try again.",
+                    f"Run finished: {failed} {role_word} {need_word} another try",
+                    body=f"{rated} rated · {failed} {role_word} failed. Review and try again.",
                     severity="warning",
                 )
             elif worth_count > 0:
+                role_word = "role" if worth_count == 1 else "roles"
                 await notifier.notify(
                     "high_score",
-                    f"{worth_count} new role{'s' if worth_count > 1 else ''} worth reviewing",
-                    body=f"Your search run found {worth_count} role{'s' if worth_count > 1 else ''} rated Your call or better.",
+                    f"{worth_count} new {role_word} worth reviewing",
+                    body=f"Your search found {worth_count} {role_word} rated Your call or better.",
                     severity="info",
                 )
             else:

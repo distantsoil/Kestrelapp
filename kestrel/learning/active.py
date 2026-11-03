@@ -120,7 +120,7 @@ async def rank_uncertain(
     # Deduplicate by dedup_group_id: one copy per group (prefer the canonical one)
     opps = [await session.get(Opportunity, oid) for oid in candidates]
     groups: dict[str | None, int] = {}  # dedup_group_id -> opportunity_id
-    for opp, oid in zip(opps, candidates):
+    for opp, oid in zip(opps, candidates, strict=True):
         if opp is None:
             continue
         gid = opp.dedup_group_id
