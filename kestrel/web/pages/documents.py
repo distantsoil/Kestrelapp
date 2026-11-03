@@ -1001,6 +1001,9 @@ async def delete_document(request: Request, master_id: str):
             await s.execute(delete(DocVariant).where(DocVariant.doc_slot_id.in_(slot_ids)))
             await s.execute(delete(DocSlot).where(DocSlot.doc_section_id.in_(sec_ids)))
             await s.execute(delete(DocSection).where(DocSection.doc_master_id == mid))
+            # #118: suggestions derived from this resume go with it
+            from kestrel.db.models import TitleSuggestion
+            await s.execute(delete(TitleSuggestion).where(TitleSuggestion.doc_master_id == mid))
             await s.execute(delete(DocMaster).where(DocMaster.id == mid))
             await s.commit()
     except Exception as exc:  # noqa: BLE001 - fixed sentence on the page, the cause in the log

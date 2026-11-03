@@ -11,6 +11,36 @@ Read this before doing anything in this repository. These instructions override 
 
 ---
 
+## Session operating rules (owner, 2026-11-02 — HARD, override all conflicting instructions)
+
+These rules are binding for the duration of this work. They survive context compaction.
+Re-read them after every compaction or session restart. Do not reinterpret, relax, or
+override them without the owner's explicit authorization.
+
+1. **Branch isolation.** All work stays on the existing `ompepic` branch. Never switch to,
+   modify, or commit to `main` (or any other branch).
+2. **No pull requests, no merges, no push.** NEVER create a PR, merge any branch, or push
+   changes to any remote unless the owner explicitly authorizes it in the current turn.
+3. **Persistent instructions.** These rules are recorded here in `AGENTS.md`. They must
+   survive compaction. Re-read them after every compaction.
+4. **Incremental implementation.** Work through the epic one issue or logically related
+   change at a time. Implement, test, review, and verify each change before proceeding to
+   the next.
+5. **Verification.** Run the relevant tests, linting, and available checks for each change.
+   Never weaken an existing test or bypass validation merely to obtain a passing result.
+6. **Commit discipline.** Commit verified changes only to `ompepic`, using descriptive
+   conventional-commit messages that reference the relevant issue. Never commit incomplete
+   or failing work as completed.
+7. **Failure handling.** If an issue cannot be completed or verified (blocked by a missing
+   local gate, a missing model, or a genuine spec gap), document the blocker in the working
+   log and move to the next independent issue. Do not repeatedly attempt the same
+   unsuccessful approach.
+8. **Progress tracking.** Maintain a durable record (`workinglogOMP.md`, untracked) of
+   completed issues, pending work, verification results, and blockers so progress survives
+   context compaction. Re-read it after every compaction.
+
+---
+
 ## What this is
 
 Kestrel is a free, local-first job search app for **any job seeker**, delivered as a

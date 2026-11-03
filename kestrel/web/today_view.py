@@ -19,7 +19,7 @@ from sqlalchemy import select
 from kestrel.analytics.today import actions_due
 from kestrel.db.models import DocMaster, Evaluation, Opportunity, Org, Pursuit, VerdictOverride
 from kestrel.web import pipeline_view as pv
-from kestrel.web.fit import GROUP_FAILED, GROUP_NEW, GROUP_WORTH
+from kestrel.web.fit import GROUP_FAILED, GROUP_MAYBE, GROUP_NEW, GROUP_WORTH
 from kestrel.web.queries import (
     GROUP_ORDER,
     OppFilters,
