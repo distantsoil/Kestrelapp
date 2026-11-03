@@ -51,6 +51,7 @@ async def handle_t1(
     t2_model_override: dict | None = None,
     online_approval: dict | None = None,
     lane_local_only: bool = False,
+    score_stub: bool = False,
 ) -> HandlerOutcome:
     """`model_override` is set on a score-again task run on another model this time only
     (D-UI-50): `settings` already carry it for Tier 1, and the Tier 2 task enqueued here carries
@@ -100,6 +101,10 @@ async def handle_t1(
         # already did the work, so skip" (tier2.py). Both must be present for the guard to run.
         if requested_at:
             t2_extra["requested_at"] = requested_at
+        # `score_stub` is the operator's explicit Score again on a stub posting: hand it on so
+        # Tier 2 scores it anyway (issue #128).
+        if score_stub:
+            t2_extra["score_stub"] = True
     async with sessionmaker() as session:
         opp = await session.get(Opportunity, opportunity_id)
         if opp is None:

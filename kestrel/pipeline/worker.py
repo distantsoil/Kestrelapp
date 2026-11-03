@@ -464,6 +464,9 @@ class Worker:
                         # re-check it when it runs, so a pick that can no longer run falls back
                         # there too (hard rule 4).
                         kwargs["model_override"] = payload.get("model_override")
+                    if payload.get("score_stub"):
+                        # Score again on a stub posting: Tier 1 hands the flag to Tier 2 (issue #128).
+                        kwargs["score_stub"] = True
                 if payload.get(T2_ONLY_KEY):
                     # A run's one-run model (D-UI-72): Tier 1 stays on the configured model;
                     # only the Tier 2 task Tier 1 enqueues carries the pick.
