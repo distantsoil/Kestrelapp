@@ -940,14 +940,24 @@ class Worker:
             counts=runlog.stats_counts(stats),
             notes=self._mid_run_switch_note,
         )
-        # Notify the operator that the run is done (#109)
+        # Notify the operator that the run is done (#109, #110)
         if not self._stop.is_set():
             from kestrel.services.notifications import NotificationService
             notifier = NotificationService(self._sm)
-            await notifier.notify(
-                "run_finished",
-                "Run finished",
-                body=f"Your search run is complete.",
-                severity="info",
-            )
+            failed = stats.tier1.errors + stats.tier2.errors
+            rated = stats.tier1.completed + stats.tier2.completed
+            if failed > 0:
+                await notifier.notify(
+                    "run_finished",
+                    f"Run finished: {failed} role{'s' if failed > 1 else ''} need{'s' if failed == 1 else ''} another try",
+                    body=f"{rated} rated · {failed} failed. Review the failed roles and try again.",
+                    severity="warning",
+                )
+            else:
+                await notifier.notify(
+                    "run_finished",
+                    "Run finished",
+                    body=f"Your search run is complete. {rated} roles rated.",
+                    severity="info",
+                )
         return stats
