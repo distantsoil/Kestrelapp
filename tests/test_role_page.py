@@ -565,9 +565,10 @@ def test_no_legacy_panel_still_posts_research_to_the_old_routes(ids):
         assert "/organization" in src, tpl
 
 
-# ------------------------------------------------------------------------------ cover letter (issue #107)
+# ---------------------------------------------------------------- cover letter
 def test_cover_letter_dialog_without_online_model_says_so(ids):
-    """Without an online model, the dialog says so and does not offer a consent panel."""
+    """Without an online model, the dialog says so and does not
+    offer a consent panel."""
     with _client() as c:
         html = c.get(f"/opportunities/{ids['strong']}/role/cover-letter").text
         assert "Online model not configured" in html
@@ -589,7 +590,8 @@ def test_documents_tab_has_enabled_cover_letter_button(ids):
 def test_cover_letter_generate_requires_online_model(ids):
     """Generating a cover letter without an online model is refused."""
     with _client() as c:
-        r = c.post(f"/opportunities/{ids['strong']}/role/cover-letter/generate", data={"confirmed": "yes"})
+        url = f"/opportunities/{ids['strong']}/role/cover-letter/generate"
+        r = c.post(url, data={"confirmed": "yes"})
         assert "Online model not configured" in r.text or r.status_code in (400, 403)
 
 

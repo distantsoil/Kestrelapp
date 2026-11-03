@@ -1205,8 +1205,7 @@ async def preview(request: Request, opp_id: int, render_id: int):
 async def cover_letter_dialog(request: Request, opp_id: int):
     """Ask first: the provider, the model, exactly what would be sent, and the re-ask disclosure.
     The operator confirms, then the draft is made and displayed with plain-writing marks."""
-    from kestrel.db.models import Opportunity, Pursuit
-    from kestrel.llm.client import LLMClient
+    from kestrel.db.models import Opportunity, Profile, Pursuit
     from kestrel.services.online_consent import online_route as shared_route
     from kestrel.web.deps import sessionmaker
 
@@ -1218,7 +1217,8 @@ async def cover_letter_dialog(request: Request, opp_id: int):
         route = await shared_route(s, settings, "tier3", reask=True)
         if not route or not route["online"]:
             return HTMLResponse(
-                "<p>Online model not configured. Set up a hosted provider in Models to draft a letter.</p>",
+                "<p>Online model not configured. "
+                "Set up a hosted provider in Models to draft a letter.</p>",
                 status_code=400,
             )
         pursuit = (
@@ -1243,7 +1243,13 @@ async def cover_letter_generate(request: Request, opp_id: int, confirmed: str = 
     from kestrel.db.models import Opportunity, Profile, Pursuit
     from kestrel.docs.letters import generate_cover
     from kestrel.llm.client import LLMClient
-    from kestrel.services.online_consent import NOT_CONFIRMED, consent_problem, online_route as shared_route
+    from kestrel.services.online_consent import (
+        NOT_CONFIRMED,
+        consent_problem,
+    )
+    from kestrel.services.online_consent import (
+        online_route as shared_route,
+    )
     from kestrel.web.deps import sessionmaker
 
     async with sessionmaker()() as s:
@@ -1259,9 +1265,9 @@ async def cover_letter_generate(request: Request, opp_id: int, confirmed: str = 
         problem = consent_problem(route, form)
         if problem == NOT_CONFIRMED:
             return HTMLResponse(
-                f'<div id="rl-dialog" hx-swap-oob="innerHTML">'
-                f"<p>Please confirm the send to generate a cover letter.</p>"
-                f"</div>",
+                '<div id="rl-dialog" hx-swap-oob="innerHTML">'
+                "<p>Please confirm the send to generate a cover letter.</p>"
+                "</div>",
                 status_code=400,
             )
         if problem:
@@ -1294,8 +1300,6 @@ async def cover_letter_generate(request: Request, opp_id: int, confirmed: str = 
         if draft.error:
             return HTMLResponse(f"<p>Generation failed: {draft.error}</p>", status_code=400)
 
-        from kestrel.web.templates import style_marks
-
         ctx = {
             "opp_id": opp_id,
             "draft_value": draft.value if isinstance(draft.value, str) else str(draft.value),
@@ -1308,7 +1312,6 @@ async def cover_letter_generate(request: Request, opp_id: int, confirmed: str = 
 
 def _assemble_letter_prompt(opp, profile, pursuit) -> str:
     """Assemble the context for the cover letter prompt: profile, posting, and selected bullets."""
-    from kestrel.db.models import DocRender
 
     parts = []
     if profile:

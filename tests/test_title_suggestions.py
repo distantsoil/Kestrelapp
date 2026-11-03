@@ -600,9 +600,10 @@ async def test_an_out_of_credit_key_defers_the_task_and_records_no_error_run(sm)
     assert last is None  # no "error" run: the weekly cadence must not swallow the retry
 
 
-# ------------------------------------------------------------------------------ #118: resume delete cascade
+# ---------------------------------------------------------------- #118: resume delete
 async def test_deleting_a_resume_removes_its_suggestions(sm):
-    """Deleting a resume removes the suggestions derived from it (issue #118)."""
+    """Deleting a resume removes the suggestions derived from it
+    (issue #118)."""
     from kestrel.db.models import TitleSuggestion
 
     await _seed_master(sm)
@@ -641,7 +642,6 @@ async def test_clear_everything_empties_suggestions(sm):
         assert rows, "expected suggestions to exist"
 
     # Run the clear-everything path (expects a sessionmaker factory)
-    from kestrel.services.reset import _empty_tables
     await _empty_tables(sm)
 
     # Verify all suggestions are gone
