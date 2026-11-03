@@ -237,23 +237,35 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
 
 def title_variants(titles: list[str], removed: Any = ()) -> list[str]:
     """The other phrasings searched beside `titles` (D-TTL-2): up to VARIANTS_PER_TITLE each,
-    in title order, never a target title itself, never one the operator removed, no duplicate
-    (case-insensitive), at most MAX_VARIANTS."""
+    interleaved across titles so no title is favored, never a target title itself, never one
+    the operator removed, no duplicate (case-insensitive), at most MAX_VARIANTS."""
     from kestrel.rules.titles import phrasings
 
     targets = [t for t in (" ".join(str(x).split()) for x in titles) if t]
     gone = {str(r).casefold() for r in removed or ()}
     seen = {t.casefold() for t in targets}
     out: list[str] = []
+    
+    # Generate variants for each title, then interleave them fairly.
+    per_title: list[list[str]] = []
     for t in targets:
+        variants = []
         for v in phrasings(t, VARIANTS_PER_TITLE):
             key = v.casefold()
             if key in seen or key in gone:
                 continue
             seen.add(key)
-            out.append(v)
-            if len(out) >= MAX_VARIANTS:
-                return out
+            variants.append(v)
+        per_title.append(variants)
+    
+    # Interleave: take one from each title in round-robin order.
+    max_variants = max((len(v) for v in per_title), default=0)
+    for i in range(max_variants):
+        for variants in per_title:
+            if i < len(variants):
+                out.append(variants[i])
+                if len(out) >= MAX_VARIANTS:
+                    return out
     return out
 
 
