@@ -1,0 +1,16 @@
+{# Consent dialog for an online cover letter draft (#107). Names what is sent and
+   discloses the possible second request for the plain-writing re-ask. #}
+<div class="k-modal__head">
+  <h2 id="cl-consent-t">Use the online model?</h2>
+</div>
+<div class="k-modal__body">
+  <p>Kestrel will send <b>{{ sends }}</b> to <b>{{ provider or 'your online provider' }}</b> (model: {{ model }}).</p>
+  {% if reask %}
+  <p class="cl-reask" data-testid="cl-reask">{{ reask }}</p>
+  {% endif %}
+  <p class="cl-never" data-testid="cl-never">Nothing is ever sent to a company. This is a draft for you to edit.</p>
+</div>
+<div class="k-modal__foot">
+  <button type="button" class="k-btn" data-k-close>Cancel</button>
+  <button type="submit" class="k-btn k-btn--primary">Send and draft</button>
+</div>

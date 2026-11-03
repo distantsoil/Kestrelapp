@@ -1168,10 +1168,33 @@ async def deeper_send(request: Request, opp_id: int):
 
 
 # ------------------------------------------------------------------------------ Cover letter
+@router.get("/opportunities/{opp_id}/role/cover-letter/consent", response_class=HTMLResponse)
+async def cover_letter_consent(request: Request, opp_id: int):
+    """The consent dialog for an online cover letter draft. Names what is sent and discloses
+    the possible second request for the plain-writing re-ask (#107)."""
+    from kestrel.services.online_consent import RUN_TIERS, approval_for, online_route
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        approval = approval_for(settings, RUN_TIERS)
+        route = await online_route(s, settings, 3)
+    ctx = {
+        "online": route["online"],
+        "model": route["model"],
+        "provider": route.get("provider", ""),
+        "sends": ("the role's title and description, your profile, and your resume text"),
+        "reask": "If the first draft uses stock phrasing, Kestrel may ask the model once more "
+                 "to reword it. You will see both replies.",
+    }
+    return templates().TemplateResponse(request, "partials/cover_letter_consent.html", ctx)
+
+
 @router.post("/opportunities/{opp_id}/role/cover-letter/draft", response_class=HTMLResponse)
 async def cover_letter_draft(request: Request, opp_id: int):
     """Queue a cover letter draft (P4). Uses the Tier 3 model; when online, the consent dialog
-    must be confirmed first. The draft is stored as a render and the Documents tab refreshes."""
+    must be confirmed first. The draft is stored as a render and the Documents tab refreshes.
+    Style flags are returned for display (#107)."""
     from kestrel.docs.letters import generate_cover, generate_engagement
     from kestrel.llm.client import LLMClient
     from kestrel.pipeline._shared import make_quarantine_hook
@@ -1194,7 +1217,6 @@ async def cover_letter_draft(request: Request, opp_id: int):
             )
         # Gather the context: profile, resume variants, evaluation
         from kestrel.db.models import Opportunity, Pursuit
-        from kestrel.docs.doc_master import doc_master_for
         opp = await s.get(Opportunity, opp_id)
         if opp is None:
             return _answer({"k-toast": _toast("Role not found.", tone="warn")})
@@ -1237,16 +1259,35 @@ async def cover_letter_draft(request: Request, opp_id: int):
         s.add(render)
         await s.flush()
         pursuit.cover_letter_id = render.id
+        # Store style flags so the UI can display them (#107)
+        if draft.style_flags:
+            render.style_flags = json.dumps(draft.style_flags)
         await s.commit()
+        # Build the response with style flags for display
+        flags_html = ""
+        if draft.style_flags:
+            flags_html = f'<div class="pp-marks" data-testid="letter-marks">' \
+                         f'{len(draft.style_flags)} plain-writing mark(s) on this draft. ' \
+                         f'Review before use.</div>'
         # Surface unverified claims if any
         if draft.unverified_claims:
             return _answer(
-                {"k-toast": _toast(
-                    f"Draft saved, but {len(draft.unverified_claims)} claim(s) could not be "
-                    "verified. Review before use.", tone="warn"
-                ), "rl-refresh": True}
+                {
+                    "k-toast": _toast(
+                        f"Draft saved, but {len(draft.unverified_claims)} claim(s) could not "
+                        "be verified. Review before use.", tone="warn"
+                    ),
+                    "rl-refresh": True,
+                    "letter-marks": flags_html,
+                }
             )
-        return _answer({"k-toast": _toast("Cover letter draft saved.", tone="good"), "rl-refresh": True})
+        return _answer(
+            {
+                "k-toast": _toast("Cover letter draft saved.", tone="good"),
+                "rl-refresh": True,
+                "letter-marks": flags_html,
+            }
+        )
 
 
 async def _assemble_letter_prompt(s, opp, pursuit, settings) -> str:
