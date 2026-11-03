@@ -559,9 +559,10 @@ a 401 or 403 is a failed attempt that says the keys were not accepted. Every rol
 same ingest path, so the D-SRC-13 drop applies. Credit: the source is named "<search> on Adzuna" and
 the Posting tab links to the Adzuna page, where the user applies.
 
-**Remote boards: Himalayas, We Work Remotely and Arbeitnow (D-SRC-15).** Three keyless job-feed
-adapters (`himalayas`, `weworkremotely`, `arbeitnow`), added from the job-board sheet (group
-"Remote jobs"). The existing `rss` kind is a consulting signal source and is not reused. Himalayas asks
+**Remote boards: Himalayas, We Work Remotely, Arbeitnow and Jobicy (D-SRC-15).** Four keyless
+job-feed adapters (`himalayas`, `weworkremotely`, `arbeitnow`, `jobicy`), added from the job-board
+sheet (group "Remote jobs"). The existing `rss` kind is a consulting signal source and is not
+reused. Himalayas asks
 `GET https://himalayas.app/jobs/api/search?q=<keyword>&country=US&sort=recent&page=N` (20 a page; the
 source's `keyword`, else the profile's target titles; `max_pages` default 3; at most 12 requests, 1
 a second, robots.txt checked); its terms require that Apply uses the API's `applicationLink`
@@ -572,10 +573,14 @@ board limits to another region ("Europe Only") is not passed on, anything unclea
 expired role is dropped, and each role links to its page on the board. Arbeitnow asks
 `GET https://www.arbeitnow.com/api/job-board-api?page=N` (300 a page; `max_pages` default 2; at most
 `max_pages` requests, 1 a second, robots.txt checked); it shows no compensation, and each role links
-to its page on Arbeitnow, where the user applies. Himalayas and We Work Remotely mark roles remote
-and map the place as "United States", "Remote (worldwide)" or the board's own words; all three run
-through the D-SRC-13 drop. A 429, 5xx or (for We Work Remotely) its 403 bot check is a `partial` run
-that keeps what was read. Credit: the source is named after the board and the Posting tab links to it.
+to its page on Arbeitnow, where the user applies. Jobicy asks
+`GET https://jobicy.com/api/v2/remote-jobs?count=<n>&cursor=<c>` (cursor pagination, `nextCursor`
+and `hasMore`; `count` default 100, `max_pages` default 2; at most `max_pages` requests, 1 a second,
+robots.txt checked); it shows structured pay when the feed provides it (`salaryMin`/`Max`,
+`salaryCurrency`, `salaryPeriod`), and each role links to its posting page, where the user applies.
+All four mark their roles remote and run through the D-SRC-13 drop. A 429, 5xx or (for We Work
+Remotely) its 403 bot check is a `partial` run that keeps what was read. Credit: the source is named
+after the board and the Posting tab links to it.
 Remotive is not built (D-SRC-15: its robots.txt disallows its API path and its terms could not be read).
 
 **Careers page (`careers_page`; B4, D-SRC-15, D-UI-102).** The operator pastes any employer's careers

@@ -38,6 +38,7 @@ _PRIORITY = {
     "arbeitnow": 1,
     "himalayas": 1,
     "weworkremotely": 1,
+    "jobicy": 1,
     "page": 1,
     "indeed": 2,
     "jobspy": 2,

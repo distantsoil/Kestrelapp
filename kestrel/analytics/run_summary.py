@@ -122,7 +122,7 @@ _KIND_WORDS = {
     "personio": "Personio", "breezy": "Breezy HR", "careers_page": "a careers page",
     "remoterocketship": "RemoteRocketship",
     "usajobs": "USAJobs", "adzuna": "Adzuna", "arbeitnow": "Arbeitnow", "himalayas": "Himalayas",
-    "weworkremotely": "We Work Remotely",
+    "weworkremotely": "We Work Remotely", "jobicy": "Jobicy",
     "sec_edgar": "SEC filings", "sam_gov": "SAM.gov",
     "rss": "a feed", "pe_portfolio": "PE portfolio pages", "manual": "a pasted posting",
 }

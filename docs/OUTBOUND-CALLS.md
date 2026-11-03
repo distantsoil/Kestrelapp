@@ -28,6 +28,7 @@ only to Kestrel's own server on this computer.
 | Himalayas | `himalayas.app` | Country (US) and a search word |
 | We Work Remotely | `weworkremotely.com` | Nothing (a public feed) |
 | Arbeitnow | `www.arbeitnow.com` | The page number |
+| Jobicy | `jobicy.com` | The count and cursor (a public feed) |
 | SAM.gov and SEC EDGAR (consulting track) | `api.sam.gov`, `efts.sec.gov`, `www.sec.gov` | Codes or search phrases; SEC requires a contact email in the request |
 
 Every request Kestrel sends itself carries Kestrel's own User-Agent and is rate-limited per site.
@@ -35,9 +36,9 @@ robots.txt, stated plainly (owner, 2026-10-30: "We just need to be transparent";
 code audit the same day, which found more than the two exceptions first written here):
 
 - **Checked before reading:** Workable, Recruitee, Teamtailor, Personio, Breezy HR, Himalayas, We
-  Work Remotely, USAJobs, a careers page or job feed the person pastes, a role added by its
-  address, the "is it still open" re-check of saved roles, a company's own site read for research,
-  and portfolio pages. A disallow stops the read.
+  Work Remotely, Arbeitnow, Jobicy, USAJobs, a careers page or job feed the person pastes, a role
+  added by its address, the "is it still open" re-check of saved roles, a company's own site read
+  for research, and portfolio pages. A disallow stops the read.
 - **Not checked:** the public job-board APIs of Greenhouse, Lever, Ashby, Workday, SmartRecruiters,
   Rippling, ADP and Paylocity (each company's own public board, read through the address the
   system publishes for it); the keyed APIs of Adzuna (its robots.txt disallows crawlers; Kestrel

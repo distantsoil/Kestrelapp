@@ -442,6 +442,24 @@ _DESCRIPTIONS: dict[str, dict] = {
         ),
         "region": "Remote roles open to the US.",
     },
+    "jobicy": {
+        "name": "Jobicy (remote jobs with pay)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Remote job listings from the Jobicy API, jobicy.com/api/v2/remote-jobs: up to "
+            "max_pages pages of count jobs (default 2 pages, 100 a page). Each role links to "
+            "its posting page, where you apply yourself, and is credited to Jobicy. Pay is "
+            "included when the feed provides it (salaryMin, salaryMax, currency, period)."
+        ),
+        "provide": "Nothing: no key or account. Optional count and max_pages.",
+        "config_example": {},
+        "rate_limit": (
+            "At most 1 request/second and at most max_pages requests a check; robots.txt "
+            "respected; a 403, 429 or 5xx makes the run partial."
+        ),
+        "region": "Remote roles open to the US.",
+    },
     "remoterocketship": {
         "name": "RemoteRocketship (paid API, finds links only)",
         "category": CATEGORY_AGGREGATOR,
@@ -668,6 +686,9 @@ _EASY_ADD = {
     "arbeitnow": (
         "Easiest: Sources > Add a source > Job board search, tick Arbeitnow. By hand: "
     ),
+    "jobicy": (
+        "Easiest: Sources > Add a source > Job board search, tick Jobicy. By hand: "
+    ),
     "jobspy": (
         "Usually nothing to do: your searches are built from Profile > Employment and Location "
         "and listed under Sources > Your searches. For an extra search of your own: "
@@ -694,7 +715,8 @@ def _ordered_kinds() -> list[str]:
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
         "paylocity", "workable", "recruitee", "teamtailor", "personio", "breezy", "careers_page",
         "jobspy",
-        "usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "remoterocketship",
+        "usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "jobicy",
+        "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

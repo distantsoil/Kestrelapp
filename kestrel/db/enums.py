@@ -37,6 +37,7 @@ SOURCE_KINDS = (
     "arbeitnow",
     "himalayas",
     "weworkremotely",
+    "jobicy",
     "page",
     "rss",
     "sec_edgar",

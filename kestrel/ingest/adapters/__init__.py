@@ -10,6 +10,7 @@ from kestrel.ingest.adapters.breezy import BreezyAdapter
 from kestrel.ingest.adapters.careers_page import CareersPageAdapter
 from kestrel.ingest.adapters.greenhouse import GreenhouseAdapter
 from kestrel.ingest.adapters.himalayas import HimalayasAdapter
+from kestrel.ingest.adapters.jobicy import JobicyAdapter
 from kestrel.ingest.adapters.jobspy import JobSpyAdapter
 from kestrel.ingest.adapters.lever import LeverAdapter
 from kestrel.ingest.adapters.paylocity import PaylocityAdapter
@@ -62,5 +63,6 @@ for _adapter in (
     ArbeitnowAdapter(),
     HimalayasAdapter(),
     WeWorkRemotelyAdapter(),
+    JobicyAdapter(),
 ):
     register(_adapter)

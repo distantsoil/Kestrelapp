@@ -55,7 +55,7 @@ _SIGNAL_TYPE = {
     "sec_edgar": "SEC filings", "sam_gov": "SAM.gov", "pe_portfolio": "PE portfolio page",
     "remoterocketship": "RemoteRocketship", "usajobs": "USAJobs", "adzuna": "Adzuna",
     "himalayas": "Himalayas", "weworkremotely": "We Work Remotely",
-    "arbeitnow": "Arbeitnow",
+    "arbeitnow": "Arbeitnow", "jobicy": "Jobicy",
 }
 
 # Where a source came from (Source.origin). `suggested` is a company the operator added from
@@ -87,7 +87,7 @@ def is_removed(src: Source) -> bool:
 
 BOARD_KINDS = (
     "jobspy", "remoterocketship", "usajobs", "adzuna", "himalayas", "weworkremotely",
-    "arbeitnow",
+    "arbeitnow", "jobicy",
 )
 KEYED_BOARDS = ("usajobs", "adzuna")  # boards that need a key of the user's own
 

@@ -24,6 +24,8 @@ from kestrel.ingest.adapters.arbeitnow import ArbeitnowAdapter
 from kestrel.ingest.adapters.arbeitnow import to_posting as an_posting
 from kestrel.ingest.adapters.himalayas import HimalayasAdapter
 from kestrel.ingest.adapters.himalayas import to_posting as him_posting
+from kestrel.ingest.adapters.jobicy import JobicyAdapter
+from kestrel.ingest.adapters.jobicy import to_posting as jc_posting
 from kestrel.ingest.adapters.weworkremotely import WeWorkRemotelyAdapter
 from kestrel.ingest.adapters.weworkremotely import to_posting as wwr_posting
 from kestrel.ingest.base import AdapterError, SourceConfigError
@@ -42,6 +44,10 @@ NOW = 1_793_400_000.0  # shortly after the capture; the edited "archived" job ex
 AN = json.loads((FIX / "arbeitnow_page1.json").read_text(encoding="utf-8"))
 AN_JOBS = AN["data"]
 AN_API = "https://www.arbeitnow.com/api/job-board-api"
+
+JC = json.loads((FIX / "jobicy_page1.json").read_text(encoding="utf-8"))
+JC_JOBS = JC["jobs"]
+JC_API = "https://jobicy.com/api/v2/remote-jobs"
 
 
 def _http(robots: bool = False) -> HttpClient:
@@ -434,6 +440,142 @@ async def test_arbeitnow_run_fetches_all_and_marks_ok(sm):
     respx.get(AN_API).mock(return_value=Response(200, json=AN))
     async with sm() as s:
         src = Source(track="employment", kind="arbeitnow", name="Arbeitnow",
+                     config={}, enabled=True, cadence_hours=24)
+        s.add(src)
+        await s.commit()
+        await s.refresh(src)
+    async with _http() as http:
+        out = await run_source(sm, src.id, http=http)
+    assert out.status == "ok", out.error
+    assert out.counts["fetched"] == 3
+    async with sm() as s:
+        opps = (await s.execute(select(Opportunity))).scalars().all()
+    assert {o.title for o in opps} == {
+        "Data Analyst", "Software Engineer", "Office Clerk"}
+    assert opps[0].source_id == src.id
+
+
+# ================================================================================== Jobicy
+def test_jobicy_maps_the_fields_including_pay():
+    by_title = {j["jobTitle"]: jc_posting(j) for j in JC_JOBS}
+    da = by_title["Data Analyst"]
+    assert da.external_id == "900001"
+    assert da.url == da.apply_url == "https://jobicy.com/jobs/900001-data-analyst-4"
+    assert da.org_name == "Northwind Labs" and da.location_raw == "USA"
+    assert da.is_remote is True and da.employment_type == "Full-Time"
+    assert (da.comp_min, da.comp_max, da.comp_currency, da.comp_interval) == (
+        90000.0, 110000.0, "USD", "year")
+    assert da.date_posted == "2026-11-03"
+    assert da.raw["via"] == "Jobicy" and da.raw["via_url"] == "https://jobicy.com"
+    sw = by_title["Software Engineer"]
+    assert (sw.comp_min, sw.comp_max, sw.comp_currency, sw.comp_interval) == (
+        60.0, 80.0, "USD", "hour")
+    clerk = by_title["Office Clerk"]  # no salary: pay fields are absent
+    assert (clerk.comp_min, clerk.comp_max, clerk.comp_currency, clerk.comp_interval) == (
+        None, None, None, None)
+
+
+def _jc_page(jobs: list, next_cursor: str | None, has_more: bool) -> dict:
+    return {**JC, "jobs": jobs, "nextCursor": next_cursor, "hasMore": has_more}
+
+
+def _jc_job(prefix: str, i: int) -> dict:
+    return dict(JC_JOBS[0], id=f"j{prefix}{i}", url=f"https://jobicy.com/jobs/{prefix}{i}")
+
+
+def test_jobicy_pay_is_optional_and_malformed_entries_are_skipped():
+    no_pay = {"jobTitle": "No Pay", "url": "https://jobicy.com/jobs/x",
+              "id": 1, "pubDate": "2026-11-01T00:00:00+00:00"}
+    p = jc_posting(no_pay)
+    assert p is not None and (p.comp_min, p.comp_max, p.comp_interval) == (None, None, None)
+    assert jc_posting({}) is None and jc_posting("not a dict") is None
+
+
+@respx.mock
+async def test_jobicy_follows_cursors_until_has_more_is_false():
+    jobs = [_jc_job("a", i) for i in range(10)]
+    page1 = jobs[:5]
+    page2 = jobs[5:]
+    route = respx.get(JC_API).mock(side_effect=[
+        Response(200, json=_jc_page(page1, "cursor-2", True)),
+        Response(200, json=_jc_page(page2, None, False)),
+    ])
+    async with _http() as http:
+        got = await JobicyAdapter().fetch({"max_pages": 5}, http)
+    assert [p.external_id for p in got] == [f"ja{i}" for i in range(10)]
+    assert got.partial_error is None
+    assert route.call_count == 2
+    # The second call carried the cursor from the first reply.
+    assert "cursor=cursor-2" in str(route.calls[1].request.url)
+
+
+@respx.mock
+async def test_jobicy_page_cap_limits_requests():
+    p1 = [_jc_job("b", i) for i in range(10)]
+    p2 = [_jc_job("b", 10 + i) for i in range(10)]
+    route = respx.get(JC_API).mock(side_effect=[
+        Response(200, json=_jc_page(p1, "c1", True)),
+        Response(200, json=_jc_page(p2, "c2", True)),
+        Response(200, json=_jc_page([_jc_job("b", 20)], None, False)),
+    ])
+    async with _http() as http:
+        got = await JobicyAdapter().fetch({"max_pages": 2}, http)
+    assert len(got) == 20 and route.call_count == 2
+
+
+@pytest.mark.parametrize("status", [403, 429, 500])
+@respx.mock
+async def test_jobicy_429_and_5xx_are_partial(status):
+    route = respx.get(JC_API).mock(side_effect=[
+        Response(200, json=_jc_page([_jc_job("c", 0)], "c", True)),
+        Response(status, json={}),
+    ])
+    async with _http() as http:
+        got = await JobicyAdapter().fetch({"max_pages": 5}, http)
+    assert len(got) == 1 and got.partial_error and "Jobicy" in got.partial_error
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_jobicy_rejects_unreadable_and_bad_requests():
+    respx.get(JC_API).mock(return_value=Response(400, json={}))
+    async with _http() as http:
+        with pytest.raises(AdapterError, match="rejected the request"):
+            await JobicyAdapter().fetch({}, http)
+    respx.get(JC_API).mock(return_value=Response(200, json={"nope": 1}))
+    async with _http() as http:
+        with pytest.raises(AdapterError, match="could not read"):
+            await JobicyAdapter().fetch({}, http)
+
+
+def test_jobicy_config_validation():
+    a = JobicyAdapter()
+    a.validate_config({})
+    a.validate_config({"count": 500, "max_pages": 5})
+    for bad in ({"max_pages": 0}, {"max_pages": 6}, {"max_pages": True},
+                {"count": 0}, {"count": 501}, {"count": "100"}):
+        with pytest.raises(SourceConfigError):
+            a.validate_config(bad)
+    assert get_adapter("jobicy") is not None
+
+
+@respx.mock
+async def test_jobicy_checks_robots_txt_and_a_disallow_skips_the_request():
+    respx.get("https://jobicy.com/robots.txt").mock(
+        return_value=Response(200, text="User-agent: *\nDisallow: /api\n"))
+    route = respx.get(JC_API).mock(return_value=Response(200, json=JC))
+    async with _http(robots=True) as http:
+        with pytest.raises(AdapterError, match="robots.txt"):
+            await JobicyAdapter().fetch({}, http)
+    assert route.call_count == 0
+
+
+@respx.mock
+async def test_jobicy_run_fetches_all_and_marks_ok(sm):
+    _profile("[Data Analyst, Software Engineer, Office Clerk]")
+    respx.get(JC_API).mock(return_value=Response(200, json=JC))
+    async with sm() as s:
+        src = Source(track="employment", kind="jobicy", name="Jobicy",
                      config={}, enabled=True, cadence_hours=24)
         s.add(src)
         await s.commit()
