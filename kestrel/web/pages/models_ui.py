@@ -909,7 +909,7 @@ async def page_ctx(rows: list, settings: Settings, track: str) -> dict[str, Any]
         base = prof.models.for_tier(key)
         tr = tier_rows.get(key)
         need = hm.context_budget(key)
-        small = key in too_small
+        small = (not online) and key in too_small
         row.update(
             model=mv.friendly_model(
                 shown.model if shown else "",
