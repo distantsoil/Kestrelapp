@@ -28,13 +28,7 @@
     <div class="rl-btns rl-docfoot">
       {% if tailor_href %}<a class="k-btn k-btn--sm k-btn--primary" href="{{ tailor_href }}" data-testid="tailor-again">{{ w.tailor }}{{ ' again' if renders else '' }}</a>
       {% else %}<button type="button" class="k-btn k-btn--sm" disabled title="No active {{ w.doc }} yet. Import or build one under Documents." data-testid="tailor-again">{{ w.tailor }}</button>{% endif %}
-      <button type="button" class="k-btn k-btn--sm" data-testid="new-letter"
-              hx-post="/opportunities/{{ opp.id }}/role/cover-letter/draft"
-              hx-vals='{"track": "{{ track }}"}'
-              hx-target="#rl-doctab" hx-swap="outerHTML"
-              hx-confirm="This uses the model to draft a letter from your resume and the job posting. Continue?">
-        {{ 'New engagement outline' if consulting else 'New cover letter' }}
-      </button>
+      <button type="button" class="k-btn k-btn--sm" disabled title="{{ no_drafter }}">{{ 'New engagement outline' if consulting else 'New cover letter' }}</button>
       {% if masters|length > 1 %}<span class="rl-quiet">Other masters:
         {% for m in masters if m.id != (tailor_master.id if tailor_master else none) %}<a class="k-link" href="/renders/new?master_id={{ m.id }}&opportunity_id={{ opp.id }}&from=/opportunities/{{ opp.id }}">{{ m.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
     </div>
