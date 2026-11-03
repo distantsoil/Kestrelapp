@@ -35,7 +35,7 @@ log = structlog.get_logger()
 SHOW_BALANCE_KEY = "ui.show_balance"
 CACHE_TTL_S = 300.0
 FAILURE_TTL_S = 60.0
-REQUEST_TIMEOUT_S = 5.0
+REQUEST_TIMEOUT_S = 15.0
 UNAVAILABLE = "Balance unavailable"
 
 _cache: dict[tuple[str, str, str], tuple[float, Reading]] = {}
