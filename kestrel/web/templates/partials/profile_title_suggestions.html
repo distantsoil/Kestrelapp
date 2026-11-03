@@ -54,7 +54,7 @@
             hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
   </div>
   {% endif %}
-  {% if note %}<p class="pf-hint" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}
+  {% if note %}<p class="pf-msg" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}
   <details data-testid="title-details">
     <summary class="pf-hint">Show details</summary>
     <p class="pf-hint">Suggestions come from your resume and skip titles already in your target titles. A dismissed title is not suggested again. New suggestions appear after the next background pass.</p>
