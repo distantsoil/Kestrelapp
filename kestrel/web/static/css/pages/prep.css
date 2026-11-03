@@ -16,6 +16,15 @@
 .pp-body { margin: 0 0 6px; font-size: 14px; }
 #pp-body { animation: k-inUp .35s var(--ease) backwards; }
 @media (prefers-reduced-motion: reduce) { #pp-body { animation: none; } }
+/* Tab-switch motion: htmx swaps the body's innerHTML, so the container's animation does not
+   re-trigger. Animate the children instead, with staggered delays, so every tab change eases in. */
+.pp-shell { animation: k-inUp .3s var(--ease) backwards; }
+.pp-tabrow { animation: k-inFade .22s var(--ease) backwards; }
+.pp-ready { animation: k-inUp .32s var(--ease) .04s backwards; }
+.pp-pane { animation: k-inUp .34s var(--ease) .08s backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .pp-shell, .pp-tabrow, .pp-ready, .pp-pane { animation: none; }
+}
 .pp-warn { background: var(--tint-warn); border: 1px solid var(--tint-warn-line); color: var(--ink);
   border-radius: var(--r-sm); padding: 9px 12px; font-size: var(--fs-md); }
 
