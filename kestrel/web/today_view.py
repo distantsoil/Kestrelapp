@@ -325,7 +325,8 @@ async def decisions_waiting(s, track: str, *, limit: int = PANEL_LIMIT,
             VerdictOverride.operator_verdict, saved_clause(),
         )
     ).where(
-        _group_expr() == GROUP_ORDER.index(GROUP_WORTH), Opportunity.opp_type != "trigger_event"
+        _group_expr().in_([GROUP_ORDER.index(GROUP_WORTH), GROUP_ORDER.index(GROUP_MAYBE)]),
+        Opportunity.opp_type != "trigger_event"
     )
     conf, mapping = await confidential_once(s)
     undecided: list[dict[str, Any]] = []
