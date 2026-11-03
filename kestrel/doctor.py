@@ -630,6 +630,43 @@ def _check_cloud_model_tags(rep: DoctorReport, client: OllamaClient) -> None:
         )
 
 
+def _check_local_ai_egress(rep: DoctorReport) -> None:
+    """Issue #166 M1: Connection spot check.
+    Samples Ollama's network connections and classifies each remote address.
+    Read-only: nothing is sent, nothing is changed."""
+    try:
+        from kestrel.services.local_ai_egress import (
+            format_egrade_result,
+            sample_connections,
+        )
+
+        result = sample_connections(duration_s=3.0)
+        text = format_egrade_result(result)
+        if result.clean:
+            rep.add("Local AI: egress", PASS, text)
+        elif result.error:
+            rep.add("Local AI: egress", WARN, text)
+        else:
+            has_public = bool(result.public_connections)
+            rep.add(
+                "Local AI: egress",
+                WARN if has_public else INFO,
+                text,
+            )
+    except ImportError:
+        rep.add(
+            "Local AI: egress",
+            INFO,
+            "psutil not available; connection spot check skipped",
+        )
+    except Exception as exc:
+        rep.add(
+            "Local AI: egress",
+            WARN,
+            f"Could not check: {type(exc).__name__}: {exc}",
+        )
+
+
 def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
     """Hard rule 7: every request carries a descriptive User-Agent with a REAL contact address
     (SEC EDGAR blocks requests without one, and the EDGAR sources refuse to run with a placeholder).
@@ -1190,8 +1227,11 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         _check_num_ctx(rep, client, s, present)
         if not quick:
             _run_probes(rep, client, s, present)
+            # Issue #166 M1: connection spot check.
+            _check_local_ai_egress(rep)
         else:
             rep.add("Needle + thinking probes", INFO, "skipped (--quick)")
+            rep.add("Local AI: egress", INFO, "skipped (--quick)")
     # The hosted branch reports the in-process engine itself; every other branch reports it here,
     # including a BYOK install where no tier needs Ollama (the case this engine exists for).
     if embed_is_inprocess(s) and not (needed and hosted):

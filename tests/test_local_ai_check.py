@@ -7,6 +7,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from kestrel.doctor import (
+    INFO,
     PASS,
     WARN,
     DoctorReport,
@@ -162,3 +163,120 @@ def test_client_error_is_silent():
     _check_cloud_model_tags(rep, _BrokenClient())
     # No new rows added.
     assert all(r.name != "Local AI: cloud model tags" for r in rep.results)
+
+
+# ---------------------------------------------------------------------------
+# _check_local_ai_egress (issue #166 M1 connection spot check)
+# ---------------------------------------------------------------------------
+
+
+def test_egress_clean_result():
+    """A clean egress result (no connections) reports PASS."""
+    from kestrel.doctor import _check_local_ai_egress
+    from kestrel.services.local_ai_egress import EgressResult, format_egrade_result
+
+    result = EgressResult(duration_s=3.0)
+    assert result.clean
+    text = format_egrade_result(result)
+    assert "No outbound connections" in text
+    assert "spot check" in text
+
+    rep = DoctorReport()
+    with patch("kestrel.services.local_ai_egress.sample_connections", return_value=result):
+        _check_local_ai_egress(rep)
+    row = next(r for r in rep.results if r.name == "Local AI: egress")
+    assert row.status == PASS
+
+
+def test_egress_public_connection_warns():
+    """A public connection is flagged as WARN."""
+    from kestrel.doctor import _check_local_ai_egress
+    from kestrel.services.local_ai_egress import (
+        ConnectionSample,
+        EgressResult,
+        format_egrade_result,
+    )
+
+    result = EgressResult(
+        samples=[
+            ConnectionSample(
+                pid=1234, proc_name="ollama", remote_addr="93.184.216.34",
+                remote_port=443, classification="public",
+            )
+        ],
+        duration_s=3.0,
+    )
+    text = format_egrade_result(result)
+    assert "public address" in text
+    assert "93.184.216.34" in text
+
+    rep = DoctorReport()
+    with patch("kestrel.services.local_ai_egress.sample_connections", return_value=result):
+        _check_local_ai_egress(rep)
+    row = next(r for r in rep.results if r.name == "Local AI: egress")
+    assert row.status == WARN
+
+
+def test_egress_private_connection_warns():
+    """A private network connection is flagged."""
+    from kestrel.doctor import _check_local_ai_egress
+    from kestrel.services.local_ai_egress import (
+        ConnectionSample,
+        EgressResult,
+        format_egrade_result,
+    )
+
+    result = EgressResult(
+        samples=[
+            ConnectionSample(
+                pid=1234, proc_name="ollama", remote_addr="192.168.1.50",
+                remote_port=8080, classification="private",
+            )
+        ],
+        duration_s=3.0,
+    )
+    text = format_egrade_result(result)
+    assert "another computer on your network" in text
+
+    rep = DoctorReport()
+    with patch("kestrel.services.local_ai_egress.sample_connections", return_value=result):
+        _check_local_ai_egress(rep)
+    row = next(r for r in rep.results if r.name == "Local AI: egress")
+    assert row.status in (WARN, INFO)
+
+
+def test_egress_no_ollama_processes():
+    """If no Ollama processes are found, the result has an error message."""
+    from kestrel.doctor import _check_local_ai_egress
+    from kestrel.services.local_ai_egress import EgressResult, format_egrade_result
+
+    result = EgressResult(duration_s=3.0, error="No Ollama processes found.")
+    text = format_egrade_result(result)
+    assert "Could not check" in text
+
+    rep = DoctorReport()
+    with patch("kestrel.services.local_ai_egress.sample_connections", return_value=result):
+        _check_local_ai_egress(rep)
+    row = next(r for r in rep.results if r.name == "Local AI: egress")
+    assert row.status == WARN
+
+
+def test_classify_address_loopback():
+    from kestrel.services.local_ai_egress import _classify_address
+
+    assert _classify_address("127.0.0.1", 8080) == "loopback"
+    assert _classify_address("::1", 8080) == "loopback"
+
+
+def test_classify_address_private():
+    from kestrel.services.local_ai_egress import _classify_address
+
+    assert _classify_address("192.168.1.50", 8080) == "private"
+    assert _classify_address("10.0.0.1", 443) == "private"
+
+
+def test_classify_address_public():
+    from kestrel.services.local_ai_egress import _classify_address
+
+    assert _classify_address("8.8.8.8", 443) == "public"
+    assert _classify_address("1.1.1.1", 53) == "public"

@@ -36,6 +36,8 @@ dependencies = [
   # QR for the LAN join link. Pure Python with no dependencies, emits inline SVG, so the frozen
   # app needs no image toolchain and the page needs no CDN.
   "segno",
+  # Local AI check: per-process network connection sampling (issue #166 M1).
+  "psutil",
   # Data
   "sqlalchemy>=2",
   "aiosqlite",
