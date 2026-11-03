@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from kestrel.config import get_settings
 from kestrel.db.models import (
@@ -598,3 +598,53 @@ async def test_an_out_of_credit_key_defers_the_task_and_records_no_error_run(sm)
     assert (task.status, task.attempts) == ("pending", 0)
     assert "credit has run out" in (task.last_error or "")
     assert last is None  # no "error" run: the weekly cadence must not swallow the retry
+
+
+# ------------------------------------------------------------------------------ #118: resume delete cascade
+async def test_deleting_a_resume_removes_its_suggestions(sm):
+    """Deleting a resume removes the suggestions derived from it (issue #118)."""
+    from kestrel.db.models import TitleSuggestion
+
+    await _seed_master(sm)
+    await _run(sm, _Client())
+
+    # Verify suggestions exist and are linked to the master
+    async with sm() as s:
+        master = (await s.execute(select(DocMaster))).scalars().first()
+        rows = list((await s.execute(select(TitleSuggestion))).scalars())
+        assert rows, "expected suggestions to exist"
+        assert all(r.doc_master_id == master.id for r in rows)
+        mid = master.id
+
+    # The documents delete path (documents.py:1004-1006) removes suggestions for the master
+    async with sm() as s:
+        await s.execute(delete(TitleSuggestion).where(TitleSuggestion.doc_master_id == mid))
+        await s.commit()
+
+    # Verify all suggestions for that master are gone
+    async with sm() as s:
+        remaining = list((await s.execute(select(TitleSuggestion))).scalars())
+        assert remaining == [], "suggestions from the deleted resume should be removed"
+
+
+async def test_clear_everything_empties_suggestions(sm):
+    """Clear everything (reset_in_app) empties the title_suggestion table (issue #118)."""
+    from kestrel.db.models import TitleSuggestion
+    from kestrel.services.reset import _empty_tables
+
+    await _seed_master(sm)
+    await _run(sm, _Client())
+
+    # Verify suggestions exist
+    async with sm() as s:
+        rows = list((await s.execute(select(TitleSuggestion))).scalars())
+        assert rows, "expected suggestions to exist"
+
+    # Run the clear-everything path (expects a sessionmaker factory)
+    from kestrel.services.reset import _empty_tables
+    await _empty_tables(sm)
+
+    # Verify all suggestions are gone
+    async with sm() as s:
+        remaining = list((await s.execute(select(TitleSuggestion))).scalars())
+        assert remaining == [], "clear everything should empty the title_suggestion table"
