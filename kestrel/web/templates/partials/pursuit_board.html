@@ -22,7 +22,14 @@
   {% if view == 'table' %}
   <div class="ap-tablewrap">
     <table class="ap-table" data-testid="apps-table">
-      <thead><tr><th scope="col">{{ 'Lead' if wide else 'Role' }}</th><th scope="col">Stage</th><th scope="col">Next step</th><th scope="col">Due</th><th scope="col">Fit</th></tr></thead>
+      <thead><tr>
+        <th scope="col" class="ap-sortable" data-sort="role">{{ 'Lead' if wide else 'Role' }}</th>
+        <th scope="col" class="ap-sortable" data-sort="stage">Stage</th>
+        <th scope="col">Next step</th>
+        <th scope="col" class="ap-sortable" data-sort="due">Due</th>
+        <th scope="col" class="ap-sortable" data-sort="applied">Date applied</th>
+        <th scope="col" class="ap-sortable" data-sort="fit">Fit</th>
+      </tr></thead>
       <tbody>
         {% for c in cards %}{{ table_row(c, track, ic, loop.index) }}{% endfor %}
       </tbody>

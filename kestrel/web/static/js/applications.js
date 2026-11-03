@@ -652,6 +652,60 @@
     }
   }
 
+  /* ------------------------------------------------------------------ view memory and sorting (#121) */
+  var VIEW_KEY = 'kestrel_pursuits_view';
+  function restoreView() {
+    var p = page();
+    if (!p) return;
+    try {
+      var saved = root.localStorage.getItem(VIEW_KEY);
+      if (saved === 'table' || saved === 'board') {
+        var current = p.getAttribute('data-view');
+        if (current !== saved) {
+          // Switch to the saved view by clicking the button
+          var btn = $('[data-view-btn="' + saved + '"]');
+          if (btn) btn.click();
+        }
+      }
+    } catch (e) { /* localStorage unavailable */ }
+  }
+
+  function saveView(view) {
+    try { root.localStorage.setItem(VIEW_KEY, view); } catch (e) { /* ignore */ }
+  }
+
+  var sortDir = {};  // column -> 1 (asc) or -1 (desc)
+  function onSortClick(e) {
+    var th = e.target.closest('[data-sort]');
+    if (!th) return;
+    var col = th.getAttribute('data-sort');
+    var table = th.closest('table');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    sortDir[col] = sortDir[col] === 1 ? -1 : 1;
+    rows.sort(function (a, b) {
+      var av = sortVal(a, col), bv = sortVal(b, col);
+      if (av < bv) return -1 * sortDir[col];
+      if (av > bv) return 1 * sortDir[col];
+      return 0;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  function sortVal(row, col) {
+    var ds = row.dataset;
+    switch (col) {
+      case 'role': return (ds.search || '').toLowerCase();
+      case 'stage': return (ds.col || '');
+      case 'due': return (ds.quiet === '1') ? 9999 : (Number(ds.quiet_days) || 0);
+      case 'applied': return ds.applied || '';
+      case 'fit': return Number(ds.fit) || 0;
+      default: return '';
+    }
+  }
+
   root.KUI.page.define('applications', {
     mount: function (main, ctx) {
       if (!page()) return;
@@ -662,12 +716,18 @@
       drag = { id: null, col: null, el: null };
       readState();
       apply();
+      restoreView();  // remember the board/table choice (#121)
       ctx.on(doc, 'htmx:afterSwap', onViewSwap);
       ctx.on(doc, 'click', onFollowUpClick);
       ctx.on(doc, 'input', onDraftInput);
       var autoDraft = $('[data-auto-draft]');
       if (autoDraft) openDraft(autoDraft.getAttribute('data-auto-draft'));
       ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'click', onSortClick);  // sortable table columns (#121)
+      ctx.on(doc, 'click', function (e) {  // save view choice on toggle
+        var btn = e.target.closest('[data-view-btn]');
+        if (btn) saveView(btn.getAttribute('data-view-btn'));
+      });
       ctx.on(doc, 'keydown', onKey, true);  // before the overlay's own Escape
       ctx.on(doc, 'input', onInput);
       ctx.on(doc, 'change', onInput);
