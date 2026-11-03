@@ -940,4 +940,14 @@ class Worker:
             counts=runlog.stats_counts(stats),
             notes=self._mid_run_switch_note,
         )
+        # Notify the operator that the run is done (#109)
+        if not self._stop.is_set():
+            from kestrel.services.notifications import NotificationService
+            notifier = NotificationService(self._sm)
+            await notifier.notify(
+                "run_finished",
+                "Run finished",
+                body=f"Your search run is complete.",
+                severity="info",
+            )
         return stats
