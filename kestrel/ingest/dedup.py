@@ -35,6 +35,7 @@ _PRIORITY = {
     "remoterocketship": 1,
     "usajobs": 1,
     "adzuna": 2,
+    "arbeitnow": 1,
     "himalayas": 1,
     "weworkremotely": 1,
     "page": 1,

@@ -27,6 +27,7 @@ only to Kestrel's own server on this computer.
 | RemoteRocketship (the person's paid key) | `www.remoterocketship.com` | The key, target titles and on-site metro names; then the employer pages it returns |
 | Himalayas | `himalayas.app` | Country (US) and a search word |
 | We Work Remotely | `weworkremotely.com` | Nothing (a public feed) |
+| Arbeitnow | `www.arbeitnow.com` | The page number |
 | SAM.gov and SEC EDGAR (consulting track) | `api.sam.gov`, `efts.sec.gov`, `www.sec.gov` | Codes or search phrases; SEC requires a contact email in the request |
 
 Every request Kestrel sends itself carries Kestrel's own User-Agent and is rate-limited per site.
@@ -157,6 +158,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `workforcenow.adp.com`: call. ADP company boards.
 - `www.anthropic.com`: link. Anthropic's privacy policy.
 - `www.apple.com`: reference. A macOS settings-file format name.
+- `www.arbeitnow.com`: call. The Arbeitnow job board.
 - `www.linkedin.com`: reference. A code comment (LinkedIn is never searched).
 - `www.openmodel.ai`: link. OpenModel's privacy policy.
 - `www.remoterocketship.com`: call. RemoteRocketship, the person's paid key.

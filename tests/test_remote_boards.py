@@ -20,6 +20,8 @@ from kestrel import paths
 from kestrel.config import get_settings
 from kestrel.db.models import Opportunity, Source
 from kestrel.ingest.adapters import get_adapter
+from kestrel.ingest.adapters.arbeitnow import ArbeitnowAdapter
+from kestrel.ingest.adapters.arbeitnow import to_posting as an_posting
 from kestrel.ingest.adapters.himalayas import HimalayasAdapter
 from kestrel.ingest.adapters.himalayas import to_posting as him_posting
 from kestrel.ingest.adapters.weworkremotely import WeWorkRemotelyAdapter
@@ -36,6 +38,10 @@ JOBS = HIM["jobs"]
 HIM_API = "https://himalayas.app/jobs/api/search"
 WWR_FEED = "https://weworkremotely.com/remote-jobs.rss"
 NOW = 1_793_400_000.0  # shortly after the capture; the edited "archived" job expired in 2023
+
+AN = json.loads((FIX / "arbeitnow_page1.json").read_text(encoding="utf-8"))
+AN_JOBS = AN["data"]
+AN_API = "https://www.arbeitnow.com/api/job-board-api"
 
 
 def _http(robots: bool = False) -> HttpClient:
@@ -321,4 +327,123 @@ async def test_wwr_run_keeps_only_analyst_titles(sm):
     async with sm() as s:
         opps = (await s.execute(select(Opportunity))).scalars().all()
     assert {o.title for o in opps} == {"Operations Analyst"}
+    assert opps[0].source_id == src.id
+
+
+# ============================================================================ Arbeitnow
+def _an_full(prefix: str = "j", n: int = 300) -> list[dict]:
+    return [dict(AN_JOBS[0], slug=f"{prefix}{i}",
+                 url=f"https://www.arbeitnow.com/jobs/{prefix}{i}") for i in range(n)]
+
+
+def _an_page(jobs: list, next_url: str | None) -> dict:
+    return {**AN, "data": jobs, "links": {"next": next_url}}
+
+
+def test_arbeitnow_maps_the_fields_and_keeps_the_link():
+    by_title = {}
+    for j in AN_JOBS:
+        p = an_posting(j)
+        if p is not None:
+            by_title[p.title] = p
+    da = by_title["Data Analyst"]
+    assert da.external_id == "data-analyst-northwind"
+    assert da.url.startswith("https://www.arbeitnow.com/jobs/")
+    assert da.org_name == "Northwind Labs" and da.location_raw == "Berlin"
+    assert da.is_remote is True and da.employment_type == "Vollzeit"
+    assert da.date_posted == "2026-10-30"
+    assert da.raw["via"] == "Arbeitnow" and da.raw["tags"] == ["SQL", "Python"]
+    sw = by_title["Software Engineer"]
+    assert sw.is_remote is False and sw.employment_type == "Vollzeit, Unbefristet"
+    clerk = by_title["Office Clerk"]  # no slug: the link is the id
+    assert clerk.external_id == clerk.url
+    assert clerk.external_id.startswith("https://www.arbeitnow.com/jobs/")
+    assert an_posting({}) is None and an_posting("x") is None
+
+
+@respx.mock
+async def test_arbeitnow_follows_pages_until_the_last_page():
+    route = respx.get(AN_API).mock(side_effect=[
+        Response(200, json=_an_page(_an_full("a"), AN_API + "?page=2")),
+        Response(200, json=_an_page(_an_full("b", 3), None))])
+    async with _http() as http:
+        got = await ArbeitnowAdapter().fetch({}, http)
+    assert [_query(c)["page"] for c in route.calls] == ["1", "2"]
+    assert len(got) == 303 and got.partial_error is None
+    assert "authorization" not in route.calls[0].request.headers
+
+
+@respx.mock
+async def test_arbeitnow_page_cap_limits_requests():
+    route = respx.get(AN_API).mock(side_effect=[
+        Response(200, json=_an_page(_an_full("a"), AN_API + "?page=2")),
+        Response(200, json=_an_page(_an_full("b"), AN_API + "?page=3"))])
+    async with _http() as http:
+        got = await ArbeitnowAdapter().fetch({"max_pages": 2}, http)
+    assert route.call_count == 2 and len(got) == 600
+
+
+@pytest.mark.parametrize("status", [403, 429, 500])
+@respx.mock
+async def test_arbeitnow_429_and_5xx_are_partial(status):
+    route = respx.get(AN_API).mock(side_effect=[
+        Response(200, json=_an_page(_an_full("a"), AN_API + "?page=2")),
+        Response(status, json={"error": "provider words"})])
+    async with _http() as http:
+        got = await ArbeitnowAdapter().fetch({"max_pages": 3}, http)
+    assert len(got) == 300 and got.partial_error and "provider words" not in got.partial_error
+    assert route.call_count == 2 and "—" not in got.partial_error
+
+
+@respx.mock
+async def test_arbeitnow_rejects_unreadable_and_bad_requests():
+    respx.get(AN_API).mock(return_value=Response(400, json={}))
+    async with _http() as http:
+        with pytest.raises(AdapterError, match="rejected the request"):
+            await ArbeitnowAdapter().fetch({}, http)
+    respx.get(AN_API).mock(return_value=Response(200, json={"nope": 1}))
+    async with _http() as http:
+        with pytest.raises(AdapterError, match="could not read"):
+            await ArbeitnowAdapter().fetch({}, http)
+
+
+def test_arbeitnow_config_validation():
+    a = ArbeitnowAdapter()
+    a.validate_config({})
+    a.validate_config({"max_pages": 5})
+    for bad in ({"max_pages": 0}, {"max_pages": 6}, {"max_pages": True}, {"max_pages": "2"}):
+        with pytest.raises(SourceConfigError):
+            a.validate_config(bad)
+    assert get_adapter("arbeitnow") is not None
+
+
+@respx.mock
+async def test_arbeitnow_checks_robots_txt_and_a_disallow_skips_the_request():
+    respx.get("https://www.arbeitnow.com/robots.txt").mock(
+        return_value=Response(200, text="User-agent: *\nDisallow: /api\n"))
+    route = respx.get(AN_API).mock(return_value=Response(200, json=AN))
+    async with _http(robots=True) as http:
+        with pytest.raises(AdapterError, match="robots.txt"):
+            await ArbeitnowAdapter().fetch({}, http)
+    assert route.call_count == 0
+
+
+@respx.mock
+async def test_arbeitnow_run_fetches_all_and_marks_ok(sm):
+    _profile("[Data Analyst, Software Engineer, Office Clerk]")
+    respx.get(AN_API).mock(return_value=Response(200, json=AN))
+    async with sm() as s:
+        src = Source(track="employment", kind="arbeitnow", name="Arbeitnow",
+                     config={}, enabled=True, cadence_hours=24)
+        s.add(src)
+        await s.commit()
+        await s.refresh(src)
+    async with _http() as http:
+        out = await run_source(sm, src.id, http=http)
+    assert out.status == "ok", out.error
+    assert out.counts["fetched"] == 3
+    async with sm() as s:
+        opps = (await s.execute(select(Opportunity))).scalars().all()
+    assert {o.title for o in opps} == {
+        "Data Analyst", "Software Engineer", "Office Clerk"}
     assert opps[0].source_id == src.id

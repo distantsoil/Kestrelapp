@@ -168,7 +168,9 @@ def test_shortlist_creates_pursuit_and_is_idempotent(monkeypatch: pytest.MonkeyP
     assert row.status == "shortlisted"
 
 
-def test_actions_panel_offers_an_applied_on_date_defaulting_to_today(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_actions_panel_offers_an_applied_on_date_defaulting_to_today(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """#129: the role actions panel offers a date for "I applied" (defaulting to and capped at
     today) instead of always forcing today."""
     from datetime import date

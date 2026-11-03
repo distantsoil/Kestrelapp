@@ -89,9 +89,10 @@ ADZUNA_SENT = (
 REMOTE_BOARDS = (
     ("himalayas", "Himalayas", "Remote jobs open to the US"),
     ("weworkremotely", "We Work Remotely", "Whole feed"),
+    ("arbeitnow", "Arbeitnow", "Whole feed"),
 )
 # Every board the sheet adds as its own source, beside the JobSpy ones.
-EXTRA_BOARDS = ("usajobs", "adzuna", "himalayas", "weworkremotely")
+EXTRA_BOARDS = ("usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow")
 EXTRAS_ONLY = "extras"  # a sheet add whose boards all have a source of their own
 DICE = ("Dice", "Dice has no public feed Kestrel can read yet, so it cannot be added.")
 INDEED_FILTERS = ("hours", "type", "remote", "easy", "none")
@@ -319,7 +320,7 @@ async def _existing(session, spec: dict) -> Source | None:
                        str(c.get("location") or "").lower(), sorted(c.get("site_name") or [])):
                 return row
         return None
-    if spec["kind"] in ("usajobs", "adzuna", "himalayas", "weworkremotely"):
+    if spec["kind"] in ("usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow"):
         cfg = spec["config"]
         want = (str(cfg.get("keyword") or "").lower(), str(cfg.get("location") or "").lower())
         for row in (await session.execute(
@@ -392,8 +393,8 @@ def _extra_spec(name: str, track: str, title: str, place: str, base: dict) -> di
     if place and name in ("usajobs", "adzuna"):
         config["location"] = place
     label = {"usajobs": "USAJobs", "adzuna": "Adzuna", "himalayas": "Himalayas",
-             "weworkremotely": "We Work Remotely"}[name]
-    if name == "weworkremotely":  # the whole feed: there is no search to name
+             "weworkremotely": "We Work Remotely", "arbeitnow": "Arbeitnow"}[name]
+    if name in ("weworkremotely", "arbeitnow"):  # the whole feed: there is no search to name
         return {"track": track, "kind": name, "name": label, "config": {}}
     shown = f"{title} on {label}" + (f" in {place}" if place and "location" in config else "")
     return {"track": track, "kind": name, "name": shown[:MAX_FIELD], "config": config}

@@ -385,6 +385,23 @@ _DESCRIPTIONS: dict[str, dict] = {
         ),
         "region": "US only.",
     },
+    "arbeitnow": {
+        "name": "Arbeitnow (whole job board feed)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "The public Arbeitnow job board API, www.arbeitnow.com/api/job-board-api: up to "
+            "max_pages pages of 300 (default 2). Each role links to its posting page on "
+            "Arbeitnow, where you apply yourself. No compensation is shown."
+        ),
+        "provide": "Nothing: no key or account. Optional max_pages.",
+        "config_example": {},
+        "rate_limit": (
+            "At most 1 request/second and at most max_pages requests a check; robots.txt "
+            "respected; a 429 or 5xx makes the run partial."
+        ),
+        "region": "Remote and in-person roles.",
+    },
     "himalayas": {
         "name": "Himalayas (remote jobs)",
         "category": CATEGORY_AGGREGATOR,
@@ -648,6 +665,9 @@ _EASY_ADD = {
     "weworkremotely": (
         "Easiest: Sources > Add a source > Job board search, tick We Work Remotely. By hand: "
     ),
+    "arbeitnow": (
+        "Easiest: Sources > Add a source > Job board search, tick Arbeitnow. By hand: "
+    ),
     "jobspy": (
         "Usually nothing to do: your searches are built from Profile > Employment and Location "
         "and listed under Sources > Your searches. For an extra search of your own: "
@@ -674,7 +694,7 @@ def _ordered_kinds() -> list[str]:
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
         "paylocity", "workable", "recruitee", "teamtailor", "personio", "breezy", "careers_page",
         "jobspy",
-        "usajobs", "adzuna", "himalayas", "weworkremotely", "remoterocketship",
+        "usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

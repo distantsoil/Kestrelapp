@@ -34,6 +34,7 @@ SOURCE_KINDS = (
     "remoterocketship",
     "usajobs",
     "adzuna",
+    "arbeitnow",
     "himalayas",
     "weworkremotely",
     "page",

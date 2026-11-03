@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kestrel.ingest.adapters.adp import AdpAdapter
 from kestrel.ingest.adapters.adzuna import AdzunaAdapter
+from kestrel.ingest.adapters.arbeitnow import ArbeitnowAdapter
 from kestrel.ingest.adapters.ashby import AshbyAdapter
 from kestrel.ingest.adapters.breezy import BreezyAdapter
 from kestrel.ingest.adapters.careers_page import CareersPageAdapter
@@ -58,6 +59,7 @@ for _adapter in (
     JobSpyAdapter(),
     UsaJobsAdapter(),
     AdzunaAdapter(),
+    ArbeitnowAdapter(),
     HimalayasAdapter(),
     WeWorkRemotelyAdapter(),
 ):
