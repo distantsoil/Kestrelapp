@@ -117,12 +117,29 @@ async def rank_uncertain(
     if not candidates:
         return []
 
+    # Deduplicate by dedup_group_id: one copy per group (prefer the canonical one)
+    opps = [await session.get(Opportunity, oid) for oid in candidates]
+    groups: dict[str | None, int] = {}  # dedup_group_id -> opportunity_id
+    for opp, oid in zip(opps, candidates):
+        if opp is None:
+            continue
+        gid = opp.dedup_group_id
+        if gid is not None:
+            if gid not in groups:
+                groups[gid] = oid
+            elif not groups[gid] == oid and opp.is_canonical:
+                groups[gid] = oid  # prefer canonical
+        else:
+            # No group: treat as unique
+            groups[f"__solo_{oid}"] = oid
+    deduped_candidates = set(groups.values())
+
     emb = await _embeddings(session, list(evals), current_model(settings))
     labeled_vecs = [emb[i] for i in labeled if i in emb]
     apply_t = settings.thresholds.apply
 
     scored: list[UncertainItem] = []
-    for oid in candidates:
+    for oid in deduped_candidates:
         ev = evals[oid]
         opp = await session.get(Opportunity, oid)
         if opp is None:
