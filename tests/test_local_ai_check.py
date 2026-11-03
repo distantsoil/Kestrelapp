@@ -280,3 +280,87 @@ def test_classify_address_public():
 
     assert _classify_address("8.8.8.8", 443) == "public"
     assert _classify_address("1.1.1.1", 53) == "public"
+
+
+# ---------------------------------------------------------------------------
+# _check_model_digests (issue #166 M2)
+# ---------------------------------------------------------------------------
+
+
+def test_digests_all_match():
+    """All local digests match the catalog: PASS."""
+    from kestrel.doctor import _check_model_digests
+
+    _MATCH_DIGEST = "sha256:" + "1" * 64
+
+    class _Client:
+        def list_models_with_digests(self, timeout: float = 10.0):
+            return [
+                {"name": "qwen3:8b", "digest": _MATCH_DIGEST},
+                {"name": "qwen3:4b-instruct-2507-q4_K_M",
+                 "digest": "sha256:" + "0" * 64},
+                {"name": "qwen3:14b", "digest": "sha256:" + "2" * 64},
+                {"name": "qwen3:30b-a3b-instruct-2507-q4_K_M",
+                 "digest": "sha256:" + "3" * 64},
+                {"name": "nomic-embed-text", "digest": "sha256:" + "4" * 64},
+            ]
+
+    rep = DoctorReport()
+    _check_model_digests(rep, _Client())
+    row = next(r for r in rep.results if r.name == "Local AI: model digests")
+    assert row.status == PASS
+    assert "match" in row.detail.lower()
+
+
+def test_digests_mismatch_warns():
+    """A local digest differs from the catalog: WARN (tag has moved)."""
+    from kestrel.doctor import _check_model_digests
+
+    class _Client:
+        def list_models_with_digests(self, timeout: float = 10.0):
+            return [
+                {"name": "qwen3:8b", "digest": "sha256:" + "9" * 64},
+                {"name": "qwen3:4b-instruct-2507-q4_K_M",
+                 "digest": "sha256:" + "0" * 64},
+                {"name": "qwen3:14b", "digest": "sha256:" + "2" * 64},
+                {"name": "qwen3:30b-a3b-instruct-2507-q4_K_M",
+                 "digest": "sha256:" + "3" * 64},
+                {"name": "nomic-embed-text", "digest": "sha256:" + "4" * 64},
+            ]
+
+    rep = DoctorReport()
+    _check_model_digests(rep, _Client())
+    row = next(r for r in rep.results if r.name == "Local AI: model digests")
+    assert row.status == WARN
+    assert "differ" in row.detail.lower()
+
+
+def test_digests_unknown_tag_not_in_catalog():
+    """A local model not in the catalog is not flagged (only catalog models are checked)."""
+    from kestrel.doctor import _check_model_digests
+
+    class _Client:
+        def list_models_with_digests(self, timeout: float = 10.0):
+            return [
+                {"name": "llama3:8b", "digest": "sha256:abcdef"},
+            ]
+
+    rep = DoctorReport()
+    _check_model_digests(rep, _Client())
+    row = next(r for r in rep.results if r.name == "Local AI: model digests")
+    # No catalog models are installed; all are "not installed".
+    assert "not installed" in row.detail.lower() or "not installed" in row.name
+
+
+def test_digests_ollama_unreachable():
+    """If Ollama is not reachable, the check is skipped."""
+    from kestrel.doctor import _check_model_digests
+
+    class _BrokenClient:
+        def list_models_with_digests(self, timeout: float = 10.0):
+            raise ConnectionError("Ollama not running")
+
+    rep = DoctorReport()
+    _check_model_digests(rep, _BrokenClient())
+    # No new row for digests (Ollama not reachable is already reported).
+    assert all(r.name != "Local AI: model digests" for r in rep.results)

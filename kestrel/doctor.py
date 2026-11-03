@@ -667,6 +667,72 @@ def _check_local_ai_egress(rep: DoctorReport) -> None:
         )
 
 
+def _check_model_digests(rep: DoctorReport, client: OllamaClient) -> None:
+    """Issue #166 M2: Verify local model digests against the tested catalog.
+    A mismatch warns (tag has moved); an unknown tag says so. Never blocks."""
+    import json
+    from importlib.resources import files
+
+    try:
+        raw = files("kestrel.resources.config").joinpath("model_digests.json").read_text(
+            encoding="utf-8"
+        )
+        catalog = json.loads(raw)
+    except Exception:
+        rep.add("Local AI: model digests", INFO, "Catalog file not found; check skipped")
+        return
+
+    models: dict[str, dict[str, str]] = catalog.get("models", {})
+    if not models:
+        rep.add("Local AI: model digests", INFO, "No models in catalog")
+        return
+
+    try:
+        local_models = client.list_models_with_digests()
+    except Exception:
+        return  # Ollama not reachable; already reported by _check_ollama.
+
+    local_by_name: dict[str, str] = {m["name"]: m["digest"] for m in local_models}
+    matches = 0
+    mismatches = 0
+    missing = 0
+    details: list[str] = []
+
+    for tag, info in models.items():
+        expected_digest = info.get("digest", "")
+        if tag not in local_by_name:
+            missing += 1
+            continue
+        local_digest = local_by_name[tag]
+        if local_digest == expected_digest:
+            matches += 1
+        else:
+            mismatches += 1
+            details.append(
+                f"{tag}: local {local_digest[:19]}... vs tested {expected_digest[:19]}..."
+            )
+
+    if mismatches == 0 and missing == 0:
+        rep.add(
+            "Local AI: model digests",
+            PASS,
+            f"{matches} model(s) match what Kestrel tested",
+        )
+    else:
+        parts: list[str] = []
+        if matches:
+            parts.append(f"{matches} match")
+        if mismatches:
+            parts.append(f"{mismatches} differ (tag has moved)")
+        if missing:
+            parts.append(f"{missing} not installed")
+        status = WARN if mismatches else INFO
+        text = ", ".join(parts)
+        if details:
+            text += ": " + "; ".join(details)
+        rep.add("Local AI: model digests", status, text)
+
+
 def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
     """Hard rule 7: every request carries a descriptive User-Agent with a REAL contact address
     (SEC EDGAR blocks requests without one, and the EDGAR sources refuse to run with a placeholder).
@@ -1247,6 +1313,8 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         # Issue #166 M1: Local AI settings spot check.
         _check_local_ai_settings(rep, s)
         _check_cloud_model_tags(rep, client)
+        # Issue #166 M2: model digest verification.
+        _check_model_digests(rep, client)
     _check_ingest_contact(rep, s)
     _check_hosted(rep, s)
     _check_mcp_port(rep, s)

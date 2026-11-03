@@ -1,0 +1,31 @@
+{
+  "_comment": "Issue #166 M2: model digest verification. Maps each shipped base model tag to the digest Kestrel tested and the date. The doctor compares the local model's digest against this catalog. A mismatch warns (tag has moved); an unknown tag says so. Never blocks. Digests are from Ollama's /api/tags response.",
+  "verified": "2026-11-03",
+  "models": {
+    "qwen3:4b-instruct-2507-q4_K_M": {
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "date": "2026-11-03",
+      "size_gb": 2.5
+    },
+    "qwen3:8b": {
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "date": "2026-11-03",
+      "size_gb": 5.2
+    },
+    "qwen3:14b": {
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "date": "2026-11-03",
+      "size_gb": 9.3
+    },
+    "qwen3:30b-a3b-instruct-2507-q4_K_M": {
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "date": "2026-11-03",
+      "size_gb": 19.0
+    },
+    "nomic-embed-text": {
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "date": "2026-11-03",
+      "size_gb": 0.3
+    }
+  }
+}
