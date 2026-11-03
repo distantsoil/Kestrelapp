@@ -460,6 +460,24 @@ _DESCRIPTIONS: dict[str, dict] = {
         ),
         "region": "Remote roles open to the US.",
     },
+    "remotive": {
+        "name": "Remotive (remote jobs, 4 fetches/day max)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Remote job listings from the Remotive API, remotive.com/api/remote-jobs: up to "
+            "limit jobs (default 50). Each role links to its posting page, where you apply "
+            "yourself, and is credited to Remotive. Salary is free text, not structured. "
+            "Kestrel fetches at most 4 times per day (enforced in the scheduler)."
+        ),
+        "provide": "Nothing: no key or account. Optional limit (1-100).",
+        "config_example": {},
+        "rate_limit": (
+            "At most 1 request/second and at most 4 fetches per day (the API advises max 4; "
+            "excessive requests are blocked); robots.txt respected; a 429 makes the run partial."
+        ),
+        "region": "Remote roles, worldwide.",
+    },
     "remoterocketship": {
         "name": "RemoteRocketship (paid API, finds links only)",
         "category": CATEGORY_AGGREGATOR,

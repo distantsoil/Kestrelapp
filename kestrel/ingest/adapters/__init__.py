@@ -17,6 +17,7 @@ from kestrel.ingest.adapters.paylocity import PaylocityAdapter
 from kestrel.ingest.adapters.personio import PersonioAdapter
 from kestrel.ingest.adapters.recruitee import RecruiteeAdapter
 from kestrel.ingest.adapters.remoterocketship import RemoteRocketshipAdapter
+from kestrel.ingest.adapters.remotive import RemotiveAdapter
 from kestrel.ingest.adapters.rippling import RipplingAdapter
 from kestrel.ingest.adapters.smartrecruiters import SmartRecruitersAdapter
 from kestrel.ingest.adapters.teamtailor import TeamtailorAdapter
@@ -64,5 +65,6 @@ for _adapter in (
     HimalayasAdapter(),
     WeWorkRemotelyAdapter(),
     JobicyAdapter(),
+    RemotiveAdapter(),
 ):
     register(_adapter)

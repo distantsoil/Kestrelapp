@@ -38,6 +38,7 @@ SOURCE_KINDS = (
     "himalayas",
     "weworkremotely",
     "jobicy",
+    "remotive",
     "page",
     "rss",
     "sec_edgar",
