@@ -162,6 +162,7 @@ class Worker:
         self._client = client
         self._settings = settings
         self._online_approval: dict | None = None
+        self._mid_run_switch_note: str | None = None
         self._queue = TaskQueue(sessionmaker)
         self._stop = stop or asyncio.Event()
         self._progress = progress or (lambda _m: None)
@@ -703,6 +704,10 @@ class Worker:
                     settings = self._settings
                 if _tier_external(settings, tier):
                     log.warning("hosted_mode_off_mid_run", type=task_type, tier=tier)
+                    if self._mid_run_switch_note is None:
+                        self._mid_run_switch_note = (
+                            "Switched to your computer; the rest of this run scores locally."
+                        )
                     settings = settings.model_copy(deep=True)
                     settings.llm.hosted_mode = live
         if settings is self._settings:
@@ -880,6 +885,7 @@ class Worker:
         resolves the tier set for this whole run and is recorded on the Run row; an explicit
         "hosted" that cannot run raises config.HostedModeError before any row is written."""
         self.apply_settings(await self.resolve_settings(mode))
+        self._mid_run_switch_note = None
         stats = RunStats()
         run_id = await runlog.open_run(
             self._sm, name="pipeline", track=track, mode=self._settings.llm.mode
@@ -890,6 +896,7 @@ class Worker:
             await runlog.finish_run(
                 self._sm, run_id, status="failed",
                 counts={"error": f"{type(exc).__name__}: {exc}"[:500]},
+                notes=self._mid_run_switch_note,
             )
             raise
 
@@ -931,5 +938,6 @@ class Worker:
             self._sm, run_id,
             status="stopping" if self._stop.is_set() else "done",
             counts=runlog.stats_counts(stats),
+            notes=self._mid_run_switch_note,
         )
         return stats
