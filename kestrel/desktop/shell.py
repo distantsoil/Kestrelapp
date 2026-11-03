@@ -1143,6 +1143,18 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
         migrate.run_migrations()
     except Exception as exc:  # the operator sees a sentence; the log keeps the cause
         log.error("startup_migrations_failed", error_type=type(exc).__name__, error=str(exc))
+        # A newer Kestrel left a database this build cannot read: say so plainly and offer
+        # a download, never a retry (it would fail the same way) or a downgrade (it would
+        # destroy data).
+        msg = str(exc)
+        if "Can't locate revision" in msg or "newer" in msg.lower():
+            raise StartupError(
+                "newer_database",
+                "This data was saved by a newer Kestrel. Install the latest version to open it.",
+                f"Startup step: open your data\nCause: {type(exc).__name__}: {msg}\n"
+                "This version of Kestrel is older than the one that last saved your data.\n"
+                "Download the latest version from kestrelapp.co to open your data.",
+            ) from exc
         raise StartupError(
             "migrations_failed",
             "Kestrel could not open your data on this computer.",
@@ -1511,10 +1523,10 @@ def _boot_held(busy: bool) -> None:
         _boot_guard.release()
 
 
-def _show_problem(splash: _Splash, reason: str, details: str) -> None:
+def _show_problem(splash: _Splash, reason: str, details: str, code: str = "") -> None:
     global _boot_failed
     _boot_failed = True
-    splash.fail(reason, details)
+    splash.fail(reason, details, code)
     if _quiet:
         show_window()  # a quiet start that fails must say so, never sit hidden with the lock
 
@@ -1548,7 +1560,7 @@ def _boot_steps(busy: bool) -> None:
         log.error("desktop_start_aborted", reason=exc.code)
         _stop_server()
         _write_marker(failed=True)  # the lock owner shows its problem card: a relaunch defers
-        _show_problem(splash, exc.reason, exc.details)
+        _show_problem(splash, exc.reason, exc.details, exc.code)
         return
     from kestrel.web.desktop_bridge import (
         set_focus_handler,
@@ -1596,6 +1608,7 @@ def _run_window(webview: Any, *, busy: bool) -> int:
         retry=_retry_start,
         open_logs=lambda: _open_folder(paths.logs_dir()),
         quit_app=do_quit,
+        download=lambda: webbrowser.open("https://kestrelapp.co/download"),
         remember_theme=_remember_theme,
     )
     # pywebview cancels every download unless told otherwise (edgechromium's
