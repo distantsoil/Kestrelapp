@@ -940,18 +940,37 @@ class Worker:
             counts=runlog.stats_counts(stats),
             notes=self._mid_run_switch_note,
         )
-        # Notify the operator that the run is done (#109, #110)
+        # Notify the operator that the run is done (#109, #110, #111)
         if not self._stop.is_set():
             from kestrel.services.notifications import NotificationService
             notifier = NotificationService(self._sm)
             failed = stats.tier1.errors + stats.tier2.errors
             rated = stats.tier1.completed + stats.tier2.completed
+
+            # Count new roles worth reviewing (strong, good, your_call) (#111)
+            from sqlalchemy import select, func
+            from kestrel.db.models import Opportunity
+            from kestrel.analytics.run_summary import WORTH_KEYS
+            async with self._sm() as s:
+                worth_count = (await s.execute(
+                    select(func.count()).select_from(Opportunity).where(
+                        Opportunity.stage.in_([f"{k}_pass" for k in WORTH_KEYS])
+                    )
+                )).scalar_one()
+
             if failed > 0:
                 await notifier.notify(
                     "run_finished",
                     f"Run finished: {failed} role{'s' if failed > 1 else ''} need{'s' if failed == 1 else ''} another try",
                     body=f"{rated} rated · {failed} failed. Review the failed roles and try again.",
                     severity="warning",
+                )
+            elif worth_count > 0:
+                await notifier.notify(
+                    "high_score",
+                    f"{worth_count} new role{'s' if worth_count > 1 else ''} worth reviewing",
+                    body=f"Your search run found {worth_count} role{'s' if worth_count > 1 else ''} rated Your call or better.",
+                    severity="info",
                 )
             else:
                 await notifier.notify(
