@@ -538,6 +538,98 @@ def _check_ollama_env(rep: DoctorReport, s: Settings) -> None:
     )
 
 
+# Loopback addresses that are safe for local model inference.
+_LOOPBACK_HOSTS = frozenset({
+    "127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1",
+})
+
+
+def _is_loopback(url: str) -> bool:
+    """Check if a URL's host is a loopback address."""
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower()
+        return host in _LOOPBACK_HOSTS
+    except Exception:
+        return False
+
+
+def _check_local_ai_settings(rep: DoctorReport, s: Settings) -> None:
+    """Issue #166 M1: Local AI settings spot check.
+    Reads local state only. Nothing is sent anywhere."""
+    # 1. The local backend address is loopback.
+    local_backend = s.llm.backends.get("local")
+    if local_backend and local_backend.base_url:
+        if _is_loopback(local_backend.base_url):
+            rep.add(
+                "Local AI: backend address",
+                PASS,
+                local_backend.base_url,
+            )
+        else:
+            rep.add(
+                "Local AI: backend address",
+                WARN,
+                local_backend.base_url,
+                "Your text goes to another address, not this computer. "
+                "Set llm.backends.local.base_url to http://127.0.0.1:11434 for local inference.",
+            )
+
+    # 2. Ollama listens only on loopback (OLLAMA_HOST unset or loopback).
+    ollama_host = os.environ.get("OLLAMA_HOST", "").strip()
+    if not ollama_host:
+        rep.add(
+            "Local AI: Ollama bind",
+            PASS,
+            "OLLAMA_HOST unset (defaults to loopback)",
+        )
+    elif _is_loopback(ollama_host) or ollama_host.startswith(("127.0.0.1", "localhost", "::1")):
+        rep.add(
+            "Local AI: Ollama bind",
+            PASS,
+            ollama_host,
+        )
+    else:
+        rep.add(
+            "Local AI: Ollama bind",
+            WARN,
+            ollama_host,
+            "Ollama is bound to a non-loopback address. Other devices on your network "
+            "can send prompts to it. Set OLLAMA_HOST=127.0.0.1:11434 to restrict to this computer.",
+        )
+
+    # 3. No installed model tag ends in -cloud.
+    # This check requires querying Ollama's model list, which is done in the
+    # _check_models_present path. We add a note here that the check is part
+    # of the model presence check.
+    # (The actual -cloud tag check is in _check_models_present below.)
+
+
+def _check_cloud_model_tags(rep: DoctorReport, client: OllamaClient) -> None:
+    """Issue #166 M1: Flag any installed model with a -cloud tag.
+    A cloud model is not local inference; its prompts go to Ollama's servers."""
+    try:
+        tags = client.list_models()
+    except Exception:
+        return  # Ollama not reachable; already reported by _check_ollama.
+    cloud_tags = [t for t in tags if t.endswith("-cloud")]
+    if cloud_tags:
+        rep.add(
+            "Local AI: cloud model tags",
+            WARN,
+            ", ".join(cloud_tags),
+            "These models are cloud-hosted: prompts are sent to Ollama's servers. "
+            "For local-only inference, use non-cloud tags "
+            "(e.g. qwen3:8b instead of qwen3:8b-cloud).",
+        )
+    else:
+        rep.add(
+            "Local AI: cloud model tags",
+            PASS,
+            "no -cloud tags found",
+        )
+
+
 def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
     """Hard rule 7: every request carries a descriptive User-Agent with a REAL contact address
     (SEC EDGAR blocks requests without one, and the EDGAR sources refuse to run with a placeholder).
@@ -1112,6 +1204,9 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         rep.add("OLLAMA_KEEP_ALIVE", INFO, HOSTED_SKIPPED)
     else:
         _check_ollama_env(rep, s)
+        # Issue #166 M1: Local AI settings spot check.
+        _check_local_ai_settings(rep, s)
+        _check_cloud_model_tags(rep, client)
     _check_ingest_contact(rep, s)
     _check_hosted(rep, s)
     _check_mcp_port(rep, s)
