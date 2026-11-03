@@ -510,7 +510,7 @@ async def _panel_ctx(
         ],
         "type_options": [("", "All types")] + [(k, t) for k, t, _d in sv.GROUPS[track]],
         "origins": sv.ORIGINS,
-        "suggestions": await source_suggestions.suggestions(
+        "suggestions": await source_suggestions.suggestions_with_boards(
             session, track, [s.name for s in in_use]
         ),
         "found_boards": sum(1 for s in sources if s.origin == board_discovery.DISCOVERED),

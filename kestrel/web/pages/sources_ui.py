@@ -174,8 +174,9 @@ async def add_form(request: Request, kind: str):
         adzuna = await pg.adzuna_status(s)
     if kind not in {k for k, _t, _d in _types(track)}:
         return _sheet(request, "", _sheet_base(track), 404)
+    company = request.query_params.get("company", "").strip()[:MAX_FIELD]
     return _sheet(request, kind, {**_sheet_base(track), "values": {}, "usajobs": usajobs,
-                                  "adzuna": adzuna})
+                                  "adzuna": adzuna, "company": company})
 
 
 def _indeed_config(form) -> dict:
@@ -880,13 +881,54 @@ async def restore_source(request: Request, source_id: int):
 
 
 # ----------------------------------------------------------------------------- suggestions
+async def _resolve_suggestion_board(request: Request, name: str) -> tuple[dict | None, str | None]:
+    """(spec, text) for a suggested company. Uses the remembered board lookup when present so a
+    repeated Add never repeats the requests (#123 finding 6); a company with no readable board
+    returns (None, None) and the caller hands it over to Add a source (#123 finding 7)."""
+    from kestrel.ingest.board_lookup import find_company_board
+    from kestrel.ingest.orgs import normalized_name
+
+    async with sessionmaker()() as s:
+        norm = normalized_name(name)
+        entry = (await source_suggestions.board_cache(s)).get(norm)
+        if entry is not None:
+            if entry.get("found") and entry.get("kind"):
+                m_kind = entry["kind"]
+                m_config = entry.get("config") or {}
+                m_company = entry.get("company") or name
+                m_jobs = int(entry.get("jobs") or 0)
+                jobs = f", {m_jobs} open" if m_jobs else ""
+                text = (f"Added {m_company} ({entry.get('platform') or 'a board'}{jobs}). "
+                        "Check it is the right company.")
+                return {"kind": m_kind, "config": m_config, "name": m_company}, text
+            return None, None
+        # Not remembered: do the lookup (a few polite requests) and keep the outcome.
+        try:
+            async with await pg._http_client() as http:
+                result = await find_company_board(name, http)
+        except Exception as exc:  # a dead network is a not-found state, never a 500
+            log.info("source_suggestion_lookup_failed", error=type(exc).__name__)
+            result = None
+        m = result.match if result is not None else None
+        if m is None:
+            await source_suggestions.record_board_lookup(s, name, found=False)
+            await s.commit()
+            return None, None
+        await source_suggestions.record_board_lookup(
+            s, name, found=True, platform=m.platform, jobs=m.jobs,
+            kind=m.kind, config=m.config, company=result.company,
+        )
+        await s.commit()
+        jobs = f", {m.jobs} open" if m.jobs else ""
+        text = f"Added {result.company} ({m.platform}{jobs}). Check it is the right company."
+        return {"kind": m.kind, "config": m.config, "name": result.company}, text
+
+
 @router.post("/sources/suggestions/add", response_class=HTMLResponse)
 async def suggestion_add(request: Request):
     """Add a suggested company. On Employment Kestrel looks for its public job board (a few
     polite requests) and adds what it finds; on Consulting it watches its public SEC filings.
-    The operator pressed Add for this named company, so it starts on, and Undo removes it."""
-    from kestrel.ingest.board_lookup import find_company_board
-
+    A company with no readable board is handed over to Add a source, a normal state (#123)."""
     name = _text(await request.form(), "name")
     async with sessionmaker()() as s:
         track = await _track(request, s)
@@ -897,25 +939,17 @@ async def suggestion_add(request: Request):
         spec = {"kind": "sec_edgar", "config": {"queries": [f'"{name}"']}, "name": name}
         text = f"Added {name}. Kestrel watches its public filings."
     else:
-        try:
-            async with await pg._http_client() as http:
-                result = await find_company_board(name, http)
-        except Exception as exc:  # a dead network is a message, never a 500
-            log.info("source_suggestion_lookup_failed", error=type(exc).__name__)
-            result = None
-        m = result.match if result is not None else None
-        if m is None:
+        spec, text = await _resolve_suggestion_board(request, name)
+        if spec is None:
+            # No readable board: a normal "add by hand" state, not an error (#123 finding 7).
+            # The outcome is remembered by _resolve_suggestion_board, so this lookup never
+            # repeats; recompute the panel so the row now offers "Add by hand".
+            async with sessionmaker()() as s:
+                ctx = await pg._panel_ctx(request, s)
             return pg.list_response(
-                request,
-                ctx,
-                pg.toast_header(
-                    f"No public job board found for {name}. Use Add a source with its careers page "
-                    "link."
-                ),
-            )
-        spec = {"kind": m.kind, "config": m.config, "name": result.company}
-        jobs = f", {m.jobs} open" if m.jobs else ""
-        text = f"Added {result.company} ({m.platform}{jobs}). Check it is the right company."
+                request, ctx, pg.toast_header(
+                    f"Kestrel couldn't read a public board for {name}. "
+                    "Use 'Add by hand' to paste the link to the careers page."))
     async with sessionmaker()() as s:
         dupe = await _existing(s, spec)
         if dupe is not None:

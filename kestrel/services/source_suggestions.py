@@ -13,6 +13,7 @@ from kestrel.db.models import Opportunity, Org, Pursuit, Setting
 from kestrel.ingest.orgs import normalized_name
 
 KEY = "sources.dismissed_suggestions"
+BOARD_CACHE_KEY = "sources.suggestion_boards"
 MAX_SHOWN = 6
 _CLOSED = {"rejected", "withdrawn", "ghosted", "declined", "closed", "lost"}
 
@@ -27,6 +28,38 @@ async def _save(session: AsyncSession, value: dict[str, list[str]]) -> None:
     row = await session.get(Setting, KEY)
     if row is None:
         session.add(Setting(key=KEY, value=value))
+    else:
+        row.value = value
+        row.updated_at = utcnow_iso()
+
+
+# --------------------------------------------------------------------------- board cache
+async def board_cache(session: AsyncSession) -> dict:
+    """{normalized name: {"found": bool, ...}}. A found entry carries the source spec; a not-found
+    entry is {"found": False}. Kept so a repeated Add does not repeat the lookups (#123, finding 6)
+    and the row can show the outcome up front (finding 7)."""
+    row = await session.get(Setting, BOARD_CACHE_KEY)
+    value = row.value if row is not None and isinstance(row.value, dict) else {}
+    return value
+
+
+async def record_board_lookup(
+    session: AsyncSession, name: str, found: bool, *, platform: str | None = None,
+    jobs: int = 0, kind: str | None = None, config: dict | None = None,
+    company: str | None = None,
+) -> None:
+    norm = normalized_name(name)
+    if not norm:
+        return
+    value = await board_cache(session)
+    entry: dict = {"found": found}
+    if found:
+        entry.update(platform=platform, jobs=int(jobs or 0), kind=kind, config=config or {},
+                     company=company or name)
+    value[norm] = entry
+    row = await session.get(Setting, BOARD_CACHE_KEY)
+    if row is None:
+        session.add(Setting(key=BOARD_CACHE_KEY, value=value))
     else:
         row.value = value
         row.updated_at = utcnow_iso()
@@ -85,4 +118,21 @@ async def suggestions(
         })
         if len(out) >= MAX_SHOWN:
             break
+    return out
+
+
+async def suggestions_with_boards(
+    session: AsyncSession, track: str, source_names: list[str]
+) -> list[dict]:
+    """suggestions() with the remembered board lookup on each row (None, a found board, or a
+    not-found note), so the row says up front whether Add will work or the company must be added
+    by hand (#123). Consulting rows carry no board (they watch filings, not a board)."""
+    out = await suggestions(session, track, source_names)
+    if track == "consulting":
+        for sg in out:
+            sg["board"] = None  # explicit: they watch filings, not a board
+        return out
+    boards = await board_cache(session)
+    for sg in out:
+        sg["board"] = boards.get(normalized_name(sg["name"]))
     return out
