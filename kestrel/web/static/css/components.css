@@ -441,6 +441,33 @@ html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform
   .k-tools { padding: 12px 16px 0; }
 }
 
+/* Sidebar collapse toggle (issue #126): a button that shrinks the sidebar to an icon rail.
+   The state is remembered in localStorage so it persists across page loads. */
+.k-side-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; margin: 0 8px 4px auto;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: none; color: var(--muted); cursor: pointer;
+  transition: color var(--dur-1), border-color var(--dur-1), transform .3s var(--ease);
+}
+.k-side-toggle:hover { color: var(--ink); border-color: var(--brand); }
+/* When collapsed: hide text, center icons, shrink width */
+.k-win.is-side-collapsed { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
+.k-win.is-side-collapsed .side { padding: 18px 10px 12px; align-items: center; }
+.k-win.is-side-collapsed .side .k-sec,
+.k-win.is-side-collapsed .side .mainnav > a .n,
+.k-win.is-side-collapsed .side .k-brand__word,
+.k-win.is-side-collapsed .side .track-switch,
+.k-win.is-side-collapsed .k-sstat__l > span:not(.k-dot) { display: none; }
+.k-win.is-side-collapsed .side .k-brand { padding: 2px 0 14px; }
+.k-win.is-side-collapsed .side .mainnav { width: 100%; }
+.k-win.is-side-collapsed .side .mainnav > a { justify-content: center; padding: 9px; position: relative; font-size: 0; }
+.k-win.is-side-collapsed .side .mainnav > a .ring { position: absolute; top: 4px; right: 6px; margin: 0; width: 8px; height: 8px; }
+.k-win.is-side-collapsed .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
+.k-win.is-side-collapsed .k-sstat__l { flex: none; }
+.k-win.is-side-collapsed .k-side-toggle { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .k-side-toggle { transition: none; } }
+
 /* The shell's htmx slots (update banner, the disclosure, what's new and announcement cards) are
    empty almost always; an empty slot takes no room and no flex gap above the title (O8). */
 #update-banner:not(:has(*)), #update-modal:not(:has(*)), #disclosure-slot:not(:has(*)),

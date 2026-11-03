@@ -245,6 +245,9 @@
   <aside class="side" id="sidebar">
     {% if k_desktop %}{% include "partials/window_controls.html" %}{% endif %}
     <a class="k-brand" href="/" title="Kestrel"><span class="k-brand__mark"><img src="{{ static_url('icon.svg') }}" alt="" width="30" height="30"></span><span class="k-brand__word">Kestrel</span></a>
+    <button type="button" class="k-side-toggle" aria-label="Collapse sidebar" data-testid="side-toggle" title="Collapse sidebar">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
     {{ trackswitch(cur) }}
     <nav class="mainnav" aria-label="Main">
       {{ navlinks(p, track=cur) }}
@@ -275,6 +278,23 @@
             if (!body.querySelector('script')) rail.replaceChildren.apply(rail, Array.prototype.slice.call(body.childNodes));
           }
         } catch (e) {}
+        // Sidebar collapse toggle (#126): remember the state in localStorage
+        var kwin = document.getElementById('kwin');
+        var btn = document.querySelector('.k-side-toggle');
+        if (kwin && btn) {
+          var collapsed = localStorage.getItem('kestrel-side-collapsed') === '1';
+          function applyState(c) {
+            kwin.classList.toggle('is-side-collapsed', c);
+            btn.setAttribute('aria-label', c ? 'Expand sidebar' : 'Collapse sidebar');
+            btn.title = c ? 'Expand sidebar' : 'Collapse sidebar';
+          }
+          if (collapsed) applyState(true);
+          btn.addEventListener('click', function () {
+            collapsed = !collapsed;
+            localStorage.setItem('kestrel-side-collapsed', collapsed ? '1' : '0');
+            applyState(collapsed);
+          });
+        }
       })();
     </script>
   </aside>
