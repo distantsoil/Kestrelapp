@@ -544,8 +544,12 @@ async def check_company(request: Request):
         return _msg(request, "warn", "The lookup could not run. Check the network and try again.")
     m = result.match
     if m is None:
-        return _msg(request, "warn", f"No board found for {company}. Paste their careers page "
-                                     "link instead.")
+        # Show which platforms were tried so the operator knows the company was checked (#123).
+        platforms = sorted({t.split(":")[0] for t in result.tried})
+        tried_text = " (checked: " + ", ".join(platforms) + ")" if platforms else ""
+        return _msg(request, "warn", f"No board found for {company}{tried_text}. The company "
+                                     "may use a system Kestrel does not read yet. Paste their "
+                                     "careers page link instead.")
     async with sessionmaker()() as s:
         have = await _existing(s, {"kind": m.kind, "config": m.config})
     if have is not None:
