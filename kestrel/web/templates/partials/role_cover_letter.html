@@ -1,0 +1,36 @@
+{# Cover letter consent dialog (D-UI-237, issue #107). Shows the provider, model, what would
+   be sent, and the re-ask disclosure. The operator confirms, then the draft is generated. #}
+{% from "partials/role_icons.html" import ric %}
+<div id="rl-cover-letter" class="rl-cover-letter" data-testid="cover-letter-dialog">
+  <div class="k-card rl-card">
+    <header class="k-sec-head">
+      <span class="k-badge k-badge--tier">{{ ric('doc') }}</span>
+      <div class="k-grow"><h3>New cover letter</h3></div>
+      <button type="button" class="k-btn k-btn--sm" data-rl-close>Close</button>
+    </header>
+    <div class="rl-cover-body">
+      <p>Kestrel will draft a cover letter for this role using your profile and the posting.
+         The draft will show plain-writing marks for any stock phrasing or claims not in your
+         proof points. You can edit or discard it.</p>
+      {% if route %}
+      <div class="rl-consent" data-testid="consent-panel">
+        <p class="rl-consent__title">What will be sent</p>
+        <ul>
+          <li>Your profile summary and skills</li>
+          <li>The job posting for {{ opp.organization if opp else 'this role' }}</li>
+          {% if route.reask %}<li class="rl-consent__reask" data-testid="consent-reask">If the first draft has plain-writing issues, Kestrel will ask the model once more to fix them, keeping your claims intact.</li>{% endif %}
+        </ul>
+        <p class="rl-consent__meta">Model: {{ route.model }} · Provider: {{ route.provider }}</p>
+      </div>
+      <form hx-post="/opportunities/{{ opp_id }}/role/cover-letter/generate"
+            hx-target="#rl-cover-letter" hx-swap="innerHTML">
+        <input type="hidden" name="confirmed" value="yes">
+        <div class="rl-btns">
+          <button type="submit" class="k-btn k-btn--primary" data-testid="cover-letter-confirm">Generate draft</button>
+          <button type="button" class="k-btn" data-rl-close>Cancel</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>

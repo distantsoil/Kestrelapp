@@ -1198,3 +1198,122 @@ async def preview(request: Request, opp_id: int, render_id: int):
         else (master.name if master else "Document"),
     }
     return templates().TemplateResponse(request, "partials/role_preview.html", ctx)
+
+
+# -------------------------------------------------------------------------------- Cover letter
+@router.get("/opportunities/{opp_id}/role/cover-letter", response_class=HTMLResponse)
+async def cover_letter_dialog(request: Request, opp_id: int):
+    """Ask first: the provider, the model, exactly what would be sent, and the re-ask disclosure.
+    The operator confirms, then the draft is made and displayed with plain-writing marks."""
+    from kestrel.db.models import Opportunity, Pursuit
+    from kestrel.llm.client import LLMClient
+    from kestrel.services.online_consent import online_route as shared_route
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        settings = await load_settings_with_db(s)
+        route = await shared_route(s, settings, "tier3", reask=True)
+        if not route or not route["online"]:
+            return HTMLResponse(
+                "<p>Online model not configured. Set up a hosted provider in Models to draft a letter.</p>",
+                status_code=400,
+            )
+        pursuit = (
+            await s.execute(
+                select(Pursuit).where(Pursuit.opportunity_id == opp_id)
+            )
+        ).scalar_one_or_none()
+        profile = await s.execute(select(Profile)).scalar_one_or_none()
+
+    ctx = {
+        "opp_id": opp_id,
+        "route": route,
+        "profile": profile,
+        "pursuit": pursuit,
+    }
+    return templates().TemplateResponse(request, "partials/role_cover_letter.html", ctx)
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/generate", response_class=HTMLResponse)
+async def cover_letter_generate(request: Request, opp_id: int, confirmed: str = ""):
+    """Generate a cover letter after consent. The draft is displayed with plain-writing marks."""
+    from kestrel.db.models import Opportunity, Profile, Pursuit
+    from kestrel.docs.letters import generate_cover
+    from kestrel.llm.client import LLMClient
+    from kestrel.services.online_consent import NOT_CONFIRMED, consent_problem, online_route as shared_route
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        settings = await load_settings_with_db(s)
+        route = await shared_route(s, settings, "tier3", reask=True)
+        if not route or not route["online"]:
+            return HTMLResponse("<p>Online model not configured.</p>", status_code=400)
+
+        form = request.form()
+        problem = consent_problem(route, form)
+        if problem == NOT_CONFIRMED:
+            return HTMLResponse(
+                f'<div id="rl-dialog" hx-swap-oob="innerHTML">'
+                f"<p>Please confirm the send to generate a cover letter.</p>"
+                f"</div>",
+                status_code=400,
+            )
+        if problem:
+            return HTMLResponse(f"<p>{problem}</p>", status_code=400)
+
+        profile = await s.execute(select(Profile)).scalar_one_or_none()
+        pursuit = (
+            await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
+        ).scalar_one_or_none()
+
+        # Assemble the user prompt from profile, posting, and selected bullets
+        user_prompt = _assemble_letter_prompt(opp, profile, pursuit)
+
+        client = LLMClient(settings)
+        draft = await generate_cover(
+            client,
+            {"opp_id": opp_id},
+            user_prompt,
+            session=s,
+            on_quarantine=None,
+            reask=True,
+        )
+
+        if draft.error:
+            return HTMLResponse(f"<p>Generation failed: {draft.error}</p>", status_code=400)
+
+        from kestrel.web.templates import style_marks
+
+        ctx = {
+            "opp_id": opp_id,
+            "draft_value": draft.value if isinstance(draft.value, str) else str(draft.value),
+            "flags": draft.style_flags or [],
+            "unverified": draft.unverified_claims or [],
+            "banned": draft.banned_hits or [],
+        }
+        return templates().TemplateResponse(request, "partials/role_cover_letter_draft.html", ctx)
+
+
+def _assemble_letter_prompt(opp, profile, pursuit) -> str:
+    """Assemble the context for the cover letter prompt: profile, posting, and selected bullets."""
+    from kestrel.db.models import DocRender
+
+    parts = []
+    if profile:
+        if profile.summary:
+            parts.append(f"Profile summary: {profile.summary}")
+        if profile.skills:
+            parts.append(f"Skills: {', '.join(profile.skills)}")
+    if opp.description:
+        parts.append(f"Job posting: {opp.description[:2000]}")
+    if opp.title:
+        parts.append(f"Role title: {opp.title}")
+    if opp.organization:
+        parts.append(f"Company: {opp.organization}")
+    return "\n\n".join(parts)

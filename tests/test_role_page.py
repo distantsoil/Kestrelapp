@@ -563,3 +563,43 @@ def test_no_legacy_panel_still_posts_research_to_the_old_routes(ids):
         ).read()
         assert "/research" not in src and "/contacts" not in src, tpl
         assert "/organization" in src, tpl
+
+
+# ------------------------------------------------------------------------------ cover letter (issue #107)
+def test_cover_letter_dialog_without_online_model_says_so(ids):
+    """Without an online model, the dialog says so and does not offer a consent panel."""
+    with _client() as c:
+        html = c.get(f"/opportunities/{ids['strong']}/role/cover-letter").text
+        assert "Online model not configured" in html
+        assert 'data-testid="consent-panel"' not in html
+
+
+def test_documents_tab_has_enabled_cover_letter_button(ids):
+    """The Documents tab shows an enabled New cover letter button (not disabled with no_drafter)."""
+    with _client() as c:
+        html = c.get(f"/opportunities/{ids['strong']}/documents").text
+        assert 'data-testid="new-cover-letter"' in html
+        # The button should NOT be disabled
+        import re
+        match = re.search(r'data-testid="new-cover-letter"[^>]*', html)
+        if match:
+            assert "disabled" not in match.group(0)
+
+
+def test_cover_letter_generate_requires_online_model(ids):
+    """Generating a cover letter without an online model is refused."""
+    with _client() as c:
+        r = c.post(f"/opportunities/{ids['strong']}/role/cover-letter/generate", data={"confirmed": "yes"})
+        assert "Online model not configured" in r.text or r.status_code in (400, 403)
+
+
+def test_cover_letter_draft_shows_style_marks():
+    """When a draft is generated, the template renders style marks for flagged phrases."""
+    # Verify the draft template includes the style marks partial
+    tpl = open(
+        "kestrel/web/templates/partials/role_cover_letter_draft.html", encoding="utf-8"
+    ).read()
+    assert "style_marks.html" in tpl
+    assert "marks(flags" in tpl
+    assert 'data-testid="cover-letter-marks"' in tpl
+    assert 'data-testid="cover-letter-text"' in tpl

@@ -1,0 +1,36 @@
+{# Cover letter draft display (issue #107). Shows the generated draft with plain-writing
+   marks for stock phrasing and ungrounded claims. The operator can edit or discard it. #}
+{% from "partials/style_marks.html" import marks, note %}
+{% from "partials/role_icons.html" import ric %}
+<div id="rl-cover-draft" class="rl-cover-draft" data-testid="cover-letter-draft">
+  <div class="k-card rl-card">
+    <header class="k-sec-head">
+      <span class="k-badge k-badge--tier">{{ ric('doc') }}</span>
+      <div class="k-grow"><h3>Cover letter draft</h3></div>
+      <button type="button" class="k-btn k-btn--sm" data-rl-close>Close</button>
+    </header>
+    <div class="rl-cover-body">
+      <div class="rl-cover-text" data-testid="cover-letter-text">
+        {{ draft_value }}
+      </div>
+      {# Plain-writing marks (issue #107, D-UI-237): inline flags for stock phrasing and
+         ungrounded claims. The note appears once under the text if any marks show. #}
+      {% if flags %}
+      <div class="rl-cover-marks" data-testid="cover-letter-marks">
+        {{ marks(flags, prefix='body.') }}
+      </div>
+      {{ note(flags, prefixes=('body.',)) }}
+      {% endif %}
+      {% if unverified %}
+      <div class="rl-cover-unverified" data-testid="cover-letter-unverified">
+        <p class="rl-warn">Claims not in your proof points: {{ unverified|join(', ') }}</p>
+      </div>
+      {% endif %}
+      <p class="rl-dsm">This draft is Kestrel's. Edit it to your voice, or discard it. Nothing is ever sent for you.</p>
+      <div class="rl-btns">
+        <a class="k-btn k-btn--primary" href="#" data-rl-cover-edit>Edit</a>
+        <a class="k-btn" href="#" data-rl-cover-discard>Discard</a>
+      </div>
+    </div>
+  </div>
+</div>
