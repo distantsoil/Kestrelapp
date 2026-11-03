@@ -358,27 +358,52 @@ def parse_rows(text: str) -> ImportReview:
 # ----------------------------------------------------------------------------- the database
 async def _existing_pursuits(
     session: AsyncSession,
-) -> list[tuple[int, str, str | None, str | None]]:
+) -> list[tuple[int, str, str | None, str | None, str | None]]:
     rows = (
         await session.execute(
-            select(Pursuit.id, Org.normalized_name, Opportunity.title, Opportunity.url)
+            select(Pursuit.id, Org.normalized_name, Opportunity.title, Opportunity.url,
+                   Pursuit.applied_at)
             .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
             .outerjoin(Org, Org.id == Opportunity.org_id)
         )
     ).all()
-    return [(pid, norm or "", title, url) for pid, norm, title, url in rows]
+    return [(pid, norm or "", title, url, applied) for pid, norm, title, url, applied in rows]
 
 
 def _find_tracked(row: ImportRow, existing) -> tuple[int | None, str]:
     url = (row.url or "").strip().rstrip("/")
     norm = normalized_name(row.company) or row.company.lower()
     tset = title_tokens(row.title)
-    for pid, org_norm, title, purl in existing:
+    # Date rule (#131): 0-3 days = same app, 4-14 days = ask, >14 days = re-apply
+    row_date = _parse_date(row.date)
+    for pid, org_norm, title, purl, applied in existing:
         if url and purl and purl.rstrip("/") == url:
             return pid, f"same URL as pursuit #{pid}"
         if org_norm == norm and jaccard(tset, title_tokens(title)) > TITLE_MATCH:
-            return pid, f"same org and title as pursuit #{pid}"
+            # Check the date rule
+            if row_date and applied:
+                app_date = _parse_date(applied) if isinstance(applied, str) else applied
+                if app_date is not None:
+                    delta = abs((row_date - app_date).days)
+                    if delta <= 3:
+                        return pid, f"same org, title and date as pursuit #{pid}"
+                    elif delta <= 14:
+                        return pid, f"same org and title, {delta} days apart from pursuit #{pid}"
+                    # >14 days: treat as re-application, do not match
+            else:
+                return pid, f"same org and title as pursuit #{pid}"
     return None, ""
+
+
+def _parse_date(s: str) -> datetime | None:
+    """Parse a date string; returns None on failure."""
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            return _dt.strptime(s.strip(), fmt)
+        except (ValueError, AttributeError):
+            continue
+    return None
 
 
 async def review(session: AsyncSession, text: str) -> ImportReview:
