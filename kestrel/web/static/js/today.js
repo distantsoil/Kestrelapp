@@ -15,7 +15,7 @@
   var doc = root.document;
   if (!doc || !root.KUI || !root.KUI.page) return;
 
-  var GAP = 16, PEEK = 60, CARD = 270;
+  var GAP = 16, PEEK = 60, CARD = 270, MAX_CARD = 420;
   // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
   var S = { idx: 0, perView: 4, cw: 0, fade: null, poll: null };
   var cx = null;
@@ -50,7 +50,7 @@
     if (!vp) return;
     var vpw = vp.clientWidth;
     S.perView = Math.max(1, Math.floor((vpw - 2 * PEEK - GAP) / (CARD + GAP)));
-    S.cw = (vpw - 2 * PEEK - GAP * (S.perView + 1)) / S.perView;
+    S.cw = Math.min(MAX_CARD, (vpw - 2 * PEEK - GAP * (S.perView + 1)) / S.perView);
     cards().forEach(function (c) { if (!c.classList.contains('is-collapse')) c.style.width = S.cw + 'px'; });
     balance();
     var dots = $('#td-dots');
