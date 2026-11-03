@@ -227,6 +227,7 @@ def test_raw_model_replies_are_not_marked_safe():
     """The template that displays raw model replies must not use |safe on model text.
     The comment in retry_row.html:3 states this explicitly."""
     from pathlib import Path
+
     import kestrel
 
     tpl_dir = Path(kestrel.__file__).parent / "web" / "templates" / "partials"
