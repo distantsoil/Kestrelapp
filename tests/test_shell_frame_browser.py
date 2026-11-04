@@ -778,9 +778,14 @@ _SIDE_FRAMES = """() => new Promise(resolve => {
   const widths = [];
   const t0 = performance.now();
   document.querySelector('.k-side-toggle').click();
+  // The running transition, read once right after the click: its duration does not depend on
+  // how many frames a busy machine manages to paint.
+  const glide = document.querySelector('#kwin').getAnimations()
+    .filter(a => a.transitionProperty === 'grid-template-columns')
+    .map(a => a.effect.getComputedTiming().duration);
   const tick = () => {
     widths.push(Math.round(side.getBoundingClientRect().width * 10) / 10);
-    if (performance.now() - t0 < 900) requestAnimationFrame(tick); else resolve(widths);
+    if (performance.now() - t0 < 900) requestAnimationFrame(tick); else resolve({widths, glide});
   };
   requestAnimationFrame(tick);
 })"""
@@ -798,12 +803,17 @@ def test_the_sidebar_collapse_glides_keeps_names_and_survives_blocked_storage(li
         is_collapsed = "document.querySelector('#kwin').classList.contains('is-side-collapsed')"
         assert page.evaluate(is_collapsed) is False
         full = page.evaluate("document.querySelector('#sidebar').getBoundingClientRect().width")
-        widths = page.evaluate(_SIDE_FRAMES)
+        sampled = page.evaluate(_SIDE_FRAMES)
+        widths, glide = sampled["widths"], sampled["glide"]
         assert page.evaluate(is_collapsed)
         end = widths[-1]
         assert end < full - 100, (full, end)
+        # A glide, not a snap: a width transition of at least 0.25 s is running after the click,
+        # and the sampled width passes through in-between values. The frame count is not pinned,
+        # because a loaded machine paints fewer frames of the same 0.3 s glide.
+        assert glide and min(glide) >= 250, glide
         between = [w for w in widths if end + 2 < w < full - 2]
-        assert len(between) >= 4, widths  # several in-between frames: a glide, not a snap
+        assert len(between) >= 2, widths
         assert all(a >= b - 0.5 for a, b in zip(widths, widths[1:], strict=False)), widths
         names = page.evaluate(
             "Array.from(document.querySelectorAll('.mainnav > a')).map("
@@ -819,9 +829,11 @@ def test_the_sidebar_collapse_snaps_under_reduced_motion(live):
     base, browser, _bridge = live
     ctx, page, errors = _page(browser, base, "/help", reduced_motion="reduce")
     try:
-        widths = page.evaluate(_SIDE_FRAMES)
+        sampled = page.evaluate(_SIDE_FRAMES)
+        widths = sampled["widths"]
         end = widths[-1]
         assert len([w for w in widths if end + 2 < w < widths[0] - 2]) == 0, widths
+        assert all(d == 0 for d in sampled["glide"]), sampled["glide"]  # no transition runs
         assert errors == []
     finally:
         ctx.close()
