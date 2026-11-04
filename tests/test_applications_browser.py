@@ -23,8 +23,10 @@ from tests.browser import (
     art_visible_left,
     assert_page_remounts_clean,
     launch_sync,
+    swap_result,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -300,6 +302,157 @@ def test_the_page_mounts_unmounts_and_mounts_again_and_keeps_other_history_state
         assert page.evaluate("history.state.apps.q") == ""
         page.fill("#ap-q", "zzz")
         assert "q=zzz" not in page.url
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+_TITLES = ("() => Array.from(document.querySelectorAll('.ap-table tbody tr .ap-tt b'))"
+           ".map(b => b.textContent.trim())")
+
+
+def _open_table(live, query: str = "&view=table", **ctx_kw):
+    base, browser, track, _ids = live
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900}, **ctx_kw)
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    return ctx, page, errors, f"{base}/pursuits?track={track}{query}"
+
+
+def test_table_headers_are_buttons_that_sort_by_the_visible_title_and_announce_it(live):
+    """#137: a sortable header is a real button, aria-sort follows it, and the role column sorts
+    on the title shown (not the search text), both ways."""
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        assert page.locator("th[data-sort] > button.ap-sortbtn").count() == 5
+        assert page.get_attribute("th[data-sort=role]", "aria-sort") == "none"
+        page.focus("th[data-sort=role] button")
+        page.keyboard.press("Enter")  # keyboard, not a mouse click
+        assert page.get_attribute("th[data-sort=role]", "aria-sort") == "ascending"
+        titles = page.evaluate(_TITLES)
+        assert titles == sorted(titles, key=str.lower), titles
+        page.keyboard.press("Space")
+        assert page.get_attribute("th[data-sort=role]", "aria-sort") == "descending"
+        assert page.evaluate(_TITLES) == sorted(titles, key=str.lower, reverse=True)
+        # Another column takes the mark; the role header goes back to none.
+        page.click("th[data-sort=fit] button")
+        assert page.get_attribute("th[data-sort=role]", "aria-sort") == "none"
+        assert page.get_attribute("th[data-sort=fit]", "aria-sort") == "descending"
+        # The mark is drawn (a direction indicator), not only announced.
+        wait_for_layout(page)
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('th[data-sort=fit] button'), '::after')"
+            ".opacity") == "1"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_due_sorts_most_overdue_first_and_rows_with_no_due_stay_last_either_way(live):
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        dues = """() => Array.from(document.querySelectorAll('.ap-table tbody tr')).map(r => ({
+            folded: r.dataset.folded, quiet: r.dataset.quiet,
+            days: Number(r.dataset.quiet_days)}))"""
+        page.click("th[data-sort=due] button")
+        first = page.evaluate(dues)
+        overdue = [r["days"] for r in first if r["folded"] != "1" and r["quiet"] == "1"]
+        assert overdue == sorted(overdue, reverse=True) and overdue, first
+        assert first[0]["quiet"] == "1"  # the first press shows what needs you most
+        assert all(r["folded"] == "1" for r in first[-2:]), first  # closed rows last
+        page.click("th[data-sort=due] button")  # reversed: still closed rows last
+        second = page.evaluate(dues)
+        assert second[-1]["folded"] == "1"
+        assert all(r["folded"] == "1" for r in second[-2:]), second
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_rows_glide_to_their_new_place_and_reduced_motion_snaps(live):
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        n = page.evaluate("""() => {
+            document.querySelector('th[data-sort=role] button').click();
+            return document.querySelectorAll('.ap-table tbody tr')
+              .length && Array.from(document.querySelectorAll('.ap-table tbody tr'))
+              .reduce((k, r) => k + r.getAnimations().length, 0); }""")
+        assert n >= 2, n  # moved rows are animating from their old places
+    finally:
+        ctx.close()
+    ctx, page, errors, url = _open_table(live, reduced_motion="reduce")
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        n = page.evaluate("""() => {
+            document.querySelector('th[data-sort=role] button').click();
+            return Array.from(document.querySelectorAll('.ap-table tbody tr'))
+              .reduce((k, r) => k + r.getAnimations().length, 0); }""")
+        assert n == 0, n
+    finally:
+        ctx.close()
+
+
+def test_the_sort_and_the_view_survive_a_swap_without_a_flash(live):
+    """#137: after the board swaps (htmx), the sort is applied before paint (the order is already
+    right in the afterSwap handler) and the saved view is rendered by the server, with no click
+    on mount."""
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        page.click("th[data-sort=role] button")
+        page.click("th[data-sort=role] button")  # descending
+        expect = page.evaluate(_TITLES)
+        got = swap_result(
+            page, "/pursuits?view=table",
+            "htmx.ajax('GET', '/pursuits?view=table&track=' + arg,"
+            " {target: '#apps-board', swap: 'outerHTML'});",
+            """return {titles: Array.from(document.querySelectorAll('.ap-table tbody tr .ap-tt b'))
+                .map(b => b.textContent.trim()),
+              sort: document.querySelector('th[data-sort=role]').getAttribute('aria-sort')};""",
+            track)
+        assert got["titles"] == expect and got["sort"] == "descending", got
+        # The choice of Table is kept by cookie: a fresh load with no view in the URL renders the
+        # table in the server's own HTML (no board first, then a switch).
+        page.click('[data-testid="view-board"]')
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
+        page.click('[data-testid="view-table"]')
+        page.wait_for_selector('[data-testid="apps-table"]')
+        html = page.request.get(f"{base}/pursuits?track={track}").text()
+        assert 'data-testid="apps-table"' in html and 'data-testid="apps-board-grid"' not in html
+        page.click('[data-testid="view-board"]')
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
+        html = page.request.get(f"{base}/pursuits?track={track}").text()
+        assert 'data-testid="apps-board-grid"' in html
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_sorting_and_the_view_work_with_storage_blocked(live):
+    block = ("Object.defineProperty(window, 'localStorage', "
+             "{get() { throw new Error('blocked'); }});")
+    ctx, page, errors, url = _open_table(live)
+    page.add_init_script(block)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        page.click("th[data-sort=role] button")
+        titles = page.evaluate(_TITLES)
+        assert titles == sorted(titles, key=str.lower)
+        page.click('[data-testid="view-board"]')
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
         assert not errors, errors
     finally:
         ctx.close()

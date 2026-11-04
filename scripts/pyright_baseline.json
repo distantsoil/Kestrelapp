@@ -1,0 +1,1136 @@
+{
+ "note": "Recorded pyright errors (D-TEST-8). Only NEW errors in changed files fail. Do not regenerate to silence a failure; fix the code.",
+ "total": 941,
+ "files": {
+  "kestrel/analytics/today.py": {
+   "reportArgumentType|62b0a784ab|Argument of type \"Sequence[Row[Tuple[str, int]]]\" cannot be assigned to parameter \"iterable\" of type": 1,
+   "reportArgumentType|7677eec6c3|Argument of type \"Literal['t0_reject']\" cannot be assigned to parameter \"key\" of type \"bytes\" in fun": 1,
+   "reportArgumentType|84a505bb48|Argument of type \"list[dict[str, Unknown]]\" cannot be assigned to parameter \"value\" of type \"int\" in": 1,
+   "reportCallIssue|62b0a784ab|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|7677eec6c3|No overloads for \"get\" match the provided arguments": 1,
+   "reportOptionalMemberAccess|e314ac328b|\"counts\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/bench/check.py": {
+   "reportArgumentType|035756d9de|Argument of type \"SimpleNamespace\" cannot be assigned to parameter \"opp\" of type \"Opportunity\" in fu": 1,
+   "reportArgumentType|451f8da43a|Argument of type \"list[str | _T@fromkeys]\" cannot be assigned to parameter \"steps\" of type \"Sequence": 1,
+   "reportArgumentType|86278df6c9|Argument of type \"list[str | _T@fromkeys]\" cannot be assigned to parameter \"steps\" of type \"Sequence": 1,
+   "reportArgumentType|9188740cf4|Argument of type \"str | _T@fromkeys\" cannot be assigned to parameter \"key\" of type \"str\" in function": 2,
+   "reportAttributeAccessIssue|5ab091ab2a|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|823bae5c95|Cannot access attribute \"verdict\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|d3716efc62|Cannot access attribute \"confidence\" for class \"BaseModel\"": 1
+  },
+  "kestrel/bench/harness.py": {
+   "reportArgumentType|73891eda2f|Argument of type \"SimpleNamespace\" cannot be assigned to parameter \"opp\" of type \"Opportunity\" in fu": 1,
+   "reportAttributeAccessIssue|0d24a78af1|Cannot access attribute \"legitimacy\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|1714984e0c|Cannot access attribute \"blockers\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|2ac860049b|Cannot access attribute \"holistic\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|395ab57b89|Cannot access attribute \"effective_num_ctx\" for class \"LLMClient\"": 1,
+   "reportAttributeAccessIssue|8bcac69ff0|Cannot access attribute \"dimensions\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|9c5c964525|Cannot access attribute \"dimensions\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|9ee2ef31f9|Cannot access attribute \"verdict\" for class \"BaseModel\"": 1
+  },
+  "kestrel/cli.py": {
+   "reportArgumentType|9ff384bbf0|Argument of type \"Generator[Traversable, None, None]\" cannot be assigned to parameter \"iterable\" of ": 1,
+   "reportArgumentType|a8aa801a6a|Argument of type \"LLMClient | None\" cannot be assigned to parameter \"client\" of type \"LLMClient\" in ": 1,
+   "reportAttributeAccessIssue|8f4ea71163|Cannot access attribute \"roles\" for class \"object\"": 1,
+   "reportOptionalMemberAccess|0fa0d7d874|\"over_page_limit\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|6564e9b3ec|\"defaults_used\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|877d4e53c9|\"hide_suggestions\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|877d4e53c9|\"over_page_limit\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9eece6fc00|\"filename\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9eece6fc00|\"page_count\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9eece6fc00|\"pdf_path\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|ebaf704386|\"hide_suggestions\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/desktop/frame.py": {
+   "reportAttributeAccessIssue|0720889f50|\"windll\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|0bc604293d|\"WinDLL\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|0cb8b94425|\"WinDLL\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|ca4c60db7a|\"WINFUNCTYPE\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|d1bff513ac|\"WinDLL\" is not a known attribute of module \"ctypes\"": 2,
+   "reportMissingImports|17de43bfd3|Import \"System.Drawing\" could not be resolved": 1,
+   "reportMissingImports|1b70597f73|Import \"gi.repository\" could not be resolved": 1,
+   "reportMissingImports|29b411adaa|Import \"gi\" could not be resolved": 1,
+   "reportMissingImports|7a1f84ed48|Import \"System.Windows.Forms\" could not be resolved": 1,
+   "reportMissingImports|81a8410098|Import \"PyObjCTools\" could not be resolved": 1,
+   "reportMissingImports|a408525033|Import \"System\" could not be resolved": 1,
+   "reportMissingImports|b85a69b643|Import \"System\" could not be resolved": 1,
+   "reportMissingImports|df3ca8471c|Import \"AppKit\" could not be resolved": 1
+  },
+  "kestrel/desktop/shell.py": {
+   "reportArgumentType|16b4734b4d|Argument of type \"() -> bool\" cannot be assigned to parameter \"retry\" of type \"(() -> None) | None\" ": 1,
+   "reportArgumentType|388899e1f2|Argument of type \"() -> bool\" cannot be assigned to parameter \"open_logs\" of type \"(() -> None) | No": 1,
+   "reportArgumentType|81a47dacd3|Argument of type \"() -> bool\" cannot be assigned to parameter \"fn\" of type \"(() -> None) | None\" in ": 1,
+   "reportArgumentType|a1388b8d91|Argument of type \"() -> bool\" cannot be assigned to parameter \"download\" of type \"(() -> None) | Non": 1,
+   "reportAttributeAccessIssue|32a665451c|\"WinDLL\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|3d9cdf1952|\"QueryValueEx\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|58de2a23ca|\"windll\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|702338b73f|\"startfile\" is not a known attribute of module \"os\"": 1,
+   "reportAttributeAccessIssue|741c6380d7|\"WinDLL\" is not a known attribute of module \"ctypes\"": 2,
+   "reportAttributeAccessIssue|a63b076ea2|\"startfile\" is not a known attribute of module \"os\"": 1,
+   "reportAttributeAccessIssue|ad491081f3|\"OpenKey\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|bdb212afa3|\"get_last_error\" is not a known attribute of module \"ctypes\"": 1,
+   "reportAttributeAccessIssue|d23009dd90|\"HKEY_CURRENT_USER\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|e6f7e4bde5|\"WinDLL\" is not a known attribute of module \"ctypes\"": 1,
+   "reportMissingImports|81a8410098|Import \"PyObjCTools\" could not be resolved": 1,
+   "reportOptionalMemberAccess|6b311074b9|\"title\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|ea6ed34139|\"icon\" is not a known attribute of \"None\"": 1,
+   "reportPrivateImportUsage|1d6b3179dd|\"initialize\" is not exported from module \"webview\"": 1
+  },
+  "kestrel/docs/assess.py": {
+   "reportArgumentType|592216cd8f|Argument of type \"None\" cannot be assigned to parameter \"opportunity_id\" of type \"int\" in function \"": 1
+  },
+  "kestrel/docs/catalog.py": {
+   "reportReturnType|d1d38a7c7d|Type \"(text: str) -> (str | None)\" is not assignable to return type \"(str) -> str\"": 1
+  },
+  "kestrel/docs/current_employer.py": {
+   "reportAssignmentType|ee2e95c9f0|Type \"set[str]\" is not assignable to declared type \"list[str] | None\"": 1,
+   "reportOperatorIssue|ff4308aa6f|Operator \"in\" not supported for types \"str\" and \"list[str] | None\"": 1,
+   "reportOptionalIterable|3e5a4dc969|Object of type \"None\" cannot be used as iterable value": 1,
+   "reportOptionalIterable|56835c39e2|Object of type \"None\" cannot be used as iterable value": 1,
+   "reportOptionalMemberAccess|2597ff83c3|\"strip\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|2c316a373c|\"strip\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|b90ad03cc9|\"strip\" is not a known attribute of \"None\"": 1,
+   "reportOptionalOperand|42880b8ab8|Operator \"%\" not supported for \"None\"": 1,
+   "reportReturnType|d3202e3731|Type \"list[Row[Tuple[DocSection, DocMaster]]]\" is not assignable to return type \"list[tuple[DocSecti": 1
+  },
+  "kestrel/docs/imports.py": {
+   "reportArgumentType|58ae6ba6a3|Argument of type \"None\" cannot be assigned to parameter \"opportunity_id\" of type \"int\" in function \"": 1,
+   "reportArgumentType|b64f4a24c7|Argument of type \"list[dict[str, str | Unknown | list[str] | bool]]\" cannot be assigned to parameter": 1,
+   "reportAttributeAccessIssue|42f97f5bfa|Cannot access attribute \"variants\" for class \"BaseModel\"": 1,
+   "reportGeneralTypeIssues|297bc0998b|\"BaseException\" is not iterable": 2,
+   "reportGeneralTypeIssues|6c582b66cd|\"None\" is not iterable": 1,
+   "reportGeneralTypeIssues|a62837ffd4|\"None\" is not iterable": 1,
+   "reportOptionalMemberAccess|34ea1e28de|\"context_lines\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9a24a61d85|\"bullets\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9d41ff19dd|\"context_lines\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|c8218b7de3|\"proof_points\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|07a952b83a|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/docs/letter_task.py": {
+   "reportAttributeAccessIssue|1b76bd1092|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|3b0cc4685c|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|6665126b5f|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|cffd950c2e|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/docs/render.py": {
+   "reportArgumentType|116af13c35|Argument of type \"str | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__s": 1,
+   "reportArgumentType|2c4cebe323|Argument of type \"str | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__s": 1,
+   "reportArgumentType|3d37145e00|Argument of type \"str | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__s": 1,
+   "reportArgumentType|838d36957e|Argument of type \"str | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__s": 1,
+   "reportArgumentType|b3b208eac7|Argument of type \"str | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"__get": 1,
+   "reportArgumentType|cb4358da90|Argument of type \"str | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"__get": 1,
+   "reportArgumentType|d1ae57d8bf|Argument of type \"float\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setite": 1,
+   "reportArgumentType|d1ae57d8bf|Argument of type \"str | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"__get": 1,
+   "reportArgumentType|eebab3676d|Argument of type \"str | None\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__s": 1,
+   "reportReturnType|bcb4ff2718|Type \"list[tuple[_AttributeValue | None, str]]\" is not assignable to return type \"list[tuple[str, st": 1
+  },
+  "kestrel/docs/select.py": {
+   "reportOptionalMemberAccess|1aeada8cc0|\"llm\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/docs/service.py": {
+   "reportAssignmentType|c10c057df6|Type \"None\" is not assignable to declared type \"list[Unknown]\"": 1
+  },
+  "kestrel/doctor.py": {
+   "reportArgumentType|17e8e488c1|Argument of type \"_ProbeClient\" cannot be assigned to parameter \"client\" of type \"OllamaClient\" in f": 1,
+   "reportArgumentType|8609aaeb9f|Argument of type \"_ProbeClient\" cannot be assigned to parameter \"client\" of type \"OllamaClient\" in f": 1,
+   "reportArgumentType|c7cdbd6e69|Argument of type \"_ProbeClient\" cannot be assigned to parameter \"client\" of type \"OllamaClient\" in f": 1,
+   "reportGeneralTypeIssues|f55ff46580|Expected mapping for dictionary unpack operator": 1,
+   "reportOptionalMemberAccess|e2785c9522|\"backend\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|f55ff46580|\"fetch\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/evals/smart_filter_report.py": {
+   "reportOptionalMemberAccess|1d6edfc223|\"split\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/adp.py": {
+   "reportOptionalMemberAccess|6827d3c78f|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|a6cf6efe9a|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/adzuna.py": {
+   "reportOptionalMemberAccess|2090f80665|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|49f71eba97|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|60812b9a5d|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|b6cc27db6d|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/breezy.py": {
+   "reportOptionalIterable|edd7fbecef|Object of type \"None\" cannot be used as iterable value": 1,
+   "reportOptionalMemberAccess|34dd57dd93|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|785af8bf48|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|ab1c922923|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/careers_page.py": {
+   "reportReturnType|fa534d34e9|Type \"list[RawPosting]\" is not assignable to return type \"PostingBatch\"": 1
+  },
+  "kestrel/ingest/adapters/himalayas.py": {
+   "reportOptionalOperand|214c2f359f|Operator \"/\" not supported for \"None\"": 2
+  },
+  "kestrel/ingest/adapters/jobspy.py": {
+   "reportGeneralTypeIssues|ec0d27d9f8|Invalid conditional operand of type \"bool | NDArray[bool_] | NDFrame\"": 1
+  },
+  "kestrel/ingest/adapters/lever.py": {
+   "reportOptionalMemberAccess|876a66619b|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|d072389f78|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/recruitee.py": {
+   "reportOptionalMemberAccess|08eda775d0|\"get\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|7d9ecb8b2b|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|b9e0bfbd5e|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/rippling.py": {
+   "reportOptionalMemberAccess|400c18ab2c|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/smartrecruiters.py": {
+   "reportOptionalMemberAccess|59da040576|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|59e0027341|\"get\" is not a known attribute of \"None\"": 2
+  },
+  "kestrel/ingest/adapters/teamtailor.py": {
+   "reportOptionalMemberAccess|167e9b30e3|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|30e2fe648d|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|5a8756f09b|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|6f5b02029b|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|86ffe9faaa|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|ce42d473ea|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|e4e58c943d|\"get\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/adapters/usajobs.py": {
+   "reportArgumentType|a9901059da|Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in ": 2
+  },
+  "kestrel/ingest/country_names.py": {
+   "reportCallIssue|5ac5f89d6f|No overloads for \"open\" match the provided arguments": 1
+  },
+  "kestrel/ingest/fetch_cap.py": {
+   "reportAttributeAccessIssue|be5e285678|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/ingest/http.py": {
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"auth\" of type \"AuthTypes | UseClientDefault": 1,
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"content\" of type \"RequestContent | None\" in": 1,
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"cookies\" of type \"CookieTypes | None\" in fu": 1,
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"data\" of type \"RequestData | None\" in funct": 1,
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"extensions\" of type \"RequestExtensions | No": 1,
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"files\" of type \"RequestFiles | None\" in fun": 1,
+   "reportArgumentType|8ab85ec7f1|Argument of type \"bool\" cannot be assigned to parameter \"params\" of type \"QueryParamTypes | None\" in": 1
+  },
+  "kestrel/ingest/location.py": {
+   "reportCallIssue|b51f6b1d02|No overloads for \"open\" match the provided arguments": 1
+  },
+  "kestrel/ingest/normalize.py": {
+   "reportArgumentType|d92301ff12|Argument of type \"int | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 1,
+   "reportArgumentType|e81d0b1ba5|Argument of type \"str | None\" cannot be assigned to parameter \"group_id\" of type \"str\" in function \"": 1,
+   "reportCallIssue|d92301ff12|No overloads for \"get\" match the provided arguments": 1
+  },
+  "kestrel/ingest/runner.py": {
+   "reportArgumentType|5a6e51c38e|Argument of type \"dict[Unknown, Unknown] | None\" cannot be assigned to parameter \"config\" of type \"d": 1,
+   "reportArgumentType|e61b70e8a7|Argument of type \"dict[Unknown, Unknown] | None\" cannot be assigned to parameter \"config\" of type \"d": 1,
+   "reportOptionalMemberAccess|4589f25b6e|\"counts\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|568d4e9305|\"finished_at\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9728f5c8dc|\"status\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|d4d565b4b9|\"error\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/ingest/scheduler.py": {
+   "reportAttributeAccessIssue|65a7711b11|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|bcd538efd9|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|f63a055430|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/ingest/signal_runner.py": {
+   "reportOptionalMemberAccess|1b2c3e8b25|\"status\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|2c2667f06e|\"counts\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|568d4e9305|\"finished_at\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|9728f5c8dc|\"status\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|d4d565b4b9|\"error\" is not a known attribute of \"None\"": 2
+  },
+  "kestrel/ingest/signal_sources/sam_gov.py": {
+   "reportArgumentType|3f70f85756|Argument of type \"str | None\" cannot be assigned to parameter \"element\" of type \"str\" in function \"a": 1
+  },
+  "kestrel/ingest/signal_sources/sec_edgar.py": {
+   "reportArgumentType|3f70f85756|Argument of type \"str | None\" cannot be assigned to parameter \"element\" of type \"str\" in function \"a": 1,
+   "reportReturnType|fa5627ed95|Type \"Unknown | Any | None\" is not assignable to return type \"str\"": 1
+  },
+  "kestrel/ingest/triggers.py": {
+   "reportAttributeAccessIssue|030ebd4c80|Cannot access attribute \"event_type\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|0d1a408435|Cannot access attribute \"evidence_quote\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|0d1a408435|Cannot access attribute \"reasoning\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|158fa7dab7|Cannot access attribute \"event_type\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|158fa7dab7|Cannot access attribute \"evidence_quote\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|1cf9681344|Cannot access attribute \"confidence\" for class \"BaseModel\"": 3,
+   "reportAttributeAccessIssue|1d5dd0a656|Cannot access attribute \"confidence\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|1d5dd0a656|Cannot access attribute \"event_type\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|219628d8d7|Cannot access attribute \"event_type\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|4823a9effb|Cannot access attribute \"confidence\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|4823a9effb|Cannot access attribute \"is_relevant\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|58dc8eec00|Cannot access attribute \"confidence\" for class \"BaseModel\"": 2,
+   "reportAttributeAccessIssue|6067c9e07a|Cannot access attribute \"org_name\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|6246ec8831|Cannot access attribute \"evidence_quote\" for class \"BaseModel\"": 3,
+   "reportAttributeAccessIssue|6828fc4120|Cannot access attribute \"evidence_quote\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|6828fc4120|Cannot access attribute \"implied_need\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|6a31c80f3c|Cannot access attribute \"org_name\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|6b2f0fac19|Cannot access attribute \"event_date\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|83a5c61602|Cannot access attribute \"confidence\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|83a5c61602|Cannot access attribute \"event_type\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|b36482ad95|Cannot access attribute \"event_type\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|c88544bcfe|Cannot access attribute \"event_type\" for class \"BaseModel\"": 2,
+   "reportAttributeAccessIssue|dfb5e0c39d|Cannot access attribute \"implied_need\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|f3358dc5ad|Cannot access attribute \"urgency_window_days\" for class \"BaseModel\"": 3,
+   "reportAttributeAccessIssue|f8ebd55105|Cannot access attribute \"event_type\" for class \"BaseModel\"": 2,
+   "reportAttributeAccessIssue|ff7d659e4d|Cannot access attribute \"reasoning\" for class \"BaseModel\"": 1
+  },
+  "kestrel/interview/prep.py": {
+   "reportArgumentType|bd4a011827|Argument of type \"list[Unknown] | None\" cannot be assigned to parameter \"unknowns\" of type \"list[Unk": 1,
+   "reportArgumentType|ea85ee59df|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 2,
+   "reportArgumentType|f6ce613b80|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"g": 2,
+   "reportArgumentType|f6ce613b80|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 2,
+   "reportOptionalIterable|5f888bef46|Object of type \"None\" cannot be used as iterable value": 1,
+   "reportOptionalIterable|aef17ce7a5|Object of type \"None\" cannot be used as iterable value": 1
+  },
+  "kestrel/interview/prep_state.py": {
+   "reportAttributeAccessIssue|97c5521987|Cannot assign to attribute \"value\" for class \"Setting\"": 1
+  },
+  "kestrel/interview/question_task.py": {
+   "reportArgumentType|fdedb1d55d|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"g": 1,
+   "reportOptionalIterable|7bd8e04e46|Object of type \"None\" cannot be used as iterable value": 1
+  },
+  "kestrel/interview/stories.py": {
+   "reportArgumentType|06b3dc0aa6|Argument of type \"Literal['id']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | slic": 1,
+   "reportArgumentType|06b3dc0aa6|Argument of type \"Literal['story']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | s": 1,
+   "reportArgumentType|06b3dc0aa6|Argument of type \"Literal['story']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex": 1,
+   "reportArgumentType|4a2cfc253f|Argument of type \"Literal['story']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | s": 1,
+   "reportArgumentType|4a2cfc253f|Argument of type \"Literal['story']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex": 1,
+   "reportArgumentType|6c5ad0345a|Argument of type \"Literal['expires']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|6c5ad0345a|Argument of type \"Literal['expires']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|958f57ec02|Argument of type \"Literal['changes']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|958f57ec02|Argument of type \"Literal['changes']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|996fd9c05b|Argument of type \"Literal['opportunity_id']\" cannot be assigned to parameter \"key\" of type \"Supports": 1,
+   "reportArgumentType|9f349edb9b|Argument of type \"Literal['changes']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|9f349edb9b|Argument of type \"Literal['changes']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|a3df325419|Argument of type \"Sequence[Story]\" cannot be assigned to parameter \"existing\" of type \"list[Story]\" ": 1,
+   "reportArgumentType|ac8fe3b948|Argument of type \"Literal['id']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | slic": 1,
+   "reportArgumentType|af24a8def0|Argument of type \"Literal['usages']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|af24a8def0|Argument of type \"Literal['usages']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportArgumentType|bd2bbf8bb3|Argument of type \"Literal['expires']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|bd2bbf8bb3|Argument of type \"Literal['expires']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|c875e876f4|Argument of type \"Literal['tokens']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|c875e876f4|Argument of type \"Literal['tokens']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportArgumentType|f6f6ae59b6|Argument of type \"Literal['usages']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|f6f6ae59b6|Argument of type \"Literal['usages']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportArgumentType|fc351d775b|Argument of type \"Literal['expires']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|fc351d775b|Argument of type \"Literal['expires']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportAttributeAccessIssue|958f57ec02|Cannot access attribute \"items\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|97c5521987|Cannot assign to attribute \"value\" for class \"Setting\"": 1,
+   "reportAttributeAccessIssue|9f349edb9b|Cannot access attribute \"items\" for class \"str\"": 1,
+   "reportCallIssue|06b3dc0aa6|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|4a2cfc253f|Argument expression after ** must be a mapping with a \"str\" key type": 1,
+   "reportCallIssue|4a2cfc253f|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|6c5ad0345a|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|958f57ec02|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|9f349edb9b|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|af24a8def0|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|bd2bbf8bb3|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|c875e876f4|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|f6f6ae59b6|Argument expression after ** must be a mapping with a \"str\" key type": 1,
+   "reportCallIssue|f6f6ae59b6|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|fc351d775b|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportIndexIssue|06b3dc0aa6|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|06b3dc0aa6|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|06b3dc0aa6|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|4a2cfc253f|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|4a2cfc253f|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|4a2cfc253f|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|6c5ad0345a|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|6c5ad0345a|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|6c5ad0345a|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|958f57ec02|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|958f57ec02|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|958f57ec02|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|9f349edb9b|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|9f349edb9b|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|9f349edb9b|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|af24a8def0|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|af24a8def0|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|af24a8def0|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|bd2bbf8bb3|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|bd2bbf8bb3|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|bd2bbf8bb3|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|c875e876f4|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|c875e876f4|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|c875e876f4|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|f6f6ae59b6|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|f6f6ae59b6|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|f6f6ae59b6|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|fc351d775b|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|fc351d775b|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|fc351d775b|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOperatorIssue|6c5ad0345a|Operator \"<\" not supported for types \"Unknown | str\" and \"float\"": 1,
+   "reportOperatorIssue|bd2bbf8bb3|Operator \">\" not supported for types \"float\" and \"Unknown | str\"": 1,
+   "reportOperatorIssue|fc351d775b|Operator \"<\" not supported for types \"Unknown | str\" and \"float\"": 1,
+   "reportOptionalSubscript|06b3dc0aa6|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|4a2cfc253f|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|6c5ad0345a|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|958f57ec02|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|9f349edb9b|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|af24a8def0|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|bd2bbf8bb3|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|c875e876f4|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|f6f6ae59b6|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|fc351d775b|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/learning/calibration.py": {
+   "reportArgumentType|b5e416a4aa|Argument of type \"Literal['before']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|b5e416a4aa|Argument of type \"Literal['before']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportAttributeAccessIssue|b5e416a4aa|Cannot access attribute \"items\" for class \"str\"": 1,
+   "reportCallIssue|b5e416a4aa|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportIndexIssue|b5e416a4aa|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|b5e416a4aa|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|b5e416a4aa|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOptionalSubscript|b5e416a4aa|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/learning/features.py": {
+   "reportAttributeAccessIssue|0ce71ccef4|Cannot access attribute \"transform\" for class \"object\"": 1
+  },
+  "kestrel/learning/ledger.py": {
+   "reportArgumentType|1e1c730a94|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportArgumentType|28ed3a797d|Argument of type \"Sequence[Row[Tuple[str, int]]]\" cannot be assigned to parameter \"iterable\" of type": 1,
+   "reportArgumentType|29c5c1e969|Argument of type \"Literal['proposed']\" cannot be assigned to parameter \"key\" of type \"bytes\" in func": 1,
+   "reportArgumentType|3b34d740c3|Argument of type \"Literal['accepted']\" cannot be assigned to parameter \"key\" of type \"bytes\" in func": 1,
+   "reportArgumentType|7b199128f0|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportArgumentType|7d45e2cef3|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str]\" in": 1,
+   "reportArgumentType|9efe2647c6|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportArgumentType|b51566f615|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str]\" in": 1,
+   "reportCallIssue|27bbcd0d24|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|29c5c1e969|No overloads for \"get\" match the provided arguments": 1,
+   "reportCallIssue|3b34d740c3|No overloads for \"get\" match the provided arguments": 1,
+   "reportOperatorIssue|02ab498341|Operator \"+\" not supported for types \"Sequence[Row[Tuple[Label, Opportunity]]]\" and \"Sequence[Row[Tu": 1
+  },
+  "kestrel/learning/outcomes.py": {
+   "reportArgumentType|53bb341f6d|Argument of type \"Generator[float | None, None, None]\" cannot be assigned to parameter \"iterable\" of": 2,
+   "reportOperatorIssue|f342dbf2e1|Operator \">=\" not supported for types \"float | None\" and \"float | None\"": 1,
+   "reportOptionalOperand|15040350a1|Operator \"*\" not supported for \"None\"": 2,
+   "reportOptionalOperand|c4e0f603f9|Operator \"*\" not supported for \"None\"": 2
+  },
+  "kestrel/learning/reranker.py": {
+   "reportArgumentType|063950ffe8|Argument of type \"str | None\" cannot be assigned to parameter \"file\" of type \"FileDescriptorOrPath\" ": 1,
+   "reportArgumentType|13bd66d050|Argument of type \"int | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 2,
+   "reportArgumentType|44518712f9|Argument of type \"int | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 1,
+   "reportArgumentType|45c1b463f9|Argument of type \"int | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 1,
+   "reportArgumentType|b2ce5c2d92|Argument of type \"str | None\" cannot be assigned to parameter \"file\" of type \"FileDescriptorOrPath\" ": 1,
+   "reportAttributeAccessIssue|13bd66d050|Cannot assign to attribute \"_source_kind\" for class \"Opportunity\"": 2,
+   "reportAttributeAccessIssue|98293c77f6|Cannot access attribute \"predict\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|9f6901e233|Cannot assign to attribute \"_source_kind\" for class \"Opportunity\"": 1,
+   "reportCallIssue|063950ffe8|No overloads for \"open\" match the provided arguments": 1,
+   "reportCallIssue|b2ce5c2d92|No overloads for \"open\" match the provided arguments": 1,
+   "reportOptionalMemberAccess|6d60d9001c|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|b731c06b52|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|e31a6e2e66|\"get\" is not a known attribute of \"None\"": 1,
+   "reportReturnType|38c4011dee|Type \"dict[int, ndarray[Unknown, Unknown] | None]\" is not assignable to return type \"dict[int, ndarr": 1
+  },
+  "kestrel/learning/training.py": {
+   "reportAttributeAccessIssue|787912f626|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportGeneralTypeIssues|933b52c663|Expected mapping for dictionary unpack operator": 1,
+   "reportOperatorIssue|bb016ff4c7|Operator \"not in\" not supported for types \"Literal['result']\" and \"dict[Unknown, Unknown] | None\"": 1,
+   "reportOptionalMemberAccess|933b52c663|\"payload\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|ae1ef4525e|\"payload\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|bb016ff4c7|\"payload\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|c0b5feeac1|\"payload\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|ae1ef4525e|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|c0b5feeac1|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/llm/client.py": {
+   "reportArgumentType|76140e9e04|Argument of type \"float | None\" cannot be assigned to parameter \"timeout\" of type \"float\" in functio": 1
+  },
+  "kestrel/llm/guard.py": {
+   "reportArgumentType|8cc1fa7d22|Argument of type \"Any | str\" cannot be assigned to parameter \"max_tokens_cap\" of type \"int | None\" i": 1,
+   "reportArgumentType|8cc1fa7d22|Argument of type \"Any | str\" cannot be assigned to parameter \"repair\" of type \"bool\" in function \"co": 1,
+   "reportArgumentType|8cc1fa7d22|Argument of type \"Any | str\" cannot be assigned to parameter \"timeout\" of type \"float | None\" in fun": 1
+  },
+  "kestrel/llm/inprocess_embed.py": {
+   "reportAttributeAccessIssue|88ae653caf|Cannot access attribute \"astype\" for class \"SparseTensor\"": 1,
+   "reportAttributeAccessIssue|88ae653caf|Cannot access attribute \"astype\" for class \"dict[Unknown, Unknown]\"": 1,
+   "reportAttributeAccessIssue|88ae653caf|Cannot access attribute \"astype\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|c30efaec3b|Cannot access attribute \"ndim\" for class \"SparseTensor\"": 1,
+   "reportAttributeAccessIssue|c30efaec3b|Cannot access attribute \"ndim\" for class \"dict[Unknown, Unknown]\"": 1,
+   "reportAttributeAccessIssue|c30efaec3b|Cannot access attribute \"ndim\" for class \"list[Unknown]\"": 1,
+   "reportOperatorIssue|60dbb0da64|Operator \"*\" not supported for types \"ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dic": 1
+  },
+  "kestrel/llm/providers.py": {
+   "reportArgumentType|c28645f440|Argument of type \"str\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"pop\"": 1,
+   "reportCallIssue|c28645f440|No overloads for \"pop\" match the provided arguments": 1
+  },
+  "kestrel/mcp/server.py": {
+   "reportArgumentType|1397045d26|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str] | N": 1,
+   "reportArgumentType|22f00450ca|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportArgumentType|350a4a3123|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str] | N": 1,
+   "reportArgumentType|7846f15cc5|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str] | N": 1,
+   "reportArgumentType|9b0054e207|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportAttributeAccessIssue|da8cb9aed8|Cannot assign to attribute \"install_signal_handlers\" for class \"Server\"": 1,
+   "reportOptionalMemberAccess|86f11e8098|\"aclose\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/negotiation/compare.py": {
+   "reportArgumentType|103042457a|Argument of type \"list[float | None]\" cannot be assigned to parameter \"values\" of type \"list[float]\"": 1
+  },
+  "kestrel/pipeline/_shared.py": {
+   "reportArgumentType|48a10da389|Argument of type \"Sequence[Row[Tuple[str, dict[Unknown, Unknown] | list[Unknown] | str | int | float": 1,
+   "reportCallIssue|48a10da389|No overloads for \"__init__\" match the provided arguments": 1
+  },
+  "kestrel/pipeline/lane.py": {
+   "reportArgumentType|5d83e00c5d|Argument of type \"Opportunity | None\" cannot be assigned to parameter \"opp\" of type \"Opportunity\" in": 1,
+   "reportOptionalSubscript|b88f9d7710|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/pipeline/reranker_gate.py": {
+   "reportAttributeAccessIssue|1a0a2d9c7b|Cannot assign to attribute \"_source_kind\" for class \"Opportunity\"": 1
+  },
+  "kestrel/pipeline/runlog.py": {
+   "reportAttributeAccessIssue|1bda3981f8|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/pipeline/tasks.py": {
+   "reportAttributeAccessIssue|9d6e6bf9f1|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/pipeline/tier1.py": {
+   "reportAttributeAccessIssue|7511b3f8b9|Cannot access attribute \"confidence\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|75b50da7ce|Cannot access attribute \"confidence\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|78d7210381|Cannot access attribute \"reason\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|81586c919b|Cannot access attribute \"signals\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|9076a3b64b|Cannot access attribute \"reason\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|a6019dc57c|Cannot access attribute \"verdict\" for class \"BaseModel\"": 1
+  },
+  "kestrel/pipeline/tier2.py": {
+   "reportAttributeAccessIssue|1714984e0c|Cannot access attribute \"blockers\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|20453fceae|Cannot access attribute \"dimensions\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|2ac860049b|Cannot access attribute \"holistic\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|43a0950ee6|Cannot access attribute \"dimensions\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|7075374a87|Cannot access attribute \"legitimacy\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|9ee2ef31f9|Cannot access attribute \"verdict\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|a07a018cc5|Cannot access attribute \"blocks\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|d0849cf232|Cannot access attribute \"dimensions\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|fdfc6a9239|Cannot access attribute \"legitimacy\" for class \"BaseModel\"": 1
+  },
+  "kestrel/pipeline/tier3.py": {
+   "reportArgumentType|0e3e066fe2|Argument of type \"dict[Unknown, Unknown] | list[Unknown] | str | int | float | bool | None\" cannot b": 1,
+   "reportArgumentType|caee28cb22|Argument of type \"type[BaseModel] | None\" cannot be assigned to parameter \"model_cls\" of type \"type[": 1,
+   "reportAttributeAccessIssue|ba608d8161|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/pipeline/worker.py": {
+   "reportArgumentType|416dd79ce1|Argument of type \"Unknown | None\" cannot be assigned to parameter \"source_id\" of type \"int\" in funct": 1,
+   "reportArgumentType|f2e4e3a8a9|Argument of type \"Unknown | None\" cannot be assigned to parameter \"source_id\" of type \"int\" in funct": 1
+  },
+  "kestrel/privacy.py": {
+   "reportOptionalOperand|ff90cec7c7|Operator \"-\" not supported for \"None\"": 1
+  },
+  "kestrel/private_logging.py": {
+   "reportAttributeAccessIssue|de0c9e007e|Cannot access attribute \"get\" for class \"object\"": 1
+  },
+  "kestrel/queue/queue.py": {
+   "reportAttributeAccessIssue|1b76bd1092|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 2,
+   "reportAttributeAccessIssue|818fb0ae89|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|b064bbcde8|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|cf865102b7|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 2
+  },
+  "kestrel/queue/rescore.py": {
+   "reportAttributeAccessIssue|0064578fc8|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/research/company.py": {
+   "reportAttributeAccessIssue|52e41a23ec|Cannot access attribute \"angle_for_candidate\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|5415605eee|Cannot access attribute \"url\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|b271bc3b0b|Cannot access attribute \"unknowns\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|d58fc091b1|Cannot access attribute \"signals\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|d6970ecd45|Cannot access attribute \"summary_md\" for class \"BaseModel\"": 1,
+   "reportAttributeAccessIssue|fdad1fb11f|Cannot access attribute \"summary_md\" for class \"BaseModel\"": 1
+  },
+  "kestrel/research/contacts.py": {
+   "reportAttributeAccessIssue|4ebd64538d|Cannot access attribute \"url\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|f57dbc19bf|Cannot access attribute \"contacts\" for class \"BaseModel\"": 1
+  },
+  "kestrel/research/jobs.py": {
+   "reportArgumentType|58d2d10113|Argument of type \"Org | None\" cannot be assigned to parameter \"org\" of type \"Org\" in function \"resea": 1,
+   "reportArgumentType|5c1def8f49|Argument of type \"Org | None\" cannot be assigned to parameter \"org\" of type \"Org\" in function \"acqui": 1,
+   "reportArgumentType|a49291cbc6|Argument of type \"Org | None\" cannot be assigned to parameter \"org\" of type \"Org\" in function \"disco": 1,
+   "reportArgumentType|aabfd83e0f|Argument of type \"dict[Unknown, Unknown] | None\" cannot be assigned to parameter \"payload\" of type \"": 1,
+   "reportArgumentType|abd0625ae6|Argument of type \"dict[Unknown, Unknown] | None\" cannot be assigned to parameter \"payload\" of type \"": 1,
+   "reportAttributeAccessIssue|3f0b898af6|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|be5e285678|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportAttributeAccessIssue|f7e69f2e3a|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportGeneralTypeIssues|7bea8f401d|Expected mapping for dictionary unpack operator": 1,
+   "reportGeneralTypeIssues|7c2c65841c|Expected mapping for dictionary unpack operator": 1,
+   "reportGeneralTypeIssues|fd5a190629|Expected mapping for dictionary unpack operator": 1,
+   "reportOptionalSubscript|801273cc30|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|bf94cbcdb3|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/research/org_summary.py": {
+   "reportArgumentType|592216cd8f|Argument of type \"None\" cannot be assigned to parameter \"opportunity_id\" of type \"int\" in function \"": 1,
+   "reportArgumentType|6e89e2db28|Argument of type \"dict[str, PydanticDescriptorProxy[ModelValidatorDecoratorInfo]]\" cannot be assigne": 1,
+   "reportArgumentType|7448de4113|Argument of type \"dict[str, PydanticDescriptorProxy[ModelValidatorDecoratorInfo]]\" cannot be assigne": 1,
+   "reportCallIssue|0f6d8e34ac|No overloads for \"create_model\" match the provided arguments": 1,
+   "reportCallIssue|b6aa9f50e7|No overloads for \"create_model\" match the provided arguments": 1
+  },
+  "kestrel/research/validation.py": {
+   "reportOperatorIssue|92ad88ab46|Operator \"-\" not supported for types \"object\" and \"Literal[1]\"": 1
+  },
+  "kestrel/rules/helpers.py": {
+   "reportArgumentType|14b77a7075|Argument of type \"tuple[Unknown | None, Unknown | None]\" cannot be assigned to parameter \"key\" of ty": 1,
+   "reportArgumentType|47498a587d|Argument of type \"tuple[Unknown | None, Unknown | None]\" cannot be assigned to parameter \"key\" of ty": 1
+  },
+  "kestrel/services/applied_import.py": {
+   "reportReturnType|d81e5aa884|Type \"tuple[list[str] | None, list[list[str]], Literal['markdown']]\" is not assignable to return typ": 1
+  },
+  "kestrel/services/autostart.py": {
+   "reportAttributeAccessIssue|13c11943dd|\"QueryValueEx\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|199abe9312|\"DeleteValue\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|869d7c2a2c|\"CreateKey\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|869d7c2a2c|\"HKEY_CURRENT_USER\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|92c06e39c2|\"HKEY_CURRENT_USER\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|92c06e39c2|\"OpenKey\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|c5b9da121b|\"REG_SZ\" is not a known attribute of module \"winreg\"": 1,
+   "reportAttributeAccessIssue|c5b9da121b|\"SetValueEx\" is not a known attribute of module \"winreg\"": 1
+  },
+  "kestrel/services/diagnostics.py": {
+   "reportAttributeAccessIssue|c1d7e87a09|Cannot access attribute \"values\" for class \"object\"": 1
+  },
+  "kestrel/services/follow_up.py": {
+   "reportGeneralTypeIssues|f090178ca7|Expected mapping for dictionary unpack operator": 1
+  },
+  "kestrel/services/model_tasks.py": {
+   "reportArgumentType|d15ee42b9d|Argument of type \"dict[bytes, bytes]\" cannot be assigned to parameter \"rows\" of type \"dict[str, Any]": 1,
+   "reportArgumentType|fbbc3cf50d|Argument of type \"Sequence[Row[Tuple[str, dict[Unknown, Unknown] | list[Unknown] | str | int | float": 1,
+   "reportAttributeAccessIssue|b064bbcde8|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportCallIssue|fbbc3cf50d|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportOptionalMemberAccess|4c88195c4d|\"get\" is not a known attribute of \"None\"": 2
+  },
+  "kestrel/services/other_service.py": {
+   "reportAttributeAccessIssue|21ca3774d8|Cannot access attribute \"get\" for class \"object\"": 1
+  },
+  "kestrel/services/profile_edit.py": {
+   "reportArgumentType|1ad844934a|Argument of type \"dict[bytes, bytes]\" cannot be assigned to parameter \"value\" of type \"bytes\" in fun": 1,
+   "reportArgumentType|2a3b07e1b8|Argument of type \"Unknown | dict[str, str] | None\" cannot be assigned to parameter \"iterable\" of typ": 1,
+   "reportArgumentType|4311a2f08e|Argument of type \"Literal['hybrid_requires_metro']\" cannot be assigned to parameter \"key\" of type \"b": 1,
+   "reportArgumentType|4311a2f08e|Argument of type \"bool\" cannot be assigned to parameter \"value\" of type \"bytes\" in function \"__setit": 1,
+   "reportArgumentType|461857ccd6|Argument of type \"Unknown | dict[Unknown, Unknown]\" cannot be assigned to parameter \"value\" of type ": 1,
+   "reportArgumentType|61661793d8|Argument of type \"bytes\" cannot be assigned to parameter \"iterable\" of type \"Iterable[list[bytes]]\" ": 1,
+   "reportArgumentType|93d093ae96|Argument of type \"Unknown | dict[Unknown, Unknown] | None\" cannot be assigned to parameter \"block\" o": 1,
+   "reportArgumentType|a6cde2f479|Argument of type \"Literal['remote_ok']\" cannot be assigned to parameter \"key\" of type \"bytes\" in fun": 1,
+   "reportArgumentType|a6cde2f479|Argument of type \"bool\" cannot be assigned to parameter \"value\" of type \"bytes\" in function \"__setit": 1,
+   "reportArgumentType|bfa5f64978|Argument of type \"Literal['employment', 'consulting']\" cannot be assigned to parameter \"default\" of ": 1,
+   "reportArgumentType|bfa5f64978|Argument of type \"Literal['track']\" cannot be assigned to parameter \"key\" of type \"bytes\" in functio": 1,
+   "reportArgumentType|cdbae1d3ca|Argument of type \"Literal['is_active']\" cannot be assigned to parameter \"key\" of type \"bytes\" in fun": 1,
+   "reportArgumentType|cdbae1d3ca|Argument of type \"Literal[True]\" cannot be assigned to parameter \"default\" of type \"bytes\" in functi": 1,
+   "reportArgumentType|ceb82a4e77|Argument of type \"Unknown | dict[list[bytes], _VT@dict] | None\" cannot be assigned to parameter \"ite": 1,
+   "reportArgumentType|ffffed6d06|Argument of type \"Literal['hybrid_requires_metro']\" cannot be assigned to parameter \"key\" of type \"b": 1,
+   "reportCallIssue|2a3b07e1b8|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|61661793d8|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|ceb82a4e77|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportOptionalMemberAccess|06838c3f70|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|3b6fbef086|\"get\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|81ace47ae6|\"get\" is not a known attribute of \"None\"": 2,
+   "reportOptionalSubscript|e983d35027|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/services/pursuit_board.py": {
+   "reportOptionalMemberAccess|7c00a46e20|\"isoformat\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/services/pursuit_undo.py": {
+   "reportArgumentType|1ff913d6e3|Argument of type \"Literal['dependents']\" cannot be assigned to parameter \"key\" of type \"SupportsInde": 1,
+   "reportArgumentType|1ff913d6e3|Argument of type \"Literal['dependents']\" cannot be assigned to parameter \"s\" of type \"slice[Supports": 1,
+   "reportArgumentType|265ab6ce39|Argument of type \"Literal['opportunity_id']\" cannot be assigned to parameter \"key\" of type \"Supports": 1,
+   "reportArgumentType|265ab6ce39|Argument of type \"Literal['pursuit']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|265ab6ce39|Argument of type \"Literal['pursuit']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|9d8c6e2739|Argument of type \"Literal['id']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | slic": 1,
+   "reportArgumentType|9d8c6e2739|Argument of type \"Literal['pursuit']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|9d8c6e2739|Argument of type \"Literal['pursuit']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|d6bebd6246|Argument of type \"Literal['pursuit']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex |": 1,
+   "reportArgumentType|d6bebd6246|Argument of type \"Literal['pursuit']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInd": 1,
+   "reportArgumentType|d8c7911c73|Argument of type \"Literal['label_ids']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex": 1,
+   "reportArgumentType|d8c7911c73|Argument of type \"Literal['label_ids']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsI": 1,
+   "reportArgumentType|d8c7911c73|Argument of type \"Opportunity | None\" cannot be assigned to parameter \"opp\" of type \"Opportunity\" in": 1,
+   "reportArgumentType|d8c7911c73|Argument of type \"Unknown | str\" cannot be assigned to parameter \"label_ids\" of type \"list[int] | No": 1,
+   "reportAttributeAccessIssue|265ab6ce39|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|265ab6ce39|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|265ab6ce39|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|265ab6ce39|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|265ab6ce39|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportCallIssue|1ff913d6e3|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|265ab6ce39|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|9d8c6e2739|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|d6bebd6246|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|d8c7911c73|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportIndexIssue|1ff913d6e3|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|1ff913d6e3|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|1ff913d6e3|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|265ab6ce39|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|265ab6ce39|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|265ab6ce39|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|9d8c6e2739|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|9d8c6e2739|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|9d8c6e2739|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|d6bebd6246|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|d6bebd6246|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|d6bebd6246|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|d8c7911c73|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|d8c7911c73|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|d8c7911c73|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOptionalMemberAccess|265ab6ce39|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|6c8f5805bf|\"mapper\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|1ff913d6e3|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|265ab6ce39|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|9d8c6e2739|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|d6bebd6246|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|d8c7911c73|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/services/retry_removal.py": {
+   "reportAttributeAccessIssue|e683c644d2|Cannot access attribute \"get\" for class \"bool\"": 2,
+   "reportAttributeAccessIssue|e683c644d2|Cannot access attribute \"get\" for class \"float\"": 2,
+   "reportAttributeAccessIssue|e683c644d2|Cannot access attribute \"get\" for class \"int\"": 2,
+   "reportAttributeAccessIssue|e683c644d2|Cannot access attribute \"get\" for class \"list[Unknown]\"": 2,
+   "reportAttributeAccessIssue|e683c644d2|Cannot access attribute \"get\" for class \"str\"": 2,
+   "reportOptionalMemberAccess|e683c644d2|\"get\" is not a known attribute of \"None\"": 2
+  },
+  "kestrel/services/run_schedule.py": {
+   "reportArgumentType|551f727c5b|Argument of type \"Literal['scheduler.last_scheduled_run']\" cannot be assigned to parameter \"key\" of ": 1,
+   "reportArgumentType|6a8f1ef8cb|Argument of type \"Literal['scheduler.run_schedule']\" cannot be assigned to parameter \"key\" of type \"": 1,
+   "reportArgumentType|fd01a08c97|Argument of type \"Sequence[Row[Tuple[str, dict[Unknown, Unknown] | list[Unknown] | str | int | float": 1,
+   "reportCallIssue|fd01a08c97|No overloads for \"__init__\" match the provided arguments": 1
+  },
+  "kestrel/services/setting_overrides.py": {
+   "reportReturnType|4a8c23ba3e|Type \"Unknown | list[Unknown] | str | int | float | bool | None\" is not assignable to return type \"s": 1
+  },
+  "kestrel/services/title_suggest.py": {
+   "reportArgumentType|76284665b5|Argument of type \"None\" cannot be assigned to parameter \"opportunity_id\" of type \"int\" in function \"": 1,
+   "reportAttributeAccessIssue|3d7de88416|Cannot access attribute \"titles\" for class \"BaseModel\"": 1,
+   "reportOptionalMemberAccess|3252ec02d2|\"id\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|421ca530c3|\"id\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/services/ui_state.py": {
+   "reportAttributeAccessIssue|544ff26178|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1
+  },
+  "kestrel/web/bench_view.py": {
+   "reportArgumentType|6100639362|Argument of type \"list[str | None]\" cannot be assigned to parameter \"iterable\" of type \"Iterable[str": 1,
+   "reportCallIssue|6100639362|No overloads for \"join\" match the provided arguments": 1
+  },
+  "kestrel/web/calibrate_view.py": {
+   "reportArgumentType|15e6ffe7e3|Argument of type \"bytes\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 1,
+   "reportArgumentType|15e6ffe7e3|Argument of type \"bytes\" cannot be assigned to parameter \"said\" of type \"float | None\" in function \"": 1,
+   "reportArgumentType|28ed3a797d|Argument of type \"Sequence[Row[Tuple[int, int]]]\" cannot be assigned to parameter \"iterable\" of type": 1,
+   "reportArgumentType|7118a74e74|Argument of type \"Sequence[Row[Tuple[int, float | None]]]\" cannot be assigned to parameter \"iterable": 1,
+   "reportArgumentType|b8656030f4|Argument of type \"int\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"get\"": 1,
+   "reportCallIssue|6895cda6b2|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|7118a74e74|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|b8656030f4|No overloads for \"get\" match the provided arguments": 1
+  },
+  "kestrel/web/deps.py": {
+   "reportArgumentType|88ad965050|Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" in functi": 1,
+   "reportArgumentType|8ab4557358|Argument of type \"object\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" in functi": 1,
+   "reportReturnType|3647e0a04b|Type \"object | None\" is not assignable to return type \"str | None\"": 1
+  },
+  "kestrel/web/fit.py": {
+   "reportReturnType|fb744ad417|Type \"tuple[Any, Any | None]\" is not assignable to return type \"tuple[float, float] | None\"": 1
+  },
+  "kestrel/web/pages/about.py": {
+   "reportReturnType|d095f5a060|Type \"tuple[Settings, EmployerMap | dict[Unknown, Unknown] | None, bool]\" is not assignable to retur": 1
+  },
+  "kestrel/web/pages/analytics.py": {
+   "reportArgumentType|17f4192a77|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1
+  },
+  "kestrel/web/pages/backup.py": {
+   "reportAttributeAccessIssue|8489772420|Cannot access attribute \"read\" for class \"str\"": 1
+  },
+  "kestrel/web/pages/bench.py": {
+   "reportArgumentType|4e0c124f9f|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"key\" of type \"str\" in function ": 1,
+   "reportArgumentType|87547a9da3|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"key\" of type \"str\" in function ": 1,
+   "reportArgumentType|c36d51bb55|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"key\" of type \"str\" in function ": 1,
+   "reportArgumentType|c5dccabe19|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"key\" of type \"str\" in function ": 1,
+   "reportAttributeAccessIssue|64672fc850|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|64672fc850|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|64672fc850|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|64672fc850|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|64672fc850|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportOperatorIssue|c5dccabe19|Operator \"+\" not supported for types \"Literal['token_']\" and \"UploadFile | str\"": 1,
+   "reportOptionalMemberAccess|541800ddc9|\"queued\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|64672fc850|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|ff8438c6f4|\"message\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/pages/chrome.py": {
+   "reportArgumentType|785d2dd7f0|Argument of type \"EmployerMap | None\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap": 1,
+   "reportArgumentType|8215d13ddd|Argument of type \"EmployerMap | None\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap": 1,
+   "reportArgumentType|c13f6f48c7|Argument of type \"EmployerMap | None\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap": 1
+  },
+  "kestrel/web/pages/documents.py": {
+   "reportArgumentType|113c31188f|Argument of type \"str | None\" cannot be assigned to parameter \"s\" of type \"str\" in function \"escape\"": 1,
+   "reportArgumentType|b176479f5a|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" i": 2,
+   "reportAttributeAccessIssue|6dafe75532|Cannot access attribute \"company_label\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|b5aef5a29e|Cannot access attribute \"isdigit\" for class \"UploadFile\"": 1,
+   "reportOptionalMemberAccess|8b6853929f|\"flags\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|8bbfdf0063|\"backend\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9e6958449c|\"tags\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|b897b488a5|\"text\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|f1de05c9a1|\"text\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/pages/mock.py": {
+   "reportArgumentType|0d5dc7a0ef|Argument of type \"object\" cannot be assigned to parameter \"settings\" of type \"Settings\" in function ": 1
+  },
+  "kestrel/web/pages/models_ui.py": {
+   "reportArgumentType|45220db883|Argument of type \"str\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"__setitem_": 1,
+   "reportArgumentType|853238a0f6|Argument of type \"dict[Unknown, Unknown] | dict[list[bytes], _VT@dict] | list[Unknown] | str | int |": 1,
+   "reportArgumentType|fc8498371d|Argument of type \"str\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"pop\"": 1,
+   "reportAttributeAccessIssue|fdf89d258c|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|fdf89d258c|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|fdf89d258c|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|fdf89d258c|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|fdf89d258c|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportCallIssue|853238a0f6|No overloads for \"__init__\" match the provided arguments": 1,
+   "reportCallIssue|fc8498371d|No overloads for \"pop\" match the provided arguments": 1,
+   "reportOptionalMemberAccess|fdf89d258c|\"get\" is not a known attribute of \"None\"": 1,
+   "reportReturnType|e31371d795|Type \"dict[int, float]\" is not assignable to return type \"dict[int, int]\"": 1
+  },
+  "kestrel/web/pages/needs_try.py": {
+   "reportArgumentType|9c9e4ddd60|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" i": 2
+  },
+  "kestrel/web/pages/offers.py": {
+   "reportArgumentType|9d863d13d1|Argument of type \"type[Offer] | type[EngagementOffer] | None\" cannot be assigned to parameter \"entit": 1,
+   "reportArgumentType|a0de0767da|Argument of type \"float | None\" cannot be assigned to parameter \"v\" of type \"float\" in function \"pc\"": 1,
+   "reportArgumentType|aec8e0ede0|Argument of type \"type[Offer] | type[EngagementOffer] | None\" cannot be assigned to parameter \"entit": 1,
+   "reportArgumentType|d69a514753|Argument of type \"float | None\" cannot be assigned to parameter \"v\" of type \"float\" in function \"pc\"": 2,
+   "reportArgumentType|dff0fdba4e|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportCallIssue|9d863d13d1|No overloads for \"select\" match the provided arguments": 1,
+   "reportCallIssue|aec8e0ede0|No overloads for \"select\" match the provided arguments": 1,
+   "reportCallIssue|dff0fdba4e|No overloads for \"get\" match the provided arguments": 1,
+   "reportOptionalCall|7bf13696b4|Object of type \"None\" cannot be called": 1,
+   "reportOptionalMemberAccess|9d863d13d1|\"id\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9d863d13d1|\"pursuit_id\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9d863d13d1|\"received_at\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|a8a0899cbb|\"strip\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|abf603ca82|\"strip\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|aec8e0ede0|\"status\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|cc9f1a571c|\"id\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|cc9f1a571c|\"received_at\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/pages/opportunity_actions.py": {
+   "reportAttributeAccessIssue|d34a917db6|Cannot access attribute \"decode\" for class \"memoryview[int]\"": 1
+  },
+  "kestrel/web/pages/orgs.py": {
+   "reportArgumentType|0b253c3b53|Argument of type \"Org | None\" cannot be assigned to parameter \"org\" of type \"Org\" in function \"_stat": 1,
+   "reportArgumentType|78b58f88c4|Argument of type \"Org | None\" cannot be assigned to parameter \"org\" of type \"Org\" in function \"_stat": 1,
+   "reportArgumentType|aff4ead7b6|Argument of type \"Org | None\" cannot be assigned to parameter \"org\" of type \"Org\" in function \"_stat": 1,
+   "reportOptionalCall|4abc4fa3f8|Object of type \"None\" cannot be called": 1,
+   "reportOptionalMemberAccess|1f3f17749c|\"hidden_at\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|2a8db74417|\"name\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|87d8cae2cb|\"name\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/pages/pipeline.py": {
+   "reportArgumentType|8f156fac22|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"online_approval\" of type": 1,
+   "reportArgumentType|c938939eaf|Argument of type \"Literal['at']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | slic": 1,
+   "reportArgumentType|c938939eaf|Argument of type \"Literal['at']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex | ": 1,
+   "reportAttributeAccessIssue|4c680c3b71|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|4c680c3b71|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|4c680c3b71|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|4c680c3b71|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|4c680c3b71|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|750ea0083f|Cannot access attribute \"rowcount\" for class \"Result[Any]\"": 1,
+   "reportCallIssue|c938939eaf|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportGeneralTypeIssues|0a948ad23e|Expected mapping for dictionary unpack operator": 1,
+   "reportGeneralTypeIssues|a86bbb9c54|\"None\" is not iterable": 1,
+   "reportIndexIssue|c938939eaf|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|c938939eaf|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|c938939eaf|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOptionalMemberAccess|0a948ad23e|\"value\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|49d2f5a5be|\"get\" is not a known attribute of \"None\"": 2,
+   "reportOptionalMemberAccess|4c680c3b71|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|9bc2330444|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|c938939eaf|\"value\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|e7259cea94|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|c938939eaf|Object of type \"None\" is not subscriptable": 1,
+   "reportReturnType|5d98e4c1df|Type \"str | None\" is not assignable to return type \"str\"": 1
+  },
+  "kestrel/web/pages/prep.py": {
+   "reportArgumentType|8ffb842742|Argument of type \"int | None\" cannot be assigned to parameter \"opportunity_id\" of type \"int\" in func": 1
+  },
+  "kestrel/web/pages/profile.py": {
+   "reportAttributeAccessIssue|6078e6958a|Cannot access attribute \"read\" for class \"str\"": 1
+  },
+  "kestrel/web/pages/pursuits.py": {
+   "reportOperatorIssue|1cc4cbee2a|Operator \"+=\" not supported for types \"bytes | memoryview[int]\" and \"bytes\"": 1
+  },
+  "kestrel/web/pages/renders.py": {
+   "reportArgumentType|202a4a9694|Argument of type \"Literal['pursuit_id']\" cannot be assigned to parameter \"key\" of type \"SupportsInde": 1,
+   "reportArgumentType|202a4a9694|Argument of type \"Literal['pursuit_id']\" cannot be assigned to parameter \"s\" of type \"slice[Supports": 1,
+   "reportArgumentType|2191e4ef85|Argument of type \"Literal['before']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|2191e4ef85|Argument of type \"Literal['before']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportArgumentType|5fd0e29e9f|Argument of type \"Literal['after']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | s": 1,
+   "reportArgumentType|5fd0e29e9f|Argument of type \"Literal['after']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex": 1,
+   "reportArgumentType|6d30bbef67|Argument of type \"Literal['last_activity_at']\" cannot be assigned to parameter \"key\" of type \"Suppor": 1,
+   "reportArgumentType|6d30bbef67|Argument of type \"Literal['last_activity_at']\" cannot be assigned to parameter \"s\" of type \"slice[Su": 1,
+   "reportArgumentType|6d707eeadb|Argument of type \"Literal['config_before']\" cannot be assigned to parameter \"key\" of type \"SupportsI": 1,
+   "reportArgumentType|6d707eeadb|Argument of type \"Literal['config_before']\" cannot be assigned to parameter \"s\" of type \"slice[Suppo": 1,
+   "reportArgumentType|85fc540093|Argument of type \"Literal['config_changed']\" cannot be assigned to parameter \"key\" of type \"Supports": 1,
+   "reportArgumentType|85fc540093|Argument of type \"Literal['config_changed']\" cannot be assigned to parameter \"s\" of type \"slice[Supp": 1,
+   "reportArgumentType|8874d4e8a7|Argument of type \"Literal['render_id']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex": 1,
+   "reportArgumentType|8874d4e8a7|Argument of type \"Literal['render_id']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsI": 1,
+   "reportArgumentType|d32add1d8e|Argument of type \"Literal['config_changed']\" cannot be assigned to parameter \"key\" of type \"Supports": 1,
+   "reportArgumentType|d32add1d8e|Argument of type \"Literal['config_changed']\" cannot be assigned to parameter \"s\" of type \"slice[Supp": 1,
+   "reportArgumentType|e1f7c86ea4|Argument of type \"Literal['config_after']\" cannot be assigned to parameter \"key\" of type \"SupportsIn": 1,
+   "reportArgumentType|e1f7c86ea4|Argument of type \"Literal['config_after']\" cannot be assigned to parameter \"s\" of type \"slice[Suppor": 1,
+   "reportArgumentType|e694ed95ee|Argument of type \"Literal['config_before']\" cannot be assigned to parameter \"key\" of type \"SupportsI": 1,
+   "reportArgumentType|e694ed95ee|Argument of type \"Literal['config_before']\" cannot be assigned to parameter \"s\" of type \"slice[Suppo": 1,
+   "reportAttributeAccessIssue|2191e4ef85|Cannot assign to attribute \"document_id\" for class \"Pursuit\"": 1,
+   "reportAttributeAccessIssue|8874d4e8a7|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|8874d4e8a7|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|8874d4e8a7|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|8874d4e8a7|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|8874d4e8a7|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportCallIssue|202a4a9694|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|2191e4ef85|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|5fd0e29e9f|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|6d30bbef67|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|6d707eeadb|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|85fc540093|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|8874d4e8a7|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|d32add1d8e|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|e1f7c86ea4|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|e694ed95ee|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportIndexIssue|202a4a9694|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|202a4a9694|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|202a4a9694|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|2191e4ef85|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|2191e4ef85|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|2191e4ef85|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|5fd0e29e9f|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|5fd0e29e9f|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|5fd0e29e9f|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|6d30bbef67|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|6d30bbef67|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|6d30bbef67|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|6d707eeadb|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|6d707eeadb|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|6d707eeadb|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|85fc540093|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|85fc540093|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|85fc540093|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|8874d4e8a7|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|8874d4e8a7|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|8874d4e8a7|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|d32add1d8e|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|d32add1d8e|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|d32add1d8e|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|e1f7c86ea4|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|e1f7c86ea4|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|e1f7c86ea4|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|e694ed95ee|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|e694ed95ee|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|e694ed95ee|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOptionalMemberAccess|2444958ef9|\"summary_variants\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|3b907cd5ac|\"summary_variants\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|8874d4e8a7|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|202a4a9694|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|2191e4ef85|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|5fd0e29e9f|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|6d30bbef67|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|6d707eeadb|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|85fc540093|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|8874d4e8a7|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|d32add1d8e|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|e1f7c86ea4|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|e694ed95ee|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/web/pages/rescore.py": {
+   "reportArgumentType|8f156fac22|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"online_approval\" of type": 1
+  },
+  "kestrel/web/pages/role.py": {
+   "reportArgumentType|15f62cd14d|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\"": 2,
+   "reportArgumentType|200e2a66f4|Argument of type \"dict[str, Any] | None\" cannot be assigned to parameter \"route\" of type \"dict[str, ": 2,
+   "reportArgumentType|2123c50d47|Argument of type \"Unknown | str | None\" cannot be assigned to parameter \"key\" of type \"str\" in funct": 1,
+   "reportArgumentType|54c555f8d7|Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" i": 2,
+   "reportArgumentType|559d866a42|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"online_approval\" of type": 1,
+   "reportArgumentType|6120b2c1a0|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleT": 2,
+   "reportArgumentType|708f766eff|Argument of type \"Unknown | str | None\" cannot be assigned to parameter \"kind\" of type \"str\" in func": 1,
+   "reportArgumentType|7527edc7f3|Argument of type \"Unknown | str | None\" cannot be assigned to parameter \"kind\" of type \"str\" in func": 1,
+   "reportArgumentType|780cfd06ee|Argument of type \"Unknown | str | None\" cannot be assigned to parameter \"kind\" of type \"str\" in func": 1,
+   "reportAttributeAccessIssue|15e6f6171f|Cannot access attribute \"commercial_shape\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|6d5b1b0a89|Cannot access attribute \"claims_used\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|9b81aa3cc6|Cannot access attribute \"assumptions\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|9b81aa3cc6|Cannot access attribute \"exclusions\" for class \"object\"": 1,
+   "reportAttributeAccessIssue|9b89c6037d|Cannot access attribute \"body_md\" for class \"object\"": 2,
+   "reportAttributeAccessIssue|d75b273a61|Cannot access attribute \"body_md\" for class \"object\"": 1
+  },
+  "kestrel/web/pages/settings.py": {
+   "reportArgumentType|22bd368e4e|Argument of type \"UploadFile | str\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\"": 2,
+   "reportArgumentType|46a7de845a|Argument of type \"Source | None\" cannot be assigned to parameter \"value\" of type \"Source\" in functio": 1,
+   "reportArgumentType|bd3cc9748f|Argument of type \"UploadFile | str | Literal[1]\" cannot be assigned to parameter \"x\" of type \"Conver": 2,
+   "reportArgumentType|fa8263a5fe|Argument of type \"Org | None\" cannot be assigned to parameter \"value\" of type \"Org\" in function \"__s": 1,
+   "reportAttributeAccessIssue|8489772420|Cannot access attribute \"read\" for class \"str\"": 1
+  },
+  "kestrel/web/pages/settings_computer.py": {
+   "reportArgumentType|35b178b1cb|Argument of type \"Literal['before']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|35b178b1cb|Argument of type \"Literal['before']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportArgumentType|a865e97059|Argument of type \"Literal['after']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | s": 1,
+   "reportArgumentType|a865e97059|Argument of type \"Literal['after']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex": 1,
+   "reportAttributeAccessIssue|35b178b1cb|Cannot access attribute \"items\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|a865e97059|Cannot access attribute \"items\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|ab2146cb60|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|ab2146cb60|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|ab2146cb60|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|ab2146cb60|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|ab2146cb60|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportCallIssue|35b178b1cb|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportCallIssue|a865e97059|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportIndexIssue|35b178b1cb|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|35b178b1cb|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|35b178b1cb|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportIndexIssue|a865e97059|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|a865e97059|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|a865e97059|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOptionalMemberAccess|ab2146cb60|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|35b178b1cb|Object of type \"None\" is not subscriptable": 1,
+   "reportOptionalSubscript|a865e97059|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/web/pages/settings_data.py": {
+   "reportOptionalMemberAccess|6f92539470|\"id\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|701e854840|\"id\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/pages/settings_prefs.py": {
+   "reportAttributeAccessIssue|6078e6958a|Cannot access attribute \"read\" for class \"str\"": 1
+  },
+  "kestrel/web/pages/settings_privacy.py": {
+   "reportArgumentType|690417133c|Argument of type \"int | None\" cannot be assigned to parameter \"port\" of type \"int\" in function \"join": 1
+  },
+  "kestrel/web/pages/settings_roles.py": {
+   "reportArgumentType|163fb96011|Argument of type \"str | None\" cannot be assigned to parameter \"track\" of type \"str\" in function \"cut": 2,
+   "reportArgumentType|17d66e2d9c|Argument of type \"str | None\" cannot be assigned to parameter \"track\" of type \"str\" in function \"cut": 1,
+   "reportArgumentType|ba01ec1479|Argument of type \"Literal['before']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | ": 1,
+   "reportArgumentType|ba01ec1479|Argument of type \"Literal['before']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsInde": 1,
+   "reportArgumentType|f65d5c1e17|Argument of type \"str | None\" cannot be assigned to parameter \"track\" of type \"str\" in function \"cut": 1,
+   "reportAttributeAccessIssue|5edae2499f|Cannot access attribute \"get\" for class \"bool\"": 2,
+   "reportAttributeAccessIssue|5edae2499f|Cannot access attribute \"get\" for class \"float\"": 2,
+   "reportAttributeAccessIssue|5edae2499f|Cannot access attribute \"get\" for class \"int\"": 2,
+   "reportAttributeAccessIssue|5edae2499f|Cannot access attribute \"get\" for class \"list[Unknown]\"": 2,
+   "reportAttributeAccessIssue|5edae2499f|Cannot access attribute \"get\" for class \"str\"": 2,
+   "reportCallIssue|ba01ec1479|No overloads for \"__getitem__\" match the provided arguments": 1,
+   "reportIndexIssue|ba01ec1479|\"__getitem__\" method not defined on type \"bool\"": 1,
+   "reportIndexIssue|ba01ec1479|\"__getitem__\" method not defined on type \"float\"": 1,
+   "reportIndexIssue|ba01ec1479|\"__getitem__\" method not defined on type \"int\"": 1,
+   "reportOptionalMemberAccess|5edae2499f|\"get\" is not a known attribute of \"None\"": 2,
+   "reportOptionalSubscript|ba01ec1479|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/web/pages/sources.py": {
+   "reportArgumentType|6d8a0861cd|Argument of type \"dict[Unknown, Unknown] | None\" cannot be assigned to parameter \"ctx\" of type \"dict": 1,
+   "reportArgumentType|8c2b0e881f|Argument of type \"object\" cannot be assigned to parameter \"online_approval\" of type \"dict[Unknown, U": 1,
+   "reportArgumentType|a4ea75ab8d|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"online_approval\" of type": 1
+  },
+  "kestrel/web/pages/sources_ui.py": {
+   "reportArgumentType|2061a48d7a|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"online_approval\" of type": 1,
+   "reportArgumentType|869391098e|Argument of type \"Literal['name']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | sl": 1,
+   "reportArgumentType|869391098e|Argument of type \"Literal['name']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex ": 1,
+   "reportArgumentType|869391098e|Argument of type \"Literal['track']\" cannot be assigned to parameter \"key\" of type \"SupportsIndex | s": 1,
+   "reportArgumentType|869391098e|Argument of type \"Literal['track']\" cannot be assigned to parameter \"s\" of type \"slice[SupportsIndex": 1,
+   "reportArgumentType|ddc3dead45|Argument of type \"int | None\" cannot be assigned to parameter \"jobs\" of type \"int\" in function \"reco": 1,
+   "reportArgumentType|f4b2686262|Argument of type \"str | None\" cannot be assigned to parameter \"message\" of type \"str\" in function \"t": 1,
+   "reportAttributeAccessIssue|1aaed91ab1|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|1aaed91ab1|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|1aaed91ab1|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|1aaed91ab1|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|1aaed91ab1|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|1c8e61e1b3|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|1c8e61e1b3|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|1c8e61e1b3|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|1c8e61e1b3|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|1c8e61e1b3|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|2032d78b83|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|2032d78b83|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|2032d78b83|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|2032d78b83|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|2032d78b83|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|43003a556f|Cannot access attribute \"get\" for class \"bool\"": 1,
+   "reportAttributeAccessIssue|43003a556f|Cannot access attribute \"get\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|43003a556f|Cannot access attribute \"get\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|43003a556f|Cannot access attribute \"get\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|43003a556f|Cannot access attribute \"get\" for class \"str\"": 1,
+   "reportAttributeAccessIssue|e6c5878337|Cannot access attribute \"read_html\" for class \"SourceAdapter\"": 1,
+   "reportCallIssue|869391098e|No overloads for \"__getitem__\" match the provided arguments": 2,
+   "reportIndexIssue|869391098e|\"__getitem__\" method not defined on type \"bool\"": 2,
+   "reportIndexIssue|869391098e|\"__getitem__\" method not defined on type \"float\"": 2,
+   "reportIndexIssue|869391098e|\"__getitem__\" method not defined on type \"int\"": 2,
+   "reportOptionalMemberAccess|1aaed91ab1|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|1c8e61e1b3|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|2032d78b83|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|43003a556f|\"get\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|e6c5878337|\"read_html\" is not a known attribute of \"None\"": 1,
+   "reportOptionalSubscript|869391098e|Object of type \"None\" is not subscriptable": 2
+  },
+  "kestrel/web/pages/stories.py": {
+   "reportAttributeAccessIssue|006dee4ebb|Cannot access attribute \"items\" for class \"Literal[True]\"": 1,
+   "reportAttributeAccessIssue|006dee4ebb|Cannot access attribute \"items\" for class \"float\"": 1,
+   "reportAttributeAccessIssue|006dee4ebb|Cannot access attribute \"items\" for class \"int\"": 1,
+   "reportAttributeAccessIssue|006dee4ebb|Cannot access attribute \"items\" for class \"list[Unknown]\"": 1,
+   "reportAttributeAccessIssue|006dee4ebb|Cannot access attribute \"items\" for class \"str\"": 1
+  },
+  "kestrel/web/pages/today.py": {
+   "reportAttributeAccessIssue|01c5fa35f3|Cannot access attribute \"card\" for class \"TemplateModule\"": 1,
+   "reportAttributeAccessIssue|5797a14ca4|Cannot access attribute \"card\" for class \"TemplateModule\"": 1
+  },
+  "kestrel/web/pipeline_view.py": {
+   "reportArgumentType|42ded6be1d|Argument of type \"Any | None\" cannot be assigned to parameter \"value\" of type \"float\" in function \"_": 1,
+   "reportArgumentType|52cf5d6edc|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportArgumentType|569e35f473|Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" i": 2,
+   "reportArgumentType|a824b66836|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportArgumentType|d5ea5f2674|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportArgumentType|f132ef5cd8|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportCallIssue|52cf5d6edc|No overloads for \"get\" match the provided arguments": 1,
+   "reportCallIssue|d5ea5f2674|No overloads for \"get\" match the provided arguments": 1,
+   "reportCallIssue|f132ef5cd8|No overloads for \"get\" match the provided arguments": 1
+  },
+  "kestrel/web/prep_view.py": {
+   "reportArgumentType|aff43930c2|Argument of type \"int | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 1,
+   "reportArgumentType|fda5527d33|Argument of type \"int | None\" cannot be assigned to parameter \"key\" of type \"int\" in function \"get\"": 1,
+   "reportOptionalMemberAccess|134bcf924e|\"next_action_at\" is not a known attribute of \"None\"": 1,
+   "reportOptionalMemberAccess|94859a1bd1|\"next_action\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/queries.py": {
+   "reportArgumentType|f2c0699ac5|Argument of type \"dict[Literal['worth', 'maybe', 'applied', 'not_fit', 'new', 'unscored', 'failed'],": 1,
+   "reportAssignmentType|ad4f499f10|Type \"Sequence[Row[Unknown]]\" is not assignable to declared type \"list[Unknown]\"": 1,
+   "reportAssignmentType|ef55e82e4b|Type \"Sequence[Row[Unknown]]\" is not assignable to declared type \"list[Unknown]\"": 1,
+   "reportOptionalMemberAccess|32b3f55deb|\"group\" is not a known attribute of \"None\"": 1
+  },
+  "kestrel/web/rescoring.py": {
+   "reportReturnType|3939e8ad14|Type \"dict[str, str | bool]\" is not assignable to return type \"dict[str, str]\"": 1
+  },
+  "kestrel/web/role_view.py": {
+   "reportArgumentType|61b457f8bc|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportArgumentType|f03dd5e27a|Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToFloat\" i": 2,
+   "reportOptionalOperand|f2049cecdf|Operator \"+\" not supported for \"None\"": 1
+  },
+  "kestrel/web/routes_api.py": {
+   "reportArgumentType|0718f12147|Argument of type \"UploadFile | str | Unknown\" cannot be assigned to parameter \"x\" of type \"Convertib": 2,
+   "reportArgumentType|2008fc6f0b|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str] | N": 1,
+   "reportArgumentType|5a9d9f92b4|Argument of type \"str | UploadFile | None\" cannot be assigned to parameter \"operator_verdict\" of typ": 1,
+   "reportArgumentType|70264b8c4f|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportArgumentType|e925e0ccc7|Argument of type \"dict[str, str]\" cannot be assigned to parameter \"mapping\" of type \"EmployerMap\" in": 1,
+   "reportAttributeAccessIssue|b2b50b021e|Cannot access attribute \"strip\" for class \"UploadFile\"": 1,
+   "reportAttributeAccessIssue|ceafa137fe|Cannot access attribute \"strip\" for class \"UploadFile\"": 1,
+   "reportAttributeAccessIssue|fad8d4cd2c|Cannot access attribute \"decode\" for class \"memoryview[int]\"": 1,
+   "reportOptionalSubscript|d8ce13bad9|Object of type \"None\" is not subscriptable": 1
+  },
+  "kestrel/web/routes_control.py": {
+   "reportArgumentType|55564e4893|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"online_approval\" of type": 1
+  },
+  "kestrel/web/routes_learning.py": {
+   "reportArgumentType|02afc63a53|Argument of type \"UploadFile | str | Any | None\" cannot be assigned to parameter \"verdict\" of type \"": 1,
+   "reportArgumentType|0718f12147|Argument of type \"UploadFile | str | Any\" cannot be assigned to parameter \"x\" of type \"ConvertibleTo": 2,
+   "reportArgumentType|244a2b18a4|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleT": 2,
+   "reportArgumentType|63112caacf|Argument of type \"UploadFile | str | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleT": 4,
+   "reportArgumentType|aaef63e2c7|Argument of type \"UploadFile | str | Literal[0]\" cannot be assigned to parameter \"x\" of type \"Conver": 2,
+   "reportArgumentType|d33ee7c9b3|Argument of type \"UploadFile | str | Any | None\" cannot be assigned to parameter \"rationale\" of type": 1,
+   "reportArgumentType|e00cd056cb|Argument of type \"UploadFile | str | Any | None\" cannot be assigned to parameter \"x\" of type \"Conver": 2,
+   "reportArgumentType|e51c63b5a1|Argument of type \"list[UploadFile | str]\" cannot be assigned to parameter \"iterable\" of type \"Iterab": 1,
+   "reportCallIssue|e51c63b5a1|No overloads for \"join\" match the provided arguments": 1,
+   "reportOperatorIssue|e55909fe1c|Operator \"+=\" not supported for types \"bytes | memoryview[int]\" and \"bytes\"": 1
+  },
+  "kestrel/web/routes_pages.py": {
+   "reportArgumentType|122aafa408|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[Unknown, Unkn": 1,
+   "reportArgumentType|1d8e6892cc|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[Unknown, Unkn": 1,
+   "reportArgumentType|4490789237|Argument of type \"EmployerMap\" cannot be assigned to parameter \"mapping\" of type \"dict[str, str]\" in": 1,
+   "reportArgumentType|54a90c8342|Argument of type \"Unknown | None\" cannot be assigned to parameter \"value\" of type \"float\" in functio": 1,
+   "reportArgumentType|54e0e7c678|Argument of type \"dict[Unknown, Unknown]\" cannot be assigned to parameter \"mapping\" of type \"Employe": 1
+  },
+  "kestrel/web/serve.py": {
+   "reportAttributeAccessIssue|4f4c09668f|Cannot assign to attribute \"_kestrel_serve_console\" for class \"StreamHandler[TextIO]\"": 1,
+   "reportAttributeAccessIssue|da8cb9aed8|Cannot assign to attribute \"install_signal_handlers\" for class \"Server\"": 1
+  },
+  "kestrel/web/today_view.py": {
+   "reportArgumentType|b6931f61d6|Argument of type \"Unknown | None\" cannot be assigned to parameter \"key\" of type \"str\" in function \"g": 1,
+   "reportCallIssue|b6931f61d6|No overloads for \"get\" match the provided arguments": 1,
+   "reportOptionalMemberAccess|96afbd1d95|\"get\" is not a known attribute of \"None\"": 1
+  }
+ }
+}

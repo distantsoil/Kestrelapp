@@ -138,7 +138,7 @@ follow-up.
 percentages; "2,5" is not 25). A number in the story found in no sketch or proof point is flagged.
 Named details are not checked (deferred).
 
-**Version history.** `cover/v2`, `engagement_outline/v2`, `story_consolidate/v2`,
+**Version history.** `cover/v3` and `engagement_outline/v3` (D-UI-241: first person, to the employer or organization), `cover/v2`, `engagement_outline/v2`, `story_consolidate/v2`,
 `mock_critique/v2`, `negotiate/v2`, `analytics_summary/v2`, `interview_questions/v2`,
 `org_summary/v2`, `follow_up/v2` (the block). `evaluate/v2` is unchanged. The `/v1` files stay for stored rows; a queued
 follow-up task written under `follow_up/v1` is drafted with `v2`.
@@ -767,7 +767,7 @@ done (P2 post-processing rule 8, O20).
 
 ## P4 — Cover Letter Draft
 
-**Version:** `cover/v2`
+**Version:** `cover/v3` (D-UI-241; `cover/v2` and `cover/v1` stay for stored rows)
 **Model tier:** `tier3`
 **Temperature:** 0.4
 **Max tokens:** 1200
@@ -779,29 +779,40 @@ done (P2 post-processing rule 8, O20).
 
 {PLAIN_WRITING}
 
-You draft a cover letter. Output is JSON containing markdown.
+You write a cover letter as the person themselves, in the first person ("I", "my"), addressed
+to the employer. It is a letter, not an evaluation of the person. Output is JSON containing
+markdown.
 
 Constraints:
 
-1. Every factual claim about the candidate must come from the supplied proof points or the
+1. Begin the body with the line "Dear Hiring Team," and nothing before it. Write the greeting
+   and the body only. Do not write a closing, a sign-off or a name: Kestrel adds those.
+
+2. Write in the first person throughout. Never refer to the person in the third person: never
+   "the candidate", "the applicant", "he", "she" or "they" for the person.
+
+3. Every factual claim about the person must come from the supplied proof points or the
    supplied resume bullets. You may rephrase for flow. You may not add a fact, a metric, a
-   company, a title, or a date that is not supplied.
+   company, a title, or a date that is not supplied. Figures and names that appear only in the
+   posting describe the role; do not claim them as the person's own.
 
-2. Length: 250 to 350 words in the body. Four paragraphs at most.
+4. Length: 250 to 350 words in the body. Four paragraphs at most.
 
-3. Open with the specific thing about this role or company that makes it worth the candidate's
+5. Open with the specific thing about this role or company that makes it worth the person's
    attention. Do not open with "I am writing to apply for". Do not open with a compliment.
+   Do not open with a gap or a weakness.
 
-4. Mirror the job description's own language for the two or three capabilities that matter
+6. Mirror the job description's own language for the two or three capabilities that matter
    most, because a human will skim for them.
 
-5. Address the gap the evaluation flagged as most significant, in one sentence, without
-   apology and without over-explaining. Name it and move on.
+7. Where the guidance names a gap, acknowledge it in one forward-looking first-person
+   sentence (what I am doing or how I would close it), without apology and without
+   over-explaining. Do not copy the guidance labels or wording.
 
-6. Voice: direct, confident, strategic. Executive register. Conversational, never stiff.
+8. Voice: direct, confident, strategic. Executive register. Conversational, never stiff.
    No "dynamic", "excited to", or "I believe I would be a great fit".
 
-7. Close with a specific next step, not a request for consideration.
+9. Close the body with a specific next step, not a request for consideration.
 ```
 
 ### User
@@ -812,11 +823,11 @@ Constraints:
 SELECTED RESUME BULLETS FOR THIS APPLICATION
 {rendered variants, verbatim}
 
-EVALUATION
-Angle: {block_e.lead_with}
-JD citations to mirror: {block_e.jd_citations}
-Most significant gap: {highest-severity gap}
-Scope read: {block_c.scope_read}
+GUIDANCE FOR THE LETTER (background for you; do not repeat these labels in the letter)
+What to lead with: {block_e.lead_with}
+Phrases from the posting worth echoing: {block_e.jd_citations}
+Gap to acknowledge in one sentence, in your own voice: {highest-severity gap}
+How senior the role reads: {block_c.scope_read}
 
 COMPANY RESEARCH (if available)
 {company_research.summary_md}
@@ -827,6 +838,10 @@ JOB
 ANGLE PREFERENCE (operator-selected, may be null)
 {one of: why_this_company | problem_i_would_solve | how_i_operate | direct_and_short}
 ```
+
+The person's name and contact details are never in the message. Kestrel prints "Sincerely," and
+the name from the local profile when it renders the preview, the PDF and the saved view, so the
+name is never part of an online payload.
 
 ### Schema
 
@@ -854,7 +869,15 @@ ANGLE PREFERENCE (operator-selected, may be null)
 - Every entry in `claims_used` must resolve to a real proof point or variant key. If any does
   not, flag the draft as "unverified claims present" in the UI and highlight it. Do not
   silently accept.
-- Run a banned-phrase check on `body_md` from rule 6 and surface any hits to the operator.
+- Run a banned-phrase check on `body_md` from rule 8 and surface any hits to the operator.
+- **Third person (D-UI-241).** A `body_md` that refers to the person in the third person ("the
+  candidate", "the applicant", "candidate's", "applicant's", as whole words) gets the one repair
+  attempt with a short reason; a second such reply is a clear failure shown on the Documents row
+  (hard rule 3). This is a check on the already validated field, never a parse of the raw reply.
+- **Unverified details.** A number or name found in the person's own text is grounded. One found
+  only in the posting is flagged only when its sentence claims it for the person (contains I,
+  I'm, I've, my, me, we or our as whole words); otherwise it is the role's own requirement. One
+  found in neither is always flagged. The posting is never a grounding source for a claim.
 
 ---
 
@@ -1502,7 +1525,7 @@ evidence to count as Met (hard rule 4, O20).
 
 ## P4C — Engagement Outline
 
-**Version:** `engagement_outline/v2` · **Tier:** `tier3` · **Temp:** 0.3 · **Max tokens:** 2500
+**Version:** `engagement_outline/v3` (D-UI-241; `/v2` stays for stored rows) · **Tier:** `tier3` · **Temp:** 0.3 · **Max tokens:** 2500
 
 ### System
 
@@ -1514,13 +1537,17 @@ evidence to count as Met (hard rule 4, O20).
 You draft an engagement outline: the document an independent consultant or contractor, in the
 field their profile states, brings to a first serious conversation. Output is JSON containing markdown.
 
+Write as that consultant, in the first person ("I", or "we" if the profile describes a firm),
+addressed to the target organization ("you"). Never refer to the consultant as "the practitioner",
+"the candidate" or "the consultant".
+
 This is NOT a priced proposal and must not read like one. It is a structured articulation of the
 situation, a proposed shape of work, and what would need to be true. The commercial section is
 indicative and explicitly labeled as such.
 
 Constraints:
 
-1. Every factual claim about the practitioner comes from the supplied proof points and proof
+1. Every factual claim about me comes from the supplied proof points and proof
    engagements. You may rephrase for flow. You may not add a client, a metric, a sector, or a
    duration that was not supplied.
 

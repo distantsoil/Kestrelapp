@@ -60,9 +60,9 @@ desktop surfaces and are outside this page-layout fix.
 The full check was deliberately stopped by the owner; these are its final available lines:
 
 ```text
-==> ruff: C:\Users\mcrow\Github\kestrel-deferred-narrow-layouts\.venv\Scripts\python.exe -m ruff check .
+==> ruff: C:\Users\you\Github\kestrel-deferred-narrow-layouts\.venv\Scripts\python.exe -m ruff check .
 All checks passed!
     ok (0s)
-==> pytest: C:\Users\mcrow\Github\kestrel-deferred-narrow-layouts\.venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
+==> pytest: C:\Users\you\Github\kestrel-deferred-narrow-layouts\.venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
 ........................................................................ [  1%]
 ```

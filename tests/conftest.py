@@ -379,3 +379,14 @@ def pytest_collection_modifyitems(config, items):
             f"test ids longer than {_MAX_TEST_ID} characters break Windows; give the parametrize "
             f"short ids: {too_long[:3]}"
         )
+    _timeout_for_browser_files(items)
+
+
+BROWSER_TEST_TIMEOUT_SECONDS = 180  # live browser tests; every other test gets pyproject's 60 s
+
+
+def _timeout_for_browser_files(items) -> None:
+    """D-TEST-8: browser test files get a longer per-test timeout than the 60 s default."""
+    for item in items:
+        if item.path.name.endswith("_browser.py") and item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(BROWSER_TEST_TIMEOUT_SECONDS))

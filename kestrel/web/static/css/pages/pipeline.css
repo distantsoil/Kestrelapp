@@ -77,6 +77,8 @@
 .pl-group + .pl-group { margin-top: 2px; }
 .pl-gh { display: flex; justify-content: space-between; font-size: 11.5px; font-weight: 800;
   letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 12px 4px 4px; }
+.pl-selall { cursor: pointer; transition: color var(--dur-1), transform .1s; }
+.pl-selall:hover { color: var(--brand); }
 .pl-rows { display: flex; flex-direction: column; gap: 6px; position: relative; }
 .pl-signals { margin-top: 0; }
 .pl-explain { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;

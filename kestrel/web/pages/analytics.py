@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -316,8 +316,12 @@ async def export_numbers(request: Request):
 
 @router.get("/analytics/export/applications.csv")
 async def export_applications(request: Request):
-    """Every application on the track with its full status history, oldest first."""
+    """Every application on the track with its full status history, oldest first.
+    ?range=30|90|all (the page's own range bar) filters by applied_at."""
     track = _track(request)
+    range_key = rpt.normalize_range(request.query_params.get("range"))
+    days = rpt.RANGES[range_key]
+    start_iso = (datetime.now(UTC) - timedelta(days=days)).date().isoformat() if days else None
     async with sessionmaker()() as s:
         if (held := await _held_export(s)) is not None:
             return held
@@ -327,14 +331,15 @@ async def export_applications(request: Request):
             await s.execute(select(StatusEvent).order_by(StatusEvent.occurred_at, StatusEvent.id))
         ).scalars():
             events.setdefault(ev.pursuit_id, []).append(ev)
-        found = (
-            await s.execute(
-                select(Pursuit, Opportunity)
-                .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
-                .where(Pursuit.track == track)
-                .order_by(Pursuit.id)
-            )
-        ).all()
+        stmt = (
+            select(Pursuit, Opportunity)
+            .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
+            .where(Pursuit.track == track)
+            .order_by(Pursuit.id)
+        )
+        if start_iso:
+            stmt = stmt.where(Pursuit.applied_at >= start_iso)
+        found = (await s.execute(stmt)).all()
     rows: list[list[Any]] = [["Role", "Company", "Status", "Sent", "Outcome", "Closed", "History"]]
     for p, o in found:
         history = "; ".join(
@@ -345,7 +350,8 @@ async def export_applications(request: Request):
             redact(o.title or ""), redact(o.org_name or ""), p.status,
             (p.applied_at or "")[:10], p.outcome or "", (p.closed_at or "")[:10], redact(history),
         ])
-    return _csv_response(rows, f"kestrel-applications-{_stamp()}.csv")
+    stamp = _stamp()
+    return _csv_response(rows, f"kestrel-applications-{stamp}.csv")
 
 
 @router.get("/analytics/export/summary.pdf")

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  /* A letter: single column, selectable text, no layout tables. Print stylesheet only; no
+     generator string and no organization name anywhere outside the person's own text. */
+  @page { size: Letter; margin: 1in; }
+  * { box-sizing: border-box; }
+  body { font-family: Georgia, "Times New Roman", serif; font-size: 11pt; line-height: 1.5;
+         color: #111; margin: 0; }
+  header.doc { margin-bottom: 18pt; }
+  header.doc .name { font-size: 16pt; font-weight: 700; }
+  header.doc .headline { font-size: 10.5pt; color: #222; margin-top: 1pt; }
+  header.doc .contact { font-size: 9.5pt; color: #333; margin-top: 2pt; }
+  p { margin: 0 0 10pt; }
+  h2 { font-size: 11.5pt; margin: 14pt 0 4pt; }
+  ul { margin: 0 0 10pt; padding-left: 16pt; }
+  li { margin: 2pt 0; }
+  .closing { margin-top: 14pt; }
+  {% if preview %}/* A frame has no page box, so the one-inch margin of @page is the page's own padding. */
+  html { background: #fff; }
+  body { padding: 1in; min-height: 11in; background: #fff; }{% endif %}
+  .note { margin-top: 14pt; font-size: 9.5pt; color: #444; font-style: italic; }
+</style>
+</head>
+<body>
+{% if header.name %}
+<header class="doc">
+  <div class="name">{{ header.name }}</div>
+  {% if header.headline %}<div class="headline">{{ header.headline }}</div>{% endif %}
+  {%- set bits = [] -%}
+  {%- if header.email %}{% set _ = bits.append(header.email) %}{% endif -%}
+  {%- if header.phone %}{% set _ = bits.append(header.phone) %}{% endif -%}
+  {%- if header.location %}{% set _ = bits.append(header.location) %}{% endif -%}
+  {%- if bits %}<div class="contact">{{ bits | join(" | ") }}</div>{% endif %}
+</header>
+{% endif %}
+{% for b in blocks %}
+  {% if b.type == "heading" %}<h2>{% for r in b.runs %}{{ r.text }}{% endfor %}</h2>
+  {% elif b.type == "list" %}<ul>{% for item in b["items"] %}<li>{% for r in item %}{% if r.bold %}<strong>{{ r.text }}</strong>{% else %}{{ r.text }}{% endif %}{% endfor %}</li>{% endfor %}</ul>
+  {% else %}<p>{% for r in b.runs %}{% if r.bold %}<strong>{{ r.text }}</strong>{% else %}{{ r.text }}{% endif %}{% endfor %}</p>{% endif %}
+{% endfor %}
+{% if closing %}<p class="closing">Sincerely,{% if header.name %}<br>{{ header.name }}{% endif %}</p>{% endif %}
+{% if outline %}<p class="note">An outline for a conversation, not a priced proposal.</p>{% endif %}
+</body>
+</html>

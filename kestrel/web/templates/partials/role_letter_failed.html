@@ -1,0 +1,11 @@
+{# No draft came back. The reason is one of Kestrel's own sentences, never the model's reply or an
+   exception. Try again asks first again when the model is online. #}
+<div class="cl-failed" role="alert" data-testid="cover-letter-failed">
+  <b>No {{ noun }} this time</b>
+  <p class="rl-quiet" data-testid="cover-letter-reason">{{ reason }}{% if quarantined %} <a class="k-link" href="/quarantine">See the reply</a>.{% endif %}</p>
+  <p class="rl-dsm">Nothing was written to your documents.</p>
+  <div class="rl-btns">
+    <button type="button" class="k-btn k-btn--primary" hx-get="/opportunities/{{ opp_id }}/role/cover-letter/start" hx-target="#cl-main" hx-swap="innerHTML" data-testid="cover-letter-retry">Try again</button>
+    <button type="button" class="k-btn" data-k-close>Close</button>
+  </div>
+</div>

@@ -178,6 +178,16 @@
     if (bulk) { runBulk(bulk.getAttribute('data-bulk')); return; }
     if (t.closest('#pl-bclear')) { clearPicks(); return; }
 
+    // Select all in a group.
+    var selall = t.closest('.pl-selall');
+    if (selall) {
+      var group = selall.closest('.pl-group');
+      if (group) {
+        $$('.pl-row[data-id]', group).forEach(function (r) { pick(Number(r.dataset.id), true); });
+      }
+      return;
+    }
+
     // The checkbox, or a modifier click, picks; a plain click on the row opens its panel.
     var rowEl = t.closest('#pipeline-list .pl-row[data-id]');
     var ck = t.closest('.pl-ck');
@@ -296,7 +306,7 @@
     var ids = state.picked.slice();
     if (!ids.length) return;
     if (action === 'score-again') {
-      // The same model choice every Score again offers, as its own page.
+      // The same model choice every Score again offers, as its own page (#127).
       go('/rescore/choose?opp_ids=' + ids.join(',') + '&page=1&next=' +
         encodeURIComponent('/opportunities'));
       return;

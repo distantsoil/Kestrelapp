@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -151,8 +153,10 @@ def test_prepare_is_greyed_until_shortlisted_then_switches_on(ids):
             "Shortlisted. Tailor resume, cover letter and prep pack are switched on."
             in toast["message"]
         )
-        # Cover letter has no drafting back end: shown, never active, and it says why
-        assert 'disabled title="Kestrel does not draft this yet.' in r.text
+        # The cover letter is a live button once the role is shortlisted (D-UI-239)
+        assert re.search(
+            r'<button[^>]*hx-get="[^"]*/role/cover-letter"[^>]*data-testid="cover-letter"', r.text
+        )
     assert len(_rows(Pursuit, Pursuit.opportunity_id == ids["second"])) == 1
 
 
@@ -489,7 +493,9 @@ def test_documents_open_as_a_scaled_true_page_with_edit_and_download(ids):
     with _client() as c:
         tab = c.get(f"/opportunities/{ids['strong']}/documents").text
         assert "Tailored resume" in tab and "Download PDF" in tab and "No draft yet" in tab
-        assert "Kestrel does not draft this yet" in tab
+        assert "Kestrel does not draft this yet" not in tab
+        assert tab.count('data-testid="new-cover-letter"') == 1
+        assert tab.count('data-testid="tailor-again"') == 1  # one Tailor button, not two
         pv = c.get(f"/opportunities/{ids['strong']}/role/preview/{ids['render']}")
         assert (
             pv.status_code == 200
@@ -563,3 +569,81 @@ def test_no_legacy_panel_still_posts_research_to_the_old_routes(ids):
         ).read()
         assert "/research" not in src and "/contacts" not in src, tpl
         assert "/organization" in src, tpl
+
+
+# ---------------------------------------------------------------- cover letter
+# The flow itself (routes, consent, failures, marks) is tests/test_cover_letter_flow.py and
+# tests/test_cover_letter_draft.py.
+def test_cover_letter_dialog_on_this_computer_starts_the_draft_without_a_consent_step(ids):
+    with _client() as c:
+        html = c.get(f"/opportunities/{ids['strong']}/role/cover-letter").text
+        assert 'data-testid="cover-letter-drafting"' in html
+        assert 'data-testid="consent-panel"' not in html and 'data-testid="rl-send"' not in html
+
+
+def test_documents_tab_has_enabled_cover_letter_button(ids):
+    """The Documents tab shows one enabled Draft button (not disabled with a no-drafter note)."""
+    with _client() as c:
+        html = c.get(f"/opportunities/{ids['strong']}/documents").text
+        assert 'data-testid="new-cover-letter"' in html
+        match = re.search(r'data-testid="new-cover-letter"[^>]*', html)
+        assert match and "disabled" not in match.group(0)
+
+
+def test_cover_letter_templates_use_the_shared_marks_and_have_no_inline_style():
+    tpl = open("kestrel/web/templates/partials/role_letter_draft.html", encoding="utf-8").read()
+    assert "style_marks.html" in tpl and "marks(style_flags" in tpl
+    assert 'data-testid="cover-letter-marks"' in tpl and 'data-testid="cover-letter-text"' in tpl
+    for name in ("role_letter", "role_letter_ask", "role_letter_draft", "role_letter_drafting",
+                 "role_letter_failed"):
+        src = open(f"kestrel/web/templates/partials/{name}.html", encoding="utf-8").read()
+        assert " style=" not in src, name
+        assert "\u2014" not in src, name
+
+
+# ------------------------------------------------------------------ I applied, from the role
+def _pursuit_for(opp_id: int):
+    from kestrel.db.models import Pursuit
+
+    return _rows(Pursuit, Pursuit.opportunity_id == opp_id)[0]
+
+
+def test_the_role_page_offers_i_applied_with_a_date_and_records_a_past_date(ids):
+    from datetime import date, timedelta
+
+    past = (date.today() - timedelta(days=9)).isoformat()
+    with _client() as c:
+        before = c.get(f"/opportunities/{ids['second']}").text
+        assert 'data-testid="applied-form"' not in before  # not shortlisted: no pursuit yet
+        c.post(f"/opportunities/{ids['second']}/role/shortlist")
+        html = c.get(f"/opportunities/{ids['second']}").text
+        soup = BeautifulSoup(html, "html.parser")
+        form = soup.select_one('#rl-side [data-testid="applied-form"]')
+        assert form is not None and form["hx-post"].endswith("/act/applied/quick")
+        date_in = form.select_one("input[type=date]")
+        assert date_in["name"] == "applied_on" and date_in["value"] == date.today().isoformat()
+        assert form.select_one('[data-testid="mark-applied"]') is not None
+        assert "style=" not in str(form)
+        p = _pursuit_for(ids["second"])
+        r = c.post(form["hx-post"], data={"applied_on": past, "refresh_side": "1"})
+        assert r.status_code == 200 and 'data-testid="applied-done"' in r.text
+        assert "/role/side" in r.text  # the decision column reloads itself
+        assert _pursuit_for(ids["second"]).applied_at.startswith(past)
+        after = c.get(f"/opportunities/{ids['second']}").text
+        board = c.get("/pursuits").text
+    soup = BeautifulSoup(after, "html.parser")
+    shown = soup.select_one('#rl-side [data-testid="applied-on"]')
+    assert shown is not None and soup.select_one('#rl-side [data-testid="applied-form"]') is None
+    from kestrel.date_display import format_display
+
+    assert shown.get_text(" ", strip=True) == f"Applied on {format_display(past)}"
+    assert p.id and past in board
+
+
+def test_a_future_or_bad_date_is_refused_in_place_and_nothing_is_recorded(ids):
+    with _client() as c:
+        c.post(f"/opportunities/{ids['second']}/role/shortlist")
+        pid = _pursuit_for(ids["second"]).id
+        r = c.post(f"/pursuits/{pid}/act/applied/quick", data={"applied_on": "not-a-date"})
+    assert r.headers.get("hx-retarget") == "#applied-error"
+    assert _pursuit_for(ids["second"]).applied_at is None

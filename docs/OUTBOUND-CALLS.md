@@ -27,6 +27,9 @@ only to Kestrel's own server on this computer.
 | RemoteRocketship (the person's paid key) | `www.remoterocketship.com` | The key, target titles and on-site metro names; then the employer pages it returns |
 | Himalayas | `himalayas.app` | Country (US) and a search word |
 | We Work Remotely | `weworkremotely.com` | Nothing (a public feed) |
+| Arbeitnow | `www.arbeitnow.com` | The page number |
+| Jobicy | `jobicy.com` | The count and cursor (a public feed) |
+| Remotive | `remotive.com` | The job count limit (a public feed); at most 4 fetches a local day, counted in the database |
 | SAM.gov and SEC EDGAR (consulting track) | `api.sam.gov`, `efts.sec.gov`, `www.sec.gov` | Codes or search phrases; SEC requires a contact email in the request |
 
 Every request Kestrel sends itself carries Kestrel's own User-Agent and is rate-limited per site.
@@ -34,15 +37,18 @@ robots.txt, stated plainly (owner, 2026-10-30: "We just need to be transparent";
 code audit the same day, which found more than the two exceptions first written here):
 
 - **Checked before reading:** Workable, Recruitee, Teamtailor, Personio, Breezy HR, Himalayas, We
-  Work Remotely, USAJobs, a careers page or job feed the person pastes, a role added by its
-  address, the "is it still open" re-check of saved roles, a company's own site read for research,
-  and portfolio pages. A disallow stops the read.
+  Work Remotely, Arbeitnow, Jobicy, USAJobs, a careers page or job feed the person pastes, a role
+  added by its address, the "is it still open" re-check of saved roles, a company's own site read
+  for research, and portfolio pages. A disallow stops the read.
 - **Not checked:** the public job-board APIs of Greenhouse, Lever, Ashby, Workday, SmartRecruiters,
   Rippling, ADP and Paylocity (each company's own public board, read through the address the
   system publishes for it); the keyed APIs of Adzuna (its robots.txt disallows crawlers; Kestrel
   makes the keyed search its API terms allow for a personal job search, D-SRC-16),
   RemoteRocketship (its robots.txt disallows `/api`; the keyed call is what its paid plan sells,
-  D-SRC-14) and SAM.gov; SEC EDGAR (its own fair-access rules: a contact in the
+  D-SRC-14), Remotive (its robots.txt disallows `/api/*` as a crawler rule, but Remotive publishes
+  its API for scripts and its legal notice sets the terms, so this one documented API is read
+  without a robots check and held to the 4-fetches-a-day it advises, counted in the database;
+  never its pages; a named exception, D-SRC-15) and SAM.gov; SEC EDGAR (its own fair-access rules: a contact in the
   User-Agent and at most 10 requests a second); RSS or Atom feeds the person adds; and a
   Greenhouse short link (`grnh.se`), followed one hop to learn which board it points at.
 - **Indeed and Glassdoor** go through the JobSpy library, which sends its own headers (it presents
@@ -73,6 +79,7 @@ Embeddings never go online; they run inside Kestrel.
 | Add a role found elsewhere | The pasted address | On the click, one page |
 | Phone notifications | `ntfy.sh` or a webhook the person sets | Only if set in the config file (off by default, no screen for it yet); notification text, redacted in Confidential mode |
 | Setup check | The person's enabled job boards | On the Setup "verify" button |
+| Name lookup for the Local AI connection check | `ollama.com`, `registry.ollama.ai`, `ollama.ai` (name lookup only) | Only when the health check sees Ollama connected to a public address, so it can tell Ollama's own services from anything else; sends no data and times out after 2 seconds |
 
 ## What stays on the computer
 
@@ -157,6 +164,9 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `workforcenow.adp.com`: call. ADP company boards.
 - `www.anthropic.com`: link. Anthropic's privacy policy.
 - `www.apple.com`: reference. A macOS settings-file format name.
+- `www.arbeitnow.com`: call. The Arbeitnow job board.
+- `jobicy.com`: call. The Jobicy remote jobs feed.
+- `remotive.com`: call. The Remotive remote jobs API (a named robots.txt exception, 4 fetches a day).
 - `www.linkedin.com`: reference. A code comment (LinkedIn is never searched).
 - `www.openmodel.ai`: link. OpenModel's privacy policy.
 - `www.remoterocketship.com`: call. RemoteRocketship, the person's paid key.

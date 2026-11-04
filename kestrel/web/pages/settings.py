@@ -484,7 +484,7 @@ async def restore_from_upload(request: Request):
             saved = html.escape(str(result.pre_restore_backup or "the Kestrel-backups folder"))
             return HTMLResponse(
                 '<div class="warnbox">The backup was restored, but bringing it up to date with '
-                f"this version failed ({html.escape(type(exc).__name__)}). Restart Kestrel to "
+                f"this version failed ({html.escape(fixed_reason(exc))}). Restart Kestrel to "
                 f"retry. Your previous database is saved at {saved}.</div>"
             )
         # Process caches that would otherwise answer from the data just replaced (the restored

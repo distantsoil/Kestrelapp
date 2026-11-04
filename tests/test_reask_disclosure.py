@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from kestrel.config import get_settings
 from kestrel.services.online_consent import online_route
 from kestrel.web.deps import templates
@@ -71,28 +73,75 @@ def test_no_line_when_the_action_stays_on_this_computer():
     assert _ask(route).strip() == ""
 
 
-def test_the_real_callers_of_enforce_ask_for_the_line():
-    import inspect
+@pytest.fixture
+def migrated(_isolate_data_home):
+    from kestrel.db import migrate
+    from kestrel.db.engine import reset_engine
+
+    asyncio.run(reset_engine())
+    migrate.run_migrations()
+    yield
+    asyncio.run(reset_engine())
+
+
+def _patch_settings(monkeypatch, tier: str):
+    from kestrel.services import setting_overrides
+
+    async def load(session):
+        return _online(tier)
+
+    monkeypatch.setattr(setting_overrides, "load_settings_with_db", load)
+
+
+def _with_session(fn):
+    from kestrel.db.engine import get_sessionmaker
+
+    async def go():
+        async with get_sessionmaker()() as session:
+            return await fn(session)
+
+    return asyncio.run(go())
+
+
+def test_the_story_build_and_question_routes_ask_for_the_line(monkeypatch, migrated):
+    from kestrel.web import prep_view
+    from kestrel.web.pages import prep
+
+    _patch_settings(monkeypatch, "tier2")
+    build = _with_session(prep_view.build_ctx)["build_route"]
+    questions = _with_session(prep.questions_route)
+    for route in (build, questions):
+        assert route["online"] is True
+        assert route["reask"] is True
+    html = _ask(questions, "questions")
+    assert LINE in html.replace("&#39;", "'")
+
+
+def test_follow_up_negotiation_company_and_mock_routes_ask_for_the_line(migrated):
+    from types import SimpleNamespace
 
     from kestrel.services import follow_up
     from kestrel.web import prep_view
-    from kestrel.web.pages import offers, orgs, prep
+    from kestrel.web.pages import offers, orgs
 
-    assert "reask=True" in inspect.getsource(prep_view.build_ctx)  # story build
-    assert "reask=True" in inspect.getsource(prep.questions_route)  # likely questions
-    assert '"reask": True' in inspect.getsource(offers._negotiate_route)  # negotiation scripts
-    assert '"reask": True' in inspect.getsource(follow_up.disclosure)
-    assert '"reask": True' in inspect.getsource(orgs._ask_dialog)  # company summary
-    assert '"reask": True' in inspect.getsource(prep_view.route_info)  # mock interview
+    follow = _with_session(lambda s: follow_up.disclosure(s, _online("tier3")))
+    negotiate = _with_session(lambda s: offers._negotiate_route(s, _online("tier3")))
+    mock = _with_session(lambda s: prep_view.route_info(s, _online("tier2")))
+    company = _with_session(lambda s: orgs._ask_dialog(s, SimpleNamespace(id=1), _online("tier2")))
+    assert follow["online"] is True
+    assert negotiate["online"] is True
+    assert mock["online"] is True
+    for route in (follow, negotiate, mock, company):
+        assert route["reask"] is True
 
 
-def test_scoring_import_and_suggestion_routes_never_ask_for_it():
-    import inspect
-
-    from kestrel.web.pages import documents, role
-
-    assert "reask=True" not in inspect.getsource(role)
-    assert "reask=True" not in inspect.getsource(documents)
+def test_scoring_import_and_suggestion_routes_never_ask_for_it(monkeypatch):
+    # Title suggestions, scoring and import never re-ask: the same online route without the flag.
+    _patch_settings(monkeypatch, "tier1")
+    route = _route("tier1")
+    assert route["online"] is True
+    assert route["reask"] is False
+    assert "asks the same model once more" not in _ask(route, "title-suggest")
 
 
 def _render(name: str, **ctx) -> str:

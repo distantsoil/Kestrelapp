@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
+from kestrel.web.errors import fixed_reason
 
 log = structlog.get_logger()
 
@@ -50,7 +51,7 @@ def apply(on: bool) -> str | None:
         previous = _set_state(flags)
     except (OSError, AttributeError) as exc:
         log.warning("keep_awake_failed", on=on, error=f"{type(exc).__name__}: {exc}")
-        return f"the request failed ({type(exc).__name__})"
+        return f"the request failed ({fixed_reason(exc)})"
     if previous == 0:
         log.warning("keep_awake_refused", on=on)
         return "Windows refused the request"

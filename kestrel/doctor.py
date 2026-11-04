@@ -9,12 +9,14 @@ threshold would wrongly fail tier1. The needle test is empirical because /api/sh
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import shutil
 import sys
 from dataclasses import dataclass, field
 
 import httpx
+import structlog
 
 from kestrel import paths
 from kestrel.config import Settings, get_settings
@@ -23,8 +25,19 @@ from kestrel.llm.client import OllamaClient
 from kestrel.llm.profiles import check_model_fit, ollama_needed
 from kestrel.rules import helpers
 from kestrel.rules.sample import sample_context
+from kestrel.web.errors import fixed_reason
 
 PASS, WARN, FAIL, INFO = "PASS", "WARN", "FAIL", "INFO"
+
+log = structlog.get_logger()
+
+
+def _why(exc: BaseException) -> str:
+    """The reason a check could not run, as one of Kestrel's own sentences (D-SEC-4). The report
+    reaches the Models page, so it never carries an exception class name or the exception's own
+    text (it can name a path or a URL); both go to the log."""
+    log.info("doctor_check_failed", error_type=type(exc).__name__, error=str(exc))
+    return fixed_reason(exc)
 
 # Logical tiers that use a derived num_ctx model (embed uses nomic-embed-text directly).
 CTX_TIERS = ("tier1", "tier2", "tier3", "docsel", "trigger")
@@ -109,7 +122,7 @@ def _check_config(rep: DoctorReport) -> None:
         rep.add(
             "Config valid",
             FAIL,
-            f"{type(exc).__name__}: {exc}",
+            f"{_why(exc)}",
             "Fix config/settings.yml.",
             blocking=True,
         )
@@ -133,7 +146,7 @@ def _check_config(rep: DoctorReport) -> None:
         rep.add(
             "Config valid",
             FAIL,
-            f"{type(exc).__name__}: {exc}",
+            f"{_why(exc)}",
             "Fix config/filters.yml.",
             blocking=True,
         )
@@ -178,14 +191,14 @@ def _check_ollama(rep: DoctorReport, client: OllamaClient) -> bool:
             rep.add(
                 "Ollama reachable",
                 WARN,
-                f"{type(exc).__name__}: {exc} (tier routing unknown: settings not read)",
+                f"{_why(exc)} (tier routing unknown: settings not read)",
                 "Fix the Settings layer row; start Ollama only if a tier runs locally.",
             )
             return False
         rep.add(
             "Ollama reachable",
             FAIL,
-            f"{type(exc).__name__}: {exc}",
+            f"{_why(exc)}",
             "Start Ollama (https://ollama.com/download), then retry.",
             blocking=True,
         )
@@ -199,7 +212,7 @@ def _check_models_present(rep: DoctorReport, client: OllamaClient, s: Settings) 
         rep.add(
             "Models present",
             FAIL,
-            f"{type(exc).__name__}: {exc}",
+            f"{_why(exc)}",
             "Could not list Ollama models.",
             blocking=True,
         )
@@ -255,7 +268,7 @@ def _check_num_ctx(rep: DoctorReport, client: OllamaClient, s: Settings, present
         try:
             actual = client.effective_num_ctx(model)
         except Exception as exc:
-            rep.add(f"num_ctx {tier}", FAIL, f"{type(exc).__name__}: {exc}", blocking=True)
+            rep.add(f"num_ctx {tier}", FAIL, f"{_why(exc)}", blocking=True)
             continue
         if actual is None:
             rep.add(
@@ -357,7 +370,7 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
             rep.add(
                 f"needle {model}",
                 WARN,
-                f"timed out loading the model ({type(exc).__name__}); context not verified",
+                f"timed out loading the model ({_why(exc)}); context not verified",
                 f"{_NOT_READY}; or set OLLAMA_KEEP_ALIVE=2h so it stays resident",
             )
         except httpx.HTTPStatusError as exc:
@@ -366,9 +379,9 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                         f"the model server answered {exc.response.status_code}; context not "
                         "verified", _NOT_READY)
             else:
-                rep.add(f"needle {model}", FAIL, f"{type(exc).__name__}: {exc}", blocking=True)
+                rep.add(f"needle {model}", FAIL, f"{_why(exc)}", blocking=True)
         except Exception as exc:
-            rep.add(f"needle {model}", FAIL, f"{type(exc).__name__}: {exc}", blocking=True)
+            rep.add(f"needle {model}", FAIL, f"{_why(exc)}", blocking=True)
 
 
 # The thinking check expects the one word "hi" in a few tokens (D-LLM-9). A model that thinks
@@ -414,9 +427,9 @@ def _check_thinking(
                 )
         except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
             # A 5xx or a timeout says nothing about thinking: warn, never fail (as the needle test).
-            rep.add(name, WARN, f"could not check ({type(exc).__name__}); thinking not verified")
+            rep.add(name, WARN, f"could not check ({_why(exc)}); thinking not verified")
         except Exception as exc:
-            rep.add(name, WARN, f"{type(exc).__name__}: {exc}")
+            rep.add(name, WARN, f"{_why(exc)}")
 
 
 _PROBE_SCHEMA = {
@@ -455,9 +468,9 @@ def _check_schema(
             ok = isinstance(data, dict) and data.get("answer") == "ready"
         except (ValueError, TypeError) as exc:  # not JSON at all
             data, ok = None, False
-            raw = f"{type(exc).__name__}: {exc}"
+            raw = f"{_why(exc)}"
         except Exception as exc:
-            rep.add(f"schema honored {model}", WARN, f"{type(exc).__name__}: {exc}")
+            rep.add(f"schema honored {model}", WARN, f"{_why(exc)}")
             continue
         if ok:
             rep.add(f"schema honored {model}", PASS, "JSON matched the probe schema")
@@ -538,6 +551,270 @@ def _check_ollama_env(rep: DoctorReport, s: Settings) -> None:
     )
 
 
+def _host_of(value: str) -> str | None:
+    """The host of a URL or of an OLLAMA_HOST style value (scheme optional, IPv6 in brackets,
+    port optional, user info ignored), lower case; None when it cannot be parsed."""
+    from urllib.parse import urlsplit
+
+    text = (value or "").strip()
+    if not text:
+        return None
+    if "://" not in text:
+        text = "//" + text
+    try:
+        host = urlsplit(text).hostname
+    except ValueError:
+        return None
+    return host.lower().rstrip(".") if host else None
+
+
+def _is_loopback(url: str) -> bool:
+    """True only when the parsed host is this computer: localhost, 127.0.0.0/8, ::1 or an
+    IPv4-mapped 127.x address. Decided by the parsed host, never by a text prefix, so
+    localhost.evil.example and localhost@evil.example are not local."""
+    import ipaddress
+
+    text = (url or "").strip()
+    # A bare IPv6 literal ("::1") has no brackets and more than one colon: urlsplit would read it
+    # as host:port, so an unbracketed value with several colons is taken whole as the address.
+    if "://" not in text and "[" not in text and text.count(":") > 1:
+        host: str | None = text.lower()
+    else:
+        host = _host_of(url)
+    if host is None:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
+_NEEDS_OLLAMA_ROW = "Local AI: checks needing Ollama"
+
+
+def _note_ollama_unreachable(rep: DoctorReport, exc: Exception) -> None:
+    """One 'unverified' row (never a pass) when a Local AI check could not ask Ollama."""
+    if any(r.name == _NEEDS_OLLAMA_ROW for r in rep.results):
+        return
+    rep.add(
+        _NEEDS_OLLAMA_ROW,
+        INFO,
+        f"unverified: Ollama not reachable ({_why(exc)}), so the cloud model tag "
+        "and model digest checks did not run",
+        "Start Ollama and run the health check again.",
+    )
+
+
+def _check_local_ai_settings(rep: DoctorReport, s: Settings) -> None:
+    """Issue #166 M1: Local AI settings spot check.
+    Reads local state only. Nothing is sent anywhere."""
+    # 1. The local backend address is loopback.
+    local_backend = s.llm.backends.get("local")
+    if local_backend and local_backend.base_url:
+        if _is_loopback(local_backend.base_url):
+            rep.add(
+                "Local AI: backend address",
+                PASS,
+                local_backend.base_url,
+            )
+        else:
+            rep.add(
+                "Local AI: backend address",
+                WARN,
+                local_backend.base_url,
+                "Your text goes to another address, not this computer. "
+                "Set llm.backends.local.base_url to http://127.0.0.1:11434 for local inference.",
+            )
+
+    # 2. Ollama listens only on loopback (OLLAMA_HOST unset or loopback).
+    ollama_host = os.environ.get("OLLAMA_HOST", "").strip()
+    if not ollama_host:
+        rep.add(
+            "Local AI: Ollama bind",
+            PASS,
+            "OLLAMA_HOST unset (defaults to loopback)",
+        )
+    elif _is_loopback(ollama_host):
+        rep.add(
+            "Local AI: Ollama bind",
+            PASS,
+            ollama_host,
+        )
+    else:
+        rep.add(
+            "Local AI: Ollama bind",
+            WARN,
+            ollama_host,
+            "Ollama is bound to a non-loopback address. Other devices on your network "
+            "can send prompts to it. Set OLLAMA_HOST=127.0.0.1:11434 to restrict to this computer.",
+        )
+
+    # 3. No installed model tag ends in -cloud.
+    # This check requires querying Ollama's model list, which is done in the
+    # _check_models_present path. We add a note here that the check is part
+    # of the model presence check.
+    # (The actual -cloud tag check is in _check_models_present below.)
+
+
+def _check_cloud_model_tags(rep: DoctorReport, client: OllamaClient) -> None:
+    """Issue #166 M1: Flag any installed model with a -cloud tag.
+    A cloud model is not local inference; its prompts go to Ollama's servers."""
+    try:
+        tags = client.list_models()
+    except (httpx.HTTPError, ValueError, OSError, KeyError) as exc:
+        _note_ollama_unreachable(rep, exc)
+        return
+    cloud_tags = [t for t in tags if t.endswith("-cloud")]
+    if cloud_tags:
+        rep.add(
+            "Local AI: cloud model tags",
+            WARN,
+            ", ".join(cloud_tags),
+            "These models are cloud-hosted: prompts are sent to Ollama's servers. "
+            "For local-only inference, use non-cloud tags "
+            "(e.g. qwen3:8b instead of qwen3:8b-cloud).",
+        )
+    else:
+        rep.add(
+            "Local AI: cloud model tags",
+            PASS,
+            "no -cloud tags found",
+        )
+
+
+def _check_local_ai_egress(rep: DoctorReport) -> None:
+    """Issue #166 M1: Connection spot check.
+    Looks at Ollama's network connections at the moment of the check and classifies each remote
+    address. Read-only: nothing is sent, nothing is changed. When the connections cannot be
+    listed, the row says "unverified" and is never a pass."""
+    try:
+        from kestrel.services.local_ai_egress import format_egress_result, sample_connections
+
+        result = sample_connections(duration_s=3.0)
+    except ImportError:
+        rep.add(
+            "Local AI: egress",
+            INFO,
+            "unverified: psutil is not available, so the connection check did not run",
+        )
+        return
+    except OSError as exc:
+        rep.add(
+            "Local AI: egress",
+            WARN,
+            f"unverified: the connection check failed ({_why(exc)})",
+        )
+        return
+    text = format_egress_result(result)
+    if result.unverified:
+        rep.add("Local AI: egress", WARN, text)
+    elif result.clean:
+        rep.add("Local AI: egress", PASS, text)
+    elif result.error:
+        rep.add("Local AI: egress", WARN, text)
+    else:
+        rep.add("Local AI: egress", WARN if result.public_connections else INFO, text)
+
+
+def _norm_digest(value: str) -> str:
+    """A digest without its optional "sha256:" prefix, lower case, for comparing."""
+    v = (value or "").strip().lower()
+    return v[len("sha256:"):] if v.startswith("sha256:") else v
+
+
+def _check_model_digests(rep: DoctorReport, client: OllamaClient) -> None:
+    """Issue #166 M2: Verify local model digests against the tested catalog.
+    A mismatch warns (tag has moved); a tag not in the catalog is reported as unknown; an empty
+    catalog is reported as not recorded, never as a pass. Never blocks."""
+    import json
+    from importlib.resources import files
+
+    from kestrel.llm.profiles import DERIVED_TIERS, derived_name
+
+    name = "Local AI: model digests"
+    try:
+        raw = files("kestrel.resources.config").joinpath("model_digests.json").read_text(
+            encoding="utf-8"
+        )
+        catalog = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        rep.add(name, INFO, f"unverified: the tested-digest list could not be read ({exc})")
+        return
+
+    models: dict[str, dict[str, str]] = catalog.get("models") or {}
+    if not models:
+        rep.add(
+            name,
+            INFO,
+            "unverified: the digests Kestrel tested are not recorded yet, so installed models "
+            "could not be compared",
+        )
+        return
+
+    try:
+        local_models = client.list_models_with_digests()
+    except (httpx.HTTPError, ValueError, OSError, KeyError) as exc:
+        _note_ollama_unreachable(rep, exc)
+        return
+
+    # Ollama's /api/tags reports a bare 64-character hex digest; the catalog stores "sha256:<hex>".
+    local_by_name: dict[str, str] = {
+        m["name"]: _norm_digest(m.get("digest", "")) for m in local_models
+    }
+    matches = 0
+    mismatches = 0
+    missing = 0
+    details: list[str] = []
+    for tag, info in models.items():
+        expected_digest = _norm_digest(info.get("digest", ""))
+        if tag not in local_by_name:
+            missing += 1
+        elif local_by_name[tag] == expected_digest:
+            matches += 1
+        else:
+            mismatches += 1
+            details.append(
+                f"{tag}: local {local_by_name[tag][:19]}... vs tested {expected_digest[:19]}..."
+            )
+    # Kestrel's own derived models (kestrel-tier1 and the like, llm/profiles.py) are built from a
+    # tested base model with a Modelfile, so their digest is per machine: never "unknown".
+    # Only the names Kestrel itself generates are exempt; any other kestrel-* name is unknown.
+    # Kestrel builds kestrel-<tier> (profiles.derived_name), kestrel-<tier>-<model slug> for a
+    # model picked on the Models page (models_ui.derived_name), and older builds made
+    # kestrel-docsel before document selection moved onto tier 2 (D-LLM-10).
+    tiers = "|".join(re.escape(derived_name(t).removeprefix("kestrel-"))
+                     for t in (*DERIVED_TIERS, "docsel"))
+    own = re.compile(rf"kestrel-(?:{tiers})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?")
+    unknown = sorted(
+        t for t in local_by_name if t not in models and not own.fullmatch(t.split(":")[0])
+    )
+
+    if mismatches == 0 and missing == 0 and not unknown:
+        rep.add(name, PASS, f"{matches} model(s) match what Kestrel tested")
+        return
+    parts: list[str] = []
+    if matches:
+        parts.append(f"{matches} match")
+    if mismatches:
+        parts.append(f"{mismatches} differ (tag has moved)")
+    if missing:
+        parts.append(f"{missing} not installed")
+    if unknown:
+        parts.append(
+            f"{len(unknown)} unknown (not in Kestrel's tested list, so unverified): "
+            + ", ".join(unknown)
+        )
+    text = ", ".join(parts)
+    if details:
+        text += ": " + "; ".join(details)
+    rep.add(name, WARN if mismatches else INFO, text)
+
+
 def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
     """Hard rule 7: every request carries a descriptive User-Agent with a REAL contact address
     (SEC EDGAR blocks requests without one, and the EDGAR sources refuse to run with a placeholder).
@@ -565,36 +842,34 @@ _ATS_KINDS = (
 )
 
 
-async def _probe_ats(settings) -> list[tuple[str, str, str]]:
+def _enabled_ats_sources() -> list:
+    """The enabled ATS sources, read with a plain sync engine. Doctor runs on whatever thread
+    called it (the CLI, the tray, the Setup page's action thread), and an async engine under
+    asyncio.run there leaves aiosqlite's worker thread calling into the closed loop when the
+    connect fails (the data folder moved or removed mid-run): an unhandled thread exception
+    (D-DB-2). The app engine belongs to uvicorn's loop and is never touched from here."""
     from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from sqlalchemy.orm import Session
 
-    from kestrel.db.engine import make_async_engine
+    from kestrel.db.engine import make_sync_engine
     from kestrel.db.models import Source
+
+    engine = make_sync_engine(paths.db_path())
+    try:
+        with Session(engine, expire_on_commit=False) as session:
+            return list(
+                session.execute(
+                    select(Source).where(Source.enabled.is_(True), Source.kind.in_(_ATS_KINDS))
+                ).scalars()
+            )
+    finally:
+        engine.dispose()
+
+
+async def _probe_ats(settings, sources) -> list[tuple[str, str, str]]:
     from kestrel.ingest.adapters import get_adapter
     from kestrel.ingest.http import HttpClient
 
-    # Doctor runs under asyncio.run on whatever thread called it (the CLI, the tray, the Setup
-    # page's action thread). The app engine belongs to uvicorn's loop, so this probe opens its own
-    # engine on this loop and disposes only that one, exactly as _settings_for_doctor does. Touching
-    # get_sessionmaker() or reset_engine() here would dispose the live app engine from a foreign
-    # loop (cross-loop aiosqlite errors that look like corruption).
-    engine = make_async_engine(paths.db_path())
-    try:
-        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
-            sources = (
-                (
-                    await session.execute(
-                        select(Source).where(
-                            Source.enabled.is_(True), Source.kind.in_(_ATS_KINDS)
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-    finally:
-        await engine.dispose()
     if not sources:
         return []
     out: list[tuple[str, str, str]] = []
@@ -609,7 +884,7 @@ async def _probe_ats(settings) -> list[tuple[str, str, str]]:
                 # fetch every per-job detail); shape-checking the first posting is enough.
                 postings = await get_adapter(src.kind).fetch({**src.config, "max_results": 1}, http)
             except Exception as exc:  # a shape/HTTP problem is a WARN, never a crash
-                out.append((src.name, WARN, f"{type(exc).__name__}: {exc}"))
+                out.append((src.name, WARN, f"{_why(exc)}"))
                 continue
             if not postings:
                 out.append((src.name, WARN, "no postings returned"))
@@ -638,9 +913,10 @@ def _check_ats_shapes(rep: DoctorReport, settings) -> None:
         rep.add("ATS shapes", INFO, "skipped (database not initialized)")
         return
     try:
-        results = asyncio.run(_probe_ats(settings))
+        sources = _enabled_ats_sources()
+        results = asyncio.run(_probe_ats(settings, sources)) if sources else []
     except Exception as exc:
-        rep.add("ATS shapes", WARN, f"could not probe: {type(exc).__name__}: {exc}")
+        rep.add("ATS shapes", WARN, f"could not probe: {_why(exc)}")
         return
     if not results:
         rep.add("ATS shapes", INFO, "no enabled ATS sources to verify")
@@ -850,7 +1126,7 @@ def _skip_local_checks(rep: DoctorReport, client: OllamaClient, s: Settings) -> 
             return
         detail = f"{embed.model} not pulled"
     except Exception as exc:  # Ollama absent is the expected case on this profile
-        detail = f"Ollama not reachable ({type(exc).__name__})"
+        detail = f"Ollama not reachable ({_why(exc)})"
     rep.add(
         "Embeddings",
         WARN,
@@ -969,7 +1245,7 @@ def _settings_for_doctor(rep: DoctorReport) -> Settings:
         rep.add(
             "Settings layer",
             WARN,
-            f"setting-table rows not applied: {type(exc).__name__}: {exc}",
+            f"setting-table rows not applied: {_why(exc)}",
             "run `kestrel db upgrade`; until then doctor reads settings.yml only",
         )
         return get_settings()
@@ -982,7 +1258,7 @@ def _settings_for_doctor(rep: DoctorReport) -> Settings:
         rep.add(
             "Settings layer",
             WARN,
-            f"setting-table rows not applied: {type(exc).__name__}: {exc}",
+            f"setting-table rows not applied: {_why(exc)}",
             "fix or reset the setting under Settings; until then doctor reads settings.yml only",
         )
         return get_settings()
@@ -994,29 +1270,26 @@ RUN_GOING = "A run is going; check again when it finishes."
 
 def _run_is_active() -> bool:
     """Whether a search or scoring run is queued or running (the same tasks the nav ring counts).
-    Any failure to read the database (none yet, a locked file) means not active."""
-    import asyncio
+    Any failure to read the database (none yet, a locked file) means not active. Sync engine, for
+    the reason given on _enabled_ats_sources."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+    from sqlalchemy.orm import Session
 
-    async def read() -> bool:
-        from sqlalchemy import select
-        from sqlalchemy.ext.asyncio import async_sessionmaker
+    from kestrel.analytics.run_summary import _live_where
+    from kestrel.db.engine import make_sync_engine
+    from kestrel.db.models import Task
 
-        from kestrel.analytics.run_summary import _live_where
-        from kestrel.db.engine import make_async_engine
-        from kestrel.db.models import Task
-
-        engine = make_async_engine(paths.db_path())
+    try:
+        engine = make_sync_engine(paths.db_path())
         try:
-            async with async_sessionmaker(engine)() as s:
-                found = await s.execute(
+            with Session(engine) as s:
+                found = s.execute(
                     select(Task.id).where(_live_where("scrape", "t1", "t2")).limit(1))
                 return found.scalar_one_or_none() is not None
         finally:
-            await engine.dispose()
-
-    try:
-        return asyncio.run(read())
-    except Exception:  # noqa: BLE001 - no database yet, a running loop, a locked file
+            engine.dispose()
+    except (SQLAlchemyError, OSError):  # no database yet, a locked file
         return False
 
 
@@ -1086,6 +1359,9 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
     )
     needed = ollama_needed(s)
     hosted = hosted_only(s)
+    # Set when Ollama answered below; the Local AI checks that ask Ollama run only then, so a
+    # stopped Ollama costs one connection attempt, not one more per check.
+    ollama_up = False
     if not needed:
         _skip_ollama_checks(rep)
         check_model_fit(rep, s, client)
@@ -1093,13 +1369,17 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         _skip_local_checks(rep, client, s)
         check_model_fit(rep, s, client)
     elif _check_ollama(rep, client):
+        ollama_up = True
         present = _check_models_present(rep, client, s)
         check_model_fit(rep, s, client)
         _check_num_ctx(rep, client, s, present)
         if not quick:
             _run_probes(rep, client, s, present)
+            # Issue #166 M1: connection spot check.
+            _check_local_ai_egress(rep)
         else:
             rep.add("Needle + thinking probes", INFO, "skipped (--quick)")
+            rep.add("Local AI: egress", INFO, "skipped (--quick)")
     # The hosted branch reports the in-process engine itself; every other branch reports it here,
     # including a BYOK install where no tier needs Ollama (the case this engine exists for).
     if embed_is_inprocess(s) and not (needed and hosted):
@@ -1112,6 +1392,14 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         rep.add("OLLAMA_KEEP_ALIVE", INFO, HOSTED_SKIPPED)
     else:
         _check_ollama_env(rep, s)
+        # Issue #166 M1: Local AI settings spot check.
+        _check_local_ai_settings(rep, s)
+        if ollama_up:
+            _check_cloud_model_tags(rep, client)
+            # Issue #166 M2: model digest verification.
+            _check_model_digests(rep, client)
+        else:
+            _note_ollama_unreachable(rep, ConnectionError("Ollama did not answer"))
     _check_ingest_contact(rep, s)
     _check_hosted(rep, s)
     _check_mcp_port(rep, s)

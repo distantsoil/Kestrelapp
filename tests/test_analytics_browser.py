@@ -13,6 +13,7 @@ import os
 import pytest
 
 from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_analytics_page import _seed_web
 
 pytestmark = [
@@ -162,7 +163,7 @@ def test_funnel_bars_are_their_true_share_of_the_track(live, theme, width):
         # The later steps sit in a fold under the four narrowing steps (the mockup draws four).
         page.evaluate(
             "document.querySelectorAll('details.an-fold').forEach(d => { d.open = true; })")
-        page.wait_for_timeout(1200)  # the bars grow in (.9s); measure them at rest
+        wait_for_layout(page)  # settled, not slept: the bars grow in (.9s); measure them at rest
         rows = page.evaluate("""() => Array.from(document.querySelectorAll('.an-frow'))
           .filter(r => r.offsetParent !== null).map(r => {
             const t = r.querySelector('.an-frow__bar').getBoundingClientRect().width;

@@ -18,7 +18,7 @@
       {% elif route.employer == 'held' %}<p data-testid="tl-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a class="k-link" href="/documents">Choose your employer in Profile › Documents</a> first.</p>{% endif %}
       <p><b>Not sent:</b> your name, contact details and your resume file. {{ route.provider }} handles what it receives under its own terms. It chooses among your wordings; it cannot write or change any of them.</p>
       {% if route.employer != 'held' %}
-      <label class="tl-confirm"><input type="checkbox" name="confirmed" value="1" required data-testid="tl-confirm"> Send this to {{ route.provider }} to pick my wordings</label>
+      {% from "partials/online_ask.html" import consent_check %}{{ consent_check('tl-confirm', 'Send this to ' ~ route.provider ~ ' to pick my wordings', extra_cls='tl-confirm') }}
       <input type="hidden" name="model" value="{{ route.model }}">
       <input type="hidden" name="dest" value="{{ route.dest }}">
       {% endif %}
@@ -28,7 +28,7 @@
     </div>
     <div class="k-modal__foot">
       <button type="button" class="k-btn" data-k-close>Cancel</button>
-      {% if route.employer != 'held' %}<button type="submit" class="k-btn k-btn--primary" data-testid="tl-send">Send and pick</button>{% endif %}
+      {% if route.employer != 'held' %}<button type="submit" class="k-btn k-btn--primary" data-consent-send data-testid="tl-send">Send and pick</button>{% endif %}
     </div>
   </form>
 </div>

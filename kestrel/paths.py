@@ -104,6 +104,51 @@ def evals_dir() -> Path:
     return d
 
 
+def documents_dir() -> Path:
+    """Where rendered resumes, capability statements and letters are written."""
+    return data_dir() / "documents"
+
+
+def prep_packs_dir() -> Path:
+    """Where rendered prep packs are written."""
+    return data_dir() / "prep_packs"
+
+
+def confined_file(stored: object, root: Path) -> Path | None:
+    """A file path read back from the database, accepted only when it resolves inside `root`.
+
+    A restored or edited backup can point a stored path at any file on the computer, so a path
+    from the database is never opened, served or deleted as it stands. Returns the resolved path,
+    or None for an empty value, a path that cannot be resolved, or one outside `root` (it is
+    then treated as missing, and logged). It does not check that the file exists."""
+    if not stored or not isinstance(stored, (str, os.PathLike)):
+        return None
+    try:
+        target = Path(stored).resolve()
+        # Compared as normcased strings, because a Windows or macOS volume ignores case: the
+        # same folder written two ways must neither be refused nor let a different one through.
+        inside = os.path.normcase(str(target))
+        base = os.path.normcase(str(root.resolve()))
+        if inside == base or inside.startswith(base.rstrip(os.sep) + os.sep):
+            return target
+    except (OSError, ValueError, RuntimeError):
+        pass
+    import structlog
+
+    structlog.get_logger().warning("stored_file_path_outside_data_folder")
+    return None
+
+
+def stored_pdf(stored: object) -> Path | None:
+    """`confined_file` for a document PDF (the documents folder)."""
+    return confined_file(stored, documents_dir())
+
+
+def stored_prep_pdf(stored: object) -> Path | None:
+    """`confined_file` for a prep pack PDF (the prep packs folder)."""
+    return confined_file(stored, prep_packs_dir())
+
+
 def exports_dir() -> Path:
     """Kestrel's own folder for files the operator asked it to save, used when the Downloads
     folder cannot be found or written (D-UI-41)."""

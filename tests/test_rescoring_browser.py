@@ -17,6 +17,7 @@ import pytest
 from tests import rescoring_helpers as rh
 from tests import role_seed, today_seed
 from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = [
     pytest.mark.usefixtures("_isolate_data_home"),

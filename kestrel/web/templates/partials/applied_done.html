@@ -1,6 +1,8 @@
-{# The "I applied" one-click answer, kept for callers that post the quick route (D-UI-51). The
-   board's own button now opens the form in the panel. #}
-<div class="ap-applied-done" id="applied-{{ pid }}" data-testid="applied-done">
+{# The "I applied" answer, in place of the form (D-UI-51, issue #145): the date recorded, not
+   "today". On the Role page (side_url set) it also reloads the decision column so the chip and the
+   date show at once. #}
+<div class="ap-applied-done oa-saved" role="status" id="applied-{{ pid }}" data-testid="applied-done"{% if side_url %}
+     hx-get="{{ side_url }}" hx-trigger="load delay:700ms" hx-target="#rl-side" hx-swap="outerHTML"{% endif %}>
   <button class="k-btn k-btn--sm k-btn--done" type="button" disabled>{{ done }}</button>
-  <span class="k-muted">Moving to {{ moving_to }} &middot; recorded today, follow up in 7 days. Use the card's Stage label to change it.</span>
+  <span class="k-muted">Moving to {{ moving_to }} &middot; recorded for {{ date_display(applied_at) }}, follow up in 7 days. Use the card's Stage label to change it.</span>
 </div>

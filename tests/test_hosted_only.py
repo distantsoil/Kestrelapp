@@ -543,9 +543,7 @@ def test_run_doctor_in_hosted_only_mode_has_no_blocking_failure(monkeypatch):
         "docsel": prov.ModelInfo(id="b/gratis:free"),
     }
     migrate.run_migrations()
-    asyncio.run(
-        setup_mod._write_rows(setup_mod.hosted_rows("frontier", backend, picks, "2026-10-12T10:00"))
-    )
+    setup_mod._write_rows(setup_mod.hosted_rows("frontier", backend, picks, "2026-10-12T10:00"))
     monkeypatch.setattr(d, "_check_browser", lambda rep: rep.add("Browser (PDF)", d.PASS, "x"))
 
     def refused(self, *a, **k):

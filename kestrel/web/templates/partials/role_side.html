@@ -7,11 +7,13 @@
 {% from "partials/_remove_confirm.html" import remove_confirm %}
 {% set base = '/opportunities/' ~ opp.id %}
 {% set hidden = opp.archived_at %}
-{% macro prep(label, icon, href='', why='', testid='') -%}
+{% macro prep(label, icon, href='', why='', testid='', hx='') -%}
   {%- if not unlocked -%}
     <button type="button" class="k-btn rl-lock" aria-disabled="true" data-testid="{{ testid }}" data-locked="1">{{ ric(icon) }}{{ label }}<span class="rl-tip" role="tooltip">Available once you {{ 'add it to your leads' if consulting else 'shortlist this role' }}. Each one uses minutes of your computer's AI time (or online credit), so Kestrel only builds them for {{ w.roles }} you {{ 'add' if consulting else 'shortlist' }}.</span></button>
   {%- elif why -%}
     <button type="button" class="k-btn" disabled title="{{ why }}" data-testid="{{ testid }}">{{ ric(icon) }}{{ label }}</button>
+  {%- elif hx -%}
+    <button type="button" class="k-btn rl-unlocked" hx-get="{{ hx }}" hx-target="#rl-dialog" hx-swap="innerHTML" data-busy-text="Opening…" data-testid="{{ testid }}">{{ ric(icon) }}{{ label }}</button>
   {%- else -%}
     <a class="k-btn rl-unlocked" href="{{ href }}" data-testid="{{ testid }}">{{ ric(icon) }}{{ label }}</a>
   {%- endif -%}
@@ -54,10 +56,15 @@
       {% endif %}
     {% endif %}
 
+    {% if pursuit and not hidden %}
+    <div class="rl-lbl">{{ 'REACHED OUT' if consulting else 'APPLICATION' }}</div>
+    <div class="rl-applied" data-testid="applied-block">{% set refresh_side = true %}{% include "partials/applied_block.html" %}</div>
+    {% endif %}
+
     <div class="rl-lbl">{{ 'PREPARE' if consulting else 'PREPARE YOUR APPLICATION' }}</div>
     <div class="rl-row2{{ ' is-stack' if consulting else '' }}">
       {{ prep(w.tailor, 'profile', tailor_href, '' if tailor_href else ('No active ' ~ w.doc ~ ' yet. Import or build one under Documents.'), 'tailor') }}
-      {{ prep('Engagement outline' if consulting else 'Cover letter', 'prep', '', no_drafter, 'cover-letter') }}
+      {{ prep('Engagement outline' if consulting else 'Cover letter', 'prep', '', '', 'cover-letter', base ~ '/role/cover-letter') }}
     </div>
     <div class="rl-row2">
       {{ prep('Discovery call prep' if consulting else 'Prep pack', 'calibrate', '/prep/' ~ opp.id ~ '?auto=1', '', 'interview-prep') }}

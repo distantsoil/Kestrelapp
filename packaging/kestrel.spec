@@ -53,7 +53,7 @@ hiddenimports = []
 # clr_loader. collect_all bundles their data. pythonnet and clr_loader are Windows-only dependencies
 # (pyproject markers), so they are collected only where they exist; a missing package would make
 # collect_all abort the whole build on a macOS or Linux runner.
-collect_all_pkgs = ["webview", "playwright"]
+collect_all_pkgs = ["webview", "playwright", "fastmcp"]
 if importlib.util.find_spec("clr_loader") is not None:
     collect_all_pkgs.append("clr_loader")
     hiddenimports += ["clr"]  # pythonnet's runtime import, invisible to the static graph

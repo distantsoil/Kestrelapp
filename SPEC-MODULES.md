@@ -239,6 +239,32 @@ deliverables, commercial model (day rate × days, or fixed fee, or retainer), as
 explicit exclusions. Same claim-tracing constraint. **It is an outline for a conversation, not a
 priced proposal**, and the UI says so.
 
+**Voice and closing (D-UI-241, prompt `cover/v3`).** The letter is written as the person, in the
+first person, to the employer. The model writes "Dear Hiring Team," and the body only; Kestrel adds
+"Sincerely," and the person's name from the local profile whenever it renders the preview, the saved
+view and the PDF, so the name is never in an online payload. The most significant gap gets one
+forward-looking first-person sentence. The user message gives evaluation notes as guidance, not
+labeled text to repeat. A reply that speaks of the person in the third person ("the candidate",
+"the applicant") gets the one repair attempt with a short reason, then fails clearly (hard rule 3).
+A number or name found only in the posting is flagged only when its sentence claims it for the
+person (I, my, me, we, our); one found in neither the person's text nor the posting is always
+flagged; the posting is never a grounding source. The engagement outline (`engagement_outline/v3`)
+is written as the consultant ("I" or "we") to the organization ("you").
+
+**The saved draft (D-UI-239).** A draft is a `doc_render` row (`template` is `cover_letter` or
+`engagement_outline`; its text, `claims_used` and marks live in `config`), so it survives a reload
+and the Documents tab offers "Open draft". The prompt carries only the person's proof points and
+the resume lines chosen for the role, each with the key a claim must cite. On this computer the
+draft starts with no consent step; an online model first shows the ask-first panel (what is sent,
+what is not, the model and service, the plain-writing re-ask sentence) and nothing is sent until the
+confirmed form is posted, checked again on the server for every call including the re-ask. The
+draft has a check view (dotted underline: a claim traced to the person's own text, with its source
+on a click; solid underline: unverified, "remove it or add it as a proof point"; stock phrasing
+highlighted), an Edit text tab (markdown, word count against 250 to 350, or 600 to 900 for an
+outline; Save confirms; Discard asks first), and a Preview that is one true-size page scaled, with
+Download PDF and a warning while an unverified claim remains. A failure shows one fixed sentence;
+a reply that fails its schema twice is quarantined with the raw reply kept.
+
 **The system never sends either.**
 
 ---

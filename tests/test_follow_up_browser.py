@@ -9,6 +9,7 @@ import pytest
 from kestrel.web.serve import running_server
 from tests import apps_seed
 from tests.browser import launch_sync
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_applications_browser import _KIDS, _LINES, _overlaps, _shot
 from tests.test_follow_up import FakeClient, settings_for
 

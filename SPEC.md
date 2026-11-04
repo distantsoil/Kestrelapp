@@ -559,9 +559,10 @@ a 401 or 403 is a failed attempt that says the keys were not accepted. Every rol
 same ingest path, so the D-SRC-13 drop applies. Credit: the source is named "<search> on Adzuna" and
 the Posting tab links to the Adzuna page, where the user applies.
 
-**Remote boards: Himalayas and We Work Remotely (D-SRC-15).** Two keyless job-feed adapters
-(`himalayas`, `weworkremotely`), added from the job-board sheet (group "Remote jobs"). The existing
-`rss` kind is a consulting signal source and is not reused. Himalayas asks
+**Remote boards: Himalayas, We Work Remotely, Arbeitnow and Jobicy (D-SRC-15).** Four keyless
+job-feed adapters (`himalayas`, `weworkremotely`, `arbeitnow`, `jobicy`), added from the job-board
+sheet (group "Remote jobs"). The existing `rss` kind is a consulting signal source and is not
+reused. Himalayas asks
 `GET https://himalayas.app/jobs/api/search?q=<keyword>&country=US&sort=recent&page=N` (20 a page; the
 source's `keyword`, else the profile's target titles; `max_pages` default 3; at most 12 requests, 1
 a second, robots.txt checked); its terms require that Apply uses the API's `applicationLink`
@@ -569,11 +570,27 @@ a second, robots.txt checked); its terms require that Apply uses the API's `appl
 (`expiryDate`). We Work Remotely reads its public feed `https://weworkremotely.com/remote-jobs.rss`
 once a check (or one category feed, `category` such as `remote-programming-jobs`); a role the
 board limits to another region ("Europe Only") is not passed on, anything unclear is kept, an
-expired role is dropped, and each role links to its page on the board. Both mark roles remote, map
-the place as "United States", "Remote (worldwide)" or the board's own words, and run through the
-D-SRC-13 drop. A 429, 5xx or (for We Work Remotely) its 403 bot check is a `partial` run that keeps
-what was read. Credit: the source is named after the board and the Posting tab links to it. Remotive
-is not built (D-SRC-15: its robots.txt disallows its API path and its terms could not be read).
+expired role is dropped, and each role links to its page on the board. Arbeitnow asks
+`GET https://www.arbeitnow.com/api/job-board-api?page=N` (300 a page; `max_pages` default 2; at most
+`max_pages` requests, 1 a second, robots.txt checked); it shows no compensation, and each role links
+to its page on Arbeitnow, where the user applies. Jobicy asks
+`GET https://jobicy.com/api/v2/remote-jobs?count=<n>&cursor=<c>` (cursor pagination, `nextCursor`
+and `hasMore`; `count` default 100, `max_pages` default 2; at most `max_pages` requests, 1 a second,
+robots.txt checked); it shows structured pay when the feed provides it (`salaryMin`/`Max`,
+`salaryCurrency`, `salaryPeriod`), and each role links to its posting page, where the user applies.
+All four mark their roles remote and run through the D-SRC-13 drop. A 429, 5xx or (for We Work
+Remotely) its 403 bot check is a `partial` run that keeps what was read. Credit: the source is named
+after the board and the Posting tab links to it.
+Remotive (`remotive`, D-SRC-15, owner 2026-11-04) is a fifth keyless feed and a named exception to the
+robots.txt rule (hard rule 7), shaped like RemoteRocketship's (D-SRC-14): its robots.txt has `Disallow: /api/*`
+as a crawler rule, but Remotive publishes `GET https://remotive.com/api/remote-jobs?limit=<n>` for scripts and
+its legal notice sets the terms. So the adapter makes no robots check on that one documented call (it would
+refuse every read); the exception never covers Remotive's pages. The terms advise at most 4 fetches a day, so
+the runner enforces 4 per local day from a count stored on the source row (`kestrel.ingest.fetch_cap`, kept in
+the database so a restart cannot reset it); a 5th is refused as a `partial` run with a plain sentence. Each
+role records Remotive as its source (`raw.via`, `raw.via_url`), links to its Remotive posting page, and is
+credited on the Posting tab. Salary is free text and is not parsed. A 403, 429 or 5xx, or a reply that is not
+the expected JSON, is a `partial` run.
 
 **Careers page (`careers_page`; B4, D-SRC-15, D-UI-102).** The operator pastes any employer's careers
 page link on the Sources sheet. Many employers (and sites on iCIMS, Taleo, Paycor, UKG or a custom
@@ -2062,6 +2079,18 @@ items. RSS 2.0 items hold `title` ("Company: Job title"), `region` ("Anywhere in
 America Only", ...), `country` and `state` (the employer's base, may carry a flag emoji), `skills`,
 `category`, `type` ("Full-Time", "Contract"), `description` (HTML, escaped), `pubDate`,
 `expires_at`, `guid` and `link`.
+
+### Arbeitnow (job-board API; no key)
+
+`GET https://www.arbeitnow.com/api/job-board-api?page=N` (300 a page; `links.next` is null on the
+last page). Free, no key. **Verified live 2026-11-03** from the build environment (200, no key; the
+fixture `tests/fixtures/arbeitnow_page1.json` is a trimmed capture with invented company and role
+names). Reply: `{data: [...], links: {first, last, prev, next}, meta}`. Per job: `slug`,
+`company_name`, `title`, `description` (HTML), `remote` (bool), `url`, `tags[]`, `job_types[]`
+(German employment-type words, joined into `employment_type`), `location`, `created_at` (Unix
+seconds). No compensation fields. Kestrel keeps the posting's own `url` (the user applies there),
+at most `max_pages` requests a check (default 2), at most 1 a second, and `robots.txt` allows the
+API path (`Disallow:` is empty except `/*?__hstc`).
 
 ### RemoteRocketship (paid API; discovery only)
 

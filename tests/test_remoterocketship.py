@@ -351,9 +351,18 @@ async def test_a_resolve_that_raises_stores_nothing_from_the_link_batch(sm, monk
 
     monkeypatch.setattr(employer_links, "resolve", boom)
     src = await _source(sm)
+    from structlog.testing import capture_logs
+
     async with _http(robots=True) as http:
-        out = await run_source(sm, src.id, http=http)
-    assert out.status == "partial" and "resolver blew up" in out.error
+        with capture_logs() as logs:
+            out = await run_source(sm, src.id, http=http)
+    # D-SEC-4: the stored error is a fixed sentence; the class and text go to the log
+    assert out.status == "partial"
+    assert out.error == "The run hit an unexpected problem; the details are in the log."
+    unexpected = [e for e in logs if e["event"] == "scrape_unexpected_error"]
+    assert len(unexpected) == 1
+    assert unexpected[0]["error_type"] == "RuntimeError"
+    assert unexpected[0]["error"] == "resolver blew up"
     async with sm() as s:
         assert (await s.execute(select(Opportunity))).scalars().all() == []
 

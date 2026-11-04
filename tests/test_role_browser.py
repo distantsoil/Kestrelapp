@@ -21,6 +21,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -204,6 +205,29 @@ def test_shortlist_unlocks_prepare_in_place_and_the_second_click_undoes_it(live)
         page.get_by_test_id("on-my-list").wait_for()
         page.get_by_test_id("on-my-list").click()
         page.get_by_test_id("add-to-list").wait_for()
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_i_applied_records_the_chosen_date_in_place_and_the_panel_then_shows_it(live):
+    from datetime import date, timedelta
+
+    past = (date.today() - timedelta(days=6)).isoformat()
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        page.get_by_test_id("add-to-list").click()
+        page.get_by_test_id("on-my-list").wait_for()
+        form = page.get_by_test_id("applied-form")
+        form.wait_for()
+        assert page.evaluate(_LINES, form.get_by_test_id("mark-applied").element_handle()) <= 1
+        page.get_by_test_id("applied-on-date").fill(past)
+        form.get_by_test_id("mark-applied").click()
+        shown = page.get_by_test_id("applied-on")
+        shown.wait_for()
+        assert page.get_by_test_id("applied-form").count() == 0
+        assert page.locator(".k-main, main").first.evaluate(
+            "e => e.scrollWidth <= e.clientWidth + 1")
         assert not errors, errors
     finally:
         ctx.close()

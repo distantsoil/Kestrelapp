@@ -275,7 +275,7 @@ async def run_prompt_hosted(
             reason=plan.refuse,
             messages=messages,
         )
-        return GuardResult(ok=False, quarantined=True, error=plan.refuse)
+        return GuardResult(ok=False, quarantined=True, error=plan.refuse, refused=True)
     sent, book = encode_send(messages, plan.mapping)
     return await run_prompt(
         client, spec, sent, schema=schema, on_quarantine=on_quarantine, reply_filter=book

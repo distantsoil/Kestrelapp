@@ -1,0 +1,115 @@
+{# A saved draft (D-UI-239): Check (the text with its marks and where each claim comes from), Edit
+   text (markdown, Save, Discard asks first) and Preview (one true-size page, scaled). A dotted
+   underline is a claim traced to the person's own text (click for the source), a solid underline
+   is unverified, highlighted text is stock phrasing. Nothing here is ever sent. #}
+{% from "partials/style_marks.html" import marks, note %}
+{% from "partials/role_icons.html" import ric %}
+{% set base = '/opportunities/' ~ opp_id ~ '/role/cover-letter/' ~ render.id %}
+<div id="cl-draft" class="cl-draft" data-testid="cover-letter-draft" data-tab="{{ tab }}" data-render="{{ render.id }}">
+  <div class="cl-scroll" data-cl-scroll>
+  {% if outline %}<p class="cl-note" data-testid="outline-note">An outline for a conversation, not a priced proposal.</p>{% endif %}
+  {% if unverified %}
+  <div class="cl-alert" role="alert" data-testid="cover-letter-unverified">
+    <span class="cl-alert__ic">{{ ric('alert', 'k-ic--sm') }}</span>
+    <div>
+      <b>Unverified claims present</b>
+      <p>Kestrel could not trace {{ 'these' if (unresolved|length + located|length) > 1 else 'this' }} to your proof points or your resume. Remove {{ 'them' if (unresolved|length + located|length) > 1 else 'it' }} from the text, or add {{ 'them' if (unresolved|length + located|length) > 1 else 'it' }} as a proof point in <a class="k-link" href="/profile">Profile</a>.</p>
+      <ul>
+        {% if unresolved %}<li data-testid="cover-letter-unresolved">{{ 'A claim' if unresolved|length == 1 else unresolved|length ~ ' claims' }} the model named {{ 'matches' if unresolved|length == 1 else 'match' }} none of your proof points or resume lines.</li>{% endif %}
+        {% for f in located %}<li><u class="cl-unv">{{ f.phrase }}</u> is not in your proof points or your resume.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+  <div class="cl-tabs" role="tablist" aria-label="Draft views">
+    {% for key, label in (('check', 'Check'), ('edit', 'Edit text'), ('preview', 'Preview')) %}
+    <button type="button" role="tab" class="cl-tab{{ ' is-on' if tab == key else '' }}" data-cl-tab="{{ key }}" aria-selected="{{ 'true' if tab == key else 'false' }}" data-testid="cover-letter-tab-{{ key }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+
+  <section class="cl-pane{{ ' is-on' if tab == 'check' else '' }}" data-cl-pane="check" role="tabpanel">
+    <div class="cl-check">
+      <article class="cl-letter" data-testid="cover-letter-text">
+        {% for para in paragraphs %}<p>{% for seg in para %}{% set t = seg.text.rstrip() %}{% if seg.kind == 'claim' %}<span class="cl-claim" role="button" tabindex="0" data-cl-key="{{ seg.key }}" aria-controls="cl-src-card">{{ t }}</span>{% elif seg.kind == 'unverified' %}<u class="cl-unv" title="Not in your proof points or your resume">{{ t }}</u>{% elif seg.kind == 'stock' %}<mark class="cl-stock" title="Stock phrasing">{{ t }}</mark>{% else %}{{ t }}{% endif %}{% if seg.text != t %} {% endif %}{% endfor %}</p>{% endfor %}
+      </article>
+      <aside class="cl-side">
+        <section class="cl-card" id="cl-src-card" aria-live="polite" data-testid="cover-letter-source">
+          <b>Where it comes from</b>
+          <p class="rl-dsm" data-cl-hint>Select a dotted phrase to see your own words behind it.</p>
+          {% for u in used %}<div class="cl-src" data-cl-src="{{ u.key }}"><span class="cl-src__tag">{{ u.label }}</span>{% for part in u.parts %}<p>{{ part }}</p>{% endfor %}</div>{% endfor %}
+        </section>
+        <section class="cl-card" data-testid="cover-letter-plain">
+          <b>Plain writing</b>
+          {% if banned %}<p class="rl-dsm" data-testid="cover-letter-banned">Stock phrasing to avoid: {% for b in banned %}<mark class="cl-stock">{{ b }}</mark>{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% else %}<p class="rl-dsm">No stock phrasing found.</p>{% endif %}
+          {% if style_flags %}<div class="cl-marks" data-testid="cover-letter-marks">{{ marks(style_flags, field='body_md') }}</div>{{ note(style_flags, fields=('body_md',)) }}{% endif %}
+          <ul class="cl-legend">
+            <li><span class="cl-claim cl-claim--key">Dotted</span> traced to your own text</li>
+            <li><u class="cl-unv">Solid</u> not found in it</li>
+            <li><mark class="cl-stock">Highlight</mark> stock phrasing</li>
+          </ul>
+        </section>
+        {% if outline and extras %}
+        <section class="cl-card" data-testid="outline-extras">
+          <b>In this outline</b>
+          {% if extras.too_few_exclusions %}<p class="rl-dsm rl-dsm--warn">Fewer than three exclusions are named. Add what this does not cover before you use it.</p>{% endif %}
+          {% if extras.exclusions %}<p class="rl-dsm">Not covered</p><ul class="cl-list">{% for e in extras.exclusions %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+          {% if extras.assumptions %}<p class="rl-dsm">Assumptions</p><ul class="cl-list">{% for e in extras.assumptions %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+          {% if extras.commercial %}<p class="rl-dsm">Commercial shape (indicative): {{ extras.commercial.model|replace('_', ' ') }}. {{ extras.commercial.caveat }}</p>{% endif %}
+        </section>
+        {% endif %}
+      </aside>
+    </div>
+  </section>
+
+  <section class="cl-pane{{ ' is-on' if tab == 'edit' else '' }}" data-cl-pane="edit" role="tabpanel">
+    <form class="cl-edit" id="cl-edit-form" hx-post="{{ base }}/save" hx-target="#cl-main" hx-swap="innerHTML" hx-sync="this:drop" data-testid="cover-letter-form">
+      <input type="hidden" name="tab" value="edit">
+      <label class="cl-label" for="cl-text">Text (markdown)</label>
+      <textarea id="cl-text" name="body_md" class="cl-textarea" data-cl-text data-lo="{{ lo }}" data-hi="{{ hi }}" spellcheck="true">{{ body_md }}</textarea>
+      {% if not outline %}<p class="rl-dsm" data-testid="cover-letter-closing-hint">Write the greeting and the body. Kestrel adds "Sincerely," and your name in the preview and the PDF.</p>{% endif %}
+      <div class="cl-editbar">
+        <span class="cl-count" data-cl-count data-state="{{ 'ok' if lo <= n_words <= hi else 'off' }}">{{ n_words }} words<span class="cl-count__aim"> · aim for {{ lo }} to {{ hi }}</span></span>
+        <span class="cl-saved{{ ' is-on' if saved else '' }}" data-cl-saved role="status">{{ ric('check', 'k-ic--sm') }}Saved</span>
+      </div>
+    </form>
+  </section>
+
+  <section class="cl-pane{{ ' is-on' if tab == 'preview' else '' }}" data-cl-pane="preview" role="tabpanel">
+    {% if unverified %}<p class="cl-warnline" data-testid="cover-letter-preview-warning">{{ ric('alert', 'k-ic--sm') }}<span>An unverified claim remains. Check it before you use this {{ noun }}.</span></p>{% endif %}
+    <div class="rl-pvb cl-pvb" data-rl-stage>
+      <div class="rl-pvpage" data-rl-page><iframe class="rl-pvframe" title="{{ noun|capitalize }} preview" sandbox="allow-same-origin" srcdoc="{{ preview_html }}"></iframe></div>
+    </div>
+    <div class="cl-prevbar">
+      <p class="rl-dsm">One page at true size, scaled to fit. Download opens your computer's Save dialog. Kestrel never sends it.</p>
+    </div>
+  </section>
+  </div>
+  {# One action bar under the panes, in every tab (D-UI-239). The primary follows the tab; the
+     buttons that do not apply to the tab are hidden by setTab in role.js. Draft again replaces the
+     draft only after asking, and then goes the same way as a first draft (an online model asks
+     first again). Nothing here is ever sent. #}
+  <div class="cl-bar" data-testid="cover-letter-actions">
+    <div class="cl-bar__btns rl-btns">
+      <button type="button" class="k-btn{{ ' k-btn--primary' if tab == 'check' else '' }}" data-cl-go="edit" data-cl-show="check preview" data-cl-primary="check"{{ '' if tab != 'edit' else ' hidden' }} data-testid="cover-letter-edit">Edit text</button>
+      <button type="submit" form="cl-edit-form" class="k-btn k-btn--primary" data-cl-show="edit" data-cl-primary="edit"{{ '' if tab == 'edit' else ' hidden' }} data-busy-text="Saving…" data-testid="cover-letter-save">Save</button>
+      <a class="k-btn{{ ' k-btn--primary' if tab == 'preview' else '' }}" href="{{ base }}/download" download data-cl-show="preview" data-cl-primary="preview"{{ '' if tab == 'preview' else ' hidden' }} data-testid="cover-letter-download">{{ ric('dl', 'k-ic--sm') }}Download PDF</a>
+      <button type="button" class="k-btn" data-cl-go="preview" data-cl-show="check edit"{{ ' hidden' if tab == 'preview' else '' }} data-testid="cover-letter-preview-go">Preview and download</button>
+      <button type="button" class="k-btn" data-cl-ask="redraft" data-testid="cover-letter-redraft">Draft again</button>
+      <button type="button" class="k-btn" data-cl-ask="discard" data-cl-discard data-testid="cover-letter-discard">Discard</button>
+    </div>
+    <div class="cl-confirm" data-cl-confirm="redraft" data-testid="cover-letter-redraft-confirm"><div class="cl-confirm__clip">
+      <p><b>Draft again?</b> Your edits to this draft are replaced.</p>
+      <div class="rl-btns">
+        <button type="button" class="k-btn k-btn--primary" hx-post="{{ base }}/redraft" hx-target="#cl-main" hx-swap="innerHTML" hx-disabled-elt="this" data-busy-text="Opening…" data-testid="cover-letter-redraft-yes">Draft again</button>
+        <button type="button" class="k-btn" data-cl-keep>Keep it</button>
+      </div>
+    </div></div>
+    <div class="cl-confirm" data-cl-confirm="discard" data-testid="cover-letter-confirm"><div class="cl-confirm__clip">
+      <p><b>Discard this draft?</b> It is deleted from Documents and cannot be brought back.</p>
+      <div class="rl-btns">
+        <button type="button" class="k-btn k-btn--danger" hx-post="{{ base }}/discard" hx-swap="none" hx-disabled-elt="this" data-testid="cover-letter-discard-yes">Discard draft</button>
+        <button type="button" class="k-btn" data-cl-keep>Keep it</button>
+      </div>
+    </div></div>
+  </div>
+</div>

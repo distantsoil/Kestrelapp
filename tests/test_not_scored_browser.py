@@ -17,6 +17,7 @@ from kestrel.db.models import Task
 from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON, UNSCORED_LABEL
 from tests import test_pipeline_view as T
 from tests.browser import launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = [
     pytest.mark.usefixtures("_isolate_data_home"),

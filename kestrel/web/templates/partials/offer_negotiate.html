@@ -35,7 +35,7 @@
       <input type="hidden" name="situation" id="of-situation" value="{{ picked }}">
       <div class="of-sits" role="group" aria-label="Situation">
         {%- for s in sits %}
-        <button type="button" class="of-sit of-act{% if s.key == picked %} is-on{% endif %}" data-sit="{{ s.key }}" data-testid="of-sit" aria-pressed="{{ 'true' if s.key == picked else 'false' }}"{% if s.disabled %} disabled title="Needs a real second offer on record. Kestrel never invents one."{% endif %}>{{ s.name }}<small>{{ 'Needs a second real offer' if s.disabled else s.hint }}</small></button>
+        <button type="button" class="of-sit of-act{% if s.key == picked %} is-on{% endif %}"{% if route.online %} data-consent-send{% endif %} data-sit="{{ s.key }}" data-testid="of-sit" aria-pressed="{{ 'true' if s.key == picked else 'false' }}"{% if s.disabled %} disabled title="Needs a real second offer on record. Kestrel never invents one."{% endif %}>{{ s.name }}<small>{{ 'Needs a second real offer' if s.disabled else s.hint }}</small></button>
         {%- endfor %}
       </div>
     </section>
@@ -49,7 +49,7 @@
     <div id="of-draft" data-testid="of-draft" aria-live="polite">
       <div class="of-ready">
         <div>{{ icon('prep', 'k-ic--lg') }}<b>Ready when you are</b>{% if route.online %}<p>Pick a situation and an online model writes the draft. Read what is sent first, below.</p>{% else %}<p>Pick a situation and Kestrel writes the draft on your computer. Nothing leaves it.</p>{% endif %}
-        <button type="submit" class="k-btn k-btn--primary of-act" data-testid="of-write">Write the draft</button></div>
+        <button type="submit" class="k-btn k-btn--primary of-act"{% if route.online %} data-consent-send{% endif %} data-testid="of-write">Write the draft</button></div>
       </div>
     </div>
   </div>

@@ -90,5 +90,5 @@ Not ready to push: fix the failure above first.
 ```
 
 Full raw check log on this machine:
-`C:\Users\mcrow\AppData\Local\Temp\kestrel-draft-follow-up-full-check.txt`.
+`C:\Users\you\AppData\Local\Temp\kestrel-draft-follow-up-full-check.txt`.
 Publication is authorized by the owner's accepted base-branch exception above.

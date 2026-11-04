@@ -74,10 +74,10 @@ tests/test_today_browser.py | round 5 | exit 0 | 15 passed in 93.74s (0:01:33)
 Last five lines of the intentionally stopped full check, retained as partial output only:
 
 ```text
-==> ruff: C:\Users\mcrow\Github\kestrel-deferred-test-waits\.venv\Scripts\python.exe -m ruff check .
+==> ruff: C:\Users\you\Github\kestrel-deferred-test-waits\.venv\Scripts\python.exe -m ruff check .
 All checks passed!
     ok (1s)
-==> pytest: C:\Users\mcrow\Github\kestrel-deferred-test-waits\.venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
+==> pytest: C:\Users\you\Github\kestrel-deferred-test-waits\.venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
 ........................................................................ [  1%]
 ```
 

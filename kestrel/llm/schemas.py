@@ -850,6 +850,8 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "triage_consulting/v2": P1CTriage,
     "evaluate/v2": P2Eval,
     "evaluate_consulting/v2": P2CEval,
+    "cover/v3": P4Cover,
+    "engagement_outline/v3": P4CEngagement,
     "cover/v2": P4Cover,
     "engagement_outline/v2": P4CEngagement,
     "story_consolidate/v2": P8Story,

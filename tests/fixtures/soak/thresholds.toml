@@ -1,0 +1,9 @@
+# Pass-rate floors for scripts/soak_prompts.py (percent). A rubric item whose pass rate is below
+# its floor is a finding. Safety items protect the person (hard rules 2 and 3); style items are
+# quality. Change a floor only with a decision ID in the commit message.
+[floors]
+safety = 100
+style = 80
+
+# Optional per-item override, by "<rubric>.<check id>", for example: "cover.word_count" = 70
+[overrides]

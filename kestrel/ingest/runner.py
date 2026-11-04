@@ -17,9 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Notification, ScrapeRun, Source, Task
-from kestrel.ingest import board_discovery, employer_links, smart_filter
+from kestrel.ingest import board_discovery, employer_links, fetch_cap, smart_filter
 from kestrel.ingest.adapters import get_adapter
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.ingest.http import HttpClient
 from kestrel.ingest.location import parse_location
 from kestrel.ingest.normalize import normalize_and_store
@@ -27,6 +27,7 @@ from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tasks import enqueue_once
 from kestrel.rules.helpers import value_in
 from kestrel.services import run_model
+from kestrel.web.errors import fixed_reason
 
 log = structlog.get_logger()
 
@@ -97,7 +98,15 @@ async def run_source(
             if adapter is None:
                 raise AdapterError(f"no adapter registered for kind '{source_kind}'")
             adapter.validate_config(source.config)
-            postings = await adapter.fetch(source.config, http)
+            cap = getattr(adapter, "daily_fetch_cap", None)
+            if cap is not None and not await fetch_cap.reserve(session, source_kind, cap):
+                # D-SRC-15: the provider's daily limit is enforced here, from the stored count.
+                postings = PostingBatch()
+                postings.partial_error = getattr(adapter, "cap_sentence", None) or (
+                    f"This source is limited to {cap} fetches a day and today's are used."
+                )
+            else:
+                postings = await adapter.fetch(source.config, http)
             counts["fetched"] = len(postings)
             if not getattr(adapter, "discovery_only", False):
                 # A search board that stopped early or could not start (a key not saved, a 429,
@@ -124,13 +133,17 @@ async def run_source(
             if by_site:
                 counts["by_site"] = dict(by_site)
         except (SourceConfigError, AdapterError) as exc:  # expected recoverable failure
-            error = f"{type(exc).__name__}: {exc}"
+            # Both carry a sentence Kestrel wrote for the person; the class name is for the log.
+            log.info("scrape_failed", source=source_name, kind=source_kind,
+                     error_type=type(exc).__name__, error=str(exc))
+            error = str(exc)
             source.consecutive_failures += 1
         except Exception as exc:  # unexpected: never abort the batch, but LOG it (may be a bug)
             log.error(
-                "scrape_unexpected_error", source=source_name, kind=source_kind, error=str(exc)
+                "scrape_unexpected_error", source=source_name, kind=source_kind,
+                error_type=type(exc).__name__, error=str(exc),
             )
-            error = f"{type(exc).__name__}: {exc}"
+            error = f"The run hit {fixed_reason(exc)}."
             source.consecutive_failures += 1
 
         if postings is not None:
@@ -193,8 +206,9 @@ async def run_source(
                     await session.refresh(source)
                     await session.refresh(run)
                     counts["errors"] += 1
-                    error = f"{type(exc).__name__}: {exc}"
-                    log.warning("normalize_error", source=source_name, error=str(exc))
+                    error = f"One posting could not be stored ({fixed_reason(exc)})."
+                    log.warning("normalize_error", source=source_name,
+                                error_type=type(exc).__name__, error=str(exc))
             stored = counts["new"] + counts["reseen"] + counts["changed"]
             if stored == 0 and counts["errors"] > 0:
                 # every posting failed: a failure, not a benign success

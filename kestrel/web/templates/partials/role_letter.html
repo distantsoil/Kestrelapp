@@ -1,0 +1,11 @@
+{# The cover letter / engagement outline sheet (D-UI-239). It slides up like the document preview
+   and holds one swappable area, #cl-main, that shows the saved draft, the ask-first panel (an
+   online model), or the drafting card (this computer). Opening it sends nothing. #}
+{% from "partials/role_icons.html" import ric %}
+<div class="k-modal k-modal--sheet rl-preview cl-sheet" id="rl-letter" role="dialog" aria-modal="true" aria-labelledby="rl-letter-t" aria-hidden="true" data-k-static data-testid="cover-letter-dialog">
+  <div class="rl-pvh">
+    <div class="k-grow"><b id="rl-letter-t">{{ noun|capitalize }}</b><div class="rl-dsm">{{ opp.title or 'This role' }}{% if opp.org_name %} · {{ opp.org_name }}{% endif %}</div></div>
+    <button type="button" class="k-iconbtn" data-k-close aria-label="Close">{{ ric('x') }}</button>
+  </div>
+  <div id="cl-main" class="cl-main">{% include "partials/" ~ part ~ ".html" %}</div>
+</div>

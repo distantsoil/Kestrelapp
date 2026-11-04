@@ -21,6 +21,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -266,7 +267,7 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         page.wait_for_selector("#pp-story-sheet.is-open")
         page.keyboard.press("Escape")
         page.wait_for_selector("#pp-story-sheet", state="hidden")
-        page.wait_for_timeout(600)
+        wait_for_layout(page)  # settled, not slept
         assert page.evaluate("KUI.page._stats().timers") == 0
         page.evaluate("KUI.page.unmount()")
         page.click("[data-pp-open]")

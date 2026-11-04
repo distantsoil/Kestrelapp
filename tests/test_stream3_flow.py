@@ -115,7 +115,9 @@ def test_applied_one_click_records_today_with_a_follow_up():
     assert [(e.from_status, e.to_status) for e in events] == [("shortlisted", "applied")]
 
 
-def test_quick_applied_ignores_posted_dates_and_refuses_another_roles_resume():
+def test_quick_applied_honors_posted_date_and_refuses_another_roles_resume():
+    """#129: the quick path now records the operator's chosen date (it used to force today), and
+    still refuses another role's resume."""
     c = _fresh()
     other, _ = _seed(title="Other")
     foreign = _add_render(other)
@@ -126,7 +128,7 @@ def test_quick_applied_ignores_posted_dates_and_refuses_another_roles_resume():
         assert _pursuit(pid)[0].status == "shortlisted"
         c.post(f"/pursuits/{pid}/act/applied/quick", data={"applied_on": "2020-01-01"})
         assert c.post("/pursuits/9999/act/applied/quick", data={}).status_code == 404
-    assert _pursuit(pid)[0].applied_at.startswith(date.today().isoformat())
+    assert _pursuit(pid)[0].applied_at.startswith("2020-01-01")
 
 
 # ------------------------------------------------------------------------------------ Tailor
@@ -533,3 +535,47 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
     with c:
         page = c.get("/stories").text
     assert "it stopped before it finished" in page
+
+
+def test_applied_quick_failure_answers_in_place_and_never_swaps_the_board():
+    """#145: a refused "I applied" retargets its sentence to the panel's own error line; it never
+    sends the board into #applied-status."""
+    c = _fresh()
+    other, _ = _seed(title="Other")
+    foreign = _add_render(other)
+    _, pid = _seed(title="Mine")
+    with c:
+        r = c.post(f"/pursuits/{pid}/act/applied/quick", data={"document_id": str(foreign)})
+        assert r.headers["HX-Retarget"] == "#applied-error"
+        assert r.headers["HX-Reswap"] == "innerHTML"
+        assert r.text.strip().startswith("That was not recorded.")
+        assert "does not belong" in r.text
+        assert 'id="apps-board"' not in r.text and "ap-board" not in r.text
+        assert _pursuit(pid)[0].status == "shortlisted"
+
+
+def test_the_role_page_applied_panel_has_no_inline_styles_and_real_tokens():
+    c = _fresh()
+    opp_id, pid = _seed(title="Styled")
+    with c:
+        html = c.get(f"/opportunities/{opp_id}/actions").text
+        css = c.get("/static/css/components.css").text
+    block = html[html.index('id="opp-actions"'):]
+    assert "style=" not in block
+    assert 'data-testid="mark-applied"' in block and "k-btn" in block
+    assert 'id="applied-error"' in block and 'role="alert"' in block
+    # The panel's rendered classes must be styled from theme tokens only: no raw --border
+    # variable anywhere in the rules for the classes the markup uses.
+    import re
+
+    classes = set(re.findall(r'class="([^"]+)"', block))
+    used = {c for group in classes for c in group.split() if c.startswith("oa-")}
+    assert used, classes
+    rules = [
+        (selector, body)
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        if any(f".{c}" in selector for c in used)
+    ]
+    assert rules, "no CSS rule styles the panel's classes"
+    for selector, body in rules:
+        assert "--border" not in body, selector.strip()

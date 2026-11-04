@@ -1,0 +1,23 @@
+[
+  {
+    "id": "p1_ops_analyst",
+    "title": "Operations Analyst",
+    "company": "Riverbend Foods",
+    "org_line": "Riverbend Foods | sector food distribution | size 200 to 500 | ownership private",
+    "description": "Riverbend Foods is looking for an Operations Analyst to own weekly reporting for our 6 distribution centers. You will work with the warehouse team, clean data from two systems, and present findings to site managers. The role requires 3 years of analysis experience and strong spreadsheet skills. Familiarity with Stockline warehouse software is a plus. We offer a hybrid schedule and a team of 8."
+  },
+  {
+    "id": "p2_reporting_lead",
+    "title": "Reporting Lead",
+    "company": "Calder Health Partners",
+    "org_line": "Calder Health Partners | sector outpatient care | size 50 to 200 | ownership nonprofit",
+    "description": "Calder Health Partners is seeking a Reporting Lead to build and maintain dashboards for 20 clinics. The position requires clear writing, patience with non-technical readers, and at least 5 years in a reporting role. You will train clinic managers and keep the monthly board packet on schedule. The team meets every Tuesday."
+  },
+  {
+    "id": "p3_process_coordinator",
+    "title": "Process Improvement Coordinator",
+    "company": "Tallgrass Logistics",
+    "org_line": "Tallgrass Logistics | sector freight | size 500 to 1000 | ownership private",
+    "description": "Tallgrass Logistics needs a Process Improvement Coordinator to find waste in our dock and billing workflows. You will measure cycle times, interview supervisors in 4 regional hubs, and propose changes with a clear before and after. Experience shortening a close or billing cycle is valued. Travel up to 15 percent."
+  }
+]

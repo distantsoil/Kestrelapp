@@ -14,7 +14,7 @@ python -c "from pathlib import Path; from kestrel.llm import profiles as p; \
 [(Path('kestrel/resources/models')/f'Modelfile.{t}').write_text(p.render_modelfile(t, 'gpu_16gb')) for t in p.DERIVED_TIERS]"
 ```
 
-| Derived model | num_ctx | num_predict | Used by (SPEC.md 8.1) | Base (gpu_16gb, placeholder) |
+| Derived model | num_ctx | num_predict | Used by (SPEC.md 8.1) | Base (gpu_16gb, pinned and tested) |
 |---|---|---|---|---|
 | `kestrel-tier1`  | 4096  | 400  | tier1 **and** trigger | `qwen3:4b-instruct-2507-q4_K_M` |
 | `kestrel-tier2`  | 16384 | 4500 | tier2                 | `qwen3:14b` |

@@ -7,6 +7,7 @@ import os
 import pytest
 
 from tests.browser import launch_sync
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",

@@ -24,8 +24,10 @@ confirmation released, each checked again on the server (`gate`)."""
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import re
+from datetime import date
 from typing import Any
 from urllib.parse import quote
 
@@ -35,6 +37,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select
 
+from kestrel import paths
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import (
     DocMaster,
@@ -42,7 +45,9 @@ from kestrel.db.models import (
     DocSection,
     DocSlot,
     DocVariant,
+    Evaluation,
     Opportunity,
+    Org,
     PrepPack,
     Pursuit,
     Story,
@@ -76,8 +81,6 @@ log = structlog.get_logger()
 router = APIRouter()
 
 TABS = rv._ORDER
-# The Prepare buttons Kestrel has no drafting back end for yet (D-UI-150): shown, never active.
-_NO_DRAFTER = "Kestrel does not draft this yet. Nothing is sent or made without you."
 
 
 # ------------------------------------------------------------------------------------- helpers
@@ -348,8 +351,10 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         prep_ready = (
             await s2.execute(select(PrepPack.id).where(PrepPack.opportunity_id == opp_id).limit(1))
         ).first() is not None
-        if pursuit is not None and pursuit.cover_letter_id:
-            cover = await s2.get(DocRender, pursuit.cover_letter_id)
+        cover = await latest_letter(s2, opp_id)
+        from kestrel.docs import letter_task
+
+        ltask = letter_task.summary(await letter_task.latest_task(s2, opp_id))
     fit = detail["fit"]
     reqs_wheel = rv.wheel(reqs)
     w = words(track)
@@ -360,6 +365,7 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
             "tab_labels": rv.TAB_LABELS,
             "tabs": TABS,
             "w": w,
+            "applied_on_default": date.today().isoformat(),
             "consulting": track == "consulting",
             "facts_row": rv.facts_row(opp, detail["org_name"]),
             "liveness": pv.liveness_fact(opp),
@@ -400,23 +406,28 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         "prep_ready": prep_ready,
             "cv_words": cv.SCORE_WORDS,
             "next_id": None,
-            "no_drafter": _NO_DRAFTER,
+            "drafting": ltask["state"] == "drafting",
+            "letter_task": ltask,
             "nf_reasons": pv.reasons_for(track),
             "request": request,
         }
     )
     detail["first_status"] = _first_status(opp.track)
     detail["fresh"] = _is_fresh(opp, pursuit)
-    detail["doc_rows"] = _doc_rows(detail, cover)
+    detail["doc_rows"] = _doc_rows(detail, cover, ltask)
     detail["mini_rows"] = [d for d in detail["doc_rows"] if d["render_id"]]
     detail["has_docs"] = bool(detail["mini_rows"])
     return detail
 
 
-def _doc_rows(detail: dict[str, Any], cover) -> list[dict[str, Any]]:
+def _doc_rows(
+    detail: dict[str, Any], cover, ltask: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     """The two document rows (resume and cover letter; capability statement and engagement
     outline): the latest render of each that exists, else what is missing and why."""
     opp, renders = detail["opp"], detail["renders"]
+    ltask = ltask or {"state": None}
+    drafting = ltask["state"] == "drafting"
     consulting = opp.track == "consulting"
     want = "capability_statement" if consulting else "resume"
     versions: dict[int, int] = {}
@@ -464,36 +475,64 @@ def _doc_rows(detail: dict[str, Any], cover) -> list[dict[str, Any]]:
             }
         )
     second = "Engagement outline" if consulting else "Cover letter"
+    unlocked = detail.get("pursuit") is not None or bool(renders)
     if cover is not None:
+        from kestrel.date_display import format_display as _fd
+
+        cfg = cover.config or {}
+        words_n = int(cfg.get("words") or 0)
+        sub = (f"Draft · {words_n} words · {'edited' if cfg.get('edited') else 'drafted'} "
+               f"{_fd(cover.created_at)}. Kestrel never sends it.")
+        # A redraft that is on hold or did not finish says so here, after the draft it would
+        # replace (which stays until a new one is saved).
+        newer = (ltask.get("at") or "") > (cover.created_at or "")
+        if ltask["state"] == "held" and newer:
+            sub += " A new draft is on hold: use Draft again to confirm it. Nothing was sent."
+        elif ltask["state"] == "failed" and newer:
+            sub += f" The last new draft did not finish: {ltask['reason']}"
         rows.append(
             {
                 "title": second,
                 "icon": "prep",
+                "letter": True,
                 "render_id": cover.id,
-                "has_pdf": bool(cover.pdf_path),
+                "has_pdf": False,
                 "short": "Draft",
-                "sub": f"Draft #{cover.id} · attached to your "
-                f"{'lead' if consulting else 'application'}. Kestrel never sends it.",
-                "href": None,
-                "action": "",
+                "sub": sub,
+                "action": "Open draft",
+                "enabled": True,
             }
         )
     else:
+        held, failed = ltask["state"] == "held", ltask["state"] == "failed"
+        base = (
+            ("An outline for a conversation, not a priced proposal. " if consulting else "")
+            + "Kestrel drafts it from your own proof points and resume lines, and never sends it."
+        )
+        if drafting:
+            short, sub = "Drafting", (
+                "Drafting now. You can leave this page; the draft will be here when it is done.")
+        elif held:
+            short, sub = "On hold", (
+                "On hold. The model or online service changed since you confirmed, so nothing "
+                "was sent. Open it to confirm again.")
+        elif failed:
+            short, sub = "Not drafted", (
+                f"No draft was made. {ltask['reason']} Nothing was written to your documents.")
+        else:
+            short, sub = "No draft yet", "No draft yet. " + base
         rows.append(
             {
                 "title": second,
                 "icon": "prep",
+                "letter": True,
                 "render_id": None,
                 "has_pdf": False,
-                "short": "No draft yet",
-                "sub": (
-                    "No draft yet. An outline for a conversation, not a priced proposal. "
-                    if consulting
-                    else "No draft yet. "
-                )
-                + _NO_DRAFTER,
-                "href": None,
-                "action": "New engagement outline" if consulting else "New cover letter",
+                "short": short,
+                "sub": sub,
+                "action": ("Drafting" if drafting else "Review and confirm" if held
+                           else "Try again" if failed else "Draft"),
+                "enabled": unlocked and not drafting,
             }
         )
     return rows
@@ -1198,3 +1237,758 @@ async def preview(request: Request, opp_id: int, render_id: int):
         else (master.name if master else "Document"),
     }
     return templates().TemplateResponse(request, "partials/role_preview.html", ctx)
+
+
+# ------------------------------------------------------------ Cover letter and engagement outline
+# D-UI-239. One row in Documents with one action (Draft / Open draft). Local mode drafts on this
+# computer with no consent step; an online model first shows the ask-first panel and nothing is
+# sent until the confirmed form is posted, checked again here (`consent_problem`), including the
+# plain-writing re-ask, which goes to the same model the panel named. A draft is a `task` row
+# (kestrel.docs.letter_task, hard rule 5): the request queues it and runs it here so the sheet
+# answers when it is done, and if the app quits first the serve worker leases it again on the
+# next start. An online task carries the model and destination that were confirmed and is held,
+# not sent, when they no longer match. The draft is a DocRender row (template "cover_letter" /
+# "engagement_outline"; its text and checks live in `config`), so it survives a reload, shows in
+# Documents, and downloads through the same PDF plumbing. Nothing here sends, submits or emails
+# anything (hard rule 1).
+_LETTER_URL = "/opportunities/{}/role/cover-letter"
+_NO_BASIS = (
+    "Nothing was sent. Kestrel needs a resume (or a capability statement) to draft from, so it "
+    "can use only your own lines. Add one under Documents first."
+)
+_EMPTY_LETTER = "A draft cannot be empty. Discard it instead."
+_SAVED = "Saved."
+_JOIN_REFUSED = (
+    "Nothing was sent. A draft is already under way with a different confirmation. Wait for it, "
+    "or close this and open the draft from Documents."
+)
+
+
+def _letter_kind(opp) -> str:
+    from kestrel.docs.letters import COVER, OUTLINE
+
+    return OUTLINE if opp.track == "consulting" else COVER
+
+
+def _letter_noun(kind: str) -> str:
+    from kestrel.docs.letters import OUTLINE
+
+    return "engagement outline" if kind == OUTLINE else "cover letter"
+
+
+async def _letter_check(task) -> str | None:
+    """Why a queued draft may not send now (None: it may run). A local route needs nothing. An
+    online one must still match the model and destination the person confirmed, with Hosted mode
+    on and, in confidential mode, an employer chosen; else the task is held and nothing is sent
+    (on the first run, a retry and a resume after a restart alike)."""
+    from kestrel.services.online_consent import CONSENT_DEST_KEY, CONSENT_KEY, consent_problem
+
+    payload = task.payload or {}
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, payload.get("opportunity_id"))
+        if opp is None:
+            return None  # the run reports that the role is gone; nothing is sent
+        route = await _letter_route(s, await load_settings_with_db(s), opp)
+    confirmed = {
+        "confirmed": "1" if payload.get(CONSENT_KEY) else "",
+        "model": payload.get(CONSENT_KEY) or "", "dest": payload.get(CONSENT_DEST_KEY) or "",
+    }
+    return consent_problem(route, confirmed)
+
+
+# What the running task's person confirmed ({} for a local draft). `_make_draft` checks it against
+# the settings it is about to send with, so a change between the lease and the send holds the
+# task instead of sending. None outside a task: nothing to check against.
+_TASK_CONSENT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "letter_task_consent", default=None
+)
+
+
+async def _run_letter_task(task) -> dict[str, Any]:
+    """Make the draft a task asks for; a redraft then replaces the draft it names."""
+    from kestrel.services.online_consent import CONSENT_DEST_KEY, CONSENT_KEY
+
+    payload = task.payload or {}
+    opp_id = int(payload["opportunity_id"])
+    seen = {k: payload[k] for k in (CONSENT_KEY, CONSENT_DEST_KEY) if payload.get(k)}
+    marker = _TASK_CONSENT.set(seen)
+    try:
+        outcome = await _make_draft(opp_id)
+    finally:
+        _TASK_CONSENT.reset(marker)
+    replace_id = payload.get("replace_id")
+    if outcome.get("ok") and replace_id and int(replace_id) != outcome.get("render_id"):
+        async with sessionmaker()() as s:
+            await _drop_letter(s, opp_id, int(replace_id))  # the new draft is in; the old goes
+            await s.commit()
+    return outcome
+
+
+async def run_letter_drafts(
+    *, stop=None, task_id: int | None = None, worker_id: str = "pipeline-letters"
+) -> int:
+    """Run queued cover letter and outline drafts (all, or one task). Only the serve worker calls
+    this (after the tiers have drained, and never while paused), every cycle, so a draft
+    interrupted by a quit or crash resumes after the restart. A request never runs one."""
+    from kestrel.docs import letter_task
+    from kestrel.web.app import is_paused
+
+    return await letter_task.drain(
+        sessionmaker(), _run_letter_task, _letter_check, stop=stop, task_id=task_id,
+        worker_id=worker_id, paused=is_paused,
+    )
+
+
+async def latest_letter(s, opp_id: int) -> DocRender | None:
+    """The role's saved cover letter or engagement outline, or None."""
+    from kestrel.docs.letters import LETTER_TEMPLATES
+
+    return (
+        await s.execute(
+            select(DocRender)
+            .where(DocRender.opportunity_id == opp_id, DocRender.template.in_(LETTER_TEMPLATES))
+            .order_by(DocRender.id.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+
+def _name_sources(doc) -> list[str]:
+    """The person's own resume text (roles, companies, titles, bullets), matched locally against
+    names in a draft so a real employer is never marked unverified. Never sent anywhere."""
+    out: list[str] = [str(v) for v in (doc.header or {}).values() if isinstance(v, str)]
+    for block in doc.blocks:
+        out += [t for t in (block.text, block.heading) if t]
+        for role in block.roles:
+            out += [t for t in (role.org, role.title, role.context) if t]
+            out += [b.text for b in role.bullets]
+        for e in block.entries:
+            out += [t for t in (e.lead, e.sub, e.detail, e.extra) if t]
+    return out
+
+
+async def _letter_basis(s, settings, opp, basis: dict | None = None):
+    """The person's document the letter draws its lines from: (master, config, resolved doc) or
+    None. A new draft uses the latest tailored resume for the role, else the track's active one;
+    a saved draft reads back the pick it was made from (`basis`)."""
+    from kestrel.docs.catalog import load_catalog, resolve
+    from kestrel.web.routes_pages import _pick_master
+
+    master_id, cfg = None, {}
+    if basis and basis.get("master_id"):
+        master_id, cfg = int(basis["master_id"]), dict(basis.get("config") or {})
+    else:
+        want = "capability_statement" if opp.track == "consulting" else "resume"
+        for row in await opportunity_renders(s, opp.id):
+            if row["master"] is not None and row["master"].doc_kind == want:
+                master_id, cfg = row["render"].doc_master_id, dict(row["render"].config or {})
+                break
+        if master_id is None:
+            masters = list((await s.execute(select(DocMaster).where(
+                DocMaster.track == opp.track, DocMaster.is_active.is_(True)
+            ))).scalars())
+            picked = _pick_master(masters, opp.track)
+            master_id = picked.id if picked is not None else None
+    if master_id is None:
+        return None
+    catalog = await load_catalog(s, master_id)
+    if catalog is None:
+        return None
+    cfg["redact_orgs"] = bool(cfg.get("redact_orgs") or settings.confidential_mode)
+    return catalog.master, cfg, resolve(catalog, cfg)
+
+
+def _variants(doc) -> list[tuple[str, str]]:
+    return [(b.key, b.text) for blk in doc.blocks for role in blk.roles for b in role.bullets]
+
+
+def _evaluation_lines(ev, kind: str) -> dict[str, str]:
+    """What Kestrel already worked out about the role, as short labeled lines for the prompt."""
+    blocks = ev.blocks if ev is not None and isinstance(ev.blocks, dict) else {}
+    out: dict[str, str] = {}
+    if kind == "engagement_outline":
+        sit, thesis = blocks.get("a_situation") or {}, blocks.get("b_thesis") or {}
+        eco, app = blocks.get("d_economics") or {}, blocks.get("e_approach") or {}
+        out["Situation (stated)"] = str(sit.get("stated") or "")
+        out["Situation (inferred)"] = str(sit.get("inferred") or "")
+        out["Engagement thesis"] = str(thesis.get("engagement") or "")
+        out["Proposed phases"] = "; ".join(
+            f"{p.get('name')} ({p.get('days')} days)" for p in thesis.get("phases") or []
+            if isinstance(p, dict)
+        )
+        out["Economics"] = f"{eco.get('rate_low')}-{eco.get('rate_high')}" if eco else ""
+        out["Opening move"] = str(app.get("opening_move") or "")
+        return out
+    angle = blocks.get("e_angle") or {}
+    out["What to lead with"] = str(angle.get("lead_with") or "")
+    out["Phrases from the posting worth echoing"] = "; ".join(
+        str(c) for c in angle.get("jd_citations") or [])
+    gaps = [g for g in ((blocks.get("b_fit") or {}).get("gaps") or []) if isinstance(g, dict)]
+    rank = {"high": 0, "medium": 1, "low": 2}
+    gaps.sort(key=lambda g: rank.get(str(g.get("severity")), 3))
+    out["Gap to acknowledge in one sentence, in your own voice"] = (
+        str(gaps[0].get("requirement") or "") if gaps else "")
+    out["How senior the role reads"] = str((blocks.get("c_level") or {}).get("scope_read") or "")
+    return out
+
+
+def _failure_sentence(draft) -> str:
+    """What the person is told when no draft came back: one of Kestrel's own sentences, picked by
+    kind. Nothing of the model's reply, an exception or a provider message is ever shown."""
+    from kestrel.errors import classify_model_failure
+
+    if draft.out_of_credit and draft.error:
+        return draft.error  # authored by kestrel.llm.credit
+    if draft.refused:
+        return _refusal_sentence(draft.error)
+    if getattr(draft, "third_person", False):
+        return ("The draft was written about you instead of as you, even after one more try, so "
+                "none was kept. Draft again to try once more.")
+    if draft.quarantined:
+        return ("The model's reply could not be read as a draft, so none was made. Kestrel kept "
+                "the reply so you can see what came back.")
+    return classify_model_failure(draft.error)[2]
+
+
+def _refusal_sentence(reason: str | None) -> str:
+    """Why Kestrel did not send a hosted draft, as one of its own sentences (the plan's reason
+    is a log line, not copy). A refusal has no reply, so there is nothing to look at."""
+    from kestrel.pipeline._shared import HOSTED_REFUSAL
+    from kestrel.services.online_consent import HELD
+
+    if reason == HOSTED_REFUSAL:
+        return HELD
+    if "turned off" in (reason or ""):
+        return "Nothing was sent. Online models need Hosted mode, which is off."
+    return "Nothing was sent. Kestrel refused this online send, so no draft was made."
+
+
+async def _make_draft(opp_id: int) -> dict[str, Any]:
+    """Draft and save the letter. Runs detached from the request, so leaving the page never loses
+    it. Returns {"ok": True, "render_id"} or {"ok": False, "reason", "quarantined"}; the reason
+    is a fixed sentence."""
+    from kestrel.docs.letters import (
+        build_letter_prompt,
+        generate_cover,
+        generate_engagement,
+        proof_rows,
+        source_map,
+        word_count,
+    )
+    from kestrel.llm.client import LLMClient
+    from kestrel.pipeline._shared import jd_budget, make_quarantine_hook
+    from kestrel.pipeline.context import normalize_description
+    from kestrel.pipeline.profile import load_profile
+    from kestrel.web.errors import fixed_reason
+
+    try:
+        async with sessionmaker()() as s:
+            opp = await s.get(Opportunity, opp_id)
+            if opp is None:
+                return {"ok": False, "reason": "That role is gone.", "quarantined": False}
+            kind = _letter_kind(opp)
+            settings = await load_settings_with_db(s)
+            found = await _letter_basis(s, settings, opp)
+            if found is None:
+                return {"ok": False, "reason": _NO_BASIS, "quarantined": False}
+            master, cfg, doc = found
+            confirmed = _TASK_CONSENT.get()
+            if confirmed is not None:  # a queued draft: still the model and place that were OK'd
+                from kestrel.services.online_consent import (
+                    CONSENT_DEST_KEY,
+                    CONSENT_KEY,
+                    consent_problem,
+                )
+
+                held = consent_problem(await _letter_route(s, settings, opp), {
+                    "confirmed": "1" if confirmed.get(CONSENT_KEY) else "",
+                    "model": confirmed.get(CONSENT_KEY) or "",
+                    "dest": confirmed.get(CONSENT_DEST_KEY) or "",
+                })
+                if held:  # nothing has been sent; the task waits for a new confirmation
+                    return {"ok": False, "held": True, "reason": held, "quarantined": False}
+            profile = await asyncio.to_thread(load_profile, opp.track)
+            proofs = proof_rows(profile)
+            variants = _variants(doc)
+            sources = source_map(proofs, variants)
+            ev = (await s.execute(
+                select(Evaluation).where(Evaluation.opportunity_id == opp.id, Evaluation.tier == 2)
+                .order_by(Evaluation.created_at.desc(), Evaluation.id.desc()).limit(1)
+            )).scalars().first()
+            org = await s.get(Org, opp.org_id) if opp.org_id else None
+            from kestrel.ingest.tokens import truncate_middle
+            from kestrel.interview.prep import _latest_research
+
+            research = await _latest_research(s, org.id if org else None)
+            desc = truncate_middle(
+                normalize_description(opp.description_md),
+                jd_budget(settings, "tier3", settings.pipeline.max_jd_tokens),
+            )
+            company = (org.name if org else None) or opp.org_name or ""
+            prompt = build_letter_prompt(
+                kind, proofs=proofs, variants=variants,
+                headline=str(getattr(profile, "headline", "") or ""),
+                narrative=str(getattr(profile, "narrative", "") or ""),
+                evaluation=_evaluation_lines(ev, kind),
+                research=(research.summary_md or "") if research else "",
+                title=opp.title or "", company=company, description=desc,
+                org_line=" | ".join(x for x in (
+                    company, f"sector {org.sector}" if org and org.sector else "",
+                    f"size {org.size_band}" if org and org.size_band else "",
+                    f"ownership {org.ownership}" if org and org.ownership else "") if x),
+            )
+            hook = make_quarantine_hook(s, tier=4, opportunity_id=opp.id)
+            # Hard rule 2: only the person's own proof points and resume lines ground a number
+            # or a name. The posting is the model's input, never the person's claim.
+            grounding = [t["text"] for t in sources.values()]
+            generate = generate_engagement if kind == "engagement_outline" else generate_cover
+            async with httpx.AsyncClient() as http:
+                draft = await generate(
+                    LLMClient(settings, http=http), user_prompt=prompt, valid_keys=set(sources),
+                    on_quarantine=hook, session=s, grounding=grounding,
+                    name_sources=_name_sources(doc), opportunity_id=opp.id,
+                    posting=normalize_description(opp.description_md),
+                )
+            if draft.value is None:
+                await s.commit()  # the quarantine row, with the raw reply kept
+                return {"ok": False, "reason": _failure_sentence(draft),
+                        "quarantined": draft.quarantined and not draft.refused}
+            v = draft.value
+            extras: dict[str, Any] = {}
+            if kind == "engagement_outline":
+                extras = {
+                    "assumptions": list(v.assumptions), "exclusions": list(v.exclusions),
+                    "commercial": v.commercial_shape.model_dump(mode="json"),
+                    "too_few_exclusions": draft.too_few_exclusions,
+                }
+            row = DocRender(
+                opportunity_id=opp.id, doc_master_id=master.id, template=kind,
+                config={
+                    "kind": kind, "body_md": v.body_md, "generated_md": v.body_md,
+                    "claims_used": list(v.claims_used), "flags": list(draft.style_flags),
+                    "basis": {"master_id": master.id, "config": {
+                        k: val for k, val in cfg.items() if k != "redact_orgs"}},
+                    "edited": False, "words": word_count(v.body_md), **extras,
+                },
+                rationale={}, defaults_used=False,
+            )
+            s.add(row)
+            await s.flush()
+            pursuit = (await s.execute(
+                select(Pursuit).where(Pursuit.opportunity_id == opp.id)
+            )).scalars().first()
+            if pursuit is not None:
+                pursuit.cover_letter_id = row.id
+            await s.commit()
+            return {"ok": True, "render_id": row.id}
+    except Exception as exc:  # noqa: BLE001 (the person is told a fixed sentence; details go to the log)
+        log.warning("letter_draft_failed", opportunity_id=opp_id, error_type=type(exc).__name__)
+        return {"ok": False, "reason": f"No draft was made: {fixed_reason(exc)}.",
+                "quarantined": False}
+
+
+async def _letter_ctx(s, settings, opp, row: DocRender, *, tab: str = "check", saved: bool = False):
+    """Everything the draft view prints, recomputed from the saved text and the person's current
+    proof points and resume lines (so a claim that now resolves stops being flagged)."""
+    from kestrel.docs.letters import (
+        WORD_RANGE,
+        annotate,
+        banned_hits,
+        letter_html,
+        proof_rows,
+        source_map,
+        unverified_details,
+        verify_claims,
+        word_count,
+    )
+    from kestrel.pipeline.context import normalize_description
+    from kestrel.pipeline.profile import load_profile
+    from kestrel.web.redact import confidential
+
+    cfg = dict(row.config or {})
+    kind, stored = cfg.get("kind") or row.template, str(cfg.get("body_md") or "")
+    found = await _letter_basis(s, settings, opp, cfg.get("basis"))
+    profile = await asyncio.to_thread(load_profile, opp.track)
+    variants = _variants(found[2]) if found else []
+    sources = source_map(proof_rows(profile), variants)
+    claims = [str(c) for c in cfg.get("claims_used") or []]
+    unresolved = verify_claims(claims, set(sources))
+    # Confidential mode: the current employer is hidden in everything the person is shown (the
+    # check view, the edit text, the preview, the sources) and in the PDF. The checks below run on
+    # the stored text, so a hidden name is never mistaken for an unverified one.
+    conf, mapping = await confidential(s)
+    body = redact_text(stored, mapping, enabled=conf) or ""
+    shown = {k: {**v, "text": redact_text(v["text"], mapping, enabled=conf),
+                 "parts": [redact_text(x, mapping, enabled=conf) for x in v.get("parts") or []]}
+             for k, v in sources.items()}
+    flags = [f for f in cfg.get("flags") or [] if isinstance(f, dict)]
+    # Hard rule 2: the unverified-detail check runs again on the text as it is now, against the
+    # person's own proof points and resume lines only (never the posting), so a number or name
+    # added by hand is marked in the check view, the preview warning and before a download, and
+    # one that now matches a source stops being marked.
+    fresh = unverified_details(
+        stored, [t["text"] for t in sources.values()],
+        _name_sources(found[2]) if found else None,
+        normalize_description(opp.description_md),
+    )
+    if cfg.get("edited"):
+        # The style marks are on Kestrel's wording, so they go once the person has changed it
+        # (the stock-phrase check below still runs on their text).
+        flags = []
+    kept = [f for f in flags if f.get("kind") != "ungrounded"] + fresh
+    located = list(fresh)
+    banned = banned_hits(stored)
+    lo, hi = WORD_RANGE[kind]
+    n = word_count(stored)
+    header = found[2].header if found else {}
+    used = [{"key": k, **shown[k]} for k in dict.fromkeys(claims) if k in shown]
+    return {
+        "opp": opp, "opp_id": opp.id, "render": row, "kind": kind, "noun": _letter_noun(kind),
+        "outline": kind == "engagement_outline", "body_md": body, "n_words": n,
+        "lo": lo, "hi": hi, "paragraphs": annotate(body, shown, claims, kept, banned),
+        "used": used, "unresolved": unresolved, "located": located,
+        "unverified": bool(unresolved or located), "banned": banned,
+        "style_flags": [f for f in kept if f.get("kind") == "style"],
+        "preview_html": letter_html(header, body, kind, preview=True), "tab": tab, "saved": saved,
+        "extras": {k: cfg.get(k) for k in ("assumptions", "exclusions", "commercial",
+                                           "too_few_exclusions")} if kind == "engagement_outline"
+        else {},
+        "edited": bool(cfg.get("edited")),
+    }
+
+
+async def _letter_route(s, settings, opp) -> dict[str, Any]:
+    from kestrel.services.online_consent import online_route as shared_route
+
+    noun = _letter_noun(_letter_kind(opp))
+    route = await shared_route(
+        s, settings, "tier3", reask=True,
+        this_send=f"the posting, your proof points and the resume lines chosen for this {noun}",
+    )
+    if route.get("online"):
+        route["free"] = prov.is_free_variant(str(route["model"]))
+    return route
+
+
+def _fragment(request: Request, name: str, ctx: dict[str, Any], events=None, status=200):
+    html = templates().get_template(f"partials/{name}.html").render(**{"request": request, **ctx})
+    return HTMLResponse(html, headers=_events(events), status_code=status)
+
+
+async def _entry(
+    request: Request, s, opp, *, shell: bool, events=None, show_failed: bool = False
+):
+    """What opening the row shows: the saved draft; a draft on its way (the drafting card, which
+    only watches it); a draft held because the model or service changed (the ask-first panel
+    again); the reason the last try failed; else (online) the ask-first panel, else (on this
+    computer) the drafting card, which starts the draft with no consent step."""
+    from kestrel.docs import letter_task
+
+    settings = await load_settings_with_db(s)
+    ctx: dict[str, Any] = {"opp": opp, "opp_id": opp.id, "noun": _letter_noun(_letter_kind(opp)),
+                           "kind": _letter_kind(opp)}
+    row = await latest_letter(s, opp.id)
+    live = await letter_task.live_task(s, opp.id)
+    replacing = live is not None and bool((live.payload or {}).get("replace_id"))
+    if row is not None and not replacing:  # a draft in hand, unless a redraft is on its way
+        ctx.update(await _letter_ctx(s, settings, opp, row))
+        part = "role_letter_draft"
+    else:
+        route = await _letter_route(s, settings, opp)
+        ctx["route"] = route
+        latest = live or await letter_task.latest_task(s, opp.id)
+        state = letter_task.summary(latest)
+        if live is not None and letter_task.is_held(live) and route.get("online"):
+            ctx.update(held=True, replace_id=(live.payload or {}).get("replace_id"))
+            part = "role_letter_ask"
+        elif live is not None:
+            if letter_task.is_held(live):  # it runs on this computer now: nothing to confirm
+                await letter_task.release_holds(sessionmaker(), _letter_check)
+            ctx["watching"] = True
+            part = "role_letter_drafting"
+        elif show_failed and state["state"] == "failed":
+            ctx.update(reason=state["reason"], quarantined=bool(state.get("quarantined")),
+                       online=bool(route.get("online")))
+            part = "role_letter_failed"
+        else:
+            part = "role_letter_ask" if route.get("online") else "role_letter_drafting"
+    ctx["part"] = part
+    if shell:
+        return templates().TemplateResponse(request, "partials/role_letter.html", ctx)
+    return _fragment(request, part, ctx, events)
+
+
+@router.get("/opportunities/{opp_id}/role/cover-letter", response_class=HTMLResponse)
+async def cover_letter_dialog(request: Request, opp_id: int):
+    """The row's one action. Opens the sheet on the draft, the ask-first panel or the drafting
+    card; nothing is sent by opening it."""
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        return await _entry(request, s, opp, shell=True, show_failed=True)
+
+
+@router.get("/opportunities/{opp_id}/role/cover-letter/status", response_class=HTMLResponse)
+async def cover_letter_status(request: Request, opp_id: int):
+    """The drafting card asks this every few seconds: still drafting, the finished draft, the
+    ask-first panel again (held), or why it failed. It starts nothing and sends nothing."""
+    from kestrel.docs import letter_task
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        done = (await latest_letter(s, opp_id) is not None
+                and await letter_task.live_task(s, opp_id) is None)  # a redraft is not done yet
+        return await _entry(
+            request, s, opp, shell=False, show_failed=True,
+            events={"rl-refresh": True} if done else None,
+        )
+
+
+@router.get("/opportunities/{opp_id}/role/cover-letter/start", response_class=HTMLResponse)
+async def cover_letter_start(request: Request, opp_id: int):
+    """The same entry as a fragment, for Try again: an online model asks first again."""
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        return await _entry(request, s, opp, shell=False)
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/generate", response_class=HTMLResponse)
+async def cover_letter_generate(request: Request, opp_id: int):
+    """Draft the letter. An online model needs the confirmed ask-first form (confirmed, model and
+    destination), checked again here against the settings in effect now; without it nothing is
+    sent and the panel is shown again. The draft is a queued task that runs detached, so closing
+    the sheet or leaving the page does not lose it. A second request for the same role joins the
+    task in flight (it never queues another, nor asks the model again); online, it must carry the
+    same confirmation the task holds, or it is refused. A held task takes the new confirmation."""
+    from kestrel.docs import letter_task
+    from kestrel.services.online_consent import consent_payload, consent_problem
+
+    form = await request.form()
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        settings = await load_settings_with_db(s)
+        replace_id = await _replace_target(s, opp_id, form)
+        live = await letter_task.live_task(s, opp_id)
+        if live is None and replace_id is None and await latest_letter(s, opp_id) is not None:
+            return await _entry(request, s, opp, shell=False)  # already drafted: nothing is sent
+        route = await _letter_route(s, settings, opp)
+        problem = consent_problem(route, form)
+        if problem:
+            if replace_id is not None and live is None:  # the panel again, still replacing
+                return await _redraft_entry(
+                    request, s, opp, replace_id, events={"k-toast": _toast(problem, tone="warn")}
+                )
+            return await _entry(
+                request, s, opp, shell=False,
+                events={"k-toast": _toast(problem, tone="warn")},
+            )
+        consent = consent_payload(route)
+        kind = _letter_kind(opp)
+        if live is not None and letter_task.is_held(live):
+            await letter_task.reconfirm(s, live, consent)  # the new, checked confirmation
+            await s.refresh(live)  # the bulk update did not touch this loaded copy
+            task = live
+        else:
+            task = live
+            if task is None:
+                task, _created = await letter_task.enqueue_or_join(
+                    s, opp_id, kind=kind, consent=consent, replace_id=replace_id)
+            held_consent = {k: (task.payload or {}).get(k) for k in consent}
+            if consent and held_consent != consent:
+                # A draft is already under way on a different confirmation: this request neither
+                # changes it nor rides on it.
+                return await _entry(
+                    request, s, opp, shell=False,
+                    events={"k-toast": _toast(_JOIN_REFUSED, tone="warn")},
+                )
+        # The worker loop drains the task (after the tiers, never while paused); this answer is
+        # the drafting card, which asks the status route until the draft is there.
+        return await _entry(request, s, opp, shell=False)
+
+
+async def _replace_target(s, opp_id: int, form) -> int | None:
+    """The draft a redraft replaces (its id), when the form names one that is this role's own
+    latest letter; else None."""
+    raw = str(form.get("replace") or "")
+    if not raw.isdigit():
+        return None
+    row = await _owned_letter(s, opp_id, int(raw))
+    latest = await latest_letter(s, opp_id)
+    return row.id if row is not None and latest is not None and latest.id == row.id else None
+
+
+async def _drop_letter(s, opp_id: int, render_id: int) -> None:
+    """Delete one letter row and its PDF; the pursuit lets go of it first (foreign key)."""
+    row = await _owned_letter(s, opp_id, render_id)
+    if row is None:
+        return
+    for pursuit in (await s.execute(
+        select(Pursuit).where(Pursuit.cover_letter_id == row.id)
+    )).scalars():
+        pursuit.cover_letter_id = None
+    await s.flush()
+    pdf = paths.stored_pdf(row.pdf_path)  # a stored path outside the documents folder is ignored
+    await s.delete(row)
+    _remove_pdf(pdf)
+
+
+def _remove_pdf(pdf) -> None:
+    """Delete a draft's saved PDF (already confined to the documents folder by the caller)."""
+    if pdf is None:
+        return
+    try:
+        pdf.unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("letter_pdf_remove_failed", error_type=type(exc).__name__)
+
+
+async def _redraft_entry(request: Request, s, opp, replace_id: int, events=None):
+    """The first-draft path for a redraft: the ask-first panel (online) or the drafting card
+    (this computer), both carrying the id of the draft to replace. Nothing is sent from here."""
+    settings = await load_settings_with_db(s)
+    route = await _letter_route(s, settings, opp)
+    ctx = {"opp": opp, "opp_id": opp.id, "noun": _letter_noun(_letter_kind(opp)),
+           "kind": _letter_kind(opp), "route": route, "replace_id": replace_id}
+    part = "role_letter_ask" if route.get("online") else "role_letter_drafting"
+    return _fragment(request, part, ctx, events)
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/redraft",
+             response_class=HTMLResponse)
+async def cover_letter_redraft(request: Request, opp_id: int, render_id: int):
+    """Draft again, after the sheet's question. The old draft stays until a new one is saved.
+    Online, this shows the ask-first panel again and sends nothing; the draft call itself checks
+    the ticked confirmation."""
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        row = await _owned_letter(s, opp_id, render_id)
+        if opp is None or row is None:
+            return HTMLResponse("", status_code=404)
+        return await _redraft_entry(request, s, opp, row.id)
+
+
+async def _owned_letter(s, opp_id: int, render_id: int) -> DocRender | None:
+    from kestrel.docs.letters import LETTER_TEMPLATES
+
+    row = await s.get(DocRender, render_id)
+    if row is None or row.opportunity_id != opp_id or row.template not in LETTER_TEMPLATES:
+        return None
+    return row
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/save",
+             response_class=HTMLResponse)
+async def cover_letter_save(request: Request, opp_id: int, render_id: int):
+    """Save the edited text. The checks are recomputed from it; a short confirmation shows."""
+    form = await request.form()
+    text = str(form.get("body_md") or "").replace("\r\n", "\n").strip()[:20000]
+    tab = "edit" if str(form.get("tab") or "") == "edit" else "check"
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        row = await _owned_letter(s, opp_id, render_id)
+        if opp is None or row is None:
+            return HTMLResponse("", status_code=404)
+        settings = await load_settings_with_db(s)
+        if not text:
+            ctx = await _letter_ctx(s, settings, opp, row, tab="edit")
+            return _fragment(request, "role_letter_draft", ctx,
+                             {"k-toast": _toast(_EMPTY_LETTER, tone="warn")})
+        from kestrel.docs.letters import word_count
+        from kestrel.web.redact import confidential
+
+        cfg = dict(row.config or {})
+        # The text on screen has the current employer hidden in confidential mode, so it is
+        # compared with the stored text as shown; saving it keeps the employer hidden.
+        conf, mapping = await confidential(s)
+        stored_now = redact_text(str(cfg.get("body_md") or ""), mapping, enabled=conf)
+        generated = redact_text(str(cfg.get("generated_md") or ""), mapping, enabled=conf)
+        if text != stored_now:
+            cfg.update({"body_md": text, "words": word_count(text),
+                        "edited": text != generated, "pdf_digest": None})
+            row.config = cfg  # a new dict, so the JSON column notices the change
+            stale_pdf = paths.stored_pdf(row.pdf_path)  # confined to the documents folder
+            row.pdf_path = None
+            await s.commit()
+            _remove_pdf(stale_pdf)  # the old file no longer matches the text; it is not kept
+        ctx = await _letter_ctx(s, settings, opp, row, tab=tab, saved=True)
+    return _fragment(request, "role_letter_draft", ctx,
+                     {"k-toast": _toast(_SAVED), "rl-refresh": True})
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/discard",
+             response_class=HTMLResponse)
+async def cover_letter_discard(opp_id: int, render_id: int):
+    """Delete the draft (the sheet asks first). The saved PDF, if any, goes with it."""
+    async with sessionmaker()() as s:
+        row = await _owned_letter(s, opp_id, render_id)
+        if row is None:
+            return _answer({"k-toast": _toast("That draft is already gone.", tone="warn"),
+                            "rl-refresh": True})
+        pdf = paths.stored_pdf(row.pdf_path)  # never a file outside the documents folder
+        for pursuit in (await s.execute(
+            select(Pursuit).where(Pursuit.cover_letter_id == row.id)
+        )).scalars():
+            pursuit.cover_letter_id = None
+        await s.flush()  # the pursuit lets go of the row before the row goes (foreign key)
+        await s.delete(row)
+        await s.commit()
+    _remove_pdf(pdf)
+    return _answer({"k-toast": _toast("Draft discarded."), "rl-letter-close": True,
+                    "rl-refresh": True})
+
+
+@router.get("/opportunities/{opp_id}/role/cover-letter/{render_id}/download")
+async def cover_letter_download(opp_id: int, render_id: int):
+    """The PDF of the saved text, made from the same HTML the preview shows. It is made again
+    when the text changed since the last one. Download goes through the computer's Save dialog
+    (D-UI-12)."""
+    import hashlib
+
+    from fastapi.responses import FileResponse, PlainTextResponse
+
+    from kestrel.docs import render as docrender
+    from kestrel.docs.letters import letter_html
+    from kestrel.web.errors import fixed_reason
+    from kestrel.web.redact import confidential
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        row = await _owned_letter(s, opp_id, render_id)
+        if opp is None or row is None:
+            return PlainTextResponse("No such draft.", status_code=404)
+        settings = await load_settings_with_db(s)
+        cfg = dict(row.config or {})
+        kind = cfg.get("kind") or row.template
+        conf, mapping = await confidential(s)  # the PDF hides the current employer too
+        body = redact_text(str(cfg.get("body_md") or ""), mapping, enabled=conf) or ""
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        path = paths.stored_pdf(row.pdf_path)  # a path outside the documents folder is missing
+        if path is None or not path.is_file() or cfg.get("pdf_digest") != digest:
+            found = await _letter_basis(s, settings, opp, cfg.get("basis"))
+            header = found[2].header if found else {}
+            try:
+                made = await docrender.render_pdf(letter_html(header, body, kind))
+            except Exception as exc:  # noqa: BLE001 (no browser on this machine: say so, never a 500)
+                log.warning("letter_pdf_failed", render_id=render_id,
+                            error_type=type(exc).__name__)
+                return PlainTextResponse(
+                    f"Could not make the PDF: {fixed_reason(exc)}", status_code=503)
+            org = opp.org_name or None
+            row.filename = docrender.filename_for(
+                header, org, "EngagementOutline" if kind == "engagement_outline" else "CoverLetter")
+            docs_dir = paths.documents_dir()
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            path = docs_dir / f"{row.id}_{row.filename}"
+            path.write_bytes(made.pdf)
+            row.pdf_path, row.page_count = str(path), made.page_count
+            row.config = {**cfg, "pdf_digest": digest}
+            await s.commit()
+        name = row.filename or path.name
+    return FileResponse(path, media_type="application/pdf", filename=name)

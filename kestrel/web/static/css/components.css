@@ -441,6 +441,38 @@ html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform
   .k-tools { padding: 12px 16px 0; }
 }
 
+/* Sidebar collapse toggle (issue #126): a button that shrinks the sidebar to an icon rail.
+   The state is remembered in localStorage so it persists across page loads. */
+.k-side-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; margin: 0 8px 4px auto;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: none; color: var(--muted); cursor: pointer;
+  transition: color var(--dur-1), border-color var(--dur-1), transform .3s var(--ease);
+}
+.k-side-toggle:hover { color: var(--ink); border-color: var(--brand); }
+/* When collapsed: hide text, center icons, shrink width */
+.k-win.is-side-collapsed { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
+/* The width change glides on a press (class added by the toggle, never on page load). The global
+   reduced-motion rule below ends all transitions with !important, so it still wins. */
+.k-win.is-side-animating { transition: grid-template-columns var(--dur-2) var(--ease); }
+.k-win.is-side-collapsed .side { padding: 18px 10px 12px; align-items: center; }
+.k-win.is-side-collapsed .side .k-sec,
+.k-win.is-side-collapsed .side .mainnav > a .n,
+.k-win.is-side-collapsed .side .k-brand__word,
+.k-win.is-side-collapsed .side .track-switch,
+.k-win.is-side-collapsed .k-sstat__l > span:not(.k-dot) { display: none; }
+.k-win.is-side-collapsed .side .k-brand { padding: 2px 0 14px; }
+.k-win.is-side-collapsed .side .mainnav { width: 100%; }
+.k-win.is-side-collapsed .side .mainnav > a { justify-content: center; padding: 9px; position: relative; font-size: 0; }
+.k-win.is-side-collapsed .side .mainnav > a .ring { position: absolute; top: 4px; right: 6px; margin: 0; width: 8px; height: 8px; }
+.k-win.is-side-collapsed .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
+.k-win.is-side-collapsed .k-sstat__l { flex: none; }
+.k-win.is-side-collapsed .k-side-toggle { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
 /* The shell's htmx slots (update banner, the disclosure, what's new and announcement cards) are
    empty almost always; an empty slot takes no room and no flex gap above the title (O8). */
 #update-banner:not(:has(*)), #update-modal:not(:has(*)), #disclosure-slot:not(:has(*)),
@@ -543,6 +575,7 @@ html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform
   border: 0; background: none; padding: 0; font: inherit; font-weight: 700; font-size: 13px;
   color: var(--link-ink); cursor: pointer; text-decoration: none; white-space: nowrap;
   display: inline-flex; align-items: center; gap: 4px;
+  transition: color var(--dur-1), transform .1s;
 }
 .k-link:hover, .k-morelink:hover { text-decoration: underline; }
 /* "More about this ›" on every page, as drawn (each page used to add the chevron itself). */
@@ -994,12 +1027,6 @@ details.is-folding > :not(summary) { opacity: 0; transform: translateY(-6px);
   transition: left .35s var(--ease), width .35s var(--ease); pointer-events: none; }
 .k-pane-in { animation: k-inUp .32s var(--ease) backwards; }
 
-/* Reduced motion (the OS setting) stops every animation and transition, as the mockups do
-   (today-mockup-locked.html :363), on every page and every class, legacy or k-. */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
-
 /* ------------------------------------------------- Preferences: text size, Reduce motion */
 /* base.html sets both on <html> from Settings > Preferences. Default changes nothing. */
 html[data-text-size="small"] body { zoom: .93; }
@@ -1100,3 +1127,41 @@ html[data-reduce-motion="1"] *::after { animation: none !important; transition: 
 .pp-marks { list-style: none; margin: 8px 0 0; padding: 0; }
 .co-marks { margin-top: 8px; }  /* the plain-writing marks under a company summary (#113) */
 .pp-sub { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
+
+/* Role page actions (opp_actions.html): layout and the "I applied" panel, theme tokens only. */
+#opp-actions > .panel, #opp-actions > .warnbox { margin-bottom: .6rem; }
+.oa-row { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
+.oa-repost { margin: .2rem 0 0; }
+.oa-gap { margin-left: .5rem; }
+.oa-hide { display: flex; gap: 6px; }
+.oa-hint { margin-top: .3rem; }
+.oa-applied { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: .5rem; }
+.oa-applied__date { display: flex; align-items: center; gap: .4rem; }
+.oa-date { font: inherit; padding: .2rem .4rem; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--paper); color: var(--ink); }
+.oa-applied__btn { transition: opacity var(--dur-1), transform var(--dur-1), background var(--dur-1); }
+.oa-applied__btn[disabled] { opacity: .6; }
+.oa-applied.htmx-request .oa-applied__btn::after { content: ""; width: .8em; height: .8em; margin-left: .5em;
+  border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent; animation: spin .8s linear infinite; }
+.oa-applied__err { margin: .4rem 0 0; color: var(--bad-ink, var(--bad)); font-weight: 600; }
+.oa-applied__err:empty { display: none; }
+.oa-applied__err:not(:empty) { animation: oa-in var(--dur-2) var(--ease); }
+.oa-saved { animation: oa-in var(--dur-2) var(--ease); }
+@keyframes oa-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+
+/* Ask-first consent row (D-UI-240): the send button stays at full strength; pressing it unticked
+   shows this hint beside the box. Theme tokens only. */
+.k-consent { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-3); }
+.k-consent__label { display: inline-flex; gap: var(--sp-2); align-items: flex-start; cursor: pointer; }
+.k-consent__label input { margin-top: 3px; flex: none; accent-color: var(--brand); }
+/* Ticking hides the hint by fading it out (opacity first, then visibility), never by a snap. */
+.k-consent__hint { font-weight: 700; color: var(--bad-ink, var(--bad)); opacity: 0; visibility: hidden;
+  transition: opacity var(--dur-2) var(--ease), visibility 0s linear var(--dur-2); }
+.k-consent__hint.is-on { visibility: visible; transition-delay: 0s; animation: k-consent-in var(--dur-2) var(--ease) both; }
+@keyframes k-consent-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .k-consent__hint { transition: none; }
+  .k-consent__hint.is-on { animation: none; opacity: 1; }
+}
+html[data-reduce-motion="1"] .k-consent__hint { transition: none; }
+html[data-reduce-motion="1"] .k-consent__hint.is-on { animation: none; opacity: 1; }

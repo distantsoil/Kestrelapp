@@ -66,8 +66,9 @@ def _tour_wanted(request: Request) -> bool:
     return request.query_params.get("tour") == "1"
 
 
-@router.get("/", response_class=HTMLResponse)
 async def today(request: Request):
+    """The Today page. GET / is registered once, by kestrel.web.pages.setup (it adds the
+    first-run redirect and the Linux fallback panel, then calls this)."""
     track = _track_param(request)
     async with sessionmaker()() as s:
         settings = await setting_overrides.load_settings_with_db(s)

@@ -75,6 +75,7 @@
         <small>Need two? Add a second search.</small>
       </fieldset>
     {% elif kind == 'ats' %}
+      {% if company %}<div class="src-msg is-info" data-testid="by-hand-co">Adding <b>{{ company }}</b>. Kestrel couldn't read a public board for it, so paste the link to one of its careers pages.</div>{% endif %}
       <p class="src-intro"><b>Paste any careers page link. Kestrel reads most of them.</b> It reads the company’s own job list directly, so you see roles that may not be on job boards.</p>
       <ol class="src-steps"><li>Open the company’s careers page.</li><li>Click any job.</li><li>Copy the address from your browser and paste it here.</li></ol>
       <div class="k-field"><label for="sh-url">Job link or careers page link</label><input id="sh-url" class="k-input" type="url" name="url" placeholder="https://" value="{{ values.get('url', '') }}" data-src-check-input></div>

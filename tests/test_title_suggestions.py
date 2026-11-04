@@ -598,3 +598,77 @@ async def test_an_out_of_credit_key_defers_the_task_and_records_no_error_run(sm)
     assert (task.status, task.attempts) == ("pending", 0)
     assert "credit has run out" in (task.last_error or "")
     assert last is None  # no "error" run: the weekly cadence must not swallow the retry
+
+
+# ---------------------------------------------------------------- #118: resume delete
+def test_deleting_a_resume_removes_its_suggestions_and_keeps_the_others(web):
+    """Issue #118/#134: the Documents delete button removes the title suggestions that came from
+    that resume, and only those."""
+    async def seed(sm):
+        first = await _seed_master(sm)
+        await _run(sm, _Client([json.dumps(_reply(("Operations Analyst", ["r1b1"])))]))
+        second = await _seed_master(sm)
+        await _run(sm, _Client([json.dumps(_reply(("Process Improvement Lead", ["r1b1"])))]),
+                   reason="again")
+        return first, second
+
+    first, second = _db(seed)
+    before = web.get("/profile/title-suggestions").text
+    assert "Operations Analyst" in before and "Process Improvement Lead" in before
+
+    r = web.post(f"/documents/{first}/delete")
+    assert r.status_code == 200
+    assert "Nothing was deleted" not in r.text and "Not deleted" not in r.text
+
+    after = web.get("/profile/title-suggestions").text
+    assert "Operations Analyst" not in after
+    assert "Process Improvement Lead" in after
+
+    async def left(sm):
+        async with sm() as s:
+            return [(t.title, t.doc_master_id) for t in await _rows(s)]
+
+    assert _db(left) == [("Process Improvement Lead", second)]
+
+
+def test_deleting_a_resume_leaves_suggestions_from_before_the_link_existed(web):
+    """Rows from before migration 0027 have no doc_master_id; nothing says which resume they came
+    from, so a delete leaves them (#134)."""
+    async def seed(sm):
+        mid = await _seed_master(sm)
+        async with sm() as s:
+            s.add(TitleSuggestion(title="Legacy Planner", why="old", evidence=[],
+                                  prompt_version="p15-v1", doc_master_id=None))
+            await s.commit()
+        return mid
+
+    mid = _db(seed)
+    assert web.post(f"/documents/{mid}/delete").status_code == 200
+
+    async def left(sm):
+        async with sm() as s:
+            return [t.title for t in await _rows(s)]
+
+    assert _db(left) == ["Legacy Planner"]
+
+
+async def test_clear_everything_empties_suggestions(sm):
+    """Clear everything (reset_in_app) empties the title_suggestion table (issue #118)."""
+    from kestrel.db.models import TitleSuggestion
+    from kestrel.services.reset import _empty_tables
+
+    await _seed_master(sm)
+    await _run(sm, _Client())
+
+    # Verify suggestions exist
+    async with sm() as s:
+        rows = list((await s.execute(select(TitleSuggestion))).scalars())
+        assert rows, "expected suggestions to exist"
+
+    # Run the clear-everything path (expects a sessionmaker factory)
+    await _empty_tables(sm)
+
+    # Verify all suggestions are gone
+    async with sm() as s:
+        remaining = list((await s.execute(select(TitleSuggestion))).scalars())
+        assert remaining == [], "clear everything should empty the title_suggestion table"

@@ -710,19 +710,21 @@ def hosted_rows(
     return rows
 
 
-async def _write_rows(rows: dict[str, Any]) -> None:
-    """Upsert setting rows on a fresh engine (setup runs before the app and owns no loop)."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+def _write_rows(rows: dict[str, Any]) -> None:
+    """Upsert setting rows on a plain sync engine (setup runs before the app and owns no loop).
+    Sync on purpose: an async engine under asyncio.run leaves aiosqlite's worker thread calling
+    into a closed loop when the connect fails (D-DB-2)."""
+    from sqlalchemy.orm import Session
 
     from kestrel.db.base import utcnow_iso
-    from kestrel.db.engine import make_async_engine
+    from kestrel.db.engine import make_sync_engine
     from kestrel.db.models import Setting
 
-    engine = make_async_engine(paths.db_path())
+    engine = make_sync_engine(paths.db_path())
     try:
-        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        with Session(engine, expire_on_commit=False) as session:
             for key, value in rows.items():
-                row = await session.get(Setting, key)
+                row = session.get(Setting, key)
                 if key == CAPS_ROW and row is not None and isinstance(row.value, dict):
                     value = {**row.value, **value}  # keep the entries for other models
                 if row is None:
@@ -730,9 +732,9 @@ async def _write_rows(rows: dict[str, Any]) -> None:
                 else:
                     row.value = value
                     row.updated_at = utcnow_iso()
-            await session.commit()
+            session.commit()
     finally:
-        await engine.dispose()
+        engine.dispose()
 
 
 def _pick_provider(st: SetupState) -> str | None:
@@ -895,7 +897,7 @@ def step_hosted(st: SetupState) -> bool:
     )
     try:
         migrate.run_migrations()
-        asyncio.run(_write_rows(rows))
+        _write_rows(rows)
     except Exception as exc:  # one line; the DB file and its reason are the operator's to fix
         st.fail("Hosted", f"could not write {paths.db_path()}: {type(exc).__name__}: {exc}")
         return False

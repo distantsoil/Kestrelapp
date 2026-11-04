@@ -15,6 +15,7 @@ import pytest
 
 from tests import today_seed
 from tests.browser import launch_sync
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -768,5 +769,59 @@ def test_bell_badge_motion_is_off_under_reduced_motion(live):
         page.goto(base + "/help")
         page.wait_for_function("document.getElementById('bellcount').textContent === '3'")
         assert page.evaluate(_STYLE.format("animationName")) == "none"
+    finally:
+        ctx.close()
+
+
+_SIDE_FRAMES = """() => new Promise(resolve => {
+  const side = document.querySelector('#sidebar');
+  const widths = [];
+  const t0 = performance.now();
+  document.querySelector('.k-side-toggle').click();
+  const tick = () => {
+    widths.push(Math.round(side.getBoundingClientRect().width * 10) / 10);
+    if (performance.now() - t0 < 900) requestAnimationFrame(tick); else resolve(widths);
+  };
+  requestAnimationFrame(tick);
+})"""
+
+
+def test_the_sidebar_collapse_glides_keeps_names_and_survives_blocked_storage(live):
+    """#142: the toggle works with localStorage blocked, the width moves over several frames
+    (no jump), and a collapsed rail link still has its name."""
+    base, browser, _bridge = live
+    block = """
+    Object.defineProperty(window, 'localStorage', {get() { throw new Error('blocked'); }});
+    """
+    ctx, page, errors = _page(browser, base, "/help", init=block)
+    try:
+        is_collapsed = "document.querySelector('#kwin').classList.contains('is-side-collapsed')"
+        assert page.evaluate(is_collapsed) is False
+        full = page.evaluate("document.querySelector('#sidebar').getBoundingClientRect().width")
+        widths = page.evaluate(_SIDE_FRAMES)
+        assert page.evaluate(is_collapsed)
+        end = widths[-1]
+        assert end < full - 100, (full, end)
+        between = [w for w in widths if end + 2 < w < full - 2]
+        assert len(between) >= 4, widths  # several in-between frames: a glide, not a snap
+        assert all(a >= b - 0.5 for a, b in zip(widths, widths[1:], strict=False)), widths
+        names = page.evaluate(
+            "Array.from(document.querySelectorAll('.mainnav > a')).map("
+            "a => [a.getAttribute('aria-label'), a.title])")
+        assert names and all(n[0] and n[0] == n[1] for n in names), names
+        assert page.get_attribute(".k-side-toggle", "aria-label") == "Expand sidebar"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_sidebar_collapse_snaps_under_reduced_motion(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _page(browser, base, "/help", reduced_motion="reduce")
+    try:
+        widths = page.evaluate(_SIDE_FRAMES)
+        end = widths[-1]
+        assert len([w for w in widths if end + 2 < w < widths[0] - 2]) == 0, widths
+        assert errors == []
     finally:
         ctx.close()

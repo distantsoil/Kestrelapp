@@ -1413,6 +1413,15 @@ def provider_display(base_url: str | None, backend: str | None) -> str:
     return host or (backend or "the online model")
 
 
+def not_a_letter():
+    """A DocRender row that is a tailored document. A saved cover letter or engagement outline
+    (template "cover_letter" / "engagement_outline") is the same table but is opened from its own
+    row, never as a resume version."""
+    from kestrel.docs.letters import LETTER_TEMPLATES
+
+    return or_(DocRender.template.is_(None), DocRender.template.notin_(LETTER_TEMPLATES))
+
+
 async def opportunity_renders(session: AsyncSession, opp_id: int) -> list[dict[str, Any]]:
     """Documents rendered for this opportunity (the Documents tab and card), newest first, each
     with its master so the row can say "Executive resume" rather than a master id."""
@@ -1420,7 +1429,7 @@ async def opportunity_renders(session: AsyncSession, opp_id: int) -> list[dict[s
         await session.execute(
             select(DocRender, DocMaster)
             .join(DocMaster, DocMaster.id == DocRender.doc_master_id, isouter=True)
-            .where(DocRender.opportunity_id == opp_id)
+            .where(DocRender.opportunity_id == opp_id, not_a_letter())
             .order_by(DocRender.id.desc())
         )
     ).all()

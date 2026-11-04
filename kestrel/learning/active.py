@@ -117,16 +117,32 @@ async def rank_uncertain(
     if not candidates:
         return []
 
+    # One query for every candidate role (never one per role), then one copy per dedup group:
+    # the canonical one, else the lowest id, so the choice does not depend on dict order.
+    opps: dict[int, Opportunity] = {}
+    for start in range(0, len(candidates), 500):
+        chunk = candidates[start:start + 500]
+        for opp in (
+            await session.execute(select(Opportunity).where(Opportunity.id.in_(chunk)))
+        ).scalars():
+            opps[opp.id] = opp
+    best: dict[str, Opportunity] = {}
+    for oid in sorted(opps):
+        opp = opps[oid]
+        key = opp.dedup_group_id if opp.dedup_group_id is not None else f"__solo_{oid}"
+        held = best.get(key)
+        if held is None or (opp.is_canonical and not held.is_canonical):
+            best[key] = opp
+    deduped_candidates = [o.id for o in best.values()]
+
     emb = await _embeddings(session, list(evals), current_model(settings))
     labeled_vecs = [emb[i] for i in labeled if i in emb]
     apply_t = settings.thresholds.apply
 
     scored: list[UncertainItem] = []
-    for oid in candidates:
+    for oid in deduped_candidates:
         ev = evals[oid]
-        opp = await session.get(Opportunity, oid)
-        if opp is None:
-            continue
+        opp = opps[oid]
         score = ev.score if ev.score is not None else 3.0
         weighted = ev.weighted_score if ev.weighted_score is not None else score
         proximity = 1.0 - min(1.0, abs(score - apply_t) / 1.5)  # near 4.0 -> ~1
@@ -142,5 +158,5 @@ async def rank_uncertain(
         uncertainty = 0.40 * proximity + 0.25 * divergence + 0.20 * novelty + 0.15 * recency
         scored.append(UncertainItem(opp, ev, round(uncertainty, 4), components))
 
-    scored.sort(key=lambda u: u.uncertainty, reverse=True)
+    scored.sort(key=lambda u: (-u.uncertainty, u.opportunity.id))
     return scored[:limit]

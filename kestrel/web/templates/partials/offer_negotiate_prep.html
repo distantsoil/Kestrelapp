@@ -44,7 +44,7 @@
   <div class="of-sitgrid" role="group" aria-label="Situations">
     {%- for s in prep.sits %}
     {%- if s.open %}
-    <button type="button" class="of-sit of-act is-on" data-sit="{{ s.key }}" data-testid="of-prep-sit" data-open="1" aria-pressed="true">{{ s.name }}<small>{{ s.hint }}</small></button>
+    <button type="button" class="of-sit of-act is-on"{% if route.online %} data-consent-send{% endif %} data-sit="{{ s.key }}" data-testid="of-prep-sit" data-open="1" aria-pressed="true">{{ s.name }}<small>{{ s.hint }}</small></button>
     {%- else %}
     <button type="button" class="of-sit" data-testid="of-prep-sit" data-open="0" disabled>{{ s.name }}<small>Record an offer to draft this</small></button>
     {%- endif %}
@@ -60,7 +60,7 @@
     <div id="of-draft" data-testid="of-draft" aria-live="polite">
       <div class="of-ready">
         <div>{{ icon('prep', 'k-ic--lg') }}<b>Ready when you are</b>{% if route.online %}<p>Press the first card and an online model writes the draft. Read what is sent first, above.</p>{% else %}<p>Press the first card and Kestrel writes the draft on your computer. Nothing leaves it.</p>{% endif %}
-        <button type="submit" class="k-btn k-btn--primary of-act" data-testid="of-write">Write the draft</button></div>
+        <button type="submit" class="k-btn k-btn--primary of-act"{% if route.online %} data-consent-send{% endif %} data-testid="of-write">Write the draft</button></div>
       </div>
     </div>
   </div>

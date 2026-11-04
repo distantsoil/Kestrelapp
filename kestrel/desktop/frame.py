@@ -66,6 +66,7 @@ class WindowApi:
         retry: Callable[[], None] | None = None,
         open_logs: Callable[[], None] | None = None,
         quit_app: Callable[[], None] | None = None,
+        download: Callable[[], None] | None = None,
         remember_theme: Callable[[str], None] | None = None,
         platform: str | None = None,
     ) -> None:
@@ -75,6 +76,7 @@ class WindowApi:
         self._retry = retry
         self._open_logs = open_logs
         self._quit = quit_app
+        self._download = download
         self._remember_theme = remember_theme
         self._os = os_key(platform)
         self._strip_rgb: tuple[int, int, int] | None = None
@@ -196,6 +198,10 @@ class WindowApi:
     def splash_retry(self) -> None:
         if self._retry:
             self._retry()
+
+    def splash_download(self) -> None:
+        if self._download:
+            self._download()
 
     def splash_open_logs(self) -> None:
         if self._open_logs:

@@ -864,15 +864,75 @@ def test_add_a_suggestion_looks_up_its_board_adds_it_and_marks_it_suggested():
     assert 'data-testid="group-sug"' not in page  # it is a source now
 
 
-def test_a_suggestion_with_no_public_board_says_so_and_stays():
+def test_a_suggestion_with_no_public_board_is_handed_to_add_by_hand():
     _pursuit("Nobody Corp")
     with respx.mock(assert_all_called=False) as mock:
         mock.route().mock(return_value=httpx.Response(404, json={}))
         with _client() as c:
             r = c.post("/sources/suggestions/add", data={"name": "Nobody Corp"}, headers=HX)
-    assert "No public job board found for Nobody Corp" in json.loads(
-        r.headers["HX-Trigger"])["k-toast"]["message"]
-    assert rows() == {} and "Nobody Corp" in r.text  # still suggested
+            first_calls = len(mock.calls)
+            # A second Add reuses the remembered not-found result: no new lookups (#123 finding 6).
+            c.post("/sources/suggestions/add", data={"name": "Nobody Corp"}, headers=HX)
+            assert len(mock.calls) == first_calls  # the miss was remembered, not repeated
+    trig = json.loads(r.headers["HX-Trigger"])["k-toast"]
+    assert "Kestrel couldn't read a public board for Nobody Corp" in trig["message"]
+    assert "Add by hand" in trig["message"]
+    assert rows() == {}  # nothing is added
+    # The row is still suggested, but it now offers "Add by hand", not "Add".
+    sug = r.text.split('data-testid="group-sug"')[1].split('data-testid="group-boards"')[0]
+    assert "Nobody Corp" in sug
+    assert 'data-testid="suggestion-add-by-hand"' in sug
+    assert 'data-testid="suggestion-add"' not in sug
+
+
+def test_add_by_hand_opens_the_sheet_with_the_company():
+    # The by-hand path is the "Add a company" (careers page link) sheet, with the company named.
+    with _client() as c:
+        r = c.get("/sources/add/ats?company=Nobody%20Corp")
+    assert 'data-testid="by-hand-co"' in r.text
+    assert "Nobody Corp" in r.text
+    assert "couldn't read a public board" in r.text
+    assert 'data-testid="type-ats"' not in r.text  # it is the ats form, not the type chooser
+
+
+def test_a_remembered_found_board_shows_on_the_row_and_add_reuses_it():
+    gh = json.loads((FIXTURES / "greenhouse.json").read_text(encoding="utf-8"))
+    _pursuit("Tidewater Freight")
+
+    # Run the lookup once (mocked) and remember the result without adding it.
+    async def _seed():
+        from kestrel.ingest.board_lookup import find_company_board
+        from kestrel.services import source_suggestions
+        from kestrel.web.pages import sources as pg
+
+        async with await pg._http_client() as http:
+            result = await find_company_board("Tidewater Freight", http)
+        m = result.match
+        assert m is not None
+        async with get_sessionmaker()() as s:
+            await source_suggestions.record_board_lookup(
+                s, "Tidewater Freight", found=True, platform=m.platform, jobs=m.jobs,
+                kind=m.kind, config=m.config, company=result.company)
+            await s.commit()
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(
+            "https://boards-api.greenhouse.io/v1/boards/tidewaterfreight/jobs?content=true"
+        ).mock(return_value=httpx.Response(200, json=gh))
+        mock.route().mock(return_value=httpx.Response(404, json={}))
+        _run(_seed())
+        calls_before = len(mock.calls)
+        with _client() as c:
+            page = c.get("/sources").text
+            sug = page.split('data-testid="group-sug"')[1].split('data-testid="group-boards"')[0]
+            assert "Found on Greenhouse" in sug  # the remembered board shows on the row
+            assert 'data-testid="suggestion-add"' in sug  # Add, not "Add by hand"
+            r = c.post("/sources/suggestions/add", data={"name": "Tidewater Freight"}, headers=HX)
+        assert len(mock.calls) == calls_before  # the found board was reused, not re-looked
+    trig = json.loads(r.headers["HX-Trigger"])["k-toast"]
+    assert "Added Tidewater Freight (Greenhouse" in trig["message"]
+    row = rows()["Tidewater Freight"]
+    assert row.origin == "suggested" and row.kind == "greenhouse"
 
 
 def test_consulting_suggestions_watch_public_filings():

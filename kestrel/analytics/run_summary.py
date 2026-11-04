@@ -28,6 +28,7 @@ status rail. Sibling of kestrel.analytics.progress, whose `scoring_progress` sha
       "rating_now": int, "waiting": int,  # full reviews leased now / still to start
       "groups": {"strong", "good", "maybe", "not_fit", "your_call": int},  # over `rated`
       "groups_by_track": {track: {...same keys...}},
+      "worth_new": int,           # of `rated`, Worth a look roles first seen in this window
       "last_activity_at": str | None,  # newest touch by the run on ANY track (stall check)
       "recent_events": [{"at", "text", "tone"}],  # newest first, at most 10
     }
@@ -121,9 +122,9 @@ _KIND_WORDS = {
     "workable": "Workable", "recruitee": "Recruitee", "teamtailor": "Teamtailor",
     "personio": "Personio", "breezy": "Breezy HR", "careers_page": "a careers page",
     "remoterocketship": "RemoteRocketship",
-    "usajobs": "USAJobs", "adzuna": "Adzuna", "himalayas": "Himalayas",
-    "weworkremotely": "We Work Remotely",
-    "sec_edgar": "SEC filings", "sam_gov": "SAM.gov",
+    "usajobs": "USAJobs", "adzuna": "Adzuna", "arbeitnow": "Arbeitnow", "himalayas": "Himalayas",
+    "weworkremotely": "We Work Remotely", "jobicy": "Jobicy",
+    "remotive": "Remotive", "sec_edgar": "SEC filings", "sam_gov": "SAM.gov",
     "rss": "a feed", "pe_portfolio": "PE portfolio pages", "manual": "a pasted posting",
 }
 
@@ -137,7 +138,7 @@ def _empty() -> dict[str, Any]:
         "found_new": 0, "set_aside": 0, "set_aside_rules": [],
         "quick_screen_done": 0, "quick_screen_total": 0, "quick_screen_kept": 0,
         "rated": 0, "to_rate": 0, "failed": 0, "rating_now": 0, "waiting": 0,
-        "groups": dict.fromkeys(GROUP_KEYS, 0), "groups_by_track": {},
+        "groups": dict.fromkeys(GROUP_KEYS, 0), "groups_by_track": {}, "worth_new": 0,
         "last_activity_at": None, "recent_events": [], "finishing": 0, "retrying": 0, "stopping": 0,
     }
 
@@ -482,7 +483,8 @@ async def run_summary(
     t2 = (
         select(Evaluation.opportunity_id, Evaluation.created_at, Evaluation.tier,
                Evaluation.verdict, Evaluation.score, Evaluation.weighted_score,
-               Evaluation.needs_review, Opportunity.title, Opportunity.stage, Opportunity.track)
+               Evaluation.needs_review, Opportunity.title, Opportunity.stage, Opportunity.track,
+               Opportunity.first_seen_at)
         .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
         .where(Evaluation.tier == 2, _in_window(Evaluation.created_at, start, end))
         .order_by(Evaluation.created_at, Evaluation.id)
@@ -534,6 +536,8 @@ async def run_summary(
         key = _FIT_KEY.get(fit.word)
         if key:
             out["groups"][key] += 1
+            if key in WORTH_KEYS and (row.first_seen_at or "") >= start:
+                out["worth_new"] += 1
             tg = by_track.setdefault(row.track or "employment", dict.fromkeys(GROUP_KEYS, 0))
             tg[key] += 1
         word = fit.word if key else "scored"
@@ -555,12 +559,16 @@ async def run_summary(
                 Task.type.in_(_WORK_TASKS), Task.status == "leased",
                 or_(Task.lease_until.is_(None), Task.lease_until >= _now_iso()))))
             .scalar_one())
+    elif active and n_t2:
+        # Scoring outranks searching: a run that has moved to rating should not read as
+        # still searching, even if some search tasks are still leased or pending (#104).
+        out["stage"] = "full_review"
     elif active and (n_scrape or out["current_search"]):
+        # A search still in flight reads as Searching even with quick-screen tasks queued:
+        # the surface shows what is running, not what is waiting. Scoring outranks both.
         out["stage"] = "searching"
     elif active and n_t1:
         out["stage"] = "quick_screen"
-    elif active and n_t2:
-        out["stage"] = "full_review"
     elif active:
         out["stage"] = "finishing"
     # A requested stop still finishing (#91): the card, the header chip and the status rail all

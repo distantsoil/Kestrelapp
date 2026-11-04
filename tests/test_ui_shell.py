@@ -465,3 +465,23 @@ def test_no_page_in_the_nav_renders_a_guide_strip():
                          "/guides/"):
                 assert gone not in r.text, (path, gone)
         assert c.post("/guides/today/dismiss").status_code in (404, 405)
+
+
+def test_sidebar_collapse_toggle_is_present_and_accessible():
+    """#126: the sidebar collapse toggle is present, has aria-label, and the CSS for the
+    collapsed state exists."""
+    asyncio.run(_seed())
+    with _client() as c:
+        r = c.get("/", follow_redirects=True)
+        assert r.status_code == 200
+        # The toggle button is present with an accessible name
+        assert 'data-testid="side-toggle"' in r.text
+        assert 'aria-label="Collapse sidebar"' in r.text
+        # The inline script persists the choice to localStorage
+        assert "kestrel-side-collapsed" in r.text
+    # The CSS rules for the collapsed state exist
+    css = _COMPONENTS_CSS.read_text(encoding="utf-8")
+    assert ".k-win.is-side-collapsed" in css
+    assert "grid-template-columns: var(--side-w-narrow)" in css
+    # The reduced-motion rule disables transitions
+    assert re.search(r"prefers-reduced-motion:\s*reduce[^{]*\{[^}]*transition:\s*none", css)

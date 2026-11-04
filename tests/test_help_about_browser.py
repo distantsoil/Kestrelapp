@@ -20,6 +20,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -411,7 +412,8 @@ def test_about_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live):
           const d = document.getElementById('ab-notices');
           const toggled = new Promise(r => d.addEventListener('toggle', r, { once: true }));
           d.open = true;
-          await toggled;
+          await Promise.race([toggled, new Promise((_, reject) => setTimeout(() => reject(new Error(
+            'timed out waiting for the toggle event of #ab-notices')), 20000))]);
           KUI.page.unmount();
         }""")
         page.wait_for_timeout(400)

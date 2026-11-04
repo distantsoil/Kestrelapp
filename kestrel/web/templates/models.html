@@ -30,11 +30,11 @@
     <div class="k-layout__main mo-main">
       <div class="mo-two">
         {# ------------------------------------------------------------ This computer #}
-        <section class="k-card mo-card {{ 'mo-edge-warn' if (cpu_only or local_pill[1] == 'warn') else 'mo-edge-good' }}" id="mo-computer" data-testid="mo-computer">
+        <section class="k-card mo-card {{ 'mo-edge-warn' if (cpu_only or local_pill[1] == 'warn') else 'mo-edge-good' }} {{ 'mo-disabled' if choice == 'hosted' }}" id="mo-computer" data-testid="mo-computer">
           <header class="mo-head"><span class="k-badge k-badge--lg {{ 'k-badge--warn' if cpu_only else 'k-badge--good' }}">{{ ui.icon('laptop') }}</span>
             <div class="k-grow"><h3>On this computer {{ ui.pill(local_pill[0], local_pill[1]) }}</h3><p class="k-muted">Private. Works offline.</p></div></header>
           <div class="mo-row"><b class="mo-name" title="{{ local_model }}">{{ local_model }}</b>
-            <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-change" hx-get="/models/change/tier2" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-local">Change model</button></div>
+            <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-change" hx-get="/models/change/tier2" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-local" {{ 'disabled' if choice == 'hosted' }}>Change model</button></div>
           <dl class="mo-strip">
             <div><dt>Size</dt><dd>{{ local_billions or 'Not known' }}</dd></div>
             <div><dt title="How much text the model can read at once, in pages of about 500 words">Can read</dt><dd>About {{ local_pages }} pages at once</dd></div>

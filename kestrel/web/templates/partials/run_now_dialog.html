@@ -10,6 +10,7 @@
    form (no script) that returns to /sources or Today. Styles: static/css/pages/surfaces.css. #}
 {% from "partials/model_picker.html" import model_select with context %}
 {% from "ui/macros.html" import icon as kicon %}
+{% from "partials/online_ask.html" import consent_check %}
 {# Context: Sources passes `source` (one search); Today's Scan now (D-UI-72) passes form_action,
    form_target, heading, cancel_href, scope_note and `searches` instead. #}
 {% set _action = form_action or ('/sources/' ~ source.id ~ '/run-now') %}
@@ -71,10 +72,8 @@
           {% endif %}
         </fieldset>
         {% if page and ((can_pick and hosted_models) or current_online) %}
-        <label class="sf-chk" data-testid="run-now-confirm-box">
-          <input type="checkbox" name="confirmed" value="1">
-          <span><b>Allow sending to {{ hosted_label or 'the online service' }}</b><br><span class="sf-small sf-muted">{% if current_online %}Needed: your usual models are online.{% else %}Only needed if you picked an online model.{% endif %} {{ consent.sends }}. Not sent: your name, contact details and your resume file.</span></span>
-        </label>
+        {% set ok_text %}<span><b>Allow sending to {{ hosted_label or 'the online service' }}</b><br><span class="sf-small sf-muted">{% if current_online %}Needed: your usual models are online.{% else %}Only needed if you picked an online model.{% endif %} {{ consent.sends }}. Not sent: your name, contact details and your resume file.</span></span>{% endset %}
+        {% if current_online %}{{ consent_check('run-now-ok', ok_text, extra_cls='sf-chk') }}{% else %}{{ consent_check('run-now-ok', ok_text, extra_cls='sf-chk', when_field='model', when_prefix=hosted_prefix) }}{% endif %}
         {% endif %}
         <div class="sf-card sf-card--info sf-what" id="run-now-desc">
           <div class="sf-ln">{{ kicon('clock') }}<span>How long it takes depends on your computer and how many searches run.</span></div>
@@ -113,7 +112,7 @@
       <span class="sf-foot-main" data-sf-foot-main>
         {% if page %}<a class="k-btn" href="{{ cancel_href or '/sources' }}" data-testid="run-now-cancel">Cancel</a>
         {% else %}<button type="button" class="k-btn" data-score-again-cancel data-testid="run-now-cancel">Cancel</button>{% endif %}
-        <button type="submit" class="k-btn k-btn--primary" data-testid="run-now-go">{{ 'Start' if form_action else 'Start run' }}</button>
+        <button type="submit" class="k-btn k-btn--primary"{% if page and ((can_pick and hosted_models) or current_online) %} data-consent-send{% endif %} data-testid="run-now-go">{{ 'Start' if form_action else 'Start run' }}</button>
       </span>
       {% if not page %}
       <span class="sf-foot-confirm" data-sf-foot-confirm hidden>

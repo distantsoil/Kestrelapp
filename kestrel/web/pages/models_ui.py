@@ -70,7 +70,7 @@ async def _state() -> tuple[ss.SetupState, dict[str, Any]]:
 
 # ======================================================================================= health
 async def health_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
-    from kestrel.web.pages.setup import action_ctx, models_snapshot
+    from kestrel.web.pages.setup import action_ctx, models_snapshot, setup_state
 
     snap = await models_snapshot()
     ctx = action_ctx(snap)
@@ -96,6 +96,9 @@ async def health_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
         "hc_any_fix": any(r["fixable"] for r in rows),
         "hc_message": message, "hc_ok": ok,
         "hc_log": (ctx["action"] or {}).get("lines", [])[-12:] if ctx["action"] else [],
+        # The standalone re-renders (health poll, run/fix swaps) pass only this dict, so the
+        # template's `choice == 'hosted'` grey-out needs `choice` here too (#115).
+        "choice": (await setup_state()).choice,
     }
 
 
@@ -909,7 +912,7 @@ async def page_ctx(rows: list, settings: Settings, track: str) -> dict[str, Any]
         base = prof.models.for_tier(key)
         tr = tier_rows.get(key)
         need = hm.context_budget(key)
-        small = key in too_small
+        small = (not online) and key in too_small
         row.update(
             model=mv.friendly_model(
                 shown.model if shown else "",

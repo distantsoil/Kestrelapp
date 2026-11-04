@@ -9,6 +9,7 @@ import pytest
 
 from tests import prep_seed
 from tests.browser import launch_sync
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_prep_browser import _check as check_prep
 
 pytestmark = pytest.mark.skipif(

@@ -347,7 +347,7 @@ async def generate(
         session.add(
             TitleSuggestion(
                 title=title, why=item.why.strip(), evidence=evidence, status="suggested",
-                prompt_version=spec.version,
+                prompt_version=spec.version, doc_master_id=master.id,
             )
         )
         added += 1

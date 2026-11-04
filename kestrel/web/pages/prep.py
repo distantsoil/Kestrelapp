@@ -14,13 +14,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import date
-from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel import paths
 from kestrel.db.models import Opportunity, PrepPack, Story
 from kestrel.interview import prep_state
 from kestrel.interview.notes import save_notes
@@ -353,7 +353,8 @@ async def download(prep_pack_id: int):
     async with sessionmaker()() as s:
         row = await s.get(PrepPack, prep_pack_id)
         sh = await pv.shell_ctx(s, row.opportunity_id) if row is not None else None
-    if row is None or not row.pdf_path or not Path(row.pdf_path).exists():
+    path = paths.stored_prep_pdf(row.pdf_path) if row is not None else None  # confined
+    if path is None or not path.exists():
         return HTMLResponse('<div class="warnbox">PDF not found.</div>', status_code=404)
-    name = _file_name(sh["org_name"], sh["when"]["date"]) if sh else Path(row.pdf_path).name
-    return FileResponse(row.pdf_path, media_type="application/pdf", filename=name)
+    name = _file_name(sh["org_name"], sh["when"]["date"]) if sh else path.name
+    return FileResponse(path, media_type="application/pdf", filename=name)

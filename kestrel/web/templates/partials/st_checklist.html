@@ -4,7 +4,7 @@
    only under Show details. Polls every 2 seconds while work runs, then stops. #}
 {% import "partials/st_macros.html" as st with context %}
 <section class="k-card st-card{% if ck_choice == 'hosted' %} is-offline{% endif %}" id="st-chk" data-testid="st-chk"
-  {% if ck_live %}hx-get="/settings/computer/checklist" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  hx-get="/settings/computer/checklist" hx-trigger="kestrel-setup-changed from:body{% if ck_live %}, every 2s{% endif %}" hx-swap="outerHTML">
   {% call st.head('Setup checklist', 'check') %}<span class="k-pill" data-testid="st-chk-tally">{{ ck_done }} of {{ ck_total }} steps ready</span>{% endcall %}
   {% if ck_choice == 'hosted' %}<p class="st-dim">{{ st.sic('info', 'k-ic--sm') }}Not needed while you use only an online model.</p>{% endif %}
   <p class="st-dsm st-hw" data-testid="st-hardware">{{ hardware_line }}.{% if recommended_online %} An online model is the better fit for this computer: {{ recommended_reason }}.{% endif %}</p>

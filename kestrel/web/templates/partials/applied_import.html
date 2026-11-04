@@ -93,6 +93,7 @@
               {% for p in r.problems %}<span class="warnbox" style="padding:0 .3rem">{{ p }}</span> {% endfor %}
               {% if r.activity %}not an application{% endif %}
               {% if r.existing_pursuit_id %}already tracked ({{ r.existing_label }}); ticking updates that pursuit's status and date{% endif %}
+              {% if r.possible_duplicate_id %}possible duplicate ({{ r.possible_duplicate_label }}); ticking adds it as a new application{% endif %}
               {% if r.track != 'employment' %}<span class="badge">{{ r.track }}</span>{% endif %}
             </td>
           </tr>

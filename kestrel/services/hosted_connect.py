@@ -24,6 +24,7 @@ from kestrel.db.models import Setting
 from kestrel.errors import classify_model_failure, is_model_failure
 from kestrel.llm import providers as prov
 from kestrel.llm.service_name import service_name
+from kestrel.web.errors import fixed_reason
 
 log = structlog.get_logger()
 
@@ -195,7 +196,7 @@ async def _connect_provider(
         # A failed call reads as a fixed sentence by kind (never the URL or the provider's text);
         # any other fault names only its type.
         why_list_failed = (classify_model_failure(exc)[2] if is_model_failure(exc)
-                           else f"the list could not be read ({type(exc).__name__}).")
+                           else f"the list could not be read ({fixed_reason(exc)}).")
         log.warning("hosted_model_list_failed", provider=provider, error_type=type(exc).__name__)
         return _refused(
             provider, "model_list_failed",

@@ -398,9 +398,19 @@ def test_a_database_error_during_the_build_is_shown_not_swallowed(downloads, mon
         raise sqlite3.DatabaseError("file is not a database")
 
     monkeypatch.setattr(diagnostics, "build_bundle", _broken)
-    r = _client().post("/about/diagnostics/save")
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        r = _client().post("/about/diagnostics/save")
     assert r.status_code == 200
-    assert "Could not build the diagnostics file" in r.text and "DatabaseError" in r.text
+    # D-SEC-4: the page shows a fixed sentence; the class name and text go to the log
+    assert "Could not build the diagnostics file" in r.text
+    assert "the database could not be read" in r.text
+    assert "DatabaseError" not in r.text and "file is not a database" not in r.text
+    failed = [e for e in logs if e["event"] == "diagnostics_build_failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == "DatabaseError"
+    assert failed[0]["error"] == "file is not a database"
 
 
 def test_a_failed_build_leaves_no_partial_zip_and_saves_never_overwrite(tmp_path, monkeypatch):

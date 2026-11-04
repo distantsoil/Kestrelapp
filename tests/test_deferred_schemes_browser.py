@@ -6,6 +6,7 @@ import os
 import pytest
 
 from tests import test_settings_browser as settings_browser
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_settings_browser import _KIDS, _LINES, _overlaps
 from tests.test_ui_tokens import PAIRS, contrast
 

@@ -128,6 +128,9 @@ def status_of(run: Run) -> dict[str, Any]:
         key = "finished"
         done = int(scrape.get("completed", 0) or 0)
         why = f"All {done} searches answered." if done > 1 else "All searches answered."
+    # A mid-run switch to local is important context: show it on every finished run.
+    if note and run_model.SWITCHED_TO_COMPUTER_MARK in note and key != "stopped":
+        why = note
     label, tone = _STATUS[key]
     return {"key": key, "label": label, "tone": tone, "why": why}
 

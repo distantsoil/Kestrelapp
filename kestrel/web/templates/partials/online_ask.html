@@ -7,6 +7,15 @@
 {%- if on %}<p data-testid="{{ tid }}-reask">If the reply has writing problems, Kestrel asks the same model once more to fix them. That second request sends the same material plus the model's first reply.</p>{% endif %}
 {% endmacro %}
 
+{# The consent box and its "Tick the box to send" hint (D-UI-240). The send button beside it
+   carries data-consent-send and is never disabled; kestrel-ui.js shows the hint and moves focus
+   here when it is pressed unticked, and the server refuses an unconfirmed post as well. A box
+   that is needed only for some picks names the form field to read (`when_field`): it is needed
+   when that field equals the box's own value, or starts with `when_prefix`. #}
+{% macro consent_check(tid, text, name='confirmed', value='1', extra_cls='', when_field='', when_prefix=none) %}
+<span class="k-consent {{ extra_cls }}" data-consent-row><label class="k-consent__label"><input type="checkbox" name="{{ name }}" value="{{ value }}" data-consent-box{% if when_field %} data-consent-field="{{ when_field }}"{% if when_prefix is not none %} data-consent-prefix="{{ when_prefix }}"{% endif %}{% endif %} data-testid="{{ tid }}" aria-describedby="{{ tid }}-hint"> <span>{{ text }}</span></label><span class="k-consent__hint" id="{{ tid }}-hint" data-consent-hint role="status" data-testid="{{ tid }}-hint">Tick the box to send</span></span>
+{% endmacro %}
+
 {% macro ask(route, tid, verb) %}
 {%- if route and route.online %}
 <div class="k-card" data-testid="{{ tid }}-ask">
@@ -30,7 +39,7 @@
   {%- if route.employer == 'hidden' %}<p data-testid="{{ tid }}-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
   {%- elif route.employer == 'held' %}<p data-testid="{{ tid }}-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
   <p><b>Not sent:</b> your name, contact details and your resume file. {% if route.many_providers %}Each provider handles{% else %}{{ route.provider }} handles{% endif %} what it receives under its own terms.</p>
-  <label><input type="checkbox" name="confirmed" value="1" data-testid="{{ tid }}-confirm"> Send this to {{ route.provider }} to {{ verb }}</label>
+  {{ consent_check(tid ~ '-confirm', 'Send this to ' ~ route.provider ~ ' to ' ~ verb) }}
   <input type="hidden" name="model" value="{{ route.model }}">
   <input type="hidden" name="dest" value="{{ route.dest }}">
 </div>

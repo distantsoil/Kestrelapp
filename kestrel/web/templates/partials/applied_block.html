@@ -1,0 +1,25 @@
+{# "I applied" with the date applied (issue #145): the form while the pursuit has no applied date,
+   the date afterward. Shared by the actions panel and the Role page's decision panel. Posts to the
+   existing quick route, which records nothing but the date and a seven-day follow-up (hard rule 1:
+   Kestrel sends nothing). Needs `pursuit` and `applied_on_default`; `refresh_side` makes the
+   answer reload the Role page's decision column. #}
+{% if pursuit.applied_at %}
+<div class="oa-applied-on" data-testid="applied-on">Applied on <b>{{ date_display(pursuit.applied_at) }}</b></div>
+{% else %}
+        <div id="applied-status">
+          {# The busy state comes from htmx (the button is disabled and aria-busy while the request
+             is open); a failure lands in #applied-error, so the form and the page stay put. #}
+          <form hx-post="/pursuits/{{ pursuit.id }}/act/applied/quick"
+                hx-target="#applied-status" hx-swap="outerHTML" hx-disabled-elt="find button"
+                class="row oa-applied" data-testid="applied-form">
+            {% if refresh_side %}<input type="hidden" name="refresh_side" value="1">{% endif %}
+            <label class="muted oa-applied__date">Applied on
+              <input type="date" name="applied_on" class="oa-date" value="{{ applied_on_default }}" max="{{ applied_on_default }}"
+                     data-testid="applied-on-date">
+            </label>
+            <button class="k-btn k-btn--sm k-btn--primary oa-applied__btn" type="submit" data-testid="mark-applied">I applied</button>
+          </form>
+          <div class="muted oa-hint">Records that you applied on the date chosen, with a follow-up in seven days.</div>
+          <p class="oa-applied__err" id="applied-error" role="alert" data-testid="applied-error"></p>
+        </div>
+{% endif %}

@@ -1,4 +1,5 @@
 {% import "ui/macros.html" as ui %}
+{% from "partials/online_ask.html" import consent_check %}
 {# The Change model drawer body (D-UI-105): an On this computer or Online switch, local models
    with a fit tag from the hardware, a Free only filter, a model whose context is below the
    step's budget disabled with the reason, Save, Undo and Reset to default. An online pick says
@@ -40,11 +41,11 @@
           {% endfor %}
         </ul>
         <div class="mo-shield">{{ ui.icon('shield') }}<div><b>What is sent</b><span>{{ ch_sends or 'The role text and the profile lines this step needs.' }} Your name and contact details are never sent.</span></div></div>
-        <label class="mo-lbl"><input type="checkbox" name="confirm" data-testid="mo-confirm-online"> I understand this goes to {{ ch_provider }} and uses my credit.</label>
+        {{ consent_check('mo-confirm-online', 'I understand this goes to ' ~ ch_provider ~ ' and uses my credit.', name='confirm', value='on', extra_cls='mo-lbl') }}
       {% endif %}
     {% endif %}
     <div class="mo-actions">
-      <button class="k-btn k-btn--primary" type="submit" data-testid="mo-change-save"{% if ch_where == 'online' and (ch_error or not ch_online_ok) %} disabled{% endif %}>Save</button>
+      <button class="k-btn k-btn--primary" type="submit" data-testid="mo-change-save"{% if ch_where == 'online' and ch_online_ok and not ch_error %} data-consent-send{% endif %}{% if ch_where == 'online' and (ch_error or not ch_online_ok) %} disabled{% endif %}>Save</button>
       {% if ch_undo %}<button class="k-btn" type="button" hx-post="/models/change/{{ ch_tier }}/undo?token={{ ch_undo_token }}" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-undo">Undo</button>{% endif %}
       {% if ch_override %}<button class="k-btn k-btn--quiet" type="button" hx-post="/models/change/{{ ch_tier }}/reset" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-reset">Reset to default</button>{% endif %}
     </div>

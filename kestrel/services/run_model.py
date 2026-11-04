@@ -25,6 +25,9 @@ from kestrel.db.models import Setting
 OVERRIDE_KEY = "model_override"
 # On a t1 task: the run's pick, for the Tier 2 task Tier 1 enqueues only (never Tier 1 itself).
 T2_ONLY_KEY = "t2_model_override"
+# The run note the worker stamps when hosted mode went off mid-run, and the Runs page looks for.
+SWITCHED_TO_COMPUTER_MARK = "Switched to your computer"
+SWITCHED_TO_COMPUTER_NOTE = f"{SWITCHED_TO_COMPUTER_MARK}; the rest of this run scores locally."
 LABEL_KEY = "model_override_label"
 THIS_RUN_ONLY = "this run only"
 

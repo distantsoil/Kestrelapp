@@ -167,6 +167,88 @@ async def test_reviewing_again_marks_rows_already_tracked_and_can_update_them(sm
     assert p.status == "interviewing" and len(events) == 2
 
 
+async def _seed_acme(sm) -> None:
+    async with sm() as s:
+        rev = await svc.review(s, TRACKER_CSV)
+        await svc.commit(s, rev, {1: svc.RowChoice(include=True)})  # Acme, applied 2026-09-30
+
+
+def _again(day: str, url: str = "") -> str:
+    head = "Company,Role,Date,Status,Link"
+    return f"{head}\nAcme Corp,VP Information Technology,{day},applied,{url}\n"
+
+
+async def test_reimport_same_application_within_three_days_is_a_match(sm):
+    await _seed_acme(sm)
+    async with sm() as s:
+        row = (await svc.review(s, _again("2026-10-03"))).rows[0]
+    assert row.existing_pursuit_id is not None and row.possible_duplicate_id is None
+    assert not row.default_include
+
+
+async def test_reimport_four_to_fourteen_days_apart_asks_instead_of_matching(sm):
+    await _seed_acme(sm)
+    for day, gap in (("2026-10-04", 4), ("2026-10-14", 14)):
+        async with sm() as s:
+            rev = await svc.review(s, _again(day))
+        row = rev.rows[0]
+        assert row.existing_pursuit_id is None  # not silently the same application
+        assert row.possible_duplicate_id is not None
+        assert f"{gap} days apart" in row.possible_duplicate_label
+        assert not row.default_include  # the person chooses; it is not ticked for them
+    async with sm() as s:  # ticking it makes a new application, it does not update the old one
+        rev = await svc.review(s, _again("2026-10-04"))
+        result = await svc.commit(s, rev, {1: svc.RowChoice(include=True)})
+    assert (result.imported, result.updated) == (1, 0)
+
+
+async def test_reimport_more_than_fourteen_days_apart_is_a_reapplication(sm):
+    await _seed_acme(sm)
+    async with sm() as s:
+        row = (await svc.review(s, _again("2026-10-15"))).rows[0]
+    assert row.existing_pursuit_id is None and row.possible_duplicate_id is None
+    assert row.default_include
+
+
+async def test_reimport_same_url_is_a_match_whatever_the_date(sm):
+    await _seed_acme(sm)
+    async with sm() as s:
+        row = (await svc.review(s, _again("2027-03-01", "https://acme.example/jobs/1"))).rows[0]
+    assert row.existing_pursuit_id is not None and "same URL" in row.existing_label
+
+
+async def test_reimport_with_an_unreadable_tracked_date_asks(sm):
+    await _seed_acme(sm)
+    async with sm() as s:
+        p = (await s.execute(select(Pursuit))).scalars().one()
+        p.applied_at = "sometime in the fall"
+        await s.commit()
+    async with sm() as s:
+        row = (await svc.review(s, _again("2026-10-03"))).rows[0]
+    assert row.existing_pursuit_id is None
+    assert row.possible_duplicate_id is not None and "could not be read" in (
+        row.possible_duplicate_label
+    )
+
+
+def test_the_import_page_names_a_possible_duplicate_and_does_not_tick_it(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client = _fresh_app()
+    first = "Company,Role,Date,Status\nAcme Corp,VP Information Technology,2026-09-30,applied\n"
+    cols = {"map_0": "company", "map_1": "title", "map_2": "date", "map_3": "status"}
+    first_review = client.post("/settings/data/applied/review", data={"text": first, **cols})
+    assert 'name="include_1"' in first_review.text
+    normalized = (
+        "company,role,date,status\nAcme Corp,VP Information Technology,2026-09-30,applied\n"
+    )
+    client.post("/settings/data/applied/add", data={"text": normalized, "include_1": "on"})
+    again = "Company,Role,Date,Status\nAcme Corp,VP Information Technology,2026-10-06,applied\n"
+    page = client.post("/settings/data/applied/review", data={"text": again, **cols}).text
+    assert "Possible duplicate" in page
+    assert 'name="include_1"' in page
+    assert "checked" not in page.split('name="include_1"')[1].split(">")[0]
+
+
 # ------------------------------------------------------------------- re-post suppression
 async def _scrape_source(s, name="gh") -> Source:
     src = Source(name=name, kind="greenhouse", track="employment", enabled=True, config={})
