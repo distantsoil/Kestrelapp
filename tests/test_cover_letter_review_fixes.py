@@ -792,9 +792,13 @@ def test_an_online_draft_cut_off_mid_send_is_failed_after_the_restart(ids, monke
             html = (await c.get(SHEET.format(ids["strong"]))).text
             await c.post(GEN.format(ids["strong"]), data=form_fields(html))
             worker = asyncio.create_task(role_page.run_letter_drafts())
+            # The worker leases the task, then marks the send as started, then sends. Quit only
+            # once the mark is written: between the two, nothing has gone out yet (a slow Windows
+            # runner stopped there once).
             for _ in range(100):
                 await asyncio.sleep(0.1)
-                if any(t.status == "leased" for t in await _poll()):
+                if any(t.status == "leased" and (t.payload or {}).get(SENDING_KEY)
+                       for t in await _poll()):
                     break
             worker.cancel()
 
