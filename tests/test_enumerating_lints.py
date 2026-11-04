@@ -97,8 +97,8 @@ LIVE_ATTR = re.compile(r"^(hx-|x-|@|:?on|popovertarget|command$|commandfor$|form
 DEAD_ALLOW: dict[str, str] = {}
 
 
-# Any case and any space before the closing ">", so no script body is missed.
-SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.S | re.I)
+# Any case, and anything between "</script" and ">", so no script body is missed.
+SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)</script\b[^>]*>", re.S | re.I)
 
 
 def script_texts(js_dir: Path, templates: Path | None = None) -> list[str]:
