@@ -177,6 +177,15 @@
     var bulk = t.closest('#pl-bulk [data-bulk]');
     if (bulk) { runBulk(bulk.getAttribute('data-bulk')); return; }
     if (t.closest('#pl-bclear')) { clearPicks(); return; }
+    var nx = t.closest('[data-pl-notice-x]');
+    if (nx) {  // dismiss a notice: fade out, then remove
+      var note = nx.closest('.pl-notice');
+      if (note) {
+        note.classList.add('is-leaving');
+        cx.after(reduced() ? 0 : 320, function () { if (note.parentNode) note.parentNode.removeChild(note); });
+      }
+      return;
+    }
 
     // Select all in a group.
     var selall = t.closest('.pl-selall');
@@ -488,17 +497,54 @@
       cx.after(700, function () { c.classList.remove('is-changed'); });
     });
   }
+  // A re-score that lands while the list is on screen shows "3.2 to 3.6" beside the score for a
+  // few seconds, then settles (issue #143). Rows are remembered by id before a refresh: their
+  // score, latest evaluation and whether a re-score was in progress.
+  var scoreBefore = {};
+  function noteScores(list) {
+    var m = {};
+    $$('.pl-row[data-id][data-eval]', list).forEach(function (r) {
+      m[r.dataset.id] = { score: r.getAttribute('data-score'), ev: r.getAttribute('data-eval'),
+        again: r.hasAttribute('data-rescoring') };
+    });
+    return m;
+  }
+  function showFinished(list) {
+    var before = scoreBefore;
+    scoreBefore = {};
+    $$('.pl-row[data-id][data-eval]', list).forEach(function (r) {
+      var was = before[r.dataset.id];
+      if (!was || !was.again || r.hasAttribute('data-rescoring')) return;
+      if (was.ev === r.getAttribute('data-eval') || $('.pl-delta', r)) return;
+      var now = r.getAttribute('data-score');
+      var host = $('.pl-score', r);
+      if (!host) return;
+      var cue = doc.createElement('span');
+      cue.className = 'pl-delta';
+      cue.setAttribute('role', 'status');
+      cue.setAttribute('data-testid', 'row-delta');
+      cue.textContent = was.score === now ? 'Still ' + now : was.score + ' to ' + now;
+      var age = $('.pl-age', host);
+      host.insertBefore(cue, age || null);
+      cx.after(40, function () { cue.classList.add('is-in'); });
+      cx.after(6000, function () {
+        cue.classList.remove('is-in');
+        cx.after(reduced() ? 0 : 320, function () { if (cue.parentNode) cue.parentNode.removeChild(cue); });
+      });
+    });
+  }
   function onMenuBeforeSwap(e) {
     var t = e.target;
     if (!t || t.id !== 'pipeline-list') return;
     chipBefore = noteChips(t);
+    scoreBefore = noteScores(t);
     var d = t.querySelector('details.pl-more[open]');
     var row = d && d.closest('.pl-row');
     menuRow = row ? row.getAttribute('data-id') : null;
   }
   function onMenuAfterSwap(e) {
     var t = e.target;
-    if (t && t.id === 'pipeline-list') markChangedChips(t);
+    if (t && t.id === 'pipeline-list') { markChangedChips(t); showFinished($('#pipeline-list') || t); }
     if (t && t.id === 'pipeline-list' && menuRow) {
       var d = t.querySelector('.pl-row[data-id="' + menuRow + '"] details.pl-more');
       if (d) d.open = true;
@@ -606,6 +652,20 @@
     state.known = rowIds();
     var id = Number(($('#pipeline') || {}).dataset ? $('#pipeline').dataset.open : 0) || null;
     if (id) { state.sel = id; markSel(); }
+    // Back from Score again: the roles it was for stay ticked, and the URL drops the one-time
+    // outcome so a reload shows the page plain.
+    var pk = (($('#pipeline') || {}).dataset || {}).picked || '';
+    if (pk) {
+      state.picked = pk.split(',').map(Number).filter(function (n) { return n > 0; });
+      updateBulk();
+    }
+    try {
+      var u = new URL(root.location.href), had = false;
+      ['outcome', 'n', 'a', 'run', 'rules', 'u', 'm', 'sel'].forEach(function (k) {
+        if (u.searchParams.has(k)) { u.searchParams.delete(k); had = true; }
+      });
+      if (had) root.history.replaceState(root.history.state, '', u.pathname + u.search + u.hash);
+    } catch (e) { /* an old webview: the URL keeps its parameters */ }
     placeInk();
     fitPanel();
     placeBulk();

@@ -304,6 +304,34 @@ async def _effective_params(s, request: Request, track: str) -> tuple[dict, list
     return eff, views, ({"id": view.id, "name": view.name} if view else None)
 
 
+def picked_from(params):
+    from kestrel.web.pages.rescore import picked_from as _picked
+
+    return _picked(params)
+
+
+async def _pipeline_notices(request: Request) -> list[dict]:
+    """The strip above the Pipeline list on a full page load (not on a poll or filter swap, so it
+    never redraws): what a Score again just did, and any requested score that ended without one.
+    Each is shown once."""
+    from kestrel.services.score_again_notice import take_notice
+    from kestrel.web.pages.rescore import outcome_summary
+
+    out: list[dict] = []
+    done = outcome_summary(request.query_params)
+    if done is not None:
+        out.append({"tone": "good" if done["ok"] else "warn", "text": done["text"], "id": "queued",
+                    "links": [{"label": lab, "href": href} for lab, href in done.get("links", [])]})
+    async with sessionmaker()() as s:
+        ended = await take_notice(s)
+        await s.commit()
+    if ended is not None:
+        links = [{"label": "Open role", "href": f"/opportunities/{ended.role_ids[0]}"}] if (
+            len(ended.role_ids) == 1) else []
+        out.append({"tone": "warn", "text": ended.text, "links": links, "id": "ended"})
+    return out
+
+
 @router.get("/opportunities", response_class=HTMLResponse)
 async def opportunities(request: Request):
     from sqlalchemy import func, select
@@ -407,6 +435,7 @@ async def opportunities(request: Request):
         "scoring_failed": counts["failed"],
         "total_open": sum(page.group_counts.values()),
         "page_ids": [r.opp.id for r in page.rows],
+        "picked_ids": picked_from(request.query_params),
         "open_id": open_id,
         "panel_html": "",
     }
@@ -416,6 +445,7 @@ async def opportunities(request: Request):
         ctx["panel_html"] = await render_panel(request, open_id)
     # HTMX chip/search/sort/paginate requests swap only the list; a full load renders the page.
     tmpl = "partials/opp_rows.html" if request.headers.get("HX-Request") else "opportunities.html"
+    ctx["notices"] = [] if request.headers.get("HX-Request") else await _pipeline_notices(request)
     return templates().TemplateResponse(request, tmpl, ctx)
 
 

@@ -23,7 +23,7 @@
   <div class="td-t" data-testid="td-title">{{ c.title }}</div>
   <div class="td-o"><span class="td-mono td-mono-{{ c.mono.tone }}" aria-hidden="true">{{ c.mono.letters }}</span><span class="td-o__n">{{ c.org }}</span></div>
   <div class="td-row td-loc">{{ ui.icon('pin') }}<span>{{ c.place or 'Place not listed' }}</span></div>
-  {% if c.rescoring %}<div class="td-again" role="status" data-testid="td-rescoring"><span class="k-dot k-dot--live" aria-hidden="true"></span><span><b>{{ c.rescoring.title }}.</b> {{ c.rescoring.hint }}</span></div>{% endif %}
+  {% if c.rescoring %}<div class="td-again" role="status" data-testid="td-rescoring"><span class="k-dot {{ 'k-dot--idle' if c.rescoring.state == 'approval' else 'k-dot--live' }}" aria-hidden="true"></span><span><b>{{ c.rescoring.title }}.</b> {{ c.rescoring.hint }}{% if c.rescoring.state == 'approval' %} <a href="/rescore/choose?opp_ids={{ c.id }}&page=1&next=/" data-testid="td-confirm">Confirm</a>{% endif %}</span></div>{% endif %}
   {% if c.pending %}
     <div class="td-pending"><span class="k-dot k-dot--live"></span>Full review in progress. Pay and details appear when it finishes.</div>
   {% else %}

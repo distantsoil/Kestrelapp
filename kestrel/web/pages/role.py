@@ -304,6 +304,15 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         # Hidden as applied with nothing queued: Not scored, never Being scored (issue #59).
         # Score again queues a live task, and then it is Being scored after all.
         detail["hidden_why"] = (await hidden_unscored(s2, [opp])).get(opp.id)
+        from kestrel.web.queries import scored_twins
+
+        # Unscored means the role has no scored Tier 2 or Tier 3 evaluation (the same test
+        # scored_twins applies to the copy): a Tier 1 screen, or a Tier 2 row without a score
+        # (quarantined), still shows the scored copy's line.
+        scored = (ev is not None and (getattr(ev, "tier", None) or 0) >= 2
+                  and getattr(ev, "score", None) is not None)
+        unscored = not scored
+        detail["twin"] = (await scored_twins(s2, [opp])).get(opp.id) if unscored else None
         detail["empty_posting"] = (opp.stage == "t1_pass"
                                    and opp.stage_reason == EMPTY_POSTING_STAGE_REASON)
         detail["posting_url"] = safe_web_url(opp.url)
@@ -574,6 +583,8 @@ async def rescoring_status(opp_id: int):
     "running" or "none" (it landed, failed or was cancelled, so the page asks for the new card)."""
     async with sessionmaker()() as s:
         found = (await rescoring_states(s, [opp_id])).get(opp_id)
+    if found is not None and found.awaiting_ok:
+        found = None  # held for the person's OK: the page redraws and shows its confirm card
     return JSONResponse(found.as_dict() if found else {"state": "none"},
                         headers={"Cache-Control": "no-store"})
 

@@ -6,9 +6,10 @@ lands.
 State comes from the task row alone: a leased task is "running", any other live one is "queued".
 A queued role's place in line is the count of live Tier 1 and Tier 2 tasks the worker takes
 before it (it leases by priority, then oldest id), plus any already running. That is a plain
-count, not a promise about time. A task held for the operator's approval, or given back unstarted
-because it cannot run now (`is_deferred`: an online key out of credit, a local-only hold), is not
-in line and does not count ahead of anyone, and a role with nothing live is not here at all.
+count, not a promise about time. A task held for the operator's approval reads "Waiting for your
+OK" (state "approval") with a link to confirm; it is not in line. A task given back unstarted
+because it cannot run now (`is_deferred`: an online key out of credit, a local-only hold) is not
+in line either and does not count ahead of anyone. A role with nothing live is not here at all.
 "Stalled" means exactly that deferral; a task that failed and was requeued is simply waiting its
 turn."""
 
@@ -17,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import median
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
@@ -27,6 +28,15 @@ from kestrel.queue.queue import in_flight, is_deferred
 TITLE = "Being scored again"
 FIRST_TITLE = "Being scored"
 EARLIER = "Earlier score"
+# A task held for the person's online OK (issue #143): not in line, never blank on a row.
+APPROVAL_TITLE = "Waiting for your OK"
+APPROVAL_HINT = "Nothing was sent. Confirm the online send to score it."
+
+
+def confirm_href(opp_id: int, back: str = "/opportunities") -> str:
+    """Where the person confirms a held score: the same ask-first dialog Score again opens."""
+    return f"/rescore/choose?opp_ids={int(opp_id)}&page=1&next={back}"
+
 STALLED_HINT = "Waiting to try again. Kestrel will pick it up when it can."
 _TASKS = ("t1", "t2", "t3", "rescore")
 _LINE_TASKS = ("t1", "t2")
@@ -36,18 +46,26 @@ _MIN_SAMPLES = 3
 
 @dataclass(frozen=True)
 class Rescoring:
-    state: str  # "queued" or "running"
+    state: str  # "queued", "running", or "approval" (held until the person confirms)
     ahead: int = 0
     typical: str | None = None
     again: bool = True  # the role already has a Tier 2 score; False: its first one
     stalled: bool = False  # deferred: it cannot run now, so nothing to watch for
 
     @property
+    def awaiting_ok(self) -> bool:
+        return self.state == "approval"
+
+    @property
     def title(self) -> str:
+        if self.awaiting_ok:
+            return APPROVAL_TITLE
         return TITLE if self.again else FIRST_TITLE
 
     @property
     def hint(self) -> str:
+        if self.awaiting_ok:
+            return APPROVAL_HINT
         if self.stalled:
             return STALLED_HINT
         if self.state == "running":
@@ -86,6 +104,16 @@ async def _typical(session: AsyncSession) -> str | None:
     return typical_words(float(median(rows)))
 
 
+async def _scored(session: AsyncSession, ids: list[int]) -> set[int]:
+    """The roles among `ids` that already have a Tier 2 or Tier 3 score."""
+    if not ids:
+        return set()
+    return set((await session.execute(
+        select(Evaluation.opportunity_id)
+        .where(Evaluation.opportunity_id.in_(ids), Evaluation.tier >= 2).distinct()
+    )).scalars())
+
+
 async def rescoring_states(session: AsyncSession, opp_ids: list[int]) -> dict[int, Rescoring]:
     """The roles in `opp_ids` that have a live scoring task, with where each one is."""
     ids = sorted({int(i) for i in opp_ids})
@@ -94,18 +122,26 @@ async def rescoring_states(session: AsyncSession, opp_ids: list[int]) -> dict[in
     from kestrel.services.online_consent import APPROVAL_HOLD
 
     oid = func.json_extract(Task.payload, "$.opportunity_id")
-    live = (
+    is_held = func.coalesce(Task.last_error, "") == APPROVAL_HOLD
+    # One read for the live tasks and the ones held for the person's OK (a pending task whose
+    # last_error is the hold; in_flight leaves those out because they wait for the person).
+    rows = (
         await session.execute(
-            select(oid, Task.id, Task.priority, Task.status, is_deferred()).where(
+            select(oid, Task.id, Task.priority, Task.status, is_deferred(), is_held).where(
                 Task.type.in_(_TASKS),
-                in_flight(utcnow_iso()),
                 oid.in_(ids),
-                func.coalesce(Task.last_error, "") != APPROVAL_HOLD,
+                or_(and_(in_flight(utcnow_iso()), ~is_held),
+                    and_(Task.status == "pending", is_held)),
             )
         )
     ).all()
+    held = {int(o) for o, _t, _p, _s, _d, h in rows if h and o is not None}
+    live = [r[:5] for r in rows if not r[5]]
     if not live:
-        return {}
+        if not held:
+            return {}
+        earlier = await _scored(session, list(held))
+        return {o: Rescoring("approval", 0, None, o in earlier) for o in held}
     # Per role the task that decides it: running beats queued; of several queued, the first.
     pick: dict[int, tuple[int, int, str, bool]] = {}
     for o, tid, prio, status, deferred in live:
@@ -161,6 +197,11 @@ async def rescoring_states(session: AsyncSession, opp_ids: list[int]) -> dict[in
         ahead = {o: place.get(t[0], 0) for o, t in queued.items()}
     typical = await _typical(session) if any(t[2] == "leased" for t in pick.values()) else None
     out: dict[int, Rescoring] = {}
+    waiting_ok = {o for o in held if o not in pick}
+    if waiting_ok:
+        again_ok = await _scored(session, list(waiting_ok))
+        for o in waiting_ok:
+            out[o] = Rescoring("approval", 0, None, o in again_ok)
     for o, (_tid, _prio, status, deferred) in pick.items():
         again = o in scored
         if status == "leased":

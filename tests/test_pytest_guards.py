@@ -4,6 +4,7 @@ test and checks the session fails with the right words."""
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -104,7 +105,10 @@ def test_a_timeout_under_xdist_fails_that_test_and_the_worker_lives_on(tmp_path)
     )
     out = proc.stdout + proc.stderr
     assert "1 failed, 1 passed" in out, out[-2000:]
-    assert "crashed" not in out and "replacing crashed worker" not in out
+    # Where the signal method exists the worker survives. Windows has only the thread method,
+    # which ends the worker; xdist replaces it, so the run still finishes as asserted above.
+    worker_ends = not hasattr(signal, "SIGALRM")
+    assert ("crashed" in out) is worker_ends, out[-2000:]
 
 
 def test_the_default_timeout_is_sixty_seconds_and_browser_files_get_longer(tmp_path):

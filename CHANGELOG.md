@@ -10,7 +10,7 @@ Cover letters are rebuilt and written in your own voice, every online send waits
 
 ### Changed
 
-- **Cover letters are rebuilt.** The letter page has Save, Discard and Generate on every tab, a preview that fits the page, and Download PDF. A letter is written in the first person, opens "Dear Hiring Team," and ends "Sincerely," with your name. Anything in a draft your notes do not support is marked for you to check. Engagement outlines use the same design.
+- **Cover letters are rebuilt.** Every tab of the letter page has an action bar with Draft again and Discard, and Save on the Edit text tab. The preview fits the page, and Download PDF is one click. A letter is written in the first person, opens "Dear Hiring Team," and ends "Sincerely," with your name. Anything in a draft your notes do not support is marked for you to check. Engagement outlines use the same design.
 - **Drafting a letter survives a restart.** A letter being drafted is saved as work in progress, so closing Kestrel mid-draft picks up where it left off.
 - **Every online send waits for your tick.** On every panel that asks before sending to an online model, Send is at full strength; pressing it without ticking the box shows a hint and sends nothing.
 - **I applied is on the role page.** Mark a role applied without leaving it.

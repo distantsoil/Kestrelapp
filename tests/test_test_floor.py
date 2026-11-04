@@ -338,6 +338,26 @@ def test_a_fix_commit_that_also_changes_a_data_file_under_tests_is_still_proved(
     assert any("ok (a new test fails on the parent)" in line for line in logs)
 
 
+def test_a_fix_commit_proved_only_by_a_browser_test_runs_that_test_live(toy):
+    """Browser tests skip unless KESTREL_LIVE_BROWSER=1. Run without it, the new test skips on
+    the parent and the skip reads as a pass, so a real browser fix fails the proof."""
+    base = _git(toy, "rev-parse", "HEAD")
+    (toy / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (toy / "tests" / "test_calc_browser.py").write_text(
+        "import os\n\nimport pytest\n\nfrom calc import add\n\n"
+        "pytestmark = pytest.mark.skipif(\n"
+        "    os.environ.get('KESTREL_LIVE_BROWSER') != '1', reason='needs a live browser'\n)\n\n"
+        "def test_add():\n    assert add(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+    _git(toy, "add", "-A")
+    _git(toy, "commit", "-q", "-m", "fix: add subtracted")
+    logs: list[str] = []
+    problems, _warnings = tf.red_first_problems(base, log=logs.append, repo=toy)
+    assert problems == [], problems
+    assert any("ok (a new test fails on the parent)" in line for line in logs)
+
+
 def test_a_fix_commit_whose_test_passes_on_the_parent_fails_the_proof(toy):
     base = _git(toy, "rev-parse", "HEAD")
     (toy / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")

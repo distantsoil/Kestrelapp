@@ -97,11 +97,15 @@ LIVE_ATTR = re.compile(r"^(hx-|x-|@|:?on|popovertarget|command$|commandfor$|form
 DEAD_ALLOW: dict[str, str] = {}
 
 
+# Any case and any space before the closing ">", so no script body is missed.
+SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.S | re.I)
+
+
 def script_texts(js_dir: Path, templates: Path | None = None) -> list[str]:
     """Every script a control can be wired by: static/js files and inline template scripts."""
     out = [p.read_text(encoding="utf-8") for p in js_dir.rglob("*.js") if p.name not in VENDORED]
     for p in sorted(templates.rglob("*.html")) if templates else []:
-        out += re.findall(r"<script\b[^>]*>(.*?)</script>", p.read_text(encoding="utf-8"), re.S)
+        out += SCRIPT_BODY.findall(p.read_text(encoding="utf-8"))
     return out
 
 
@@ -534,7 +538,7 @@ def code_only(name: str, text: str) -> str:
     if name.endswith(".html"):
         keep = [
             (m.start(1), m.end(1))
-            for m in re.finditer(r"<script\b[^>]*>(.*?)</script>", text, re.S)
+            for m in SCRIPT_BODY.finditer(text)
         ]
         masked = list(re.sub(r"[^\n]", " ", text))
         for a, b in keep:

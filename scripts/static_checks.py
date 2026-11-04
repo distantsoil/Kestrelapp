@@ -67,12 +67,15 @@ def _line_text(path: str, line: int, root: Path) -> str:
 
 def _rel(path: str, root: Path) -> str:
     p = Path(path)
-    try:
-        return (
-            p.resolve().relative_to(root.resolve()).as_posix() if p.is_absolute() else p.as_posix()
-        )
-    except ValueError:
+    if not p.is_absolute():
         return p.as_posix()
+    # Resolved on both sides: pyright on Windows names a file "c:\\..." while Python says "C:\\...",
+    # and only resolve() gives one spelling, for a file outside the repo too.
+    resolved = p.resolve()
+    try:
+        return resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 def fingerprint(diag: dict, root: Path = ROOT) -> tuple[str, str]:

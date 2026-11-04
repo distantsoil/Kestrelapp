@@ -430,7 +430,12 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
 
 def _pytest(worktree: Path, files: list[str], *, ids: list[str] | None = None) -> tuple[int, str]:
     env = {**os.environ, "KESTREL_HEADLESS": "1", "PYTHONPATH": str(worktree)}
-    env.pop("KESTREL_LIVE_BROWSER", None)
+    # A browser test skips unless KESTREL_LIVE_BROWSER=1, and a skipped test would read as a pass
+    # on the parent. So browser files get a live browser; every other file runs without one.
+    if any(PurePosixPath(f.split("::")[0]).name.endswith("_browser.py") for f in files):
+        env["KESTREL_LIVE_BROWSER"] = "1"
+    else:
+        env.pop("KESTREL_LIVE_BROWSER", None)
     cmd = [
         sys.executable,
         "-m",

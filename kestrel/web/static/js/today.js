@@ -476,7 +476,7 @@
   function startPoll() {
     var top = $('#td-top');
     var busy = (!!top && /active/.test(top.getAttribute('data-state') || '')) ||
-      !!$('#td-track [data-rescoring]');
+      !!$('#td-track [data-rescoring]:not([data-rescoring="approval"])');  // a hold waits for the person
     var ms = busy ? 6000 : 30000;
     if (S.poll && S.pollMs === ms) return;
     cx.clear(S.poll);

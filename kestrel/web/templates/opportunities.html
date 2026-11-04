@@ -16,7 +16,7 @@
 {% block page_name %}pipeline{% endblock %}
 {% block page_scripts %}<script src="{{ static_url('js/pipeline.js') }}" defer></script>{% endblock %}
 {% block content %}
-<div class="pl-wrap"><div class="pl-page" id="pipeline" data-open="{{ open_id or '' }}" data-track="{{ track }}">
+<div class="pl-wrap"><div class="pl-page" id="pipeline" data-open="{{ open_id or '' }}" data-picked="{{ picked_ids|join(',') }}" data-track="{{ track }}">
   {% call ui.scene_band('Pipeline') %}
     <span id="pl-counts" class="pl-counts" data-testid="pl-counts">
       {%- if signals_tab -%}{{ signals|length }} signals · {{ signals|selectattr('view.this_week')|list|length }} this week
@@ -35,6 +35,15 @@
     <button type="button" role="tab" aria-selected="{{ 'true' if signals_tab else 'false' }}" class="{{ 'is-on' if signals_tab else '' }}" data-tab="signals"
             hx-get="/opportunities?track=consulting&view=none&tab=signals" hx-target="#pipeline-list" hx-swap="outerHTML" hx-push-url="true" data-testid="tab-signals">Signals <b id="pl-tabcount-sig">{{ n_signals }}</b></button>
     <span class="pl-tabs__ink" aria-hidden="true"></span>
+  </div>
+  {% endif %}
+
+  {% if notices %}
+  <div class="pl-notices" id="pl-notices" data-testid="pl-notices">
+    {% for n in notices %}<div class="pl-notice pl-notice--{{ n.tone }}" role="status" data-testid="pl-notice" data-notice="{{ n.id }}">
+      <span class="pl-notice__t">{{ n.text }}{% for l in n.links %} <a href="{{ l.href }}">{{ l.label }}</a>{% endfor %}</span>
+      <button type="button" class="pl-notice__x" data-pl-notice-x aria-label="Dismiss">{{ ui.icon('x', 'k-ic--sm') }}</button>
+    </div>{% endfor %}
   </div>
   {% endif %}
 

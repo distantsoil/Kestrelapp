@@ -302,6 +302,7 @@ OUTCOMES: dict[str, tuple[bool, str]] = {
                          "which is off."),
     "held": (False, "Not queued: nothing was sent. Confidential mode is on and no current "
                     "employer is chosen. Choose it in Settings, then try again."),
+    "running": (False, "Nothing queued: that role is already running."),
     "rules": (False, "Not queued: your rules set this role aside. Open it to see which rule and "
                      "where to change it, or choose Score this role anyway."),
 }
@@ -317,6 +318,45 @@ def outcome_for(params) -> dict | None:
     n = min(int(raw), MAX_ROLES) if raw.isdigit() else 0
     roles = "1 role" if n == 1 else f"{n} roles"
     return {"ok": ok, "text": text.format(roles=roles)}
+
+
+# The per-role counts a no-script Score again hands back in the URL (issue #143): fixed numeric
+# keys, never free text. Key -> (words after the number, singular override).
+_COUNT_KEYS: tuple[tuple[str, str], ...] = (
+    ("n", "queued"),
+    ("a", "already waiting"),
+    ("run", "already running"),
+    ("rules", "set aside by your rules"),
+    ("u", "not screened yet"),
+    ("m", "no longer in Kestrel"),
+)
+
+
+def _count(params, key: str) -> int:
+    raw = str(params.get(key) or "0")
+    return min(int(raw), MAX_ROLES) if raw.isdigit() else 0
+
+
+def outcome_summary(params) -> dict | None:
+    """The Pipeline banner after a Score again: each kind of outcome with its count, short
+    ("1 queued. 1 already waiting. 1 set aside by your rules."), or the fixed sentence for an
+    error code. None for no or an unknown code. `links` are same-site (label, href) pairs."""
+    code = str(params.get("outcome") or "")
+    found = OUTCOMES.get(code)
+    if found is None:
+        return None
+    if code not in ("queued", "already", "running", "rules", "not_queued") or not any(
+        _count(params, k) for k, _ in _COUNT_KEYS
+    ):
+        return outcome_for(params)
+    parts = [f"{_count(params, k)} {words}." for k, words in _COUNT_KEYS if _count(params, k)]
+    links = [("Review your rules", "/profile")] if _count(params, "rules") else []
+    return {"ok": bool(_count(params, "n")), "text": " ".join(parts), "links": links}
+
+
+def picked_from(params) -> list[int]:
+    """The roles a Score again was for (`sel`), so Pipeline keeps them ticked on return."""
+    return parse_ids(str(params.get("sel") or ""))
 
 
 def safe_next(raw: str | None, default: str = "/quarantine") -> str:
@@ -473,10 +513,17 @@ async def rescore(request: Request):
         back = safe_next(str(form.get("next")))
 
     def answer(text: str, *, ok: bool, headers: dict | None = None, code: str = "not_queued",
-               n: int = 0, links: list[tuple[str, str]] | None = None):
+               n: int = 0, links: list[tuple[str, str]] | None = None,
+               counts: dict[str, int] | None = None):
         if back is not None:  # a fixed outcome code, never free text in the URL (D-UI-71)
             sep = "&" if "?" in back else "?"
-            query = urlencode({"outcome": code, "n": n})
+            fixed: dict[str, object] = {"outcome": code, "n": n}
+            pipeline = back.split("?", 1)[0] == "/opportunities"  # the page that names roles
+            if pipeline:
+                fixed.update({k: v for k, v in (counts or {}).items() if v})
+            if pipeline and counts is not None and ids:
+                fixed["sel"] = ",".join(str(i) for i in ids)  # the roles asked about, ticked
+            query = urlencode(fixed)
             return RedirectResponse(f"{back}{sep}{query}", status_code=303)
         return HTMLResponse(_note(text, ok=ok, links=links), headers=headers or {})
 
@@ -515,14 +562,18 @@ async def rescore(request: Request):
     body = " ".join([head, *result.messages()])
     headers = {"HX-Trigger": "pipelineRefresh"} if n else {}
     code = "queued" if n else (
-        "already" if result.already else ("rules" if result.rules else "not_queued")
+        "already" if result.already else (
+            "running" if result.running else ("rules" if result.rules else "not_queued")
+        )
     )
+    counts = {"a": len(result.already), "run": len(result.running), "rules": len(result.rules),
+              "u": len(result.unscreened), "m": len(result.missing)}
     # Where each refused role's rule is changed, as links after the sentence (D-UI-73).
     links: list[tuple[str, str]] = []
     for why in result.rule_whys.values():
         if (f"Open {why.place}", why.href) not in links:
             links.append((f"Open {why.place}", why.href))
-    return answer(body, ok=bool(n), headers=headers, code=code, n=n, links=links)
+    return answer(body, ok=bool(n), headers=headers, code=code, n=n, links=links, counts=counts)
 
 
 def short_model(model: str | None, bases: dict[str, str | None] | None = None) -> str:

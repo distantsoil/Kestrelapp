@@ -112,6 +112,8 @@
       {% elif rescoring %}<span data-testid="panel-rescoring">{{ rescoring.hint }} Details appear when the review finishes.</span>
       {% elif scoring == 'not_queued' %}Kestrel has not reached this role yet. It scores on its own.
       {% else %}Being scored now. Details appear when the review finishes.{% endif %}</div>
+    {% if rescoring and rescoring.state == 'approval' and kind != 'role' %}<a class="k-btn k-btn--primary pl-fit-content" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities" data-testid="panel-confirm">Confirm and score</a>{% endif %}
+    {% if twin %}<div class="pl-dsm" data-testid="panel-twin">{{ twin.sentence }} <a href="/opportunities/{{ twin.opp_id }}">See the scored copy</a></div>{% endif %}
     {% if scoring == 'hidden' %}
       <button type="button" class="k-btn pl-fit-content" hx-post="/opportunities/{{ opp.id }}/decide/put-back" hx-swap="none" data-testid="panel-put-back">Put it back</button>
     {% endif %}
@@ -133,7 +135,8 @@
 {% elif kind == 'role' %}
   {{ head(({'contract_posting': 'Contract posting', 'rfp': 'RFP', 'referral': 'Referral'}.get(opp.opp_type, 'Opportunity') if consulting else 'Role summary'), title, org_name ~ (' · ' ~ place if place else '')) }}
   <div class="pl-db">
-    {% if rescoring %}<div class="pl-again" role="status" data-testid="panel-rescoring" data-state="{{ rescoring.state }}"><span class="k-dot k-dot--live" aria-hidden="true"></span><span><b>{{ rescoring.title }}.</b> {{ rescoring.hint }} {% if rescoring.again %}<span class="pl-hint-again" data-testid="panel-earlier">The score below is the earlier one.</span>{% endif %}</span></div>{% endif %}
+    {% if rescoring and rescoring.state == 'approval' %}<a class="k-btn k-btn--primary pl-fit-content" href="/rescore/choose?opp_ids={{ opp.id }}&page=1&next=/opportunities" data-testid="panel-confirm">Confirm and score</a>{% endif %}
+    {% if rescoring %}<div class="pl-again" role="status" data-testid="panel-rescoring" data-state="{{ rescoring.state }}"><span class="k-dot {{ 'k-dot--idle' if rescoring.state == 'approval' else 'k-dot--live' }}" aria-hidden="true"></span><span><b>{{ rescoring.title }}.</b> {{ rescoring.hint }} {% if rescoring.again %}<span class="pl-hint-again" data-testid="panel-earlier">The score below is the earlier one.</span>{% endif %}</span></div>{% endif %}
     <div class="pl-ringrow">
       {{ ring(score if score is not none else 0, ring_pct, tone) }}
       <div class="pl-dims">

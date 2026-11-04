@@ -152,6 +152,21 @@
 .src-sugc { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; gap: 10px;
   align-items: center; height: 52px; padding: 0 6px; border-top: 1px solid var(--line); }
 .src-sugs > .src-sugc:first-child { border-top-color: transparent; }
+/* While Add looks the board up, base.html inserts a status span beside the button. In this grid
+   it would be a fifth child, so auto-placement pushed Dismiss into a new row under the badge.
+   The status leaves the grid (absolute) and takes the subline's place; the subline fades out,
+   so the row keeps its size and nothing moves. */
+.src-sugc { position: relative; }
+.src-sugc .src-ty { transition: opacity .18s ease; }
+.src-sugc:has(> .busy-status) .src-ty { opacity: 0; }
+.src-sugc > .busy-status { position: absolute; left: 48px; right: 160px; top: 28px; margin: 0;
+  gap: .4rem; height: 18px; font-size: 13px; line-height: 18px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; animation: src-sug-in .18s ease both; }
+@keyframes src-sug-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .src-sugc .src-ty { transition: none; }
+  .src-sugc > .busy-status { animation: none; }
+}
 
 /* ---------------------------------------------------------------- keys for some sources */
 .src-keys { padding: 14px 16px; }

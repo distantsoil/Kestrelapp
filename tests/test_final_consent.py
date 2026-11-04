@@ -177,7 +177,8 @@ def test_c2_fresh_consent_does_not_change_a_leased_task():
             "opp_ids": str(oid), "model_choice": "same", "confirmed": "1",
             "online_approval": json.dumps(_approval()),
         })
-        assert "already waiting" in response.text
+        # D-UI-243: a running task is reported as already running (it was "already waiting").
+        assert "already running" in response.text
 
         async def read(s):
             return (await s.get(Task, tid)).payload
@@ -558,3 +559,53 @@ def test_r1_a_refused_scan_says_why_and_queues_nothing(data, says):
 
             assert not (await s.execute(select(Task).where(Task.type == "scrape"))).first()
         _app_db(read)
+
+
+def _waiting_role():
+    """An ordinary automatic task (no operator flags, no approval) for a thin role."""
+    async def seed(s):
+        opp = Opportunity(track="employment", opp_type="job_posting", title="Engineer",
+                          stage="t1_pass", description_md="")
+        s.add(opp)
+        await s.flush()
+        task = Task(type="t2", payload={"opportunity_id": opp.id}, priority=30)
+        s.add(task)
+        await s.flush()
+        return opp.id, task.id
+
+    return _app_db(seed)
+
+
+def test_d144_an_unconfirmed_score_again_leaves_a_waiting_task_untouched():
+    """Nothing goes online without the confirmed dialog: a refused press upgrades nothing."""
+    with _hosted_app(trigger=False) as client:
+        oid, tid = _waiting_role()
+        refused = client.post("/rescore", data={
+            "opp_ids": str(oid), "model_choice": "same",
+            "online_approval": json.dumps(_approval()),
+        })
+        assert "Confirm the online send first" in refused.text
+
+        async def read(s):
+            return (await s.get(Task, tid)).payload
+
+        payload = _app_db(read)
+        assert payload == {"opportunity_id": oid}  # no rescore, no score_stub, no approval
+
+
+def test_d144_a_confirmed_score_again_upgrades_the_waiting_task_with_that_approval_only():
+    with _hosted_app(trigger=False) as client:
+        oid, tid = _waiting_role()
+        approval = _approval()
+        done = client.post("/rescore", data={
+            "opp_ids": str(oid), "model_choice": "same", "confirmed": "1",
+            "online_approval": json.dumps(approval),
+        })
+        assert "Queued 1 role" in done.text
+
+        async def read(s):
+            return (await s.get(Task, tid)).payload
+
+        payload = _app_db(read)
+        assert payload["online_approval"] == approval
+        assert payload["rescore"] is True and payload["score_stub"] is True

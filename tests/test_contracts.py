@@ -717,7 +717,7 @@ def _file_routes(route_table) -> dict[str, str]:
     return out
 
 
-SECRET = b"%PDF-1.4\ninvented secret outside the documents folder\n%%EOF\n"
+OUTSIDE_PDF = b"%PDF-1.4\ninvented text outside the documents folder\n%%EOF\n"
 
 FILE_ROUTES = {
     "GET /renders/{render_id}/download",
@@ -744,11 +744,11 @@ def _stored(where: str, tmp_path: Path, folder: Path) -> Path:
     if where == "inside":
         target = folder / "invented-control.pdf"
     elif where == "elsewhere":
-        target = tmp_path / "elsewhere" / "secret.pdf"
+        target = tmp_path / "elsewhere" / "outside.pdf"
     else:  # a traversal that starts inside the folder
-        target = folder / ".." / "secret-by-traversal.pdf"
+        target = folder / ".." / "outside-by-traversal.pdf"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(SECRET)
+    target.write_bytes(OUTSIDE_PDF)
     return target
 
 
@@ -833,7 +833,7 @@ def test_a_stored_path_inside_the_documents_folder_is_served(route, tmp_path, no
     it, which proves the outside cases reach the code they are meant to test."""
     _method, _doc, _prep, r, shown = _drive_file_route(route, "inside", tmp_path)
     assert r.status_code == 200, f"control not served: {shown}"
-    assert r.content == SECRET, f"control not served: {shown}"
+    assert r.content == OUTSIDE_PDF, f"control not served: {shown}"
 
 
 @pytest.mark.parametrize("route", sorted(r for r in FILE_ROUTES if not r.startswith("GET ")))
@@ -854,12 +854,12 @@ def test_a_stored_path_outside_the_documents_folder_is_left_alone(
     assert r.status_code not in (405, 422), shown
     assert method == "GET" or r.status_code != 404, shown
     assert r.status_code < 500 or r.status_code == 503, shown
-    assert SECRET not in r.content, f"{route} served a file from outside the folder"
-    assert doc.read_bytes() == SECRET and prep.read_bytes() == SECRET, (
+    assert OUTSIDE_PDF not in r.content, f"{route} served a file from outside the folder"
+    assert doc.read_bytes() == OUTSIDE_PDF and prep.read_bytes() == OUTSIDE_PDF, (
         f"{route} changed or deleted a file outside the folder: {shown}"
     )
     # Refusing the stored path is the contract. A route may then make a fresh PDF from the saved
     # text (renders download does when a renderer is available), which is never the outside file:
-    # SECRET is checked above. Whether it can render depends on the machine, so 200 (a fresh
+    # OUTSIDE_PDF is checked above. Whether it can render depends on the machine, so 200 (a fresh
     # PDF), 404 and 503 are all refusals of the stored path for a GET.
     assert method != "GET" or r.status_code in (200, 404, 503), shown

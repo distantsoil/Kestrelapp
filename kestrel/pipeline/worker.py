@@ -439,6 +439,8 @@ class Worker:
             kwargs: dict = {}
             if task_type == "t2":
                 kwargs["changed"] = bool(payload.get("changed"))
+                if payload.get("requested") or payload.get("rescore"):
+                    kwargs["requested"] = True  # the operator asked: an empty end is reported
                 if payload.get("rescore"):
                     kwargs["rescore"] = True
                     kwargs["requested_at"] = payload.get("requested_at")

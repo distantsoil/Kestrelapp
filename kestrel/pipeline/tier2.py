@@ -177,8 +177,12 @@ async def handle_t2(
     requested_at: str | None = None,
     task_id: int | None = None,
     score_stub: bool = False,
+    requested: bool = False,
 ) -> HandlerOutcome:
-    """`score_stub` is the operator's explicit Score again: a posting with next to no
+    """`requested` marks a task the operator asked for: when it ends without a score because
+    the posting is empty, a note says so (kestrel.services.score_again_notice), never silence.
+
+    `score_stub` is the operator's explicit Score again: a posting with next to no
     description is scored anyway (D-SRC-18); an automatic path never sets it.
 
     `rescore` marks a score-again task (D-UI-50): the role is evaluated again whatever its
@@ -247,6 +251,10 @@ async def handle_t2(
                 return HandlerOutcome("skip", 2)
             opp.stage = "t1_pass"
             opp.stage_reason = EMPTY_POSTING_STAGE_REASON
+            if requested or rescore:
+                from kestrel.services.score_again_notice import record_not_scored
+
+                await record_not_scored(session, opp.id)
             await session.commit()
             log.info("t2_empty_posting_not_scored", opportunity_id=opp.id)
             return HandlerOutcome("skip", 2)
