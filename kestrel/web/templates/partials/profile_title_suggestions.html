@@ -47,14 +47,14 @@
   {% if route and route.online %}
   {# A div, not a form: this sits inside the Employment form (and the onboarding form). The button
      sends only the consent fields from this panel, which the server checks again. #}
-  <div data-testid="title-suggest-online" data-pf-nodirty>
+  <div data-testid="title-suggest-online" data-pf-nodirty data-consent-scope>
     {{ online_ask.ask(route, 'title-suggest', 'suggest titles') }}
-    <button class="k-btn k-btn--sm" type="button" data-testid="title-suggest-again" hx-post="/title-suggestions/refresh"
+    <button class="k-btn k-btn--sm" type="button" data-consent-send data-testid="title-suggest-again" hx-post="/title-suggestions/refresh"
             hx-include="closest [data-testid='title-suggest-online']" hx-params="confirmed,model,dest"
             hx-target="#title-suggestions" hx-swap="outerHTML" {% if pending %}disabled{% endif %}>{{ suggest_label }}</button>
   </div>
   {% endif %}
-  {% if note %}<p class="pf-hint" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}
+  {% if note %}<p class="pf-msg" role="status" data-testid="title-suggestions-note">{{ note }}</p>{% endif %}
   <details data-testid="title-details">
     <summary class="pf-hint">Show details</summary>
     <p class="pf-hint">Suggestions come from your resume and skip titles already in your target titles. A dismissed title is not suggested again. New suggestions appear after the next background pass.</p>

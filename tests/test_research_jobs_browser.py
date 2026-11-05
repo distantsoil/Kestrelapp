@@ -7,6 +7,7 @@ import os
 import pytest
 
 from tests import test_role_browser as role_browser
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",

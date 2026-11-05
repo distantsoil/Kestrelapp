@@ -146,6 +146,9 @@
     }
     function arm() {
       clearTimeout(timer);
+      // Test mode (the server sets data-test-mode): toasts stay until dismissed, so a slow
+      // machine cannot lose one a test is about to press.
+      if (doc.documentElement.dataset.testMode === '1') return;
       timer = setTimeout(dismiss, opts.timeout || (hasUndo ? 8000 : 2600));
     }
     node.addEventListener('mouseenter', function () { clearTimeout(timer); });
@@ -2270,7 +2273,66 @@
   root.KUI = KUI;
   if (typeof module !== 'undefined' && module.exports) module.exports = KUI;
 
+  /* Ask-first send buttons (D-UI-240). A button marked data-consent-send stays at full strength.
+     Pressed while its panel's box (data-consent-box) is unticked, it sends nothing: the hint
+     beside the box fades in and focus moves to the box. Ticking clears the hint. The server
+     refuses an unconfirmed post as well, whatever this does. Runs in the capture phase, so the
+     htmx request, the form submit and a modal close never see the press. */
+  function consentBoxFor(btn) {
+    // Only the button's own panel counts: its form, an element marked data-consent-scope, or the
+    // dialog it sits in, whichever is nearest. A neighbouring panel's box is never borrowed.
+    var scope = btn.closest('form, [data-consent-scope], [role="dialog"], dialog');
+    return scope ? scope.querySelector('[data-consent-box]') : null;
+  }
+  // A box needed only for some picks (data-consent-field) is needed when that form field equals
+  // the box's own value, or starts with data-consent-prefix. Absent: always needed.
+  function consentNeeded(box) {
+    var name = box.getAttribute('data-consent-field');
+    if (!name) return true;
+    var form = box.closest('form');
+    var el = form && form.elements ? form.elements[name] : null;
+    // Two controls with one name (a picker's disabled <select> and its enabled hidden input)
+    // come back as a list: the enabled one is what the form sends.
+    if (el && !el.tagName && el.length !== undefined) {
+      el = Array.prototype.filter.call(el, function (x) { return !x.disabled; })[0] || null;
+    }
+    if (!el || el.disabled) return false;
+    var v = String(el.value || '');
+    var prefix = box.getAttribute('data-consent-prefix');
+    return prefix !== null ? (v !== '' && v.indexOf(prefix) === 0) : v === box.value;
+  }
+  function consentHint(box) {
+    var row = box.closest('[data-consent-row]');
+    return row ? row.querySelector('[data-consent-hint]') : null;
+  }
+  function onConsentClick(e) {
+    var t = e.target, btn = t && t.closest ? t.closest('[data-consent-send]') : null;
+    if (!btn) return;
+    var box = consentBoxFor(btn);
+    if (!box || box.checked || box.disabled || box.closest('[hidden]') || !consentNeeded(box)) return;
+    e.preventDefault(); e.stopPropagation();
+    var hint = consentHint(box);
+    if (hint) { hint.classList.remove('is-on'); void hint.offsetWidth; hint.classList.add('is-on'); }
+    box.focus();
+  }
+  function onConsentChange(e) {
+    var t = e.target;
+    if (!t || !t.matches || !t.matches('[data-consent-box]') || !t.checked) return;
+    var hint = consentHint(t);
+    if (hint) {
+      // Fade out from where it is: the class's animation holds opacity at 1 and a transition
+      // does not start from an animated value, so pin the value for one style change first.
+      var o = getComputedStyle(hint).opacity;
+      hint.style.opacity = o;
+      hint.classList.remove('is-on');
+      void hint.offsetWidth;
+      hint.style.opacity = '';
+    }
+  }
+
   if (doc && doc.addEventListener) {
+    doc.addEventListener('click', onConsentClick, true);
+    doc.addEventListener('change', onConsentChange);
     doc.addEventListener('click', function (e) { if (!onFrameClick(e) && !onFoldClick(e)) onClick(e); });
     // In-place navigation (D-UI-210): its popstate listener goes in now, ahead of htmx's.
     navStart();
@@ -2306,6 +2368,7 @@
         if (nav) cue(nav);  // a short window scrolls the menu above the status readout
         cueWatch();  // content that loads in later changes the length: observed, not polled
       }
+      doc.documentElement.dataset.kuiReady = '1';  // tests wait on this, not on a sleep
     };
     if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', ready); else ready();
   }

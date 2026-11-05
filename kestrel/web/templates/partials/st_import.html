@@ -46,7 +46,7 @@
           <td><b>{{ r.company }}</b></td><td>{{ r.title }}</td><td>{{ date_display(r.date) or r.date_raw }}</td>
           <td>{% if r.status %}<span class="k-pill{% if r.status == 'rejected' %}{% elif r.status in ('interviewing', 'screening', 'final', 'offer') %} k-pill--info{% else %} k-pill--warn{% endif %}">{{ r.status|replace('_', ' ')|capitalize }}</span>
             {% else %}<span class="k-select"><select name="status_{{ r.index }}" aria-label="Stage for {{ r.company }}"><option value="">Choose a stage</option>{% for o in status_options %}<option value="{{ o }}">{{ o|replace('_', ' ')|capitalize }}</option>{% endfor %}</select></span>{% endif %}</td>
-          <td>{% if r.problems %}<span class="k-pill k-pill--bad">{{ r.problems[0] }}</span>{% elif r.existing_pursuit_id %}<span class="k-pill k-pill--warn">Possible duplicate</span>{% elif r.activity %}<span class="k-pill">Looks like an activity</span>{% endif %}</td>
+          <td>{% if r.problems %}<span class="k-pill k-pill--bad">{{ r.problems[0] }}</span>{% elif r.existing_pursuit_id or r.possible_duplicate_id %}<span class="k-pill k-pill--warn">Possible duplicate</span>{% elif r.activity %}<span class="k-pill">Looks like an activity</span>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody></table></div>

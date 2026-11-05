@@ -74,7 +74,12 @@ async def _set_config(render_id: int, **changes) -> None:
 
 
 async def _write_pdf(render_id: int, tmp_path: Path) -> Path:
-    path = tmp_path / "saved.pdf"
+    # A saved PDF lives in the documents folder; a stored path anywhere else is never served.
+    from kestrel import paths
+
+    folder = paths.documents_dir() / f"t{render_id}"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "saved.pdf"
     path.write_bytes(b"%PDF-1.4 saved")
     async with _sm()() as s:
         r = await s.get(DocRender, render_id)
@@ -403,7 +408,7 @@ async def test_download_makes_the_pdf_again_from_the_current_picks_when_they_cha
 
     async def fake_refresh(session, settings, render):
         calls.append(render.id)
-        fresh = tmp_path / "fresh.pdf"
+        fresh = old.parent / "fresh.pdf"
         fresh.write_bytes(b"%PDF-1.4 fresh")
         render.pdf_path = str(fresh)
         cfg = dict(render.config or {})
@@ -816,7 +821,9 @@ async def test_an_online_pick_asks_first_and_the_server_checks_the_ask_again(mon
             "Sends your resume variant texts and the opportunity summary.")
         assert "Not sent: your name, contact details and your resume file." in t
         assert "your current employer is hidden before anything is sent" in t
-        assert dlg.select_one('[data-testid="tl-confirm"]').has_attr("required")
+        box = dlg.select_one('[data-testid="tl-confirm"]')
+        # D-UI-240: no native `required` bubble; the hint hook replaces it.
+        assert not box.has_attr("required") and box.has_attr("data-consent-box")
         # Nothing is sent without the confirmation, for the configured model.
         for data in ({}, {"confirmed": "1"}, {"confirmed": "1", "model": "other/model"},
                      {"model": "vendor/model-x"},

@@ -25,6 +25,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -103,6 +104,8 @@ def live(monkeypatch, request):
 
     monkeypatch.setattr(routes_control, "_probe_ollama", _down, raising=False)
     _seed()
+    if "while_looking_up" in request.node.name:
+        _seed_pursuits()
     if "legacy_backlog" in request.node.name:
         from tests.test_sources_lane import _seed as seed_backlog
 
@@ -435,4 +438,86 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         assert page.get_attribute(f'[data-src-health="{key}"]', "aria-pressed") == "false"
         assert not errors, errors
     finally:
+        ctx.close()
+
+
+def _seed_pursuits() -> None:
+    from kestrel.db.models import Opportunity, Org, Pursuit
+    from kestrel.ingest.orgs import normalized_name
+
+    async def go() -> None:
+        await reset_engine()
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            for name, status in (("Tidewater Freight Group", "applied"),
+                                 ("Ironbridge Supply", "shortlisted")):
+                o = Org(name=name, normalized_name=normalized_name(name))
+                s.add(o)
+                await s.flush()
+                opp = Opportunity(track="employment", opp_type="job", external_id=name,
+                                  title="Role", org_name=name, org_id=o.id)
+                s.add(opp)
+                await s.flush()
+                s.add(Pursuit(opportunity_id=opp.id, track="employment", status=status))
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    asyncio.run(go())
+
+
+_SUG_BOXES = """row => { const r = row.getBoundingClientRect();
+  const q = s => { const e = row.querySelector(s); if (!e || e.offsetParent === null) return null;
+    const b = e.getBoundingClientRect();
+    return {l: b.left, r: b.right, tp: b.top, bt: b.bottom}; };
+  return {row: {l: r.left, r: r.right, tp: r.top, bt: r.bottom},
+    kids: Array.from(row.children).filter(e => e.offsetParent !== null).map(e => {
+      const b = e.getBoundingClientRect();
+      return {t: (e.textContent || '').trim().slice(0, 24), l: b.left, r: b.right, tp: b.top,
+              bt: b.bottom}; }),
+    title: q('.src-nm'), sub: q('.src-ty'), dismiss: q('[data-testid="suggestion-dismiss"]')}; }"""
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 700])
+def test_a_suggested_row_keeps_its_layout_while_looking_up(live, theme, width):
+    """Pressing Add holds the lookup open: the row must not reflow (the title stays put, nothing
+    wraps to a second line) and no control overlaps the badge or the text."""
+    ctx, page, errors = _page(live, theme, width)
+    release: list = []
+    try:
+        page.route("**/sources/suggestions/add", lambda route: release.append(route))
+        row = page.locator('[data-testid="suggestion"]').first
+        row.wait_for()
+        before = page.evaluate(_SUG_BOXES, row.element_handle())
+        row.locator('[data-testid="suggestion-add"]').click()
+        page.wait_for_selector(".busy-status")
+        page.wait_for_timeout(450)
+        shot = os.environ.get("KESTREL_SHOTS")
+        if shot:
+            os.makedirs(shot, exist_ok=True)
+            page.locator(".src-sugs").screenshot(path=f"{shot}/{theme}-{width}.png")
+        during = page.evaluate(_SUG_BOXES, row.element_handle())
+        assert abs(during["title"]["tp"] - before["title"]["tp"]) <= 1, (before, during)
+        assert abs(during["row"]["bt"] - before["row"]["bt"]) <= 1, (before, during)
+        kids = during["kids"]
+        status = next(k for k in kids if k["t"].startswith("Looking"))
+        # The status takes the faded subline's place: clear of the title, badge and buttons.
+        assert status["tp"] >= during["title"]["bt"] - 1, (status, during["title"])
+        kids = [k for k in kids if not (k is not status and k["t"].startswith(("Ironbridge",
+                                                                              "Tidewater")))]
+        for i, a in enumerate(kids):
+            assert a["l"] >= during["row"]["l"] - 1 and a["r"] <= during["row"]["r"] + 1, kids
+            assert a["tp"] >= during["row"]["tp"] - 1 and a["bt"] <= during["row"]["bt"] + 1, kids
+            for b in kids[i + 1:]:
+                assert not _overlaps(a, b), (a, b, theme, width)
+        # Dismiss stays where it was, to the right of the text.
+        assert during["dismiss"] is not None
+        assert abs(during["dismiss"]["l"] - before["dismiss"]["l"]) <= 1, (before, during)
+        assert during["dismiss"]["l"] >= during["sub"]["r"] - 1, during
+        assert not errors, errors
+    finally:
+        for route in release:
+            route.abort()
         ctx.close()

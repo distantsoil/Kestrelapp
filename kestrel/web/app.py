@@ -462,6 +462,15 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     from kestrel.services.follow_up import drain as drain_follow_ups
 
                     await drain_follow_ups(sm, lambda cfg: LLMClient(cfg, http=http), stop=stop)
+                    # Cover letter and outline drafts (D-UI-239): a draft cut short by a quit or
+                    # a crash is leased again here after the restart. An online one whose
+                    # confirmed model or destination changed is held, not sent.
+                    from kestrel.web.pages.role import run_letter_drafts
+
+                    try:  # a letter pass must never take the tiers, training or checks with it
+                        await run_letter_drafts(stop=stop)
+                    except Exception as exc:  # noqa: BLE001 - isolated; the next cycle retries
+                        log.warning("letter_drafts_pass_error", error_type=type(exc).__name__)
                     # Model check (D-DRIFT-11): its own drained step, after every tier has
                     # drained and never beside them, so it cannot swap models under the worker.
                     await drain_checks(sm, settings, make_client=lambda s: LLMClient(s, http=http),

@@ -39,6 +39,7 @@ from kestrel.services.setting_overrides import (
     HOSTED_MODEL_DEFAULTS_KEY,
     HOSTED_MODEL_OVERRIDES_KEY,
 )
+from kestrel.web.errors import fixed_reason
 
 log = structlog.get_logger()
 
@@ -232,7 +233,7 @@ async def fetch_models(
             AttributeError) as exc:
         log.info("hosted_model_list_failed", backend=name, error=type(exc).__name__)
         raise ModelListError(
-            f"The model list from {name} could not be fetched ({type(exc).__name__}). "
+            f"The model list from {name} could not be fetched ({fixed_reason(exc)}). "
             "Check the key and your connection under Settings > Hosted."
         ) from exc
     prime(name, backend, models)

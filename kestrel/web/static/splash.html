@@ -79,7 +79,7 @@ button{font:inherit;cursor:pointer;color:inherit}
     <div class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg></div>
     <h2>Kestrel couldn't start</h2>
     <p id="reason"></p>
-    <div class="row"><button class="btn p" id="retry" type="button">Try again</button><button class="btn" id="logs" type="button">Open logs folder</button><button class="btn" id="quit" type="button">Quit</button></div>
+    <div class="row"><button class="btn p" id="download" type="button" style="display:none">Download latest</button><button class="btn p" id="retry" type="button">Try again</button><button class="btn" id="logs" type="button">Open logs folder</button><button class="btn" id="quit" type="button">Quit</button></div>
     <button class="link" id="detBtn" type="button" aria-expanded="false" aria-controls="det">Show details</button>
     <div class="det" id="det"></div>
   </div>
@@ -118,8 +118,12 @@ button{font:inherit;cursor:pointer;color:inherit}
     bar(pct);
     if (later) noteTimer = setTimeout(function () { note(later); }, noteAfterMs || 0);
   }
-  function fail(reason, details) {
+  function fail(reason, details, code) {
     clearTimeout(noteTimer);
+    var dl = $('download');
+    var is_newer = code === 'newer_database';
+    dl.style.display = is_newer ? '' : 'none';
+    $('retry').style.display = is_newer ? 'none' : '';
     $('retry').disabled = false;
     $('reason').textContent = reason || '';
     $('det').textContent = details || '';
@@ -127,7 +131,7 @@ button{font:inherit;cursor:pointer;color:inherit}
     $('detBtn').textContent = 'Show details';
     $('detBtn').setAttribute('aria-expanded', 'false');
     show('prob');
-    $('retry').focus();
+    (is_newer ? dl : $('retry')).focus();
   }
   function ready() { say('Ready', 100); setTimeout(function () { $('splash').classList.add('is-out'); }, 250); }
   // One start at a time: the button is disabled until this attempt ends on the card again.
@@ -137,6 +141,7 @@ button{font:inherit;cursor:pointer;color:inherit}
     say('Opening your data', 10);
     api('splash_retry');
   });
+  $('download').addEventListener('click', function () { api('splash_download'); });
   $('logs').addEventListener('click', function () { api('splash_open_logs'); });
   $('quit').addEventListener('click', function () { api('splash_quit'); });
   $('detBtn').addEventListener('click', function () {

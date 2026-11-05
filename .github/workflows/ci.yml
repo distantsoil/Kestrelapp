@@ -34,6 +34,9 @@ jobs:
     # CI runs only in the public repo; the private copy spends no minutes (D-CI-11).
     if: github.repository == 'distantsoil/Kestrelapp'
     runs-on: ${{ matrix.os }}
+    # A hung test must not burn the 6-hour default (a 0.7.5 run hung for hours). Windows takes
+    # about 40 minutes and Ubuntu about 18 (D-CI-13).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

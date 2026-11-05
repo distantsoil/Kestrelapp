@@ -17,6 +17,7 @@ import pytest
 from tests import rescoring_helpers as rh
 from tests import role_seed, today_seed
 from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = [
     pytest.mark.usefixtures("_isolate_data_home"),
@@ -234,5 +235,150 @@ def test_the_today_card_updates_when_the_score_lands(today_live):
         assert card.get_by_test_id("td-score").inner_text().startswith("4.9")
         assert page.evaluate("window.__same_page") is True
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+# --------------------------------------------------------------------- issue #143: after a press
+def _shot(page, name: str) -> None:
+    """Screenshots for review, only when KESTREL_SHOT_DIR names a folder (never in the gate)."""
+    out = os.environ.get("KESTREL_SHOT_DIR")
+    if out:
+        os.makedirs(out, exist_ok=True)
+        page.screenshot(path=os.path.join(out, name))
+
+
+_NO_OVERLAP = """() => {
+  const bad = [];
+  const parts = '.pl-notice__t, .pl-row .pl-main, .pl-score, .pl-delta';
+  for (const el of document.querySelectorAll(parts)) {
+    const clipped = getComputedStyle(el).overflow !== 'visible';
+    if (el.scrollWidth > el.clientWidth + 1 && clipped) bad.push(el.className);
+  }
+  const rows = [...document.querySelectorAll('.pl-row')].map(r => r.getBoundingClientRect());
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].top < rows[i - 1].bottom - 1) bad.push('rows overlap ' + i);
+  }
+  return bad;
+}"""
+
+
+@pytest.mark.parametrize(("scheme", "width", "tag"), [
+    ("light", 1440, "light"), ("dark", 1440, "dark"), ("light", 700, "narrow"),
+])
+def test_back_from_score_again_names_outcomes_ticks_roles_and_shows_state(
+        today_live, scheme, width, tag):
+    base, browser, ids = today_live
+    oid = ids["strong"]
+    rh.queue(oid)
+    ctx = browser.new_context(viewport={"width": width, "height": 1000}, color_scheme=scheme)
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/opportunities?outcome=queued&n=1&a=1&rules=1&sel={oid}")
+        page.wait_for_selector(f"#row-{oid}")
+        wait_for_layout(page)
+        note = page.get_by_test_id("pl-notice")
+        assert note.inner_text().strip().startswith(
+            "1 queued. 1 already waiting. 1 set aside by your rules.")
+        row = page.locator(f"#row-{oid}")
+        assert "is-picked" in (row.get_attribute("class") or "")  # still ticked
+        assert page.locator("#pl-bcount").inner_text() == "1 selected"
+        assert row.get_by_test_id("row-rescoring").is_visible()  # its state on first render
+        assert "outcome=" not in page.url and "sel=" not in page.url  # one-time
+        assert page.evaluate(_NO_OVERLAP) == []
+        _shot(page, f"back-from-score-again-{tag}.png")
+        note.get_by_role("button", name="Dismiss").click()
+        page.wait_for_selector("[data-testid=pl-notice]", state="detached", timeout=3000)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("reduce", [False, True])
+def test_a_finished_rescore_shows_old_and_new_once_then_settles(today_live, reduce):
+    base, browser, ids = today_live
+    oid = ids["strong"]
+    task = rh.queue(oid)
+    ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, color_scheme="light",
+                              reduced_motion="reduce" if reduce else "no-preference")
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/opportunities")
+        page.wait_for_selector(f"#row-{oid}[data-rescoring]")
+        wait_for_layout(page)
+        old = page.locator(f"#row-{oid}").get_attribute("data-score")
+        rh.lease(task)
+        page.wait_for_function(
+            f"document.getElementById('row-{oid}').dataset.rescoring === 'running'", timeout=16000)
+        rh.land(oid, task, score=4.9)
+        cue = page.locator(f"#row-{oid}").get_by_test_id("row-delta")
+        cue.wait_for(state="visible", timeout=16000)
+        assert cue.inner_text() == f"{old} to 4.9"
+        assert page.locator("[data-testid=row-delta]").count() == 1  # once
+        dur = page.evaluate(
+            "(s) => getComputedStyle(document.querySelector(s)).transitionDuration",
+            f"#row-{oid} .pl-delta")
+        assert (dur == "0s") is reduce  # reduced motion shows it without animation
+        _shot(page, f"finished-rescore-{'reduced' if reduce else 'motion'}.png")
+        page.wait_for_selector("[data-testid=row-delta]", state="detached", timeout=9000)
+        assert page.locator(f"#row-{oid} [data-fit-score]").inner_text().startswith("4.9")
+    finally:
+        ctx.close()
+
+
+def test_a_row_held_for_the_online_ok_says_so_with_a_confirm_link(today_live):
+    from kestrel.services.online_consent import APPROVAL_HOLD
+
+    base, browser, ids = today_live
+    oid = ids["strong"]
+    rh.queue(oid, held=APPROVAL_HOLD)
+    ctx = browser.new_context(viewport={"width": 1440, "height": 1000}, color_scheme="light")
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/opportunities")
+        row = page.locator(f"#row-{oid}")
+        row.wait_for()
+        wait_for_layout(page)
+        assert row.get_by_test_id("row-rescoring").inner_text() == "Waiting for your OK"
+        link = row.get_by_test_id("row-confirm")
+        assert link.get_attribute("href").startswith(f"/rescore/choose?opp_ids={oid}")
+        assert page.evaluate(_NO_OVERLAP) == []
+        _shot(page, "held-for-ok.png")
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize(("scheme", "width", "tag"), [
+    ("light", 1440, "light"), ("dark", 1440, "dark"), ("light", 700, "narrow"),
+])
+def test_the_today_card_held_for_the_online_ok_does_not_poll_or_pulse(
+        today_live, scheme, width, tag):
+    from kestrel.services.online_consent import APPROVAL_HOLD
+
+    base, browser, ids = today_live
+    oid = ids["strong"]
+    rh.queue(oid, held=APPROVAL_HOLD)
+    ctx = browser.new_context(viewport={"width": width, "height": 1000}, color_scheme=scheme)
+    page = ctx.new_page()
+    polls: list[str] = []
+    page.on("request", lambda r: polls.append(r.url) if "/today/matches/new" in r.url else None)
+    try:
+        page.goto(f"{base}/")
+        card = page.locator(f'.td-card[data-id="{oid}"]')
+        card.wait_for()
+        wait_for_layout(page)
+        note = card.get_by_test_id("td-rescoring")
+        assert "Waiting for your OK" in note.inner_text()
+        link = card.get_by_test_id("td-confirm")
+        assert link.get_attribute("href").startswith(f"/rescore/choose?opp_ids={oid}")
+        # No pulsing dot for a hold, and no 6 second poll: a hold waits for the person.
+        assert note.locator(".k-dot--live").count() == 0
+        polls.clear()
+        page.wait_for_timeout(8500)
+        assert polls == [], polls
+        assert page.evaluate(_NO_OVERLAP) == []
+        _shot(page, f"today-card-held-{tag}.png")
     finally:
         ctx.close()

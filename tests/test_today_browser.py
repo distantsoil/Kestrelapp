@@ -33,6 +33,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -175,6 +176,26 @@ def test_the_carousel_shows_whole_cards_with_the_next_one_peeking(live, width):
         wait_for_layout(page)
         assert page.get_by_test_id("td-next").is_disabled()
         assert not page.get_by_test_id("td-prev").is_disabled()
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [1920, 2200, 2560])
+def test_a_wide_window_shares_its_width_between_the_cards_it_has(live, width):
+    """#128: when every card fits, no peek margin is held back and no wide empty strip is left
+    beside the cards: they are recomputed from the width, up to the card cap."""
+    ctx, page, errors = _page(live, "light", width)
+    try:
+        vp = page.evaluate(_BOXES, "#td-vp")[0]
+        cards = page.evaluate(_BOXES, ".td-card")
+        assert len(cards) == 5
+        assert all(c["l"] >= vp["l"] - 1 and c["r"] <= vp["r"] + 1 for c in cards)
+        assert all(c["w"] <= 421 for c in cards), [c["w"] for c in cards]
+        spare = vp["r"] - max(c["r"] for c in cards)
+        # Left over only once the cap is reached: less than one more card's width.
+        assert spare < 421, spare
+        assert page.get_by_test_id("td-next").is_disabled()
+        assert errors == []
     finally:
         ctx.close()
 
@@ -651,7 +672,7 @@ def test_tour_footer_buttons_stay_inside_the_popover(live, theme, size):
         for step in range(6):
             page.evaluate(f"window.KTour.start({step})")
             wait_for_layout(page)
-            page.wait_for_timeout(700)   # the popover glides to its place
+            wait_for_layout(page)  # settled, not slept: the popover glides to its place
             tc = page.evaluate(_BOX1, "#td-tc")
             for b in page.evaluate(_BOXES, "#td-tc .k-btn"):
                 assert tc["l"] - 1 <= b["l"] and b["r"] <= tc["r"] + 1, (step, b, tc)

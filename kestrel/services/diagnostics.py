@@ -61,6 +61,8 @@ QUARANTINE_ROWS = 20
 ROLE_ROWS = 500  # roles.json: the newest roles by ID (owner round 14)
 RAW_RESPONSE_CHARS = 500
 RUN_ROWS = 5
+TASK_ROWS = 40  # summary.json "tasks": the newest tasks listed one by one (issues #143, #144)
+TASK_ERROR_CHARS = 200
 SCRAPE_RUN_ROWS = 10
 _TEMP_PREFIX = "kestrel-diag-"
 
@@ -83,7 +85,8 @@ CONTENTS: tuple[tuple[str, str], ...] = (
         "hardware profile, data folder path, database schema revision, run mode, hosted mode "
         "state with backend names and models (never keys), row counts per table, Tier 0 set-asides "
         "counted by rule name (no titles or orgs), evaluations counted by model id, the last 5 "
-        "runs and the last 10 scans",
+        "runs and the last 10 scans, and live and recent tasks by type and status with each recent "
+        "task's last error and flags (role IDs only, no posting text)",
     ),
     ("doctor.json", "the saved preflight report, or a quick kestrel doctor run if none was saved"),
     (
@@ -416,6 +419,59 @@ def table_counts(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+_TASK_FLAGS = ("rescore", "requested", "score_stub", "tier0_override", "changed", "lane")
+
+
+def task_rows(
+    conn: sqlite3.Connection, scrub: Scrubber, *, conservative: bool = False
+) -> dict[str, Any] | str:
+    """Live and recent work: counts of tasks by type and status, the live ones by type, and the
+    newest TASK_ROWS tasks with their status, attempts, last error (cut and scrubbed) and which
+    operator flags they carry. Role ids only: no posting text, title, organization or payload
+    values, so a Score again that went nowhere can be read from the file. `conservative` withholds
+    the last error (an exception can quote model output), as quarantine_rows does."""
+    try:
+        by = conn.execute(
+            "SELECT type, status, COUNT(*) AS n FROM task GROUP BY type, status "
+            "ORDER BY type, status"
+        ).fetchall()
+        rows = conn.execute(
+            "SELECT id, type, status, priority, attempts, last_error, created_at, updated_at, "
+            "payload FROM task ORDER BY updated_at DESC, id DESC "
+            f"LIMIT {TASK_ROWS}"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        return f"unavailable: {exc}"
+    live: dict[str, int] = {}
+    for r in by:
+        if r["status"] in ("pending", "leased"):
+            live[r["type"]] = live.get(r["type"], 0) + int(r["n"])
+    recent = []
+    for r in rows:
+        payload = _loads(r["payload"])
+        payload = payload if isinstance(payload, dict) else {}
+        err = str(r["last_error"] or "")
+        recent.append({
+            "id": r["id"], "type": r["type"], "status": r["status"], "priority": r["priority"],
+            "attempts": r["attempts"], "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+            "opportunity_id": payload.get("opportunity_id")
+            if isinstance(payload.get("opportunity_id"), int) else None,
+            "flags": [k for k in _TASK_FLAGS if payload.get(k)],
+            "model_override": bool(payload.get("model_override")),
+            "online_approval": "online_approval" in payload,
+            # Scrub the whole text, then cut, so a secret split by the cut cannot survive.
+            "last_error": None if not err else (
+                WITHHELD if conservative else scrub(err)[:TASK_ERROR_CHARS]),
+        })
+    return {
+        "by_type_and_status": {f"{r['type']}/{r['status']}": int(r["n"]) for r in by},
+        "live_by_type": live,
+        "recent_note": f"newest {TASK_ROWS} tasks; role ids only, no posting text",
+        "recent": recent,
+    }
+
+
 def recent_runs(conn: sqlite3.Connection) -> list[dict[str, Any]] | str:
     try:
         rows = conn.execute(
@@ -569,13 +625,17 @@ def role_rows(
     return {"note": f"newest {ROLE_ROWS} roles by ID; no posting text", "rows": out}
 
 
-def summary(settings: Settings, scrub: Scrubber) -> dict[str, Any]:
+def summary(
+    settings: Settings, scrub: Scrubber, *, conservative: bool = False
+) -> dict[str, Any]:
     conn = _connect()
     try:
         counts: dict[str, Any] | str = "database not initialized"
         runs: list[dict[str, Any]] | str = []
         scans: list[dict[str, Any]] | str = []
+        tasks: dict[str, Any] | str = "database not initialized"
         if conn is not None:
+            tasks = task_rows(conn, scrub, conservative=conservative)
             counts = table_counts(conn)
             runs = recent_runs(conn)
             scans = recent_scrape_runs(conn, scrub)
@@ -600,6 +660,7 @@ def summary(settings: Settings, scrub: Scrubber) -> dict[str, Any]:
         "counts": counts,
         "runs": runs,
         "scrape_runs": scans,
+        "tasks": tasks,
     }
 
 
@@ -834,9 +895,9 @@ def build_bundle(
     try:
         with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("README.txt", readme_text())
-            z.writestr("summary.json", _json(
-                _scrub_values(summary(settings, scrub), scrub, key_scrub),
-            ))
+            z.writestr("summary.json", _json(_scrub_values(
+                summary(settings, scrub, conservative=conservative), scrub, key_scrub,
+            )))
             z.writestr("doctor.json", _json(_scrub_values(doctor_rows(), scrub, key_scrub)))
             z.writestr("settings.redacted.yml", redacted_settings_yaml(
                 settings, scrub=scrub, key_scrub=key_scrub,

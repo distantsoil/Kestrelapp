@@ -396,7 +396,7 @@ async def save_diagnostics(request: Request):
                 ok=False,
                 error=(
                     f"Could not build the diagnostics file "
-                    f"({type(exc).__name__}: {plain_error(exc)})."
+                    f"({fixed_reason(exc)})."
                 ),
             )
         log.info("diagnostics_saved", path=str(archive))

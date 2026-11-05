@@ -142,6 +142,12 @@ PR branch runs CI. So CI confirms; it does not discover.
   (D-CI-9); cloud builders run targeted unit tests only.
 - **Clocks in tests.** Patch a module's own clock alias, never the global one; seed "minutes ago" rows
   through `tests/clock_seed.py`; never read the clock at module level (D-TEST-2, D-TEST-3).
+- **Tests nobody can game (owner, 2026-11-04, D-TEST-7).** `scripts/check.py` runs the browser
+  test files for every page a change touches (never only the skip), fails when lines changed on the
+  branch are not run by any test (diff coverage), and the contract tests
+  (`tests/test_contracts.py`) check every consent form and every file-serving route at once. Each
+  feature also gets tests written from the spec by an agent that never sees the implementation.
+  A builder's "Ready to push." from its own tests is not evidence (D-TEST-6).
 
 ---
 

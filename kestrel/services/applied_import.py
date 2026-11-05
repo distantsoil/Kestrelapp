@@ -15,7 +15,7 @@ import hashlib
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from itertools import chain
 
 import httpx
@@ -120,6 +120,11 @@ class ImportRow:
     activity: bool = False  # not an application
     existing_pursuit_id: int | None = None  # already tracked
     existing_label: str = ""
+    # Same org and a like title, but the dates leave it open whether this is the same application
+    # (4 to 14 days apart, or a date that cannot be read). It is not an automatic match: the row
+    # is not ticked by default and reads "possible duplicate"; ticking it adds a new application.
+    possible_duplicate_id: int | None = None
+    possible_duplicate_label: str = ""
 
     @property
     def importable(self) -> bool:
@@ -134,6 +139,7 @@ class ImportRow:
             and self.status is not None
             and not self.activity
             and self.existing_pursuit_id is None
+            and self.possible_duplicate_id is None
         )
 
 
@@ -358,27 +364,68 @@ def parse_rows(text: str) -> ImportReview:
 # ----------------------------------------------------------------------------- the database
 async def _existing_pursuits(
     session: AsyncSession,
-) -> list[tuple[int, str, str | None, str | None]]:
+) -> list[tuple[int, str, str | None, str | None, str | None]]:
     rows = (
         await session.execute(
-            select(Pursuit.id, Org.normalized_name, Opportunity.title, Opportunity.url)
+            select(Pursuit.id, Org.normalized_name, Opportunity.title, Opportunity.url,
+                   Pursuit.applied_at)
             .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
             .outerjoin(Org, Org.id == Opportunity.org_id)
         )
     ).all()
-    return [(pid, norm or "", title, url) for pid, norm, title, url in rows]
+    return [(pid, norm or "", title, url, applied) for pid, norm, title, url, applied in rows]
 
 
-def _find_tracked(row: ImportRow, existing) -> tuple[int | None, str]:
+def _find_tracked(row: ImportRow, existing) -> tuple[int | None, str, bool]:
+    """(pursuit id, why, ask). `ask` False: it is the same application (same URL, or same org and
+    title within 3 days, or no dates to tell them apart) and ticking updates it. `ask` True: same
+    org and title 4 to 14 days apart, or a date that cannot be read; the person decides, so the
+    caller marks the row "possible duplicate" instead of treating it as a match. More than 14
+    days apart is a re-application and no match (#131, #147)."""
     url = (row.url or "").strip().rstrip("/")
     norm = normalized_name(row.company) or row.company.lower()
     tset = title_tokens(row.title)
-    for pid, org_norm, title, purl in existing:
+    row_date = _parse_date(row.date) if row.date else None
+    ask: tuple[int, str] | None = None
+    for pid, org_norm, title, purl, applied in existing:
         if url and purl and purl.rstrip("/") == url:
-            return pid, f"same URL as pursuit #{pid}"
-        if org_norm == norm and jaccard(tset, title_tokens(title)) > TITLE_MATCH:
-            return pid, f"same org and title as pursuit #{pid}"
-    return None, ""
+            return pid, f"same URL as pursuit #{pid}", False
+        if org_norm != norm or jaccard(tset, title_tokens(title)) <= TITLE_MATCH:
+            continue
+        if not row.date or not applied:  # nothing to compare: as before, the same application
+            return pid, f"same org and title as pursuit #{pid}", False
+        app_date = _parse_date(applied) if isinstance(applied, str) else applied
+        if row_date is None or app_date is None:
+            ask = ask or (pid, f"same org and title as pursuit #{pid}; a date could not be read")
+            continue
+        delta = abs((row_date - app_date).days)
+        if delta <= 3:
+            return pid, f"same org and title, same date as pursuit #{pid}", False
+        if delta <= 14:
+            ask = ask or (pid, f"same org and title, {delta} days apart from pursuit #{pid}")
+        # more than 14 days: a re-application, not a match
+    if ask is not None:
+        return ask[0], ask[1], True
+    return None, "", False
+
+
+def _parse_date(s: str) -> date | None:
+    """Parse a plain ISO date or an ISO timestamp to a date; returns None on failure."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", s)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except (ValueError, AttributeError):
+            continue
+    return None
 
 
 async def review(session: AsyncSession, text: str) -> ImportReview:
@@ -392,7 +439,11 @@ async def review(session: AsyncSession, text: str) -> ImportReview:
         for row in rev.rows:
             if row.problems:
                 continue
-            row.existing_pursuit_id, row.existing_label = _find_tracked(row, existing)
+            pid, why, ask = _find_tracked(row, existing)
+            if ask:
+                row.possible_duplicate_id, row.possible_duplicate_label = pid, why
+            else:
+                row.existing_pursuit_id, row.existing_label = pid, why
 
     await asyncio.to_thread(match_rows)
     return rev

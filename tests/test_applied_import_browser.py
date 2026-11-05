@@ -11,6 +11,7 @@ import os
 import pytest
 
 from tests.browser import launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = [
     pytest.mark.skipif(

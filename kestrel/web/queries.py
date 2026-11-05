@@ -129,6 +129,16 @@ class OppFilters:
     limits: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ScoredTwin:
+    opp_id: int
+    score: float
+
+    @property
+    def sentence(self) -> str:
+        return f"The same role from another board is scored {self.score:.1f}."
+
+
 @dataclass
 class OppRow:
     opp: Opportunity
@@ -168,6 +178,9 @@ class OppRow:
     # What the Pipeline template prints for the row (kestrel.web.pipeline_view.row_view), set
     # by the page after confidential-mode redaction.
     view: dict | None = None
+    # An unscored row whose duplicate group has a scored copy from another board (issue #144):
+    # the copy's id and score. Display and link only; the row is never folded or hidden.
+    twin: ScoredTwin | None = None
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
@@ -751,6 +764,8 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
             # Nothing will score it unless the operator acts (issue #90): the reason leads, and
             # a task that only refreshes a vector (a re-post's embed) never changes it.
             r.scoring, r.hidden_why = _unscored_reason(r)
+            if r.scoring == "empty" and r.opp.id in hidden:
+                r.hidden_why = hidden[r.opp.id]  # says so plainly after a requested score
             continue
         if r.opp.id in hidden:
             # Hidden as applied and nothing queued to score it (D-UI-225); checked first because
@@ -783,6 +798,49 @@ def _unscored_reason(r: OppRow) -> tuple[str, str | None]:
     return "removed", None
 
 
+async def scored_twins(session: AsyncSession, opps: list[Opportunity]) -> dict[int, ScoredTwin]:
+    """For each role in `opps` whose duplicate group has ANOTHER visible copy with a Tier 2 or
+    Tier 3 score, that copy's id and latest score (the newest scored copy when several). Issue
+    #144: a thin copy of a role scored from another board says so and links to it. Read only: it
+    never folds, hides or rejects anything."""
+    group_of = {o.id: o.dedup_group_id for o in opps if o.dedup_group_id}
+    if not group_of:
+        return {}
+    rows = (
+        await session.execute(
+            select(Opportunity.id, Opportunity.dedup_group_id, Evaluation.id, Evaluation.score)
+            .join(Evaluation, Evaluation.opportunity_id == Opportunity.id)
+            .where(
+                Opportunity.dedup_group_id.in_(set(group_of.values())),
+                Opportunity.archived_at.is_(None),
+                Evaluation.tier >= 2,
+                Evaluation.score.is_not(None),
+            )
+            .order_by(Evaluation.id)
+        )
+    ).all()
+    newest: dict[int, tuple[int, str, float]] = {}  # opp id -> (evaluation id, group, score)
+    for oid, group, eid, score in rows:
+        newest[int(oid)] = (int(eid), str(group), float(score))
+    out: dict[int, ScoredTwin] = {}
+    for mine, group in group_of.items():
+        best = max(
+            ((eid, oid, sc) for oid, (eid, g, sc) in newest.items() if g == group and oid != mine),
+            default=None,
+        )
+        if best is not None:
+            out[mine] = ScoredTwin(best[1], best[2])
+    return out
+
+
+async def attach_twins(session: AsyncSession, rows: list[OppRow]) -> None:
+    """Fill `twin` on the unscored rows (fit word new) that have a scored copy."""
+    cand = [r for r in rows if r.fit and r.fit.word == "new" and r.fit.group != GROUP_FAILED]
+    found = await scored_twins(session, [r.opp for r in cand])
+    for r in cand:
+        r.twin = found.get(r.opp.id)
+
+
 async def attach_rescoring(session: AsyncSession, rows: list[OppRow]) -> None:
     """Fill `rescoring` on the rows that have a live scoring task (issue #74). Scored rows read
     Being scored again; an unscored one uses it for the place in line. One more statement per
@@ -794,6 +852,8 @@ async def attach_rescoring(session: AsyncSession, rows: list[OppRow]) -> None:
     found = await rescoring_states(session, [r.opp.id for r in cand])
     for r in cand:
         r.rescoring = found.get(r.opp.id)
+        if r.rescoring is not None and r.rescoring.awaiting_ok and r.fit and r.fit.word == "new":
+            r.scoring = "approval"  # held for the person's OK: never a blank Waiting
 
 
 async def hidden_unscored(session: AsyncSession, opps: list[Opportunity]) -> dict[int, str]:
@@ -809,6 +869,12 @@ async def hidden_unscored(session: AsyncSession, opps: list[Opportunity]) -> dic
     )
     for (o,) in queued.all():
         cand.pop(int(o), None)
+    # A role the operator asked to score whose posting is empty says so plainly (issue #144).
+    from kestrel.services.score_again_notice import NOT_SCORED_WHY, asked_not_scored
+
+    asked = await asked_not_scored(session, [i for i, w in cand.items() if w == EMPTY_POSTING_WHY])
+    for i in asked:
+        cand[i] = NOT_SCORED_WHY
     return cand
 
 
@@ -1150,6 +1216,7 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
     ]
     await scoring_states(session, out)
     await attach_rescoring(session, out)
+    await attach_twins(session, out)
     failed_ids: list[int] = []
     if group_counts.get(GROUP_FAILED):
         failed_ids = [
@@ -1413,6 +1480,15 @@ def provider_display(base_url: str | None, backend: str | None) -> str:
     return host or (backend or "the online model")
 
 
+def not_a_letter():
+    """A DocRender row that is a tailored document. A saved cover letter or engagement outline
+    (template "cover_letter" / "engagement_outline") is the same table but is opened from its own
+    row, never as a resume version."""
+    from kestrel.docs.letters import LETTER_TEMPLATES
+
+    return or_(DocRender.template.is_(None), DocRender.template.notin_(LETTER_TEMPLATES))
+
+
 async def opportunity_renders(session: AsyncSession, opp_id: int) -> list[dict[str, Any]]:
     """Documents rendered for this opportunity (the Documents tab and card), newest first, each
     with its master so the row can say "Executive resume" rather than a master id."""
@@ -1420,7 +1496,7 @@ async def opportunity_renders(session: AsyncSession, opp_id: int) -> list[dict[s
         await session.execute(
             select(DocRender, DocMaster)
             .join(DocMaster, DocMaster.id == DocRender.doc_master_id, isouter=True)
-            .where(DocRender.opportunity_id == opp_id)
+            .where(DocRender.opportunity_id == opp_id, not_a_letter())
             .order_by(DocRender.id.desc())
         )
     ).all()

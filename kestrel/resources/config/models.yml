@@ -9,7 +9,8 @@
 # The shipped kestrel/resources/models/Modelfile.* are the `default_profile` rendered to disk and a
 # test asserts they stay byte-identical to render_modelfile(); regenerate them, never hand-edit.
 #
-# Base tags are placeholders pending model research; swap them here and rebuild, nothing else moves.
+# Base tags are pinned, tested tags (D-LLM-9, D-LLM-10); to change one, edit it here and rebuild,
+# nothing else moves.
 
 default_profile: gpu_16gb
 

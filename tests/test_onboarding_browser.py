@@ -23,6 +23,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -379,7 +380,7 @@ def test_a_dirty_setup_form_never_lifts_the_toasts(live, theme):
             "document.body.insertAdjacentHTML('beforeend',"
             "'<form class=\"pf-form\" data-pf-form data-dirty hidden></form>')")
         page.wait_for_selector("form.pf-form[data-dirty]", state="attached")
-        page.wait_for_timeout(600)  # past the .3s bottom transition
+        wait_for_layout(page)  # settled, not slept: past the .3s bottom transition
         assert page.evaluate(bottom) == before
         assert not errors, errors
     finally:

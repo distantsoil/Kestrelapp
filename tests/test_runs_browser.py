@@ -32,6 +32,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -288,7 +289,7 @@ def test_dropped_titles_disclosure_fits_opens_and_closes_smoothly(running, theme
         page.wait_for_function(
             "document.querySelector('[data-testid=rn-dropped-titles]').open === true"
         )
-        page.wait_for_timeout(450)  # the fold animation has ended
+        wait_for_layout(page)  # settled, not slept: the fold animation has ended
         assert details.evaluate("el => el.open") is True
         count = page.get_by_test_id("rn-dropped-count")
         assert "Showing 25 of 40." in count.inner_text()
@@ -314,7 +315,7 @@ def test_dropped_titles_disclosure_fits_opens_and_closes_smoothly(running, theme
         assert not errors, errors
         page.screenshot(path=str(tmp_path / f"runs-dropped-{theme}-{width}.png"))
         details.locator("summary").click()
-        page.wait_for_timeout(300)
+        wait_for_layout(page)  # settled, not slept
         assert details.evaluate("el => el.open") is False
         assert not errors, errors
     finally:
@@ -530,8 +531,7 @@ def test_this_run_only_asks_before_anything_goes_online(live):
         page.get_by_test_id("rn-this-run").click()
         dialog = page.locator("#rn-choose-dialog")
         dialog.wait_for(state="visible")
-        wait_for_layout(page)
-        page.wait_for_timeout(600)  # the sheet's entrance finishes before it is measured
+        wait_for_layout(page)  # settled, not slept: the sheet's entrance finishes first
         mb = dialog.bounding_box()
         assert abs((mb["y"] + mb["height"] / 2) - 450) < 60
         assert page.locator("#rn-ask").is_hidden()

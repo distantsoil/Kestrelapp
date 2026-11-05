@@ -1365,7 +1365,9 @@ content exists above or below a scrolling area. There is no dead space. The wind
 
 **Previews are scaled, never re-flowed (D-UI-126).** A document preview (resume, cover letter,
 prep-pack PDF) is one true-size page scaled with a transform, so the small preview and the
-Enlarge view show the same line breaks.
+Enlarge view show the same line breaks. The page keeps its real margins (1 inch) inside the
+page, in the preview as in the PDF, and the draft sheet's action bar stays visible at the bottom
+of the sheet in every tab (D-UI-241).
 
 **Accessibility (D-UI-128).** Settings > Preferences > Appearance has a text size (Small,
 Default, Large) that scales the whole interface; cards grow or the carousel shows fewer, taller

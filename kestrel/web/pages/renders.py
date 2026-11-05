@@ -22,7 +22,6 @@ import json
 import re
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -37,6 +36,7 @@ from fastapi.responses import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel import paths
 from kestrel.config import Settings
 from kestrel.db.models import (
     DocMaster,
@@ -1398,7 +1398,7 @@ async def download(request: Request, render_id: int):
                 render.config = config
                 await s.commit()
         config = dict(render.config or {})
-        path = Path(render.pdf_path) if render.pdf_path else None
+        path = paths.stored_pdf(render.pdf_path)  # confined to the documents folder
         if config.get("stale") or path is None or not path.is_file():
             try:
                 from kestrel.docs.service import refresh_pdf
@@ -1414,7 +1414,7 @@ async def download(request: Request, render_id: int):
                 return PlainTextResponse("The document this came from no longer exists.",
                                     status_code=404)
             render = fresh
-        path = Path(render.pdf_path) if render.pdf_path else None
+        path = paths.stored_pdf(render.pdf_path)
         if path is None or not path.is_file():
             return PlainTextResponse("The PDF file is missing from disk.", status_code=404)
         name = render.filename or path.name

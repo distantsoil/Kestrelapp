@@ -270,7 +270,9 @@
     var ask = $('#rn-ask', dlg), ok = $('#rn-ok', dlg), go = $('#rn-start', dlg);
     if (ask) ask.hidden = !isOnline;
     if (ok) ok.disabled = !isOnline || ok.hasAttribute('data-held');
-    if (go) go.disabled = isOnline && !(ok && ok.checked);
+    // Never disabled for want of the tick (D-UI-240): pressed unticked it shows the hint. Only a held
+    // send (no employer chosen) keeps it off.
+    if (go) go.disabled = isOnline && !!ok && ok.hasAttribute('data-held');
   }
   function onChange(e) {
     if (e.target && e.target.closest && e.target.closest('#rn-choose-dialog')) syncChoose();

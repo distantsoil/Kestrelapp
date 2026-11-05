@@ -224,7 +224,7 @@
   {% for g in groups %}
     {% if g.key in ('new', 'failed') and not nfs.done %}{{ nf_section() }}{% set nfs.done = true %}{% endif %}
     <section class="pl-group" data-group="{{ g.key }}"{% if g.key == 'failed' %} id="scoring-failed"{% endif %}>
-      <div class="pl-gh"><span>{{ g.label }} · {{ g.count }}{% if g.key == 'new' and running %} <span class="k-dot k-dot--live" title="A run is active" data-testid="being-scored-ring"></span>{% endif %}</span><span>{{ sort_note }}</span></div>
+      <div class="pl-gh"><span>{{ g.label }} · {{ g.count }}{% if g.key == 'new' and running %} <span class="k-dot k-dot--live" title="A run is active" data-testid="being-scored-ring"></span>{% endif %}</span><span>{{ sort_note }}</span><button type="button" class="k-link pl-selall" data-selall="{{ g.key }}" data-testid="select-all-{{ g.key }}">Select all</button></div>
       {% if g.key == 'new' and background %}
         {# Why some of these have not started (#34): the background lane's roles. #}
         <div class="pl-explain" data-testid="background-note">

@@ -24,6 +24,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -191,7 +192,7 @@ def test_the_search_done_toast_clears_itself_pauses_on_hover_and_clears_the_save
         page.evaluate(_SCAN_DONE_JS)
         toast = page.locator("#kestrel-toast")
         toast.wait_for(state="visible")
-        page.wait_for_timeout(500)  # the region has settled above the bar
+        wait_for_layout(page)  # settled, not slept: the region has settled above the bar
         t = toast.bounding_box()
         b = bar.bounding_box()
         assert t["y"] + t["height"] <= b["y"] + 1, (t, b)  # never over Save
@@ -236,9 +237,9 @@ def test_a_save_slides_the_bar_away_with_its_contents_and_the_old_toast_leaves_a
     try:
         page.fill("#pa-head", "Operations lead")
         _save_and_wait(page)
-        page.wait_for_timeout(700)
+        wait_for_layout(page)  # settled, not slept
         page.fill("#pa-head", "Operations director")
-        page.wait_for_timeout(700)  # the bar has finished sliding in
+        wait_for_layout(page)  # settled, not slept: the bar has finished sliding in
         page.evaluate("document.querySelectorAll('.k-toast').forEach("
                       "t => t.setAttribute('data-old', ''))")
         page.evaluate("() => { window.__frames = (" + _FRAMES_JS + ")(); }")
@@ -291,9 +292,9 @@ def test_the_save_bar_never_covers_the_last_hint_at_the_foot_of_the_page(live, t
           const i = f.querySelector('input[type=text], input:not([type]), textarea');
           i.value = i.value + ' '; i.dispatchEvent(new Event('input', {bubbles: true})); }""")
         page.wait_for_selector("[data-pf-savebar]", state="visible")
-        page.wait_for_timeout(600)  # the bar slides in and the room below eases open
+        wait_for_layout(page)  # settled, not slept: the bar slides in and the room below eases open
         page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
-        page.wait_for_timeout(300)
+        wait_for_layout(page)  # settled, not slept
         got = page.evaluate("""() => {
           const bar = document.querySelector('[data-pf-savebar]').getBoundingClientRect();
           // The lowest text on the page column: its last hint or note, whatever card holds it.
@@ -453,9 +454,10 @@ def test_hosted_title_refresh_preserves_explicit_consent_fields(live, monkeypatc
     try:
         page.click('[data-testid="title-suggest-toggle"]')  # the box opens from the card (D-UI-199)
         form = page.locator('[data-testid="title-suggest-online"]')
+        # Unticked (D-UI-240): the press sends nothing and shows the hint beside the box.
         form.get_by_role("button", name="Suggest", exact=True).click()
-        expect(page.locator('[data-testid="title-suggestions-note"]')).not_to_contain_text(
-            "Queued.")
+        expect(form.locator("[data-consent-hint]")).to_be_visible()
+        expect(page.locator('[data-testid="title-suggestions-note"]')).to_have_count(0)
         form.locator('[name="confirmed"]').check()
         with page.expect_request("**/title-suggestions/refresh") as sent:
             form.get_by_role("button", name="Suggest", exact=True).click()
@@ -765,7 +767,7 @@ def test_the_save_bar_watcher_lets_go_of_swapped_out_bars(live):
         for i in range(3):
             page.fill("#pa-head", f"Operations lead {i}")
             _save_and_wait(page)
-            page.wait_for_timeout(300)
+            wait_for_layout(page)  # settled, not slept
             assert page.evaluate("window.__roBars()") == [True], i
         assert not errors, errors
     finally:

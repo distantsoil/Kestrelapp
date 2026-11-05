@@ -56,6 +56,9 @@ INSTANT_LABELS = ["00:03 local", "00:01 UTC on the 1st"]
 MONTH_MODULES = ["tests/test_hosted_balance.py", "tests/test_analytics.py"]
 
 
+# It runs its own pytest subprocess over the time-sensitive modules (up to 900 s, below), so the
+# 60 s default per-test timeout (D-TEST-8) does not apply.
+@pytest.mark.timeout(960)
 @pytest.mark.parametrize("label", INSTANT_LABELS)
 def test_time_sensitive_modules_pass_just_after_midnight(label):
     env = {**os.environ, "KESTREL_FROZEN_AT": _instants()[label].isoformat()}

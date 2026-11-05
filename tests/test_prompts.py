@@ -12,8 +12,9 @@ def test_prompts_registered():
     # P15 (suggested titles) in D-TTL-3 and P16 (company summary) in D-LLM-9.
     # The nine free-prose prompts gained a /v2 with the plain-writing block (issue #93); their
     # /v1 files stay. Plus the /v1 of triage, triage_consulting and
-    # evaluate, kept beside their /v2 (D-LLM-12).
-    assert len(all_versions()) == 34
+    # evaluate, kept beside their /v2 (D-LLM-12). cover/v3 and engagement_outline/v3 (first
+    # person, D-UI-241) sit beside their /v2.
+    assert len(all_versions()) == 36
 
 
 def test_every_prompt_loads_and_substitutes_global_rules():

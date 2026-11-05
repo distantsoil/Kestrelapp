@@ -782,7 +782,7 @@ async def preview(request: Request, master_id: int):
     except Exception as exc:  # a 500 here is invisible: htmx leaves the target untouched
         log.warning("preview_failed", master_id=master_id, error=f"{type(exc).__name__}: {exc}")
         return HTMLResponse(
-            f'<div class="warnbox">Preview failed: {escape(type(exc).__name__)}. '
+            f'<div class="warnbox">Preview failed: {escape(fixed_reason(exc))}. '
             "Download diagnostics from About if this keeps happening.</div>"
         )
 
@@ -928,16 +928,14 @@ async def _delete_info(s: AsyncSession, master_id: int) -> dict:
 
 
 def _unlink_render_files(paths_to_remove: list[str]) -> None:
-    from pathlib import Path
-
     from kestrel import paths
 
-    root = (paths.data_dir() / "documents").resolve()
     for raw in paths_to_remove:
+        target = paths.stored_pdf(raw)  # a path outside the documents folder is never deleted
+        if target is None:
+            continue
         try:
-            target = Path(raw).resolve()
-            if target.is_relative_to(root):
-                target.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
         except OSError as exc:
             log.warning("doc_delete_file_left", error=fixed_reason(exc))
 
@@ -1001,6 +999,11 @@ async def delete_document(request: Request, master_id: str):
             await s.execute(delete(DocVariant).where(DocVariant.doc_slot_id.in_(slot_ids)))
             await s.execute(delete(DocSlot).where(DocSlot.doc_section_id.in_(sec_ids)))
             await s.execute(delete(DocSection).where(DocSection.doc_master_id == mid))
+            # #118/#134: suggestions derived from this resume go with it. Rows written before
+            # migration 0027 have a NULL doc_master_id (nothing recorded which resume they came
+            # from, so there is no link to backfill from); they are left, not guessed at.
+            from kestrel.db.models import TitleSuggestion
+            await s.execute(delete(TitleSuggestion).where(TitleSuggestion.doc_master_id == mid))
             await s.execute(delete(DocMaster).where(DocMaster.id == mid))
             await s.commit()
     except Exception as exc:  # noqa: BLE001 - fixed sentence on the page, the cause in the log
@@ -1346,7 +1349,7 @@ def _local_assess_models(settings) -> tuple[list[str], str | None]:
             backend.base_url, settings.llm.ollama_native_url, backend.api_key or "ollama"
         ).list_models(timeout=5.0)
     except Exception as exc:  # noqa: BLE001 -- Ollama not running is a note in the popup
-        return [], f"Ollama is not reachable ({type(exc).__name__})."
+        return [], f"Ollama is not reachable ({fixed_reason(exc)})."
     return sorted(t for t in tags if t.startswith(_LOCAL_DERIVED_PREFIX)), None
 
 

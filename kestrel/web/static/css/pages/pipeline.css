@@ -77,11 +77,27 @@
 .pl-group + .pl-group { margin-top: 2px; }
 .pl-gh { display: flex; justify-content: space-between; font-size: 11.5px; font-weight: 800;
   letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 12px 4px 4px; }
+.pl-selall { cursor: pointer; transition: color var(--dur-1), transform .1s; }
+.pl-selall:hover { color: var(--brand); }
 .pl-rows { display: flex; flex-direction: column; gap: 6px; position: relative; }
 .pl-signals { margin-top: 0; }
 .pl-explain { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   font-size: var(--fs-sm); color: var(--muted); padding: 4px 4px 6px; }
 .pl-explain a { color: var(--link-ink); }
+.pl-notices { display: flex; flex-direction: column; gap: 8px; margin: 0 0 10px; }
+.pl-notice { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  background: var(--tint-info); border: 1px solid var(--tint-info-line); color: var(--ink);
+  border-radius: 12px; padding: 10px 14px; font-size: var(--fs-md); overflow-wrap: anywhere;
+  animation: pl-notice-in var(--dur-2) var(--ease) both;
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease); }
+.pl-notice--warn { background: var(--tint-warn); border-color: var(--tint-warn-line); }
+.pl-notice.is-leaving { opacity: 0; transform: translateY(-4px); }
+.pl-notice a { color: var(--link-ink); }
+.pl-notice__t { min-width: 0; }
+.pl-notice__x { flex: none; background: none; border: 0; color: var(--muted); cursor: pointer;
+  padding: 2px; border-radius: 8px; line-height: 0; transition: color var(--dur-1), background var(--dur-1); }
+.pl-notice__x:hover { color: var(--ink); background: var(--soft); }
+@keyframes pl-notice-in { from { opacity: 0; transform: translateY(-6px); } }
 .pl-more25 { align-self: center; margin: 4px 0; display: flex; justify-content: center; }
 
 .pl-row { position: relative; display: grid; grid-template-columns: 22px 36px minmax(0, 1fr) auto; gap: 12px;
@@ -343,9 +359,19 @@
 @media (prefers-reduced-motion: reduce) {
   .pl-cue svg, .pl-arrive > * { animation: none !important; }
   .pl-panel, .pl-panel__in > *, .pl-bulk, .pl-foot, .pl-foot__a, .pl-fr, .pl-fl, .pl-mf, .pl-row, .pl-ring, .pl-dim u,
-  .pl-list .pl-rows, .pl-drop, .pl-more__menu, .pl-chip { animation: none !important; transition: none !important; }
+  .pl-list .pl-rows, .pl-drop, .pl-more__menu, .pl-chip, .pl-notice, .pl-delta, .pl-tag--ok, .pl-notice__x { animation: none !important; transition: none !important; }
+  .pl-delta { transform: none; }
 }
 
 /* "On my shortlist" footer button: the mockup's .btn.done is a full-strength green, not a dimmed
    disabled button, so it reads clearly in dark mode too. */
 .pl-foot .k-btn--done[disabled] { opacity: 1; background: var(--good-bg); color: var(--good); }
+.pl-delta { display: block; width: max-content; max-width: 100%; margin: 2px 0 0 auto;
+  font-size: var(--fs-xs); font-weight: 700; color: var(--good-ink); background: var(--good-bg);
+  border-radius: 6px; padding: 1px 7px; opacity: 0; transform: translateY(-3px);
+  transition: opacity var(--dur-2) var(--ease), transform var(--dur-2) var(--ease); }
+.pl-delta.is-in { opacity: 1; transform: none; }
+.pl-tag--ok { text-decoration: none; color: var(--link-ink); cursor: pointer;
+  transition: background var(--dur-1), color var(--dur-1); }
+.pl-tag--ok:hover { background: var(--soft); }
+.pl-notice--good { background: var(--good-bg); border-color: transparent; }

@@ -36,6 +36,8 @@ dependencies = [
   # QR for the LAN join link. Pure Python with no dependencies, emits inline SVG, so the frozen
   # app needs no image toolchain and the page needs no CDN.
   "segno",
+  # Local AI check: per-process network connection sampling (issue #166 M1).
+  "psutil",
   # Data
   "sqlalchemy>=2",
   "aiosqlite",
@@ -74,6 +76,9 @@ dev = [
   "pytest",
   "pytest-asyncio",
   "pytest-xdist>=3.8,<4",
+  "pytest-cov",
+  "pytest-timeout",
+  "pyright",
   "respx",
   "pyinstaller",
 ]
@@ -121,4 +126,21 @@ filterwarnings = [
     # A database worker thread calling into a closed event loop is a leaked connection, not
     # noise: fail the test instead of letting CI annotate it (tests/conftest.py, D-TEST-1).
     "error::pytest.PytestUnhandledThreadExceptionWarning",
+    # An un-awaited coroutine is a call that never ran (D-TEST-8): fail the test that leaks one.
+    "error:coroutine .* was never awaited:RuntimeWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
 ]
+# A test that hangs fails after 60 s with a stack dump; tests/conftest.py gives *_browser.py
+# files 180 s (D-TEST-8).
+timeout = 60
+# No timeout_method: pytest-timeout then uses "signal" where it exists (Linux, macOS), which fails
+# the one test, and "thread" on Windows, which stops the worker. A thread timeout on Linux took
+# down an xdist worker and ended the gate at 64 percent (D-TEST-8).
+
+[tool.pyright]
+# Type errors are compared with scripts/pyright_baseline.json; only new ones in changed files
+# fail (scripts/static_checks.py, D-TEST-8).
+include = ["kestrel"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingModuleSource = false

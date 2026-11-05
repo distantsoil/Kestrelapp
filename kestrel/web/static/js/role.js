@@ -402,6 +402,118 @@
     syncRescore();
   }
 
+  /* ------------------------------------------------ cover letter and engagement outline (D-UI-239)
+     The sheet's tabs, the source card for a traced claim, the ask-first box that releases Send and
+     draft, the live word count, and the inline "Discard this draft?" question. Everything the
+     server decides (what is sent, what is saved) is a form post; nothing here sends anything. */
+  function letter() { return $('#rl-letter'); }
+  function setTab(box, name) {
+    $$('[data-cl-tab]', box).forEach(function (b) {
+      var on = b.getAttribute('data-cl-tab') === name;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    $$('[data-cl-pane]', box).forEach(function (p) {
+      p.classList.toggle('is-on', p.getAttribute('data-cl-pane') === name);
+    });
+    var d = $('#cl-draft', box); if (d) d.setAttribute('data-tab', name);
+    $$('.cl-bar [data-cl-show]', box).forEach(function (b) {
+      b.hidden = (' ' + b.getAttribute('data-cl-show') + ' ').indexOf(' ' + name + ' ') < 0;
+      var p = b.getAttribute('data-cl-primary');
+      if (p) b.classList.toggle('k-btn--primary', p === name);
+    });
+    var hid = $('input[name="tab"]', box); if (hid) hid.value = name === 'edit' ? 'edit' : 'check';
+    if (name === 'preview') fitPreview(box);
+  }
+  function showSource(box, key) {
+    var any = false;
+    $$('.cl-src', box).forEach(function (n) {
+      var on = n.getAttribute('data-cl-src') === key;
+      n.classList.toggle('is-on', on); any = any || on;
+    });
+    $$('.cl-claim[data-cl-key]', box).forEach(function (n) {
+      n.classList.toggle('is-on', n.getAttribute('data-cl-key') === key);
+    });
+    var hint = $('[data-cl-hint]', box); if (hint) hint.hidden = any;
+  }
+  function countWords(area) {
+    var n = (area.value.trim().match(/\S+/g) || []).length;
+    var lo = parseInt(area.getAttribute('data-lo'), 10), hi = parseInt(area.getAttribute('data-hi'), 10);
+    var out = $('[data-cl-count]', area.form || doc);
+    if (!out) return;
+    var first = out.firstChild;
+    if (first && first.nodeType === 3) first.nodeValue = n + ' words';
+    out.setAttribute('data-state', n >= lo && n <= hi ? 'ok' : 'off');
+  }
+  function onLetterClick(e) {
+    var t = e.target, box = letter();
+    if (!box || !t.closest || !box.contains(t)) return;
+    var send = t.closest('[data-cl-send]');
+    if (send && send.form) {
+      var ack = $('[data-cl-ack]', send.form);
+      if (ack && !ack.checked) {
+        // Not ticked: nothing is posted. The server refuses an unconfirmed post as well.
+        e.preventDefault(); e.stopPropagation();
+        var hint = $('[data-cl-tick]', send.form);
+        if (hint) { hint.classList.remove('is-on'); void hint.offsetWidth; hint.classList.add('is-on'); }
+        ack.focus();
+        return;
+      }
+    }
+    var tab = t.closest('[data-cl-tab]');
+    if (tab) { setTab(box, tab.getAttribute('data-cl-tab')); return; }
+    var claim = t.closest('.cl-claim[data-cl-key]');
+    if (claim) { showSource(box, claim.getAttribute('data-cl-key')); return; }
+    if (t.closest('[data-cl-leave]')) {
+      toast('Still drafting. It will be in Documents when it is done.');
+      if (root.KUI) root.KUI.closeModal();
+      return;
+    }
+    var go = t.closest('[data-cl-go]');
+    if (go) { setTab(box, go.getAttribute('data-cl-go')); return; }
+    var ask = t.closest('[data-cl-ask]');
+    if (ask) {
+      var want = ask.getAttribute('data-cl-ask');
+      $$('[data-cl-confirm]', box).forEach(function (c) {
+        c.classList.toggle('is-on', c.getAttribute('data-cl-confirm') === want);
+      });
+      return;
+    }
+    if (t.closest('[data-cl-keep]')) {
+      $$('[data-cl-confirm]', box).forEach(function (c) { c.classList.remove('is-on'); });
+    }
+  }
+  function onLetterKey(e) {
+    var t = e.target;
+    if ((e.key === 'Enter' || e.key === ' ') && t && t.matches && t.matches('.cl-claim[data-cl-key]')) {
+      e.preventDefault();
+      var box = letter(); if (box) showSource(box, t.getAttribute('data-cl-key'));
+    }
+  }
+  function onLetterChange(e) {
+    var t = e.target;
+    if (t && t.matches && t.matches('[data-cl-ack]')) {
+      var hint = $('[data-cl-tick]', t.form || doc);
+      if (hint && t.checked) hint.classList.remove('is-on');
+    }
+  }
+  function onLetterInput(e) {
+    var t = e.target;
+    if (t && t.matches && t.matches('[data-cl-text]')) countWords(t);
+  }
+  function onLetterClose() { if (root.KUI) root.KUI.closeModal(); }
+  function onLetterSwap(e) {
+    var t = e.target, box = letter();
+    if (!box || !t || t.id !== 'cl-main') return;
+    var d = $('#cl-draft', box);
+    if (d) setTab(box, d.getAttribute('data-tab') || 'check');
+    var ta = $('[data-cl-text]', box); if (ta) countWords(ta);
+    var fr = $('.rl-pvframe', box);
+    if (fr) fr.addEventListener('load', function () { fitPreview(box); });
+    var s = $('[data-cl-saved].is-on', box);
+    if (s) cx.after(2300, function () { s.classList.remove('is-on'); });
+  }
+
   /* ------------------------------------------------------------------------------ the page */
   root.KUI.page.define('role', {
     mount: function (main, ctx) {
@@ -422,6 +534,12 @@
       ctx.on(doc, 'rl-story-saved', onStorySaved);
       ctx.on(doc, 'click', onAdjustClick);
       ctx.on(doc, 'click', onMenuClick);
+      ctx.on(doc, 'click', onLetterClick);
+      ctx.on(doc, 'keydown', onLetterKey);
+      ctx.on(doc, 'change', onLetterChange);
+      ctx.on(doc, 'input', onLetterInput);
+      ctx.on(doc, 'rl-letter-close', onLetterClose);
+      ctx.on(doc, 'htmx:afterSettle', onLetterSwap);
       ctx.on(doc, 'keydown', onEscape);
       watchDialog();
       ctx.on(doc, 'htmx:historyRestore', watchDialog);

@@ -470,6 +470,14 @@ def static_url(path: str) -> str:
     return f"/static/{path.lstrip('/')}?v={static_token()}"
 
 
+def _test_mode() -> bool:
+    """KESTREL_TEST_MODE=1 (set by the live-browser test fixtures only): toasts do not
+    auto-dismiss, so tests are deterministic on a slow machine (D-TEST-8)."""
+    import os
+
+    return os.environ.get("KESTREL_TEST_MODE") == "1"
+
+
 def templates() -> Jinja2Templates:
     global _templates
     if _templates is None:
@@ -482,6 +490,7 @@ def templates() -> Jinja2Templates:
         t.env.globals["nav_title"] = nav_title
         t.env.globals["ui_scheme"] = ui_scheme
         t.env.globals["ui_prefs"] = ui_prefs
+        t.env.globals["test_mode"] = _test_mode
         t.env.globals["bell_unread"] = bell_unread
         t.env.globals["bell_label"] = bell_label
         t.env.globals["words"] = words

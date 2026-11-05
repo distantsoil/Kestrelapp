@@ -41,6 +41,7 @@ from kestrel.services import pursuit_undo as undo
 from kestrel.services.pursuits import set_pursuit_status
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import active_track, sessionmaker, templates, track_is_consulting
+from kestrel.web.queries import not_a_letter
 from kestrel.web.redact import confidential, redact_name, redact_text
 
 router = APIRouter()
@@ -90,7 +91,7 @@ async def _resume_options(session: AsyncSession, opp_ids: list[int]) -> dict[int
         await session.execute(
             select(DocRender, DocMaster.name)
             .join(DocMaster, DocMaster.id == DocRender.doc_master_id, isouter=True)
-            .where(DocRender.opportunity_id.in_(opp_ids))
+            .where(DocRender.opportunity_id.in_(opp_ids), not_a_letter())
             .order_by(DocRender.created_at.desc(), DocRender.id.desc())
         )
     ).all()
@@ -494,7 +495,10 @@ async def _missing(request: Request) -> HTMLResponse:
 @router.get("/pursuits", response_class=HTMLResponse)
 async def pursuits(request: Request):
     track = active_track(request)
-    view = request.query_params.get("view") or "kanban"
+    # The URL wins, then the Board / Table choice the page script saved in a cookie (so the saved
+    # view is drawn first time, with no switch after paint), then the board.
+    view = request.query_params.get("view") or request.cookies.get("kestrel_pursuits_view") or ""
+    view = "table" if view == "table" else "kanban"
     from kestrel.analytics.today import switched_off_work
 
     async with sessionmaker()() as s:
@@ -825,28 +829,38 @@ async def act(request: Request, pursuit_id: int, verb: str):
 
 @router.post("/pursuits/{pursuit_id}/act/applied/quick", response_class=HTMLResponse)
 async def applied_quick(request: Request, pursuit_id: int):
-    """The one-click path of "I applied": records applied today with a follow-up in seven days
-    (and the resume chosen for the button). Kept for callers that post it; the card itself now
-    opens the form in the panel."""
+    """The one-click path of "I applied": records applied on the chosen date (today by default,
+    or an earlier one the operator picked), with a fixed seven-day follow-up. Kept for callers that
+    post it; the card itself now opens the form in the panel."""
     form = {k: str(v) for k, v in (await request.form()).items()}
-    form.pop("applied_on", None)
+    # `applied_on` (today or an earlier date) passes through to apply_verb; the quick path keeps
+    # its fixed seven-day follow-up, so a custom follow-up is not accepted here.
     form.pop("follow_up", None)
     async with sessionmaker()() as s:
         p = await s.get(Pursuit, pursuit_id)
         if p is None:
             return HTMLResponse("not found", status_code=404)
         track = p.track
+        opp_id = p.opportunity_id
         err = await board_svc.apply_verb(s, p, "applied", form)
         if err:
             await s.rollback()
         else:
+            applied_at = p.applied_at
             await s.commit()
     if err:
-        return await _render_board(request, track, notice={"ok": False, "text": err})
+        # In place: the sentence goes into the panel's own error line and the form stays. The
+        # board is never swapped into #applied-status.
+        return templates().TemplateResponse(
+            request, "partials/applied_error.html", {"error": err},
+            headers={"HX-Retarget": "#applied-error", "HX-Reswap": "innerHTML"},
+        )
     label = board_svc.VERB_LABELS[track]["applied"]
     ctx = {
         "pid": pursuit_id, "track": track, "done": board_svc.done_label(label),
         "moving_to": "Applied" if track == "employment" else "In conversation",
+        "applied_at": applied_at,
+        "side_url": f"/opportunities/{opp_id}/role/side" if form.get("refresh_side") else "",
     }
     return templates().TemplateResponse(request, "partials/applied_done.html", ctx)
 

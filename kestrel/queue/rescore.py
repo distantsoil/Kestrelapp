@@ -19,16 +19,18 @@ change. Each new evaluation is a new row beside the old ones."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Task
 from kestrel.pipeline.tasks import enqueue_once
+from kestrel.queue.queue import RESTART_REFUND_TYPES
 from kestrel.services.run_model import T2_ONLY_KEY
 
 MAX_ROLES = 200
@@ -44,6 +46,10 @@ _TO_T1 = ("t0_pass", "t1_reject")
 class RescoreResult:
     queued: list[int] = field(default_factory=list)
     already: list[int] = field(default_factory=list)  # a scoring task was already waiting
+    running: list[int] = field(default_factory=list)  # a scoring task is running right now
+    # Queued by turning an ordinary waiting task into the operator's Score again (a subset of
+    # `queued`): the role was already in line, and now carries the operator's request.
+    upgraded: list[int] = field(default_factory=list)
     rules: list[int] = field(default_factory=list)  # set aside by a Tier 0 rule: refused
     # Why each refused role was set aside (kestrel.web.fit.RuleWhy), when the caller explained.
     rule_whys: dict[int, Any] = field(default_factory=dict)
@@ -56,6 +62,8 @@ class RescoreResult:
         out: list[str] = []
         if self.already:
             out.append(f"{_roles(len(self.already))} already waiting to be scored.")
+        if self.running:
+            out.append(f"{_roles(len(self.running))} already running: scoring now.")
         if self.rules:
             whys = [self.rule_whys[i] for i in self.rules if i in self.rule_whys]
             if len(self.rules) == 1 and whys:
@@ -181,7 +189,17 @@ async def enqueue_rescore(
             session, task_type, oid, priority=RESCORE_PRIORITY, extra=dict(extra)
         )
         if not added:
-            result.already.append(oid)
+            # A live task for the role wins the insert. A pending one takes the operator's flags
+            # (rescore, score_stub, requested_at, model override, an approval confirmed in THIS
+            # request); a leased one is running on its own payload and is left alone.
+            kind = await _upgrade_waiting(session, task_type, oid, dict(extra))
+            if kind == "running":
+                result.running.append(oid)
+            elif kind == "upgraded":
+                result.queued.append(oid)
+                result.upgraded.append(oid)
+            else:
+                result.already.append(oid)
             continue
         result.queued.append(oid)
     return result
@@ -213,6 +231,84 @@ async def _reconfirm_held(
     ).values(payload=payload, last_error=None, updated_at=utcnow_iso(),
              priority=RESCORE_PRIORITY).execution_options(synchronize_session=False))
     return changed.rowcount == 1
+
+
+async def _live_rows(session: AsyncSession, task_type: str, opportunity_id: int) -> list[Task]:
+    """The role's live (pending or leased) tasks of `task_type`."""
+    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    return list((
+        await session.execute(
+            select(Task).where(Task.type == task_type, Task.status.in_(("pending", "leased")),
+                               oid == opportunity_id)
+        )
+    ).scalars().all())
+
+
+def _waiting(task: Task, now: str) -> bool:
+    """Not started: pending, or leased with a lease that has run out (queue.claimable gives such
+    a task to the next worker, so it is waiting, not running), but only while it can still be
+    claimed: out of attempts it is about to be dead-lettered, so it reads as running (the live
+    task index still holds it) and the next press, after the sweep, queues a fresh task. A
+    leased task with no expiry recorded counts as running, as queue.in_flight does."""
+    if task.status == "pending":
+        return True
+    if not (task.status == "leased" and task.lease_until is not None and task.lease_until < now):
+        return False
+    # queue._claim_state: an expired lease is claimed again only while attempts remain; out of
+    # attempts it is dead-lettered by reclaim_expired, and never runs (refund types excepted).
+    return task.type in RESTART_REFUND_TYPES or (task.attempts or 0) < (task.max_attempts or 0)
+
+
+async def _upgrade_waiting(
+    session: AsyncSession, task_type: str, opportunity_id: int, extra: dict
+) -> str:
+    """The role already has a live `task_type` task, so Score again could not insert one. Returns
+    "running" when it is running (a live lease: it runs on its own payload and the operator can
+    ask again once it ends), "upgraded" when a WAITING ordinary one (an automatic pass that never
+    carried the request) took the operator's flags, and "again" when the waiting one already was
+    a Score again (it still takes the newer model pick and `requested_at`, but the role was
+    already waiting for exactly this).
+
+    The write is one conditional UPDATE on the status, the lease and the payload exactly as read
+    (like _reconfirm_held), so a worker that leases the task between the read and the write is
+    never edited under: the update does not apply, the role is read again, and a task that is
+    now running reads "running".
+
+    Consent: only what `extra` carries is written. `extra` holds an `online_approval` only when
+    the caller validated a confirmed dialog in THIS request, so an upgrade never adds an approval
+    the operator did not give, and a stamp the task already had is never widened. The worker
+    still checks the stamp against the destination when the task runs (held_for_approval)."""
+    for _attempt in range(2):
+        rows = await _live_rows(session, task_type, opportunity_id)
+        now = utcnow_iso()
+        waiting = [t for t in rows if _waiting(t, now)]
+        if not waiting:
+            return "running" if rows else "again"
+        task = waiting[0]
+        old_payload = task.payload
+        payload = dict(old_payload or {})
+        was_again = bool(payload.get("rescore"))
+        payload.update(extra)
+        priority = task.priority or 0
+        if payload.pop("lane", 0):  # a lane task the operator asked for leaves the lane
+            priority = int(payload.pop("lane_priority", 0) or 0)
+        payload.pop("lane_priority", None)
+        payload.pop(T2_ONLY_KEY, None)  # the operator's pick (or the usual models) wins
+        if "model_override" not in extra:
+            payload.pop("model_override", None)
+        lease = Task.lease_until.is_(None) if task.lease_until is None else (
+            Task.lease_until == task.lease_until)
+        done = await session.execute(update(Task).where(
+            Task.id == task.id, Task.status == task.status, lease,
+            # Minified on both sides: the stored text may come from json_set (compact).
+            func.json(Task.payload) == func.json(json.dumps(old_payload)),
+        ).values(payload=payload, priority=max(priority, RESCORE_PRIORITY),
+                 updated_at=utcnow_iso()).execution_options(synchronize_session=False))
+        if cast(CursorResult, done).rowcount == 1:
+            session.expire(task)
+            return "again" if was_again else "upgraded"
+        session.expire(task)  # it changed under us: read it again
+    return "running"
 
 
 async def _upgrade_waiting_t1(session: AsyncSession, opportunity_id: int, extra: dict) -> bool:

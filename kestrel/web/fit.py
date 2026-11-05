@@ -96,6 +96,8 @@ SCORING_CHIPS: dict[str, tuple[str, str, str]] = {
     "stuck": ("Stopped", "Scoring stopped before it finished. Score it again.", "wait"),
     "held": ("Paused", "Its track is off, so it waits until you turn the track on.", "wait"),
     "background": ("Paused", "It waits for a free slot and scores when Kestrel is idle.", "wait"),
+    "approval": ("Waiting for your OK",
+                 "Nothing was sent. Confirm the online send to score it.", "wait"),
     "running": ("Scoring", "A model is reading it now.", "live"),
     "empty": ("No description",
               "The posting had no text, so there is nothing to score. Paste the description to "

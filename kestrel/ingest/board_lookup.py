@@ -52,6 +52,10 @@ class LookupResult:
     company: str
     match: BoardMatch | None
     tried: list[str]  # "lever:acme", for the plain failure message and the log
+    # True when nothing matched but at least one probe could not get a definite answer (the
+    # network was down, a timeout, a 429 or 5xx). That is not "no board here" and must never be
+    # remembered as one.
+    inconclusive: bool = False
 
 
 def _words(name: str) -> list[str]:
@@ -106,11 +110,27 @@ def _probes(name: str) -> list[tuple[str, dict]]:
     return out[:MAX_PROBES]
 
 
+def _transient(exc: BaseException | None) -> bool:
+    """True for a failure that says nothing about whether the board exists: no connection, a
+    timeout, or the site asking us to slow down or failing on its side."""
+    seen = 0
+    while exc is not None and seen < 4:  # an adapter wraps the HTTP error as its __cause__
+        if isinstance(exc, httpx.TransportError):
+            return True
+        if isinstance(exc, httpx.HTTPStatusError):
+            code = exc.response.status_code
+            return code in (403, 429) or code >= 500
+        exc = exc.__cause__
+        seen += 1
+    return False
+
+
 async def find_company_board(name: str, http: Any) -> LookupResult:
     """Try each candidate until a board answers with at least one job. A 404, a refused request,
     a non-JSON body or an empty board is simply "not this one"; nothing here raises for them."""
     company = " ".join(_words(name)) or name.strip()
     tried: list[str] = []
+    unanswered = 0
     for kind, config in _probes(name):
         adapter = get_adapter(kind)
         if adapter is None:
@@ -122,7 +142,10 @@ async def find_company_board(name: str, http: Any) -> LookupResult:
         except (httpx.HTTPError, AdapterError, SourceConfigError, ValueError, PermissionError,
                 RuntimeError) as exc:
             log.debug("board_lookup_miss", kind=kind, ident=ident, error=type(exc).__name__)
+            unanswered += _transient(exc)
             continue
+        if not postings and getattr(postings, "partial_error", None):
+            unanswered += 1  # the board slowed us down before answering
         if postings:
             saved = {k: v for k, v in config.items() if k != "max_results"}
             if kind == "ashby":
@@ -132,4 +155,4 @@ async def find_company_board(name: str, http: Any) -> LookupResult:
             return LookupResult(company, BoardMatch(kind, saved, jobs, PLATFORM_NAMES[kind]),
                                 tried)
     log.info("board_lookup_none", company=company, tried=len(tried))
-    return LookupResult(company, None, tried)
+    return LookupResult(company, None, tried, inconclusive=unanswered > 0)

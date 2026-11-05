@@ -397,6 +397,7 @@
         $$('.ap-closedg').forEach(function (g) { g.classList.remove('is-still'); });
       });
       markSelected();
+      applySort(false);  // a swapped table keeps its sort; drawn in place, never moved
       flip();
       var body = $('#ap-panel .k-flyout__body');
       if (body && panelScroll) { body.scrollTop = panelScroll; }
@@ -652,6 +653,140 @@
     }
   }
 
+  /* ------------------------------------------------------------------ view memory and sorting (#121) */
+  /* The Board / Table choice is remembered in localStorage and in a cookie. The server reads the
+     cookie when the URL names no view, so the saved view is rendered first time and nothing
+     switches after paint (no click on mount, no flash). Every storage access is guarded. */
+  var VIEW_KEY = 'kestrel_pursuits_view';
+  var VIEW_COOKIE = 'kestrel_pursuits_view';
+  var SORT_KEY = 'kestrel_pursuits_sort';
+  function readStore(key) {
+    try { return root.localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function writeStore(key, value) {
+    try { root.localStorage.setItem(key, value); } catch (e) { /* storage blocked: ignore */ }
+  }
+  function writeViewCookie(view) {
+    try {
+      doc.cookie = VIEW_COOKIE + '=' + encodeURIComponent(view) + '; path=/; max-age=31536000; SameSite=Lax';
+    } catch (e) { /* cookies blocked: ignore */ }
+  }
+  function hasViewCookie() {
+    try { return doc.cookie.split(';').some(function (c) { return c.trim().indexOf(VIEW_COOKIE + '=') === 0; }); }
+    catch (e) { return true; }
+  }
+  /* An install that only has the older localStorage choice gets the cookie from it, so the next
+     visit renders that view on the server. This visit is left exactly as it was drawn. */
+  function migrateView() {
+    if (hasViewCookie()) return;
+    var saved = readStore(VIEW_KEY);
+    if (saved === 'table' || saved === 'board') writeViewCookie(saved);
+  }
+  function saveView(view) {
+    writeStore(VIEW_KEY, view);
+    writeViewCookie(view);
+  }
+
+  /* Sorting: the header cell holds a real button (Enter and Space work), aria-sort says which
+     column is sorted and which way, and the choice survives every swap of the board. */
+  var sortState = { col: '', dir: 1 };  // dir: 1 ascending, -1 descending
+  var SORT_FIRST = { role: 1, stage: 1, due: -1, applied: -1, fit: -1 };  // first press: most useful end
+  function loadSort() {
+    sortState = { col: '', dir: 1 };
+    var raw = readStore(SORT_KEY);
+    if (!raw) return;
+    try {
+      var o = JSON.parse(raw);
+      if (o && SORT_FIRST[o.col] !== undefined && (o.dir === 1 || o.dir === -1)) {
+        sortState = { col: o.col, dir: o.dir };
+      }
+    } catch (e) { /* unreadable: no sort */ }
+  }
+  function saveSort() { writeStore(SORT_KEY, JSON.stringify(sortState)); }
+
+  function markSort() {
+    $$('th[data-sort]').forEach(function (th) {
+      var on = th.getAttribute('data-sort') === sortState.col;
+      th.setAttribute('aria-sort', on ? (sortState.dir === 1 ? 'ascending' : 'descending') : 'none');
+    });
+  }
+
+  function rowSnap(rows) {
+    var map = new root.Map();
+    rows.forEach(function (r) { map.set(r, r.getBoundingClientRect().top); });
+    return map;
+  }
+  function rowFlip(rows, before) {
+    if (!before || reduced()) return;
+    rows.forEach(function (r) {
+      var from = before.get(r);
+      if (from === undefined || !r.animate) return;
+      var dy = from - r.getBoundingClientRect().top;
+      if (Math.abs(dy) > 2) {
+        r.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }],
+          { duration: 320, easing: 'cubic-bezier(.22,.8,.3,1)' });
+      }
+    });
+  }
+
+  /* Put the rows in the chosen order. animate=false on a restore after a swap: the rows are drawn
+     in their place the first time, never moved after paint. */
+  function applySort(animate) {
+    markSort();
+    if (!sortState.col) return;
+    var tbody = $('.ap-table tbody');
+    if (!tbody) return;
+    var rows = $$('tr', tbody);
+    var before = animate ? rowSnap(rows) : null;
+    var dir = sortState.dir, col = sortState.col;
+    rows.sort(function (a, b) {
+      var av = sortVal(a, col), bv = sortVal(b, col);
+      // A row with no value for this column is last in both directions.
+      if (av === null && bv === null) return ordOf(a) - ordOf(b);
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      var c = typeof av === 'string' ? av.localeCompare(bv, undefined, { sensitivity: 'base' }) : av - bv;
+      return c !== 0 ? c * dir : ordOf(a) - ordOf(b);
+    });
+    var same = rows.every(function (r, i) { return tbody.children[i] === r; });
+    if (same) return;
+    rows.forEach(function (r) { tbody.appendChild(r); });
+    rowFlip(rows, before);
+  }
+  function ordOf(row) { return Number(row.dataset.ord) || 0; }
+
+  function onSortClick(e) {
+    var th = e.target.closest('th[data-sort]');
+    if (!th || !th.closest('.ap-table')) return;
+    var col = th.getAttribute('data-sort');
+    if (sortState.col === col) sortState.dir = -sortState.dir;
+    else sortState = { col: col, dir: SORT_FIRST[col] || 1 };
+    saveSort();
+    applySort(true);
+  }
+
+  var STAGE_ORD = { to_apply: 0, to_contact: 0, applied: 1, conversation: 1, interviewing: 2, proposal: 2, closed: 3 };
+  /* The value a row sorts on, or null when it has none. The role column sorts on the title the
+     row shows, not on the search text (which starts with other words). */
+  function sortVal(row, col) {
+    var ds = row.dataset;
+    switch (col) {
+      case 'role': {
+        var b = row.querySelector('.ap-tt b');
+        return b ? b.textContent.trim().toLowerCase() : null;
+      }
+      case 'stage': {
+        var o = STAGE_ORD[ds.col];
+        return o === undefined ? 99 : o;
+      }
+      // Closed rows have no due date. A row that is overdue outranks one that is not.
+      case 'due': return ds.folded === '1' ? null : (ds.quiet === '1' ? 1000 + (Number(ds.quiet_days) || 0) : 0);
+      case 'applied': return ds.applied ? ds.applied : null;
+      case 'fit': return ds.fit === '' || ds.fit === undefined || isNaN(Number(ds.fit)) ? null : Number(ds.fit);
+      default: return null;
+    }
+  }
+
   root.KUI.page.define('applications', {
     mount: function (main, ctx) {
       if (!page()) return;
@@ -662,12 +797,23 @@
       drag = { id: null, col: null, el: null };
       readState();
       apply();
+      migrateView();  // the saved Board / Table choice is rendered by the server (#121)
+      loadSort();
+      applySort(false);
       ctx.on(doc, 'htmx:afterSwap', onViewSwap);
+      // Before the swapped table is painted, not a frame after: no flash of the unsorted order.
+      ctx.on(doc, 'htmx:afterSwap', function () { applySort(false); });
+      ctx.on(doc, 'htmx:oobAfterSwap', function () { applySort(false); });
       ctx.on(doc, 'click', onFollowUpClick);
       ctx.on(doc, 'input', onDraftInput);
       var autoDraft = $('[data-auto-draft]');
       if (autoDraft) openDraft(autoDraft.getAttribute('data-auto-draft'));
       ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'click', onSortClick);  // sortable table columns (#121)
+      ctx.on(doc, 'click', function (e) {  // save view choice on toggle
+        var btn = e.target.closest('[data-view-btn]');
+        if (btn) saveView(btn.getAttribute('data-view-btn'));
+      });
       ctx.on(doc, 'keydown', onKey, true);  // before the overlay's own Escape
       ctx.on(doc, 'input', onInput);
       ctx.on(doc, 'change', onInput);

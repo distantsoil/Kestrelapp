@@ -512,6 +512,10 @@ def _mock_doctor_probes(monkeypatch) -> None:
         ("_check_thinking", "thinking off"),
         ("_check_schema", "schema honored"),
         ("_check_browser", "Browser (PDF)"),
+        # The Local AI checks (#166) ask Ollama or list connections: faked like the probes.
+        ("_check_cloud_model_tags", "Local AI: cloud model tags"),
+        ("_check_model_digests", "Local AI: model digests"),
+        ("_check_local_ai_egress", "Local AI: egress"),
     ):
         monkeypatch.setattr(doctor_mod, fn, ok(name))
 

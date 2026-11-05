@@ -385,6 +385,23 @@ _DESCRIPTIONS: dict[str, dict] = {
         ),
         "region": "US only.",
     },
+    "arbeitnow": {
+        "name": "Arbeitnow (whole job board feed)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "The public Arbeitnow job board API, www.arbeitnow.com/api/job-board-api: up to "
+            "max_pages pages of 300 (default 2). Each role links to its posting page on "
+            "Arbeitnow, where you apply yourself. No compensation is shown."
+        ),
+        "provide": "Nothing: no key or account. Optional max_pages.",
+        "config_example": {"max_pages": 2},
+        "rate_limit": (
+            "At most 1 request/second and at most max_pages requests a check; robots.txt "
+            "respected; a 429 or 5xx makes the run partial."
+        ),
+        "region": "Remote and in-person roles.",
+    },
     "himalayas": {
         "name": "Himalayas (remote jobs)",
         "category": CATEGORY_AGGREGATOR,
@@ -424,6 +441,45 @@ _DESCRIPTIONS: dict[str, dict] = {
             "makes the run partial."
         ),
         "region": "Remote roles open to the US.",
+    },
+    "jobicy": {
+        "name": "Jobicy (remote jobs with pay)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Remote job listings from the Jobicy API, jobicy.com/api/v2/remote-jobs: up to "
+            "max_pages pages of count jobs (default 2 pages, 100 a page). Each role links to "
+            "its posting page, where you apply yourself, and is credited to Jobicy. Pay is "
+            "included when the feed provides it (salaryMin, salaryMax, currency, period)."
+        ),
+        "provide": "Nothing: no key or account. Optional count and max_pages.",
+        "config_example": {"max_pages": 2, "count": 100},
+        "rate_limit": (
+            "At most 1 request/second and at most max_pages requests a check; robots.txt "
+            "respected; a 403, 429 or 5xx makes the run partial."
+        ),
+        "region": "Remote roles open to the US.",
+    },
+    "remotive": {
+        "name": "Remotive (remote jobs, 4 fetches/day max)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Remote job listings from the Remotive API, remotive.com/api/remote-jobs: up to "
+            "limit jobs (default 50). Each role links to its posting page, where you apply "
+            "yourself, and is credited to Remotive. Salary is free text, not structured. "
+            "Kestrel fetches at most 4 times per local day, counted in the database so a restart "
+            "cannot reset it."
+        ),
+        "provide": "Nothing: no key or account. Optional limit (1-100).",
+        "config_example": {"limit": 50},
+        "rate_limit": (
+            "At most 1 request/second and at most 4 fetches per local day (the API advises max 4; "
+            "excessive requests are blocked); a named exception to the robots.txt rule "
+            "(D-SRC-15): the documented API is read without a robots check, its pages never; "
+            "a 403, 429 or 5xx makes the run partial."
+        ),
+        "region": "Remote roles, worldwide.",
     },
     "remoterocketship": {
         "name": "RemoteRocketship (paid API, finds links only)",
@@ -648,6 +704,12 @@ _EASY_ADD = {
     "weworkremotely": (
         "Easiest: Sources > Add a source > Job board search, tick We Work Remotely. By hand: "
     ),
+    "arbeitnow": (
+        "Easiest: Sources > Add a source > Job board search, tick Arbeitnow. By hand: "
+    ),
+    "jobicy": (
+        "Easiest: Sources > Add a source > Job board search, tick Jobicy. By hand: "
+    ),
     "jobspy": (
         "Usually nothing to do: your searches are built from Profile > Employment and Location "
         "and listed under Sources > Your searches. For an extra search of your own: "
@@ -674,7 +736,8 @@ def _ordered_kinds() -> list[str]:
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
         "paylocity", "workable", "recruitee", "teamtailor", "personio", "breezy", "careers_page",
         "jobspy",
-        "usajobs", "adzuna", "himalayas", "weworkremotely", "remoterocketship",
+        "usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "jobicy",
+        "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]
     registered = set(known_kinds()) | set(known_signal_kinds())

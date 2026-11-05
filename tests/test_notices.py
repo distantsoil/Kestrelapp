@@ -11,7 +11,9 @@ from kestrel.services import notices
 def test_runtime_closure_has_runtime_deps_and_no_dev_tools():
     names = {d.metadata["Name"].lower() for d in notices.runtime_closure()}
     assert {"python-jobspy", "fastapi", "pystray"} <= names
-    assert not names & {"pytest", "ruff", "pyinstaller", "respx", "kestrel"}
+    dev_tools = {"pytest", "ruff", "pyinstaller", "respx", "kestrel", "pytest-cov", "coverage",
+                 "pytest-timeout", "pyright"}
+    assert not names & dev_tools
 
 
 def test_notices_carry_jobspy_license_text_and_copyright():

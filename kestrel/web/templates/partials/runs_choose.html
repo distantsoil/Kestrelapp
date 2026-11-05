@@ -3,7 +3,7 @@
    cost. Nothing is queued until Start; the server checks the confirmation again. static: a click
    outside does not close it, because it asks before something goes online. #}
 {% from "ui/macros.html" import modal %}
-{% set start_attrs = {'id': 'rn-start', 'data-testid': 'rn-start', 'hx-post': '/runs/start', 'hx-include': '#rn-choose', 'hx-swap': 'none', 'data-busy-text': 'Starting the run…'} %}
+{% set start_attrs = {'id': 'rn-start', 'data-testid': 'rn-start', 'data-consent-send': '', 'hx-post': '/runs/start', 'hx-include': '#rn-choose', 'hx-swap': 'none', 'data-busy-text': 'Starting the run…'} %}
 {% call modal('rn-choose-dialog', 'Run once, this time only', [
   {'label': 'Cancel', 'close': True},
   {'label': 'Start this run', 'kind': 'primary', 'close': True, 'attrs': start_attrs}
@@ -31,7 +31,7 @@
       {% elif employer == 'held' %}<p data-testid="rn-employer-held"><b>Online sends will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send anything. <a href="/settings">Choose your employer in Settings</a> first.</p>{% endif %}
       <p><b>Not sent:</b> your name, contact details and your resume file.</p>
       <p><b>Cost:</b> you pay your provider for what is sent, from your own credit.{% if credit %} {{ credit }}.{% endif %} The number of roles decides the total.</p>
-      <label class="rn-ok"><input type="checkbox" name="confirmed" value="1" id="rn-ok" data-testid="rn-ok"{% if employer == 'held' %} disabled{% endif %}><span>I understand what is sent and approve this one run.</span></label>
+      <span class="k-consent rn-ok" data-consent-row><label class="k-consent__label"><input type="checkbox" name="confirmed" value="1" id="rn-ok" data-consent-box data-testid="rn-ok" aria-describedby="rn-ok-hint"{% if employer == 'held' %} disabled{% endif %}><span>I understand what is sent and approve this one run.</span></label><span class="k-consent__hint" id="rn-ok-hint" data-consent-hint role="status" data-testid="rn-ok-hint">Tick the box to send</span></span>
     </div>
     <p class="k-muted rn-small">Your settings do not change. Later runs use {{ usual }}, your saved choice.</p>
   </form>

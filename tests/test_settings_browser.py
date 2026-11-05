@@ -14,6 +14,7 @@ import os
 import pytest
 
 from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = [
     pytest.mark.skipif(
@@ -239,5 +240,23 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         page.click('.k-toast:has-text("Moved.") .k-toast__undo')
         page.wait_for_function("window.__undone === 1")
         assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_switching_to_online_updates_the_setup_checklist_without_leaving_settings(live):
+    """D-UI-241: the checklist follows the Models choice on the same page, no reload."""
+    ctx, page, errors = _page(live, "light", 1280, "#computer")
+    try:
+        page.wait_for_selector('#st-sec-computer:not([hidden]) .st-modes')
+        page.wait_for_selector('#st-chk [data-testid="st-chk-tally"]')
+        assert page.locator("#st-chk.is-offline").count() == 0
+        page.locator('[data-testid="st-mode-online"]').click()
+        page.wait_for_selector("#st-chk.is-offline", timeout=5000)
+        said = page.locator("#st-chk").inner_text()
+        assert "Not needed while you use only an online model" in said
+        page.locator('[data-testid="st-mode-local"]').click()
+        page.wait_for_function("!document.querySelector('#st-chk.is-offline')", timeout=5000)
+        assert not errors
     finally:
         ctx.close()

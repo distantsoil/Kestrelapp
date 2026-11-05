@@ -30,10 +30,10 @@
     {% if route.problem %}<p role="alert">{{ route.problem }}</p>
     {% elif route.hidden %}<p>Confidential mode is on: your current employer is hidden before anything is sent.</p>{% endif %}
     <p>The facts above are the complete input for this draft. Your name, contact details, resume file, profile and notes are not sent. {{ route.provider }} handles what it receives under its own terms.</p>
-    <label class="ap-check"><input type="checkbox" name="confirmed" value="1" required> Send this to {{ route.provider }} to write the draft</label>
+    {{ online_ask.consent_check('follow-up-confirm', 'Send this to ' ~ route.provider ~ ' to write the draft', extra_cls='ap-check') }}
     <input type="hidden" name="model" value="{{ route.model }}">
     {% else %}<p>This draft is written on your computer.</p>{% endif %}
-    <button type="submit" class="k-btn k-btn--primary"{% if route.problem %} disabled{% endif %}>Write the draft</button>
+    <button type="submit" class="k-btn k-btn--primary"{% if route.online %} data-consent-send{% endif %}{% if route.problem %} disabled{% endif %}>Write the draft</button>
   </form>
   {% elif not eligible and not result and not pending %}<p>This application no longer has a due follow-up.</p>{% endif %}
 </div>

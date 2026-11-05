@@ -18,7 +18,7 @@
   <form hx-post="/opportunities/{{ opp_id }}/questions/regenerate?view=prep"
         hx-target="#questions-card" hx-swap="outerHTML">
     {{ online_ask.ask(qview.route, 'questions', 'write the list') }}
-    <button type="submit" class="k-btn k-btn--sm" data-testid="questions-regenerate"
+    <button type="submit" class="k-btn k-btn--sm" data-consent-send data-testid="questions-regenerate"
           {% if qview.pending %}disabled{% endif %}>{{ 'Write a new list' if qview.questions else 'Write the list now' }}</button>
   </form>
   {%- endif %}

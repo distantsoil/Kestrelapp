@@ -1,0 +1,46 @@
+{# The ask-first panel for an online model (D-UI-239). What is sent comes from the Hosted mode
+   disclosure the person accepted (route.sends), never from words written here. The box is the form's
+   own `confirmed` field, so an unticked box posts nothing and the server refuses it; role.js
+   only shows the hint. The server checks confirmed, model and destination again before any call,
+   including the re-ask. #}
+{% from "partials/online_ask.html" import reask_note %}
+<form id="cl-ask" class="cl-ask" hx-post="/opportunities/{{ opp_id }}/role/cover-letter/generate" hx-target="#cl-main" hx-swap="innerHTML" hx-sync="this:drop" data-testid="cover-letter-ask">
+  <div class="cl-ask__body">
+    <h3>Send to an online model to draft your {{ noun }}?</h3>
+    {% if held %}<p class="rl-quiet" role="status" data-testid="cover-letter-held"><b>On hold. Nothing was sent.</b> The model or online service changed since you confirmed, so Kestrel stopped before sending. Check the details below and confirm again.</p>{% endif %}
+    <p class="rl-quiet">{{ route.provider }}, using your own credit. Kestrel would use <b>{{ route.model }}</b> to draft a {{ noun }} for {{ opp.title or 'this role' }}{% if opp.org_name %} at {{ opp.org_name }}{% endif %}. Nothing is sent until you press the button.</p>
+    <div class="cl-panel rl-send">
+      <b>What will be sent</b>
+      <ul>
+        {# The letter lists only its own line. The shared Hosted mode line (the one all the Tier 3
+           features share) is left out here because it names features this panel is not for. #}
+        {% if route.this_send %}<li data-testid="rl-sends">{{ route.this_send|capitalize }}.</li>
+        {% else %}<li data-testid="rl-sends">{{ route.sends }}.</li>{% endif %}
+      </ul>
+      {{ reask_note(route.reask, 'cl') }}
+      {% if route.employer == 'hidden' %}<p data-testid="rl-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
+      {% elif route.employer == 'held' %}<p data-testid="rl-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a class="k-link" href="/settings">Choose your employer in Settings</a>, then try again.</p>
+      {% else %}<p data-testid="rl-employer">Confidential mode is off, so the employer's name is not hidden.</p>{% endif %}
+      <b>What is not sent</b>
+      <p>Your name, contact details and your resume file.</p>
+      <p>{{ route.provider }} handles what it receives under its own terms, and Kestrel cannot recall it.{% if route.free %} This is a free model, and free models may use what they receive for training.{% endif %}</p>
+    </div>
+    <label class="cl-ack"><input type="checkbox" name="confirmed" value="1" data-cl-ack data-testid="cover-letter-ack" aria-describedby="cl-tick-hint"> I have read what will be sent and I want to send it to {{ route.provider }}.</label>
+    <p class="cl-tick" id="cl-tick-hint" data-cl-tick role="status" data-testid="cover-letter-tick-hint">Tick the box to send</p>
+    {% if replace_id %}<input type="hidden" name="replace" value="{{ replace_id }}">{% endif %}
+    <input type="hidden" name="model" value="{{ route.model }}">
+    <input type="hidden" name="dest" value="{{ route.dest }}">
+    <div class="rl-btns">
+      <button type="button" class="k-btn" data-k-close>Cancel</button>
+      {% if route.employer != 'held' %}<button type="submit" class="k-btn k-btn--primary" data-cl-send data-testid="rl-send">Send and draft</button>{% endif %}
+    </div>
+  </div>
+  <div class="cl-wait cl-wait--sent" role="status" aria-live="polite">
+    <span class="cl-pulse" aria-hidden="true"></span>
+    <div>
+      <b>Sent. Waiting for your {{ noun }}</b>
+      <p class="rl-quiet">{{ route.provider }} is drafting. You can close this and keep working: the draft is saved to Documents when it is done. Kestrel never sends it.</p>
+      <div class="rl-btns"><button type="button" class="k-btn" data-cl-leave>Close and keep working</button></div>
+    </div>
+  </div>
+</form>

@@ -50,7 +50,7 @@ from kestrel.llm import credit
 from kestrel.services import tracks as tracks_svc
 from kestrel.web import source_view as sv
 from kestrel.web.deps import sessionmaker, templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import fixed_reason, plain_error
 
 log = structlog.get_logger()
 
@@ -510,7 +510,7 @@ async def _panel_ctx(
         ],
         "type_options": [("", "All types")] + [(k, t) for k, t, _d in sv.GROUPS[track]],
         "origins": sv.ORIGINS,
-        "suggestions": await source_suggestions.suggestions(
+        "suggestions": await source_suggestions.suggestions_with_boards(
             session, track, [s.name for s in in_use]
         ),
         "found_boards": sum(1 for s in sources if s.origin == board_discovery.DISCOVERED),
@@ -719,7 +719,7 @@ async def watch_company_board(request: Request):
         async with sessionmaker()() as s:
             ctx = await _panel_ctx(request, s, lookup={
                 "ok": False, "company": company,
-                "text": f"The lookup could not run ({type(exc).__name__}). Check the network "
+                "text": f"The lookup could not run ({fixed_reason(exc)}). Check the network "
                         "and try again, or use Add a source with its careers page link.",
             })
         return _panel(request, ctx)

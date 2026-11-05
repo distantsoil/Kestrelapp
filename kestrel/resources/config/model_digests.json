@@ -1,0 +1,31 @@
+{
+  "_comment": "Issue #166 M2: model digest verification. Maps each shipped base model tag to the manifest digest Kestrel tested and the date. Captured 2026-11-04 from the ollama-content-digest header of registry.ollama.ai (the manifest digest, which Ollama's /api/tags reports as 'digest'; the first 12 characters are the ID shown by 'ollama list'). The doctor compares the local model's digest against this catalog. A mismatch warns (tag has moved); a tag not listed here is reported as unknown. Never blocks. An empty list is reported as 'not recorded yet', never as a pass.",
+  "verified": "2026-11-04",
+  "models": {
+    "qwen3:4b-instruct-2507-q4_K_M": {
+      "digest": "sha256:0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+      "date": "2026-11-04",
+      "size_gb": 2.5
+    },
+    "qwen3:8b": {
+      "digest": "sha256:500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+      "date": "2026-11-04",
+      "size_gb": 5.2
+    },
+    "qwen3:14b": {
+      "digest": "sha256:bdbd181c33f2ed1b31c972991882db3cf4d192569092138a7d29e973cd9debe8",
+      "date": "2026-11-04",
+      "size_gb": 9.3
+    },
+    "qwen3:30b-a3b-instruct-2507-q4_K_M": {
+      "digest": "sha256:19e422b0231392335cfc49cfd172de7034bb1aeabb08aa307cce745c60b272fe",
+      "date": "2026-11-04",
+      "size_gb": 19.0
+    },
+    "nomic-embed-text:latest": {
+      "digest": "sha256:0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+      "date": "2026-11-04",
+      "size_gb": 0.3
+    }
+  }
+}

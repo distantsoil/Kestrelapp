@@ -11,17 +11,18 @@
   <div class="warnbox">{{ error or 'Opportunity not found.' }}</div>
 {% else %}
   <h2>Actions</h2>
-  {% if message %}<div class="panel" style="margin-bottom:.6rem">{{ message }}</div>{% endif %}
-  {% if error %}<div class="warnbox" style="margin-bottom:.6rem">{{ error }}</div>{% endif %}
+  {% if message %}<div class="panel">{{ message }}</div>{% endif %}
+  {% if error %}<div class="warnbox">{{ error }}</div>{% endif %}
 
-  <div class="row" style="flex-wrap:wrap;gap:1.2rem;align-items:flex-start">
+  <div class="row oa-row">
 
     {# 1. On my shortlist: Add to my shortlist lives in the decision panel (D-UI-45); this keeps the
        pursuit's re-post switch. #}
     {% if pursuit %}
     <div>
         <div class="muted">{{ words(opp.track).on_list|capitalize }} ({{ pursuit_column or pursuit.status|replace('_', ' ') }})</div>
-        <form hx-post="/pursuits/{{ pursuit.id }}/reposts" hx-trigger="change" hx-swap="none" style="margin:.2rem 0 0"><label class="muted" title="Once applied, a new posting of this role is hidden on arrival as a re-post. Tick to see such listings anyway."><input type="checkbox" name="allow" value="on" {% if pursuit.allow_reposts %}checked{% endif %}> allow re-posts</label></form>
+        <form hx-post="/pursuits/{{ pursuit.id }}/reposts" hx-trigger="change" hx-swap="none" class="oa-repost"><label class="muted" title="Once applied, a new posting of this role is hidden on arrival as a re-post. Tick to see such listings anyway."><input type="checkbox" name="allow" value="on" {% if pursuit.allow_reposts %}checked{% endif %}> allow re-posts</label></form>
+        {% include "partials/applied_block.html" %}
     </div>
     {% endif %}
 
@@ -56,7 +57,7 @@
     {% if prep_ready %}
     <div>
       <a class="btn primary" href="/prep/{{ opp.id }}" data-testid="open-interview-prep">Open {{ words(opp.track).interview_prep|lower }}</a>
-      <a class="btn ghost" href="/mock/{{ opp.id }}" style="margin-left:.5rem">Mock interview</a>
+      <a class="btn ghost oa-gap" href="/mock/{{ opp.id }}">Mock interview</a>
     </div>
     {% endif %}
 
@@ -68,7 +69,7 @@
         <div class="muted">hidden {{ date_display(opp.archived_at, 'raw') }}{% if opp.archive_reason %} &middot; {{ (archive_reasons or {}).get(opp.archive_reason, opp.archive_reason)|lower }}{% endif %}{% if opp.stage_reason and opp.stage_reason.startswith('Re-post') %} &middot; {{ opp.stage_reason|lower }}; Unhide if this is a different role{% endif %}</div>
       {% else %}
         <form hx-post="/opportunities/{{ opp.id }}/archive" hx-target="#opp-actions" hx-swap="outerHTML"
-              class="row" style="gap:6px">
+              class="row oa-hide">
           <select name="reason" aria-label="Why hide it">
             {% for key, label in (archive_reasons or {}).items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
           </select>

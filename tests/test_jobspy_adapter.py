@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from kestrel.ingest.adapters.jobspy import JobSpyAdapter
-from kestrel.ingest.base import SourceConfigError
+from kestrel.ingest.base import AdapterError, SourceConfigError
 
 _A = JobSpyAdapter()
 
@@ -118,3 +118,23 @@ def test_default_boards_are_indeed_and_glassdoor_never_linkedin_or_google():
     assert DEFAULT_SITES == ("indeed", "glassdoor")
     assert _sites({"site_name": ["linkedin"]}) == ["indeed", "glassdoor"]
     assert _sites({"site_name": ["google"]}) == ["google"]  # a custom source may still name it
+
+
+async def test_a_failed_scrape_keeps_the_underlying_class_in_the_log(monkeypatch):
+    """D-SEC-4: the stored sentence has no class name; the log still names the real failure."""
+    from structlog.testing import capture_logs
+
+    def boom(**kw):
+        raise ConnectionResetError("board closed the connection")
+
+    fake = types.ModuleType("jobspy")
+    fake.scrape_jobs = boom
+    monkeypatch.setitem(sys.modules, "jobspy", fake)
+    with capture_logs() as logs:
+        with pytest.raises(AdapterError) as caught:
+            await _A.fetch({"site_name": ["indeed"], "search_term": "analyst"})
+    assert "ConnectionResetError" not in str(caught.value)
+    failed = [e for e in logs if e["event"] == "jobspy_scrape_failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_type"] == "ConnectionResetError"
+    assert failed[0]["error"] == "board closed the connection"

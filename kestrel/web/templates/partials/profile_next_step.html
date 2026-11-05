@@ -13,7 +13,7 @@
   <input type="hidden" name="online_approval" value='{{ ask.approval_json }}'>
   {% if ask.problem %}<p role="alert" data-testid="score-again-problem">{{ ask.problem }}</p>{% endif %}
   {{ online_ask.ask(ask.route, 'score-again', 'score these roles again') }}
-  <button class="k-btn k-btn--sm" type="submit" data-testid="score-again-send">Score again</button>
+  <button class="k-btn k-btn--sm" type="submit" data-consent-send data-testid="score-again-send">Score again</button>
 </form>
 {% elif rescoring and rescoring != 'confirm' %}
 <span class="sf-msg" data-testid="rescoring-note">Queued {{ rescoring }} {{ 'role' if rescoring == '1' else 'roles' }} to score again.</span>

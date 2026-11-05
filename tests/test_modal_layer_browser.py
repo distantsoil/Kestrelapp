@@ -16,6 +16,7 @@ import pytest
 
 from tests import prep_seed, profile_seed, tailor_seed
 from tests.browser import TIMER_PROBE_JS, assert_page_remounts_clean, launch_sync, wait_for_layout
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -186,7 +187,7 @@ def test_the_story_sheet_opens_visible_and_clickable_every_time(prep_live, schem
             assert page.evaluate(_TOP_AT_CENTER, '[data-testid="pp-sheet-save"]')["onTop"], n
             page.click('[data-testid="pp-sheet-cancel"]')
             page.wait_for_selector("#pp-story-sheet", state="hidden", timeout=3000)
-            page.wait_for_timeout(450)
+            wait_for_layout(page)  # settled, not slept
             frames = page.evaluate("window.__stopFrames()")
             assert _bad_frames(frames) == [], (n, _bad_frames(frames)[:3])
             assert page.evaluate("document.getElementById('k-scrim').classList.contains('is-on')") \
@@ -215,7 +216,7 @@ def test_saving_a_story_does_not_move_the_page(prep_live):
         page.fill('textarea[name="situation"]', "A short situation.")
         page.click('[data-testid="pp-sheet-save"]')
         page.wait_for_selector("#pp-story-sheet", state="hidden", timeout=5000)
-        page.wait_for_timeout(500)
+        wait_for_layout(page)  # settled, not slept
         assert abs(page.evaluate("window.scrollY") - before) <= 2
     finally:
         ctx.close()
@@ -236,7 +237,7 @@ def test_an_open_sheet_goes_back_with_its_page(prep_live):
         assert page.evaluate("document.documentElement.classList.contains('k-scroll-held')") \
             is False
         assert page.evaluate("KUI.page.mount()") is True
-        page.wait_for_timeout(700)
+        wait_for_layout(page)  # settled, not slept
         assert page.evaluate("KUI.page._stats()") == first
     finally:
         ctx.close()
@@ -290,7 +291,10 @@ def test_every_modal_on_the_prep_page_opens_on_top(prep_live):
         page.click('[data-testid="pp-have-story"]')  # brings the sheet in
         page.wait_for_selector("#pp-story-sheet.is-open")
         page.keyboard.press("Escape")
-        page.wait_for_timeout(500)
+        # Closed and handed back to its place (a timer after the exit animation), not slept.
+        page.wait_for_function("""() => { const m = document.getElementById('pp-story-sheet');
+            return m && !m.classList.contains('is-open') && m.parentElement.id !== 'k-layer'; }""")
+        wait_for_layout(page)
         _assert_every_modal(page, 1)
     finally:
         ctx.close()

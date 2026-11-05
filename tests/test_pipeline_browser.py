@@ -25,6 +25,7 @@ from tests.browser import (
     launch_sync,
     wait_for_layout,
 )
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_pipeline_screen import _signals
 
 pytestmark = [
@@ -246,6 +247,38 @@ def test_checkboxes_the_bar_and_shift_select(live):
         ctx.close()
 
 
+def test_select_all_picks_every_row_in_its_group_and_only_that_group(live):
+    """#132: Select all in a group picks each row of that group and no row of another group; its
+    press moves like the other k-link actions."""
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        groups = page.evaluate(
+            "() => Array.from(document.querySelectorAll('.pl-group')).map("
+            "g => ({key: g.dataset.group,"
+            " n: g.querySelectorAll('.pl-row[data-id]').length,"
+            " has: !!g.querySelector('.pl-selall')}))")
+        with_all = [g for g in groups if g["has"] and g["n"] > 0]
+        assert with_all and len(groups) > 1
+        key = with_all[0]["key"]
+        page.click(f'[data-selall="{key}"]')
+        page.wait_for_selector("#pl-bulk.is-on")
+        picked = page.evaluate(
+            "() => Array.from(document.querySelectorAll('.pl-row.is-picked')).map("
+            "r => r.closest('.pl-group').dataset.group)")
+        in_group = page.evaluate(
+            "k => document.querySelectorAll("
+            "`.pl-group[data-group=\"${k}\"] .pl-row[data-id]`).length",
+            key)
+        assert len(picked) == in_group and set(picked) == {key}
+        assert page.inner_text("#pl-bcount") == f"{in_group} selected"
+        # The press animates like the other k-link actions: a transform transition is set.
+        assert "transform" in page.eval_on_selector(
+            f'[data-selall="{key}"]', "e => getComputedStyle(e).transitionProperty")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
 def test_a_group_pages_25_at_a_time_and_not_a_fit_opens_in_its_own_box(live):
     _base, _browser, ids, _sig = live
     ctx, page, errors = _page(live, "light", 1680)
@@ -288,11 +321,12 @@ def test_keep_it_anyway_and_hide_company_with_undo(live):
         row.hover()
         row.locator("summary").click()
         row.locator("[data-testid=hide-company]").click()
+        # Test mode keeps toasts until dismissed (D-TEST-8), so the Undo cannot time out under
+        # load. The Keep-it-anyway toast (with its own Undo) is still on screen: press this
+        # action's Undo, picked by its text, after its effect shows.
         undo = page.locator(".k-toast", has_text="hidden. Its roles leave Pipeline.").locator(
             ".k-toast__undo")
-        undo.hover()
-        # The Keep-it-anyway toast (with its own Undo) may still be on screen: wait for this
-        # action's effect, then press the newest Undo, never the first one that matches.
+        undo.wait_for(state="visible")
         page.wait_for_function("id => !document.querySelector('#row-' + id)", arg=str(ids["b"]))
         undo.click()
         page.wait_for_selector(f"#row-{ids['b']}")

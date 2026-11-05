@@ -16,6 +16,7 @@ from kestrel.db import migrate
 from kestrel.db.engine import make_async_engine, reset_engine
 from kestrel.db.models import Opportunity, Org, Pursuit
 from tests.browser import launch_sync
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 

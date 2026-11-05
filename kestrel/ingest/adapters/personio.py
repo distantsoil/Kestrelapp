@@ -48,7 +48,7 @@ _DEFAULT_MAX_RESULTS = 100
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$")
 _TLDS = ("de", "com")
 _LD_JSON = re.compile(
-    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script\b[^>]*>', re.S | re.I
 )
 _INTERVALS = {"yearly": "year", "monthly": "month", "daily": "day", "hourly": "hour"}
 _REMOTE_WORD = re.compile(r"\bremote\b|\bhome\s*office\b", re.IGNORECASE)

@@ -1,6 +1,6 @@
 {# Settings > Preferences reach every page here, once: text size and Reduce motion as
    attributes on <html> (components.css reads them), the avatar in the top bar below. #}{% set prefs = ui_prefs() %}<!doctype html>
-<html lang="en"{% if desktop_window(request) %} data-k-desktop="1"{% endif %} data-scheme="{{ ui_scheme() }}" data-text-size="{{ prefs.text_size }}" data-reduce-motion="{{ '1' if prefs.reduce_motion else '0' }}" data-k-nav="{{ '0' if prefs.classic_nav else '1' }}" x-data="kChrome()">
+<html lang="en"{% if test_mode is defined and test_mode() %} data-test-mode="1"{% endif %}{% if desktop_window(request) %} data-k-desktop="1"{% endif %} data-scheme="{{ ui_scheme() }}" data-text-size="{{ prefs.text_size }}" data-reduce-motion="{{ '1' if prefs.reduce_motion else '0' }}" data-k-nav="{{ '0' if prefs.classic_nav else '1' }}" x-data="kChrome()">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -220,7 +220,7 @@
   {% if group %}<div class="k-sec">{{ group }}</div>{% else %}<div class="k-spacer" aria-hidden="true"></div>{% endif %}
   {% for it in items %}
   {% set on = nav_active(it, path) %}
-  <a href="{{ it.href }}" class="{% if on %}active{% endif %}" title="{{ it.label_for(track) }}"{% if on %} aria-current="page"{% endif %}>{{ kicon(it.icon) }}{% if counts and it.count == 'unrated' %}<span class="ring" id="nav-ring" title="A run is active" hidden></span>{% endif %}{% if counts and it.count %}<span class="n" id="nav-count-{{ it.count }}"{% if it.count == 'unrated' %} title="Roles not yet rated"{% endif %}></span>{% endif %}{{ it.label_for(track) }}</a>
+  <a href="{{ it.href }}" class="{% if on %}active{% endif %}" title="{{ it.label_for(track) }}" aria-label="{{ it.label_for(track) }}"{% if on %} aria-current="page"{% endif %}>{{ kicon(it.icon) }}{% if counts and it.count == 'unrated' %}<span class="ring" id="nav-ring" title="A run is active" hidden></span>{% endif %}{% if counts and it.count %}<span class="n" id="nav-count-{{ it.count }}"{% if it.count == 'unrated' %} title="Roles not yet rated"{% endif %}></span>{% endif %}{{ it.label_for(track) }}</a>
   {% endfor %}
 {% endfor %}
 {% endmacro %}
@@ -245,6 +245,9 @@
   <aside class="side" id="sidebar">
     {% if k_desktop %}{% include "partials/window_controls.html" %}{% endif %}
     <a class="k-brand" href="/" title="Kestrel"><span class="k-brand__mark"><img src="{{ static_url('icon.svg') }}" alt="" width="30" height="30"></span><span class="k-brand__word">Kestrel</span></a>
+    <button type="button" class="k-side-toggle" aria-label="Collapse sidebar" data-testid="side-toggle" title="Collapse sidebar">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
     {{ trackswitch(cur) }}
     <nav class="mainnav" aria-label="Main">
       {{ navlinks(p, track=cur) }}
@@ -275,6 +278,28 @@
             if (!body.querySelector('script')) rail.replaceChildren.apply(rail, Array.prototype.slice.call(body.childNodes));
           }
         } catch (e) {}
+        // Sidebar collapse toggle (#126): remember the state in localStorage. Every storage
+        // access is guarded: blocked storage must never stop the toggle from working.
+        var kwin = document.getElementById('kwin');
+        var btn = document.querySelector('.k-side-toggle');
+        if (kwin && btn) {
+          var collapsed = false;
+          try { collapsed = localStorage.getItem('kestrel-side-collapsed') === '1'; } catch (e) {}
+          function applyState(c) {
+            kwin.classList.toggle('is-side-collapsed', c);
+            btn.setAttribute('aria-label', c ? 'Expand sidebar' : 'Collapse sidebar');
+            btn.setAttribute('aria-expanded', c ? 'false' : 'true');
+            btn.title = c ? 'Expand sidebar' : 'Collapse sidebar';
+          }
+          applyState(collapsed);
+          btn.addEventListener('click', function () {
+            collapsed = !collapsed;
+            // The width transition is switched on only for a press, never for the restore above.
+            kwin.classList.add('is-side-animating');
+            try { localStorage.setItem('kestrel-side-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+            applyState(collapsed);
+          });
+        }
       })();
     </script>
   </aside>
@@ -397,7 +422,7 @@
 <script>
   function kChrome() {
     return {
-      theme: localStorage.getItem('kestrel-theme') || 'auto',
+      theme: (function () { try { return localStorage.getItem('kestrel-theme') || 'auto'; } catch (e) { return 'auto'; } })(),
       scheme: (function () {
         var s = null;
         try { s = localStorage.getItem('kestrel-scheme'); } catch (e) {}

@@ -41,7 +41,7 @@ _RATE = 1.0  # requests/second; one detail request per posting
 _BOARD_ID = re.compile(r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 _PAGE_DATA = "window.pageData = "
 _LD_JSON = re.compile(
-    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script\b[^>]*>', re.S | re.I
 )
 
 

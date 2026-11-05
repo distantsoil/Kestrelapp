@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Opportunity, ScrapeRun, Setting, Source, Task
+from kestrel.db.models import Opportunity, Run, ScrapeRun, Setting, Source, Task
 from kestrel.errors import failure_record
 from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
@@ -42,7 +42,7 @@ from kestrel.pipeline.tier0 import run_tier0_batch
 from kestrel.pipeline.tier1 import handle_t1
 from kestrel.pipeline.tier2 import handle_t2
 from kestrel.queue.queue import TaskQueue, claimable, in_lane
-from kestrel.services.run_model import T2_ONLY_KEY
+from kestrel.services.run_model import SWITCHED_TO_COMPUTER_NOTE, T2_ONLY_KEY
 
 log = structlog.get_logger()
 
@@ -162,6 +162,7 @@ class Worker:
         self._client = client
         self._settings = settings
         self._online_approval: dict | None = None
+        self._mid_run_switch_note: str | None = None
         self._queue = TaskQueue(sessionmaker)
         self._stop = stop or asyncio.Event()
         self._progress = progress or (lambda _m: None)
@@ -438,6 +439,8 @@ class Worker:
             kwargs: dict = {}
             if task_type == "t2":
                 kwargs["changed"] = bool(payload.get("changed"))
+                if payload.get("requested") or payload.get("rescore"):
+                    kwargs["requested"] = True  # the operator asked: an empty end is reported
                 if payload.get("rescore"):
                     kwargs["rescore"] = True
                     kwargs["requested_at"] = payload.get("requested_at")
@@ -463,6 +466,9 @@ class Worker:
                         # re-check it when it runs, so a pick that can no longer run falls back
                         # there too (hard rule 4).
                         kwargs["model_override"] = payload.get("model_override")
+                    if payload.get("score_stub"):
+                        # Score again on a stub: Tier 1 passes the flag to Tier 2 (#128).
+                        kwargs["score_stub"] = True
                 if payload.get(T2_ONLY_KEY):
                     # A run's one-run model (D-UI-72): Tier 1 stays on the configured model;
                     # only the Tier 2 task Tier 1 enqueues carries the pick.
@@ -703,6 +709,8 @@ class Worker:
                     settings = self._settings
                 if _tier_external(settings, tier):
                     log.warning("hosted_mode_off_mid_run", type=task_type, tier=tier)
+                    if self._mid_run_switch_note is None:
+                        self._mid_run_switch_note = SWITCHED_TO_COMPUTER_NOTE
                     settings = settings.model_copy(deep=True)
                     settings.llm.hosted_mode = live
         if settings is self._settings:
@@ -880,6 +888,7 @@ class Worker:
         resolves the tier set for this whole run and is recorded on the Run row; an explicit
         "hosted" that cannot run raises config.HostedModeError before any row is written."""
         self.apply_settings(await self.resolve_settings(mode))
+        self._mid_run_switch_note = None
         stats = RunStats()
         run_id = await runlog.open_run(
             self._sm, name="pipeline", track=track, mode=self._settings.llm.mode
@@ -890,8 +899,75 @@ class Worker:
             await runlog.finish_run(
                 self._sm, run_id, status="failed",
                 counts={"error": f"{type(exc).__name__}: {exc}"[:500]},
+                notes=self._mid_run_switch_note,
             )
             raise
+
+    async def _notify_run_finished(self, stats: RunStats, run_id: int | None = None) -> None:
+        """Raise ONE "Run finished" notification (its own Settings switch, `run_finished`) that
+        carries the failure count, then, when this run found new roles worth reviewing, ONE
+        consolidated "worth reviewing" alert (the New strong matches switch, `high_score`). Never
+        one per role. A failure here is logged with context and swallowed: the run is done."""
+        from kestrel.analytics.run_summary import run_summary
+        from kestrel.services.notifications import NotificationService
+
+        try:
+            notifier = NotificationService(self._sm)
+            rated = stats.tier1.completed + stats.tier2.completed
+            async with self._sm() as s:
+                summary = await run_summary(s, None, paused=False)
+            # Roles, not attempts: a role whose scoring task gave up after three tries is one
+            # role (`stats.*.errors` counts every try). Quarantined roles count once, too.
+            # Tasks carry no run id, so "this run" is the run's own start. With no start that
+            # resolves, count nothing rather than every dead task ever (never `>= ""`).
+            async with self._sm() as s:
+                run_row = await s.get(Run, run_id) if run_id is not None else None
+                window_start = (run_row.started_at if run_row else None) or summary.get(
+                    "started_at"
+                )
+                dead = 0
+                if window_start:
+                    dead = int((await s.execute(
+                        select(func.count()).select_from(Task).where(
+                            Task.type.in_(("t1", "t2")), Task.status == "dead",
+                            Task.updated_at >= window_start,
+                        )
+                    )).scalar_one())
+            failed = max(int(summary.get("failed", 0) or 0), dead)
+            worth_count = int(summary.get("worth_new", 0) or 0)
+
+            rated_word = "role" if rated == 1 else "roles"
+            if failed > 0:
+                fail_word = "role" if failed == 1 else "roles"
+                need_word = "needs" if failed == 1 else "need"
+                await notifier.notify(
+                    "run_finished",
+                    f"Run finished: {failed} {fail_word} {need_word} another try",
+                    body=f"{rated} rated · {failed} {fail_word} failed. Review and try again.",
+                    severity="warning",
+                )
+            else:
+                await notifier.notify(
+                    "run_finished",
+                    "Run finished",
+                    body=f"Your search run is complete. {rated} {rated_word} rated.",
+                    severity="info",
+                )
+            if worth_count > 0:
+                role_word = "role" if worth_count == 1 else "roles"
+                await notifier.notify(
+                    "high_score",
+                    f"{worth_count} new {role_word} worth reviewing",
+                    body=f"Your search found {worth_count} new {role_word} rated Your call or "
+                    "better.",
+                    severity="info",
+                )
+        except Exception as exc:  # noqa: BLE001
+            # The one sanctioned broad catch: the run is already marked finished, and a notifier,
+            # a toast backend or a summary query failing for ANY reason must not turn that into a
+            # failed run. It is logged with context, never silently dropped.
+            log.warning("run_finished_notification_failed", run_id=run_id,
+                        error=type(exc).__name__, detail=str(exc)[:200], exc_info=True)
 
     async def _run_tiers(
         self, stats: RunStats, run_id: int, *, track: str | None, limit: int | None
@@ -931,5 +1007,10 @@ class Worker:
             self._sm, run_id,
             status="stopping" if self._stop.is_set() else "done",
             counts=runlog.stats_counts(stats),
+            notes=self._mid_run_switch_note,
         )
+        # Notify the operator that the run is done (#109, #110, #111, #125 to #127). A stopped
+        # run says nothing. Building the notice never fails a finished run.
+        if not self._stop.is_set():
+            await self._notify_run_finished(stats, run_id)
         return stats

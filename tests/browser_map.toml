@@ -1,0 +1,455 @@
+# Which browser test files cover which UI files (D-TEST-7 A). scripts/check.py runs the browser
+# files selected here for every UI file the branch changed. A UI file that matches no rule fails
+# the gate, and tests/test_browser_map.py fails when a file in the repo matches nothing, so this
+# map stays complete.
+#
+# Patterns are fnmatch globs over repo-relative posix paths; "*" also crosses "/". A file takes
+# the union of every rule it matches. Browser file names are given without the leading "tests/".
+# The name "@shell" expands to the [shell] list below.
+
+[shell]
+# Tests of the frame every page sits in: window controls and entrance, responsive rail and bottom
+# bar, in-place navigation, the modal layer, the toast, the design system cascade, the small
+# surfaces, and the busy bar. A change to shared plumbing runs all of them.
+files = [
+  "test_shell_frame_browser.py",
+  "test_shell_responsive_browser.py",
+  "test_nav_browser.py",
+  "test_modal_layer_browser.py",
+  "test_toast_undo_browser.py",
+  "test_ui_browser.py",
+  "test_surfaces_browser.py",
+  "test_busy_idle_browser.py",
+]
+
+[soak]
+# Browser files that run only in the soak tier (docs/handoff/SOAK.md), never in the gate: they are
+# skipped unless KESTREL_LAYOUT_CRAWL=1 is set, so selecting them would give "no test passed".
+# Listing a file here is the only way to keep it out of the rules above without failing
+# tests/test_browser_map.py; scripts/diff_gate.py never selects these.
+files = [
+  "test_layout_crawl_browser.py",
+]
+
+# ---- shared plumbing -------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/base.html",
+  "kestrel/web/templates/stub.html",
+  "kestrel/web/templates/ui/*",
+  "kestrel/web/static/css/components.css",
+  "kestrel/web/static/css/kestrel.css",
+  "kestrel/web/static/css/shell.css",
+  "kestrel/web/static/css/tokens.css",
+  "kestrel/web/static/js/kestrel-ui.js",
+  "kestrel/web/static/js/htmx.min.js",
+  "kestrel/web/static/js/alpine.min.js",
+  "kestrel/web/static/js/palette.js",
+  "kestrel/web/static/js/scenes/*",
+  "kestrel/web/static/fonts/*",
+  "kestrel/web/static/favicon.ico",
+  "kestrel/web/static/icon*",
+  "kestrel/web/static/manifest.webmanifest",
+  "kestrel/web/static/splash.html",
+  "kestrel/web/routes*.py",
+  "kestrel/web/error_page.py",
+  "kestrel/web/announcements.py",
+  "kestrel/web/errors.py",
+  "kestrel/web/queries.py",
+  "kestrel/web/fit.py",
+  "kestrel/web/flash.py",
+  "kestrel/web/words.py",
+  "kestrel/web/redact.py",
+  "kestrel/web/desktop_bridge.py",
+  "kestrel/web/uploads.py",
+  "kestrel/web/notifications_view.py",
+  "kestrel/web/pages/__init__.py",
+  "kestrel/web/pages/chrome.py",
+  "kestrel/web/pages/announcements.py",
+  "kestrel/web/templates/partials/toast.html",
+  "kestrel/web/templates/partials/topbar_avatar.html",
+  "kestrel/web/templates/partials/window_*.html",
+  "kestrel/web/templates/partials/status_rail.html",
+  "kestrel/web/templates/partials/quit_confirm.html",
+  "kestrel/web/templates/partials/_remove_confirm.html",
+  "kestrel/web/templates/partials/notifications_list.html",
+  "kestrel/web/templates/partials/announcement.html",
+  "kestrel/web/templates/partials/row_expand.html",
+  "kestrel/web/templates/partials/system_panel.html",
+  "kestrel/web/templates/partials/style_marks.html",
+  "kestrel/web/templates/partials/linux_webkit.html",
+  "kestrel/desktop/*",
+]
+files = ["@shell"]
+
+# ---- small surfaces --------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/error.html",
+  "kestrel/web/static/js/error.js",
+  "kestrel/web/templates/partials/update_*.html",
+  "kestrel/web/templates/partials/run_now_dialog.html",
+  "kestrel/web/templates/partials/score_again_dialog.html",
+  "kestrel/web/templates/run_now_page.html",
+  "kestrel/web/pages/updates.py",
+]
+files = ["test_surfaces_browser.py", "test_consent_dialogs_browser.py"]
+
+# The shared ask-first hint (D-UI-240): the partial that renders it and the script that shows it.
+[[rule]]
+patterns = [
+  "kestrel/web/templates/partials/online_ask.html",
+  "kestrel/web/static/js/kestrel-ui.js",
+]
+files = ["test_consent_dialogs_browser.py", "test_consent_hint_browser.py"]
+
+# ---- Today -----------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/dashboard.html",
+  "kestrel/web/static/js/today.js",
+  "kestrel/web/static/css/pages/today.css",
+  "kestrel/web/templates/partials/td_*.html",
+  "kestrel/web/templates/partials/today_*.html",
+  "kestrel/web/pages/today.py",
+  "kestrel/web/today_view.py",
+  "kestrel/web/pages/dashboard.py",
+]
+files = ["test_today_browser.py"]
+
+# ---- Analytics -------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/analytics*.html",
+  "kestrel/web/static/js/analytics.js",
+  "kestrel/web/static/css/pages/analytics.css",
+  "kestrel/web/templates/partials/analytics_*.html",
+  "kestrel/web/pages/analytics.py",
+]
+files = ["test_analytics_browser.py"]
+
+# ---- Opportunities list and pipeline -----------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/opportunities.html",
+  "kestrel/web/static/js/pipeline.js",
+  "kestrel/web/static/css/pages/pipeline.css",
+  "kestrel/web/templates/partials/pl_*.html",
+  "kestrel/web/templates/partials/opp_rows.html",
+  "kestrel/web/templates/partials/filter_preview.html",
+  "kestrel/web/templates/partials/scan_button.html",
+  "kestrel/web/pages/pipeline.py",
+  "kestrel/web/pipeline_view.py",
+]
+files = ["test_pipeline_browser.py", "test_not_scored_browser.py"]
+
+# ---- Role page (one opportunity) ---------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/opportunity_detail.html",
+  "kestrel/web/static/js/role.js",
+  "kestrel/web/static/css/pages/role.css",
+  "kestrel/web/templates/partials/role_*.html",
+  "kestrel/web/templates/partials/opp_actions.html",
+  "kestrel/web/templates/partials/opp_decision.html",
+  "kestrel/web/templates/partials/opp_questions.html",
+  "kestrel/web/templates/partials/override_*.html",
+  "kestrel/web/templates/partials/score_*.html",
+  "kestrel/web/templates/partials/employer_banner.html",
+  "kestrel/web/templates/partials/hosted_disclosure.html",
+  "kestrel/web/templates/partials/online_ask.html",
+  "kestrel/web/pages/role.py",
+  "kestrel/web/pages/escalate.py",
+  "kestrel/web/pages/opportunity_actions.py",
+  "kestrel/web/pages/rescore.py",
+  "kestrel/web/role_view.py",
+  "kestrel/web/rescoring.py",
+  "kestrel/web/score_again_ask.py",
+]
+files = [
+  "test_role_browser.py", "test_cover_letter_browser.py", "test_rescoring_browser.py",
+  "test_not_scored_browser.py", "test_research_jobs_browser.py",
+]
+
+[[rule]]
+patterns = [
+  "kestrel/web/templates/score_again_page.html",
+  "kestrel/web/templates/partials/score_again*.html",
+]
+files = ["test_rescoring_browser.py", "test_consent_dialogs_browser.py"]
+
+# ---- Pursuits (applications) -------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/pursuits.html",
+  "kestrel/web/static/js/applications.js",
+  "kestrel/web/static/css/pages/applications.css",
+  "kestrel/web/templates/partials/pursuit_*.html",
+  "kestrel/web/templates/partials/follow_up.html",
+  "kestrel/web/pages/pursuits.py",
+]
+files = [
+  "test_applications_browser.py", "test_pursuit_filters_browser.py",
+  "test_follow_up_browser.py", "test_consent_hint_browser.py",
+]
+
+[[rule]]
+patterns = [
+  "kestrel/web/templates/partials/applied_*.html",
+  "kestrel/web/pages/applied.py",
+]
+files = ["test_applied_import_browser.py", "test_applied_panel_browser.py"]
+
+# ---- Company ---------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/orgs.html",
+  "kestrel/web/static/js/company.js",
+  "kestrel/web/static/css/pages/company.css",
+  "kestrel/web/templates/partials/company_*.html",
+  "kestrel/web/templates/partials/org_detail.html",
+  "kestrel/web/pages/orgs.py",
+  "kestrel/web/company_view.py",
+]
+files = ["test_company_browser.py"]
+
+# ---- Interview prep and stories ----------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/prep.html",
+  "kestrel/web/static/js/prep.js",
+  "kestrel/web/static/css/pages/prep.css",
+  "kestrel/web/templates/partials/pp_*.html",
+  "kestrel/web/templates/partials/profile_stories*.html",
+  "kestrel/web/pages/prep.py",
+  "kestrel/web/pages/stories.py",
+  "kestrel/web/pages/mock.py",
+  "kestrel/web/prep_view.py",
+]
+files = ["test_prep_browser.py", "test_story_marks_browser.py", "test_consent_hint_browser.py"]
+
+# ---- Offers ----------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/offers.html",
+  "kestrel/web/static/js/offers.js",
+  "kestrel/web/static/css/pages/offers.css",
+  "kestrel/web/templates/partials/offer*.html",
+  "kestrel/web/pages/offers.py",
+  "kestrel/web/offers_view.py",
+]
+files = ["test_offers_browser.py"]
+
+# ---- Documents, import, tailoring ----------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/partials/doc_*.html",
+  "kestrel/web/templates/partials/documents_body.html",
+  "kestrel/web/templates/partials/import_*.html",
+  "kestrel/web/templates/partials/variant_suggestions.html",
+  "kestrel/web/pages/documents.py",
+]
+files = ["test_import_progress_browser.py", "test_modal_layer_browser.py"]
+
+[[rule]]
+patterns = [
+  "kestrel/web/templates/renders.html",
+  "kestrel/web/static/js/tailor.js",
+  "kestrel/web/static/css/pages/tailor.css",
+  "kestrel/web/templates/partials/tailor_*.html",
+  "kestrel/web/templates/partials/render_review.html",
+  "kestrel/web/pages/renders.py",
+  "kestrel/web/tailor_view.py",
+]
+files = ["test_tailor_browser.py"]
+
+# The documents engine builds the preview and PDF HTML (D-TEST-7). The letter template and the
+# letter modules reach the cover letter preview and the role page that hosts it; the resume
+# template, its renderer, styles and sections reach the tailor and render review pages.
+[[rule]]
+patterns = [
+  "kestrel/docs/templates/letter.html",
+  "kestrel/docs/letters.py",
+  "kestrel/docs/letter_task.py",
+]
+files = ["test_cover_letter_browser.py", "test_role_browser.py", "test_rescoring_browser.py"]
+
+[[rule]]
+patterns = [
+  "kestrel/docs/templates/document.html",
+  "kestrel/docs/render.py",
+  "kestrel/docs/styles.py",
+  "kestrel/docs/sections.py",
+]
+files = ["test_tailor_browser.py", "test_import_progress_browser.py"]
+
+[[rule]]
+patterns = ["kestrel/docs/service.py"]
+files = ["test_tailor_browser.py", "test_cover_letter_browser.py"]
+
+# kestrel/web modules that build no page context: the app factory, auth, the database retry,
+# dependencies, the server and the static help and wording tables. They still shape every page,
+# so they map to the shell set explicitly.
+[[rule]]
+patterns = [
+  "kestrel/web/__init__.py",
+  "kestrel/web/app.py",
+  "kestrel/web/auth.py",
+  "kestrel/web/db_retry.py",
+  "kestrel/web/deps.py",
+  "kestrel/web/serve.py",
+  "kestrel/web/help_articles.py",
+  "kestrel/web/retry_words.py",
+  "kestrel/web/settings_io.py",
+  "kestrel/web/score_again_ask.py",
+]
+files = ["@shell"]
+
+# ---- Profile and settings ----------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/profile.html",
+  "kestrel/web/static/js/profile.js",
+  "kestrel/web/static/css/pages/profile.css",
+  "kestrel/web/templates/partials/profile_*.html",
+  "kestrel/web/templates/partials/model_picker.html",
+  "kestrel/web/pages/profile.py",
+]
+files = ["test_profile_browser.py", "test_review_backend_browser.py", "test_consent_hint_browser.py"]
+
+[[rule]]
+patterns = [
+  "kestrel/web/templates/settings.html",
+  "kestrel/web/templates/backup.html",
+  "kestrel/web/static/js/settings.js",
+  "kestrel/web/static/css/pages/settings.css",
+  "kestrel/web/templates/partials/st_*.html",
+  "kestrel/web/templates/partials/settings_*.html",
+  "kestrel/web/templates/partials/diagnostics_saved.html",
+  "kestrel/web/templates/partials/keep_awake.html",
+  "kestrel/web/templates/partials/lan_bind.html",
+  "kestrel/web/templates/partials/learning_ledger.html",
+  "kestrel/web/templates/partials/hosted_*.html",
+  "kestrel/web/pages/settings*.py",
+  "kestrel/web/pages/backup.py",
+  "kestrel/web/settings_view.py",
+  "kestrel/web/settings_io.py",
+]
+files = [
+  "test_settings_browser.py", "test_profile_browser.py", "test_alert_sound_browser.py",
+  "test_applied_import_browser.py", "test_region_dates_browser.py",
+  "test_other_service_browser.py",
+]
+
+# ---- Models and bench --------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/models.html",
+  "kestrel/web/templates/bench.html",
+  "kestrel/web/static/js/models.js",
+  "kestrel/web/static/js/model_combo.js",
+  "kestrel/web/static/js/bench.js",
+  "kestrel/web/static/css/models.css",
+  "kestrel/web/templates/partials/models_*.html",
+  "kestrel/web/templates/partials/model_overrides.html",
+  "kestrel/web/templates/partials/assess_model.html",
+  "kestrel/web/templates/partials/bench_*.html",
+  "kestrel/web/templates/partials/hosted_*.html",
+  "kestrel/web/pages/models*.py",
+  "kestrel/web/pages/bench.py",
+  "kestrel/web/models_view.py",
+  "kestrel/web/bench_view.py",
+]
+files = [
+  "test_models_browser.py", "test_other_service_browser.py", "test_consent_dialogs_browser.py",
+]
+
+# ---- Calibrate ---------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/calibrate.html",
+  "kestrel/web/static/js/calibrate.js",
+  "kestrel/web/static/css/calibrate.css",
+  "kestrel/web/templates/partials/calibrate_*.html",
+  "kestrel/web/calibrate_view.py",
+]
+files = ["test_calibrate_browser.py"]
+
+# ---- Runs ------------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/runs.html",
+  "kestrel/web/templates/run_detail.html",
+  "kestrel/web/static/js/runs.js",
+  "kestrel/web/static/css/pages/runs.css",
+  "kestrel/web/templates/partials/runs_*.html",
+  "kestrel/web/templates/partials/run_*.html",
+  "kestrel/web/pages/runs_*.py",
+]
+files = ["test_runs_browser.py"]
+
+# ---- Sources -----------------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/sources.html",
+  "kestrel/web/static/js/sources.js",
+  "kestrel/web/static/css/sources.css",
+  "kestrel/web/templates/partials/source*.html",
+  "kestrel/web/pages/sources*.py",
+  "kestrel/web/source_view.py",
+  "kestrel/web/retry_words.py",
+]
+files = ["test_sources_browser.py", "test_consent_dialogs_browser.py"]
+
+# ---- Needs a try (quarantine and retry) ----------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/quarantine.html",
+  "kestrel/web/static/js/retry.js",
+  "kestrel/web/static/css/retry.css",
+  "kestrel/web/templates/partials/retry_*.html",
+  "kestrel/web/pages/needs_try.py",
+  "kestrel/web/retry_words.py",
+]
+files = ["test_needs_try_browser.py"]
+
+# ---- Onboarding and setup ----------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/onboarding.html",
+  "kestrel/web/static/js/onboarding.js",
+  "kestrel/web/static/css/pages/onboarding.css",
+  "kestrel/web/templates/partials/onboarding_*.html",
+  "kestrel/web/templates/partials/setup_*.html",
+  "kestrel/web/pages/onboarding.py",
+  "kestrel/web/pages/setup.py",
+]
+files = ["test_onboarding_browser.py", "test_busy_idle_browser.py"]
+
+# ---- Help and About ----------------------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/help.html",
+  "kestrel/web/templates/about.html",
+  "kestrel/web/static/js/help.js",
+  "kestrel/web/static/js/about.js",
+  "kestrel/web/static/css/pages/help.css",
+  "kestrel/web/static/css/pages/about.css",
+  "kestrel/web/templates/partials/help_*.html",
+  "kestrel/web/templates/partials/about_*.html",
+  "kestrel/web/pages/help.py",
+  "kestrel/web/pages/about.py",
+  "kestrel/web/help_articles.py",
+]
+files = [
+  "test_help_about_browser.py", "test_applied_panel_browser.py",
+  "test_deferred_schemes_browser.py", "test_deferred_high_contrast_browser.py",
+]
+
+# ---- Shared page style sheets ------------------------------------------------------------------
+[[rule]]
+patterns = ["kestrel/web/static/css/pages/surfaces.css"]
+files = ["test_surfaces_browser.py", "test_deferred_schemes_browser.py"]
+
+# tests/test_layout_crawl_browser.py is a soak-tier file (D-TEST-8): it runs only with
+# KESTREL_LAYOUT_CRAWL=1 (nightly or on demand) and is deliberately not mapped into the gate.

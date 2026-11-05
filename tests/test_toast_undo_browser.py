@@ -8,7 +8,8 @@ import os
 
 import pytest
 
-from tests.browser import launch_sync
+from tests.browser import launch_sync, wait_for_app_ready
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("KESTREL_LIVE_BROWSER") != "1",
@@ -127,3 +128,21 @@ def test_a_503_with_its_own_toast_shows_exactly_one_toast(live):
 def test_a_failure_with_no_toast_of_its_own_still_gets_the_generic_one(live):
     texts = _press_failing_button(live, lambda route: route.fulfill(status=500, body="boom"))
     assert len(texts) == 1 and texts[0].startswith("That did not go through")
+
+
+def test_a_toast_auto_dismisses_when_test_mode_is_off_and_stays_in_test_mode(live):
+    """D-TEST-8: the server marks <html data-test-mode> under KESTREL_TEST_MODE=1 and toasts then
+    stay until dismissed. With the mark removed (a real run) a short timeout still dismisses."""
+    base, browser = live
+    page = browser.new_page()
+    page.goto(f"{base}/about")
+    wait_for_app_ready(page)
+    assert page.evaluate("document.documentElement.dataset.testMode") == "1"
+    page.evaluate("KUI.toast('Stays.', {timeout: 150})")
+    page.wait_for_selector(".k-toast")
+    page.wait_for_timeout(600)  # past the 150 ms timer: a negative check has no signal to wait on
+    assert page.locator(".k-toast").count() == 1
+    page.evaluate("delete document.documentElement.dataset.testMode")
+    page.evaluate("KUI.toast('Goes.', {timeout: 150})")
+    page.locator(".k-toast", has_text="Goes.").wait_for(state="detached")
+    assert page.locator(".k-toast", has_text="Stays.").count() == 1

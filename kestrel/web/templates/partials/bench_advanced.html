@@ -1,4 +1,5 @@
 {% from "partials/model_picker.html" import model_select with context %}
+{% from "partials/online_ask.html" import consent_check %}
 {# Advanced (D-UI-105, D-UI-147), inside the Model check card as the mockup shows: choose a step and
    a model yourself, the instructions to the AI, and the older one-step and Promote forms. Online
    wording comes from tier_sends (ck_sends) so it matches Models and the apply box. #}
@@ -26,11 +27,12 @@
         </select></div>
         <span class="k-muted">Kestrel updates the instructions it gives the AI from time to time. Comparing with the version before shows whether an update helped or hurt for your roles.{% if not has_previous_instructions %} Comparing with the version before is not available yet, so every check uses the current instructions.{% endif %}</span></div>
       {% if ck_provider %}
-      <label class="mo-lbl" data-testid="ck-adv-confirm-label"><input type="checkbox" name="confirm" value="{{ ck_provider_backend }}" data-testid="ck-adv-confirm"> If I pick an online model: I understand this sends to {{ ck_provider }}, for Quick screen {{ ck_sends.tier1 }}; for Rating {{ ck_sends.tier2 }}; for Deeper read {{ ck_sends.tier3 }}. It uses my credit.</label>
+      {% set adv_text %}If I pick an online model: I understand this sends to {{ ck_provider }}, for Quick screen {{ ck_sends.tier1 }}; for Rating {{ ck_sends.tier2 }}; for Deeper read {{ ck_sends.tier3 }}. It uses my credit.{% endset %}
+      <span data-testid="ck-adv-confirm-label">{{ consent_check('ck-adv-confirm', adv_text, name='confirm', value=ck_provider_backend, extra_cls='mo-lbl', when_field='backend') }}</span>
       {% if ck_employer == 'hidden' %}<p class="k-muted">Confidential mode is on: your current employer is replaced with a code before anything is sent.</p>
       {% elif ck_employer == 'held' %}<p class="k-muted">Confidential mode is on and no current employer is chosen under Settings > Privacy and access, so an online model is skipped and nothing is sent.</p>{% endif %}
       {% endif %}
-      <button class="k-btn k-btn--primary" type="submit" data-testid="bench-run-btn">Check this one</button>
+      <button class="k-btn k-btn--primary" type="submit"{% if ck_provider %} data-consent-send{% endif %} data-testid="bench-run-btn">Check this one</button>
     </form>
     <form hx-post="/bench/promote" hx-target="#promote-result" hx-swap="innerHTML" class="mo-card">
       <h4>Use a model for a step</h4>

@@ -261,3 +261,24 @@ async def test_roles_go_through_the_area_and_title_drop_before_they_are_stored(s
     async with sm() as s:
         titles = [o.title for o in (await s.execute(select(Opportunity))).scalars().all()]
     assert titles == ["Operations Analyst"]
+
+
+async def test_a_job_page_whose_ld_block_closes_with_a_spaced_tag_is_still_read():
+    """A page may close its JSON-LD block as `</script >`; the posting body must still be read."""
+    from kestrel.ingest.adapters import paylocity, personio
+
+    page = (
+        '<html><script type="application/ld+json">'
+        '{"@type": "JobPosting", "title": "Invented Role", "description": "<p>Invented body</p>"}'
+        "</script >\n</html>"
+    )
+
+    class _Client:
+        async def get_text(self, url, **_kwargs):
+            return page
+
+    ld = await personio._read_page("https://invented.example", "1", _Client())
+    assert ld == {
+        "@type": "JobPosting", "title": "Invented Role", "description": "<p>Invented body</p>",
+    }
+    assert len(paylocity._LD_JSON.findall(page)) == 1

@@ -17,6 +17,7 @@ wording; the page never says it for an online tier."""
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -112,14 +113,36 @@ async def mode_ctx(*, message: str = "", ok: bool = True, key_result: dict | Non
     }
 
 
-def _mode_card(request: Request, ctx: dict, headers: dict | None = None) -> HTMLResponse:
-    return templates().TemplateResponse(request, "partials/st_mode.html", ctx,
-                                        headers=headers or {})
+SETUP_CHANGED = "kestrel-setup-changed"
+
+
+def _with_setup_event(headers: dict | None) -> dict:
+    """`headers` with the setup-changed event added to its HX-Trigger, next to any toast. The
+    checklist listens for it and fetches itself again, so a change to how Kestrel runs shows in
+    the steps without leaving Settings (D-UI-241)."""
+    out = dict(headers or {})
+    try:
+        events = json.loads(out.get("HX-Trigger") or "{}")
+    except ValueError:
+        events = {}
+    if not isinstance(events, dict):
+        events = {}
+    events[SETUP_CHANGED] = True
+    out["HX-Trigger"] = json.dumps(events, ensure_ascii=True)
+    return out
+
+
+def _mode_card(request: Request, ctx: dict, headers: dict | None = None, *,
+               setup: bool = False) -> HTMLResponse:
+    return templates().TemplateResponse(
+        request, "partials/st_mode.html", ctx,
+        headers=_with_setup_event(headers) if setup else (headers or {}))
 
 
 @router.get("/settings/computer/mode", response_class=HTMLResponse)
 async def mode_card(request: Request):
-    return _mode_card(request, await mode_ctx())
+    # Also what the card fetches again after Undo, which changes the steps back too.
+    return _mode_card(request, await mode_ctx(), setup=True)
 
 
 _SAID = {
@@ -157,6 +180,7 @@ async def mode_save(request: Request):
         request, await mode_ctx(),
         trigger(_SAID[choice], undo=undo,
                 refresh={"refresh": "/settings/computer/mode", "target": "#st-mode"}),
+        setup=True,
     )
 
 
@@ -207,7 +231,7 @@ async def key_save(request: Request):
         # Keep the address draft after a test or refusal, but never echo a pasted key.
         ctx["other_url"] = str(form.get("base_url") or "")
     headers = trigger(result["text"]) if op in ("save", "remove") and result["ok"] else None
-    return _mode_card(request, ctx, headers)
+    return _mode_card(request, ctx, headers, setup=bool(headers))
 
 
 @router.post("/settings/computer/free", response_class=HTMLResponse)

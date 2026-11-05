@@ -79,8 +79,174 @@ def _launch_kwargs() -> list[dict[str, Any]]:
     return attempts
 
 
+TIMEOUT_ENV = "KESTREL_BROWSER_TIMEOUT_MS"
+DEFAULT_TIMEOUT_MS = 60000
+
+
+def default_timeout_ms() -> int:
+    """One timeout for every page and context a helper creates (D-TEST-8). The owner's slower
+    Windows PC, or a machine under load, needs more than Playwright's 30 s; raise it with
+    KESTREL_BROWSER_TIMEOUT_MS rather than editing a test."""
+    try:
+        return max(1000, int(os.environ.get(TIMEOUT_ENV, DEFAULT_TIMEOUT_MS)))
+    except ValueError:
+        return DEFAULT_TIMEOUT_MS
+
+
+class ArtifactTracker:
+    """Per-test record of the contexts a browser made, so a failing test leaves a screenshot of
+    each page and a Playwright trace in a folder under the pytest tmp dir (path printed).
+    Created by the browser_artifacts fixture (tests/browser_plugin.py)."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        self.failed = False
+        self.contexts: list[Any] = []
+        self.saved = False
+        self._done: set[int] = set()
+
+    def track(self, ctx: Any) -> None:
+        self.contexts.append(ctx)
+        try:
+            ctx.tracing.start(screenshots=False, snapshots=False)
+        except Exception:  # noqa: BLE001, S110 (tracing is a diagnostic aid, never a test failure)
+            pass
+
+    def capture(self, ctx: Any, *, keep: bool) -> None:
+        """Stop tracing; with keep, write a screenshot per page and the trace to the folder."""
+        if id(ctx) in self._done:
+            return
+        self._done.add(id(ctx))
+        n = self.contexts.index(ctx) if ctx in self.contexts else len(self._done)
+        try:
+            if not keep:
+                ctx.tracing.stop()
+                return
+            self.folder.mkdir(parents=True, exist_ok=True)
+            for m, page in enumerate(ctx.pages):
+                try:
+                    page.screenshot(path=str(self.folder / f"ctx{n}-page{m}.png"), timeout=5000)
+                except Exception:  # noqa: BLE001, S110 (a crashed or closed page has no picture)
+                    pass
+            ctx.tracing.stop(path=str(self.folder / f"ctx{n}-trace.zip"))
+            if not self.saved:
+                print(f"\nBrowser failure artifacts (screenshots, traces): {self.folder}")
+            self.saved = True
+        except Exception:  # noqa: BLE001, S110 (a stopped Playwright cannot be captured)
+            pass
+
+    def capture_open(self) -> None:
+        for ctx in list(self.contexts):
+            self.capture(ctx, keep=True)
+
+
+_TRACKER: ArtifactTracker | None = None
+
+
+def set_tracker(tracker: ArtifactTracker | None) -> None:
+    global _TRACKER  # noqa: PLW0603
+    _TRACKER = tracker
+
+
+def _prepare_context(ctx: Any) -> Any:
+    """The default timeouts and failure capture for one context."""
+    import sys
+
+    ms = default_timeout_ms()
+    ctx.set_default_timeout(ms)
+    ctx.set_default_navigation_timeout(ms)
+    tracker = _TRACKER
+    if tracker is None:
+        return ctx
+    tracker.track(ctx)
+    original_close = ctx.close
+
+    def close(*args: Any, **kwargs: Any) -> Any:
+        # An exception in flight (the finally: ctx.close() of a failing test) or a failure
+        # already reported by the hook means the evidence is worth keeping.
+        tracker.capture(ctx, keep=tracker.failed or sys.exc_info()[0] is not None)
+        return original_close(*args, **kwargs)
+
+    ctx.close = close
+    return ctx
+
+
+def _wrap_browser(browser: Any) -> Any:
+    original_new_context = browser.new_context
+
+    def new_context(*args: Any, **kwargs: Any) -> Any:
+        return _prepare_context(original_new_context(*args, **kwargs))
+
+    def new_page(*args: Any, **kwargs: Any) -> Any:
+        return new_context(*args, **kwargs).new_page()
+
+    browser.new_context = new_context
+    browser.new_page = new_page
+    return browser
+
+
+def _capture_before_stop(playwright: Any) -> None:
+    """A test that holds `with sync_playwright()` inside its body leaves that block, and so stops
+    Playwright, before pytest reports the failure: capture while the exception is in flight."""
+    import sys
+
+    impl = getattr(playwright, "_impl_obj", None)
+    connection = getattr(impl, "_connection", None)  # what sync_playwright().__exit__ stops
+    original_stop = getattr(connection, "stop_sync", None)
+    if original_stop is None:
+        return
+
+    def stop(*args: Any, **kwargs: Any) -> Any:
+        tracker = _TRACKER
+        if tracker is not None and sys.exc_info()[0] is not None:
+            tracker.capture_open()
+        return original_stop(*args, **kwargs)
+
+    connection.stop_sync = stop
+
+
+def wait_for_app_ready(page: Page) -> None:
+    """Wait for the app's own ready signal: htmx and KUI have initialized (kestrel-ui.js sets
+    data-kui-ready on <html> at the end of its init). Use it instead of a fixed sleep after goto."""
+    page.wait_for_function(
+        "() => document.documentElement.dataset.kuiReady === '1' && !!window.htmx")
+
+
+_SWAP_JS = """async ([path, trigger, read, arg, ms]) => {
+  const wait = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      document.removeEventListener('htmx:afterSwap', onSwap);
+      reject(new Error('timed out after ' + ms + ' ms waiting for the htmx swap of ' + path));
+    }, ms);
+    function onSwap(e) {
+      const d = e.detail || {};
+      const p = (d.pathInfo && d.pathInfo.requestPath) || (d.requestConfig && d.requestConfig.path)
+        || '';
+      if (!p.includes(path)) return;   // another swap (a poll, a toast) is not this one
+      clearTimeout(timer);
+      document.removeEventListener('htmx:afterSwap', onSwap);
+      try { resolve(new Function('arg', read)(arg)); } catch (err) { reject(err); }
+    }
+    document.addEventListener('htmx:afterSwap', onSwap);
+  });
+  new Function('arg', trigger)(arg);
+  return await wait;
+}"""
+
+
+def swap_result(page: Page, path: str, trigger_js: str, read_js: str, arg: Any = None) -> Any:
+    """Run trigger_js (a function body, with `arg`) and return read_js (also a body) evaluated in
+    the afterSwap of the swap whose request path contains `path`. Other swaps are ignored, the
+    response is awaited by URL, and a swap that never comes rejects with a message naming it,
+    after the default timeout (never an unbounded wait)."""
+    ms = default_timeout_ms()
+    with page.expect_response(lambda r: path in r.url, timeout=ms):
+        return page.evaluate(_SWAP_JS, [path, trigger_js, read_js, arg, ms])
+
+
 def launch_sync(playwright: Any, monkeypatch: pytest.MonkeyPatch | None = None) -> Any:
-    """Edge first, then the fallback Chromium; skip only when neither starts."""
+    """Edge first, then the fallback Chromium; skip only when neither starts. The browser's
+    contexts and pages get the default timeout and failure capture (D-TEST-8)."""
     errors: list[str] = []
     for kwargs in _launch_kwargs():
         try:
@@ -90,7 +256,8 @@ def launch_sync(playwright: Any, monkeypatch: pytest.MonkeyPatch | None = None) 
             continue
         if "executable_path" in kwargs and monkeypatch is not None:
             monkeypatch.setenv(BROWSER_PATH_ENV, kwargs["executable_path"])
-        return browser
+        _capture_before_stop(playwright)
+        return _wrap_browser(browser)
     pytest.skip(f"{SKIP_PREFIX}: {'; '.join(errors) or 'no candidates'}")
 
 

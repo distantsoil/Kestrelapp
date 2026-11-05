@@ -1,4 +1,5 @@
 {% import "ui/macros.html" as ui %}
+{% from "partials/online_ask.html" import consent_check %}
 {# Model check result (D-UI-105): a summary line, a card per step with a change, one quiet line for
    the rest, the main button named by its action, Undo after, and See the numbers (one table per
    step with its own caption). The rated-role count always sits beside a figure; under five it says
@@ -46,13 +47,13 @@
     {% if todo %}
     <form class="mo-undo-row" hx-post="/bench/apply" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-apply-form">
       {% for c in todo %}<input type="hidden" name="step" value="{{ c.step }}">{% endfor %}
-      {% if online_todo %}<label class="mo-lbl"><input type="checkbox" name="confirm" data-testid="ck-confirm-online"> I understand this sends {% for c in online_todo %}{{ ck_sends[c.tier] }}{% if online_todo|length > 1 %} (for {{ c.label }}){% endif %}{% if not loop.last %}; and {% endif %}{% endfor %} to {{ ck_provider or 'my provider' }} and uses my credit.</label>{% endif %}
-      <button class="k-btn k-btn--primary" type="submit" data-testid="ck-apply">{% if todo|length == 1 %}Switch {{ todo[0].label }} to {{ todo[0].best_name }}{% else %}Make {{ todo|length }} changes{% endif %}</button>
+      {% if online_todo %}{% set ok_text %}I understand this sends {% for c in online_todo %}{{ ck_sends[c.tier] }}{% if online_todo|length > 1 %} (for {{ c.label }}){% endif %}{% if not loop.last %}; and {% endif %}{% endfor %} to {{ ck_provider or 'my provider' }} and uses my credit.{% endset %}{{ consent_check('ck-confirm-online', ok_text, name='confirm', value='on', extra_cls='mo-lbl') }}{% endif %}
+      <button class="k-btn k-btn--primary" type="submit"{% if online_todo %} data-consent-send{% endif %} data-testid="ck-apply">{% if todo|length == 1 %}Switch {{ todo[0].label }} to {{ todo[0].best_name }}{% else %}Make {{ todo|length }} changes{% endif %}</button>
       <span class="k-muted">You can switch back any time on Models.</span>
     </form>
     {% if todo|length > 1 %}
     <div class="mo-actions">
-      {% for c in todo %}<form class="mo-actions" hx-post="/bench/apply" hx-target="#ck-card" hx-swap="outerHTML"><input type="hidden" name="step" value="{{ c.step }}">{% if c.online %}<label class="mo-lbl"><input type="checkbox" name="confirm"> I understand this sends {{ ck_sends[c.tier] }} to {{ ck_provider or 'my provider' }} and uses my credit.</label>{% endif %}<button class="k-btn k-btn--sm" type="submit" data-testid="ck-apply-{{ c.step }}">Switch {{ c.label }}</button></form>{% endfor %}
+      {% for c in todo %}<form class="mo-actions" hx-post="/bench/apply" hx-target="#ck-card" hx-swap="outerHTML"><input type="hidden" name="step" value="{{ c.step }}">{% if c.online %}{{ consent_check('ck-confirm-' ~ c.step, 'I understand this sends ' ~ ck_sends[c.tier] ~ ' to ' ~ (ck_provider or 'my provider') ~ ' and uses my credit.', name='confirm', value='on', extra_cls='mo-lbl') }}{% endif %}<button class="k-btn k-btn--sm" type="submit"{% if c.online %} data-consent-send{% endif %} data-testid="ck-apply-{{ c.step }}">Switch {{ c.label }}</button></form>{% endfor %}
     </div>
     {% endif %}
     {% endif %}

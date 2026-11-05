@@ -1,0 +1,34 @@
+{
+  "headline": "Operations analyst who builds reporting that small teams actually use",
+  "narrative": "I spent six years turning messy spreadsheets into dependable weekly reports for a regional bakery chain and a small clinic network. I like plain tools and clear handoffs.",
+  "resume_text": "Operations analyst, Harbor Loaf Bakeries and Pine Row Clinics. Built weekly reports in spreadsheets and a small database. Cut month-end close from 9 days to 5 days. Trained 14 shift leads on the new dashboards.",
+  "proof_points": [
+    {
+      "key": "pp_close",
+      "claim": "Shortened the month-end close",
+      "evidence": "Rebuilt the reconciliation sheets and the checklist for Harbor Loaf Bakeries",
+      "metric": "9 days to 5 days"
+    },
+    {
+      "key": "pp_train",
+      "claim": "Trained shift leads on new dashboards",
+      "evidence": "Ran short sessions at each Harbor Loaf Bakeries site",
+      "metric": "14 shift leads"
+    },
+    {
+      "key": "pp_waste",
+      "claim": "Found and reduced recurring supply waste",
+      "evidence": "Compared deliveries with sales for Pine Row Clinics",
+      "metric": ""
+    }
+  ],
+  "variants": [
+    ["rv_report", "Built weekly operations reports from three data sources for 11 sites."],
+    ["rv_handoff", "Wrote one-page handoff guides so new staff could run the reports alone."]
+  ],
+  "evaluation": {
+    "Most relevant strength": "Reliable reporting and clear handoffs",
+    "Biggest gap": "No direct experience with the posting's named warehouse software"
+  },
+  "research": ""
+}

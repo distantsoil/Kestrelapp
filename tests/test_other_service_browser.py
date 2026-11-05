@@ -7,6 +7,7 @@ import os
 import pytest
 
 from tests.browser import launch_sync
+from tests.browser_plugin import browser_artifacts  # noqa: F401
 from tests.test_other_service import KEY, MODELS, URL
 from tests.test_settings_browser import _KIDS, _LINES, _overlaps
 

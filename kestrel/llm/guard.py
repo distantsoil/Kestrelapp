@@ -76,6 +76,10 @@ class GuardResult:
     # The provider said the key has no credit left (D-LLM-8). Not a quarantine (there is no model
     # output to keep) and not a request error to retry: `error` is the authored sentence.
     out_of_credit: bool = False
+    # A hosted send that Kestrel refused to make before anything left the computer (Hosted mode
+    # turned off, or confidential mode with no employer chosen). `error` is the reason; there is
+    # no model reply, and the Quarantine row it leaves holds the prompt that was not sent.
+    refused: bool = False
 
 
 def length_retry_budget(client: Any, tier: str, exc: Any) -> int | None:

@@ -665,6 +665,7 @@ class TitleSuggestion(Base):
     evidence: Mapped[list] = mapped_column(JSON, default=list)  # [{slot_key, text}], display only
     status: Mapped[str] = mapped_column(String, default="suggested", index=True)
     prompt_version: Mapped[str] = mapped_column(String)
+    doc_master_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     decided_at: Mapped[str | None] = mapped_column(String, nullable=True)
 

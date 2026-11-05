@@ -8,7 +8,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import structlog
+
 from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+
+log = structlog.get_logger()
 
 # Parameters JobSpy's scrape_jobs accepts; anything else in config is ignored.
 _JOBSPY_PARAMS = {
@@ -112,7 +116,9 @@ class JobSpyAdapter:
 
             df = await asyncio.to_thread(jobspy.scrape_jobs, **self._params(config))
         except Exception as exc:  # a board's 429 etc. -> partial run, never abort the batch
-            raise AdapterError(f"jobspy scrape failed: {type(exc).__name__}: {exc}") from exc
+            # The class name left the stored sentence (D-SEC-4); keep it for the log.
+            log.warning("jobspy_scrape_failed", error_type=type(exc).__name__, error=str(exc))
+            raise AdapterError(f"jobspy scrape failed: {exc}") from exc
         if df is None or len(df) == 0:
             return []
         return [self._row_to_posting(row) for _, row in df.iterrows()]

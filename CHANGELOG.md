@@ -4,6 +4,26 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-11-04
+
+Cover letters are rebuilt and written in your own voice, every online send waits for your tick, and setup checks report honestly.
+
+### Changed
+
+- **Cover letters are rebuilt.** Every tab of the letter page has an action bar with Draft again and Discard, and Save on the Edit text tab. The preview fits the page, and Download PDF is one click. A letter is written in the first person, opens "Dear Hiring Team," and ends "Sincerely," with your name. Anything in a draft your notes do not support is marked for you to check. Engagement outlines use the same design.
+- **Drafting a letter survives a restart.** A letter being drafted is saved as work in progress, so closing Kestrel mid-draft picks up where it left off.
+- **Every online send waits for your tick.** On every panel that asks before sending to an online model, Send is at full strength; pressing it without ticking the box shows a hint and sends nothing.
+- **I applied is on the role page.** Mark a role applied without leaving it.
+- **The setup checklist refreshes** as you finish each step.
+
+### Fixed
+
+- **Local AI checks report honestly.** The checks ask Ollama only when it answered, never call Kestrel's own derived models "unknown", and compare model digests correctly.
+- **Error pages show plain sentences.** No page or doctor report shows an internal error name in its main text; technical detail stays under Show details.
+- **Run-finished notification, re-import and duplicates.** The run-finished notice is reliable, re-imported possible duplicates are flagged, and calibration skips duplicate decisions.
+- **Remotive** is fetched within its published limits and credited as its terms ask.
+- **Polish.** The sidebar, Applications sort, Select all, Today and narrow Documents rows behave as expected.
+
 ## [0.7.4] - 2026-11-02
 
 Today counts quiet applications by your own calendar day, the online ask says when Kestrel may send a second request, and more drafts mark wording to check.

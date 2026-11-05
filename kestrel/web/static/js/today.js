@@ -15,7 +15,7 @@
   var doc = root.document;
   if (!doc || !root.KUI || !root.KUI.page) return;
 
-  var GAP = 16, PEEK = 60, CARD = 270;
+  var GAP = 16, PEEK = 60, CARD = 270, MAX_CARD = 420;
   // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
   var S = { idx: 0, perView: 4, cw: 0, fade: null, poll: null };
   var cx = null;
@@ -50,7 +50,15 @@
     if (!vp) return;
     var vpw = vp.clientWidth;
     S.perView = Math.max(1, Math.floor((vpw - 2 * PEEK - GAP) / (CARD + GAP)));
-    S.cw = (vpw - 2 * PEEK - GAP * (S.perView + 1)) / S.perView;
+    S.cw = Math.min(MAX_CARD, (vpw - 2 * PEEK - GAP * (S.perView + 1)) / S.perView);
+    var n = count();
+    if (n > 0 && n <= S.perView) {
+      // Every card fits, so nothing peeks and the peek margins are not needed: share the whole
+      // width, up to the card cap, instead of leaving it empty (#128). Recomputed on every layout,
+      // so a resize, a removed card or a new match re-fits the view.
+      S.perView = n;
+      S.cw = Math.min(MAX_CARD, Math.max(CARD, (vpw - GAP * (n - 1)) / n));
+    }
     cards().forEach(function (c) { if (!c.classList.contains('is-collapse')) c.style.width = S.cw + 'px'; });
     balance();
     var dots = $('#td-dots');
@@ -468,7 +476,7 @@
   function startPoll() {
     var top = $('#td-top');
     var busy = (!!top && /active/.test(top.getAttribute('data-state') || '')) ||
-      !!$('#td-track [data-rescoring]');
+      !!$('#td-track [data-rescoring]:not([data-rescoring="approval"])');  // a hold waits for the person
     var ms = busy ? 6000 : 30000;
     if (S.poll && S.pollMs === ms) return;
     cx.clear(S.poll);

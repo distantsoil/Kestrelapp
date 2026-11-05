@@ -1,0 +1,17 @@
+{# The drafting card for a model on this computer: no consent step, so opening the sheet starts
+   the draft. The person can leave: the draft is saved when it is done, with or without the sheet. #}
+{% if watching %}{# a draft is already on its way (queued, or running after a restart): this card only watches it #}
+<form id="cl-run" class="cl-run" hx-get="/opportunities/{{ opp_id }}/role/cover-letter/status" hx-trigger="load delay:2s" hx-target="#cl-main" hx-swap="innerHTML" hx-sync="this:drop" data-testid="cover-letter-drafting" data-watching>
+{% else %}
+<form id="cl-run" class="cl-run" hx-post="/opportunities/{{ opp_id }}/role/cover-letter/generate" hx-trigger="load" hx-target="#cl-main" hx-swap="innerHTML" hx-sync="this:drop" data-testid="cover-letter-drafting">
+{% endif %}
+  {% if replace_id %}<input type="hidden" name="replace" value="{{ replace_id }}">{% endif %}
+  <div class="cl-wait" role="status" aria-live="polite">
+    <span class="cl-pulse" aria-hidden="true"></span>
+    <div>
+      <b>Drafting your {{ noun }}</b>
+      <p class="rl-quiet">{% if route and route.online %}It is with {{ route.provider }} and can take a few minutes.{% else %}This runs on this computer and can take a few minutes.{% endif %} It uses only your own proof points and resume lines. You can close this and keep working: the draft is saved to Documents when it is done. Kestrel never sends it.</p>
+    </div>
+  </div>
+  <div class="rl-btns"><button type="button" class="k-btn" data-cl-leave data-testid="cover-letter-leave">Close and keep working</button></div>
+</form>

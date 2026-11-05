@@ -99,7 +99,9 @@ def test_the_add_sheet_offers_adzuna_with_a_hidden_key_panel_and_the_remote_grou
     assert "up to 8 of your free calls" in panel and "—" not in panel
     group = html.split("Remote jobs</div>", 1)[1].split("Limited</div>", 1)[0]
     assert 'name="board_himalayas"' in group and 'name="board_weworkremotely"' in group
-    assert "remotive" not in html.lower()
+    assert 'name="board_arbeitnow"' in group
+    assert 'name="board_remotive"' in group  # D-SRC-15: a named exception, shown like the rest
+    assert "4 checks a day" in group
 
 
 def test_adding_adzuna_alone_saves_both_keys_to_env_and_stores_none_in_the_source():
@@ -127,24 +129,38 @@ def test_without_keys_it_is_added_and_says_what_is_missing():
 
 def test_a_second_add_of_the_same_search_is_refused_for_every_new_board():
     form = {"title": "Analyst", "board_himalayas": "1", "board_weworkremotely": "1",
-            "board_adzuna": "1", "adzuna_id": APP_ID, "adzuna_key": APP_KEY}
+            "board_arbeitnow": "1", "board_adzuna": "1",
+            "adzuna_id": APP_ID, "adzuna_key": APP_KEY}
     with _client() as c:
         c.post("/sources/add/boards", headers=HX, data=form)
         again = c.post("/sources/add/boards", headers=HX, data=form)
-    assert "already one of your sources" in again.text and len(_sources()) == 3
+    assert "already one of your sources" in again.text and len(_sources()) == 4
 
 
 def test_the_remote_boards_add_keyless_sources_named_after_the_board():
     with _client() as c:
         c.post("/sources/add/boards", headers=HX, data={
             "title": "Operations Analyst", "place": "Remote",
-            "board_himalayas": "1", "board_weworkremotely": "1"})
+            "board_himalayas": "1", "board_weworkremotely": "1",
+            "board_arbeitnow": "1"})
     got = _sources()
     him = got["Operations Analyst on Himalayas"]
     wwr = got["We Work Remotely"]
+    an = got["Arbeitnow"]
     assert (him.kind, him.config) == ("himalayas", {"keyword": "Operations Analyst"})
     assert (wwr.kind, wwr.config) == ("weworkremotely", {})
+    assert (an.kind, an.config) == ("arbeitnow", {})
     assert _env() == "" or "ADZUNA" not in _env()
+
+
+def test_remotive_is_added_from_the_sheet_as_a_keyless_source_and_shows_on_the_page():
+    with _client() as c:
+        c.post("/sources/add/boards", headers=HX, data={
+            "title": "Operations Analyst", "board_remotive": "1"})
+        page = c.get("/sources").text
+    rem = _sources()["Remotive"]
+    assert (rem.kind, rem.config) == ("remotive", {})
+    assert ">Remotive<" in page or "Remotive" in page.split('data-testid="group-boards"', 1)[-1]
 
 
 def test_a_sheet_with_no_board_ticked_still_asks_for_one():

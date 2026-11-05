@@ -489,9 +489,17 @@ def test_saving_a_wording_shows_saved_and_a_preview_failure_is_visible(monkeypat
     import re
 
     mid = int(re.search(r"/documents/(\d+)/preview", html).group(1))
-    r = client.post(f"/documents/{mid}/preview")
-    assert r.status_code == 200 and "Preview failed: RuntimeError." in r.text
-    assert "no template" not in r.text  # exception text stays in the log
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        r = client.post(f"/documents/{mid}/preview")
+    # D-SEC-4: a fixed sentence on the page; the class name and text stay in the log
+    assert r.status_code == 200
+    assert "Preview failed: an unexpected problem; the details are in the log." in r.text
+    assert "RuntimeError" not in r.text and "no template" not in r.text
+    failed = [e for e in logs if e["event"] == "preview_failed"]
+    assert len(failed) == 1
+    assert "RuntimeError: no template" in failed[0]["error"]
 
 
 def test_pursuits_links_to_the_applied_import_and_render_review_links_back(monkeypatch):

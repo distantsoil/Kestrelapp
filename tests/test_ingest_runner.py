@@ -91,13 +91,23 @@ async def test_one_bad_posting_is_counted_and_the_rest_are_stored(sm, monkeypatc
         return await real(session, raw, **kw)
 
     monkeypatch.setattr(runner_mod, "normalize_and_store", _flaky)
+    from structlog.testing import capture_logs
+
     async with HttpClient(user_agent="test", respect_robots=False) as http:
-        outcome = await run_source(sm, sid, http=http)
+        with capture_logs() as logs:
+            outcome = await run_source(sm, sid, http=http)
 
     assert outcome.status == "partial"
     assert outcome.counts["errors"] == 1
     assert outcome.counts["new"] == 1
-    assert "boom" in (outcome.error or "")
+    # D-SEC-4: the stored error is a fixed sentence; the class and text go to the log
+    assert outcome.error == (
+        "One posting could not be stored (an unexpected problem; the details are in the log)."
+    )
+    bad = [e for e in logs if e["event"] == "normalize_error"]
+    assert len(bad) == 1
+    assert bad[0]["error_type"] == "RuntimeError"
+    assert "boom on the first posting" in bad[0]["error"]
     async with sm() as s:
         run = await s.get(ScrapeRun, outcome.scrape_run_id)
         assert run.status == "partial" and run.finished_at is not None

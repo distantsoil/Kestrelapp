@@ -19,7 +19,7 @@ from sqlalchemy import select
 from kestrel.analytics.today import actions_due
 from kestrel.db.models import DocMaster, Evaluation, Opportunity, Org, Pursuit, VerdictOverride
 from kestrel.web import pipeline_view as pv
-from kestrel.web.fit import GROUP_FAILED, GROUP_NEW, GROUP_WORTH
+from kestrel.web.fit import GROUP_FAILED, GROUP_MAYBE, GROUP_NEW, GROUP_WORTH
 from kestrel.web.queries import (
     GROUP_ORDER,
     OppFilters,
@@ -325,7 +325,8 @@ async def decisions_waiting(s, track: str, *, limit: int = PANEL_LIMIT,
             VerdictOverride.operator_verdict, saved_clause(),
         )
     ).where(
-        _group_expr() == GROUP_ORDER.index(GROUP_WORTH), Opportunity.opp_type != "trigger_event"
+        _group_expr().in_([GROUP_ORDER.index(GROUP_WORTH), GROUP_ORDER.index(GROUP_MAYBE)]),
+        Opportunity.opp_type != "trigger_event"
     )
     conf, mapping = await confidential_once(s)
     undecided: list[dict[str, Any]] = []

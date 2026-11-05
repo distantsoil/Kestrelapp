@@ -54,6 +54,16 @@ class OllamaClient:
         r.raise_for_status()
         return [m["name"] for m in r.json().get("models", [])]
 
+    def list_models_with_digests(self, timeout: float = 10.0) -> list[dict[str, str]]:
+        """Return each installed model as {"name": ..., "digest": ...}.
+        Issue #166 M2: digest verification."""
+        r = httpx.get(f"{self.native_url}/api/tags", timeout=timeout)
+        r.raise_for_status()
+        return [
+            {"name": m["name"], "digest": m.get("digest", "")}
+            for m in r.json().get("models", [])
+        ]
+
     def unload_others(self, keep: str | None = None, timeout: float = 30.0) -> int:
         """Unload every loaded model except `keep` (the doctor's probes; #112). Same logic as the
         async client's recovery: /api/ps, then keep_alive 0 per model. Never raises."""

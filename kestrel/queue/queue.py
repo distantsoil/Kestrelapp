@@ -89,9 +89,17 @@ def in_flight(now: str) -> ColumnElement[bool]:
     """The one "is something running" predicate (review finding 1): what lease() could claim
     now, or a task under a live lease. A held task (switched-off track) is neither, so every
     count of live work (run summary, rail, scan button, run ring) agrees with the queue."""
-    return or_(
-        claimable(now),
-        and_(Task.status == "leased", or_(Task.lease_until.is_(None), Task.lease_until >= now)),
+    from kestrel.services.online_consent import APPROVAL_HOLD
+
+    # A task held for the person's online approval waits for them, not for the worker: it is not
+    # live work, so it never keeps a page polling or a status rail lit (D-UI-239 addition).
+    awaiting_person = func.coalesce(Task.last_error, "") == APPROVAL_HOLD
+    return and_(
+        or_(
+            claimable(now),
+            and_(Task.status == "leased", or_(Task.lease_until.is_(None), Task.lease_until >= now)),
+        ),
+        ~awaiting_person,
     )
 
 

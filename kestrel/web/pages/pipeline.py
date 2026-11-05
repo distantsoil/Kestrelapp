@@ -47,6 +47,7 @@ from kestrel.web.queries import (
     OppRow,
     _retry_removed,
     attach_rescoring,
+    attach_twins,
     live_scoring_exists,
     saved_clause,
     scoring_states,
@@ -160,6 +161,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     )
     await scoring_states(s, [probe])
     await attach_rescoring(s, [probe])
+    await attach_twins(s, [probe])
     detail = await _detail_context(s, opp_id)
     if detail is None:
         return None
@@ -193,6 +195,7 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         "rescoring": probe.rescoring,
         "failed_reason": probe.failed_reason,
         "hidden_why": probe.hidden_why,
+        "twin": probe.twin,
         "posted": pv.posted_words(opp.date_posted),
         "liveness": pv.liveness_fact(opp),
         "open_href": f"/opportunities/{opp.id}",
