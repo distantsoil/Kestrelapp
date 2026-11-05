@@ -100,6 +100,9 @@ PR branch runs CI. So CI confirms; it does not discover.
   the full suite, including the workflow, installer-script and notices guards) once, after the final
   review, on the sanitized public tree, and push it only when it ends "Ready to push." The private
   branch push needs `scripts/check.py --quick`. The opt-in hook: `git config core.hooksPath .githooks`.
+  Within one PR, after its own full gate ended "Ready to push.", a later change that touches only
+  test files under `tests/` is verified by `scripts/check.py --fast` plus the changed test files run
+  directly, not a second full gate (owner, D-CI-14; shared test plumbing is excluded).
 - Exception (owner, D-CI-4): a push whose changes touch only the private decision log and/or `working.log`
   skips `check.py`; no test reads either file. Any other doc (specs, CLAUDE.md, CHANGELOG) still
   runs it, because tests read those.

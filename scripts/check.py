@@ -247,8 +247,45 @@ def _red_first_gate() -> bool:
     return not problems
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+PASS_LINES = {
+    "full": "Ready to push.",
+    "quick": "Quick checks passed; run the full check before pushing.",
+    "fast": "Fast checks passed; run the full check before pushing.",
+}
+
+
+class _LastLine:
+    """Pass stdout through unchanged while remembering the last non-empty line written."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.last = ""
+        self.not_ready = ""
+        self._partial = ""
+
+    def write(self, text: str) -> int:
+        self._partial += text
+        *lines, self._partial = self._partial.split("\n")
+        for line in lines:
+            if line.strip():
+                self.last = line.strip()
+                if line.startswith("Not ready to push") and not self.not_ready:
+                    self.not_ready = line.strip()
+        return self.inner.write(text)
+
+    def flush(self) -> None:
+        self.inner.flush()
+
+    def final_line(self) -> str:
+        return self._partial.strip() or self.last
+
+    def __getattr__(self, name: str):
+        return getattr(self.inner, name)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0], allow_abbrev=False)
     parser.add_argument("--quick", action="store_true",
                         help="lint, the packaging guards and the static checks")
     parser.add_argument("--fast", action="store_true",
@@ -263,9 +300,39 @@ def main() -> int:
                              "real browser against a server under coverage, and two at once on "
                              "a small machine push slow pages past the 30 s waits)")
     parser.add_argument("--junitxml", metavar="PATH", help="write test outcomes for comparison")
+    return parser
+
+
+def main() -> int:
+    """Run the gate. The exit code always matches the words: 0 only when no "Not ready" line was
+    printed and the last line is this tier's pass line (INSTRUCTIONS.md section 6), so
+    `check.py && git push` is safe."""
+    parser = _build_parser()
     args = parser.parse_args()
     if args.quick and args.fast:
         parser.error("choose --quick or --fast, not both")
+    tier = "quick" if args.quick else "fast" if args.fast else "full"
+    real = sys.stdout
+    tee = _LastLine(real)
+    sys.stdout = tee
+    try:
+        code = _gate(args)
+    finally:
+        sys.stdout = real
+    last = tee.final_line()
+    if code != 0:
+        return code
+    if tee.not_ready:
+        print("Not ready to push: a stage printed a failure but the gate went on "
+              f"({tee.not_ready!r}).")
+        return 1
+    if last != PASS_LINES[tier]:
+        print(f"Not ready to push: the gate stopped without its pass line (last line: {last!r}).")
+        return 1
+    return code
+
+
+def _gate(args: argparse.Namespace) -> int:
     py = sys.executable
     plan = _plan_diff_guards()
     if plan is not None and plan[2]:

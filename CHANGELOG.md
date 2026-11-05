@@ -15,6 +15,8 @@ Cover letters are rebuilt and written in your own voice, every online send waits
 - **Every online send waits for your tick.** On every panel that asks before sending to an online model, Send is at full strength; pressing it without ticking the box shows a hint and sends nothing.
 - **I applied is on the role page.** Mark a role applied without leaving it.
 - **The setup checklist refreshes** as you finish each step.
+- **Score again tells you what happened.** Pipeline names each role's outcome, keeps your picks ticked, and adds your request to a role already waiting. A role that needs your OK to go online reads "Waiting for your OK" with Confirm, on Pipeline and Today.
+- **A posting with no description says so** instead of staying silent, and a thin copy of a role links to the copy Kestrel already scored from another board.
 
 ### Fixed
 
@@ -23,6 +25,7 @@ Cover letters are rebuilt and written in your own voice, every online send waits
 - **Run-finished notification, re-import and duplicates.** The run-finished notice is reliable, re-imported possible duplicates are flagged, and calibration skips duplicate decisions.
 - **Remotive** is fetched within its published limits and credited as its terms ask.
 - **Polish.** The sidebar, Applications sort, Select all, Today and narrow Documents rows behave as expected.
+- **Suggested companies keep their layout** while Add looks the company up.
 
 ## [0.7.4] - 2026-11-02
 
