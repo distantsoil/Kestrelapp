@@ -38,7 +38,12 @@ def test_an_async_http_client_cannot_reach_a_public_host():
 
     with pytest.raises((OutboundNetworkInTest, httpx.ConnectError)) as info:
         asyncio.run(go())
-    assert "boards.example.com" in str(info.value)
+    # The guard names the host it refused; compared whole, not as a substring (CodeQL).
+    # httpx hands the resolver the host as bytes.
+    assert str(info.value) in {
+        "test tried to look up 'boards.example.com'",
+        "test tried to look up b'boards.example.com'",
+    }
 
 
 def test_loopback_still_connects():

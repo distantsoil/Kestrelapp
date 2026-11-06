@@ -733,6 +733,42 @@ def test_a_suggested_row_updates_on_the_first_press_when_the_lookup_cannot_answe
         ctx.close()
 
 
+
+def test_one_press_on_add_turns_a_suggested_row_with_no_board_into_add_by_hand(live, monkeypatch):
+    """#123 (b), the owner's case: the row offered Add from an old answer, the board has since
+    gone. One press must show "Add by hand" straight away, never a second press."""
+    from kestrel.services import source_suggestions as ss
+
+    outcomes = {"Tidewater Freight Group": "down"}  # the background check cannot answer
+    _stub_board_lookup(monkeypatch, outcomes)
+
+    async def remember(s):
+        await ss.record_board_lookup(s, "Tidewater Freight Group", found=True,
+                                     platform="Greenhouse", jobs=3, kind="greenhouse",
+                                     config={"token": "tidewater"})
+
+    _db(remember)
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        row = page.locator('[data-testid="suggestion"][data-name="Tidewater Freight Group"]')
+        row.locator('[data-testid="suggestion-add"]').wait_for()
+
+        async def forget(s):
+            from kestrel.db.models import Setting
+
+            await s.delete(await s.get(Setting, ss.BOARD_CACHE_KEY))
+
+        _db(forget)
+        outcomes["Tidewater Freight Group"] = "none"  # the press finds no board
+        row.locator('[data-testid="suggestion-add"]').click()
+        row.locator('[data-testid="suggestion-add-by-hand"]').wait_for(timeout=60000)
+        assert row.get_attribute("data-state") == "none"
+        assert "No board Kestrel can read" in row.inner_text()
+        assert row.locator('[data-testid="suggestion-add"]').count() == 0
+        assert not errors, errors
+    finally:
+        ctx.close()
+
 _ACTION_BOXES = """row => { const box = e => { const b = e.getBoundingClientRect();
     return {l: b.left, r: b.right, tp: b.top, bt: b.bottom}; };
   const vis = e => e.offsetParent !== null;
