@@ -37,6 +37,7 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ### Fixed
 
+- **A missing built-in embedding model now says what to do** instead of "an unexpected problem (EmbedModelMissing)". Matching stories and other text always runs on this computer, even with an online model, so a source checkout must fetch the model once; the developer guide now lists that step.
 - **A cover letter no longer marks the employer's own name as unverified** unless it says you worked there, and a number or length of time from your own headline or narrative counts as yours. A company you never named is still marked, and the send dialog now says the headline and narrative are sent.
 - **A failed step on Settings > Your computer now says what happened in plain words** instead of naming an internal error type.
 - **A cover letter could claim things you never said.** A gap the review had found you already meet was passed to the letter as one to acknowledge, so a letter wrote "three years" for a person with eight. That gap is no longer passed on, a length of time now has to match your own text exactly (a "3" elsewhere no longer covers "three years"), and promises such as starting immediately or relocating are marked unless you wrote them (D-LETTER-9).

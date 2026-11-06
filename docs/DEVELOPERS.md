@@ -20,6 +20,7 @@ PDF rendering uses Edge, Chrome, or Playwright's Chromium, whichever is present;
 ```bash
 git clone https://github.com/distantsoil/Kestrelapp && cd Kestrelapp
 uv sync --extra dev
+uv run python scripts/fetch_embed_model.py  # the built-in embedding model (installers ship it)
 uv run kestrel setup              # offers the Ollama install command for your platform
 uv run kestrel serve --open       # opens http://127.0.0.1:8765 in your browser
 uv run python -m kestrel.desktop  # or the desktop window, where a webview backend exists
