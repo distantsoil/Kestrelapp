@@ -213,9 +213,10 @@ async def enforce(
 
     violations, extra = look(value)
     blocking = [v for v in violations if v.blocking]
-    # A named-detail flag (#113) is a mark only, never a re-ask: a false one would make the model
-    # delete a real fact. Number grounding keeps its re-ask.
-    reask_extra = [f for f in extra if f.get("detail") != "name"]
+    # A named-detail flag (#113), a letter's length of time or a promise (D-LETTER-9) is a mark
+    # only, never a re-ask: a false one would make the model delete a real fact. Number grounding
+    # keeps its re-ask.
+    reask_extra = [f for f in extra if f.get("detail") not in ("name", "time", "promise")]
     if not blocking and not reask_extra:
         return PlainResult(value, _flags(violations, extra))
 

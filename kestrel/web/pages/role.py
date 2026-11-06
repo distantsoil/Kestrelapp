@@ -1697,9 +1697,14 @@ def _evaluation_lines(ev, kind: str) -> dict[str, str]:
     out["What to lead with"] = str(angle.get("lead_with") or "")
     out["Phrases from the posting worth echoing"] = "; ".join(
         str(c) for c in angle.get("jd_citations") or [])
-    gaps = [g for g in ((blocks.get("b_fit") or {}).get("gaps") or []) if isinstance(g, dict)]
-    rank = {"high": 0, "medium": 1, "low": 2}
-    gaps.sort(key=lambda g: rank.get(str(g.get("severity")), 3))
+    # The P2 gap severities are fatal, addressable and noise (PROMPTS.md block B). A noise gap is
+    # one the evaluation found the person already meets, so it is never handed to the letter as a
+    # gap to acknowledge: the model would apologize for a shortfall that is not there (owner's
+    # local check, 2026-11-06: "three years" written for a person with eight).
+    rank = {"fatal": 0, "addressable": 1}
+    gaps = [g for g in ((blocks.get("b_fit") or {}).get("gaps") or [])
+            if isinstance(g, dict) and str(g.get("severity")) in rank]
+    gaps.sort(key=lambda g: rank[str(g.get("severity"))])
     out["Gap to acknowledge in one sentence, in your own voice"] = (
         str(gaps[0].get("requirement") or "") if gaps else "")
     out["How senior the role reads"] = str((blocks.get("c_level") or {}).get("scope_read") or "")
@@ -1892,6 +1897,7 @@ async def _letter_ctx(
     from kestrel.docs import letter_store
     from kestrel.docs.letters import (
         MAX_SAVE_WORDS,
+        OUTLINE,
         WORD_RANGE,
         annotate,
         banned_hits,
@@ -1966,6 +1972,7 @@ async def _letter_ctx(
         stored, [t["text"] for t in sources.values()],
         _name_sources(found[2]) if found else None,
         normalize_description(opp.description_md),
+        cover=letter.kind != OUTLINE,
     )
     if letter.edited:
         # The style marks are on Kestrel's wording, so they go once the person has changed it

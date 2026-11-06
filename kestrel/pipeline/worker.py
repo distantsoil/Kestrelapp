@@ -130,6 +130,9 @@ class TierStats:
     completed: int = 0
     errors: int = 0
     elapsed_s: float = 0.0
+    # The roles this tier finished, so a run's "N roles rated" counts each role once even when
+    # it went through both tiers (a role rated by t1 and t2 is one role, not two).
+    roles: set[int] = field(default_factory=set)
 
     @property
     def per_minute(self) -> float:
@@ -513,6 +516,8 @@ class Worker:
                 return
             async with done_lock:
                 stats.completed += 1
+                if opp_id is not None:
+                    stats.roles.add(int(opp_id))
                 window.append(time.perf_counter())
                 self._emit_progress(task_type, stats.completed, total_at_start, window)
 
@@ -912,7 +917,7 @@ class Worker:
 
         try:
             await notify_run_finished(
-                self._sm, run_id=run_id, rated=stats.tier1.completed + stats.tier2.completed
+                self._sm, run_id=run_id, rated=len(stats.tier1.roles | stats.tier2.roles)
             )
         except Exception as exc:  # noqa: BLE001
             # The one sanctioned broad catch: the run is already marked finished, and a notifier,

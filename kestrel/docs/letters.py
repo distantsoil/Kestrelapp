@@ -214,8 +214,76 @@ def _has_token(sentence: str, phrase: str) -> bool:
     return re.search(rx, sentence, re.IGNORECASE) is not None
 
 
+def _duration_rx():
+    from kestrel.writing_check import _ONES, _TENS, _WORD_NUMBERS
+
+    compound = "(?:" + "|".join(_TENS) + ")[-\\s](?:" + "|".join(_ONES) + ")"
+    number = r"(\d+(?:\.\d+)?|" + compound + "|" + "|".join(_WORD_NUMBERS) + ")"
+    return re.compile(
+        r"(?<![\w.])" + number + r"(?:\s*\+\s*|\s*-?\s*plus\s+|\s+|-)(?:full\s+)?"
+        r"(years?|yrs?|months?)\b", re.IGNORECASE)
+
+
+def _durations(text: str) -> list[tuple[str, str, str]]:
+    """(phrase, number, key) for every length of time in `text`: "three years", "8+ years",
+    "twenty-five years", "an eight-year career", "18-month". The key is the value and the unit,
+    so "3 warehouses" never supports "three years" (D-LETTER-9)."""
+    from kestrel.writing_check import _WORD_NUMBERS, _num_key
+
+    out: list[tuple[str, str, str]] = []
+    for m in _duration_rx().finditer(text or ""):
+        raw = m.group(1).lower()
+        parts = re.split(r"[-\s]", raw)
+        if raw in _WORD_NUMBERS:
+            value = float(_WORD_NUMBERS[raw])
+        elif len(parts) == 2 and all(x in _WORD_NUMBERS for x in parts):
+            value = float(_WORD_NUMBERS[parts[0]] + _WORD_NUMBERS[parts[1]])
+        else:
+            value = float(raw)
+        out.append((m.group(0).strip(), m.group(1), f"{_num_key(value)}{m.group(2)[0].lower()}"))
+    return out
+
+
+# Promises a letter must not make for the person unless their own text makes the same kind of
+# promise (D-LETTER-9): no number or name is in them, so the detail check alone cannot see them.
+# Each alternative is a named kind; the person's text grounds a promise of the same kind.
+_WITHIN = r"within\s+(?:\w+\s+){1,2}(?:days?|weeks?)"
+_COMMITMENTS = re.compile(
+    r"\b(?:"
+    r"(?P<start>(?:start|begin|join)(?:\s+(?:work|working|the\s+role|this\s+role|the\s+position"
+    r"|in\s+the\s+role))?\s+(?:immediately|right\s+away|at\s+once|straight\s+away|on\s+short"
+    r"\s+notice|next\s+week|" + _WITHIN + r")|available\s+(?:to\s+start\s+)?(?:immediately|now"
+    r"|right\s+away|on\s+short\s+notice|" + _WITHIN + r")|immediately\s+available"
+    r"|(?:my\s+)?notice\s+period|short\s+notice)"
+    r"|(?P<relocate>(?:willing|able|happy|open|ready|prepared|glad)\s+to\s+relocate"
+    r"|open\s+to\s+relocation)"
+    r"|(?P<travel>(?:willing|able|happy|open|ready|prepared|glad)\s+to\s+travel)"
+    r"|(?P<work>(?:visa\s+)?sponsorship|authori[sz]ed\s+to\s+work|work\s+authori[sz]ation)"
+    r"|(?P<pay>(?:salary|compensation|pay)\s+(?:expectations?|requirements?))"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _promise_kinds(text: str) -> set[str]:
+    return {m.lastgroup or "" for m in _COMMITMENTS.finditer(text or "")}
+
+
+def _commitments(body_md: str, sources: list[str]) -> list[dict[str, str]]:
+    own = _promise_kinds(" ".join(sources))
+    out: list[dict[str, str]] = []
+    for m in _COMMITMENTS.finditer(body_md or ""):
+        phrase = m.group(0)
+        if m.lastgroup not in own and phrase.casefold() not in {
+                f["phrase"].casefold() for f in out}:
+            out.append({"kind": "ungrounded", "detail": "promise", "field": "body_md",
+                        "phrase": phrase})
+    return out
+
+
 def unverified_details(
-    body_md: str, sources: list[str], name_sources: list[str] | None = None, posting: str = ""
+    body_md: str, sources: list[str], name_sources: list[str] | None = None, posting: str = "",
+    *, cover: bool = True,
 ) -> list[dict[str, str]]:
     """Numbers and names in the body that the person's own text does not support (hard rule 2).
     One found in neither the person's text nor the posting is always flagged. One found only in
@@ -229,10 +297,33 @@ def unverified_details(
     # The greeting the prompt asks for is Kestrel's own wording, not a name the model made up.
     mine = [f for f in ungrounded_details(fields, sources, name_sources=name_sources)
             if f["phrase"].casefold() != GREETING_NAME]
+    # A length of time must match the person's own value and unit; a bare number elsewhere in
+    # their text does not support it.
+    if not cover:  # the time and promise checks are the cover letter's (D-LETTER-9)
+        timed: list[tuple[str, str]] = []
+        promised: list[dict[str, str]] = []
+    else:
+        own = {key for src in [*sources, *(name_sources or [])] for _p, _n, key in _durations(src)}
+        # One mark per claim: a length of time whose number is already marked (that mark keeps its
+        # re-ask) is not marked again.
+        said = {f["phrase"].casefold() for f in mine}
+        timed = [(p, k) for p, n, k in _durations(body_md)
+                 if k not in own and n.casefold() not in said and p.casefold() not in said]
+        # A time or promise mark never triggers the re-ask (like a name, #113): a false one would
+        # make the model delete a true fact the person's other text holds.
+        mine += [{"kind": "ungrounded", "detail": "time", "field": "body_md", "phrase": p}
+                 for p, _k in timed]
+        promised = _commitments(body_md, [*sources, *(name_sources or [])])
     if not mine or not (posting or "").strip():
-        return mine
+        return mine + promised
     neither = {f["phrase"] for f in ungrounded_details(
         fields, [*sources, posting], name_sources=name_sources)}
+    # The posting only ever excuses a sentence about the role (below), so there a value match is
+    # enough: "8-10 years" in the posting covers "8 years" said of the role.
+    from kestrel.writing_check import _number_keys
+
+    posted = {k for keys in _number_keys(posting or "") for k in keys}
+    neither |= {p for p, k in timed if k[:-1] not in posted}
     sentences = [s for para in re.split(r"\n+", body_md or "") for s in _SENTENCE.split(para)]
     out: list[dict[str, str]] = []
     for f in mine:
@@ -242,11 +333,12 @@ def unverified_details(
             claims_it(s) or not about_the_role(s) for s in holding
         ):
             out.append(f)
-    return out
+    return out + promised  # a promise is the person's, never excused by the posting
 
 
 def _grounding(
-    sources: list[str] | None, name_sources: list[str] | None, posting: str = ""
+    sources: list[str] | None, name_sources: list[str] | None, posting: str = "",
+    *, cover: bool = True,
 ):
     """The plain-writing check's number and name grounding against the text the model was given
     (the person's proof points and bullets) and, for names, the person's own resume text. The
@@ -254,7 +346,8 @@ def _grounding(
     (`unverified_details`)."""
     if sources is None:
         return None
-    return lambda val: unverified_details(val.body_md, sources, name_sources, posting)
+    return lambda val: unverified_details(val.body_md, sources, name_sources, posting,
+                                          cover=cover)
 
 
 async def generate_cover(
@@ -339,7 +432,7 @@ async def generate_engagement(
     result.value = first
     plain = await enforce(
         spec, result.value, messages=messages, exempt=exempt,
-        extra_check=_grounding(grounding, name_sources, posting),
+        extra_check=_grounding(grounding, name_sources, posting, cover=False),
         run=lambda m, reask=False: _run(
             client, spec, m, session=session, on_quarantine=on_quarantine, reask=reask,
             opportunity_id=opportunity_id,

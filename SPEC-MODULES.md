@@ -232,7 +232,11 @@ Generated prose is permitted here, under constraint.
 the prompt supplies only those and forbids asserting anything else. 250-350 words, markdown, in
 an editor, operator edits before rendering. A `claims_used` array is returned and every entry
 must resolve to a real key; any that does not flags the draft "unverified claims present". A
-banned-phrase check runs on the body.
+banned-phrase check runs on the body. A number or name in the body that the person's own text
+does not support is marked unverified. A length of time ("three years") is supported only by the
+same value and unit in their text, never by a bare number elsewhere ("3 warehouses"), and a
+promise about when they can start, relocating, travel, sponsorship or pay is supported only when
+their own text makes it (D-LETTER-9).
 
 **Engagement outline** (consulting): situation, proposed scope, phases with durations, named
 deliverables, commercial model (day rate × days, or fixed fee, or retainer), assumptions, and

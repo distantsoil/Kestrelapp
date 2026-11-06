@@ -1168,7 +1168,12 @@ def test_fixed_elements_follow_the_one_sidebar_width_variable(live):
         page.evaluate("KUI.toast('Placed.', {timeout: 60000})")
         page.wait_for_selector("#k-toasts .k-toast")
         for sel in ("#k-toasts", ".pf-savebar"):
-            assert abs(_center(page, sel) - (full + (vw - full) / 2)) <= 1.5, sel
+            # The hidden save bar reaches its place up to about 1.5s after load (failed every time
+            # on Windows when read at once); wait for the end state, as the collapse step does.
+            page.wait_for_function(
+                "([s, w, vw]) => { const r = document.querySelector(s).getBoundingClientRect();"
+                " return Math.abs(r.left + r.width / 2 - (w + (vw - w) / 2)) <= 1.5; }",
+                arg=[sel, full, vw], timeout=10000)
         page.click(".k-side-toggle")
         page.wait_for_function(
             "() => getComputedStyle(document.documentElement).getPropertyValue('--side-w-now')"

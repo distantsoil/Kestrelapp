@@ -113,14 +113,36 @@ def test_the_evaluation_lines_use_the_guidance_labels(ids):
 
     ev = type("E", (), {"blocks": {
         "e_angle": {"lead_with": "Planning.", "jd_citations": ["forecasting"]},
-        "b_fit": {"gaps": [{"requirement": "Freight bidding", "severity": "high"}]},
+        "b_fit": {"gaps": [{"requirement": "Freight bidding", "severity": "addressable"}]},
         "c_level": {"scope_read": "Senior"},
     }})()
     lines = _evaluation_lines(ev, COVER)
+    assert lines["Gap to acknowledge in one sentence, in your own voice"] == "Freight bidding"
     assert list(lines) == [
         "What to lead with", "Phrases from the posting worth echoing",
         "Gap to acknowledge in one sentence, in your own voice", "How senior the role reads",
     ]
+
+
+def test_a_noise_gap_is_never_handed_to_the_letter_as_a_gap():
+    """The evaluation rated "3 years of analysis experience" noise (the person has eight). Passed
+    on as a gap to acknowledge, the model wrote "I have three years". Noise is dropped, and the
+    worst real gap leads: fatal before addressable."""
+    from kestrel.web.pages.role import _evaluation_lines
+
+    def gap(noise_first):
+        gaps = [{"requirement": "3 years of analysis experience", "severity": "noise",
+                 "mitigation": "Eight years as an operations analyst."}]
+        return type("E", (), {"blocks": {"b_fit": {"gaps": gaps if noise_first else []}}})()
+
+    label = "Gap to acknowledge in one sentence, in your own voice"
+    assert _evaluation_lines(gap(True), COVER)[label] == ""
+    ev = type("E", (), {"blocks": {"b_fit": {"gaps": [
+        {"requirement": "Spanish", "severity": "addressable"},
+        {"requirement": "3 years of analysis experience", "severity": "noise"},
+        {"requirement": "A forklift license", "severity": "fatal"},
+    ]}}})()
+    assert _evaluation_lines(ev, COVER)[label] == "A forklift license"
 
 
 # ------------------------------------------------------------------------- the voice check

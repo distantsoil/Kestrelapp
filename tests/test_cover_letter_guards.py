@@ -577,3 +577,102 @@ def test_story_rows_leave_out_a_proposed_story_whatever_the_query_returns():
                                is_canonical=True, operator_edited=False)
     accepted = SimpleNamespace(**{**vars(proposed), "id": 4, "operator_edited": True})
     assert [r["key"] for r in story_rows([proposed, accepted])] == ["story-4"]
+
+
+# ------------------------------------------- D-LETTER-9: lengths of time and promises
+# The owner's local check, 2026-11-06: a letter said "I have three years of analysis experience"
+# for a person with eight, and "prepared to start immediately", and neither was marked.
+_OWN = ["Cut weekly reporting from two days to two hours, 3 warehouses.",
+        "Raised inventory accuracy from 92% to 98%."]
+_POSTING = "The role requires 3 years of analysis experience."
+
+
+def _flagged(body, sources=_OWN, posting=_POSTING):
+    from kestrel.docs.letters import unverified_details
+
+    return [f["phrase"] for f in unverified_details(body, sources, [], posting)]
+
+
+def test_a_bare_number_elsewhere_does_not_support_a_length_of_time():
+    assert _flagged("I have three years of analysis experience.") == ["three years"]
+    assert _flagged("I bring 3 years in analysis.") == ["3 years"]
+
+
+def test_a_length_of_time_the_person_wrote_is_supported():
+    own = [*_OWN, "Eight years as an operations analyst."]
+    assert _flagged("I have eight years as an analyst.", own) == []
+    assert _flagged("I have 8 years as an analyst.", own) == []
+    assert _flagged("I have eight months as an analyst.", own) == ["eight months"]
+
+
+def test_the_postings_own_requirement_may_be_restated_about_the_role():
+    assert _flagged("The role requires 3 years of analysis experience.") == []
+
+
+def test_promises_the_person_never_made_are_marked():
+    assert _flagged("I am prepared to start immediately.") == ["start immediately"]
+    assert _flagged("I can start right away and am willing to relocate.") == [
+        "start right away", "willing to relocate"]
+    assert _flagged("I would not need sponsorship.") == ["sponsorship"]
+
+
+def test_a_promise_in_the_persons_own_text_is_not_marked():
+    own = [*_OWN, "Willing to relocate to the coast."]
+    assert _flagged("I am willing to relocate.", own) == []
+
+
+def test_a_letter_with_no_promise_or_time_claim_is_clean():
+    assert _flagged("I look forward to discussing how I can help the team.") == []
+
+
+def test_every_length_of_time_is_found_even_after_the_same_number():
+    # A repeated compound: the second "twenty-five" is the claim, the first is grounded.
+    assert _flagged("I managed twenty-five clients over twenty-five years.",
+                    ["25 clients."]) == ["twenty-five years"]
+    # Hyphenated lengths of time are found: grounded by the same number elsewhere ("8 sites"),
+    # they are still marked.
+    assert _flagged("My eight-year career included an 18-month rollout.",
+                    ["8 sites and 18 stores."]) == ["eight-year", "18-month"]
+
+
+def test_a_length_of_time_is_marked_once_not_twice():
+    # The bare number is marked (and keeps its re-ask); the length of time is not added again.
+    assert _flagged("I bring eight years of analysis experience.") == ["eight"]
+
+
+def test_ordinary_prose_is_not_read_as_a_promise():
+    assert _flagged("I could start contributing immediately to your relocation project.") == []
+
+
+def test_more_promise_wordings_are_marked():
+    assert _flagged("I can start on short notice, am happy to travel, and am authorized to "
+                    "work in the US.") == ["start on short notice", "happy to travel",
+                                           "authorized to work"]
+
+
+def test_a_promise_of_the_same_kind_in_the_persons_text_grounds_another_wording():
+    assert _flagged("I am open to relocation.", [*_OWN, "Willing to relocate to the coast."]) == []
+
+
+async def test_time_and_promise_marks_never_trigger_the_re_ask():
+    """A false mark must not make the model delete a true fact (D-LETTER-9, like names #113):
+    the draft is kept as written, with both marks, after one model call."""
+    from kestrel.docs.letters import generate_cover
+    from tests.test_writing_check import _cover, _FakeLLM
+
+    body = "I have three years in planning and can start immediately."
+    llm = _FakeLLM(_cover(body), _cover("I plan well."))
+    draft = await generate_cover(llm, user_prompt="x", valid_keys=set(), grounding=_OWN,
+                                 posting=_POSTING)
+    assert llm.calls == 1  # no re-ask
+    assert draft.value.body_md == body
+    marks = {(f.get("detail"), f["phrase"]) for f in draft.style_flags}
+    assert {("time", "three years"), ("promise", "start immediately")} <= marks
+
+
+def test_an_engagement_outline_keeps_the_number_check_only():
+    from kestrel.docs.letters import unverified_details
+
+    out = unverified_details("Over three months we will relocate the team.", ["x"], [], _POSTING,
+                             cover=False)
+    assert [f["phrase"] for f in out] == ["three"]

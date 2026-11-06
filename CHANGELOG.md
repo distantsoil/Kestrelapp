@@ -4,6 +4,8 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-06
+
 ### Changed
 
 - **Diagnostics no longer carry network addresses.** The Local AI connection check names the addresses Ollama connected to; a saved diagnostics file now shows "a public address: <redacted>" instead of the address and port, in every mode. The Local AI notes list each shipped model with its size and checked digest, and point to the Ollama library for who made it and its license.
@@ -35,6 +37,8 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ### Fixed
 
+- **A cover letter could claim things you never said.** A gap the review had found you already meet was passed to the letter as one to acknowledge, so a letter wrote "three years" for a person with eight. That gap is no longer passed on, a length of time now has to match your own text exactly (a "3" elsewhere no longer covers "three years"), and promises such as starting immediately or relocating are marked unless you wrote them (D-LETTER-9).
+- **The run notification counted a role twice.** A role rated by the quick screen and then the full review was counted once per step, so one role read as "2 roles rated". Each role now counts once (D-RUN-2).
 - **A fast press on a Settings form sent unticked boxes.** The entry motion draws ticked boxes unticked for two frames after a card opens; a press in that window, such as Add on the import review, sent nothing ticked and added 0 applications. Any press, key or submit now puts the real values back first (D-UI-262).
 - **The safe-mode offer only appears when it can help.** A start that fails because your data was saved by a newer Kestrel, or could not be opened, now shows its own message every time instead of offering to start with optional features off.
 - **Deleting a resume keeps title suggestions another resume still backs.** A suggested title that quotes both the deleted resume and one you kept stays as it was, and deleting a capability statement no longer removes any suggested titles.

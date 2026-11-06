@@ -430,3 +430,32 @@ async def test_a_stopped_or_failed_loop_run_raises_nothing(sm):
     await cycle.record("tier2", {"completed": 1, "errors": 0}, did_work=True)
     await cycle.finish("stopping")
     assert await _notes(sm) == []
+
+
+async def test_a_role_rated_by_both_tiers_counts_once_in_the_run_summary(sm):
+    """The owner's run: 1 role went through the quick screen and the full review, and the
+    notification said "2 roles rated". Each role counts once."""
+    from kestrel.pipeline.runlog import CycleRun
+
+    src = await _source(sm)
+    cycle = CycleRun(sm, mode="local")
+    await cycle.ensure_open()
+    opp = await _role(sm, src, "Operations Lead", "Acme", utcnow_iso(), "not_fit")
+    await cycle.record("tier1", {"completed": 1, "errors": 0}, did_work=True, roles={opp})
+    await cycle.record("tier2", {"completed": 1, "errors": 0}, did_work=True, roles={opp})
+    await cycle.finish("done")
+    (note,) = await _notes(sm, "run_finished")
+    assert note.body == "Your search run is complete. 1 role rated."
+
+
+async def test_a_loop_run_recorded_without_roles_never_adds_the_tiers(sm):
+    from kestrel.pipeline.runlog import CycleRun
+
+    await _source(sm)
+    cycle = CycleRun(sm, mode="local")
+    await cycle.ensure_open()
+    await cycle.record("tier1", {"completed": 2, "errors": 0}, did_work=True)
+    await cycle.record("tier2", {"completed": 1, "errors": 0}, did_work=True)
+    await cycle.finish("done")
+    (note,) = await _notes(sm, "run_finished")
+    assert note.body == "Your search run is complete. 2 roles rated."

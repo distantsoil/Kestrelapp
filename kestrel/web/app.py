@@ -481,15 +481,22 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 await worker.drain_embed(emb)
                 await cycle.record("embed", runlog.tier_counts(emb), did_work=emb.completed > 0)
                 await worker.drain_tier("t1", settings.concurrency.tier1, handle_t1, t1)
-                await cycle.record("tier1", runlog.tier_counts(t1), did_work=t1.completed > 0)
+                await cycle.record("tier1", runlog.tier_counts(t1), did_work=t1.completed > 0,
+                                   roles=t1.roles)
                 await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
-                await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0)
+                await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0,
+                                   roles=t2.roles)
                 # Idle after every normal tier: free the day's share of roles waiting in the
                 # background lane (found company boards); they then drain tier by tier.
                 lane_n = await worker.release_lane()
                 if lane_n:
                     await worker.drain_tier("t1", settings.concurrency.tier1, handle_t1, t1)
                     await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
+                    # The lane's roles are this run's too (D-RUN-2): record the tiers again.
+                    await cycle.record("tier1", runlog.tier_counts(t1),
+                                       did_work=t1.completed > 0, roles=t1.roles)
+                    await cycle.record("tier2", runlog.tier_counts(t2),
+                                       did_work=t2.completed > 0, roles=t2.roles)
                 # Stories the operator asked to build from the My stories page (queued, never run
                 # on the request thread).
                 # A pause mid-cycle (finding 2): each drain above finished its leased task and

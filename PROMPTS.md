@@ -849,6 +849,10 @@ only when the person accepted it (canonical and `operator_edited`); a proposed s
 story appears as its key `story-<id>`, its title, its first action sentence and its result,
 never whole (the ask-first panel names the same four).
 
+The gap line is the worst `fatal` or `addressable` gap from block B. A `noise` gap is one the
+evaluation found the person already meets, so it is never offered as a gap to acknowledge; with
+only noise gaps the line is left out (D-LETTER-9).
+
 The person's name and contact details are never in the message. Kestrel prints "Sincerely," and
 the name from the local profile when it renders the preview, the PDF and the saved view, so the
 name is never part of an online payload.

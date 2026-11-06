@@ -244,6 +244,7 @@ class CycleRun:
         self.started_at = utcnow_iso()
         self.run_id: int | None = None
         self.counts: dict[str, Any] = {}
+        self.rated_roles: set[int] = set()
         self.did_work = False
         # Called once, when the row opens: the desktop loop holds the cycle's settings then, so
         # the run in flight is described by what it really uses (#103).
@@ -258,8 +259,12 @@ class CycleRun:
                 self.on_open()
         return self.run_id
 
-    async def record(self, key: str, value: dict[str, Any], *, did_work: bool) -> None:
+    async def record(
+        self, key: str, value: dict[str, Any], *, did_work: bool, roles: set[int] | None = None
+    ) -> None:
         self.counts[key] = value
+        if roles:
+            self.rated_roles |= roles
         if did_work:
             self.did_work = True
             await self.ensure_open()
@@ -306,8 +311,11 @@ class CycleRun:
         logged and never undoes the finished run."""
         from kestrel.services.run_notify import notify_run_finished
 
-        rated = sum(int((self.counts.get(k) or {}).get("completed", 0) or 0)
-                    for k in ("tier1", "tier2"))
+        # Each role once, even when both tiers rated it. A caller that records no roles falls
+        # back to the larger tier count, never the sum (D-RUN-2).
+        rated = len(self.rated_roles) or max(
+            (int((self.counts.get(k) or {}).get("completed", 0) or 0) for k in ("tier1", "tier2")),
+            default=0)
         try:
             await notify_run_finished(self._sm, run_id=self.run_id, rated=rated)
         except Exception as exc:  # noqa: BLE001 - a notification never fails a finished run
