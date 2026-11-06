@@ -296,7 +296,7 @@ async def test_a_long_running_task_keeps_its_lease_renewed(sm, monkeypatch):
     from kestrel.queue.queue import TaskQueue, claimable
 
     monkeypatch.setattr(worker_mod, "_RENEW_S", 0.05)
-    monkeypatch.setattr(worker_mod, "_TASK_LEASE_S", 1)
+    monkeypatch.setattr(worker_mod, "_TASK_LEASE_S", 2)
 
     await _seed(sm)
     queue = TaskQueue(sm)
@@ -313,11 +313,10 @@ async def test_a_long_running_task_keeps_its_lease_renewed(sm, monkeypatch):
     beat = asyncio.create_task(worker_mod._renew_lease(queue, task.id, "w1"))
     try:
         # Well past the 1s lease the task was taken with.
-        await asyncio.sleep(1.6)
-        # Still held: a heartbeat from the owning worker succeeds, and a competing worker
-        # cannot claim it because the lease has not lapsed.
-        assert await queue.heartbeat(task.id, "w1", lease_seconds=1) is True
-        assert await queue.lease("intruder", types=["t1"]) is None
+        await asyncio.sleep(2.5)
+        # Still held by the renewal alone: read straight from the row, before anything else
+        # touches it, so no lock retry can stretch the gap (a 1s margin lost that race on the
+        # Windows runner).
         async with sm() as s:
             still_leased = (
                 await s.execute(
@@ -328,6 +327,9 @@ async def test_a_long_running_task_keeps_its_lease_renewed(sm, monkeypatch):
                 )
             ).scalar_one_or_none()
         assert still_leased is None, "the task became claimable while its handler was running"
+        # The owner's heartbeat still succeeds, and a competing worker cannot claim the task.
+        assert await queue.heartbeat(task.id, "w1", lease_seconds=60) is True
+        assert await queue.lease("intruder", types=["t1"]) is None
     finally:
         beat.cancel()
         with contextlib.suppress(asyncio.CancelledError):
