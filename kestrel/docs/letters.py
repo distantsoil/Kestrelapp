@@ -281,9 +281,33 @@ def _commitments(body_md: str, sources: list[str]) -> list[dict[str, str]]:
     return out
 
 
+# Words that place the person at an employer in the past: a sentence holding the employer's name
+# and one of these keeps the name's mark (D-LETTER-10).
+_PAST_THERE = re.compile(
+    r"\b(?:worked|working\s+(?:at|for)|spent|was|were|led|ran|managed|built|served|joined|"
+    r"former|formerly|previously|tenure|my\s+time|my\s+(?:\w+\s+)?years?|during\s+my|"
+    r"(?:years?|months?)\s+(?:at|with|for))\b",
+    re.IGNORECASE,
+)
+
+
+def _just_the_employer(flag: dict[str, str], body_md: str, employer: str) -> bool:
+    """True for a name mark that is the employer's name (or a part of it) used only in sentences
+    that do not place the person there in the past."""
+    if flag.get("detail") != "name":
+        return False
+    phrase = flag["phrase"].strip().casefold()
+    words = set(re.findall(r"\w+", employer.casefold()))
+    if not phrase or not set(re.findall(r"\w+", phrase)) <= words:
+        return False
+    sentences = [x for para in re.split(r"\n+", body_md or "") for x in _SENTENCE.split(para)]
+    holding = [x for x in sentences if _has_token(x, flag["phrase"])]
+    return bool(holding) and not any(_PAST_THERE.search(x) for x in holding)
+
+
 def unverified_details(
     body_md: str, sources: list[str], name_sources: list[str] | None = None, posting: str = "",
-    *, cover: bool = True,
+    *, cover: bool = True, employer: str = "",
 ) -> list[dict[str, str]]:
     """Numbers and names in the body that the person's own text does not support (hard rule 2).
     One found in neither the person's text nor the posting is always flagged. One found only in
@@ -297,6 +321,11 @@ def unverified_details(
     # The greeting the prompt asks for is Kestrel's own wording, not a name the model made up.
     mine = [f for f in ungrounded_details(fields, sources, name_sources=name_sources)
             if f["phrase"].casefold() != GREETING_NAME]
+    # The employer's own name is not a claim when the letter is addressed to it ("I am excited
+    # to join <employer>"); it is still one in a sentence that places the person there in the
+    # past ("my four years at <employer>"), which escalates (D-LETTER-10).
+    if (employer or "").strip():
+        mine = [f for f in mine if not _just_the_employer(f, body_md, employer)]
     # A length of time must match the person's own value and unit; a bare number elsewhere in
     # their text does not support it.
     if not cover:  # the time and promise checks are the cover letter's (D-LETTER-9)
@@ -338,7 +367,7 @@ def unverified_details(
 
 def _grounding(
     sources: list[str] | None, name_sources: list[str] | None, posting: str = "",
-    *, cover: bool = True,
+    *, cover: bool = True, employer: str = "",
 ):
     """The plain-writing check's number and name grounding against the text the model was given
     (the person's proof points and bullets) and, for names, the person's own resume text. The
@@ -347,14 +376,14 @@ def _grounding(
     if sources is None:
         return None
     return lambda val: unverified_details(val.body_md, sources, name_sources, posting,
-                                          cover=cover)
+                                          cover=cover, employer=employer)
 
 
 async def generate_cover(
     client, *, user_prompt: str, valid_keys: set[str], on_quarantine=None, session=None,
     exempt: tuple[str, ...] = (), grounding: list[str] | None = None,
     name_sources: list[str] | None = None, opportunity_id: int | None = None,
-    posting: str = "",
+    posting: str = "", employer: str = "",
 ):
     """P4 cover letter. `user_prompt` is the assembled context (profile, selected verbatim bullets,
     accepted stories, evaluation angle, job); the caller supplies only real proof points, variants
@@ -380,7 +409,7 @@ async def generate_cover(
     if not ok:
         return LetterDraft(value=None, third_person=True, error="third person")
     result.value = first
-    grounded = _grounding(grounding, name_sources, posting)
+    grounded = _grounding(grounding, name_sources, posting, employer=employer)
 
     def checks(val) -> list[dict[str, str]]:
         return [*(grounded(val) if grounded else []), *length_flags(val.body_md, COVER)]
@@ -407,7 +436,7 @@ async def generate_engagement(
     client, *, user_prompt: str, valid_keys: set[str], on_quarantine=None, session=None,
     exempt: tuple[str, ...] = (), grounding: list[str] | None = None,
     name_sources: list[str] | None = None, opportunity_id: int | None = None,
-    posting: str = "",
+    posting: str = "", employer: str = "",
 ):
     """P4C engagement outline. Needs at least three explicit exclusions."""
     spec = load_prompt(OUTLINE_PROMPT)
@@ -432,7 +461,8 @@ async def generate_engagement(
     result.value = first
     plain = await enforce(
         spec, result.value, messages=messages, exempt=exempt,
-        extra_check=_grounding(grounding, name_sources, posting, cover=False),
+        extra_check=_grounding(grounding, name_sources, posting, cover=False,
+                               employer=employer),
         run=lambda m, reask=False: _run(
             client, spec, m, session=session, on_quarantine=on_quarantine, reask=reask,
             opportunity_id=opportunity_id,

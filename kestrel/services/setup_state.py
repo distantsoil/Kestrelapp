@@ -754,11 +754,12 @@ def start_action(name: str, work: Callable[[Action], None]) -> Action:
         try:
             work(act)
         except Exception as exc:  # the thread must report, never die silently
-            # The action log is shown on the page: the type name, plus the text only when
-            # Kestrel wrote it. The raw exception (it can name a path) goes to the log only.
+            # The action log is shown on the page outside Show details, so it never names an
+            # exception class: Kestrel's own text when Kestrel wrote it, else a plain sentence.
+            # The raw exception (it can name a path) goes to the log only.
             act.error = (
-                f"{type(exc).__name__}: {exc}" if isinstance(exc, UserFacingError)
-                else f"{type(exc).__name__}; the details are in the log"
+                str(exc).strip() if isinstance(exc, UserFacingError) and str(exc).strip()
+                else "an unexpected problem; the details are in the log"
             )
             act.log(f"failed: {act.error}")
             log.warning("setup_action_failed", action=name, error=f"{type(exc).__name__}: {exc}")

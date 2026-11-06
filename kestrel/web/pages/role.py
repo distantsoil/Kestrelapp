@@ -1641,6 +1641,13 @@ def _name_sources(doc) -> list[str]:
     return out
 
 
+def _own_words(profile) -> list[str]:
+    """The person's own headline and narrative: the prompt carries both, so a number or name the
+    letter takes from them is the person's, not the model's (D-LETTER-10)."""
+    return [t for t in (str(getattr(profile, k, "") or "") for k in ("headline", "narrative"))
+            if t.strip()]
+
+
 async def _letter_basis(s, settings, opp, basis: dict | None = None):
     """The person's document the letter draws its lines from: (master, config, resolved doc) or
     None. A new draft uses the latest tailored resume for the role, else the track's active one;
@@ -1835,15 +1842,17 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
                     f"ownership {org.ownership}" if org and org.ownership else "") if x),
             )
             hook = make_quarantine_hook(s, tier=4, opportunity_id=opp.id)
-            # Hard rule 2: only the person's own proof points and resume lines ground a number
-            # or a name. The posting is the model's input, never the person's claim.
-            grounding = [t["text"] for t in sources.values()]
+            # Hard rule 2: only the person's own text (proof points, resume lines, headline and
+            # narrative) grounds a number or a name. The posting is the model's input, never the
+            # person's claim.
+            grounding = [t["text"] for t in sources.values()] + _own_words(profile)
             generate = generate_engagement if kind == "engagement_outline" else generate_cover
             async with httpx.AsyncClient() as http:
                 draft = await generate(
                     LLMClient(settings, http=http), user_prompt=prompt, valid_keys=set(sources),
                     on_quarantine=hook, session=s, grounding=grounding,
-                    name_sources=_name_sources(doc), opportunity_id=opp.id, posting=posting,
+                    name_sources=_name_sources(doc), opportunity_id=opp.id,
+                    posting=posting, employer=company,
                 )
             if draft.value is None:
                 await s.commit()  # the quarantine row, with the raw reply kept
@@ -1853,6 +1862,9 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
             extras: dict[str, Any] = {"basis": {"master_id": master.id, "config": {
                 k: val for k, val in cfg.items() if k != "redact_orgs"}},
                 "sent_keys": sorted(sources),
+                # The person's headline and narrative as this prompt carried them, so a later
+                # profile edit never clears or adds a mark on this letter (D-LETTER-10).
+                "sent_own": _own_words(profile),
                 # The exact text each key carried in this prompt, so the check view shows what
                 # was sent, never a later edit of it (hard rule 2, D-LETTER-8).
                 "sent_sources": {k: {"label": v["label"], "text": v["text"],
@@ -1919,6 +1931,8 @@ async def _letter_ctx(
     kind, stored = str(letter.kind or row.template or "cover_letter"), str(letter.body_md or "")
     found = await _letter_basis(s, settings, opp, extras.get("basis"))
     profile = await asyncio.to_thread(load_profile, opp.track)
+    org = await s.get(Org, opp.org_id) if opp.org_id else None
+    company = (org.name if org else None) or opp.org_name or ""
     variants = _variants(found[2]) if found else []
     collided: set[str] = set()
     current = source_map(
@@ -1955,6 +1969,10 @@ async def _letter_ctx(
     else:
         sources = current
     unresolved = verify_claims(claims, set(sources))
+    # A letter drafted before 0.7.6 kept no headline or narrative: those use the current ones.
+    sent_own = extras.get("sent_own")
+    own = ([str(x) for x in sent_own] if isinstance(sent_own, list)
+           else _own_words(profile))
     # Confidential mode: the current employer is hidden in everything the person is shown (the
     # check view, the edit text, the preview, the sources) and in the PDF. The checks below run on
     # the stored text, so a hidden name is never mistaken for an unverified one.
@@ -1969,10 +1987,10 @@ async def _letter_ctx(
     # added by hand is marked in the check view, the preview warning and before a download, and
     # one that now matches a source stops being marked.
     fresh = unverified_details(
-        stored, [t["text"] for t in sources.values()],
+        stored, [t["text"] for t in sources.values()] + own,
         _name_sources(found[2]) if found else None,
         normalize_description(opp.description_md),
-        cover=letter.kind != OUTLINE,
+        cover=letter.kind != OUTLINE, employer=company,
     )
     if letter.edited:
         # The style marks are on Kestrel's wording, so they go once the person has changed it
@@ -2015,11 +2033,12 @@ async def _letter_route(s, settings, opp) -> dict[str, Any]:
     kind = _letter_kind(opp)
     noun = _letter_noun(kind)
     sends = (
-        "the posting, up to three of your proof points or resume lines and up to two of your "
-        "accepted stories (for each story: a reference key, its title, its first action sentence "
-        "and its result), chosen for this cover letter"
+        "the posting, your headline and narrative, up to three of your proof points or resume "
+        "lines and up to two of your accepted stories (for each story: a reference key, its "
+        "title, its first action sentence and its result), chosen for this cover letter"
         if kind == "cover_letter"
-        else f"the posting, your proof points and the resume lines chosen for this {noun}"
+        else f"the posting, your headline and narrative, your proof points and the resume lines "
+             f"chosen for this {noun}"
     )
     route = await shared_route(s, settings, "tier3", reask=True, this_send=sends)
     if route.get("online"):
