@@ -1131,10 +1131,19 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
     loading window. Raises StartupError with a plain reason when a step cannot finish, and
     _Cancelled as soon as `stop()` turns true (a quit during loading): no server is started after
     a quit, and one already started is stopped by the caller."""
+    from kestrel import startup_health
     from kestrel.db import migrate
     from kestrel.web.serve import wait_for_health, write_runtime
 
     _check(stop)
+    if startup_health.take_offer(startup_health.failed_starts()):
+        raise StartupError(
+            startup_health.OFFER_CODE,
+            startup_health.OFFER_REASON,
+            "Startup step: before starting\nThe last two starts did not finish.\n"
+            "Log file: kestrel.log (in the logs folder)",
+        )
+    startup_health.begin_start()  # counted as failed until the app is up (cleared below)
     if _updating():
         splash.say(UPDATING, None, UPDATING_NOTE, 3500)
     else:
@@ -1148,13 +1157,19 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
         # destroy data).
         msg = str(exc)
         if "Can't locate revision" in msg or "newer" in msg.lower():
+            # The release is named only when the database itself recorded one that is newer than
+            # this build; otherwise "a newer Kestrel", never an invented number (#105).
+            newer = migrate.newer_than_this_build()
+            who = f"a newer Kestrel ({newer})" if newer else "a newer Kestrel"
+            startup_health.start_failed("newer_database")  # safe mode cannot help: not counted
             raise StartupError(
                 "newer_database",
-                "This data was saved by a newer Kestrel. Install the latest version to open it.",
+                f"This data was saved by {who}. Install the latest version to open it.",
                 f"Startup step: open your data\nCause: {type(exc).__name__}: {msg}\n"
                 "This version of Kestrel is older than the one that last saved your data.\n"
                 "Download the latest version from kestrelapp.co to open your data.",
             ) from exc
+        startup_health.start_failed("migrations_failed")  # safe mode cannot help: not counted
         raise StartupError(
             "migrations_failed",
             "Kestrel could not open your data on this computer.",
@@ -1190,6 +1205,7 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
         )
     _check(stop)
     write_runtime(port, os.getpid())
+    startup_health.mark_started()
     splash.say(CHECKING, 85)
     run_preflight()
     _check(stop)
@@ -1474,6 +1490,17 @@ def _retry_start() -> bool:
     return True
 
 
+def _safe_start() -> bool:
+    """Start with optional features off (#130): this run only. The flag is the process
+    environment, read by the app's lifespan, so the next normal launch has everything back."""
+    from kestrel import startup_health
+
+    if _started or _quitting:
+        return False
+    startup_health.enter_safe_mode()
+    return _retry_start()
+
+
 def _resize_to(win: Any, width: int, height: int) -> None:
     try:
         win.resize(width, height)
@@ -1554,6 +1581,9 @@ def _boot_steps(busy: bool) -> None:
         port = _start_backend(splash, stop=lambda: _quitting)
     except _Cancelled:
         log.info("startup_cancelled_by_quit")
+        from kestrel import startup_health
+
+        startup_health.abandon_start()
         _stop_server()
         return
     except StartupError as exc:
@@ -1606,6 +1636,7 @@ def _run_window(webview: Any, *, busy: bool) -> int:
         close_intent=_close_intent,
         close=_close_from_page,
         retry=_retry_start,
+        safe_start=_safe_start,
         open_logs=lambda: _open_folder(paths.logs_dir()),
         quit_app=do_quit,
         download=lambda: webbrowser.open("https://kestrelapp.co/download"),

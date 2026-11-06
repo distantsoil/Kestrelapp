@@ -366,7 +366,9 @@ wrong, change it yourself. Your choice always wins, and Kestrel learns from it.<
 <p>Kestrel needs an AI model to read postings. The model can run on this computer or on an
 online service. You choose, and you can change your mind at any time.</p>
 <h6>On this computer</h6><p>Local models run through Ollama, a free app that runs AI models.
-They cost nothing and your data never leaves. Speed depends on your computer. A recent
+They cost nothing. Kestrel keeps your data on this computer as long as Ollama is set up as
+shipped; Ollama's own settings, such as its cloud models, can change that. The Models page
+explains how to keep it local. Speed depends on your computer. A recent
 graphics card or an Apple chip makes a large difference. A computer without one still works,
 only slower.</p>
 <h6>Online</h6><p>You add your own key from OpenRouter, OpenModel, Anthropic, OpenAI or any

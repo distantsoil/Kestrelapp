@@ -260,25 +260,33 @@ def _swaps(text: str, pattern: re.Pattern[str], pairs: dict[str, str]) -> list[s
     return found
 
 
+def ranked_phrasings(title: str, limit: int = 3) -> list[tuple[str, str]]:
+    """`phrasings` with the kind of each: "abbrev" for an abbreviation or expansion swap (VP and
+    Vice President), "family" for a curated family spelling. Abbreviation swaps come first."""
+    title = " ".join(str(title or "").split())
+    if not title or limit <= 0:
+        return []
+    want = token_set(title)
+    candidates = [(c, "abbrev") for c in _swaps(title, _SWAP_RE, _SEARCH_PAIRS)] + [
+        (c, "family") for c in _swaps(title, _FAMILY_RE, _FAMILY_PAIRS)
+    ]
+    out: list[tuple[str, str]] = []
+    seen = {title.casefold()}
+    for c, kind in candidates:
+        c = " ".join(c.split())
+        if not c or c.casefold() in seen or token_set(c) != want:
+            continue
+        seen.add(c.casefold())
+        out.append((c, kind))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def phrasings(title: str, limit: int = 3) -> list[str]:
     """Up to `limit` other spellings postings commonly use for `title` (D-TTL-2), most complete
     first: every searchable abbreviation swapped for its other form, then each one on its own,
     then a curated family spelling swapped. Word order is never changed (boards handle it).
     Every variant normalizes to exactly the title's token set; one that does not is dropped.
     Never the title itself, never a duplicate (case-insensitive)."""
-    title = " ".join(str(title or "").split())
-    if not title or limit <= 0:
-        return []
-    want = token_set(title)
-    candidates = _swaps(title, _SWAP_RE, _SEARCH_PAIRS) + _swaps(title, _FAMILY_RE, _FAMILY_PAIRS)
-    out: list[str] = []
-    seen = {title.casefold()}
-    for c in candidates:
-        c = " ".join(c.split())
-        if not c or c.casefold() in seen or token_set(c) != want:
-            continue
-        seen.add(c.casefold())
-        out.append(c)
-        if len(out) >= limit:
-            break
-    return out
+    return [v for v, _ in ranked_phrasings(title, limit)]

@@ -52,17 +52,19 @@
        follows the page as it scrolls, as tall as its content. #}
     <div class="pl-panel-host"><aside id="pl-panel" class="pl-panel{% if open_id %} is-open{% endif %}" aria-label="Role summary" data-testid="pl-panel">{% if open_id %}{{ panel_html|safe }}{% endif %}</aside></div>
     {% include "partials/opp_rows.html" %}
-    <div class="pl-bulk-host"><div class="pl-bulk" id="pl-bulk" role="toolbar" aria-label="Selected roles" data-testid="pl-bulk">
-      <b id="pl-bcount">0 selected</b>
+    <div class="pl-bulk-host"><div class="pl-bulk" id="pl-bulk" role="toolbar" aria-label="Selected roles" data-testid="pl-bulk" data-cap="{{ bulk_cap }}">
+      <b id="pl-bcount" aria-live="polite">0 selected</b>
+      <button type="button" class="pl-bulk__all" id="pl-ball" data-testid="select-whole-group" hidden></button>
+      <span class="pl-bulk__note" id="pl-bnote" data-testid="bulk-note" hidden></span>
       {% if signals_tab %}
-        <button type="button" data-bulk="shortlist">Add to leads</button>
-        <button type="button" data-bulk="not-for-me">Not relevant</button>
+        <button type="button" data-bulk="shortlist" data-bulk-label="Add to leads">Add to leads</button>
+        <button type="button" data-bulk="not-for-me" data-bulk-label="Not relevant">Not relevant</button>
       {% else %}
-        <button type="button" data-bulk="shortlist">{{ 'Add to leads' if track == 'consulting' else 'Shortlist' }}</button>
-        <button type="button" data-bulk="not-for-me">Not for me</button>
-        <button type="button" data-bulk="score-again" data-testid="bulk-score-again">Score again</button>
+        <button type="button" data-bulk="shortlist" data-bulk-label="{{ 'Add to leads' if track == 'consulting' else 'Shortlist' }}">{{ 'Add to leads' if track == 'consulting' else 'Shortlist' }}</button>
+        <button type="button" data-bulk="not-for-me" data-bulk-label="Not for me">Not for me</button>
+        <button type="button" data-bulk="score-again" data-bulk-label="Score again" data-testid="bulk-score-again">Score again</button>
         <button type="button" data-bulk="deeper-read">Deeper read</button>
-        <button type="button" data-bulk="mark-reviewed">Mark reviewed</button>
+        <button type="button" data-bulk="mark-reviewed" data-bulk-label="Mark reviewed">Mark reviewed</button>
       {% endif %}
       <button type="button" class="pl-bulk__x" id="pl-bclear" aria-label="Clear selection">{{ ui.icon('x', 'k-ic--sm') }}</button>
     </div></div>

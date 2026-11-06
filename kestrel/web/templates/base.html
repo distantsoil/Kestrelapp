@@ -1,6 +1,6 @@
 {# Settings > Preferences reach every page here, once: text size and Reduce motion as
-   attributes on <html> (components.css reads them), the avatar in the top bar below. #}{% set prefs = ui_prefs() %}<!doctype html>
-<html lang="en"{% if test_mode is defined and test_mode() %} data-test-mode="1"{% endif %}{% if desktop_window(request) %} data-k-desktop="1"{% endif %} data-scheme="{{ ui_scheme() }}" data-text-size="{{ prefs.text_size }}" data-reduce-motion="{{ '1' if prefs.reduce_motion else '0' }}" data-k-nav="{{ '0' if prefs.classic_nav else '1' }}" x-data="kChrome()">
+   attributes on <html> (components.css reads them), the avatar in the top bar below. #}{% set prefs = ui_prefs() %}{% set side_c = request.cookies.get('kestrel-side') == '1' %}{% set side_p = request.cookies.get('kestrel-side-pin') == '1' and not side_c %}<!doctype html>
+<html lang="en"{% if side_c or side_p %} class="{% if side_c %}k-side-collapsed{% else %}k-side-pinned{% endif %}"{% endif %}{% if test_mode is defined and test_mode() %} data-test-mode="1"{% endif %}{% if desktop_window(request) %} data-k-desktop="1"{% endif %} data-scheme="{{ ui_scheme() }}" data-text-size="{{ prefs.text_size }}" data-reduce-motion="{{ '1' if prefs.reduce_motion else '0' }}" data-k-nav="{{ '0' if prefs.classic_nav else '1' }}" x-data="kChrome()">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -233,6 +233,7 @@
 <div class="track-switch" role="tablist" aria-label="Track" data-track="{{ track }}">
   {% for t in enabled_tracks() %}
   <a href="?track={{ t }}" role="tab" @click="setTrack('{{ t }}')" data-tab-track="{{ t }}" data-k-reload
+     data-initial="{{ words(t).track_name[:1] }}" title="{{ words(t).track_name }}" aria-label="{{ words(t).track_name }}"
      aria-selected="{{ 'true' if track == t else 'false' }}"
      class="{% if track == t %}active{% endif %}">{{ words(t).track_name }}{% if badges %}<span class="n" id="nav-count-track-{{ t }}" title="Waiting for you on this track"></span>{% endif %}</a>
   {% endfor %}
@@ -241,13 +242,18 @@
 {% endmacro %}
 
 {% if k_desktop %}{% include "partials/window_edges.html" %}{% endif %}
-<div class="k-win" id="kwin">
+<div class="k-win{% if side_c %} is-side-collapsed is-rail{% endif %}" id="kwin">
   <aside class="side" id="sidebar">
     {% if k_desktop %}{% include "partials/window_controls.html" %}{% endif %}
     <a class="k-brand" href="/" title="Kestrel"><span class="k-brand__mark"><img src="{{ static_url('icon.svg') }}" alt="" width="30" height="30"></span><span class="k-brand__word">Kestrel</span></a>
-    <button type="button" class="k-side-toggle" aria-label="Collapse sidebar" data-testid="side-toggle" title="Collapse sidebar">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </button>
+    <div class="k-side-ctl">
+      <button type="button" class="k-side-pin" aria-label="Pin sidebar open" aria-pressed="false" data-testid="side-pin" title="Pin sidebar open">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 2h4l-.6 4.2 2.2 2.3V9.5H8.7V14H7.3V9.5H4.4V8.5l2.2-2.3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      </button>
+      <button type="button" class="k-side-toggle" aria-label="{{ 'Expand sidebar' if side_c else 'Collapse sidebar' }}" aria-expanded="{{ 'false' if side_c else 'true' }}" aria-keyshortcuts="Control+B Meta+B" data-testid="side-toggle" title="{{ 'Expand sidebar' if side_c else 'Collapse sidebar' }} (Ctrl B)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
     {{ trackswitch(cur) }}
     <nav class="mainnav" aria-label="Main">
       {{ navlinks(p, track=cur) }}
@@ -278,26 +284,161 @@
             if (!body.querySelector('script')) rail.replaceChildren.apply(rail, Array.prototype.slice.call(body.childNodes));
           }
         } catch (e) {}
-        // Sidebar collapse toggle (#126): remember the state in localStorage. Every storage
-        // access is guarded: blocked storage must never stop the toggle from working.
+        // The sidebar's forms (#126, D-UI-249). In the page it is the full sidebar (pinned) or the
+        // 68 px rail. The rail is chosen (the kestrel-side cookie) or forced by the window width.
+        // Opening the rail draws the full sidebar OVER the page; it closes after a short idle
+        // time, on Esc, on a click outside and after choosing a page. The pushpin keeps it in the
+        // page (kestrel-side-pin). The server reads both cookies for the first paint; every
+        // storage access is guarded because either store may be blocked.
         var kwin = document.getElementById('kwin');
         var btn = document.querySelector('.k-side-toggle');
-        if (kwin && btn) {
-          var collapsed = false;
-          try { collapsed = localStorage.getItem('kestrel-side-collapsed') === '1'; } catch (e) {}
-          function applyState(c) {
-            kwin.classList.toggle('is-side-collapsed', c);
-            btn.setAttribute('aria-label', c ? 'Expand sidebar' : 'Collapse sidebar');
-            btn.setAttribute('aria-expanded', c ? 'false' : 'true');
-            btn.title = c ? 'Expand sidebar' : 'Collapse sidebar';
+        var pin = document.querySelector('.k-side-pin');
+        var side = document.getElementById('sidebar');
+        if (kwin && btn && pin && side) {
+          var root = document.documentElement;
+          var mq1100 = window.matchMedia('(max-width: 1100px)');
+          var mq900 = window.matchMedia('(max-width: 899px)');
+          var mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+          var hint = mac ? ' (⌘B)' : ' (Ctrl B)';
+          var cookieOf = function (n) {
+            var m = document.cookie.match(new RegExp('(?:^|; )' + n + '=([01])'));
+            return m ? m[1] : null;
+          };
+          var stored = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+          var cs = cookieOf('kestrel-side'), cp = cookieOf('kestrel-side-pin');
+          var collapsed = cs !== null ? cs === '1' : stored('kestrel-side-collapsed') === '1';
+          var pinned = !collapsed && (cp !== null ? cp === '1' : stored('kestrel-side-pin') === '1');
+          var open = false, closing = false, settling = false, hovering = false, idleTimer = null;
+          var rail = function () { return collapsed || mq900.matches || (mq1100.matches && !pinned); };
+          function render() {
+            var r = rail();
+            if (!r && !settling) { open = false; closing = false; }
+            kwin.classList.toggle('is-rail', r);
+            kwin.classList.toggle('is-side-open', (r && open) || settling);
+            kwin.classList.toggle('is-side-closing', closing);
+            kwin.classList.toggle('is-side-collapsed', collapsed);
+            root.classList.toggle('k-side-collapsed', collapsed);
+            root.classList.toggle('k-side-pinned', pinned);
+            var expanded = !r || open;
+            btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            btn.setAttribute('aria-label', expanded ? 'Collapse sidebar' : 'Expand sidebar');
+            btn.title = (expanded ? 'Collapse sidebar' : 'Expand sidebar') + hint;
+            // In the page the pin is "on"; pressing it returns the sidebar to the rail. On the
+            // open rail it is "off"; pressing it keeps the sidebar in the page, if there is room.
+            var inPage = !r;
+            var tooSmall = r && mq900.matches;
+            pin.setAttribute('aria-pressed', inPage ? 'true' : 'false');
+            pin.setAttribute('aria-disabled', tooSmall ? 'true' : 'false');
+            var pinLabel = tooSmall ? 'The window is too narrow to keep the sidebar open'
+              : inPage ? 'Unpin sidebar (back to icons)' : 'Pin sidebar open';
+            pin.setAttribute('aria-label', pinLabel);
+            pin.title = pinLabel;
+            armIdle();
           }
-          applyState(collapsed);
-          btn.addEventListener('click', function () {
-            collapsed = !collapsed;
-            // The width transition is switched on only for a press, never for the restore above.
+          function remember() {
+            try {
+              localStorage.setItem('kestrel-side-collapsed', collapsed ? '1' : '0');
+              localStorage.setItem('kestrel-side-pin', pinned ? '1' : '0');
+            } catch (e) {}
+            var tail = '; path=/; max-age=31536000; samesite=lax';
+            document.cookie = 'kestrel-side=' + (collapsed ? '1' : '0') + tail;
+            document.cookie = 'kestrel-side-pin=' + (pinned ? '1' : '0') + tail;
+          }
+          // A browser with only the older localStorage copy moves it to the cookies once.
+          if ((cs === null && collapsed) || (cp === null && pinned)) remember();
+          // The grid glides on a press only (never on the restore at page load).
+          function afterGlide(fn) {
+            var done = false, t = null;
+            function end() {
+              if (done) return; done = true; clearTimeout(t);
+              kwin.removeEventListener('transitionend', on); fn();
+            }
+            function on(e) { if (e.target === kwin && e.propertyName === 'grid-template-columns') end(); }
+            kwin.addEventListener('transitionend', on);
+            t = setTimeout(end, 700);
+            if (!(parseFloat(getComputedStyle(kwin).transitionDuration) > 0)) end();
+          }
+          function collapseToRail() {
+            collapsed = true; pinned = false; open = false; closing = false;
             kwin.classList.add('is-side-animating');
-            try { localStorage.setItem('kestrel-side-collapsed', collapsed ? '1' : '0'); } catch (e) {}
-            applyState(collapsed);
+            root.classList.add('k-side-glide');
+            remember(); render();
+          }
+          function openOverlay() {
+            if (!rail() || (open && !closing)) return;
+            open = true; closing = false; render();
+          }
+          function closeOverlay() {
+            if (!open || closing) return;
+            var a = getComputedStyle(side);
+            if (a.animationName === 'none') { open = false; render(); return; }
+            closing = true; render();
+            var done = false;
+            function end() {
+              if (done) return; done = true; side.removeEventListener('animationend', on);
+              if (closing) { open = false; closing = false; render(); }
+            }
+            function on(e) { if (e.target === side) end(); }
+            side.addEventListener('animationend', on);
+            setTimeout(end, 600);
+          }
+          function pinOpen() {
+            if (mq900.matches) return;
+            collapsed = false; pinned = true; settling = true;
+            kwin.classList.add('is-side-animating');
+            root.classList.add('k-side-glide');
+            remember(); render();
+            afterGlide(function () { settling = false; open = false; closing = false; render(); });
+          }
+          function armIdle() {
+            clearTimeout(idleTimer);
+            var f = document.activeElement;
+            // Keyboard focus inside keeps it open; the focus a mouse press leaves on a button does not.
+            if (!open || closing || hovering || (side.contains(f) && f.matches(':focus-visible'))) return;
+            var ms = parseInt(side.dataset.idleMs, 10) || 5000;
+            idleTimer = setTimeout(closeOverlay, ms);
+          }
+          function toggleSide() {
+            if (!rail()) collapseToRail();
+            else if (open && !closing) closeOverlay();
+            else openOverlay();
+          }
+          render();
+          btn.addEventListener('click', toggleSide);
+          pin.addEventListener('click', function () {
+            if (pin.getAttribute('aria-disabled') === 'true') return;
+            if (!rail()) collapseToRail(); else pinOpen();
+          });
+          side.addEventListener('mouseenter', function () { hovering = true; armIdle(); });
+          side.addEventListener('mouseleave', function () { hovering = false; armIdle(); });
+          side.addEventListener('focusin', armIdle);
+          side.addEventListener('focusout', function () { setTimeout(armIdle, 0); });
+          // Choosing a page closes the overlay at once.
+          side.addEventListener('click', function (e) {
+            if (open && e.target.closest && e.target.closest('.mainnav a')) closeOverlay();
+          });
+          // A press anywhere outside the open sidebar closes it (mouse, pen and touch alike).
+          document.addEventListener('pointerdown', function (e) {
+            if (open && !closing && !side.contains(e.target)) closeOverlay();
+          }, true);
+          document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && open && !closing && !e.defaultPrevented) {
+              var had = side.contains(document.activeElement);
+              closeOverlay();
+              if (had) btn.focus();
+            }
+          });
+          [mq1100, mq900].forEach(function (q) {
+            if (q.addEventListener) q.addEventListener('change', render);
+          });
+          // Ctrl B (Cmd B on a Mac) toggles it. Not while the sidebar is hidden (phone width),
+          // and never inside an editable field, where B belongs to the text.
+          document.addEventListener('keydown', function (e) {
+            if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || String(e.key).toLowerCase() !== 'b') return;
+            if (e.defaultPrevented || !btn.getClientRects().length) return;
+            if (e.target && e.target.isContentEditable) return;
+            e.preventDefault();
+            toggleSide();
           });
         }
       })();

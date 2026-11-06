@@ -984,6 +984,35 @@
     };
     doc.addEventListener('htmx:responseError', failed);
     doc.addEventListener('htmx:sendError', failed);
+    // I applied (issue #129): the shared form on the Role page and in the Pipeline side panel.
+    // Today and Yesterday fill the applied date; the follow-up follows it (a week later) until
+    // the person sets the follow-up themselves.
+    var oaDays = function (iso, n) {
+      var d = new Date(iso + 'T00:00:00');
+      if (isNaN(d.getTime())) return '';
+      d.setDate(d.getDate() + n);
+      var m = String(d.getMonth() + 1), day = String(d.getDate());
+      return d.getFullYear() + '-' + (m.length < 2 ? '0' : '') + m + '-' + (day.length < 2 ? '0' : '') + day;
+    };
+    var oaSync = function (form) {
+      var a = form.querySelector('[data-oa-applied]'), f = form.querySelector('[data-oa-follow]');
+      if (!a || !f || f.getAttribute('data-touched') === '1' || !a.value) return;
+      var next = oaDays(a.value, 7);
+      if (next) f.value = next;
+    };
+    doc.addEventListener('click', function (e) {
+      var pick = e.target && e.target.closest ? e.target.closest('[data-oa-pick]') : null;
+      var form = pick && pick.closest('form'), a = form && form.querySelector('[data-oa-applied]');
+      if (!a) return;
+      a.value = pick.getAttribute('data-oa-pick');
+      oaSync(form);
+    });
+    doc.addEventListener('input', function (e) {
+      var t = e.target;
+      if (!t || !t.matches) return;
+      if (t.matches('[data-oa-follow]')) t.setAttribute('data-touched', '1');
+      else if (t.matches('[data-oa-applied]') && t.form) oaSync(t.form);
+    });
     // A click on a page in the sidebar moves the highlight at once, so the click visibly lands
     // while the next page loads (owner round 15: a lag read as a missed click).
     doc.addEventListener('click', function (e) {
@@ -2344,6 +2373,12 @@
     doc.addEventListener('keydown', onKey);
     doc.addEventListener('pointerdown', onOutside, true);
     doc.addEventListener('k-toast', function (e) {
+      var d = e.detail || {};
+      toast(d.message || d.value || '', d);
+    });
+    // A setting changed while a run is working: the run keeps what it was confirmed on, with a
+    // Stop button (the toast's action button posts to /runs/stop).
+    doc.addEventListener('k-run-notice', function (e) {
       var d = e.detail || {};
       toast(d.message || d.value || '', d);
     });

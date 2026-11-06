@@ -14,6 +14,7 @@ import secrets
 import shutil
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 import structlog
@@ -687,15 +688,23 @@ def _check_cloud_model_tags(rep: DoctorReport, client: OllamaClient) -> None:
         )
 
 
-def _check_local_ai_egress(rep: DoctorReport) -> None:
+def _check_local_ai_egress(rep: DoctorReport, watcher: object | None = None) -> None:
     """Issue #166 M1: Connection spot check.
-    Looks at Ollama's network connections at the moment of the check and classifies each remote
-    address. Read-only: nothing is sent, nothing is changed. When the connections cannot be
-    listed, the row says "unverified" and is never a pass."""
+    Classifies the remote address of each Ollama connection seen. With a ConnectionWatcher
+    (started before the model probes, #144) the connections cover the probe's duration; without
+    one it samples for a few seconds. Read-only: nothing is sent, nothing is changed. When the
+    connections cannot be listed, the row says "unverified" and is never a pass."""
     try:
-        from kestrel.services.local_ai_egress import format_egress_result, sample_connections
+        from kestrel.services.local_ai_egress import (
+            ConnectionWatcher,
+            format_egress_result,
+            sample_connections,
+        )
 
-        result = sample_connections(duration_s=3.0)
+        if isinstance(watcher, ConnectionWatcher):
+            result = watcher.finish()
+        else:
+            result = sample_connections(duration_s=3.0)
     except ImportError:
         rep.add(
             "Local AI: egress",
@@ -718,7 +727,70 @@ def _check_local_ai_egress(rep: DoctorReport) -> None:
     elif result.error:
         rep.add("Local AI: egress", WARN, text)
     else:
-        rep.add("Local AI: egress", WARN if result.public_connections else INFO, text)
+        # Private and public addresses both warn; only Ollama's own services are info (#144).
+        rep.add("Local AI: egress", WARN if (result.public_connections
+                                             or result.private_connections) else INFO, text)
+
+
+def _start_egress_watcher() -> object | None:
+    """Start sampling Ollama's connections; None when psutil is not importable (the egress row
+    then says "unverified" by itself)."""
+    try:
+        from kestrel.services.local_ai_egress import ConnectionWatcher
+
+        return ConnectionWatcher().start()
+    except ImportError:
+        return None
+
+
+def ollama_server_json_path() -> Path:
+    """Where Ollama keeps its server settings on this computer (`~/.ollama/server.json`)."""
+    return Path.home() / ".ollama" / "server.json"
+
+
+def _check_ollama_cloud_off(rep: DoctorReport, s: Settings) -> None:
+    """#144: are Ollama's own cloud features turned off? Ollama's FAQ ("How do I disable Ollama's
+    cloud features?") says `disable_ollama_cloud` in `~/.ollama/server.json` or the environment
+    variable `OLLAMA_NO_CLOUD=1` does it. Kestrel can read the file and its own environment, not
+    the environment Ollama was started with, so a setting that is not seen is reported as "not
+    seen turned off", never as a pass, and an unreadable file or an Ollama on another computer is
+    "unverified". Read-only."""
+    import json
+
+    name = "Local AI: cloud features"
+    backend = s.llm.backends.get("local")
+    if backend and backend.base_url and not _is_loopback(backend.base_url):
+        rep.add(name, INFO, "unverified: Ollama is not on this computer, so its settings "
+                "file cannot be read")
+        return
+    if os.environ.get("OLLAMA_NO_CLOUD", "").strip().lower() in ("1", "true", "yes", "on"):
+        rep.add(name, PASS, "off (OLLAMA_NO_CLOUD is set)")
+        return
+    path = ollama_server_json_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raw = None
+    except OSError as exc:
+        rep.add(name, INFO, f"unverified: Ollama's settings file could not be read ({_why(exc)})")
+        return
+    if raw is not None:
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            rep.add(name, INFO, "unverified: Ollama's settings file is not valid JSON")
+            return
+        if isinstance(data, dict) and data.get("disable_ollama_cloud") is True:
+            rep.add(name, PASS, "off (disable_ollama_cloud is true in Ollama's settings)")
+            return
+    rep.add(
+        name,
+        INFO,
+        "not seen turned off. Ollama's cloud models and web search stay available if you sign "
+        "in to Ollama. Kestrel cannot see a setting made only in Ollama's own startup",
+        "To turn them off, set disable_ollama_cloud to true in ~/.ollama/server.json (or set "
+        "OLLAMA_NO_CLOUD=1) and restart Ollama. Kestrel does not change Ollama's settings.",
+    )
 
 
 def _norm_digest(value: str) -> str:
@@ -1374,9 +1446,12 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         check_model_fit(rep, s, client)
         _check_num_ctx(rep, client, s, present)
         if not quick:
-            _run_probes(rep, client, s, present)
-            # Issue #166 M1: connection spot check.
-            _check_local_ai_egress(rep)
+            # Issue #166 M1 / #144: the connection spot check watches while the probes run.
+            watcher = _start_egress_watcher()
+            try:
+                _run_probes(rep, client, s, present)
+            finally:
+                _check_local_ai_egress(rep, watcher)
         else:
             rep.add("Needle + thinking probes", INFO, "skipped (--quick)")
             rep.add("Local AI: egress", INFO, "skipped (--quick)")
@@ -1394,6 +1469,7 @@ def run_doctor(*, quick: bool = False) -> DoctorReport:
         _check_ollama_env(rep, s)
         # Issue #166 M1: Local AI settings spot check.
         _check_local_ai_settings(rep, s)
+        _check_ollama_cloud_off(rep, s)
         if ollama_up:
             _check_cloud_model_tags(rep, client)
             # Issue #166 M2: model digest verification.

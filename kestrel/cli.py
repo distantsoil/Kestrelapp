@@ -1131,7 +1131,10 @@ async def _export(fmt: str, track: str | None, out: str | None) -> None:
     async with sm() as s:
         # An export is a file on disk: exactly the generated output confidential mode covers.
         conf, mapping = await confidential(s)
-        stmt = select(Opportunity).order_by(Opportunity.id)
+        # Remotive's terms: its postings never leave in an export (D-SRC-19).
+        from kestrel.services.export_terms import shareable_clause
+
+        stmt = select(Opportunity).where(shareable_clause()).order_by(Opportunity.id)
         if track:
             stmt = stmt.where(Opportunity.track == track)
         opps = (await s.execute(stmt)).scalars().all()

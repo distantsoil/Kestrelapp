@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from kestrel import paths
@@ -217,6 +219,37 @@ async def _maybe_run_liveness(sm, settings, cycle) -> dict | None:
 # status strip and /api/status. None until the first cycle of this process.
 _run_mode: dict[str, str | None] = {"mode": None}
 
+# The settings the cycle in flight was confirmed on (#103), and the last change already announced
+# for it. Empty between runs. A run keeps these until it ends; a change made meanwhile applies to
+# the next run, and the rail and run card keep showing what this run is really using.
+_run_confirmed: dict[str, Any] = {"settings": None, "announced": "", "online_approval": None}
+
+
+def confirmed_run_settings() -> Any:
+    """The Settings the run in flight started with, or None when no run is working."""
+    return _run_confirmed["settings"]
+
+
+def _hold_run(settings: Any, online_approval: Any = None) -> None:
+    _run_confirmed["settings"] = settings
+    _run_confirmed["announced"] = ""
+    _run_confirmed["online_approval"] = online_approval
+
+
+def _hold_if_free(settings: Any, online_approval: Any = None) -> None:
+    """Hold a run's settings unless a run already holds its own (a carried run keeps them)."""
+    if _run_confirmed["settings"] is None:
+        _hold_run(settings, online_approval)
+
+
+def _release_run() -> None:
+    _run_confirmed["settings"] = None
+    _run_confirmed["announced"] = ""
+    _run_confirmed["online_approval"] = None
+
+
+release_confirmed_run = _release_run  # the Stop button ends the run's hold on its settings
+
 
 async def _rebuild_generated_sources() -> None:
     """Bring the profile-generated searches in line at every start (review finding 9): an install
@@ -400,22 +433,37 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # one-shot mode is consumed here, by exactly one cycle; one that can no longer
                 # run (the acknowledgement or an assignment went away since it was queued) is
                 # logged and the stored mode is used instead.
-                async with sm() as s:
-                    request = await take_run_request(s)
-                    requested = request.get("mode")
-                    try:
-                        settings = await load_settings_with_db(s, mode=requested)
-                    except HostedModeError as exc:
-                        log.warning("run_mode_unavailable", requested=requested, reason=str(exc))
-                        settings = await load_settings_with_db(s)
-                worker.apply_settings(
-                    settings, online_approval=request.get("online_approval")
-                )
+                # A run a pause carried over keeps the settings it was confirmed on until it
+                # ends, as the change notice says (0.7.6 review): no settings are re-read and no
+                # queued one-shot request is consumed for it (that request waits for the next
+                # run).
+                held = confirmed_run_settings() if carried is not None else None
+                if held is not None:
+                    settings, approval = held, _run_confirmed["online_approval"]
+                else:
+                    async with sm() as s:
+                        request = await take_run_request(s)
+                        requested = request.get("mode")
+                        try:
+                            settings = await load_settings_with_db(s, mode=requested)
+                        except HostedModeError as exc:
+                            log.warning("run_mode_unavailable", requested=requested,
+                                        reason=str(exc))
+                            settings = await load_settings_with_db(s)
+                    approval = request.get("online_approval")
+                worker.apply_settings(settings, online_approval=approval)
                 _run_mode["mode"] = settings.llm.mode
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
                 cycle, carried = carried or runlog.CycleRun(sm, mode=settings.llm.mode), None
                 _held_cycle["cycle"] = cycle
+                # The hold covers the whole cycle from its start: the settings are held the
+                # moment its run opens, whether work was waiting at the start or only appears
+                # once this cycle's own scrape ran (0.7.6 review). An idle cycle opens no run
+                # and holds nothing, so no notice is shown when nothing is working.
+                cycle.on_open = functools.partial(_hold_if_free, settings, approval)
+                if cycle.run_id is not None:
+                    _hold_if_free(settings, approval)
                 if await runlog.has_pipeline_work(sm, skip_types=held_types(settings)):
                     await cycle.ensure_open()
                 # Scheduled scrapes first: the scheduler, tray and MCP only enqueue them, and
@@ -459,6 +507,14 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     await request_weekly(sm)
                     await drain_org_summaries(sm, client, settings, stop=stop)
                     await drain_research(sm, stop=stop)
+                    # Suggested companies on Sources (D-SRC-19): a few public board lookups, a
+                    # small number of companies a pass, never beside a model tier. A failure of
+                    # one company is recorded on its row and never stops the cycle.
+                    from kestrel.services.source_suggestions import (
+                        drain_checks as drain_suggestion_checks,
+                    )
+
+                    await drain_suggestion_checks(sm, stop=stop)
                     from kestrel.services.follow_up import drain as drain_follow_ups
 
                     await drain_follow_ups(sm, lambda cfg: LLMClient(cfg, http=http), stop=stop)
@@ -489,6 +545,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     carried = cycle  # paused mid-run: the run stays open until resumed
                 else:
                     _held_cycle["cycle"] = None
+                    _release_run()
                     await cycle.finish("stopping" if stop.is_set() else "done")
                 idle = (
                     counts["pass"] == 0
@@ -501,6 +558,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 log.warning("serve_worker_cycle_error", error=str(exc))
                 idle = True
                 _held_cycle["cycle"] = None
+                _release_run()
                 if cycle is not None:
                     try:
                         from kestrel.errors import task_failure_text
@@ -513,6 +571,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
             if idle:
                 await _wait(stop, 5.0)
         _held_cycle["cycle"] = None
+        _release_run()
         if carried is not None:  # quit while paused: close the run this loop kept open
             try:
                 await carried.finish("stopping")
@@ -817,9 +876,42 @@ async def _start_mcp_if_enabled() -> None:
         return
     # bind_all is read exactly as the web app's own guard reads it (get_settings at build), so
     # the MCP port is never more exposed than the web port.
-    problem = await mcp_runtime.start(settings.mcp.port, bind_all=get_settings().server.bind_all)
+    bind_all = get_settings().server.bind_all
+    try:
+        problem = await mcp_runtime.start(settings.mcp.port, bind_all=bind_all)
+    except Exception as exc:  # noqa: BLE001 - MCP is optional: Kestrel starts whatever happens
+        problem = mcp_runtime.note_start_failure(exc, port=settings.mcp.port, bind_all=bind_all)
     if problem:
         log.warning("mcp_not_started", reason=problem)
+        await _turn_mcp_off_after_failed_start(problem)
+
+
+def mcp_turned_off_sentence(problem: str) -> str:
+    return (f"MCP was turned off because it could not start: {problem.rstrip('. ')}. "
+            "Turn it on again to retry.")
+
+
+async def _turn_mcp_off_after_failed_start(problem: str) -> None:
+    """Self-heal (#130, D-MCP-4): a saved switch plus a server that cannot start must not repeat
+    on every launch. Turn the switch off and keep the reason for the Settings card. Never raises."""
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+    from kestrel.services.setting_overrides import MCP_TURNED_OFF_KEY
+
+    try:
+        async with get_sessionmaker()() as s:
+            for key, value in (("mcp.enabled", False),
+                               (MCP_TURNED_OFF_KEY, mcp_turned_off_sentence(problem))):
+                row = await s.get(Setting, key)
+                if row is None:
+                    s.add(Setting(key=key, value=value))
+                else:
+                    row.value = value
+                    row.updated_at = utcnow_iso()
+            await s.commit()
+    except Exception as exc:  # noqa: BLE001 - the app starts either way; the log keeps the cause
+        log.warning("mcp_turn_off_failed", error=f"{type(exc).__name__}: {exc}")
 
 
 def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
@@ -836,20 +928,30 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         # Every startup, worker or not (finding 7): a CLI or UI-only start must not drop the
         # consulting track an existing install uses.
         await _load_enabled_tracks()
+        # Safe mode (#130, D-UI-252): the person chose "Start with optional features off" on the
+        # loading window. The database, the web app and the pipeline worker stay; every optional
+        # start below is skipped for this run.
+        from kestrel import startup_health
+
+        safe = startup_health.safe_mode()
+        if safe:
+            log.warning("safe_mode_optional_features_skipped")
         if worker:
             await _seed_shipped_sources()
             await _rebuild_generated_sources()
             await _seed_shipped_layouts()
-            await _apply_keep_awake()
+            if not safe:
+                await _apply_keep_awake()
             task = asyncio.create_task(_worker_loop(stop), name="worker")
-            deliver = asyncio.create_task(_delivery_loop(stop), name="delivery")
             stall = asyncio.create_task(_stall_monitor(stop), name="stall-monitor")
-            models = asyncio.create_task(_setup_models_loop(stop), name="setup-models")
-            # Gated on `worker` like the delivery loop: tests build the app with worker=False, so
-            # the update check (a network request) never runs there.
             await _mark_update_seen()
-            updates = asyncio.create_task(_update_loop(stop), name="update-check")
-        if scheduler:
+            if not safe:
+                deliver = asyncio.create_task(_delivery_loop(stop), name="delivery")
+                models = asyncio.create_task(_setup_models_loop(stop), name="setup-models")
+                # Gated on `worker` like the delivery loop: tests build the app with worker=False,
+                # so the update check (a network request) never runs there.
+                updates = asyncio.create_task(_update_loop(stop), name="update-check")
+        if scheduler and not safe:
             sched = asyncio.create_task(_scheduler_loop(stop), name="scheduler")
         for created in (task, deliver, sched, stall, models, updates):
             if created is not None:
@@ -858,11 +960,14 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         # `worker` so the UI/test app (worker=False) never opens the MCP port.
         # The switch is the setting-table layer over YAML (Settings > LAN, D-MCP-1), and
         # kestrel.mcp.runtime owns the task so the switch can start and stop it live.
-        if worker:
-            from kestrel.mcp import runtime as mcp_runtime
+        if worker and not safe:
+            try:
+                from kestrel.mcp import runtime as mcp_runtime
 
-            mcp_runtime.set_live(True)
-            await _start_mcp_if_enabled()
+                mcp_runtime.set_live(True)
+                await _start_mcp_if_enabled()
+            except Exception as exc:  # noqa: BLE001 - MCP is optional: Kestrel starts whatever happens
+                log.error("mcp_startup_step_failed", error=f"{type(exc).__name__}: {exc}")
         try:
             yield
         finally:
@@ -871,14 +976,16 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
             # releases its leases.
             stop.set()
             if worker:
-                from kestrel.mcp import runtime as mcp_runtime
-
                 try:
-                    await mcp_runtime.stop()
+                    from kestrel.mcp import runtime as mcp_runtime
+
+                    try:
+                        await mcp_runtime.stop()
+                    finally:
+                        mcp_runtime.set_live(False)
                 except Exception as exc:
                     log.warning("shutdown_step_failed", step="mcp",
                                 error=f"{type(exc).__name__}: {exc}")
-                mcp_runtime.set_live(False)
             for extra in (sched, mcp_task, deliver, stall, models, updates):
                 if extra is not None:
                     extra.cancel()
@@ -917,6 +1024,38 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         if path.startswith("/api/documents/import"):
             log.warning("import_refused", stage="read" if path.endswith("/read") else "propose",
                         outcome="refused", reason=reason, status=status)
+
+    @app.middleware("http")
+    async def _run_change_notice(request: Request, call_next: Callable) -> Response:
+        """A setting saved while a run is working carries a notice back (#103): the run keeps what
+        it was confirmed on, the change applies to the next run, and Stop is one press away. Only
+        a changing request from the page (htmx) that succeeded, only while a run is in flight,
+        and once per distinct change."""
+        response = await call_next(request)
+        run = confirmed_run_settings()
+        if (run is None or request.method in ("GET", "HEAD", "OPTIONS")
+                or request.headers.get("HX-Request") != "true" or response.status_code >= 400
+                or request.url.path.startswith("/runs/")):
+            return response
+        try:
+            from kestrel.db.engine import get_sessionmaker
+            from kestrel.services import run_notice
+            from kestrel.services.setting_overrides import load_settings_with_db
+
+            async with get_sessionmaker()() as s:
+                stored = await load_settings_with_db(s)
+            diff = run_notice.changed(run, stored)
+        except (SQLAlchemyError, OSError, ValueError) as exc:  # a notice never fails a save
+            log.warning("run_change_notice_failed", error_type=type(exc).__name__)
+            return response
+        key = "|".join(diff)
+        if key != _run_confirmed["announced"]:
+            _run_confirmed["announced"] = key
+            if diff:
+                response.headers["HX-Trigger"] = run_notice.merge_trigger(
+                    response.headers.get("HX-Trigger"), run_notice.toast_detail(run)
+                )
+        return response
 
     @app.middleware("http")
     async def _time_requests(request: Request, call_next: Callable) -> Response:

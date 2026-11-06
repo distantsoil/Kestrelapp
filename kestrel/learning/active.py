@@ -10,8 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from sqlalchemy import ColumnElement, and_, func, select
+from sqlalchemy import ColumnElement, String, and_, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from kestrel.config import Settings
 from kestrel.db.models import (
@@ -21,6 +22,8 @@ from kestrel.db.models import (
     OpportunityEmbedding,
     VerdictOverride,
 )
+from kestrel.learning.capture import not_bulk
+from kestrel.learning.groups import group_key, group_key_expr, group_keys
 from kestrel.llm.embeddings import cosine, current_model, from_bytes
 from kestrel.rules.helpers import age_days
 
@@ -31,6 +34,41 @@ class UncertainItem:
     evaluation: Evaluation
     uncertainty: float
     components: dict
+
+
+def askable_group_count_stmt(track: str | None):
+    """The count of what Calibrate can ask about, one per duplicate group (#122, D-LRN-1): groups
+    with a Tier 2 evaluated, readable, visible copy and no copy rated or overridden. The sidebar
+    badge runs this, so it equals the groups `rank_uncertain` draws from. `track` None counts
+    every track (the tray)."""
+    labeled = select(Label.opportunity_id)
+    # A bulk decision is not a judgment (D-PIPE-116), so Calibrate can still ask about it.
+    overridden = select(VerdictOverride.opportunity_id).where(not_bulk())
+    if track:
+        labeled = labeled.where(Label.track == track)
+        overridden = overridden.join(
+            Opportunity, Opportunity.id == VerdictOverride.opportunity_id
+        ).where(Opportunity.track == track)
+    done = labeled.union(overridden).subquery()
+    done_opp = aliased(Opportunity)
+    labeled_groups = (
+        select(
+            func.coalesce(
+                func.nullif(done_opp.dedup_group_id, ""),
+                literal("__solo_").concat(cast(done_opp.id, String)),
+            )
+        )
+        .where(done_opp.id.in_(select(done.c.opportunity_id)))
+    )
+    stmt = (
+        select(func.count(func.distinct(group_key_expr())))
+        .select_from(Evaluation)
+        .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
+        .where(Evaluation.tier == 2, calibratable(), group_key_expr().not_in(labeled_groups))
+    )
+    if track:
+        stmt = stmt.where(Opportunity.track == track)
+    return stmt
 
 
 def calibratable() -> ColumnElement[bool]:
@@ -72,7 +110,7 @@ async def _labeled_ids(session: AsyncSession, track: str) -> set[int]:
             await session.execute(
                 select(VerdictOverride.opportunity_id)
                 .join(Opportunity, Opportunity.id == VerdictOverride.opportunity_id)
-                .where(Opportunity.track == track)
+                .where(Opportunity.track == track, not_bulk())
             )
         ).all()
     }
@@ -113,7 +151,10 @@ async def rank_uncertain(
 ) -> list[UncertainItem]:
     evals = await _latest_evals(session, track)
     labeled = await _labeled_ids(session, track)
-    candidates = [oid for oid in evals if oid not in labeled]
+    # A duplicate group is labeled once any copy is rated or overridden (#122, D-LRN-1): its other
+    # copies are never asked about. A role with no group is its own group.
+    labeled_groups = set((await group_keys(session, list(labeled))).values())
+    candidates = list(evals)
     if not candidates:
         return []
 
@@ -129,11 +170,15 @@ async def rank_uncertain(
     best: dict[str, Opportunity] = {}
     for oid in sorted(opps):
         opp = opps[oid]
-        key = opp.dedup_group_id if opp.dedup_group_id is not None else f"__solo_{oid}"
+        key = group_key(oid, opp.dedup_group_id)
+        if key in labeled_groups:
+            continue
         held = best.get(key)
         if held is None or (opp.is_canonical and not held.is_canonical):
             best[key] = opp
     deduped_candidates = [o.id for o in best.values()]
+    if not deduped_candidates:
+        return []
 
     emb = await _embeddings(session, list(evals), current_model(settings))
     labeled_vecs = [emb[i] for i in labeled if i in emb]

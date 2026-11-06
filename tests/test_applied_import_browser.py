@@ -59,6 +59,88 @@ def test_sample_file_walks_every_step_and_adds_the_applications(live):
     assert "Birchwood Freight" in page.content()
 
 
+def test_add_pressed_while_the_review_card_draws_still_sends_the_ticked_rows(live):
+    """The settings entry motion draws ticked boxes unticked for two frames after a swap. A press
+    in that window must send what the page shows, not the drawn default (the flaky "0 added")."""
+    base, browser = live
+    page, errors = _page(base, browser)
+    page.goto(f"{base}/settings#data/st-imp")
+    page.wait_for_selector('[data-testid="st-imp-sample"]')
+    wait_for_layout(page)
+    page.click('[data-testid="st-imp-sample"]')
+    page.wait_for_selector('[data-testid="st-imp-next"]')
+    # Press Add in the same task as the swap, after the entry motion has unticked the boxes.
+    page.evaluate(
+        """() => document.addEventListener('htmx:load', (e) => {
+             const add = e.target.querySelector && e.target.querySelector('#st-imp-add');
+             if (!add) return;
+             window.__drawnUnticked = !!e.target.querySelector('input.st-check')
+               && !e.target.querySelector('input.st-check:checked');
+             add.click();
+           })"""
+    )
+    page.click('[data-testid="st-imp-next"]')
+    page.wait_for_selector('[data-testid="st-imp-done"]')
+    assert page.evaluate("window.__drawnUnticked") is True  # the press really hit the window
+    assert "5 applications added" in page.inner_text('[data-testid="st-imp-done"]')
+    assert not errors
+
+
+def _to_review(page, base, on_load_js):
+    page.goto(f"{base}/settings#data/st-imp")
+    page.wait_for_selector('[data-testid="st-imp-sample"]')
+    wait_for_layout(page)
+    page.click('[data-testid="st-imp-sample"]')
+    page.wait_for_selector('[data-testid="st-imp-next"]')
+    page.evaluate(
+        """(body) => document.addEventListener('htmx:load', (e) => {
+             const add = e.target.querySelector && e.target.querySelector('#st-imp-add');
+             if (!add) return;
+             window.__unticked = e.target.querySelectorAll('input.st-check:checked').length === 0;
+             new Function('add', body)(add);
+           })""",
+        on_load_js,
+    )
+    page.click('[data-testid="st-imp-next"]')
+
+
+def test_enter_pressed_while_the_review_card_draws_still_sends_the_ticked_rows(live):
+    base, browser = live
+    page, errors = _page(base, browser)
+    _to_review(
+        page,
+        base,
+        "add.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));"
+        "add.form.requestSubmit(add);",
+    )
+    page.wait_for_selector('[data-testid="st-imp-done"]')
+    assert page.evaluate("window.__unticked") is True
+    assert "5 applications added" in page.inner_text('[data-testid="st-imp-done"]')
+    assert not errors
+
+
+def test_with_no_press_the_drawn_boxes_come_back_ticked(live):
+    base, browser = live
+    page, errors = _page(base, browser)
+    _to_review(page, base, "")
+    page.wait_for_function("window.__unticked !== undefined")
+    assert page.evaluate("window.__unticked") is True  # the motion did draw them unticked
+    page.wait_for_function(
+        "document.querySelectorAll('#st-imp input.st-check:checked').length === 5"
+    )
+    assert not errors
+
+
+def test_reduced_motion_never_unticks_the_boxes(live):
+    base, browser = live
+    page = browser.new_context(
+        viewport={"width": 1280, "height": 1000}, reduced_motion="reduce"
+    ).new_page()
+    _to_review(page, base, "")
+    page.wait_for_function("window.__unticked !== undefined")
+    assert page.evaluate("window.__unticked") is False
+
+
 def test_a_large_tracker_chosen_from_applications_is_added(live, tmp_path):
     """The owner's path: Applications, Import past applications, choose a Markdown tracker, Next,
     Add. 600 rows with long notes go past Starlette's form defaults (1 MB a field, 1,000 fields),

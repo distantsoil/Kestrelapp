@@ -295,6 +295,15 @@ def test_progress_links_only_to_steps_already_reached():
 
 
 # ------------------------------------------------------------------------------ model step
+def test_model_step_qualifies_the_privacy_line_for_a_local_model():
+    """#143: the local card promises privacy only as far as Kestrel controls it."""
+    c = _app()
+    _jump("models", visited=["welcome"])
+    body = c.get("/onboarding").text
+    assert "Private when Ollama is set up as shipped" in body
+    assert "Stays private" not in body
+
+
 def test_model_step_needs_a_choice_then_connects_hosted_with_a_mocked_verify(monkeypatch):
     monkeypatch.setenv("KESTREL_USE_SYSTEM_KEYS", "")
     c = _app()

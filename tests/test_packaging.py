@@ -63,6 +63,35 @@ def test_spec_ships_the_load_bearing_datas_and_hidden_imports():
     assert "onefile" not in src.lower()
 
 
+def test_spec_copies_the_metadata_fastmcp_reads_at_import():
+    """fastmcp reads its own version from package metadata when imported; the packaged app had
+    none and the MCP server could not start (#130). Removing the metadata line fails this."""
+    src = _code(SPEC)
+    assert re.search(r"^\s+copy_metadata,$", src, re.M)  # imported
+    m = re.search(r"for _dist in \(([^)]*)\):", src)
+    assert m, "the spec must loop copy_metadata over the distributions fastmcp looks up"
+    names = set(re.findall(r'"([^"]+)"', m.group(1)))
+    assert {"fastmcp", "fastmcp-slim", "mcp"} <= names
+    assert "copy_metadata(_dist" in src
+
+
+def test_every_distribution_fastmcp_reads_by_name_is_in_the_spec():
+    """The names come from fastmcp's own source, so a new lookup after an upgrade fails here."""
+    import importlib.util
+
+    root = Path(importlib.util.find_spec("fastmcp").origin).parent
+    found: set[str] = set()
+    for f in root.rglob("*.py"):
+        found.update(re.findall(
+            r'\b_?(?:version|distribution)\(\s*"([A-Za-z0-9_.-]+)"',
+            f.read_text(encoding="utf-8")))
+    found.discard("")
+    src = _code(SPEC)
+    for dist in found:
+        assert f'"{dist}"' in src, f"fastmcp reads metadata for {dist}; add it to kestrel.spec"
+    assert {"fastmcp-slim", "fastmcp", "mcp"} <= found
+
+
 def test_spec_is_platform_aware_and_windowed_everywhere():
     src = _code(SPEC)
     assert 'sys.platform == "win32"' in src and 'sys.platform == "darwin"' in src

@@ -16,14 +16,21 @@
 .pp-body { margin: 0 0 6px; font-size: 14px; }
 #pp-body { animation: k-inUp .35s var(--ease) backwards; }
 @media (prefers-reduced-motion: reduce) { #pp-body { animation: none; } }
-/* Tab-switch motion: htmx swaps the body's innerHTML, so the container's animation does not
-   re-trigger. Animate the children instead, with staggered delays, so every tab change eases in. */
-.pp-shell { animation: k-inUp .3s var(--ease) backwards; }
-.pp-tabrow { animation: k-inFade .22s var(--ease) backwards; }
-.pp-ready { animation: k-inUp .32s var(--ease) .04s backwards; }
-.pp-pane { animation: k-inUp .34s var(--ease) .08s backwards; }
+/* Tab-switch motion (D-PREP-1): a tab change swaps only #pp-tabbody (tiles, pane, help
+   column); the tab row stays the same element and its ink bar slides. prep.js adds .is-switching
+   to #pp-tabbody for a moment after a tab change, so the pane eases in, the tiles fade and the
+   help cards arrive one after another. A poll that swaps new content does not add it. */
+.pp-tabbody { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.pp-tabbody.is-switching .pp-pane { animation: k-inUp .34s var(--ease) backwards; }
+.pp-tabbody.is-switching .pp-ready { animation: k-inFade .3s var(--ease) backwards; }
+.pp-tabbody.is-switching .k-help-col > * { animation: k-inUp .32s var(--ease) backwards; }
+.pp-tabbody.is-switching .k-help-col > :nth-child(1) { animation-delay: .06s; }
+.pp-tabbody.is-switching .k-help-col > :nth-child(2) { animation-delay: .12s; }
+.pp-tabbody.is-switching .k-help-col > :nth-child(3) { animation-delay: .18s; }
+.pp-tabbody.is-switching .k-help-col > :nth-child(n+4) { animation-delay: .24s; }
 @media (prefers-reduced-motion: reduce) {
-  .pp-shell, .pp-tabrow, .pp-ready, .pp-pane { animation: none; }
+  .pp-tabbody.is-switching .pp-pane, .pp-tabbody.is-switching .pp-ready,
+  .pp-tabbody.is-switching .k-help-col > * { animation: none; }
 }
 .pp-warn { background: var(--tint-warn); border: 1px solid var(--tint-warn-line); color: var(--ink);
   border-radius: var(--r-sm); padding: 9px 12px; font-size: var(--fs-md); }
@@ -71,9 +78,8 @@
 .pp-tab { padding: 8px 2px 10px; font-weight: 700; color: var(--muted); text-decoration: none;
   margin-bottom: -1px; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px;
   transition: color var(--dur-1); position: relative; }
-.pp-tab::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
-  background: var(--brand); transform: scaleX(0); transition: transform var(--dur-2) var(--ease); }
-.pp-tab.is-on::after { transform: scaleX(1); }
+/* The underline is the sliding ink bar (KUI.ink draws .k-tabink under the active tab). */
+.pp-tabs .k-tabink { z-index: 1; }
 .pp-tab:hover { color: var(--ink); text-decoration: none; }
 .pp-tab.is-on { color: var(--ink); }
 .pp-tab__n { font-size: 11px; background: var(--soft); color: var(--brand);
@@ -115,6 +121,7 @@
 }
 @container (max-width: 760px) {
   .pp-tabrow { flex-wrap: wrap; }
+  .pp-tabs { flex: 1 1 100%; gap: 16px; }
   .pp-slist { grid-template-columns: minmax(0, 1fr); }
 }
 

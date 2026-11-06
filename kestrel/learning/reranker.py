@@ -28,10 +28,10 @@ from kestrel.db.models import (
     OpportunityEmbedding,
     Org,
     Source,
-    VerdictOverride,
 )
 from kestrel.learning.capture import labeled_examples
 from kestrel.learning.features import FittedFeatures, embedding_of, fit_features
+from kestrel.learning.groups import group_key
 from kestrel.llm.embeddings import current_model
 from kestrel.pipeline.scoring import (
     _TOP_VERDICT,  # single source of truth for the per-track verdict
@@ -99,16 +99,6 @@ async def build_rows(
     emb = await _corpus_embeddings(session, ids, model)
 
     labeled = {ex.opportunity_id: ex for ex in await labeled_examples(session, track)}
-    override_ids = {
-        oid
-        for (oid,) in (
-            await session.execute(
-                select(VerdictOverride.opportunity_id).where(
-                    VerdictOverride.operator_score.is_not(None)
-                )
-            )
-        ).all()
-    }
     # tier-2 holistic and tier-1 verdict maps
     t2, t1 = {}, {}
     for ev in (
@@ -127,19 +117,35 @@ async def build_rows(
     orgs = {o.id: o for o in (await session.execute(select(Org))).scalars().all()}
     src_kind = {s.id: s.kind for s in (await session.execute(select(Source))).scalars().all()}
 
-    rows: list[Row] = []
-    for oid, opp in opp_by_id.items():
-        vec = emb.get(oid)
-        if vec is None:
+    # One row per duplicate group (#122, D-LRN-1): copies of one posting are one role, and one
+    # judgment. A group the operator rated (or overrode with a score) trains on its newest
+    # judgment, already one per group; any other group trains once on the Tier 2 holistic of its
+    # canonical copy, else its lowest id.
+    gkey = {oid: group_key(oid, opp.dedup_group_id) for oid, opp in opp_by_id.items()}
+    rated_groups = {gkey[oid] for oid in labeled if oid in gkey}
+    chosen: dict[str, int] = {}
+    for oid in sorted(opp_by_id):
+        key = gkey[oid]
+        if key in rated_groups:
+            if oid in labeled and emb.get(oid) is not None:
+                chosen[key] = oid
             continue
+        if oid not in t2 or emb.get(oid) is None:
+            continue
+        held = chosen.get(key)
+        if held is None or (opp_by_id[oid].is_canonical and not opp_by_id[held].is_canonical):
+            chosen[key] = oid
+
+    rows: list[Row] = []
+    for oid in sorted(chosen.values()):
+        opp = opp_by_id[oid]
+        vec = emb[oid]
         if oid in labeled:
             target = labeled[oid].operator_score
             is_labeled, op_verdict = True, labeled[oid].verdict
-        elif oid in t2 and oid not in override_ids:
+        else:
             target = t2[oid]
             is_labeled, op_verdict = False, None
-        else:
-            continue
         opp._source_kind = src_kind.get(opp.source_id)
         feats = fitted.transform(opp, orgs.get(opp.org_id), vec)
         rows.append(Row(oid, feats, float(target), is_labeled, op_verdict, t1.get(oid)))

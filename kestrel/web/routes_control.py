@@ -24,13 +24,10 @@ from kestrel.analytics.run_summary import rail_line, run_summary
 from kestrel.analytics.today import failing_sources, latest_scan
 from kestrel.config import MODES, HostedModeError, Settings
 from kestrel.db.models import (
-    Evaluation,
-    Label,
     Opportunity,
     ScrapeRun,
     Source,
     Task,
-    VerdictOverride,
 )
 from kestrel.llm import credit
 from kestrel.llm.profiles import ollama_needed
@@ -711,6 +708,11 @@ def readout(payload: dict[str, Any]) -> dict[str, Any]:
         text = f"Local AI ready · {shown}" if shown else "Local AI ready · no model loaded"
         engine = {"dot": "good" if shown else "idle", "rail": "engine", "text": text,
                   "href": None, "title": model.get("label") or ""}
+    confirmed = payload.get("run_confirmed")
+    if confirmed and confirmed.get("diverged"):
+        # The person changed a setting while this run works: say what the run is on, and that the
+        # change waits for the next run (#103).
+        engine["title"] = confirmed["message"]
     return {"state": state, "engine": engine}
 
 
@@ -730,13 +732,15 @@ def _hosted_row(settings: Settings) -> dict[str, Any]:
 
 async def _balance_row(s: AsyncSession, settings: Settings) -> dict[str, str] | None:
     """The rail's balance line (#29): what is left on an opted-in OpenRouter key, or this month's
-    local spend for any other provider. Cached; never raises into the poll."""
+    local spend for any other provider. Cached; never raises into the poll, and never waits on the
+    provider: a cold cache starts the read in the background and the line fills in on a later poll
+    (#106)."""
     from sqlalchemy.exc import SQLAlchemyError
 
     from kestrel.services import hosted_balance
 
     try:
-        return await hosted_balance.rail_row(s, settings)
+        return await hosted_balance.rail_row_nowait(s, settings)
     except (SQLAlchemyError, httpx.HTTPError) as exc:  # the rail must render without this line
         log.warning("balance_row_failed", error_type=type(exc).__name__)
         if isinstance(exc, SQLAlchemyError):
@@ -753,10 +757,10 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
       group (queries._group_expr), so the badge and that group's header always agree.
     - `calibrate`: Calibrate's candidate pool (learning.active.rank_uncertain before ranking):
       roles on the track with a Tier 2 evaluation, a description, not hidden (active.calibratable,
-      #32) and no label or override on the track.
+      #32), counted once per duplicate group, and no label or override on any copy (#122).
       Ranking loads embeddings, which is too much for a 30 s poll, so the pool is counted."""
     from kestrel.analytics.today import worth_a_look
-    from kestrel.learning.active import calibratable
+    from kestrel.learning.active import askable_group_count_stmt
     from kestrel.web.fit import GROUP_NEW
     from kestrel.web.queries import GROUP_ORDER, OppFilters, _base_stmt, _group_expr, _with_operator
 
@@ -768,23 +772,7 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
             )
         )
     ).scalar_one()
-    labeled = select(Label.opportunity_id)
-    overridden = select(VerdictOverride.opportunity_id)
-    if track:
-        labeled = labeled.where(Label.track == track)
-    pool = (
-        select(func.count(func.distinct(Evaluation.opportunity_id)))
-        .select_from(Evaluation)
-        .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
-        .where(
-            Evaluation.tier == 2,
-            calibratable(),
-            Evaluation.opportunity_id.not_in(labeled.union(overridden)),
-        )
-    )
-    if track:
-        pool = pool.where(Opportunity.track == track)
-    calibrate = (await s.execute(pool)).scalar_one()
+    calibrate = (await s.execute(askable_group_count_stmt(track))).scalar_one()
     # No needs_review count (review finding 12): no nav badge shows it, so its out-of-band span
     # had no target and its query was wasted on every 30 s poll.
     # Applications (Leads): the follow-ups due on the track, the board's own quiet rule
@@ -838,7 +826,20 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
     worker = await _worker_row(s, activity, mode, settings)
     # The model row follows the STORED mode, not the worker's last cycle: an idle worker keeps the
     # mode it last ran on, so after switching to Hosted the rail kept probing a stopped Ollama.
-    model = await _model_row(settings, settings.llm.mode) if probe else None
+    # While a run is working the rail shows what that run is really using (#103), not the stored
+    # choice the person has just changed: the change applies to the next run.
+    from kestrel.services import run_notice
+    from kestrel.web.app import confirmed_run_settings
+
+    run_settings = confirmed_run_settings()
+    shown = run_settings or settings
+    model = await _model_row(shown, shown.llm.mode) if probe else None
+    run_confirmed = None
+    if run_settings is not None:
+        run_confirmed = {"mode": run_settings.llm.mode,
+                         "text": run_notice.describe_run(run_settings),
+                         "diverged": bool(run_notice.changed(run_settings, settings)),
+                         "message": run_notice.message(run_settings)}
     scan = await _scan_row(s)
     hosted = _hosted_row(settings)
     balance = await _balance_row(s, settings)
@@ -847,7 +848,8 @@ async def _status_payload(s: AsyncSession, *, probe: bool = True) -> dict[str, A
     next_run = await _next_run(s)
     return {
         "next_run": next_run,
-        "settings_mode": settings.llm.mode,
+        "settings_mode": shown.llm.mode,
+        "run_confirmed": run_confirmed,
         "version": __version__,
         "paused": is_paused(),
         "activity": activity,

@@ -54,7 +54,7 @@ def _reply(*titles: tuple[str, list[str]]) -> dict:
                        for t, k in titles]}
 
 
-async def _seed_master(sm, *, track="employment", kind="resume") -> int:
+async def _seed_master(sm, *, track="employment", kind="resume", bullets=None) -> int:
     async with sm() as s:
         m = DocMaster(track=track, name="Resume", doc_kind=kind, is_active=True)
         s.add(m)
@@ -63,7 +63,7 @@ async def _seed_master(sm, *, track="employment", kind="resume") -> int:
                          title="Analyst", sort_order=0)
         s.add(sec)
         await s.flush()
-        for n, text in enumerate((BULLET_1, BULLET_2), start=1):
+        for n, text in enumerate(bullets or (BULLET_1, BULLET_2), start=1):
             slot = DocSlot(doc_section_id=sec.id, key=f"r1b{n}", sort_order=n,
                            default_variant_key="v1")
             s.add(slot)
@@ -631,25 +631,162 @@ def test_deleting_a_resume_removes_its_suggestions_and_keeps_the_others(web):
     assert _db(left) == [("Process Improvement Lead", second)]
 
 
-def test_deleting_a_resume_leaves_suggestions_from_before_the_link_existed(web):
-    """Rows from before migration 0027 have no doc_master_id; nothing says which resume they came
-    from, so a delete leaves them (#134)."""
+def test_deleting_the_last_resume_cleans_rows_from_before_the_link_existed(web):
+    """Rows from before migration 0027 have no doc_master_id. Nothing says which resume they came
+    from, so while another active resume remains they are left; once none remains their waiting
+    rows go and the decided ones lose the resume's words (issue #118)."""
     async def seed(sm):
-        mid = await _seed_master(sm)
+        keep = await _seed_master(sm)
+        gone = await _seed_master(sm)
         async with sm() as s:
-            s.add(TitleSuggestion(title="Legacy Planner", why="old", evidence=[],
-                                  prompt_version="p15-v1", doc_master_id=None))
+            s.add_all([
+                TitleSuggestion(title="Legacy Planner", why="old words", evidence=[
+                    {"slot_key": "r1b1", "text": BULLET_1}], prompt_version="p15-v1"),
+                TitleSuggestion(title="Legacy Buyer", why="old buyer words", evidence=[
+                    {"slot_key": "r1b1", "text": BULLET_2}], prompt_version="p15-v1",
+                    status="dismissed"),
+            ])
             await s.commit()
-        return mid
+        return keep, gone
 
-    mid = _db(seed)
-    assert web.post(f"/documents/{mid}/delete").status_code == 200
+    keep, gone = _db(seed)
 
     async def left(sm):
         async with sm() as s:
-            return [t.title for t in await _rows(s)]
+            return {t.title: (t.status, t.why, t.evidence) for t in await _rows(s)}
 
-    assert _db(left) == ["Legacy Planner"]
+    assert web.post(f"/documents/{gone}/delete").status_code == 200
+    assert _db(left)["Legacy Planner"] == ("suggested", "old words", [
+        {"slot_key": "r1b1", "text": BULLET_1}])  # another resume remains: left alone
+    assert web.post(f"/documents/{keep}/delete").status_code == 200
+    rows = _db(left)
+    assert rows == {"Legacy Buyer": ("dismissed", "", [])}
+
+
+def test_pre_link_rows_quoting_the_deleted_resume_are_cleaned_while_another_remains(web):
+    """Issue #118: rows written before the resume link existed (no doc_master_id) are matched to
+    the deleted resume by their stored evidence. A waiting row that quotes one of its bullets
+    goes; a row any of whose quotes the kept resume also has, and a row quoting only the kept
+    resume, are left as they are (D-UI-254, D-UI-260)."""
+    only_gone = "Rebuilt the dock schedule so trucks waited under ten minutes."
+    shared = "Trained four new planners on the weekly forecast."
+    only_keep = "Ran the quarterly supplier review for twelve vendors."
+
+    async def seed(sm):
+        keep = await _seed_master(sm, bullets=(shared, only_keep))
+        gone = await _seed_master(sm, bullets=(only_gone, shared))
+        async with sm() as s:
+            s.add_all([
+                TitleSuggestion(title="Dock Scheduler", why="from the gone resume", evidence=[
+                    {"slot_key": "r1b1", "text": only_gone}], prompt_version="p15-v1"),
+                TitleSuggestion(title="Yard Lead", why="gone and shared", evidence=[
+                    {"slot_key": "r1b2", "text": shared}, {"slot_key": "r1b1", "text": only_gone}],
+                    prompt_version="p15-v1", status="dismissed"),
+                TitleSuggestion(title="Forecast Trainer", why="shared only", evidence=[
+                    {"slot_key": "r1b2", "text": shared}], prompt_version="p15-v1"),
+                TitleSuggestion(title="Vendor Reviewer", why="kept only", evidence=[
+                    {"slot_key": "r1b2", "text": only_keep}], prompt_version="p15-v1"),
+            ])
+            await s.commit()
+        return keep, gone
+
+    keep, gone = _db(seed)
+    assert only_gone in web.get("/profile/title-suggestions").text
+    assert web.post(f"/documents/{gone}/delete").status_code == 200
+
+    async def left(sm):
+        async with sm() as s:
+            return {t.title: (t.status, t.why, t.evidence) for t in await _rows(s)}
+
+    assert _db(left) == {
+        # A quote the kept resume also has still backs the title (0.7.6 review item 7).
+        "Yard Lead": ("dismissed", "gone and shared", [
+            {"slot_key": "r1b2", "text": shared}, {"slot_key": "r1b1", "text": only_gone}]),
+        "Forecast Trainer": ("suggested", "shared only", [{"slot_key": "r1b2", "text": shared}]),
+        "Vendor Reviewer": ("suggested", "kept only", [{"slot_key": "r1b2", "text": only_keep}]),
+    }
+    page = web.get("/profile/title-suggestions").text
+    assert only_gone not in page and "Dock Scheduler" not in page
+    assert "Forecast Trainer" in page  # another resume remains, so the card still lists
+
+
+def test_a_dismissed_title_stays_bare_when_another_resume_remains(web):
+    """Issue #118: deleting a resume blanks the evidence and why of its decided titles even
+    while another resume remains; the bare title stays so it is not suggested again."""
+    async def seed(sm):
+        first = await _seed_master(sm)
+        await _run(sm, _Client([json.dumps(_reply(("Operations Analyst", ["r1b1"])))]))
+        await _seed_master(sm)
+        return first
+
+    first = _db(seed)
+    assert web.post("/title-suggestions/1/dismiss").status_code == 200
+    assert web.post(f"/documents/{first}/delete").status_code == 200
+
+    async def left(sm):
+        async with sm() as s:
+            return [(t.title, t.status, t.why, t.evidence) for t in await _rows(s)]
+
+    assert _db(left) == [("Operations Analyst", "dismissed", "", [])]
+
+
+def test_the_real_sequence_import_suggest_dismiss_delete_then_open_profile(web):
+    """Issue #118: import a resume, get suggestions, dismiss one, delete the resume, open
+    Profile. The card says Import a resume first, no resume wording is stored anywhere, and the
+    dismissed title survives bare so it is never suggested again."""
+    async def seed(sm):
+        mid = await _seed_master(sm)
+        await _run(sm)
+        return mid
+
+    mid = _db(seed)
+    assert BULLET_1 in web.get("/profile/title-suggestions").text
+    assert web.post("/title-suggestions/2/dismiss").status_code == 200
+    assert web.post(f"/documents/{mid}/delete").status_code == 200
+
+    page = web.get("/profile/title-suggestions").text
+    assert "Import a resume first." in page
+    assert 'data-testid="title-suggestion"' not in page
+    assert BULLET_1 not in page and BULLET_2 not in page
+
+    async def left(sm):
+        async with sm() as s:
+            return [(t.title, t.status, t.why, t.evidence, t.doc_master_id)
+                    for t in await _rows(s)]
+
+    assert _db(left) == [("Process Improvement Lead", "dismissed", "", [], None)]
+
+    async def again(sm):
+        await _seed_master(sm)
+        return await _run(sm, _Client([json.dumps(_reply(
+            ("Process Improvement Lead", ["r1b1"]), ("Operations Analyst", ["r1b1"])))]))
+
+    _db(again)
+    shown = web.get("/profile/title-suggestions").text
+    assert "Process Improvement Lead" not in shown  # dismissed once, never suggested again
+
+
+def test_leftover_rows_are_ignored_when_no_resume_is_active(web):
+    """Issue #118: the view checks for an active resume. Rows that survived (an older delete, a
+    restored backup) are not listed, and the card asks for a resume."""
+    async def seed(sm):
+        mid = await _seed_master(sm)
+        await _run(sm)
+        async with sm() as s:
+            m = await s.get(DocMaster, mid)
+            m.is_active = False
+            await s.commit()
+
+    _db(seed)
+
+    async def count(sm):
+        async with sm() as s:
+            return len(await _rows(s))
+
+    assert _db(count) == 2  # the rows are still there
+    page = web.get("/profile/title-suggestions").text
+    assert "Import a resume first." in page
+    assert 'data-testid="title-suggestion"' not in page and BULLET_1 not in page
 
 
 async def test_clear_everything_empties_suggestions(sm):
@@ -672,3 +809,71 @@ async def test_clear_everything_empties_suggestions(sm):
     async with sm() as s:
         remaining = list((await s.execute(select(TitleSuggestion))).scalars())
         assert remaining == [], "clear everything should empty the title_suggestion table"
+
+
+# ----------------------------- 0.7.6 review item 7: a row still backed by a kept resume stays
+def test_a_waiting_pre_link_row_with_one_quote_still_backed_by_a_kept_resume_stays(web):
+    only_gone = "Moved the invented spare parts store to a two-bin system."
+    only_keep = "Wrote the invented onboarding guide for night shift leads."
+
+    async def seed(sm):
+        await _seed_master(sm, bullets=(only_keep, "Another invented kept line."))
+        gone = await _seed_master(sm, bullets=(only_gone, "Another invented gone line."))
+        async with sm() as s:
+            s.add(TitleSuggestion(title="Stores Planner", why="both resumes", evidence=[
+                {"slot_key": "r1b1", "text": only_gone}, {"slot_key": "r1b1", "text": only_keep}],
+                prompt_version="p15-v1"))
+            await s.commit()
+        return gone
+
+    gone = _db(seed)
+    assert web.post(f"/documents/{gone}/delete").status_code == 200
+
+    async def left(sm):
+        async with sm() as s:
+            return {t.title: (t.status, t.why) for t in await _rows(s)}
+
+    assert _db(left) == {"Stores Planner": ("suggested", "both resumes")}
+
+
+def test_deleting_a_capability_statement_never_touches_employment_suggestions(web):
+    statement_line = "Invented consulting line about a warehouse layout study."
+
+    async def seed(sm):
+        await _seed_master(sm, bullets=("Invented kept employment line.", "Second kept line."))
+        cap = await _seed_master(sm, track="consulting", kind="capability_statement",
+                                 bullets=(statement_line, "Another invented consulting line."))
+        async with sm() as s:
+            s.add(TitleSuggestion(title="Layout Analyst", why="quotes the statement", evidence=[
+                {"slot_key": "r1b1", "text": statement_line}], prompt_version="p15-v1"))
+            await s.commit()
+        return cap
+
+    cap = _db(seed)
+    assert web.post(f"/documents/{cap}/delete").status_code == 200
+
+    async def left(sm):
+        async with sm() as s:
+            return {t.title: (t.status, t.why) for t in await _rows(s)}
+
+    assert _db(left) == {"Layout Analyst": ("suggested", "quotes the statement")}
+
+
+def test_deleting_a_capability_statement_with_no_resume_keeps_pre_link_rows(web):
+    async def seed(sm):
+        cap = await _seed_master(sm, track="consulting", kind="capability_statement")
+        async with sm() as s:
+            s.add(TitleSuggestion(title="Plant Advisor", why="older row", evidence=[
+                {"slot_key": "r1b1", "text": "Invented older evidence line."}],
+                prompt_version="p15-v1", status="dismissed"))
+            await s.commit()
+        return cap
+
+    cap = _db(seed)
+    assert web.post(f"/documents/{cap}/delete").status_code == 200
+
+    async def left(sm):
+        async with sm() as s:
+            return {t.title: (t.status, t.why) for t in await _rows(s)}
+
+    assert _db(left) == {"Plant Advisor": ("dismissed", "older row")}

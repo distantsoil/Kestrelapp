@@ -456,3 +456,166 @@ def test_sorting_and_the_view_work_with_storage_blocked(live):
         assert not errors, errors
     finally:
         ctx.close()
+
+
+
+_ROWS = """() => Array.from(document.querySelectorAll('.ap-table tbody tr')).map(r => ({
+  title: r.querySelector('.ap-tt b').textContent.trim(), col: r.dataset.col,
+  fit: r.dataset.fit, applied: r.dataset.applied, ord: Number(r.dataset.ord)}))"""
+_PIPELINE = {"to_apply": 0, "to_contact": 0, "applied": 1, "conversation": 1,
+             "interviewing": 2, "proposal": 2, "closed": 3}
+
+
+def _sorted_by(page, col: str) -> list[dict]:
+    page.click(f"th[data-sort={col}] button")
+    return page.evaluate(_ROWS)
+
+
+def _empties_last(values: list[str]) -> bool:
+    filled = [v != "" for v in values]
+    return filled == sorted(filled, reverse=True)
+
+
+def test_each_header_sorts_reverses_and_the_third_press_returns_the_default_order(live):
+    """#121: Stage, Fit and Applied sort (stage in pipeline order, not by name), a second press
+    reverses, a third restores the server's order, empty values are last both ways, and the row
+    count never changes."""
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        default = page.evaluate(_ROWS)
+        ords = [r["ord"] for r in default]
+        assert len(default) >= 8 and ords == sorted(ords)
+        # Stage: pipeline order (to apply, then applied, interviewing, closed), then reversed.
+        up = _sorted_by(page, "stage")
+        ranks = [_PIPELINE[r["col"]] for r in up]
+        assert ranks == sorted(ranks) and len(set(ranks)) > 2, ranks
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "ascending"
+        down = _sorted_by(page, "stage")
+        ranks = [_PIPELINE[r["col"]] for r in down]
+        assert ranks == sorted(ranks, reverse=True)
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "descending"
+        back = _sorted_by(page, "stage")  # third press: default order, no sort
+        assert back == default
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "none"
+        # Fit: highest first, unscored last in both directions.
+        best = _sorted_by(page, "fit")
+        scores = [r["fit"] for r in best]
+        nums = [float(x) for x in scores if x != ""]
+        assert nums == sorted(nums, reverse=True) and len(nums) >= 5 and _empties_last(scores)
+        worst = _sorted_by(page, "fit")
+        nums = [float(x) for x in (r["fit"] for r in worst) if x != ""]
+        assert nums == sorted(nums) and _empties_last([r["fit"] for r in worst])
+        assert _sorted_by(page, "fit") == default
+        # Applied: most recent first, roles not yet applied for last in both directions.
+        newest = _sorted_by(page, "applied")
+        days = [r["applied"] for r in newest]
+        filled = [d for d in days if d]
+        assert filled == sorted(filled, reverse=True) and len(filled) >= 3 and _empties_last(days)
+        assert any(d == "" for d in days)  # the seed has roles not yet applied for
+        oldest = _sorted_by(page, "applied")
+        days = [r["applied"] for r in oldest]
+        filled = [d for d in days if d]
+        assert filled == sorted(filled) and _empties_last(days)
+        assert _sorted_by(page, "applied") == default
+        for rows in (up, down, best, worst, newest, oldest):
+            assert len(rows) == len(default) and {r["title"] for r in rows} == {
+                r["title"] for r in default}
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_sort_and_the_view_are_remembered_across_a_revisit(live):
+    """#121: sort by Stage, leave through the sidebar and come back through it with no view in
+    the address: the table opens already sorted, from the server's table plus the saved sort."""
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        page.click('[data-testid="view-board"]')
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
+        page.click('[data-testid="view-table"]')  # the person's own choice is what is stored
+        page.wait_for_selector(".ap-table tbody tr")
+        _sorted_by(page, "stage")
+        _sorted_by(page, "stage")  # descending
+        expect = page.evaluate(_ROWS)
+        page.goto(f"{base}/?track={track}")
+        page.wait_for_selector('a[href^="/pursuits"]', state="attached")
+        link = page.locator('a[href^="/pursuits"]:visible').first
+        assert "view=" not in (link.get_attribute("href") or "")  # the sidebar names no view
+        link.click()
+        page.wait_for_selector(".ap-table tbody tr")
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "descending"
+        assert page.evaluate(_ROWS) == expect
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_applied_date_follows_the_date_format_setting(live):
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live)
+    try:
+        for fmt, make in (
+            ("DD/MM/YYYY", lambda d: f"{d[8:10]}/{d[5:7]}/{d[0:4]}"),
+            ("YYYY-MM-DD", lambda d: d),
+            ("MM/DD/YYYY", lambda d: f"{d[5:7]}/{d[8:10]}/{d[0:4]}"),
+        ):
+            r = page.request.post(f"{base}/settings/ui", data={"key": "region.date_format",
+                                                                "value": fmt})
+            assert r.ok, r.text()
+            page.goto(url)
+            page.wait_for_selector(".ap-table tbody tr")
+            cells = page.evaluate("""() =>
+              Array.from(document.querySelectorAll('.ap-table tbody tr'))
+              .map(r => [r.dataset.applied, r.querySelector('[data-testid=applied-cell]')
+                .textContent.trim()])""")
+            applied = [(d, t) for d, t in cells if d]
+            assert applied
+            for day, shown in applied:
+                assert shown == make(day), (fmt, day, shown)
+        assert not errors, errors
+    finally:
+        page.request.post(f"{base}/settings/ui", data={"key": "region.date_format",
+                                                       "value": "MM/DD/YYYY"})
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [390, 700, 860, 1000])
+def test_the_date_column_hides_before_the_table_overlaps(live, width):
+    """#121: the Applied column is shown only when the table has room for it; where it is shown,
+    no cell's text spills into the next one and the table does not scroll sideways."""
+    base, browser, track, _ids = live
+    ctx = browser.new_context(viewport={"width": width, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/pursuits?track={track}&view=table")
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        got = page.evaluate("""() => {
+          const wrap = document.querySelector('.ap-tablewrap');
+          const head = document.querySelector('th.ap-c-date');
+          const row = '.ap-table tbody tr:first-child td';
+          const cells = Array.from(document.querySelectorAll(row));
+          const boxes = cells.filter(c => c.offsetParent !== null)
+            .map(c => c.getBoundingClientRect());
+          let overlap = false;
+          for (let i = 1; i < boxes.length; i++) {
+            if (boxes[i].left < boxes[i - 1].right - 1) overlap = true;
+          }
+          return {shown: getComputedStyle(head).display !== 'none', overlap,
+                  scrolls: wrap.scrollWidth > wrap.clientWidth + 1,
+                  bodyShown: cells.some(c => c.classList.contains('ap-c-date')
+                    && c.offsetParent !== null),
+                  room: wrap.clientWidth};
+        }""")
+        assert got["shown"] == got["bodyShown"], got  # head and cells leave together
+        assert not got["overlap"], got
+        assert not (got["shown"] and got["scrolls"]), got  # shown only where it fits
+        assert got["shown"] == (width >= 1000), got  # hidden on the narrow windows, shown wide
+    finally:
+        ctx.close()

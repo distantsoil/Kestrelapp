@@ -96,6 +96,7 @@ Non-negotiable. Every downstream decision defers to these.
 | MCP server | `fastmcp` | Mirrors the operator's existing `copilot-mcp` pattern |
 | Notifications | `win11toast` locally, optional `ntfy` webhook | Native toast plus phone push for long runs |
 | Token counting | `tiktoken` with a **vendored** `cl100k_base` encoding file | First use otherwise downloads from Azure blob storage, which breaks the offline requirement. Ship the file and set `TIKTOKEN_CACHE_DIR` |
+| Local AI connection check | `psutil` (BSD-3-Clause) | Lists the network connections of Ollama's processes during the health check (SPEC-INTERFACES §1.2). Read-only. A packaged build lists it in `packaging/kestrel.spec` hidden imports and in the third-party notices (a test fails if either is missing) |
 | Config | `pydantic-settings`, `.env` + YAML + DB overrides | |
 | Logging | `structlog`, rotating JSON lines | |
 | Tests | `pytest`, `pytest-asyncio`, `pytest-xdist`, `respx`, `playwright` | Isolated processes, temporary per-test data and ports; serial parity required (D-UI-172) |
@@ -343,7 +344,7 @@ application, a consulting pursuit is a business-development thread.
 | track | enum | |
 | status | enum | employment: `shortlisted`/`preparing`/`applied`/`screening`/`interviewing`/`final`/`offer`/`accepted`/`rejected`/`withdrawn`/`ghosted`. consulting: `shortlisted`/`researching`/`outreach_sent`/`conversation`/`scoping`/`proposal_sent`/`negotiating`/`won`/`lost`/`no_response` |
 | document_id | fk nullable | the resume or capability statement actually sent |
-| cover_letter_id | fk nullable | |
+| cover_letter_id | fk nullable | the current letter's render (`letter.render_id`, SPEC-MODULES §1.6) |
 | priority | int | operator-set |
 | applied_at, last_activity_at, next_action_at | ts | |
 | next_action | text | |
@@ -456,7 +457,8 @@ Guardrails, all of which must be enforced rather than discovered:
   currently returns nothing through JobSpy (D-SRC-4 amended). Every run records its postings per
   board, so a board that found nothing is shown, not hidden in the total.
 - Profile-generated searches also ask for near-title variants of each target title (D-TTL-2):
-  up to 3 per title, deduplicated, 9 in all, OR-joined into the same title queries. A variant
+  up to 3 per title, deduplicated, 9 in all (D-TTL-4: abbreviation and expansion swaps first, then
+  other phrasings, round-robin across titles inside each kind), OR-joined into the same title queries. A variant
   only swaps a searchable abbreviation for its other form (IT and Information Technology, VP and
   Vice President, RN and Registered Nurse) or a curated family spelling (Technology and IT,
   People Operations and HR); word order is never changed, since boards handle it, and every
@@ -589,8 +591,9 @@ refuse every read); the exception never covers Remotive's pages. The terms advis
 the runner enforces 4 per local day from a count stored on the source row (`kestrel.ingest.fetch_cap`, kept in
 the database so a restart cannot reset it); a 5th is refused as a `partial` run with a plain sentence. Each
 role records Remotive as its source (`raw.via`, `raw.via_url`), links to its Remotive posting page, and is
-credited on the Posting tab. Salary is free text and is not parsed. A 403, 429 or 5xx, or a reply that is not
-the expected JSON, is a `partial` run.
+credited on the Posting tab. Salary is free text and is not parsed. A 403, 429 or 5xx is a `partial` run; a reply that is not the expected JSON is an
+`AdapterError` (shape drift is never an empty success), like every other adapter (D-SRC-19). Terms: a Remotive
+posting is never passed on by an export or a share feature (D-SRC-19).
 
 **Careers page (`careers_page`; B4, D-SRC-15, D-UI-102).** The operator pastes any employer's careers
 page link on the Sources sheet. Many employers (and sites on iCIMS, Taleo, Paycor, UKG or a custom
@@ -1274,6 +1277,10 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
   every provider but OpenRouter makes **no request**: the rail shows this month's deeper reads from
   `frontier_transmission.cost_usd` (a send with no reported cost is unknown, never $0). Tier runs on a
   hosted model are not metered locally, so that line says "on deeper reads".
+  The balance read is off the critical path (#106): `/status/rail` and `/api/status` answer from
+  the cache and never wait for the provider, so a slow `/key` (the timeout is 15 s) cannot delay a
+  poll or the page; until a reading exists the line is absent, and a failure reads "Balance
+  unavailable", never zero.
 
 ### 6.5 Recurring scans
 
@@ -1372,9 +1379,10 @@ alike, and it is the primary input to the active-learning queue.
 The two cutoffs are `thresholds.apply` (default 4.0, shown to the operator as **Strong match**) and
 `thresholds.consider` (default 3.0, shown as **Worth a look**). They are editable in Settings >
 Which roles you see (D-UI-107): each is 0.0 to 5.0 in steps of 0.1, `consider` must be lower than
-`apply`, and Restore defaults returns 4.0 and 3.0. The "new strong match" notification uses the
-`apply` cutoff rather than a separate `notify.high_score` setting, which the interface no longer
-exposes. A change applies to new evaluations and to how existing ones are grouped; stored scores
+`apply`, and Restore defaults returns 4.0 and 3.0. The "New roles worth a look" alert
+(SPEC-INTERFACES §6) covers every role rated Your call or better rather than using a cutoff or a
+separate `notify.high_score` setting, which the interface no longer exposes. A change applies to
+new evaluations and to how existing ones are grouped; stored scores
 are never rewritten. (The earlier code read threshold keys that did not exist; the cutoffs are
 read from `thresholds` and fixed under D-UI-107.)
 

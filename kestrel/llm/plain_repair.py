@@ -164,7 +164,9 @@ def repair_request(violations: list[Violation], extra: list[dict[str, str]]) -> 
     for v in violations:
         lines.append(f"- {v.field}: \"{v.phrase}\" ({RULE_LABELS.get(v.rule, v.rule)})")
     for f in extra:
-        lines.append(f"- {f.get('field', '')}: {describe(f)}. Remove it or say what is known.")
+        # A check that needs its own wording (a letter over its length, D-LETTER-3) says it.
+        ask = f.get("request") or f"{describe(f)}. Remove it or say what is known."
+        lines.append(f"- {f.get('field', '')}: {ask}")
     lines += ["", "Return the same JSON object, complete, with the same fields."]
     return "\n".join(lines)
 

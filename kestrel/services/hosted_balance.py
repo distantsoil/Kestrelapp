@@ -48,6 +48,9 @@ def _now() -> float:
 def clear_cache() -> None:
     _cache.clear()
     _locks.clear()
+    for task in list(_background.values()):
+        task.cancel()
+    _background.clear()
 
 
 @dataclass(frozen=True)
@@ -162,6 +165,28 @@ async def _reading(name: str, backend: BackendConfig) -> Reading:
         return reading
 
 
+_background: dict[tuple[str, str, str], asyncio.Task[Reading]] = {}
+
+
+def _start_background(name: str, backend: BackendConfig) -> None:
+    """Begin the balance read without waiting for it (#106). One read per key at a time; the
+    answer lands in the cache and the next poll shows it. The task is held here so it is not
+    collected mid-flight, and dropped when it ends."""
+    key = _cache_key(name, backend)
+    if key in _background:
+        return
+    task = asyncio.ensure_future(_reading(name, backend))
+    _background[key] = task
+
+    def _done(t: asyncio.Task[Reading]) -> None:
+        if _background.get(key) is t:
+            del _background[key]
+        if not t.cancelled() and t.exception() is not None:  # _fetch catches its own; never silent
+            log.warning("balance_background_failed", error_type=type(t.exception()).__name__)
+
+    task.add_done_callback(_done)
+
+
 # A normal OpenRouter key reports only on itself: its own spend, and a cap if one was set on
 # openrouter.ai. The account balance needs a management key (/api/v1/credits), which can create and
 # delete keys, far more access than a balance line justifies, so Kestrel never asks for one.
@@ -224,6 +249,27 @@ async def rail_row(session: AsyncSession, settings: Settings) -> dict[str, str] 
     has_key = any(
         _key_value(b) for b in prov.external_backends(settings).values()
     )
+    return await local_spend(session) if has_key else None
+
+
+async def rail_row_nowait(session: AsyncSession, settings: Settings) -> dict[str, str] | None:
+    """The same line as `rail_row`, but the status polls (/status/rail, /api/status) never wait on
+    the provider (#106). A fresh cached reading, or a remembered failure, answers at once. With
+    nothing cached the read starts in the background and this returns None (or the last reading,
+    when there is an old one), so the rail shows no balance line for that poll: unknown, never
+    zero. The next poll finds the answer."""
+    eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
+    if eligible is not None:
+        key = _cache_key(*eligible)
+        reading = _fresh(key)
+        if reading is None:
+            _start_background(*eligible)
+            # An expired reading still answers while the new one loads, so the line does not
+            # blink out every five minutes; with none at all there is no line yet.
+            stale = _cache.get(key)
+            return _row_from(stale[1]) if stale is not None else None
+        return _row_from(reading)
+    has_key = any(_key_value(b) for b in prov.external_backends(settings).values())
     return await local_spend(session) if has_key else None
 
 

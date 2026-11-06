@@ -58,7 +58,7 @@
         {% if r.rescoring and not unscored %}<span class="pl-tag pl-tag--again" data-testid="row-rescoring" data-state="{{ r.rescoring.state }}" title="{{ r.rescoring.hint }}">{{ r.rescoring.title }}</span>{% endif %}
         {% if r.rescoring and r.rescoring.state == 'approval' %}<a class="pl-tag pl-tag--ok" href="/rescore/choose?opp_ids={{ o.id }}&page=1&next=/opportunities" data-testid="row-confirm">Confirm</a>{% endif %}
         {% if r.mine and r.mine != ft.word %}<span class="pl-tag" data-mine="{{ r.mine }}" title="The word you picked">you said {{ r.mine }}</span>{% endif %}
-        {% if r.pursuit_id and r.pursuit_status and ft.group == 'applied' %}<span class="pl-tag pl-tag--on" title="Where this application stands" data-testid="pursuit-status">{{ r.pursuit_status|replace('_', ' ') }}</span>
+        {% if r.pursuit_id and r.pursuit_status and ft.group == 'applied' %}<span class="pl-tag pl-tag--on" title="Where this application stands" data-testid="pursuit-status">{{ r.pursuit_status|replace('_', ' ')|capitalize }}</span>
         {% elif r.pursuit_id %}<span class="pl-tag pl-tag--on" data-testid="on-shortlist">{{ 'In my leads' if o.track == 'consulting' else 'On my shortlist' }}</span>{% endif %}
         {% if r.saved %}<span class="pl-tag" data-testid="saved-tag">Saved</span>{% endif %}
         {% if v.near_floor %}<span class="pl-tag pl-tag--warn" data-testid="near-floor" title="The posted pay is a little under your minimum. Kestrel kept it for you to decide.">Below your minimum</span>{% endif %}

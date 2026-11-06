@@ -19,6 +19,7 @@ app's aiosqlite engine, so the thread never touches the event loop's connections
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import platform
@@ -40,6 +41,7 @@ import yaml
 import kestrel
 from kestrel import paths
 from kestrel.config import Settings
+from kestrel.services.export_terms import NO_EXPORT_SQL
 from kestrel.web.redact import redact_text
 
 log = structlog.get_logger()
@@ -173,6 +175,78 @@ def saved_secret_values() -> list[str]:
     return sorted((v for v in values if len(v) >= MIN_SECRET_CHARS), key=len, reverse=True)
 
 
+# A word character or underscore before or after an address does not make it any less an address
+# (`ip_8.8.8.8`, 0.7.6 review), so the edges only refuse digits, dots and (for IPv6) hex digits
+# and colons that would mean the match is part of a longer number or address.
+_IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?(?!\d|\.\d)")
+_IPV6_BRACKET = re.compile(r"\[([0-9A-Fa-f:.]+)\](?::\d{1,5})?")
+_IPV6_BARE = re.compile(r"(?<![0-9A-Fa-f:.])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f.]*")
+
+
+def _is_kept_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """This computer's own address and the unspecified one say nothing about the network."""
+    return ip.is_loopback or ip.is_unspecified
+
+
+def _parse_ipv4(host: str) -> ipaddress.IPv4Address | None:
+    """Four decimal octets, leading zeros allowed (`08.08.08.08` names 8.8.8.8 to a person
+    reading it, so it is masked like 8.8.8.8). None when an octet is over 255: a version or a
+    number, not an address."""
+    try:
+        octets = [int(part, 10) for part in host.split(".")]
+    except ValueError:
+        return None
+    if len(octets) != 4 or any(o > 255 for o in octets):
+        return None
+    return ipaddress.IPv4Address(".".join(str(o) for o in octets))
+
+
+def _parse_ipv6(text: str) -> ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.IPv6Address(text)
+    except ValueError:
+        return None
+
+
+def mask_ip_addresses(text: str) -> str:
+    """Replace every observed IP address (and the port after it) with <redacted>, in every
+    diagnostics output (#144). The Local AI connection check lists the remote addresses Ollama
+    connected to; where a person's computer talks is theirs. Loopback stays: it says nothing.
+    The sentence around the address keeps its meaning ("a public address", "another computer on
+    your network")."""
+
+    def v4(m: re.Match[str]) -> str:
+        ip = _parse_ipv4(m.group(0).split(":", 1)[0])
+        if ip is None:
+            return m.group(0)
+        return m.group(0) if _is_kept_ip(ip) else REDACTED
+
+    def v6_bracket(m: re.Match[str]) -> str:
+        ip = _parse_ipv6(m.group(1))
+        if ip is None:
+            return m.group(0)
+        return m.group(0) if _is_kept_ip(ip) else REDACTED
+
+    def v6_bare(m: re.Match[str]) -> str:
+        raw = m.group(0)
+        core = raw.rstrip(":.")
+        ip = _parse_ipv6(core)
+        if ip is None:
+            # A full eight-group address with its port and no brackets
+            # (`2a00:1450:4001:82f:1:2:3:4:443`) does not parse whole; without the last
+            # decimal group it does, and that group is the port.
+            head, _, port = core.rpartition(":")
+            if port.isdigit() and len(port) <= 5:
+                ip = _parse_ipv6(head)
+            if ip is None:
+                return raw  # a clock time or other colon text
+        return raw if _is_kept_ip(ip) else REDACTED + raw[len(core):]
+
+    out = _IPV6_BRACKET.sub(v6_bracket, text)
+    out = _IPV6_BARE.sub(v6_bare, out)
+    return _IPV4.sub(v4, out)
+
+
 def make_scrubber(
     redaction: Mapping[str, str] | None, secrets: Iterable[str] = (), *,
     addresses: Iterable[str] = (),
@@ -201,7 +275,8 @@ def make_scrubber(
             out = out.replace(v, REDACTED)
         for host in short_hosts:
             out = re.sub(r"(?<![\w.-])" + re.escape(host) + r"(?![\w.-])", REDACTED, out)
-        return mask_tokens(redact_text(out, mapping, enabled=bool(mapping)) or "")
+        return mask_ip_addresses(
+            mask_tokens(redact_text(out, mapping, enabled=bool(mapping)) or ""))
 
     return scrub
 
@@ -250,7 +325,7 @@ def readme_text() -> str:
         "",
         "Every text file was passed through the same scrubber: bearer and API tokens are",
         "masked and, in confidential mode, the current employer is replaced by the operator's",
-        "placeholder.",
+        "placeholder. Observed network addresses are hidden too.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -578,6 +653,8 @@ def role_rows(
         opps = conn.execute(
             "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "
             "stage_reason, url, first_seen_at, date_posted FROM opportunity "
+            "WHERE source_id IS NULL OR source_id NOT IN "  # Remotive's terms (D-SRC-19)
+            f"(SELECT id FROM source WHERE kind IN {NO_EXPORT_SQL}) "
             f"ORDER BY id DESC LIMIT {ROLE_ROWS}"
         ).fetchall()
         ids = [r["id"] for r in opps]

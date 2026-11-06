@@ -357,6 +357,62 @@ async def move_to_status(
     return None
 
 
+FUTURE_DATE = "That date is in the future. Choose today or an earlier date."
+FOLLOW_UP_OVERDUE = "Follow-up overdue"
+
+
+def applied_dates(
+    form: dict[str, str], on: date | None = None
+) -> tuple[date, date, str | None]:
+    """(applied on, follow up on, error) from an "I applied" form. The server's rule, whatever the
+    page's date input allowed: a malformed date or an applied date after today is refused with a
+    plain sentence (issue #129), and the caller records nothing. The applied date defaults to
+    today and the follow-up to FOLLOW_UP_DAYS after the applied date. A follow-up that is already
+    past (a backdated application) is kept as typed and shown as overdue, never moved."""
+    on = on or today()
+    raw_applied = str(form.get("applied_on") or "").strip()
+    applied = parse_day(raw_applied) or on
+    if raw_applied and parse_day(raw_applied) is None:
+        return applied, applied, "That date is not a valid date."
+    if applied > on:
+        return applied, applied, FUTURE_DATE
+    raw_follow = str(form.get("follow_up") or "").strip()
+    follow = parse_day(raw_follow)
+    if raw_follow and follow is None:
+        return applied, applied, "The follow-up date is not a valid date."
+    return applied, follow or (applied + timedelta(days=FOLLOW_UP_DAYS)), None
+
+
+def follow_up_phrase(p: Pursuit, on: date | None = None) -> str:
+    """How an application's follow-up reads: "Follow up May 11", or "Follow-up overdue" once that
+    date has passed. One wording for the role page, the board and Today (issue #129)."""
+    due = parse_day(p.next_action_at)
+    if due is None:
+        return ""
+    if due < (on or today()):
+        return FOLLOW_UP_OVERDUE
+    return f"Follow up {short_date(p.next_action_at)}"
+
+
+async def edit_applied_dates(session, p: Pursuit, form: dict[str, str]) -> str | None:
+    """Change the dates of an application already recorded (Edit date). Only the applied date and
+    the follow-up move; the status, its history and every other field stay as they are. Returns an
+    error sentence or None. Flushes; the caller commits."""
+    if not p.applied_at:
+        return "That role is not marked applied yet."
+    applied, follow, err = applied_dates(form)
+    if err:
+        return err
+    p.applied_at = day_stamp(applied)
+    p.next_action_at = follow.isoformat()
+    if not p.next_action:
+        verb = VERBS.get(p.track, {}).get("applied")
+        p.next_action = verb.next_action if verb is not None else None
+    p.last_activity_at = utcnow_iso()
+    await session.flush()
+    return None
+
+
 async def apply_verb(
     session, p: Pursuit, verb_key: str, form: dict[str, str]
 ) -> str | None:
@@ -370,22 +426,21 @@ async def apply_verb(
     on = today()
     event_date: date | None = None
     if verb_key == "applied":
-        event_date = parse_day(form.get("applied_on")) or on
-        if form.get("applied_on") and parse_day(form.get("applied_on")) is None:
-            return "That date is not a valid date."
-        follow = parse_day(form.get("follow_up"))
-        if form.get("follow_up") and follow is None:
-            return "The follow-up date is not a valid date."
-        follow = follow or (event_date + timedelta(days=FOLLOW_UP_DAYS))
+        event_date, follow, bad = applied_dates(form, on)
+        if bad:
+            return bad
         doc = str(form.get("document_id") or "").strip()
         if doc:
             from kestrel.db.models import DocRender
+            from kestrel.docs.letters import LETTER_TEMPLATES
 
             render = await session.get(DocRender, int(doc)) if doc.isdigit() else None
             if render is None or (
                 render.opportunity_id is not None and render.opportunity_id != p.opportunity_id
             ):
                 return "That document does not belong to this role."
+            if render.template in LETTER_TEMPLATES:  # Resume used names a resume, not a letter
+                return "Choose a resume, not a cover letter."
             p.document_id = render.id
         p.applied_at = day_stamp(event_date)
         p.next_action, p.next_action_at = verb.next_action, follow.isoformat()

@@ -995,15 +995,26 @@ async def delete_document(request: Request, master_id: str):
             else:
                 await s.execute(update(SelectionOverride).where(mine)
                                 .values(doc_render_id=None))
+            # Letters drafted from this document go with their renders (D-LETTER-5), and the story
+            # usage they held is counted again for each role they belonged to.
+            from kestrel.db.models import Letter
+            from kestrel.docs import letter_store
+
+            letter_roles = set((await s.execute(
+                select(Letter.opportunity_id).where(Letter.render_id.in_(render_ids))
+            )).scalars())
+            await s.execute(delete(Letter).where(Letter.render_id.in_(render_ids)))
             await s.execute(delete(DocRender).where(DocRender.doc_master_id == mid))
+            for opp_id in sorted(letter_roles):
+                await letter_store.sync_story_usage(s, opp_id)
+            # #118: what was derived from this resume goes with it (waiting title suggestions;
+            # decided titles stay bare; older rows are matched by their evidence, so this runs
+            # before the bullets it reads are deleted).
+            from kestrel.services.title_suggest import forget_resume
+            await forget_resume(s, mid)
             await s.execute(delete(DocVariant).where(DocVariant.doc_slot_id.in_(slot_ids)))
             await s.execute(delete(DocSlot).where(DocSlot.doc_section_id.in_(sec_ids)))
             await s.execute(delete(DocSection).where(DocSection.doc_master_id == mid))
-            # #118/#134: suggestions derived from this resume go with it. Rows written before
-            # migration 0027 have a NULL doc_master_id (nothing recorded which resume they came
-            # from, so there is no link to backfill from); they are left, not guessed at.
-            from kestrel.db.models import TitleSuggestion
-            await s.execute(delete(TitleSuggestion).where(TitleSuggestion.doc_master_id == mid))
             await s.execute(delete(DocMaster).where(DocMaster.id == mid))
             await s.commit()
     except Exception as exc:  # noqa: BLE001 - fixed sentence on the page, the cause in the log

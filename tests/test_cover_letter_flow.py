@@ -296,7 +296,8 @@ def test_the_action_bar_is_under_the_panes_with_the_right_buttons_for_each_tab(i
     # the bar sits after the panes, and the form's Save is tied to the form by id
     assert soup.select_one('[data-testid="cover-letter-save"]')["form"] == "cl-edit-form"
     assert soup.select_one("#cl-edit-form") is not None
-    assert "Your edits to this draft are replaced" in _text(check)
+    # D-LETTER-4: Draft again keeps this draft, with its edits, until the new one is kept.
+    assert "This one stays, with your edits, until you keep the new one" in _text(check)
 
 
 def test_draft_again_online_asks_first_and_the_model_is_not_called_until_confirmed(
@@ -320,8 +321,10 @@ def test_draft_again_online_asks_first_and_the_model_is_not_called_until_confirm
         assert [r.id for r in _letter_rows(ids["strong"])] == [first[0].id]
         done = generate(c, GEN.format(ids["strong"]), form)
     assert fake.calls > before and 'data-testid="cover-letter-draft"' in done.text
+    # D-LETTER-4: the new draft waits beside the old one, which stays until the new one is kept.
     rows = _letter_rows(ids["strong"])
-    assert len(rows) == 1 and rows[0].id != first[0].id
+    assert len(rows) == 2 and rows[0].id == first[0].id
+    assert 'data-testid="cover-letter-proposal"' in done.text
 
 
 def test_draft_again_on_this_computer_replaces_the_draft(ids, monkeypatch):
@@ -337,5 +340,6 @@ def test_draft_again_on_this_computer_replaces_the_draft(ids, monkeypatch):
         calls = fake.calls
         generate(c, GEN.format(ids["strong"]), form)
     assert fake.calls > calls
+    # D-LETTER-4: "replaces" now happens only on Keep new draft; until then both are kept.
     rows = _letter_rows(ids["strong"])
-    assert [r.id for r in rows] != [old] and len(rows) == 1
+    assert [r.id for r in rows][0] == old and len(rows) == 2

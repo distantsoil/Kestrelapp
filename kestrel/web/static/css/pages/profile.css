@@ -84,11 +84,8 @@
    the column is the whole page. Here the form ends above the page's later cards, so a bar sticky
    to the form parked mid-page over them (owner report 2026-10-26). At phone width the bottom
    bar owns the window's foot, so the bar stays sticky to the form there. */
-.pf-savebar { position: fixed; left: var(--side-w); right: 0; margin: 0 auto; width: max-content;
-  max-width: calc(100% - var(--side-w) - 32px); }
-@media (max-width: 1100px) {
-  .pf-savebar { left: var(--side-w-narrow); max-width: calc(100% - var(--side-w-narrow) - 32px); }
-}
+.pf-savebar { position: fixed; left: var(--side-w-now); right: 0; margin: 0 auto; width: max-content;
+  max-width: calc(100% - var(--side-w-now) - 32px); }
 @media (max-width: 700px) {
   .pf-savebar { position: sticky; left: auto; right: auto; margin: 0; width: auto; max-width: none; }
 }
@@ -96,10 +93,11 @@
   align-items: center; gap: 10px; padding: 9px 10px 9px 16px; background: var(--ink);
   color: var(--paper); border-radius: 14px; box-shadow: var(--shadow);
   transform: translateY(140%); opacity: 0; visibility: hidden; pointer-events: none;
-  transition: transform .35s cubic-bezier(.22, .8, .3, 1), opacity .25s, visibility 0s .35s; }
+  transition: transform .35s cubic-bezier(.22, .8, .3, 1), opacity .25s, visibility 0s .35s,
+    left var(--dur-2) var(--ease), max-width var(--dur-2) var(--ease); }
 .pf-form[data-dirty] .pf-savebar, .pf-savebar[data-shown] { transform: none; opacity: 1;
   visibility: visible; pointer-events: auto; transition: transform .35s cubic-bezier(.22, .8, .3, 1),
-  opacity .25s, visibility 0s; }
+  opacity .25s, visibility 0s, left var(--dur-2) var(--ease), max-width var(--dur-2) var(--ease); }
 .pf-savebar__msg { flex: 1; min-width: 0; font-weight: 700; padding-right: 8px; }
 .pf-savebar .k-btn { background: transparent; color: var(--paper); border-color: var(--line); }
 .pf-savebar .k-btn:hover { background: transparent; border-color: var(--paper); }
@@ -224,7 +222,12 @@ html[data-reduce-motion="1"] .pf-sugg__panel { transition: none; }
   border-radius: 999px; font-weight: 700; font-size: var(--fs-sm); }
 .pf-chip form { margin: 0; display: inline-flex; }
 .pf-chip.is-off { background: transparent; border-color: var(--line); color: var(--muted); }
-.pf-chip.is-off span { text-decoration: line-through; }
+.pf-chip.is-off .pf-chip__v { text-decoration: line-through; }
+.pf-chip__t { display: inline-flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.pf-chip__src { font-weight: 500; font-size: var(--fs-xs); color: var(--muted); }
+.pf-chip.is-left { padding-right: 12px; background: transparent; border-color: var(--line);
+  color: var(--muted); }
+.pf-chips--left { margin-top: 6px; }
 .pf-chip__x { display: inline-flex; align-items: center; justify-content: center; width: 24px;
   height: 24px; padding: 0; border: 0; border-radius: 999px; background: transparent;
   color: inherit; cursor: pointer; }
@@ -502,3 +505,7 @@ body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .
   body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .k-toasts {
     bottom: calc(72px + var(--pf-savebar-h, 52px) + var(--sp-2) + env(safe-area-inset-bottom)); }
 }
+
+/* The title of the variants card wraps instead of running past the card on a narrow window. */
+#title-variants .k-sec-head .k-grow { min-width: 0; }
+#title-variants .k-sec-head h3 { overflow-wrap: anywhere; }

@@ -29,6 +29,8 @@ status rail. Sibling of kestrel.analytics.progress, whose `scoring_progress` sha
       "groups": {"strong", "good", "maybe", "not_fit", "your_call": int},  # over `rated`
       "groups_by_track": {track: {...same keys...}},
       "worth_new": int,           # of `rated`, Worth a look roles first seen in this window
+      "worth_new_strong": int,    # of those, rated Strong
+      "worth_new_first": {"id", "title", "org"} | None,  # the first of them, for a lone role
       "last_activity_at": str | None,  # newest touch by the run on ANY track (stall check)
       "recent_events": [{"at", "text", "tone"}],  # newest first, at most 10
     }
@@ -139,6 +141,7 @@ def _empty() -> dict[str, Any]:
         "quick_screen_done": 0, "quick_screen_total": 0, "quick_screen_kept": 0,
         "rated": 0, "to_rate": 0, "failed": 0, "rating_now": 0, "waiting": 0,
         "groups": dict.fromkeys(GROUP_KEYS, 0), "groups_by_track": {}, "worth_new": 0,
+        "worth_new_strong": 0, "worth_new_first": None,
         "last_activity_at": None, "recent_events": [], "finishing": 0, "retrying": 0, "stopping": 0,
     }
 
@@ -484,7 +487,7 @@ async def run_summary(
         select(Evaluation.opportunity_id, Evaluation.created_at, Evaluation.tier,
                Evaluation.verdict, Evaluation.score, Evaluation.weighted_score,
                Evaluation.needs_review, Opportunity.title, Opportunity.stage, Opportunity.track,
-               Opportunity.first_seen_at)
+               Opportunity.first_seen_at, Opportunity.org_name)
         .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
         .where(Evaluation.tier == 2, _in_window(Evaluation.created_at, start, end))
         .order_by(Evaluation.created_at, Evaluation.id)
@@ -538,6 +541,11 @@ async def run_summary(
             out["groups"][key] += 1
             if key in WORTH_KEYS and (row.first_seen_at or "") >= start:
                 out["worth_new"] += 1
+                if key == "strong":
+                    out["worth_new_strong"] += 1
+                if out["worth_new_first"] is None:
+                    out["worth_new_first"] = {"id": row.opportunity_id, "title": row.title,
+                                              "org": row.org_name}
             tg = by_track.setdefault(row.track or "employment", dict.fromkeys(GROUP_KEYS, 0))
             tg[key] += 1
         word = fit.word if key else "scored"

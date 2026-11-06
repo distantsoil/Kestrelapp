@@ -53,6 +53,9 @@
 /* ------------------------------------------------------------------------ cards and rows */
 .st-card { overflow: visible; }
 .st-head { margin-bottom: 8px; }
+/* A card title plus its pill and switch can be wider than a phone (MCP, Access from other
+   devices: #133): let every card title wrap instead of running under the controls. */
+.st-card .st-head h3 { display: block; white-space: normal; overflow-wrap: anywhere; }
 .st-sub { margin: -2px 0 10px; color: var(--muted); font-size: 13.5px; }
 .st-dsm { display: block; color: var(--muted); font-size: 13px; }
 .st-kind { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
@@ -60,6 +63,9 @@
 .st-kind--gap { margin-top: 14px; }
 .st-qn { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }
 .st-mono, .st-path { font-family: var(--mono); font-size: 12.5px; }
+/* A name inside running text (a header, an environment variable): inline, one line, wraps as a
+   unit. Never .st-mono, which is the 26px monogram badge on a service tile. */
+.st-code { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
 .st-path { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
   border-radius: var(--r-sm); padding: 3px 8px; margin-top: 4px; }
@@ -311,9 +317,9 @@ html.st-rm *, html.st-rm *::before, html.st-rm *::after { animation: none !impor
 .st-accp { margin-top: 6px; border: 1px solid var(--tint-info-line); background: var(--tint-info);
   border-radius: var(--r-lg); padding: 12px 14px; }
 .st-acc { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-.st-qr { width: 132px; height: 132px; flex: none; border-radius: var(--r-md);
+.st-qr { --qr-size: 132px; width: var(--qr-size); height: var(--qr-size); flex: none; border-radius: var(--r-md);
   border: 1px solid var(--line); display: block; }
-.st-qr svg { max-width: 100%; max-height: 100%; display: block; }
+.st-qr svg { width: 100%; height: 100%; display: block; }
 .st-accm { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .st-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .st-addr { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

@@ -37,6 +37,7 @@ from typing import Any
 
 import httpx
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import paths
@@ -54,6 +55,9 @@ log = structlog.get_logger()
 CHOICES: tuple[str, ...] = ("local", "hosted", "both")
 CHOICE_KEY = "setup.run_choice"
 MODE_KEY = "llm.mode"
+# Set when the person leaves the Online choice for On this computer or Both: the Health check of
+# the earlier local setup is out of date, so one new check is owed (finish_owed_recheck).
+RECHECK_OWED_KEY = "setup.recheck_owed"
 OLLAMA_TIMEOUT_S = 2.0
 OLLAMA_CONNECT_TIMEOUT_S = 0.5  # loopback: a live Ollama accepts in ms; Windows refuses in ~2 s
 PROBE_TTL_UP_S = 5.0
@@ -818,7 +822,12 @@ async def set_run_mode(session: AsyncSession, choice: str, settings: Settings) -
     complete. Returns the message for the page. The caller commits."""
     if choice not in CHOICES:
         raise ValueError(f"unknown run choice {choice!r}; expected one of {', '.join(CHOICES)}")
+    found = await session.execute(
+        select(Setting.key, Setting.value).where(Setting.key.in_((MODE_KEY, CHOICE_KEY))))
+    was = run_choice(settings, {k: v for k, v in found.all()})[0]
     await _set(session, CHOICE_KEY, choice)
+    if was == "hosted" and choice != "hosted":
+        await _set(session, RECHECK_OWED_KEY, True)  # the old report is from before; check again
     if choice == "local":
         await _set(session, MODE_KEY, "local")
         return "Kestrel runs on local models. Steps 2 to 5 apply."

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -33,57 +34,35 @@ async def _fetch(config: dict | None = None):
         return await RemotiveAdapter().fetch(cfg, client)
 
 
+def _payload() -> dict:
+    """A real API payload captured 2026-11-05 (tests/fixtures/remotive_jobs.json), with every
+    name, title and text replaced by invented ones."""
+    path = Path(__file__).parent / "fixtures" / "remotive_jobs.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 @respx.mock
 async def test_remotive_maps_jobs_correctly():
-    fixture = {
-        "00-warning": "test",
-        "0-legal-notice": "test",
-        "job-count": 2,
-        "total-job-count": 100,
-        "jobs": [
-            {
-                "id": "12345",
-                "url": "https://remotive.com/jobs/12345",
-                "title": "Senior Developer",
-                "company_name": "Example Corp",
-                "candidate_required_location": "Anywhere",
-                "salary": "$100k-$150k",
-                "description": "<p>Build things.</p>",
-                "publication_date": "2026-11-01T12:00:00Z",
-            },
-            {
-                "id": "67890",
-                "url": "https://remotive.com/jobs/67890",
-                "title": "Product Manager",
-                "company_name": "Another Corp",
-                "candidate_required_location": "US Only",
-                "salary": None,
-                "description": None,
-                "publication_date": "2026-11-02T08:00:00Z",
-            },
-        ],
-    }
-    respx.get(f"{_BASE}?limit=50").mock(
-        return_value=httpx.Response(200, json=fixture)
-    )
+    respx.get(f"{_BASE}?limit=50").mock(return_value=httpx.Response(200, json=_payload()))
 
     batch = await _fetch()
 
-    assert len(batch) == 2
+    assert len(batch) == 3
     p0 = batch[0]
-    assert p0.title == "Senior Developer"
-    assert p0.org_name == "Example Corp"
-    assert p0.location_raw == "Anywhere"
+    assert p0.title == "Platform Engineer"
+    assert p0.org_name == "Sample Harbor Co"
+    assert p0.location_raw == "USA Only"
     assert p0.is_remote is True
-    assert p0.description_html == "<p>Build things.</p>"
-    assert p0.date_posted == "2026-11-01T12:00:00Z"
-    assert p0.url == "https://remotive.com/jobs/12345"
-    assert p0.external_id == "12345"
+    assert p0.description_html == "<p>Run the sample platform.</p><ul><li>Invented duty</li></ul>"
+    assert p0.date_posted == "2026-11-01T09:30:00"
+    assert p0.url.startswith("https://remotive.com/remote-jobs/software-development/")
+    assert p0.external_id == "900001"
+    assert p0.raw == {"via": "Remotive", "via_url": "https://remotive.com"}
 
-    p1 = batch[1]
-    assert p1.title == "Product Manager"
-    assert p1.description_html is None
-    assert p1.external_id == "67890"
+    p2 = batch[2]
+    assert p2.title == "Support Lead"
+    assert p2.description_html is None
+    assert p2.external_id == "900003"
 
 
 @respx.mock
@@ -112,51 +91,29 @@ async def test_remotive_handles_empty_jobs():
 @respx.mock
 async def test_remotive_fallback_external_id():
     """Jobs without an id use the url as the dedup key."""
-    fixture = {
-        "jobs": [
-            {
-                "url": "https://remotive.com/jobs/abc",
-                "title": "No ID Job",
-                "company_name": "Test Corp",
-            },
-        ],
-    }
+    job = {k: v for k, v in _payload()["jobs"][0].items() if k != "id"}
     respx.get(f"{_BASE}?limit=50").mock(
-        return_value=httpx.Response(200, json=fixture)
+        return_value=httpx.Response(200, json={"jobs": [job]})
     )
 
     batch = await _fetch()
 
     assert len(batch) == 1
-    assert batch[0].external_id == "https://remotive.com/jobs/abc"
+    assert batch[0].external_id == job["url"]
 
 
 @respx.mock
 async def test_remotive_deduplicates_by_id():
-    fixture = {
-        "jobs": [
-            {
-                "id": "111",
-                "url": "https://remotive.com/jobs/111",
-                "title": "First",
-                "company_name": "Corp A",
-            },
-            {
-                "id": "111",
-                "url": "https://remotive.com/jobs/111",
-                "title": "Duplicate",
-                "company_name": "Corp A",
-            },
-        ],
-    }
+    first = _payload()["jobs"][0]
+    again = {**first, "title": "Duplicate"}
     respx.get(f"{_BASE}?limit=50").mock(
-        return_value=httpx.Response(200, json=fixture)
+        return_value=httpx.Response(200, json={"jobs": [first, again]})
     )
 
     batch = await _fetch()
 
     assert len(batch) == 1
-    assert batch[0].title == "First"
+    assert batch[0].title == "Platform Engineer"
 
 
 def test_validate_config_rejects_bad_limit():
@@ -177,21 +134,14 @@ def test_validate_config_rejects_bad_limit():
 # The named robots.txt exception, attribution, the 4-a-day cap (stored, so a restart keeps it),
 # and unreadable replies. No network: respx answers every request.
 
-_JOB = {
-    "id": 501,
-    "url": "https://remotive.com/remote-jobs/it/vp-of-it-501",
-    "title": "VP of IT",
-    "company_name": "Harbor Example Co",
-    "candidate_required_location": "USA",
-    "description": "<p>Lead the IT team.</p>",
-    "publication_date": "2026-11-02T08:00:00",
-}
+_JOB = _payload()["jobs"][0]
 
 
 async def _make_source(sm) -> int:
     paths.config_dir().mkdir(parents=True, exist_ok=True)
     paths.config_dir().joinpath("profile.yml").write_text(
-        "employment:\n  employment_terms:\n    target_titles: [VP of IT]\n", encoding="utf-8"
+        "employment:\n  employment_terms:\n    target_titles: [Platform Engineer]\n",
+        encoding="utf-8",
     )
     async with sm() as s:
         src = Source(track="employment", kind="remotive", name="Remotive", config={}, enabled=True)
@@ -244,21 +194,33 @@ async def test_a_stored_role_carries_the_remotive_credit_and_link(sm):
 
 @pytest.mark.parametrize(
     "response",
-    [
-        httpx.Response(200, text="<html>not json</html>"),
-        httpx.Response(200, json={"jobs": "oops"}),
-        httpx.Response(200, json=["a", "list"]),
-        httpx.Response(403),
-        httpx.Response(429),
-        httpx.Response(503),
-    ],
+    [httpx.Response(403), httpx.Response(429), httpx.Response(503)],
 )
 @respx.mock
-async def test_an_unreadable_or_refused_reply_is_a_partial_run_not_a_crash(response):
+async def test_a_refused_reply_is_a_partial_run_not_a_crash(response):
     respx.get(f"{_BASE}?limit=50").mock(return_value=response)
     batch = await _fetch()
     assert len(batch) == 0
     assert batch.partial_error and "Remotive" in batch.partial_error
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="<html>not json</html>"),
+        httpx.Response(200, json={"jobs": "oops"}),
+        httpx.Response(200, json=["a", "list"]),
+        httpx.Response(200, json={"job-count": 0}),
+    ],
+)
+@respx.mock
+async def test_an_unreadable_reply_is_an_adapter_error_like_every_other_board(response):
+    """D-SRC-19: shape drift is never an empty success (the other adapters raise the same)."""
+    from kestrel.ingest.base import AdapterError
+
+    respx.get(f"{_BASE}?limit=50").mock(return_value=response)
+    with pytest.raises(AdapterError, match="could not read"):
+        await _fetch()
 
 
 @respx.mock

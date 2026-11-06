@@ -271,6 +271,7 @@ patterns = [
   "kestrel/docs/templates/letter.html",
   "kestrel/docs/letters.py",
   "kestrel/docs/letter_task.py",
+  "kestrel/docs/letter_store.py",
 ]
 files = ["test_cover_letter_browser.py", "test_role_browser.py", "test_rescoring_browser.py"]
 

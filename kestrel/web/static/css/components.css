@@ -121,12 +121,23 @@ html::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px;
 html::-webkit-scrollbar-track { background: transparent; }
 .k-win {
   display: grid;
-  grid-template-columns: var(--side-w) minmax(0, 1fr);
+  grid-template-columns: var(--side-w-now) minmax(0, 1fr);
   min-height: 100vh;
   /* Named so the layout steps the locked mockups take (1300, 1000 ...) measure the WINDOW, as the
      mockups' .win does, never a page wrapper ~232px narrower (2026-10-26 conformance audit). */
   container: kwin / inline-size;
 }
+/* The sidebar's width right now (#126): the full width, the rail when collapsed, the rail below
+   1100 px. The grid and every fixed element that sits beside the sidebar (the toast stack, the
+   Profile save bar) read this one variable. The server renders k-side-collapsed on <html> from
+   the kestrel-side cookie, so the first frame already has the right width. */
+:root { --side-w-now: var(--side-w); }
+:root.k-side-collapsed { --side-w-now: var(--side-w-narrow); }
+/* Between 900 and 1100 px the sidebar is the rail unless the person pinned it; under 900 px it is
+   the rail whatever they pinned (the page needs the room). An opened sidebar overlays and never
+   changes this width (D-UI-249). */
+@media (max-width: 1100px) { :root:not(.k-side-pinned) { --side-w-now: var(--side-w-narrow); } }
+@media (max-width: 899px) { :root { --side-w-now: var(--side-w-narrow); } }
 .k-win--narrow { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
 .side {
   background: var(--side-bg);
@@ -189,6 +200,18 @@ html::-webkit-scrollbar-track { background: transparent; }
 }
 .track-switch a.active .n { background: var(--brand-ink); color: var(--brand); }
 .track-switch a .n:empty { display: none; }
+/* The compact track switch in the rail (#126): stacked, one letter each, the full name in the
+   tooltip and the accessible name. Shared by the chosen rail and the forced one below 1100 px. */
+.k-win.is-side-collapsed .side .track-switch { flex-direction: column; gap: 3px; margin: 0 0 6px; width: 100%; }
+.k-win.is-side-collapsed .side .track-switch a { font-size: 0; padding: 5px 0; }
+.k-win.is-side-collapsed .side .track-switch a::before { content: attr(data-initial); font-size: 12px; font-weight: 700; }
+.k-win.is-side-collapsed .side .track-switch a .n { display: none; }
+@media (max-width: 1100px) {
+  .side .track-switch { flex-direction: column; gap: 3px; margin: 0 0 6px; width: 100%; }
+  .side .track-switch a { font-size: 0; padding: 5px 0; }
+  .side .track-switch a::before { content: attr(data-initial); font-size: 12px; font-weight: 700; }
+  .side .track-switch a .n { display: none; }
+}
 /* The status readout (D-UI-91): two lines, never wrapping. */
 .k-sstat {
   border-top: 1px solid var(--line); padding: 10px 8px 0; margin-top: 6px;
@@ -419,56 +442,74 @@ mark.k-pal__m { background: none; color: var(--brand); font-weight: 800; }
 html.k-leaving .k-win { transform: scale(.97); opacity: 0; transition: transform .35s ease, opacity .35s ease; }
 @keyframes k-fade { from { opacity: 0; } }
 
-/* Below 1100 px the sidebar is an icon rail; it never disappears (D-UI-91). At phone width
-   (700 px and under) the rail gives way to the bottom bar, whose More sheet holds every page. */
-@media (max-width: 1100px) {
-  .k-win { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
-  .side { padding: 18px 10px 12px; align-items: center; }
-  .side .k-sec, .side .mainnav > a .n, .side .k-brand__word,
-  .side .track-switch, .k-sstat__l > span:not(.k-dot) { display: none; }
-  .side .k-brand { padding: 2px 0 14px; }
-  .side .mainnav { width: 100%; }
-  .side .mainnav > a { justify-content: center; padding: 9px; position: relative; font-size: 0; }
-  .side .mainnav > a .ring { position: absolute; top: 4px; right: 6px; margin: 0; width: 8px; height: 8px; }
-  .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
-  .k-sstat__l { flex: none; }
-  .k-wctl { flex-direction: column; margin: -6px 0 12px; }
-  .k-wctl.is-mac { width: 22px; min-height: 60px; }
-}
+/* The icon rail (D-UI-91, D-UI-249). The rail is the sidebar's compact form: chosen by the
+   person (is-side-collapsed) or forced by the window width (under 1100 px unless pinned, under
+   900 px always). One class, is-rail, says "the rail is showing"; it is rendered by the server for a
+   chosen rail and set by the sidebar script for the width, before the first frame.
+   Opening the rail adds is-side-open: the full sidebar then overlays the page and the grid does
+   not change. At phone width (700 px and under) the rail gives way to the bottom bar, whose More
+   sheet holds every page. */
 @media (max-width: 700px) {
   .k-win { grid-template-columns: minmax(0, 1fr); }
   .side { display: none; }
   .k-tools { padding: 12px 16px 0; }
 }
 
-/* Sidebar collapse toggle (issue #126): a button that shrinks the sidebar to an icon rail.
-   The state is remembered in localStorage so it persists across page loads. */
-.k-side-toggle {
+/* Sidebar controls (issue #126): the collapse toggle and the pushpin share one row. */
+.k-side-ctl { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 0 8px 4px; }
+.k-side-toggle, .k-side-pin {
   display: flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; margin: 0 8px 4px auto;
+  width: 28px; height: 28px; margin: 0;
   border: 1px solid var(--line); border-radius: var(--r-sm);
   background: none; color: var(--muted); cursor: pointer;
-  transition: color var(--dur-1), border-color var(--dur-1), transform .3s var(--ease);
+  transition: color var(--dur-1), border-color var(--dur-1), background var(--dur-1), transform .3s var(--ease);
 }
-.k-side-toggle:hover { color: var(--ink); border-color: var(--brand); }
-/* When collapsed: hide text, center icons, shrink width */
-.k-win.is-side-collapsed { grid-template-columns: var(--side-w-narrow) minmax(0, 1fr); }
+.k-side-toggle:hover, .k-side-pin:hover { color: var(--ink); border-color: var(--brand); }
+.k-side-pin[aria-pressed="true"] { color: var(--brand); border-color: var(--brand); background: var(--soft); }
+.k-side-pin[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.k-side-pin[aria-disabled="true"]:hover { color: var(--muted); border-color: var(--line); }
+.k-side-pin svg { transition: transform .3s var(--ease); }
+.k-side-pin[aria-pressed="true"] svg { transform: rotate(-30deg); }
+/* The pushpin only shows while the sidebar is open or in the page; the bare rail has no room. */
+.k-win.is-rail:not(.is-side-open) .k-side-pin { display: none; }
+.k-win.is-rail:not(.is-side-open) .k-side-ctl { justify-content: center; margin: 0 0 4px; }
+.k-win.is-rail:not(.is-side-open) .k-side-toggle { transform: rotate(180deg); }
 /* The width change glides on a press (class added by the toggle, never on page load). The global
    reduced-motion rule below ends all transitions with !important, so it still wins. */
 .k-win.is-side-animating { transition: grid-template-columns var(--dur-2) var(--ease); }
-.k-win.is-side-collapsed .side { padding: 18px 10px 12px; align-items: center; }
-.k-win.is-side-collapsed .side .k-sec,
-.k-win.is-side-collapsed .side .mainnav > a .n,
-.k-win.is-side-collapsed .side .k-brand__word,
-.k-win.is-side-collapsed .side .track-switch,
-.k-win.is-side-collapsed .k-sstat__l > span:not(.k-dot) { display: none; }
-.k-win.is-side-collapsed .side .k-brand { padding: 2px 0 14px; }
-.k-win.is-side-collapsed .side .mainnav { width: 100%; }
-.k-win.is-side-collapsed .side .mainnav > a { justify-content: center; padding: 9px; position: relative; font-size: 0; }
-.k-win.is-side-collapsed .side .mainnav > a .ring { position: absolute; top: 4px; right: 6px; margin: 0; width: 8px; height: 8px; }
-.k-win.is-side-collapsed .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
-.k-win.is-side-collapsed .k-sstat__l { flex: none; }
-.k-win.is-side-collapsed .k-side-toggle { transform: rotate(180deg); }
+
+.k-win.is-rail:not(.is-side-open) .side { padding: 18px 10px 12px; align-items: center; }
+.k-win.is-rail:not(.is-side-open) .side .k-sec,
+.k-win.is-rail:not(.is-side-open) .side .mainnav > a .n,
+.k-win.is-rail:not(.is-side-open) .side .k-brand__word,
+.k-win.is-rail:not(.is-side-open) .k-sstat__l > span:not(.k-dot) { display: none; }
+.k-win.is-rail:not(.is-side-open) .side .k-brand { padding: 2px 0 14px; }
+.k-win.is-rail:not(.is-side-open) .side .mainnav { width: 100%; }
+.k-win.is-rail:not(.is-side-open) .side .mainnav > a { justify-content: center; padding: 9px; position: relative; font-size: 0; }
+.k-win.is-rail:not(.is-side-open) .side .mainnav > a .ring { position: absolute; top: 4px; right: 6px; margin: 0; width: 8px; height: 8px; }
+.k-win.is-rail:not(.is-side-open) .k-sstat { font-size: 0; flex-direction: row; justify-content: center; gap: 8px; width: 100%; padding: 10px 0 0; }
+.k-win.is-rail:not(.is-side-open) .k-sstat__l { flex: none; }
+/* The window controls stack in the rail so all three fit its 68 px (they were cut off by the
+   frame edge when the rail was chosen on a wide window). */
+.k-win.is-rail:not(.is-side-open) .k-wctl { flex-direction: column; margin: -6px 0 12px; }
+.k-win.is-rail:not(.is-side-open) .k-wctl.is-mac { width: 22px; min-height: 60px; }
+/* The compact track switch in the rail (#126): stacked, one letter each, the full name in the
+   tooltip and the accessible name. */
+.k-win.is-rail:not(.is-side-open) .side .track-switch { flex-direction: column; gap: 3px; margin: 0 0 6px; width: 100%; }
+.k-win.is-rail:not(.is-side-open) .side .track-switch a { font-size: 0; padding: 5px 0; }
+.k-win.is-rail:not(.is-side-open) .side .track-switch a::before { content: attr(data-initial); font-size: 12px; font-weight: 700; }
+.k-win.is-rail:not(.is-side-open) .side .track-switch a .n { display: none; }
+
+/* Opened over the page (D-UI-249): the sidebar keeps its place in the grid (the rail's column
+   stays 68 px, so the page does not move) and draws full width above the page. It fades and
+   slides in; closing plays the same in reverse before the rail returns. */
+.k-win.is-side-open .side {
+  width: var(--side-w); z-index: var(--z-overlay); box-shadow: var(--shadow-pop);
+  animation: k-side-in var(--dur-2) var(--ease) both;
+}
+.k-win.is-side-open.is-side-closing .side { animation: k-side-out var(--dur-2) var(--ease) both; }
+@keyframes k-side-in { from { opacity: 0; transform: translateX(-16px); } }
+@keyframes k-side-out { to { opacity: 0; transform: translateX(-16px); } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -767,7 +808,7 @@ html.k-scroll-held { overflow: hidden; }
    centered over the page column, a green chip with white bold text, an Undo chip on a wash. It
    slides up from below the window and back down on its way out. */
 .k-toasts {
-  position: fixed; left: calc(50% + var(--side-w) / 2); bottom: 22px; transform: translateX(-50%);
+  position: fixed; left: calc(50% + var(--side-w-now) / 2); bottom: 22px; transform: translateX(-50%);
   z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--sp-2);
   align-items: center; pointer-events: none; width: max-content; max-width: calc(100vw - 32px);
 }
@@ -785,7 +826,8 @@ html.k-scroll-held { overflow: hidden; }
   border-radius: 7px; padding: 3px 9px; cursor: pointer;
 }
 .k-toast__undo:hover { text-decoration: underline; }
-@media (max-width: 1100px) { .k-toasts { left: calc(50% + var(--side-w-narrow) / 2); } }
+/* The stack follows the sidebar as it glides (the class is on <html> for a press only). */
+html.k-side-glide .k-toasts { transition: left var(--dur-2) var(--ease); }
 @media (max-width: 700px) { .k-toasts { left: 50%; bottom: calc(72px + env(safe-area-inset-bottom)); } }
 
 /* ------------------------------------------------------------------------ form controls */
@@ -1148,6 +1190,34 @@ html[data-reduce-motion="1"] *::after { animation: none !important; transition: 
 .oa-applied__err:not(:empty) { animation: oa-in var(--dur-2) var(--ease); }
 .oa-saved { animation: oa-in var(--dur-2) var(--ease); }
 @keyframes oa-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+/* "I applied" on the Role page and in the Pipeline side panel (issues 145 and 129): the shared
+   block from applied_block.html. */
+.oa-block { min-width: 0; }
+.oa-block .oa-applied { margin-top: 0; }
+.oa-block .oa-applied__date { flex-wrap: wrap; }
+.oa-block .oa-date { min-width: 0; max-width: 100%; }
+.oa-block .oa-hint { font-size: var(--fs-sm); color: var(--muted); }
+.oa-applied-on { color: var(--ink); font-size: var(--fs-md); animation: oa-in var(--dur-2) var(--ease); }
+@media (prefers-reduced-motion: reduce) { .oa-applied-on { animation: none; } }
+.oa-block .oa-form { display: flex; flex-direction: column; align-items: stretch; gap: .5rem; }
+.oa-block .oa-picks { display: flex; flex-wrap: wrap; gap: .4rem; }
+.oa-block .oa-after { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5rem; margin-top: .5rem; }
+.oa-follow { color: var(--muted); transition: color var(--dur-1); }
+.oa-follow.is-late { color: var(--bad-ink, var(--bad)); font-weight: 600; }
+.oa-edit { min-width: 0; }
+.oa-edit > summary { list-style: none; cursor: pointer; }
+.oa-edit > summary::-webkit-details-marker { display: none; }
+.oa-edit[open] > .oa-form, .oa-edit[open] > .oa-applied__err:not(:empty) { animation: oa-in var(--dur-2) var(--ease); }
+.oa-edit .oa-form { display: flex; flex-direction: column; gap: .5rem; margin-top: .5rem; }
+@media (prefers-reduced-motion: reduce) { .oa-edit[open] > .oa-form, .oa-follow { animation: none; transition: none; } }
+.oa-block .oa-used { font-size: var(--fs-sm); margin-top: .3rem; animation: oa-in var(--dur-2) var(--ease); }
+.oa-block .oa-repost-note { display: flex; flex-direction: column; gap: .2rem; margin-top: .5rem; font-size: var(--fs-sm); }
+.oa-block .oa-repost-note label { display: inline-flex; align-items: center; gap: .4rem; }
+.oa-applied-on b, .oa-applied-on .oa-nowrap { white-space: nowrap; }  /* a date never breaks */
+.oa-block select.oa-date { flex: 1 1 100%; }  /* its own line, so the resume label is never cut off */
+@media (prefers-reduced-motion: reduce) { .oa-block .oa-used { animation: none; } }
+html[data-reduce-motion="1"] .oa-applied-on, html[data-reduce-motion="1"] .oa-block .oa-used,
+html[data-reduce-motion="1"] .oa-edit[open] > .oa-form { animation: none; }
 
 /* Ask-first consent row (D-UI-240): the send button stays at full strength; pressing it unticked
    shows this hint beside the box. Theme tokens only. */

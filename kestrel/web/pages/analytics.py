@@ -340,6 +340,12 @@ async def export_applications(request: Request):
         if start_iso:
             stmt = stmt.where(Pursuit.applied_at >= start_iso)
         found = (await s.execute(stmt)).all()
+        # Remotive's terms (D-SRC-19): an application on a Remotive posting is exported from the
+        # same role's copy on another board, or left out when there is none.
+        from kestrel.services.export_terms import export_copies
+
+        copies = await export_copies(s, [o.id for _p, o in found])
+        found = [(p, c) for p, o in found if (c := copies.get(o.id)) is not None]
     rows: list[list[Any]] = [["Role", "Company", "Status", "Sent", "Outcome", "Closed", "History"]]
     for p, o in found:
         history = "; ".join(
@@ -366,6 +372,14 @@ async def export_pdf(request: Request):
         if (held := await _held_export(s)) is not None:
             return held
         ctx = await _context(request, s, track, range_key, "charts")
+        # Remotive's terms (D-SRC-19): the PDF is a file that leaves the page, so the one line
+        # that names a role does not name a Remotive posting. Counts stay (they name nothing).
+        from kestrel.services.export_terms import restricted_ids
+
+        timing = (ctx.get("report") or {}).get("timing") or {}
+        oldest = timing.get("oldest")
+        if oldest and await restricted_ids(s, [oldest.get("opportunity_id")]):
+            timing["oldest"] = None
     css_dir = Path(paths.web_static_dir()) / "css"
     ctx["css"] = "\n".join(
         (css_dir / name).read_text(encoding="utf-8")

@@ -237,6 +237,21 @@ def test_qr_svg_renders_or_degrades_quietly():
     assert svg == "" or svg.lstrip().startswith("<svg")
 
 
+def test_qr_svg_has_a_viewbox_and_no_fixed_size_so_it_scales_whole():
+    """A fixed width and height with no viewBox is cropped, not scaled, when CSS resizes it (#133):
+    only the top-left finder marker survived and no phone could read the code."""
+    import xml.etree.ElementTree as ET
+
+    svg = auth.qr_svg("http://192.168.1.10:8765/auth?key=made-up-key-for-tests")
+    assert svg != ""  # segno is a declared dependency
+    root = ET.fromstring(svg)
+    assert root.tag.endswith("svg")
+    vb = [float(v) for v in root.attrib["viewBox"].split()]
+    assert vb[0] == 0 and vb[1] == 0 and vb[2] == vb[3] > 0
+    assert "width" not in root.attrib and "height" not in root.attrib
+    assert 'fill="#fff"' in svg and 'stroke="#000"' in svg  # dark on white whatever the theme
+
+
 class TestBindAllDoesNotDisableTheOtherControls:
     """The regression that made LAN mode dangerous.
 
@@ -681,3 +696,37 @@ def test_a_hostile_page_cannot_flip_the_switch(_isolate_data_home):
         rebound = c.post("/settings/lan/bind", data=data, headers={"Host": "evil.example"})
     assert cross.status_code == 403 and rebound.status_code == 400
     assert target.read_text(encoding="utf-8") == before
+
+
+# ----------------------------------------- which adapter's address is offered (#130 sub-bug)
+def _pick(monkeypatch, routed, adapters):
+    monkeypatch.setattr(auth, "_routed_ip", lambda: routed)
+    monkeypatch.setattr(auth, "_adapter_ipv4", lambda: adapters)
+    return auth.lan_host_ip()
+
+
+def test_a_vpn_default_route_still_picks_the_wifi_adapter(monkeypatch):
+    adapters = [("Wi-Fi", "192.168.1.20"), ("WireGuard Tunnel", "10.8.0.2"),
+                ("vEthernet (WSL)", "172.28.0.1"), ("Loopback Pseudo-Interface 1", "127.0.0.1"),
+                ("Ethernet 2", "169.254.7.7")]
+    assert _pick(monkeypatch, "10.8.0.2", adapters) == "192.168.1.20"
+    assert _pick(monkeypatch, "192.168.1.20", adapters) == "192.168.1.20"
+    assert _pick(monkeypatch, None, adapters) == "192.168.1.20"
+
+
+def test_only_virtual_adapters_means_no_address_not_a_guess(monkeypatch):
+    adapters = [("vEthernet (Default Switch)", "172.20.0.1"), ("docker0", "172.17.0.1"),
+                ("tailscale0", "100.64.0.3"), ("VirtualBox Host-Only Network", "192.168.56.1")]
+    assert _pick(monkeypatch, "172.20.0.1", adapters) is None
+    assert _pick(monkeypatch, None, adapters) is None
+
+
+def test_two_real_adapters_with_the_route_on_a_vpn_is_undecidable(monkeypatch):
+    adapters = [("Ethernet", "192.168.1.30"), ("Wi-Fi", "192.168.1.31"), ("tun0", "10.8.0.2")]
+    assert _pick(monkeypatch, "10.8.0.2", adapters) is None
+    assert _pick(monkeypatch, "192.168.1.31", adapters) == "192.168.1.31"  # the route is real
+
+
+def test_an_unreadable_adapter_list_falls_back_to_the_route(monkeypatch):
+    assert _pick(monkeypatch, "192.168.1.20", None) == "192.168.1.20"
+    assert _pick(monkeypatch, None, None) is None

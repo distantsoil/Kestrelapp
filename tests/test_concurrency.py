@@ -117,7 +117,10 @@ def test_online_mode_still_offers_concurrency(models_client):
     response = models_client.post("/setup/mode", data={"mode": "hosted"})
     assert response.status_code == 200
     body = models_client.get("/models/downloads").text
-    assert "nothing needs to be downloaded" in body
+    # Online mode shows the #114 note in place of the download controls.
+    assert 'data-testid="mo-dl-online"' in body
+    assert "Not needed while Kestrel runs online." in body
+    assert "mo-dl-start" not in body
     assert 'id="mo-speed"' in body
     assert "Online providers have their own request limits." in body
 

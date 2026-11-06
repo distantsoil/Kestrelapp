@@ -83,6 +83,113 @@ def _reset_status_caches():
     reset_status_caches()
 
 
+_LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "testserver", "0.0.0.0", "::", ""}
+
+
+def _is_loopback(host: object) -> bool:
+    """True for this machine only: loopback names and addresses (127.0.0.0/8, ::1)."""
+    import ipaddress
+
+    if host is None:
+        return True
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    name = str(host).strip("[]").lower()
+    if name in _LOOPBACK_NAMES or name in _this_machine():
+        return True
+    try:
+        return ipaddress.ip_address(name.split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
+_THIS_MACHINE: set[str] = set()
+
+
+def _this_machine() -> set[str]:
+    """This machine's own host names and the addresses they resolve to (the LAN address the MCP
+    tests bind to). Looked up once, before any guard is installed."""
+    import socket
+
+    if not _THIS_MACHINE:
+        names = {socket.gethostname(), socket.getfqdn()}
+        _THIS_MACHINE.update(n.lower() for n in names if n)
+        for n in names:
+            try:
+                for info in socket.getaddrinfo(n, None):
+                    _THIS_MACHINE.add(str(info[4][0]).split("%", 1)[0].lower())
+            except OSError:
+                continue
+        _THIS_MACHINE.add("\0")  # never empty, so the lookup runs once
+    return _THIS_MACHINE
+
+
+class OutboundNetworkInTest(RuntimeError):
+    """A test tried to reach a host other than this machine (CLAUDE.md: never call a live job
+    board, ATS or SEC endpoint from a test)."""
+
+
+@pytest.fixture(autouse=True)
+def _no_outbound_network(monkeypatch):
+    """Refuse any DNS lookup or connection to a host other than this machine, so a test that runs
+    the real worker (board lookups, update checks, notification pushes) fails loudly instead of
+    calling a live service. Loopback stays open for the app under test, Ollama fakes and the
+    browser tests' local server. Unix sockets are not affected."""
+    import socket
+
+    _this_machine()
+    real_getaddrinfo = socket.getaddrinfo
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        if not _is_loopback(host):
+            raise OutboundNetworkInTest(f"test tried to look up {host!r}")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    def _check(sock, address):
+        # A UDP connect only sets the default peer and sends nothing (kestrel/web/auth.py uses
+        # one to learn the LAN address), so only stream connections are checked.
+        if (sock.family in (socket.AF_INET, socket.AF_INET6) and sock.type == socket.SOCK_STREAM
+                and isinstance(address, tuple)):
+            if not _is_loopback(address[0]):
+                raise OutboundNetworkInTest(f"test tried to connect to {address[0]!r}")
+
+    def guarded_connect(self, address):
+        _check(self, address)
+        return real_connect(self, address)
+
+    def guarded_connect_ex(self, address):
+        _check(self, address)
+        return real_connect_ex(self, address)
+
+    # A proxy on this machine would turn every public request into a loopback connection, so
+    # the proxy settings are dropped for the test (a test never needs one).
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy",
+                "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+
+
+@pytest.fixture(autouse=True)
+def _no_run_state_between_tests():
+    """The serve loop records the mode of its latest cycle and the settings a run in flight was
+    confirmed on in process-global dicts (kestrel/web/app.py). A worker-loop test that left
+    "local" behind made a later run-card test read the wrong mode; reset both around each test."""
+    from kestrel.desktop import linux_check
+    from kestrel.web import app as app_mod
+
+    app_mod._run_mode["mode"] = None
+    app_mod._release_run()
+    linux_check.clear()  # a desktop test's "the window could not open" must not reach the next
+    yield
+    app_mod._run_mode["mode"] = None
+    app_mod._release_run()
+    linux_check.clear()
+
+
 @pytest.fixture(autouse=True)
 def _no_credit_holds_between_tests():
     """An out-of-credit hold (kestrel/llm/credit.py) is process-global; one test's hold must

@@ -91,6 +91,9 @@ class OppFilters:
     # and Unhide puts one back. Nothing here deletes a row.
     include_archived: bool = False
     hidden_only: bool = False
+    # Share surfaces (the read API, the MCP tools) leave out postings whose source terms forbid
+    # passing them on (D-SRC-19, kestrel.services.export_terms).
+    shareable: bool = False
     # A hidden company's roles are out of Pipeline (D-UI-123 amended); only the Settings list of
     # hidden companies and a role page reached by its link ever need them.
     include_hidden_orgs: bool = False
@@ -565,6 +568,31 @@ def your_call_clause():
     return and_(Evaluation.needs_review.is_(True), not_(_both_below()), not_(both_high))
 
 
+def needs_decision_clause(track: str | None):
+    """THE definition of "needs a decision" (issue #113): a role in Worth a look or Maybe (Your
+    call is part of Worth a look) that the operator has not acted on. Either it has no
+    shortlist entry, is not saved and carries no label of theirs and was not first seen today
+    (today's roles wait in Top matches, so a role is never in both), or it is shortlisted and not
+    yet applied to (Consulting: still in leads). Today's Decisions waiting, the Pipeline "Your
+    call" chip and `needs_decision_count` all read this one clause. The statement must outer-join
+    Pursuit and the latest VerdictOverride (`_with_operator`)."""
+    first = ("researching",) if track == "consulting" else ("shortlisted", "preparing")
+    undecided = and_(
+        Pursuit.id.is_(None), not_(saved_clause()), VerdictOverride.operator_verdict.is_(None),
+        or_(Opportunity.first_seen_at.is_(None),
+            Opportunity.first_seen_at < local_day_start_iso()),
+    )
+    listed = and_(
+        Pursuit.id.is_not(None), Pursuit.closed_at.is_(None), Pursuit.applied_at.is_(None),
+        Pursuit.status.in_(first),
+    )
+    return and_(
+        _group_expr().in_([_G[GROUP_WORTH], _G[GROUP_MAYBE]]),
+        Opportunity.opp_type != "trigger_event",
+        or_(undecided, listed),
+    )
+
+
 def listed_clause():
     """The role is listed on its own: the canonical copy of its duplicate group, or a copy the
     operator shortlisted or saved. Lists use it (OppFilters.include_duplicates), and every count
@@ -896,6 +924,10 @@ async def failure_reasons(session: AsyncSession, opp_ids: list[int]) -> dict[int
 
 
 def _apply_filters(stmt, f: OppFilters):
+    if f.shareable:
+        from kestrel.services.export_terms import shareable_clause
+
+        stmt = stmt.where(shareable_clause())
     if f.hidden_only:
         stmt = stmt.where(Opportunity.archived_at.is_not(None))
     elif not f.include_archived:
@@ -915,11 +947,12 @@ def _apply_filters(stmt, f: OppFilters):
     if f.score_max is not None:
         stmt = stmt.where(Evaluation.score <= f.score_max)
     if f.needs_review:
-        stmt = stmt.where(your_call_clause())
         if f.grouped:
-            # Your call is a role the operator has not decided (D-UI-96): their own word, from
-            # the latest label that `_with_operator` joins, takes it off the chip.
-            stmt = stmt.where(VerdictOverride.operator_verdict.is_(None))
+            # Your call is a role the operator has not decided (D-UI-96, issue #113): the one
+            # shared definition, the same set Today's Decisions waiting lists.
+            stmt = stmt.where(needs_decision_clause(f.track))
+        else:
+            stmt = stmt.where(your_call_clause())
     if f.ghost_min is not None:
         stmt = stmt.where(Opportunity.ghost_score >= f.ghost_min)
     if f.org:
@@ -969,9 +1002,10 @@ def _apply_filters(stmt, f: OppFilters):
     if f.warnings == "no_ghost":
         stmt = stmt.where(Opportunity.ghost_score < GHOST_WARN)
     elif f.warnings == "review":
-        stmt = stmt.where(your_call_clause())
         if f.grouped:  # the same meaning as the Your call chip: roles you have not decided
-            stmt = stmt.where(VerdictOverride.operator_verdict.is_(None))
+            stmt = stmt.where(needs_decision_clause(f.track))
+        else:
+            stmt = stmt.where(your_call_clause())
     if f.kind == "signals":
         stmt = stmt.where(Opportunity.opp_type == "trigger_event")
     elif f.kind == "opportunities":
@@ -1100,6 +1134,15 @@ async def list_signals(
         out.append(SignalRow(opp=o, ev=e, org_name=on or o.org_name, pursuit_id=pid,
                              type_key=key, type_label=label))
     return out
+
+
+async def needs_decision_count(session: AsyncSession, track: str | None) -> int:
+    """How many roles need a decision (needs_decision_clause). The one number behind Today's
+    Decisions waiting, the Pipeline Your call chip and any alert that counts decisions."""
+    stmt = _with_operator(
+        _base_stmt(OppFilters(track=track, grouped=True), func.count(Opportunity.id))
+    ).where(needs_decision_clause(track))
+    return int((await session.execute(stmt)).scalar_one() or 0)
 
 
 async def chip_counts(session: AsyncSession, f: OppFilters) -> dict[str, int]:
@@ -1259,6 +1302,25 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
         not_fit_rules=sorted(by_rule.items(), key=lambda kv: (-kv[1], kv[0])),
         failed_ids=failed_ids,
     )
+
+
+async def group_role_ids(session: AsyncSession, f: OppFilters, group: str) -> list[int]:
+    """Every role in one Pipeline fit group over the WHOLE filter set, in the order the list
+    shows them (the sort inside the group, then newest id), never only the rows drawn. A bulk
+    action that names a group resolves it here at action time (issue #116, D-PIPE-116), so the
+    roles it changes are the roles the group holds now."""
+    if group not in GROUP_ORDER or group == GROUP_NOT_FIT:
+        return []
+    col, desc = _SORTS.get(f.sort, _SORTS["score"])
+    if f.sort == "score":
+        col = func.coalesce(Evaluation.score, Evaluation.weighted_score)
+    order = col.desc() if desc else col.asc()
+    stmt = (
+        _with_operator(_base_stmt(f, Opportunity.id))
+        .where(_group_expr() == _G[group])
+        .order_by(order, Opportunity.id.desc())
+    )
+    return [int(i) for i in (await session.execute(stmt)).scalars()]
 
 
 async def get_detail(session: AsyncSession, opp_id: int) -> dict[str, Any] | None:

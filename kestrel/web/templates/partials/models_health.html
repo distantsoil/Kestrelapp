@@ -1,11 +1,21 @@
 {% import "ui/macros.html" as ui %}
-{# Health check: the preflight in plain words. Polls while a check or a fix runs. #}
-<section class="k-card mo-card {{ 'mo-edge-bad' if hc_failed else 'mo-edge-good' }} {{ 'mo-disabled' if choice == 'hosted' }}" id="mo-health" data-testid="mo-health"
+{# Health check: the preflight in plain words, then the Local AI check rows (#144). Polls while a
+   check or a fix runs. Under the Online choice (D-115) the card is greyed, shows one line and
+   hides the rows of any earlier local check: no Run check, no Fix it. `hc_oob` marks the copy
+   swapped out of band beside a Scoring steps Fix it. #}
+<section class="k-card mo-card {{ 'mo-edge-bad' if (hc_failed or hc_la_warn) and not hc_online else 'mo-edge-good' }} {{ 'mo-disabled' if hc_online }}" id="mo-health" data-testid="mo-health"{% if hc_online %} data-online="1"{% endif %}{% if hc_oob %} hx-swap-oob="outerHTML"{% endif %}
   {% if hc_running %}hx-get="/models/health" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-  <header class="mo-head"><span class="k-badge {{ 'k-badge--bad' if hc_failed else 'k-badge--good' }}">{{ ui.icon('shield') }}</span>
+  <header class="mo-head"><span class="k-badge {{ 'k-badge--bad' if (hc_failed or hc_la_warn) and not hc_online else 'k-badge--good' }}">{{ ui.icon('shield') }}</span>
     <div class="k-grow"><h3>Health check</h3></div></header>
-  <div class="mo-hact"><button type="button" class="k-btn k-btn--sm" hx-post="/models/health/run" hx-target="#mo-health" hx-swap="outerHTML" {% if hc_running or choice == 'hosted' %}disabled{% endif %} data-testid="mo-health-run">{{ 'Checking…' if hc_running and not hc_fixing else 'Run check' }}</button>
-    <span class="k-muted">{% if choice == 'hosted' %}Not needed for online models{% else %}{% if hc_when %}Checked {{ hc_when }}{% else %}Not checked yet{% endif %}{% endif %}</span></div>
+  {% if hc_online %}
+  <p class="mo-offline" data-testid="mo-health-online">{{ hc_note }}</p>
+  {% if hc_message %}<p class="mo-msg is-good" role="status" data-testid="mo-health-message">{{ hc_message }}</p>{% endif %}
+  {% if hc_when %}<p class="k-muted mo-oldnote" data-testid="mo-health-old">Your last local check was on {{ hc_when }}. It runs again when you switch back to this computer or Both.</p>{% endif %}
+  <div class="mo-hact"><button type="button" class="k-btn k-btn--sm" disabled data-testid="mo-health-run">Run check</button></div>
+  {% else %}
+  <div class="mo-hact"><button type="button" class="k-btn k-btn--sm" hx-post="/models/health/run" hx-target="#mo-health" hx-swap="outerHTML" {% if hc_running %}disabled{% endif %} data-testid="mo-health-run">{{ 'Checking…' if hc_running and not hc_fixing else 'Run check' }}</button>
+    <span class="k-muted">{% if hc_when %}Checked {{ hc_when }}{% else %}Not checked yet{% endif %}</span></div>
+  {% if hc_both %}<p class="k-muted mo-bothnote" data-testid="mo-health-both">Kestrel runs some steps online. This check covers the steps on this computer and the matching model only.</p>{% endif %}
   {% if hc_message %}<p class="mo-msg {{ 'is-good' if hc_ok else 'is-bad' }}" role="status" data-testid="mo-health-message">{{ hc_message }}</p>{% endif %}
   {% if hc_fixing %}<div class="mo-prog" role="progressbar" aria-label="Rebuilding Kestrel's models" {% if hc_percent is not none %}aria-valuenow="{{ hc_percent }}"{% endif %}><i style="width: {{ hc_percent or 5 }}%"></i></div><p class="k-muted">Rebuilding Kestrel's models, then testing again.</p>{% endif %}
   <ul class="mo-checks">
@@ -17,8 +27,23 @@
     </li>
     {% endfor %}
   </ul>
+  <h4 class="mo-sub-h" data-testid="mo-la-title">Local AI check</h4>
+  <p class="k-muted mo-la-intro">Reads this computer only; nothing is sent. A spot check, not proof: it can miss very short connections, cannot see name lookups and watches only Ollama's own programs.</p>
+  <ul class="mo-checks" data-testid="mo-la">
+    {% for r in la_rows %}
+    <li class="is-{{ r.state }}" data-testid="mo-la-{{ r.key }}">
+      <span class="mo-state">{{ ui.icon('check' if r.state == 'ok' else ('alert' if r.state in ('fail', 'warn') else 'clock')) }}</span>
+      <div class="k-grow"><b>{{ r.title }}</b>{% if r.state == 'unverified' %} <span class="k-pill k-pill--info">Unverified</span>{% endif %}<span class="k-muted">{{ r.detail }}</span></div>
+    </li>
+    {% endfor %}
+  </ul>
   <details class="mo-details"><summary>Show details</summary>
     {% for r in hc_rows if r.tech %}<p class="mo-mono-line">{{ r.tech }}</p>{% endfor %}
+    {% for r in la_rows if r.tech %}<p class="mo-mono-line">{{ r.tech }}</p>{% endfor %}
     {% if hc_log %}<pre class="mo-log">{{ hc_log|join('\n') }}</pre>{% endif %}
-    <p class="k-muted">The same test runs from a terminal with <code>kestrel doctor</code>.</p></details>
+    <p class="k-muted">The same test runs from a terminal with <code>kestrel doctor</code>.</p>
+    <p class="k-muted" data-testid="mo-firewall-title"><b>Block Ollama from the internet (optional).</b> Download your models first, because this also blocks downloads and Ollama's update check. Kestrel never changes system settings; copy a line yourself. These lines have not been tested by Kestrel on your system.</p>
+    {% for label, cmd in hc_firewall %}<p class="k-muted mo-fwlabel">{{ label }}</p><p class="mo-mono-line mo-fwcmd" data-testid="mo-firewall">{{ cmd }}</p>{% endfor %}
+    <p class="k-muted">More in <a class="k-link" href="/help">Help</a> and the Local AI notes guide.</p></details>
+  {% endif %}
 </section>

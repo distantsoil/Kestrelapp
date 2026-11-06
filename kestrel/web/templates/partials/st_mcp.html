@@ -13,12 +13,22 @@
   <p class="st-sub">Lets an AI app on this computer, such as Claude Desktop, read your roles and applications.</p>
   <p class="st-dsm" data-testid="mcp-status">{% if mcp_running %}Running on port {{ mcp_port }}{% elif mcp_enabled and not mcp_live %}On; starts with Kestrel{% elif mcp_enabled and mcp_stopped_reason %}On, stopped: {{ mcp_stopped_reason }}
       <button type="button" class="k-btn k-btn--sm" data-testid="mcp-restart" hx-post="/settings/mcp" hx-vals='{"enabled": "1"}' hx-target="#st-mcp" hx-swap="outerHTML">Start again</button>{% elif mcp_enabled %}On, not running{% else %}Off{% endif %}</p>
+  {% if mcp_turned_off_note %}<p class="st-note st-note--bad" role="status" data-testid="mcp-turned-off">{{ mcp_turned_off_note }}</p>{% endif %}
+  {% if mcp_safe_mode %}<p class="st-note st-note--bad" data-testid="mcp-safe-mode">Kestrel started with optional features off this time, so the assistant connection is not running. Restart Kestrel to turn them back on.</p>{% endif %}
   {% if mcp_message %}<p class="st-note st-note--{{ 'good' if mcp_ok else 'bad' }}" role="status" data-testid="mcp-message">{{ mcp_message }}</p>{% endif %}
   {% if mcp_enabled %}
   <div class="st-pan">
-    <div class="st-kind">Address to paste into the assistant</div>
+    <div class="st-kind">Address to paste into the assistant: this computer only</div>
     <div class="st-addr"><code data-testid="mcp-address">{{ mcp_address.local }}</code>
-      <button type="button" class="k-btn k-btn--sm" data-st-copy="{{ mcp_address.local }}">{{ st.sic('copy', 'k-ic--sm') }}Copy</button></div>
+      <button type="button" class="k-btn k-btn--sm" data-st-copy="{{ mcp_address.local }}" data-testid="mcp-copy-local">{{ st.sic('copy', 'k-ic--sm') }}Copy</button></div>
+    {% if mcp_bind_all %}
+    <div class="st-kind st-kind--gap">Address to paste into an assistant on your network</div>
+    {% if mcp_address.lan %}<div class="st-addr"><code data-testid="mcp-address-lan">{{ mcp_address.lan }}</code>
+      <button type="button" class="k-btn k-btn--sm" data-st-copy="{{ mcp_address.lan }}" data-testid="mcp-copy-lan">{{ st.sic('copy', 'k-ic--sm') }}Copy</button></div>
+    {% else %}<p class="st-dsm" data-testid="mcp-lan-unknown">{{ mcp_address.lan_note }}</p>{% endif %}
+    {% else %}
+    <p class="st-qn" data-testid="mcp-lan-hint">To connect from another device, <a href="/settings#privacy" data-testid="mcp-lan-link">turn on LAN access in Settings</a>.</p>
+    {% endif %}
     <div class="st-p2">
       <div class="st-lbox st-lbox--in"><div class="st-kind">It can</div>
         <ul data-testid="mcp-actions">{% for a in mcp_actions %}<li>{{ st.sic('check', 'k-ic--sm') }}<span><b>{{ a.name }}</b> {{ a.does }}{% if a.writes %} <span class="k-pill">Changes your lists</span>{% endif %}</span></li>{% endfor %}</ul></div>
@@ -28,10 +38,11 @@
     <div class="st-pv st-pv--warn">{{ st.sic('warn') }}<span class="st-pvt">The assistant is a separate app with its own rules. What it reads from Kestrel may go to its online service, and it may be able to send email or messages on its own. Kestrel can't control that.</span></div>
   </div>
   {% endif %}
-  {% if mcp_bind_all %}<p class="st-note st-note--bad" data-testid="mcp-secret-note">LAN access is on, so a device that is not this computer must send the shared key as the <span class="st-mono">X-Kestrel-Key</span> header.{% if not mcp_has_secret %} Make the key first; until then only this computer can connect.{% endif %}</p>{% endif %}
+  {% if mcp_bind_all %}<p class="st-note st-note--bad" data-testid="mcp-secret-note">LAN access is on, so a device that is not this computer must send the shared key as the <span class="st-code">X-Kestrel-Key</span> header.{% if not mcp_has_secret %} Make the key first; until then only this computer can connect.{% endif %}</p>{% endif %}
   <details class="st-det"><summary>Show details</summary>
       <pre>Port: {{ mcp_port }}
-Address: {{ mcp_address.local }}{% if mcp_bind_all and mcp_address.lan %}
+Address (this computer only): {{ mcp_address.local }}{% if mcp_stopped_detail %}
+Why it stopped: {{ mcp_stopped_detail }}{% endif %}{% if mcp_bind_all and mcp_address.lan %}
 On your network: {{ mcp_address.lan }}{% endif %}</pre>
       <form class="st-port" hx-post="/settings/privacy/mcp/port" hx-target="#st-mcp" hx-swap="outerHTML" hx-trigger="change">
         <label for="st-port-in">Change port</label><input class="k-input" id="st-port-in" name="port" inputmode="numeric" maxlength="5" value="{{ mcp_port }}" aria-label="Change port" data-testid="mcp-port"></form>

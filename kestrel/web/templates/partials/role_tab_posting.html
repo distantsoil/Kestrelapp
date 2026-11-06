@@ -5,7 +5,8 @@
 <div id="rl-tab-posting" class="rl-postab" data-tab="posting">
   <section class="k-card rl-card rl-posting">
     <div class="rl-dsm" data-testid="posting-sources">Shown exactly as posted.
-      {% if source_name %}Posted on <b>{{ source_name }}</b>{% if posting_link and posting_link.href %} <a class="k-link" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="posting-link">{{ posting_link.text }} ↗</a>{% elif posting_link %} <span class="rl-quiet">({{ posting_link.text }})</span>{% endif %}.
+      {% if source_credit %}Source: <a class="k-link" href="{{ source_credit.href }}" target="_blank" rel="noopener" data-testid="source-credit">{{ source_credit.name }} ↗</a>.
+      {% elif source_name %}Posted on <b>{{ source_name }}</b>{% if posting_link and posting_link.href %} <a class="k-link" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="posting-link">{{ posting_link.text }} ↗</a>{% elif posting_link %} <span class="rl-quiet">({{ posting_link.text }})</span>{% endif %}.
       {% elif posting_link and posting_link.href %}<a class="k-link" href="{{ posting_link.href }}" target="_blank" rel="noopener" data-testid="posting-link">{{ posting_link.text }} ↗</a>.
       {% elif opp.opp_type == 'manual' %}Pasted by you.{% endif %}
       {% if dedup_rows %}<span data-testid="also-posted">Also posted on ({{ dedup_rows|length }}):

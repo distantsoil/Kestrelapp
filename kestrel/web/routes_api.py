@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from kestrel import __version__
 from kestrel.db.enums import VERDICTS
 from kestrel.db.models import Opportunity
+from kestrel.services.export_terms import RESTRICTED_SENTENCE
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.fit import fit_word_for_verdict, verdict_for_fit
 from kestrel.web.queries import (
@@ -210,6 +211,7 @@ async def opportunities_ingest(request: Request):
 @router.get("/api/opportunities")
 async def api_opportunities(request: Request):
     f = filters_from_query(request.query_params)
+    f.shareable = True  # a source whose terms forbid passing postings on stays out (D-SRC-19)
     async with sessionmaker()() as s:
         page = await list_opportunities(s, f)
         conf, mapping = await confidential(s)
@@ -228,6 +230,11 @@ async def api_opportunity(opp_id: int):
         detail = await get_detail(s, opp_id)
         if detail is None:
             return JSONResponse({"error": "not found"}, status_code=404)
+        from kestrel.services.export_terms import restricted_ids
+
+        if await restricted_ids(s, [opp_id]):
+            return JSONResponse({"error": RESTRICTED_SENTENCE}, status_code=403)
+        hidden = await restricted_ids(s, [m.id for m in detail["dedup_members"]])
         conf, mapping = await confidential(s)
     o, e = detail["opp"], detail["ev"]
     org = detail["org"].name if detail.get("org") else o.org_name
@@ -246,7 +253,7 @@ async def api_opportunity(opp_id: int):
         "dimensions": detail["ev_json"]["dimensions"],
         "blockers": detail["ev_json"]["blockers"],
         "legitimacy": detail["ev_json"]["legitimacy"],
-        "dedup_members": [m.id for m in detail["dedup_members"]],
+        "dedup_members": [m.id for m in detail["dedup_members"] if m.id not in hidden],
         "override": _override_json(detail["override"]),
     }
 

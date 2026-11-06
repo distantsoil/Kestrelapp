@@ -17,7 +17,6 @@
 
   // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
   var cx = null;
-  var inkFrom = null;  // where the tab ink was before a tab change
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
@@ -212,18 +211,37 @@
     var tabs = $('.pp-tabs');
     if (tabs && root.KUI) root.KUI.ink(tabs, from);
   }
-  function onTabRequest(e) {
-    var elt = e.detail && e.detail.elt;
-    if (elt && elt.classList && elt.classList.contains('pp-tab') && root.KUI) {
-      inkFrom = root.KUI.inkPos($('.pp-tabs'));
-    }
+  /* A tab change swaps the pane, the tiles and the help column (#pp-tabbody). The tab row is the
+     same element before and after, so only its state changes here: the new tab is marked and
+     the ink bar slides to it by its own transition. */
+  function swapTarget(e) {
+    return e.detail && e.detail.target ? e.detail.target : e.target;
   }
   function onInkSwap(e) {
-    var elt = e.detail && e.detail.requestConfig && e.detail.requestConfig.elt;
-    if (!elt || !elt.classList || !elt.classList.contains('pp-tab')) { placeInk(null); return; }
-    placeInk(inkFrom);
-    inkFrom = null;
-    if (root.KUI) root.KUI.paneIn($('#pp-pane'));
+    var tgt = swapTarget(e);
+    if (!tgt || tgt.id !== 'pp-tabbody') { placeInk(null); return; }
+    var layout = $('#pp-layout');
+    var want = layout ? layout.getAttribute('data-tab') : '';
+    $$('.pp-tab').forEach(function (a) {
+      var on = a.getAttribute('data-testid') === 'pp-tab-' + want;
+      a.classList.toggle('is-on', on);
+      a.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    placeInk(null);
+    // Only a change of tab eases in. A poll that finds something new swaps the same way and
+    // must not replay the entrance.
+    var from = e.detail && e.detail.requestConfig && e.detail.requestConfig.elt;
+    var viaTab = from && from.closest && from.closest('[data-pp-tabin]');
+    if (viaTab) tabIn(tgt);
+  }
+  function tabIn(body) {
+    if (!body || !cx) return;
+    body.classList.add('is-switching');
+    if (body.kTabInTimer) cx.clear(body.kTabInTimer);
+    body.kTabInTimer = cx.after(900, function () {
+      body.classList.remove('is-switching');
+      body.kTabInTimer = 0;
+    });
   }
   function onTabsSwap(e) {
     if (e.target && e.target.id === 'pp-tabs') placeInk(null);
@@ -234,7 +252,6 @@
   root.KUI.page.define('prep', {
     mount: function (main, ctx) {
       cx = ctx;
-      inkFrom = null;
       // The order the file added them in.
       ctx.on(doc, 'click', onClick);
       ctx.on(doc, 'keydown', onEscape);
@@ -248,7 +265,6 @@
       ctx.on(doc, 'htmx:oobAfterSwap', onChatSwap);
       ctx.on(doc, 'kestrel:undone', onUndone);
       ctx.on(doc, 'htmx:responseError', onResponseError);
-      ctx.on(doc, 'htmx:beforeRequest', onTabRequest);
       ctx.on(doc, 'htmx:afterSwap', onInkSwap);
       ctx.on(doc, 'htmx:oobAfterSwap', onTabsSwap);
       placeInk(null);

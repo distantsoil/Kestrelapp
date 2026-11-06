@@ -382,17 +382,30 @@ def test_bulk_not_for_me_hides_with_no_label_and_undo_brings_them_back():
     assert _db(_labels) == []  # a bulk hide gives no reason, so it teaches nothing
 
 
+def _first_seen_days_ago(oid: int, days: int = 2) -> None:
+    """Today's new roles wait in Top matches, not in Your call (needs_decision_clause)."""
+    async def go(s):
+        o = await s.get(Opportunity, oid)
+        o.first_seen_at = T.iso(T._now() - timedelta(days=days))
+        await s.commit()
+
+    _db(go)
+
+
 def test_bulk_mark_reviewed_records_an_agree_label_and_skips_unscored_roles():
     ids = asyncio.run(T._seed())
+    _first_seen_days_ago(ids["b"])
     with T._client() as c:
         r = c.post("/pipeline/bulk/mark-reviewed", data={"ids": f"{ids['b']},{ids['d']}"},
                    headers=_HX)
         ev = _events(r)
         assert ev["k-toast"]["message"] == "1 role marked reviewed. 1 role not scored yet."
         # Your call is a role the operator has not decided: reviewing it takes it off the chip.
-        assert T._row_ids(T._get(c, "/opportunities?needs_review=1")) == []
+        # The shortlisted role `a` still waits for an application (issue #113's one definition).
+        assert T._row_ids(T._get(c, "/opportunities?needs_review=1")) == [ids["a"]]
         assert c.post(ev["k-toast"]["undoUrl"], headers=_HX).status_code == 200
-        assert T._row_ids(T._get(c, "/opportunities?needs_review=1")) == [ids["b"]]
+        assert sorted(T._row_ids(T._get(c, "/opportunities?needs_review=1"))) == sorted(
+            [ids["a"], ids["b"]])
     assert _db(_labels) == []
 
 
@@ -484,6 +497,7 @@ def test_views_are_per_track_and_saving_the_same_name_replaces_its_filters():
 # ============================================================================= More filters
 def test_more_filters_have_their_inputs_and_each_one_narrows_the_list(monkeypatch):
     ids = asyncio.run(T._seed())
+    _first_seen_days_ago(ids["b"])
 
     async def vary(s):
         a = await s.get(Opportunity, ids["a"])
@@ -516,7 +530,7 @@ def test_more_filters_have_their_inputs_and_each_one_narrows_the_list(monkeypatc
         assert ids_of("posted=3") >= {ids["a"]} and ids["b"] not in ids_of("posted=3")
         assert ids["b"] in ids_of("posted=30")
         assert ids["b"] not in ids_of("warn=no_ghost") and ids["a"] in ids_of("warn=no_ghost")
-        assert ids_of("warn=review") == {ids["b"]}
+        assert ids_of("warn=review") == {ids["a"], ids["b"]}  # a: shortlisted, not applied
         assert ids_of("live=live") == {ids["a"]} and ids_of("live=closed") == {ids["b"]}
         assert ids["a"] in ids_of("score_min=4") and ids["b"] not in ids_of("score_min=4")
         assert ids_of("org=north") >= {ids["a"], ids["b"]}
@@ -959,11 +973,12 @@ def test_the_pay_filter_never_drops_an_estimate_or_another_currency(monkeypatch)
 
 def test_the_review_warning_filter_means_the_same_as_your_call():
     ids = asyncio.run(T._seed())
+    _first_seen_days_ago(ids["b"])
     with T._client() as c:
         c.post("/pipeline/bulk/mark-reviewed", data={"ids": str(ids["b"])}, headers=_HX)
         got = T._row_ids(T._get(c, "/opportunities?warn=review"))
         chip = T._row_ids(T._get(c, "/opportunities?needs_review=1"))
-    assert got == chip == []
+    assert got == chip == [ids["a"]]  # a: shortlisted and not applied, still waiting
 
 
 # ================================================================== review fixes round 2

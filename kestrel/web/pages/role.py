@@ -27,7 +27,7 @@ import asyncio
 import contextvars
 import json
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -36,6 +36,7 @@ import structlog
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from kestrel import paths
 from kestrel.db.base import utcnow_iso
@@ -50,6 +51,7 @@ from kestrel.db.models import (
     Org,
     PrepPack,
     Pursuit,
+    Setting,
     Story,
     Task,
     VerdictOverride,
@@ -57,6 +59,7 @@ from kestrel.db.models import (
 from kestrel.llm import credit
 from kestrel.llm import providers as prov
 from kestrel.research import jobs as research_jobs
+from kestrel.services import pursuit_board as board_svc
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
 from kestrel.web import calibrate_view as cv
@@ -274,6 +277,52 @@ def _label_state(ev, overrides: list[VerdictOverride]) -> dict[str, Any] | None:
     return None
 
 
+async def applied_view(session: Any, opp_id: int, pursuit: Pursuit | None) -> dict[str, Any]:
+    """What the shared I applied block (partials/applied_block.html) needs, for the Role page's
+    decision column and the Pipeline side panel alike (issue #129): one form, one route. Resume
+    used lists the documents made for this role (never a cover letter), labeled by master and
+    date only, as Applications labels them; `resume_used` is the label of the one stored on the
+    application."""
+    from kestrel.services import pursuit_undo
+    from kestrel.web.pages.pursuits import _resume_options
+
+    token = None
+    if pursuit is not None and pursuit.applied_at:
+        token = await pursuit_undo.applied_undo_token(session, pursuit)
+    options = (await _resume_options(session, [opp_id])).get(opp_id, [])
+    used = None
+    if pursuit is not None and pursuit.document_id:
+        used = next((o["label"] for o in options if o["id"] == pursuit.document_id), None)
+        if used is None:
+            used = (await _resume_options_any(session, pursuit.document_id)) or "A document"
+    return {
+        "applied_on_default": date.today().isoformat(),
+        "applied_yesterday": (date.today() - timedelta(days=1)).isoformat(),
+        "follow_up_default": (date.today() + timedelta(days=board_svc.FOLLOW_UP_DAYS)).isoformat(),
+        "follow_phrase": board_svc.follow_up_phrase(pursuit) if pursuit is not None else "",
+        "applied_can_undo": token is not None,
+        "resume_options": options,
+        "resume_used": used,
+    }
+
+
+async def _resume_options_any(session: Any, render_id: int) -> str | None:
+    """The label of a stored document that was not made for this role (a general version)."""
+    from kestrel.date_display import format_display
+    from kestrel.db.models import DocMaster, DocRender
+
+    row = (
+        await session.execute(
+            select(DocRender.created_at, DocMaster.name)
+            .join(DocMaster, DocMaster.id == DocRender.doc_master_id, isouter=True)
+            .where(DocRender.id == render_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    return f"{row[1] or 'Document'} · {format_display(row[0])}"
+
+
 async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any] | None:
     """Everything the Role page's templates print for one role and one tab. Prose comes from the
     redacted copies `_detail_context` builds (confidential mode), never the raw ORM fields. The
@@ -351,7 +400,9 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
                 await opportunity_history(s2, opp_id), mapping, enabled=conf
             )
         cover = None
+        cover_info: dict[str, Any] = {}
         pursuit = detail.get("pursuit")
+        applied_ctx = await applied_view(s2, opp_id, pursuit)
         qview = None
         if pursuit is not None:
             from kestrel.web.routes_pages import _questions_view
@@ -361,7 +412,15 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
             await s2.execute(select(PrepPack.id).where(PrepPack.opportunity_id == opp_id).limit(1))
         ).first() is not None
         cover = await latest_letter(s2, opp_id)
-        from kestrel.docs import letter_task
+        from kestrel.docs import letter_store, letter_task
+
+        cover_letter = await letter_store.letter_for(s2, cover.id if cover else None)
+        cover_info = {
+            "words": int(cover_letter.word_count or 0) if cover_letter else 0,
+            "edited": bool(cover_letter and cover_letter.edited),
+            "new_ready": await letter_store.render_in(s2, opp_id, letter_store.PROPOSED)
+            is not None,
+        }
 
         ltask = letter_task.summary(await letter_task.latest_task(s2, opp_id))
     fit = detail["fit"]
@@ -374,7 +433,7 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
             "tab_labels": rv.TAB_LABELS,
             "tabs": TABS,
             "w": w,
-            "applied_on_default": date.today().isoformat(),
+            **applied_ctx,
             "consulting": track == "consulting",
             "facts_row": rv.facts_row(opp, detail["org_name"]),
             "liveness": pv.liveness_fact(opp),
@@ -423,14 +482,15 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
     )
     detail["first_status"] = _first_status(opp.track)
     detail["fresh"] = _is_fresh(opp, pursuit)
-    detail["doc_rows"] = _doc_rows(detail, cover, ltask)
+    detail["doc_rows"] = _doc_rows(detail, cover, ltask, cover_info)
     detail["mini_rows"] = [d for d in detail["doc_rows"] if d["render_id"]]
     detail["has_docs"] = bool(detail["mini_rows"])
     return detail
 
 
 def _doc_rows(
-    detail: dict[str, Any], cover, ltask: dict[str, Any] | None = None
+    detail: dict[str, Any], cover, ltask: dict[str, Any] | None = None,
+    cover_info: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The two document rows (resume and cover letter; capability statement and engagement
     outline): the latest render of each that exists, else what is missing and why."""
@@ -488,10 +548,12 @@ def _doc_rows(
     if cover is not None:
         from kestrel.date_display import format_display as _fd
 
-        cfg = cover.config or {}
-        words_n = int(cfg.get("words") or 0)
-        sub = (f"Draft · {words_n} words · {'edited' if cfg.get('edited') else 'drafted'} "
+        info = cover_info or {}
+        words_n, edited = int(info.get("words") or 0), bool(info.get("edited"))
+        sub = (f"Draft · {words_n} words · {'edited' if edited else 'drafted'} "
                f"{_fd(cover.created_at)}. Kestrel never sends it.")
+        if info.get("new_ready"):
+            sub += " A new draft is ready: open it to keep it or keep this one."
         # A redraft that is on hold or did not finish says so here, after the draft it would
         # replace (which stays until a new one is saved).
         newer = (ltask.get("at") or "") > (cover.created_at or "")
@@ -771,6 +833,193 @@ async def unshortlist(request: Request, opp_id: int):
         oob = await _oob_counts(s)
     html = await _side_html(request, opp_id)
     return HTMLResponse(html + oob, headers=_events({"pipelineRefresh": True, "k-toast": toast}))
+
+
+# ------------------------------------------------------------------------------------ I applied
+def _applied_error(request: Request, text: str) -> HTMLResponse:
+    """A refusal shown in place under the form (the same answer the quick route gives)."""
+    return templates().TemplateResponse(
+        request, "partials/applied_error.html", {"error": text},
+        headers={"HX-Retarget": "#applied-error", "HX-Reswap": "innerHTML"},
+    )
+
+
+def _from_panel(request: Request) -> bool:
+    """The Pipeline side panel posts the same I applied form (issue #129); its answer is the
+    panel, not the Role page's decision column."""
+    return request.headers.get("HX-Target") == "pl-panel"
+
+
+async def _applied_html(request: Request, opp_id: int, **extra: Any) -> str:
+    if _from_panel(request):
+        from kestrel.web.pages.pipeline import render_panel
+
+        return await render_panel(request, opp_id)
+    return await _side_html(request, opp_id, **extra)
+
+
+async def _take_back_fresh(s: Any, opp: Opportunity, label_ids: list[int]) -> None:
+    """I applied on a never-shortlisted role failed after add_to_list committed the pursuit:
+    take the pursuit, the labels the Add wrote and the Add's Undo row away again, so the role is
+    as it was before the click. The rollback expired every loaded row, so reload before reading
+    it (an expired attribute would lazy-load outside the async context: MissingGreenlet)."""
+    from kestrel.services import pursuit_undo as undo
+    from kestrel.web.pages.opportunity_actions import remove_from_list
+
+    await s.refresh(opp)
+    await remove_from_list(s, opp, label_ids=label_ids)
+    token = (s.info.get("added_undo") or {}).get(opp.id)
+    leftover = await s.get(Setting, undo.PREFIX + token) if token else None
+    if leftover is not None:
+        await s.delete(leftover)
+        await s.commit()
+
+
+@router.post("/opportunities/{opp_id}/role/applied", response_class=HTMLResponse)
+async def mark_applied(request: Request, opp_id: int):
+    """I applied, from the decision panel (issue #129). It records what the person did and sends
+    nothing. The dates are checked first and a refused date records nothing, not even a
+    shortlist entry. A role never shortlisted gets its pursuit the way Shortlist makes it, then
+    the existing Applications verb runs (status event, follow-up, and the interview-question
+    task with its own ask-first rule for an online model). Undo puts back exactly what was
+    there before the click."""
+    from kestrel.services import pursuit_undo as undo
+    from kestrel.web.pages.opportunity_actions import add_to_list
+
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return _answer({"k-toast": _toast("That role is gone.", tone="warn")})
+        _, _, bad = board_svc.applied_dates(form)
+        if bad:
+            return _applied_error(request, bad)
+        p = (
+            await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
+        ).scalar_one_or_none()
+        if p is not None and p.applied_at:
+            return _applied_error(request, "That is already recorded. Use Edit date to change it.")
+        if opp.archived_at:
+            return _applied_error(request, "Put the role back before marking it applied.")
+        fresh = p is None
+        label_ids: list[int] = []
+        try:
+            if fresh:
+                p, text = await add_to_list(s, opp)
+                if p is None:
+                    return _applied_error(request, text)
+                added = await s.get(Setting, undo.PREFIX + s.info["added_undo"][opp_id])
+                if added is not None:
+                    saved = added.value if isinstance(added.value, dict) else {}
+                    label_ids = list(saved.get("label_ids") or [])
+                    await s.delete(added)
+            snap = await undo.snapshot(s, p)
+            err = await board_svc.apply_verb(s, p, "applied", form)
+            if err:
+                await s.rollback()
+                if fresh:
+                    await _take_back_fresh(s, opp, label_ids)
+                return _applied_error(request, err)
+            if fresh:
+                await undo.save_added(s, p, label_ids, applied=True)
+            else:
+                snap["applied_undo"] = True
+                snap["question_sets_before"] = await undo.question_set_ids(s, p.id)
+                await undo.save(s, snap)
+            await s.commit()
+        except SQLAlchemyError as exc:  # a write path must never 500 (CLAUDE.md hard rules)
+            log.warning("role_applied_failed", opp_id=opp_id, error=str(exc))
+            await s.rollback()
+            if fresh and p is not None:
+                # add_to_list already committed the pursuit and its labels: the page says
+                # nothing was recorded, so take them back as the refused branch does.
+                try:
+                    await _take_back_fresh(s, opp, label_ids)
+                except SQLAlchemyError as again:
+                    log.warning("role_applied_cleanup_failed", opp_id=opp_id, error=str(again))
+                    await s.rollback()
+            return _applied_error(request, plain_error(exc))
+        done = board_svc.short_date(p.applied_at)
+        follow = board_svc.follow_up_phrase(p)
+        verb = "reached out" if opp.track == "consulting" else "applied"
+        toast = _toast(
+            f"Marked {verb} on {done}. {follow}.",
+            f"/opportunities/{opp_id}/role/applied/undo",
+        )
+        if not _from_panel(request):  # Pipeline reloads its own panel on kestrel:undone
+            toast["refresh"] = _side_refresh(opp_id)
+        oob = await _oob_counts(s)
+    html = await _applied_html(request, opp_id, unlocked_now=True)
+    return HTMLResponse(html + oob, headers=_events({"pipelineRefresh": True, "k-toast": toast}))
+
+
+@router.post("/opportunities/{opp_id}/role/applied/edit", response_class=HTMLResponse)
+async def edit_applied(request: Request, opp_id: int):
+    """Edit date: change the applied date and the follow-up of an application already recorded.
+    The same server rules as I applied (no future date). Undo still returns the role to before
+    it was applied."""
+    from kestrel.services import pursuit_undo as undo
+
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    async with sessionmaker()() as s:
+        p = (
+            await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
+        ).scalar_one_or_none()
+        if p is None or not p.applied_at:
+            return _applied_error(request, "That role is not marked applied yet.")
+        token = await undo.applied_undo_token(s, p)
+        err = await board_svc.edit_applied_dates(s, p, form)
+        if err:
+            await s.rollback()
+            return _applied_error(request, err)
+        if token:
+            await undo.applied_dates_changed(s, p, token)
+        await s.commit()
+        oob = await _oob_counts(s)
+    html = await _applied_html(request, opp_id)
+    toast = _toast("Dates saved.")
+    return HTMLResponse(html + oob, headers=_events({"pipelineRefresh": True, "k-toast": toast}))
+
+
+@router.post("/opportunities/{opp_id}/role/applied/undo", response_class=HTMLResponse)
+async def undo_applied(request: Request, opp_id: int):
+    """Undo I applied: the status, dates and follow-up come back exactly as they were (a role
+    that was never shortlisted goes back to not being on the shortlist). Used up once. From the
+    Undo button it answers with the refreshed column; from the toast, with the counts only."""
+    from kestrel.services import pursuit_undo as undo
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        p = (
+            await s.execute(select(Pursuit).where(Pursuit.opportunity_id == opp_id))
+        ).scalar_one_or_none()
+        token = await undo.applied_undo_token(s, p) if p is not None else None
+        done = False
+        if token and opp is not None:
+            data = await s.get(Setting, undo.PREFIX + token)
+            kind = data.value.get("kind") if data and isinstance(data.value, dict) else None
+            if kind == "added":
+                done = await undo.undo_added(s, token, opp_id)
+            else:
+                saved = dict(data.value) if data and isinstance(data.value, dict) else {}
+                track, _ = await undo.restore(s, token)
+                done = track is not None
+                if done:
+                    # Back to before the application: its question task and set go too.
+                    await undo.undo_applied_questions(s, saved)
+            await s.commit()
+        oob = await _oob_counts(s)
+    if request.headers.get("HX-Request") and request.headers.get("HX-Target") in (
+        "rl-side", "pl-panel"
+    ):
+        html = await _applied_html(request, opp_id)
+        toast = _toast("Undone." if done else "This can no longer be undone.",
+                       tone=None if done else "warn")
+        return HTMLResponse(
+            html + oob, headers=_events({"pipelineRefresh": True, "k-toast": toast})
+        )
+    refused = '<span data-undo-msg data-ok="0">This can no longer be undone.</span>'
+    return _answer({"pipelineRefresh": True}, oob if done else refused + oob)
 
 
 @router.post("/opportunities/{opp_id}/role/remove", response_class=HTMLResponse)
@@ -1258,10 +1507,11 @@ async def preview(request: Request, opp_id: int, render_id: int):
 # (kestrel.docs.letter_task, hard rule 5): the request queues it and runs it here so the sheet
 # answers when it is done, and if the app quits first the serve worker leases it again on the
 # next start. An online task carries the model and destination that were confirmed and is held,
-# not sent, when they no longer match. The draft is a DocRender row (template "cover_letter" /
-# "engagement_outline"; its text and checks live in `config`), so it survives a reload, shows in
-# Documents, and downloads through the same PDF plumbing. Nothing here sends, submits or emails
-# anything (hard rule 1).
+# not sent, when they no longer match. The draft is a `letter` row with its PDF render attached
+# (kestrel.docs.letter_store, D-LETTER-1); the render's id is the one these routes carry, so the
+# draft survives a reload, shows in Documents and downloads through the same PDF plumbing. Draft
+# again saves the new draft beside the current one until the person keeps it (D-LETTER-4).
+# Nothing here sends, submits or emails anything (hard rule 1).
 _LETTER_URL = "/opportunities/{}/role/cover-letter"
 _NO_BASIS = (
     "Nothing was sent. Kestrel needs a resume (or a capability statement) to draft from, so it "
@@ -1315,6 +1565,12 @@ _TASK_CONSENT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.Conte
 )
 
 
+# The draft a running redraft task would replace (its render id), or None.
+_TASK_REPLACE: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "letter_task_replace", default=None
+)
+
+
 async def _run_letter_task(task) -> dict[str, Any]:
     """Make the draft a task asks for; a redraft then replaces the draft it names."""
     from kestrel.services.online_consent import CONSENT_DEST_KEY, CONSENT_KEY
@@ -1323,16 +1579,15 @@ async def _run_letter_task(task) -> dict[str, Any]:
     opp_id = int(payload["opportunity_id"])
     seen = {k: payload[k] for k in (CONSENT_KEY, CONSENT_DEST_KEY) if payload.get(k)}
     marker = _TASK_CONSENT.set(seen)
+    raw = payload.get("replace_id")
+    # A redraft is saved as a proposal beside the draft it would replace, which stays until the
+    # person keeps the new one (D-LETTER-4).
+    replacing = _TASK_REPLACE.set(int(str(raw)) if str(raw or "").isdigit() else None)
     try:
-        outcome = await _make_draft(opp_id)
+        return await _make_draft(opp_id)
     finally:
+        _TASK_REPLACE.reset(replacing)
         _TASK_CONSENT.reset(marker)
-    replace_id = payload.get("replace_id")
-    if outcome.get("ok") and replace_id and int(replace_id) != outcome.get("render_id"):
-        async with sessionmaker()() as s:
-            await _drop_letter(s, opp_id, int(replace_id))  # the new draft is in; the old goes
-            await s.commit()
-    return outcome
 
 
 async def run_letter_drafts(
@@ -1351,17 +1606,25 @@ async def run_letter_drafts(
 
 
 async def latest_letter(s, opp_id: int) -> DocRender | None:
-    """The role's saved cover letter or engagement outline, or None."""
-    from kestrel.docs.letters import LETTER_TEMPLATES
+    """The role's current cover letter or engagement outline (its render), or None. A Draft
+    again that is waiting to be kept is not it (D-LETTER-4)."""
+    from kestrel.docs import letter_store
 
-    return (
-        await s.execute(
-            select(DocRender)
-            .where(DocRender.opportunity_id == opp_id, DocRender.template.in_(LETTER_TEMPLATES))
-            .order_by(DocRender.id.desc())
-            .limit(1)
-        )
-    ).scalars().first()
+    return await letter_store.render_in(s, opp_id, letter_store.CURRENT)
+
+
+async def _accepted_stories(s, track: str) -> list[dict[str, str]]:
+    """The story bank's accepted stories as letter sources (D-LETTER-2). A cover letter only; a
+    proposed story is never among them."""
+    from kestrel.db.models import Story
+    from kestrel.docs.letters import story_rows
+
+    if track == "consulting":
+        return []
+    rows = (await s.execute(
+        select(Story).where(Story.is_canonical.is_(True)).order_by(Story.id)
+    )).scalars().all()
+    return story_rows(rows)  # the one filter: only accepted stories (`is_accepted_story`)
 
 
 def _name_sources(doc) -> list[str]:
@@ -1478,13 +1741,17 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
     """Draft and save the letter. Runs detached from the request, so leaving the page never loses
     it. Returns {"ok": True, "render_id"} or {"ok": False, "reason", "quarantined"}; the reason
     is a fixed sentence."""
+    from kestrel.docs import letter_store
     from kestrel.docs.letters import (
+        COVER_PROMPT,
+        OUTLINE_PROMPT,
+        SourceKeyCollision,
         build_letter_prompt,
         generate_cover,
         generate_engagement,
+        pick_inputs,
         proof_rows,
         source_map,
-        word_count,
     )
     from kestrel.llm.client import LLMClient
     from kestrel.pipeline._shared import jd_budget, make_quarantine_hook
@@ -1521,7 +1788,21 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
             profile = await asyncio.to_thread(load_profile, opp.track)
             proofs = proof_rows(profile)
             variants = _variants(doc)
-            sources = source_map(proofs, variants)
+            stories = await _accepted_stories(s, opp.track)
+            posting = normalize_description(opp.description_md)
+            if kind == "cover_letter":  # only the few most relevant are sent (D-LETTER-3)
+                proofs, variants, stories = pick_inputs(
+                    proofs, variants, stories, posting=posting, title=opp.title or "")
+            # Hard rule 2: a claim resolves only to a key this prompt actually carried. A real key
+            # the model guessed but was never given is "unverified claims present" (D-LETTER-2).
+            try:
+                sources = source_map(proofs, variants, stories)
+            except SourceKeyCollision as clash:  # refused before anything is sent (D-LETTER-8)
+                log.warning("letter_source_key_collision", opportunity_id=opp_id, key=clash.key)
+                return {"ok": False, "quarantined": False, "reason": (
+                    f"No draft was made: two of your sources use the same key "
+                    f"\"{clash.key}\" ({' and '.join(clash.labels).lower()}). Give one of them "
+                    f"another key, then draft again.")}
             ev = (await s.execute(
                 select(Evaluation).where(Evaluation.opportunity_id == opp.id, Evaluation.tier == 2)
                 .order_by(Evaluation.created_at.desc(), Evaluation.id.desc()).limit(1)
@@ -1542,7 +1823,7 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
                 narrative=str(getattr(profile, "narrative", "") or ""),
                 evaluation=_evaluation_lines(ev, kind),
                 research=(research.summary_md or "") if research else "",
-                title=opp.title or "", company=company, description=desc,
+                title=opp.title or "", company=company, description=desc, stories=stories,
                 org_line=" | ".join(x for x in (
                     company, f"sector {org.sector}" if org and org.sector else "",
                     f"size {org.size_band}" if org and org.size_band else "",
@@ -1557,40 +1838,42 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
                 draft = await generate(
                     LLMClient(settings, http=http), user_prompt=prompt, valid_keys=set(sources),
                     on_quarantine=hook, session=s, grounding=grounding,
-                    name_sources=_name_sources(doc), opportunity_id=opp.id,
-                    posting=normalize_description(opp.description_md),
+                    name_sources=_name_sources(doc), opportunity_id=opp.id, posting=posting,
                 )
             if draft.value is None:
                 await s.commit()  # the quarantine row, with the raw reply kept
                 return {"ok": False, "reason": _failure_sentence(draft),
                         "quarantined": draft.quarantined and not draft.refused}
-            v = draft.value
-            extras: dict[str, Any] = {}
+            v: Any = draft.value
+            extras: dict[str, Any] = {"basis": {"master_id": master.id, "config": {
+                k: val for k, val in cfg.items() if k != "redact_orgs"}},
+                "sent_keys": sorted(sources),
+                # The exact text each key carried in this prompt, so the check view shows what
+                # was sent, never a later edit of it (hard rule 2, D-LETTER-8).
+                "sent_sources": {k: {"label": v["label"], "text": v["text"],
+                                     "parts": list(v["parts"])} for k, v in sources.items()}}
             if kind == "engagement_outline":
-                extras = {
+                extras.update({
                     "assumptions": list(v.assumptions), "exclusions": list(v.exclusions),
                     "commercial": v.commercial_shape.model_dump(mode="json"),
                     "too_few_exclusions": draft.too_few_exclusions,
-                }
-            row = DocRender(
-                opportunity_id=opp.id, doc_master_id=master.id, template=kind,
-                config={
-                    "kind": kind, "body_md": v.body_md, "generated_md": v.body_md,
-                    "claims_used": list(v.claims_used), "flags": list(draft.style_flags),
-                    "basis": {"master_id": master.id, "config": {
-                        k: val for k, val in cfg.items() if k != "redact_orgs"}},
-                    "edited": False, "words": word_count(v.body_md), **extras,
-                },
-                rationale={}, defaults_used=False,
+                })
+            # Draft again: the new draft waits beside the current one, which is not touched,
+            # until the person keeps it. If that draft is gone by now, this one is the draft.
+            current, replace_id = await latest_letter(s, opp.id), _TASK_REPLACE.get()
+            status = (letter_store.PROPOSED
+                      if replace_id is not None and current is not None and current.id == replace_id
+                      else letter_store.CURRENT)
+            row, _letter, stale = await letter_store.create(
+                s, opp_id=opp.id, master_id=master.id, kind=kind, body_md=v.body_md,
+                claims_used=list(v.claims_used), flags=list(draft.style_flags),
+                prompt_version=OUTLINE_PROMPT if kind == "engagement_outline" else COVER_PROMPT,
+                extras=extras, status=status,
             )
-            s.add(row)
-            await s.flush()
-            pursuit = (await s.execute(
-                select(Pursuit).where(Pursuit.opportunity_id == opp.id)
-            )).scalars().first()
-            if pursuit is not None:
-                pursuit.cover_letter_id = row.id
+            if status == letter_store.CURRENT:
+                await letter_store.sync_story_usage(s, opp.id)
             await s.commit()
+            _unlink_stored(stale)  # a replaced proposal's PDF, after the commit
             return {"ok": True, "render_id": row.id}
     except Exception as exc:  # noqa: BLE001 (the person is told a fixed sentence; details go to the log)
         log.warning("letter_draft_failed", opportunity_id=opp_id, error_type=type(exc).__name__)
@@ -1598,14 +1881,22 @@ async def _make_draft(opp_id: int) -> dict[str, Any]:
                 "quarantined": False}
 
 
-async def _letter_ctx(s, settings, opp, row: DocRender, *, tab: str = "check", saved: bool = False):
+async def _letter_ctx(
+    s, settings, opp, row: DocRender, *, tab: str = "check", saved: bool = False,
+    typed: str | None = None,
+):
     """Everything the draft view prints, recomputed from the saved text and the person's current
-    proof points and resume lines (so a claim that now resolves stops being flagged)."""
+    proof points, resume lines and accepted stories (so a claim that now resolves stops being
+    flagged). `typed` is text the server refused to save: it goes back into the editor as typed,
+    so nothing the person wrote is lost (D-LETTER-3)."""
+    from kestrel.docs import letter_store
     from kestrel.docs.letters import (
+        MAX_SAVE_WORDS,
         WORD_RANGE,
         annotate,
         banned_hits,
         letter_html,
+        over_length,
         proof_rows,
         source_map,
         unverified_details,
@@ -1616,13 +1907,47 @@ async def _letter_ctx(s, settings, opp, row: DocRender, *, tab: str = "check", s
     from kestrel.pipeline.profile import load_profile
     from kestrel.web.redact import confidential
 
-    cfg = dict(row.config or {})
-    kind, stored = cfg.get("kind") or row.template, str(cfg.get("body_md") or "")
-    found = await _letter_basis(s, settings, opp, cfg.get("basis"))
+    letter = await letter_store.letter_for(s, row.id)
+    assert letter is not None  # every caller passes a row from _owned_letter / letter_store
+    extras = dict(letter.extras or {})
+    kind, stored = str(letter.kind or row.template or "cover_letter"), str(letter.body_md or "")
+    found = await _letter_basis(s, settings, opp, extras.get("basis"))
     profile = await asyncio.to_thread(load_profile, opp.track)
     variants = _variants(found[2]) if found else []
-    sources = source_map(proof_rows(profile), variants)
-    claims = [str(c) for c in cfg.get("claims_used") or []]
+    collided: set[str] = set()
+    current = source_map(
+        proof_rows(profile), variants, await _accepted_stories(s, opp.track), strict=False,
+        collided=collided)
+    claims = [str(c) for c in letter.claims_used or []]
+    # A claim resolves only to the person's own text that was in the prompt. A draft keeps that
+    # text (`sent_sources`, D-LETTER-8): the view shows it, never a later edit, and says when the
+    # source has changed or gone since. An older draft kept only the keys (`sent_keys`) and is
+    # resolved against the current text of those keys; a letter moved from 0.7.5 kept neither
+    # and resolves against all of the person's text.
+    snapshot = extras.get("sent_sources")
+    sent = extras.get("sent_keys")
+    if isinstance(snapshot, dict):
+        sources = {}
+        for k, v in snapshot.items():
+            if not isinstance(v, dict):
+                continue
+            now = current.get(k)
+            # A key two sources now share is left out of `current`, but its source was not
+            # deleted: say what happened instead (0.7.6 review).
+            if k in collided:
+                state = "collided"
+            elif now is None:
+                state = "gone"
+            else:
+                state = "changed" if now["text"] != v.get("text") else ""
+            sources[str(k)] = {"label": str(v.get("label") or "Your text"),
+                               "text": str(v.get("text") or ""),
+                               "parts": [str(x) for x in v.get("parts") or []],
+                               "since": state}
+    elif sent is not None:
+        sources = {k: v for k, v in current.items() if k in set(sent)}
+    else:
+        sources = current
     unresolved = verify_claims(claims, set(sources))
     # Confidential mode: the current employer is hidden in everything the person is shown (the
     # check view, the edit text, the preview, the sources) and in the PDF. The checks below run on
@@ -1632,7 +1957,7 @@ async def _letter_ctx(s, settings, opp, row: DocRender, *, tab: str = "check", s
     shown = {k: {**v, "text": redact_text(v["text"], mapping, enabled=conf),
                  "parts": [redact_text(x, mapping, enabled=conf) for x in v.get("parts") or []]}
              for k, v in sources.items()}
-    flags = [f for f in cfg.get("flags") or [] if isinstance(f, dict)]
+    flags = [f for f in letter.flags or [] if isinstance(f, dict)]
     # Hard rule 2: the unverified-detail check runs again on the text as it is now, against the
     # person's own proof points and resume lines only (never the posting), so a number or name
     # added by hand is marked in the check view, the preview warning and before a download, and
@@ -1642,7 +1967,7 @@ async def _letter_ctx(s, settings, opp, row: DocRender, *, tab: str = "check", s
         _name_sources(found[2]) if found else None,
         normalize_description(opp.description_md),
     )
-    if cfg.get("edited"):
+    if letter.edited:
         # The style marks are on Kestrel's wording, so they go once the person has changed it
         # (the stock-phrase check below still runs on their text).
         flags = []
@@ -1661,21 +1986,35 @@ async def _letter_ctx(s, settings, opp, row: DocRender, *, tab: str = "check", s
         "unverified": bool(unresolved or located), "banned": banned,
         "style_flags": [f for f in kept if f.get("kind") == "style"],
         "preview_html": letter_html(header, body, kind, preview=True), "tab": tab, "saved": saved,
-        "extras": {k: cfg.get(k) for k in ("assumptions", "exclusions", "commercial",
-                                           "too_few_exclusions")} if kind == "engagement_outline"
-        else {},
-        "edited": bool(cfg.get("edited")),
+        "extras": {k: extras.get(k) for k in ("assumptions", "exclusions", "commercial",
+                                              "too_few_exclusions")}
+        if kind == "engagement_outline" else {},
+        "edited": bool(letter.edited),
+        # Length guards (D-LETTER-3): the mark, and the editor's hard cap the server also keeps.
+        "over": over_length(stored, kind), "max_words": MAX_SAVE_WORDS.get(kind, 0),
+        "edit_text": body if typed is None else typed,
+        "edit_words": n if typed is None else word_count(typed),
+        # Draft again (D-LETTER-4): a proposal is shown with Keep new / Keep previous; a kept one
+        # offers Undo while the previous draft is there.
+        "proposal": letter.status == letter_store.PROPOSED,
+        "can_undo": letter.status == letter_store.CURRENT
+        and await letter_store.render_in(s, opp.id, letter_store.PREVIOUS) is not None,
     }
 
 
 async def _letter_route(s, settings, opp) -> dict[str, Any]:
     from kestrel.services.online_consent import online_route as shared_route
 
-    noun = _letter_noun(_letter_kind(opp))
-    route = await shared_route(
-        s, settings, "tier3", reask=True,
-        this_send=f"the posting, your proof points and the resume lines chosen for this {noun}",
+    kind = _letter_kind(opp)
+    noun = _letter_noun(kind)
+    sends = (
+        "the posting, up to three of your proof points or resume lines and up to two of your "
+        "accepted stories (for each story: a reference key, its title, its first action sentence "
+        "and its result), chosen for this cover letter"
+        if kind == "cover_letter"
+        else f"the posting, your proof points and the resume lines chosen for this {noun}"
     )
+    route = await shared_route(s, settings, "tier3", reask=True, this_send=sends)
     if route.get("online"):
         route["free"] = prov.is_free_variant(str(route["model"]))
     return route
@@ -1698,9 +2037,14 @@ async def _entry(
     settings = await load_settings_with_db(s)
     ctx: dict[str, Any] = {"opp": opp, "opp_id": opp.id, "noun": _letter_noun(_letter_kind(opp)),
                            "kind": _letter_kind(opp)}
-    row = await latest_letter(s, opp.id)
+    from kestrel.docs import letter_store
+
     live = await letter_task.live_task(s, opp.id)
     replacing = live is not None and bool((live.payload or {}).get("replace_id"))
+    # A finished Draft again waits to be kept beside the current draft (D-LETTER-4).
+    proposal = None if live is not None else await letter_store.render_in(
+        s, opp.id, letter_store.PROPOSED)
+    row = proposal or await latest_letter(s, opp.id)
     if row is not None and not replacing:  # a draft in hand, unless a redraft is on its way
         ctx.update(await _letter_ctx(s, settings, opp, row))
         part = "role_letter_draft"
@@ -1750,8 +2094,12 @@ async def cover_letter_status(request: Request, opp_id: int):
         opp = await s.get(Opportunity, opp_id)
         if opp is None:
             return HTMLResponse("", status_code=404)
-        done = (await latest_letter(s, opp_id) is not None
-                and await letter_task.live_task(s, opp_id) is None)  # a redraft is not done yet
+        from kestrel.docs import letter_store
+
+        done = (await letter_task.live_task(s, opp_id) is None  # a redraft is not done yet
+                and (await latest_letter(s, opp_id) is not None
+                     or await letter_store.render_in(s, opp_id, letter_store.PROPOSED)
+                     is not None))
         return await _entry(
             request, s, opp, shell=False, show_failed=True,
             events={"rl-refresh": True} if done else None,
@@ -1835,29 +2183,17 @@ async def _replace_target(s, opp_id: int, form) -> int | None:
     return row.id if row is not None and latest is not None and latest.id == row.id else None
 
 
-async def _drop_letter(s, opp_id: int, render_id: int) -> None:
-    """Delete one letter row and its PDF; the pursuit lets go of it first (foreign key)."""
-    row = await _owned_letter(s, opp_id, render_id)
-    if row is None:
-        return
-    for pursuit in (await s.execute(
-        select(Pursuit).where(Pursuit.cover_letter_id == row.id)
-    )).scalars():
-        pursuit.cover_letter_id = None
-    await s.flush()
-    pdf = paths.stored_pdf(row.pdf_path)  # a stored path outside the documents folder is ignored
-    await s.delete(row)
-    _remove_pdf(pdf)
-
-
-def _remove_pdf(pdf) -> None:
-    """Delete a draft's saved PDF (already confined to the documents folder by the caller)."""
-    if pdf is None:
-        return
-    try:
-        pdf.unlink(missing_ok=True)
-    except OSError as exc:
-        log.warning("letter_pdf_remove_failed", error_type=type(exc).__name__)
+def _unlink_stored(raws: list[str] | None) -> None:
+    """Remove deleted letters' PDFs after the commit, each stored path confined to the documents
+    folder first (`paths.stored_pdf`); a path outside it is never touched."""
+    for raw in raws or []:
+        pdf = paths.stored_pdf(raw)
+        if pdf is None:
+            continue
+        try:
+            pdf.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("letter_pdf_remove_failed", error_type=type(exc).__name__)
 
 
 async def _redraft_entry(request: Request, s, opp, replace_id: int, events=None):
@@ -1886,18 +2222,28 @@ async def cover_letter_redraft(request: Request, opp_id: int, render_id: int):
 
 
 async def _owned_letter(s, opp_id: int, render_id: int) -> DocRender | None:
+    """The render of this role's letter with that id, or None (another role's id, a render that
+    is not a letter, or one with no letter row)."""
+    from kestrel.docs import letter_store
     from kestrel.docs.letters import LETTER_TEMPLATES
 
     row = await s.get(DocRender, render_id)
     if row is None or row.opportunity_id != opp_id or row.template not in LETTER_TEMPLATES:
         return None
-    return row
+    letter = await letter_store.letter_for(s, row.id)
+    return row if letter is not None and letter.opportunity_id == opp_id else None
 
 
 @router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/save",
              response_class=HTMLResponse)
 async def cover_letter_save(request: Request, opp_id: int, render_id: int):
-    """Save the edited text. The checks are recomputed from it; a short confirmation shows."""
+    """Save the edited text. The checks are recomputed from it; a short confirmation shows. A
+    cover letter over 600 words is not saved, and the text stays in the editor as typed
+    (D-LETTER-3)."""
+    from kestrel.docs import letter_store
+    from kestrel.docs.letters import save_refusal, word_count
+    from kestrel.web.redact import confidential
+
     form = await request.form()
     text = str(form.get("body_md") or "").replace("\r\n", "\n").strip()[:20000]
     tab = "edit" if str(form.get("tab") or "") == "edit" else "check"
@@ -1911,23 +2257,27 @@ async def cover_letter_save(request: Request, opp_id: int, render_id: int):
             ctx = await _letter_ctx(s, settings, opp, row, tab="edit")
             return _fragment(request, "role_letter_draft", ctx,
                              {"k-toast": _toast(_EMPTY_LETTER, tone="warn")})
-        from kestrel.docs.letters import word_count
-        from kestrel.web.redact import confidential
-
-        cfg = dict(row.config or {})
+        letter = await letter_store.letter_for(s, row.id)
+        assert letter is not None  # _owned_letter checked it
+        refused = save_refusal(text, letter.kind)
+        if refused:
+            ctx = await _letter_ctx(s, settings, opp, row, tab="edit", typed=text)
+            return _fragment(request, "role_letter_draft", ctx,
+                             {"k-toast": _toast(refused, tone="warn")})
         # The text on screen has the current employer hidden in confidential mode, so it is
         # compared with the stored text as shown; saving it keeps the employer hidden.
         conf, mapping = await confidential(s)
-        stored_now = redact_text(str(cfg.get("body_md") or ""), mapping, enabled=conf)
-        generated = redact_text(str(cfg.get("generated_md") or ""), mapping, enabled=conf)
+        stored_now = redact_text(str(letter.body_md or ""), mapping, enabled=conf)
+        generated = redact_text(str(letter.generated_md or ""), mapping, enabled=conf)
         if text != stored_now:
-            cfg.update({"body_md": text, "words": word_count(text),
-                        "edited": text != generated, "pdf_digest": None})
-            row.config = cfg  # a new dict, so the JSON column notices the change
-            stale_pdf = paths.stored_pdf(row.pdf_path)  # confined to the documents folder
+            letter.body_md, letter.word_count = text, word_count(text)
+            letter.edited = text != generated
+            await letter_store.sync_story_usage(s, opp_id)  # a story cut from it stops counting
+            row.config = {**(row.config or {}), "pdf_digest": None}  # a new dict for the column
+            stale_pdf = row.pdf_path  # confined to the documents folder when it is removed
             row.pdf_path = None
             await s.commit()
-            _remove_pdf(stale_pdf)  # the old file no longer matches the text; it is not kept
+            _unlink_stored([stale_pdf] if stale_pdf else [])  # it no longer matches the text
         ctx = await _letter_ctx(s, settings, opp, row, tab=tab, saved=True)
     return _fragment(request, "role_letter_draft", ctx,
                      {"k-toast": _toast(_SAVED), "rl-refresh": True})
@@ -1936,23 +2286,176 @@ async def cover_letter_save(request: Request, opp_id: int, render_id: int):
 @router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/discard",
              response_class=HTMLResponse)
 async def cover_letter_discard(opp_id: int, render_id: int):
-    """Delete the draft (the sheet asks first). The saved PDF, if any, goes with it."""
+    """Delete the draft (the sheet asks first), with the previous one Undo could bring back. The
+    saved PDFs go with them."""
+    from kestrel.docs import letter_store
+
     async with sessionmaker()() as s:
         row = await _owned_letter(s, opp_id, render_id)
-        if row is None:
+        gone = None if row is None else await letter_store.discard(s, opp_id, row.id)
+        if gone is None:
             return _answer({"k-toast": _toast("That draft is already gone.", tone="warn"),
                             "rl-refresh": True})
-        pdf = paths.stored_pdf(row.pdf_path)  # never a file outside the documents folder
-        for pursuit in (await s.execute(
-            select(Pursuit).where(Pursuit.cover_letter_id == row.id)
-        )).scalars():
-            pursuit.cover_letter_id = None
-        await s.flush()  # the pursuit lets go of the row before the row goes (foreign key)
-        await s.delete(row)
-        await s.commit()
-    _remove_pdf(pdf)
+    _unlink_stored(gone)
     return _answer({"k-toast": _toast("Draft discarded."), "rl-letter-close": True,
                     "rl-refresh": True})
+
+
+_KEPT_NEW = "Kept the new draft. Undo in the draft brings the previous one back."
+_KEPT_OLD = "Kept your previous draft. The new one is deleted."
+_UNDONE = "Your previous draft is back."
+_NOT_A_PROPOSAL = "That new draft is already gone. Nothing changed."
+_UNDO_UNCONFIRMED = "Nothing changed. Use Undo in the draft and confirm it."
+_UNDO_STALE = "Nothing changed: the drafts changed since you opened this. Check the draft shown."
+_WAIT_FOR_REDRAFT = ("Nothing changed: a new draft is being written for this role. Wait for it, "
+                     "then choose.")
+
+
+async def _draft_view(request: Request, s, opp, events: dict[str, Any]):
+    """The sheet's main area after a keep or an Undo: the role's draft as it is now."""
+    return await _entry(request, s, opp, shell=False, events=events)
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/keep-new",
+             response_class=HTMLResponse)
+async def cover_letter_keep_new(request: Request, opp_id: int, render_id: int):
+    """Keep new draft: the proposal becomes the draft in Documents and on the application; the
+    one it replaces is kept so Undo can bring it back exactly (D-LETTER-4)."""
+    from kestrel.docs import letter_store
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        gone = await letter_store.keep_new(s, opp_id, render_id)
+        if gone is None:
+            return await _draft_view(request, s, opp,
+                                     {"k-toast": _toast(_NOT_A_PROPOSAL, tone="warn")})
+        _unlink_stored(gone)
+        # No one-click Undo in the toast: Undo deletes this draft, so it asks first in the sheet.
+        return await _draft_view(request, s, opp, {"k-toast": _toast(_KEPT_NEW),
+                                                   "rl-refresh": True})
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/keep-previous",
+             response_class=HTMLResponse)
+async def cover_letter_keep_previous(request: Request, opp_id: int, render_id: int):
+    """Keep previous draft: the new one is deleted; the current draft was never changed."""
+    from kestrel.docs import letter_store
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        if await _redraft_running(s, opp_id):
+            return await _draft_view(request, s, opp,
+                                     {"k-toast": _toast(_WAIT_FOR_REDRAFT, tone="warn")})
+        gone = await letter_store.keep_previous(s, opp_id, render_id)
+        _unlink_stored(gone)
+        return await _draft_view(request, s, opp, {
+            "k-toast": _toast(_KEPT_OLD) if gone is not None
+            else _toast(_NOT_A_PROPOSAL, tone="warn"),
+            "rl-refresh": True})
+
+
+@router.post("/opportunities/{opp_id}/role/cover-letter/{render_id}/undo",
+             response_class=HTMLResponse)
+async def cover_letter_undo(request: Request, opp_id: int, render_id: int):
+    """Undo after Keep new draft, after the sheet asked (D-LETTER-7): the named current draft,
+    with any edits, is deleted and the previous draft is the draft again, exactly as it was. The
+    form must carry the sheet's answer (`sure`) and name the draft on screen; a changed state
+    (another draft is current now, a redraft is running, nothing to bring back) changes nothing and
+    says so."""
+    from kestrel.docs import letter_store
+
+    form = await request.form()
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        if opp is None:
+            return HTMLResponse("", status_code=404)
+        # "sure" is the sheet's own question (a local delete), not an online-send confirmation.
+        if str(form.get("sure") or "") != "1":
+            return await _draft_view(request, s, opp,
+                                     {"k-toast": _toast(_UNDO_UNCONFIRMED, tone="warn")})
+        if await _redraft_running(s, opp_id):
+            return await _draft_view(request, s, opp,
+                                     {"k-toast": _toast(_WAIT_FOR_REDRAFT, tone="warn")})
+        gone = await letter_store.undo_keep(s, opp_id, render_id)
+        _unlink_stored(gone)
+        if gone is None:
+            return await _draft_view(request, s, opp, {
+                "k-toast": _toast(_UNDO_STALE, tone="warn"), "rl-refresh": True})
+        return await _draft_view(request, s, opp, {"k-toast": _toast(_UNDONE), "rl-refresh": True})
+
+
+async def _redraft_running(s, opp_id: int) -> bool:
+    """A draft for this role is queued, running or held: Undo and Keep previous wait for it, so
+    its result can never land beside a draft they just brought back (D-LETTER-5)."""
+    from kestrel.docs import letter_task
+
+    return await letter_task.live_task(s, opp_id) is not None
+
+
+async def _ensure_pdf(s, settings, opp, row: DocRender):
+    """The PDF of the saved text, made again when the text changed since the last one, from the
+    same HTML the preview shows. Returns (path, page_count). Raises when no browser can make it."""
+    import hashlib
+
+    from kestrel.docs import letter_store
+    from kestrel.docs import render as docrender
+    from kestrel.docs.letters import letter_html
+    from kestrel.web.redact import confidential
+
+    letter = await letter_store.letter_for(s, row.id)
+    assert letter is not None  # _owned_letter checked it
+    kind = str(letter.kind or row.template or "cover_letter")
+    conf, mapping = await confidential(s)  # the PDF hides the current employer too
+    body = redact_text(str(letter.body_md or ""), mapping, enabled=conf) or ""
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    cfg = dict(row.config or {})
+    path = paths.stored_pdf(row.pdf_path)  # a path outside the documents folder is missing
+    if path is not None and path.is_file() and cfg.get("pdf_digest") == digest:
+        return path, row.page_count
+    found = await _letter_basis(s, settings, opp, (letter.extras or {}).get("basis"))
+    header = found[2].header if found else {}
+    made = await docrender.render_pdf(letter_html(header, body, kind))
+    org = opp.org_name or None
+    row.filename = docrender.filename_for(
+        header, org, "EngagementOutline" if kind == "engagement_outline" else "CoverLetter")
+    docs_dir = paths.documents_dir()
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    path = docs_dir / f"{row.id}_{row.filename}"
+    path.write_bytes(made.pdf)
+    row.pdf_path, row.page_count = str(path), made.page_count
+    row.config = {**cfg, "pdf_digest": digest}
+    await s.commit()
+    return path, made.page_count
+
+
+@router.get("/opportunities/{opp_id}/role/cover-letter/{render_id}/fit",
+            response_class=HTMLResponse)
+async def cover_letter_fit(request: Request, opp_id: int, render_id: int):
+    """The Preview's one-page check (D-LETTER-3): makes the PDF (or reuses the one that matches
+    the text) and says whether it fits one page, before the person saves it. The font is never
+    shrunk to make it fit. Nothing is sent anywhere."""
+    from kestrel.web.errors import fixed_reason
+
+    async with sessionmaker()() as s:
+        opp = await s.get(Opportunity, opp_id)
+        row = await _owned_letter(s, opp_id, render_id)
+        if opp is None or row is None:
+            return HTMLResponse("", status_code=404)
+        settings = await load_settings_with_db(s)
+        noun = _letter_noun(_letter_kind(opp))
+        try:
+            _path, pages = await _ensure_pdf(s, settings, opp, row)
+        except Exception as exc:  # noqa: BLE001 (no browser on this machine: say so, never a 500)
+            log.warning("letter_fit_failed", render_id=render_id, error_type=type(exc).__name__)
+            return _fragment(request, "role_letter_fit", {
+                "state": "unknown", "reason": fixed_reason(exc), "noun": noun})
+        state = "over" if (pages or 1) > 1 and _letter_kind(opp) == "cover_letter" else "fits"
+        return _fragment(request, "role_letter_fit", {"state": state, "pages": pages or 1,
+                                                       "noun": noun})
 
 
 @router.get("/opportunities/{opp_id}/role/cover-letter/{render_id}/download")
@@ -1960,14 +2463,9 @@ async def cover_letter_download(opp_id: int, render_id: int):
     """The PDF of the saved text, made from the same HTML the preview shows. It is made again
     when the text changed since the last one. Download goes through the computer's Save dialog
     (D-UI-12)."""
-    import hashlib
-
     from fastapi.responses import FileResponse, PlainTextResponse
 
-    from kestrel.docs import render as docrender
-    from kestrel.docs.letters import letter_html
     from kestrel.web.errors import fixed_reason
-    from kestrel.web.redact import confidential
 
     async with sessionmaker()() as s:
         opp = await s.get(Opportunity, opp_id)
@@ -1975,31 +2473,12 @@ async def cover_letter_download(opp_id: int, render_id: int):
         if opp is None or row is None:
             return PlainTextResponse("No such draft.", status_code=404)
         settings = await load_settings_with_db(s)
-        cfg = dict(row.config or {})
-        kind = cfg.get("kind") or row.template
-        conf, mapping = await confidential(s)  # the PDF hides the current employer too
-        body = redact_text(str(cfg.get("body_md") or ""), mapping, enabled=conf) or ""
-        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        path = paths.stored_pdf(row.pdf_path)  # a path outside the documents folder is missing
-        if path is None or not path.is_file() or cfg.get("pdf_digest") != digest:
-            found = await _letter_basis(s, settings, opp, cfg.get("basis"))
-            header = found[2].header if found else {}
-            try:
-                made = await docrender.render_pdf(letter_html(header, body, kind))
-            except Exception as exc:  # noqa: BLE001 (no browser on this machine: say so, never a 500)
-                log.warning("letter_pdf_failed", render_id=render_id,
-                            error_type=type(exc).__name__)
-                return PlainTextResponse(
-                    f"Could not make the PDF: {fixed_reason(exc)}", status_code=503)
-            org = opp.org_name or None
-            row.filename = docrender.filename_for(
-                header, org, "EngagementOutline" if kind == "engagement_outline" else "CoverLetter")
-            docs_dir = paths.documents_dir()
-            docs_dir.mkdir(parents=True, exist_ok=True)
-            path = docs_dir / f"{row.id}_{row.filename}"
-            path.write_bytes(made.pdf)
-            row.pdf_path, row.page_count = str(path), made.page_count
-            row.config = {**cfg, "pdf_digest": digest}
-            await s.commit()
+        try:
+            path, _pages = await _ensure_pdf(s, settings, opp, row)
+        except Exception as exc:  # noqa: BLE001 (no browser on this machine: say so, never a 500)
+            log.warning("letter_pdf_failed", render_id=render_id,
+                        error_type=type(exc).__name__)
+            return PlainTextResponse(
+                f"Could not make the PDF: {fixed_reason(exc)}", status_code=503)
         name = row.filename or path.name
     return FileResponse(path, media_type="application/pdf", filename=name)

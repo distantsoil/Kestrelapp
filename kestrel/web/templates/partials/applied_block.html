@@ -1,25 +1,78 @@
-{# "I applied" with the date applied (issue #145): the form while the pursuit has no applied date,
-   the date afterward. Shared by the actions panel and the Role page's decision panel. Posts to the
-   existing quick route, which records nothing but the date and a seven-day follow-up (hard rule 1:
-   Kestrel sends nothing). Needs `pursuit` and `applied_on_default`; `refresh_side` makes the
-   answer reload the Role page's decision column. #}
-{% if pursuit.applied_at %}
-<div class="oa-applied-on" data-testid="applied-on">Applied on <b>{{ date_display(pursuit.applied_at) }}</b></div>
+{# "I applied" with the date applied (issue #145, #129): the form while the pursuit has no applied
+   date, the date afterward. Shared by the actions panel and the Role page's decision panel. It
+   records what the person did and nothing else (hard rule 1: Kestrel sends nothing).
+   Needs `pursuit` (None on the Role page for a role never shortlisted) and `applied_on_default`.
+   On the Role page `role_applied_url` is set: the form then also has the quick picks Today and
+   Yesterday and Follow up on, a saved application shows its dates with Undo and Edit date, and the
+   answer reloads the decision column. Elsewhere `refresh_side` is the only extra. #}
+{% set post_url = role_applied_url if role_applied_url is defined else '/pursuits/' ~ pursuit.id ~ '/act/applied/quick' %}
+{# The Role page swaps its decision column; the Pipeline side panel (issue #129) swaps itself. #}
+{% set ap_target = applied_target if applied_target is defined else '#rl-side' %}
+{% set ap_swap = applied_swap if applied_swap is defined else 'outerHTML' %}
+{% if pursuit and pursuit.applied_at %}
+<div class="oa-applied-on" data-testid="applied-on">Applied on <b>{{ date_display(pursuit.applied_at) }}</b>
+  {%- if follow_phrase is defined and follow_phrase %}{% set late = follow_phrase == 'Follow-up overdue' %}. <span class="oa-follow{{ ' is-late' if late else '' }}" data-testid="applied-follow">{{ follow_phrase if late else 'Follow up on ' }}{% if not late %}<span class="oa-nowrap">{{ date_display(pursuit.next_action_at) }}</span>{% endif %}</span>{% endif %}</div>
+{% if role_applied_url is defined %}
+{% if resume_used %}<div class="muted oa-used" data-testid="applied-resume">{{ 'Sent' if consulting else 'Resume used' }}: {{ resume_used }}</div>{% endif %}
+{# Re-posts (SPEC.md 5.6): once applied, a new posting of this role is hidden on arrival unless
+   this switch is on. The same switch as Applications; it saves on change. #}
+<div class="oa-repost-note" data-testid="repost-note">
+  <span class="muted">Re-posts of a {{ 'lead' if consulting else 'role' }} you {{ 'reached out to' if consulting else 'applied to' }} are hidden.</span>
+  <form hx-post="/pursuits/{{ pursuit.id }}/reposts" hx-trigger="change" hx-swap="none" class="oa-repost">
+    <label class="muted"><input type="checkbox" name="allow" value="on" {% if pursuit.allow_reposts %}checked{% endif %} data-testid="repost-switch"> Show new listings of this {{ 'lead' if consulting else 'role' }}</label></form>
+</div>
+{# Undo and Save dates disable each other while either is on its way: an Undo clicked during a
+   date save would otherwise post from the panel the save is about to replace, and its answer would
+   land in a detached panel while the page kept showing the role as applied (issue #129). #}
+<div class="oa-after row">
+  {% if applied_can_undo %}<button class="k-btn k-btn--sm" type="button" data-testid="applied-undo"
+          hx-post="{{ role_applied_url }}/undo" hx-target="{{ ap_target }}" hx-swap="{{ ap_swap }}" hx-disabled-elt="this, next [data-testid=applied-edit-save]">Undo</button>{% endif %}
+  <details class="oa-edit" data-testid="applied-edit">
+    <summary class="k-btn k-btn--sm" data-testid="applied-edit-open">Edit date</summary>
+    <form hx-post="{{ role_applied_url }}/edit" hx-target="{{ ap_target }}" hx-swap="{{ ap_swap }}" hx-disabled-elt="find button[type=submit], previous [data-testid=applied-undo]"
+          class="oa-form" data-testid="applied-edit-form">
+      <label class="muted oa-applied__date">Applied on
+        <input type="date" name="applied_on" class="oa-date" value="{{ pursuit.applied_at[:10] }}" max="{{ applied_on_default }}" data-testid="applied-edit-date" data-oa-applied>
+      </label>
+      <label class="muted oa-applied__date">Follow up on
+        <input type="date" name="follow_up" class="oa-date" value="{{ (pursuit.next_action_at or '')[:10] }}" data-testid="applied-edit-follow" data-oa-follow>
+      </label>
+      <button class="k-btn k-btn--sm k-btn--primary" type="submit" data-testid="applied-edit-save">Save dates</button>
+    </form>
+    <p class="oa-applied__err" id="applied-error" role="alert" data-testid="applied-error"></p>
+  </details>
+</div>
+{% endif %}
 {% else %}
         <div id="applied-status">
           {# The busy state comes from htmx (the button is disabled and aria-busy while the request
              is open); a failure lands in #applied-error, so the form and the page stay put. #}
-          <form hx-post="/pursuits/{{ pursuit.id }}/act/applied/quick"
-                hx-target="#applied-status" hx-swap="outerHTML" hx-disabled-elt="find button"
-                class="row oa-applied" data-testid="applied-form">
+          <form hx-post="{{ post_url }}"
+                {% if role_applied_url is defined %}hx-target="{{ ap_target }}" hx-swap="{{ ap_swap }}"{% else %}hx-target="#applied-status" hx-swap="outerHTML"{% endif %} hx-disabled-elt="find button[type=submit]"
+                class="row oa-applied{{ ' oa-form' if role_applied_url is defined else '' }}" data-testid="applied-form">
             {% if refresh_side %}<input type="hidden" name="refresh_side" value="1">{% endif %}
             <label class="muted oa-applied__date">Applied on
               <input type="date" name="applied_on" class="oa-date" value="{{ applied_on_default }}" max="{{ applied_on_default }}"
-                     data-testid="applied-on-date">
+                     data-testid="applied-on-date" data-oa-applied>
             </label>
+            {% if role_applied_url is defined %}
+            <span class="oa-picks" role="group" aria-label="Quick picks">
+              <button class="k-btn k-btn--sm" type="button" data-oa-pick="{{ applied_on_default }}" data-testid="pick-today">Today</button>
+              <button class="k-btn k-btn--sm" type="button" data-oa-pick="{{ applied_yesterday }}" data-testid="pick-yesterday">Yesterday</button>
+            </span>
+            <label class="muted oa-applied__date">Follow up on
+              <input type="date" name="follow_up" class="oa-date" value="{{ follow_up_default }}" data-testid="applied-follow-date" data-oa-follow>
+            </label>
+            <label class="muted oa-applied__date">{{ 'Document sent' if consulting else 'Resume used' }}
+              <select name="document_id" class="oa-date" data-testid="applied-resume-pick">
+                <option value="">None / not tailored</option>
+                {% for d in resume_options or [] %}<option value="{{ d.id }}" {% if loop.first %}selected{% endif %}>{{ d.label }}</option>{% endfor %}
+              </select>
+            </label>
+            {% endif %}
             <button class="k-btn k-btn--sm k-btn--primary oa-applied__btn" type="submit" data-testid="mark-applied">I applied</button>
           </form>
-          <div class="muted oa-hint">Records that you applied on the date chosen, with a follow-up in seven days.</div>
+          <div class="muted oa-hint">Records that you applied on the date chosen{% if role_applied_url is defined %}{% if not pursuit %} and puts the role on your {{ 'leads' if consulting else 'shortlist' }}{% endif %}, with a follow-up on the date you pick (a week later by default){% else %}, with a follow-up in seven days{% endif %}. Kestrel contacts no one.</div>
           <p class="oa-applied__err" id="applied-error" role="alert" data-testid="applied-error"></p>
         </div>
 {% endif %}

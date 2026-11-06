@@ -861,3 +861,86 @@ async def test_story_add_undo_preserves_later_question_choice():
             await s.commit()
         assert 'data-ok="0"' in c.post(_toast(r)["undoUrl"]).text
     assert await _get(Story, story.id) is not None
+
+
+# ------------------------------------------------------------- #125: tabs and the bank poll
+HX_TAB = {"HX-Request": "true", "HX-Target": "pp-tabbody"}
+
+
+async def test_a_tab_change_answers_with_the_pane_and_help_only_not_the_tab_row():
+    """The tab row is not in the tab-change answer, so the page keeps that element; a full page,
+    and an answer for the whole body (a build), still carry it exactly once."""
+    ids = await prep_seed.seed_async(with_pack=True)
+    opp = ids[LARK]["opp"]
+    with _client() as c:
+        full = c.get(f"/prep/{opp}").text
+        bodies = {t: c.get(f"/prep/{opp}?tab={t}", headers=HX_TAB).text
+                  for t in ("pack", "practice", "bank")}
+        whole = c.get(f"/prep/{opp}?tab=practice", headers=HX).text
+    assert full.count(' id="pp-tabs"') == 1 and whole.count(' id="pp-tabs"') == 1
+    assert 'id="pp-tabbody"' in full and 'id="pp-tabbody"' not in bodies["pack"]
+    for tab, text in bodies.items():
+        assert ' id="pp-tabs"' not in text and "<html" not in text
+        assert f'id="pp-layout" data-tab="{tab}"' in text and 'id="pp-pane"' in text
+        assert "k-help-col" in text and "k-flyout" in text
+    assert 'id="pp-ready"' in bodies["pack"] and 'id="pp-ready"' not in bodies["practice"]
+    # every tab link swaps the pane region and marks itself as a tab change
+    for tab in ("pack", "practice", "bank"):
+        link = full.split(f'data-testid="pp-tab-{tab}"')[1].split(">")[0]
+        assert 'hx-target="#pp-tabbody"' in link
+    assert "data-pp-tabin" in full
+
+
+async def _start_building():
+    from kestrel.interview.story_task import TASK_TYPE
+
+    async with _sm()() as s:
+        from kestrel.db.models import Task
+
+        s.add(Task(type=TASK_TYPE, payload={}, status="pending"))
+        await s.commit()
+
+
+def _version(html: str) -> str:
+    import re
+
+    m = re.search(r'hx-get="[^"]*tab=bank&version=([0-9a-f]+)"', html)
+    assert m, "the poll carries a version of what is on screen"
+    return m.group(1)
+
+
+async def test_the_story_bank_poll_answers_204_when_nothing_changed_and_content_when_it_did():
+    """While a build runs the bank polls. A poll that carries the current version gets 204 and
+    changes nothing; a new story changes the version, and the next poll gets the new body."""
+    ids = await prep_seed.seed_async(with_pack=True)
+    opp = ids[LARK]["opp"]
+    await _start_building()
+    with _client() as c:
+        page = c.get(f"/prep/{opp}?tab=bank").text
+        assert 'hx-trigger="every 5s"' in page and 'hx-target="#pp-tabbody"' in page
+        v1 = _version(page)
+        same = c.get(f"/prep/{opp}?tab=bank&version={v1}", headers=HX_TAB)
+        assert same.status_code == 204 and same.text == ""
+        again = c.get(f"/prep/{opp}?tab=bank&version={v1}", headers=HX_TAB)
+        assert again.status_code == 204  # still nothing new, still nothing sent
+        async with _sm()() as s:
+            s.add(Story(title="A story added while it builds", themes=["team_building"],
+                        is_canonical=True))
+            await s.commit()
+        changed = c.get(f"/prep/{opp}?tab=bank&version={v1}", headers=HX_TAB)
+        assert changed.status_code == 200 and "A story added while it builds" in changed.text
+        v2 = _version(changed.text)
+        assert v2 != v1
+        assert c.get(f"/prep/{opp}?tab=bank&version={v2}", headers=HX_TAB).status_code == 204
+        # a tab click never carries a version: it always answers with the tab
+        click = c.get(f"/prep/{opp}?tab=bank", headers=HX_TAB)
+        assert click.status_code == 200 and 'id="pp-layout"' in click.text
+        # a poll sent with a stale or garbage version is answered with the body, never a 204
+        assert c.get(f"/prep/{opp}?tab=bank&version=zz", headers=HX_TAB).status_code == 200
+
+
+async def test_the_bank_does_not_poll_when_no_build_is_running():
+    ids = await prep_seed.seed_async(with_pack=True)
+    with _client() as c:
+        page = c.get(f"/prep/{ids[LARK]['opp']}?tab=bank").text
+    assert 'hx-trigger="every 5s"' not in page and "version=" not in page

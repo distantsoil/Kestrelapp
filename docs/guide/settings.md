@@ -68,7 +68,7 @@ Under **Appearance**, **Theme** offers **Light**, **Dark**, and **Match computer
 
 Under **Region**, **Country** is fixed to **United States** and **Currency** to **US dollars**. **Date format** and **Time** control how dates and times appear; the preview updates as you choose.
 
-Under **Notifications**, choose which events to receive: **New strong matches**, **Follow-ups due**, **Run finished**, and **Something needs attention**. The in-app bell is always on. **Computer notifications** controls desktop pop-ups. **Play a sound** is on by default with **Chime**. Choose **Soft click** or **Bell**, set **Volume**, and use **Play** to hear the sound. Alerts do not play sounds yet, so these choices are saved but do not change what you hear during a run. **Quiet hours** sets **From** and **To** times, but it is not active yet: the times are saved and do not mute pop-ups or sound. Alerts always collect in the bell.
+Under **Notifications**, choose which events to receive: **New roles worth a look**, **Follow-ups due**, **Run finished**, and **Something needs attention**. The in-app bell is always on. **Computer notifications** controls desktop pop-ups. **Play a sound** is on by default with **Chime**. Choose **Soft click** or **Bell**, set **Volume**, and use **Play** to hear the sound. Alerts do not play sounds yet, so these choices are saved but do not change what you hear during a run. **Quiet hours** sets **From** and **To** times, but it is not active yet: the times are saved and do not mute pop-ups or sound. Alerts always collect in the bell.
 
 ![Preferences](../images/walk/settings-preferences-light.png)
 

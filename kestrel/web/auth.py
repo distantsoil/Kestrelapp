@@ -230,8 +230,11 @@ def qr_svg(data: str) -> str:
     buf = io.BytesIO()  # segno writes bytes even for SVG
     # Dark on white whatever the theme: a scanner needs the contrast, so this is the one color pair
     # that is not a theme token (SPEC-INTERFACES 2.6, Access from other devices).
+    # omitsize leaves a viewBox and no fixed width or height, so CSS can scale the whole code to
+    # its box (a fixed-size SVG with no viewBox is cropped, not scaled: #133). border=4 is the
+    # four-module quiet zone the QR standard asks for.
     segno.make(data, error="m").save(
-        buf, kind="svg", scale=4, border=2, xmldecl=False, svgns=True,
+        buf, kind="svg", scale=1, border=4, xmldecl=False, svgns=True, omitsize=True,
         dark="#000000", light="#ffffff",
     )
     return buf.getvalue().decode("utf-8")
@@ -266,11 +269,46 @@ def local_addresses() -> list[str]:
     return sorted(addresses)
 
 
-def lan_host_ip() -> str | None:
-    """This machine's LAN address, for the QR target. Uses a UDP socket to a documentation address
-    to ask the OS which interface would be used; no packet is actually sent, and nothing is
-    contacted. Returns None if there is no usable route, in which case the UI says so instead of
-    printing a wrong address into a QR code."""
+_VIRTUAL_CONTAINS = (
+    "vethernet", "wsl", "hyper-v", "docker", "virtualbox", "vmware", "wireguard", "tailscale",
+    "zerotier", "loopback", "isatap", "teredo", "bluetooth", "vpn", "tunnel", "virtual",
+    "host-only", "local area connection*",
+)
+_VIRTUAL_PREFIX = ("veth", "br-", "virbr", "vbox", "vmnet", "tun", "tap", "utun", "wg", "ppp",
+                   "zt", "ham", "awdl", "llw", "anpi", "bridge", "docker", "lo")
+
+
+def _is_virtual_adapter(name: str) -> bool:
+    """A virtual, bridge, VPN or tunnel adapter, by its name. A phone on the Wi-Fi cannot reach
+    these, so they are never offered as "the address to use"."""
+    low = name.lower()
+    if low in ("lo", "lo0"):
+        return True
+    return any(w in low for w in _VIRTUAL_CONTAINS) or any(
+        low.startswith(p) for p in _VIRTUAL_PREFIX if p != "lo")
+
+
+def _adapter_ipv4() -> list[tuple[str, str]] | None:
+    """(adapter name, IPv4 address) of every adapter that is up; None when the OS list cannot be
+    read (the caller then falls back to the route probe alone)."""
+    try:
+        import psutil
+
+        stats = psutil.net_if_stats()
+        out: list[tuple[str, str]] = []
+        for name, addrs in psutil.net_if_addrs().items():
+            if name in stats and not stats[name].isup:
+                continue
+            out.extend((name, a.address) for a in addrs
+                       if getattr(a.family, "name", "") == "AF_INET")
+        return out
+    except (ImportError, OSError, AttributeError):
+        return None
+
+
+def _routed_ip() -> str | None:
+    """The address the OS would use toward the internet, from a UDP socket to a documentation
+    address. No packet is sent and nothing is contacted."""
     import socket
 
     try:
@@ -287,3 +325,24 @@ def lan_host_ip() -> str | None:
     if ip.startswith("127.") or ip == "0.0.0.0":  # noqa: S104 - rejecting it, not binding it
         return None
     return ip
+
+
+def lan_host_ip() -> str | None:
+    """This machine's LAN address, for the pairing QR and the MCP address. The adapter that holds
+    the default route wins when it is a real one (Wi-Fi or Ethernet). When the default route runs
+    through a VPN or a virtual adapter (WSL, Hyper-V, Docker, VirtualBox, a tunnel), the one real
+    adapter is used if there is exactly one. Link-local (169.254) addresses are never offered. If
+    it cannot tell, None: the UI says so instead of printing a wrong address into a QR code."""
+    routed = _routed_ip()
+    adapters = _adapter_ipv4()
+    if adapters is None:
+        return routed  # the OS adapter list is unreadable: the route probe is all there is
+    real = [ip for name, ip in adapters
+            if not _is_virtual_adapter(name) and not ip.startswith(("127.", "169.254."))]
+    if routed and routed in real:
+        return routed
+    if len(real) == 1:
+        return real[0]
+    if routed and not any(ip == routed for _, ip in adapters):
+        return routed  # the probe names an address the list does not show: trust the OS route
+    return None

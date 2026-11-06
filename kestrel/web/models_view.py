@@ -43,6 +43,15 @@ READS = {
 }
 
 
+# Can read for a step that runs online: Kestrel's room-to-read test only covers local models, so
+# an online step says what is true instead of a local verdict (D-114).
+ONLINE_READS = "Set by the online model"
+ONLINE_READS_TIP = (
+    "This step runs online, so how much it can read depends on the online model. Kestrel's "
+    "room-to-read test only covers models on this computer."
+)
+
+
 def friendly_model(model: str | None, *, base: str | None = None) -> str:
     """A model as the operator knows it. Kestrel's own `kestrel-<step>` models show the model they
     are built from (`base`, from the hardware profile) or, with none known, "Kestrel's model for
@@ -131,6 +140,66 @@ def health_rows(report: dict[str, Any] | None) -> list[dict[str, Any]]:
             "fixable": state in ("fail", "warn") and key in ("room", "thinking", "format"),
         })
     return found
+
+
+# The Local AI check rows of the preflight (#144, SPEC-INTERFACES 1.2), in the order shown:
+# key, title, doctor row name.
+LOCAL_AI_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("backend", "Text stays on this computer", "Local AI: backend address"),
+    ("bind", "Ollama listens only here", "Local AI: Ollama bind"),
+    ("cloudtags", "No cloud-hosted models installed", "Local AI: cloud model tags"),
+    ("cloudoff", "Ollama's cloud features are off", "Local AI: cloud features"),
+    ("egress", "No unexpected connections", "Local AI: egress"),
+    ("digests", "Models are the ones Kestrel tested", "Local AI: model digests"),
+)
+# The row Kestrel adds when Ollama could not be asked at all.
+_NEEDS_OLLAMA = "Local AI: checks needing Ollama"
+
+
+def _is_unverified(detail: str) -> bool:
+    low = detail.strip().lower()
+    return low.startswith(("unverified", "could not check")) or "unverified:" in low
+
+
+def local_ai_rows(report: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The Local AI check rows from the persisted doctor report, as plain rows. A check that
+    could not run is state "unverified" and never "ok" (#144). Nothing here is fixable: a warning
+    is advice that never stops scoring."""
+    results = {
+        str(r.get("name")): r for r in (report or {}).get("results", []) if isinstance(r, dict)
+    }
+    needs_ollama = results.get(_NEEDS_OLLAMA)
+    out: list[dict[str, Any]] = []
+    for key, title, name in LOCAL_AI_ROWS:
+        row = results.get(name)
+        if row is None and needs_ollama is not None and key in ("cloudtags", "digests"):
+            state, detail = "unverified", "Unverified: Ollama was not reachable"
+        elif row is None:
+            state, detail = "none", "Not checked yet"
+        else:
+            raw = str(row.get("detail") or "").strip()
+            status = row.get("status")
+            if status == "FAIL":
+                state = "fail"
+            elif _is_unverified(raw) and not any(
+                    w in raw.lower() for w in ("public address", "another computer")):
+                state = "unverified"
+            elif status == "WARN":
+                state = "warn"
+            elif status == "PASS":
+                state = "ok"
+            elif raw.lower().startswith("skipped"):
+                state = "none"
+            else:
+                state = "info"
+            detail = raw if state in ("warn", "fail", "info", "unverified") else (
+                raw or "Looks fine")
+            if status == "WARN" and row.get("remediation") and state == "warn":
+                detail = f"{detail} {row['remediation']}".strip()
+            detail = (detail[:260] + "…") if len(detail) > 260 else detail
+        out.append({"key": key, "title": title, "state": state, "detail": detail,
+                    "tech": f"{name}: {(row or {}).get('detail', '')}" if row else ""})
+    return out
 
 
 def _plain_detail(row: dict[str, Any]) -> str:

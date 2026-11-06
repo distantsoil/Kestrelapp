@@ -89,6 +89,14 @@ Embeddings never go online; they run inside Kestrel.
   record talk to.
 - The MCP server and LAN access are off by default and accept connections; they never call out.
 
+## Local AI and Ollama
+
+**What Kestrel does.** Kestrel runs the local AI through Ollama on this computer. It sends the model a prompt and reads text back. It gives the model no tools, no web access and no files. Every answer is checked against a fixed format.
+
+**What Kestrel cannot control.** Ollama is a separate program. Its own settings decide whether it checks for updates, uses its cloud models, or listens beyond this computer. If you point Kestrel at an Ollama on another machine, or use a custom or cloud-hosted model, your text goes there. Models are files made by other people: Kestrel tests that they run and answer in the right format, but it cannot inspect how they were trained.
+
+**How to keep it local.** Keep Ollama on this computer. Turn off Ollama's cloud models in its settings. For certainty, block Ollama's internet access in your firewall once your models are downloaded. Kestrel keeps working, because it talks to Ollama on this computer.
+
 ## Links that open only when clicked
 
 Kestrel's site, the source repository and its changelog, the donation page, the projects Kestrel

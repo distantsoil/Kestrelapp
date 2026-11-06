@@ -472,6 +472,7 @@ async def _panel_ctx(
     create_error: str | None = None,
     create_values: dict | None = None,
     edit_error: dict | None = None,
+    queue_checks: bool = False,
     **extra,
 ) -> dict:
     from kestrel.services import source_suggestions
@@ -511,7 +512,7 @@ async def _panel_ctx(
         "type_options": [("", "All types")] + [(k, t) for k, t, _d in sv.GROUPS[track]],
         "origins": sv.ORIGINS,
         "suggestions": await source_suggestions.suggestions_with_boards(
-            session, track, [s.name for s in in_use]
+            session, track, [s.name for s in in_use], queue_checks=queue_checks
         ),
         "found_boards": sum(1 for s in sources if s.origin == board_discovery.DISCOVERED),
         "found_cap": board_discovery.MAX_DISCOVERED,
@@ -570,7 +571,7 @@ async def page(request: Request):
     elif rid.isdigit() and code in RUN_OUTCOMES:
         message = {"id": int(rid), "text": RUN_OUTCOMES[code][1]}
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(request, s, run_message=message)
+        ctx = await _panel_ctx(request, s, run_message=message, queue_checks=True)
     ctx["title"] = "Sources"
     ctx["query"] = dict(request.query_params)
     tmpl = "partials/sources_panel.html" if request.headers.get("HX-Request") else "sources.html"
@@ -683,19 +684,9 @@ async def save_sec_titles(request: Request):
 
 
 async def _http_client():
-    from kestrel.ingest.http import HttpClient
-    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.services import source_suggestions
 
-    async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
-    ing = settings.ingest
-    return HttpClient(
-        user_agent=ing.user_agent,
-        default_rate_per_sec=ing.default_rate_per_sec,
-        timeout=min(ing.request_timeout_s, 20.0),
-        respect_robots=ing.respect_robots,
-        max_attempts=1,  # one request per probe: MAX_PROBES is the request ceiling
-    )
+    return await source_suggestions.http_client()
 
 
 @router.post("/sources/company-board", response_class=HTMLResponse)
@@ -1029,7 +1020,7 @@ def list_response(
 async def source_list(request: Request):
     """The groups again, for Undo and for a change made elsewhere."""
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(request, s)
+        ctx = await _panel_ctx(request, s, queue_checks=True)
     return list_response(request, ctx)
 
 

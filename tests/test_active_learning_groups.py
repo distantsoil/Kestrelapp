@@ -72,3 +72,28 @@ async def test_ranking_reads_roles_in_a_constant_number_of_queries(sm):
             event.remove(engine, "before_cursor_execute", count)
     assert len(ranked) == 25
     assert len(statements) < 10, f"{len(statements)} queries for 25 candidates"
+
+
+async def test_badge_count_equals_the_pool_when_a_role_was_decided_in_bulk(sm):
+    """A bulk decision never teaches (D-PIPE-116), so Calibrate may still ask about that role; the
+    sidebar badge counts the groups Calibrate can ask about (D-LRN-1), so it counts it too. A role
+    overridden one at a time is done for both."""
+    from kestrel.db.models import VerdictOverride
+    from kestrel.learning.active import askable_group_count_stmt
+    from kestrel.learning.capture import bulk_marks
+
+    async with sm() as s:
+        ids = await _seed(s, [("bulk", None, True, 3.9), ("single", None, True, 3.9),
+                              ("open", None, True, 3.9)])
+        s.add(VerdictOverride(opportunity_id=ids["bulk"], operator_verdict="consider",
+                              dimension_corrections=bulk_marks()))
+        s.add(VerdictOverride(opportunity_id=ids["single"], operator_verdict="consider"))
+        await s.commit()
+    async with sm() as s:
+        pool = [u.opportunity.id for u in
+                await rank_uncertain(s, "employment", get_settings(), limit=10)]
+        badge = (await s.execute(askable_group_count_stmt("employment"))).scalar_one()
+        badge_all = (await s.execute(askable_group_count_stmt(None))).scalar_one()
+    assert sorted(pool) == sorted([ids["bulk"], ids["open"]])
+    assert badge == len(pool) == 2
+    assert badge_all == 2

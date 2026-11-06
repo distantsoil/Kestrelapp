@@ -15,6 +15,8 @@ from kestrel.llm.prompts import load_prompt
 
 COVER = "cover_letter"
 OUTLINE = "engagement_outline"
+COVER_PROMPT = "cover/v4"
+OUTLINE_PROMPT = "engagement_outline/v3"
 _MIN_EXCLUSIONS = 3
 _BANNED = [
     "hit the ground running",
@@ -262,8 +264,10 @@ async def generate_cover(
     posting: str = "",
 ):
     """P4 cover letter. `user_prompt` is the assembled context (profile, selected verbatim bullets,
-    evaluation angle, job); the caller supplies only real proof points and variants."""
-    spec = load_prompt("cover/v3")
+    accepted stories, evaluation angle, job); the caller supplies only real proof points, variants
+    and accepted stories. A body over the length limits is asked once to shorten, inside the one
+    plain-writing re-ask (D-LETTER-3); one still too long is kept and marked by the page."""
+    spec = load_prompt(COVER_PROMPT)
     messages = [
         {"role": "system", "content": spec.system},
         {"role": "user", "content": user_prompt},
@@ -283,9 +287,13 @@ async def generate_cover(
     if not ok:
         return LetterDraft(value=None, third_person=True, error="third person")
     result.value = first
+    grounded = _grounding(grounding, name_sources, posting)
+
+    def checks(val) -> list[dict[str, str]]:
+        return [*(grounded(val) if grounded else []), *length_flags(val.body_md, COVER)]
+
     plain = await enforce(
-        spec, result.value, messages=messages, exempt=exempt,
-        extra_check=_grounding(grounding, name_sources, posting),
+        spec, result.value, messages=messages, exempt=exempt, extra_check=checks,
         run=lambda m, reask=False: _run(
             client, spec, m, session=session, on_quarantine=on_quarantine, reask=reask,
             opportunity_id=opportunity_id,
@@ -294,7 +302,8 @@ async def generate_cover(
     )
     v = plain.value
     return LetterDraft(
-        style_flags=plain.flags,
+        # The length mark is worked out from the text whenever it is shown, so it is not stored.
+        style_flags=[f for f in plain.flags if f.get("kind") != LENGTH],
         value=v,
         unverified_claims=verify_claims(v.claims_used, valid_keys),
         banned_hits=banned_hits(v.body_md),
@@ -308,7 +317,7 @@ async def generate_engagement(
     posting: str = "",
 ):
     """P4C engagement outline. Needs at least three explicit exclusions."""
-    spec = load_prompt("engagement_outline/v3")
+    spec = load_prompt(OUTLINE_PROMPT)
     messages = [
         {"role": "system", "content": spec.system},
         {"role": "user", "content": user_prompt},
@@ -374,25 +383,192 @@ def proof_rows(profile) -> list[dict[str, str]]:
     return rows
 
 
-def source_map(proofs: list[dict[str, str]], variants: list[tuple[str, str]]) -> dict[str, dict]:
+class SourceKeyCollision(ValueError):
+    """Two of the person's sources carry the same key (a proof point keyed like a resume line or a
+    story, say). A claim naming that key could not say which one it means, so the draft is refused
+    before anything is sent (hard rule 2, D-LETTER-8)."""
+
+    def __init__(self, key: str, labels: list[str]) -> None:
+        super().__init__(f"source key {key!r} is used by: {', '.join(labels)}")
+        self.key = key
+        self.labels = labels
+
+
+def source_map(
+    proofs: list[dict[str, str]], variants: list[tuple[str, str]],
+    stories: list[dict[str, str]] | None = None, *, strict: bool = True,
+    collided: set[str] | None = None,
+) -> dict[str, dict]:
     """Every key a claim may name, with the person's own words behind it: {key: {label, text}}.
-    A proof point's text is its claim, evidence and metric as written; a variant's is its text."""
-    out: dict[str, dict] = {}
+    A proof point's text is its claim, evidence and metric as written; a variant's is its text; an
+    accepted story's is the action line and result the prompt was given (`story_rows`).
+
+    No kind ever overwrites another (D-LETTER-8): a key used twice raises SourceKeyCollision when
+    `strict` (the draft path, before the prompt is built), else the key is left out altogether,
+    so a claim that names it is flagged unverified instead of showing the wrong text. A
+    `collided` set, when given, receives each key left out that way, so a view can tell a key
+    two sources now share from one whose source was deleted."""
+    entries: list[tuple[str, dict]] = []
+    for st in stories or []:
+        parts = [x for x in (st["action"], st["result"]) if x]
+        entries.append((st["key"], {"label": "Your story", "text": " ".join(parts),
+                                    "parts": parts}))
     for key, text in variants:
-        out[key] = {"label": "Your resume", "text": text, "parts": [text]}
+        entries.append((key, {"label": "Your resume", "text": text, "parts": [text]}))
     for p in proofs:
         parts = [x for x in (p["claim"], p["evidence"], p["metric"]) if x]
         # `text` stays one string for matching and grounding; `parts` is what the page prints, one
         # line each, so the claim, its evidence and its metric do not run together.
-        out[p["key"]] = {"label": "Your proof point", "text": " ".join(parts), "parts": parts}
+        entries.append((p["key"], {"label": "Your proof point", "text": " ".join(parts),
+                                   "parts": parts}))
+    out: dict[str, dict] = {}
+    seen: dict[str, list[str]] = {}
+    for key, value in entries:
+        seen.setdefault(key, []).append(value["label"])
+        out.setdefault(key, value)
+    for key, labels in seen.items():
+        if len(labels) > 1:
+            if strict:
+                raise SourceKeyCollision(key, labels)
+            out.pop(key, None)
+            if collided is not None:
+                collided.add(key)
     return out
+
+
+# ------------------------------------------------------------ stories as a source (D-LETTER-2)
+STORY_PREFIX = "story-"
+STORY_ACTION_CHARS = 220
+STORY_RESULT_CHARS = 320
+
+
+def is_accepted_story(story) -> bool:
+    """Only a story the person accepted may be cited: canonical and written or edited by them
+    (`operator_edited`). A proposed story (a merge the person has not saved) never is, whatever
+    its checks found."""
+    return bool(getattr(story, "is_canonical", False) and getattr(story, "operator_edited", False))
+
+
+def _sentences(text: str, limit: int, most: int) -> str:
+    """Whole sentences from the start of `text`, at most `most` of them and `limit` characters.
+    A first sentence longer than the limit is cut at the last word that fits. This shapes the
+    prompt's input only; nothing the person reads is shortened."""
+    parts = [p for p in _SENTENCE.split(" ".join((text or "").split())) if p]
+    out: list[str] = []
+    for p in parts[:most]:
+        if len(" ".join([*out, p])) > limit:
+            break
+        out.append(p)
+    if out:
+        return " ".join(out)
+    first = parts[0] if parts else ""
+    return first[:limit].rsplit(" ", 1)[0] if len(first) > limit else first
+
+
+def story_rows(stories) -> list[dict[str, str]]:
+    """Accepted stories as {key, title, action, result}: the key a claim cites, the first action
+    sentence (of its first line) and the result's first sentences. Never the whole story, and
+    never a story that is not accepted (`is_accepted_story`)."""
+    rows: list[dict[str, str]] = []
+    for st in stories or []:
+        if not is_accepted_story(st) or getattr(st, "id", None) is None:
+            continue
+        action_line = next((ln for ln in (st.action or "").splitlines() if ln.strip()), "")
+        action = _sentences(action_line, STORY_ACTION_CHARS, 1)
+        result = _sentences(st.result or "", STORY_RESULT_CHARS, 2)
+        if not (action or result):
+            continue
+        rows.append({"key": f"{STORY_PREFIX}{st.id}", "title": str(st.title or ""),
+                     "action": action, "result": result})
+    return rows
+
+
+# ------------------------------------------------------------------ length guards (D-LETTER-3)
+MAX_LINES = 3  # proof points and resume lines together, per letter
+MAX_STORIES = 2
+MAX_PARAGRAPHS = 4
+MAX_SAVE_WORDS = {COVER: 600}
+LENGTH = "length"
+_GREETING = re.compile(r"^dear\b[^\n]{0,60},?$", re.IGNORECASE)
+
+
+def pick_inputs(
+    proofs: list[dict[str, str]], variants: list[tuple[str, str]], stories: list[dict[str, str]],
+    *, posting: str, title: str = "", max_lines: int = MAX_LINES, max_stories: int = MAX_STORIES,
+) -> tuple[list[dict[str, str]], list[tuple[str, str]], list[dict[str, str]]]:
+    """What one letter's prompt may carry: the `max_lines` proof points and resume lines (pooled)
+    and the `max_stories` stories that share the most words with the posting and the title. Ties
+    keep the person's own order, and the kept items stay in that order."""
+    wanted = _tokens(f"{title} {posting}")
+
+    def score(text: str) -> int:
+        return len(_tokens(text) & wanted)
+
+    pool = [("p", i, " ".join(x for x in (p["claim"], p["evidence"], p["metric"]) if x))
+            for i, p in enumerate(proofs)]
+    pool += [("v", i, text) for i, (_k, text) in enumerate(variants)]
+    ranked = sorted(range(len(pool)), key=lambda n: (-score(pool[n][2]), n))
+    keep = {(pool[n][0], pool[n][1]) for n in ranked[:max(max_lines, 0)]}
+    s_ranked = sorted(range(len(stories)), key=lambda n: (
+        -score(f"{stories[n]['action']} {stories[n]['result']}"), n))
+    s_keep = set(s_ranked[:max(max_stories, 0)])
+    return (
+        [p for i, p in enumerate(proofs) if ("p", i) in keep],
+        [v for i, v in enumerate(variants) if ("v", i) in keep],
+        [st for i, st in enumerate(stories) if i in s_keep],
+    )
+
+
+def paragraph_count(body_md: str) -> int:
+    """Body paragraphs: blocks between blank lines, not counting a first block that is only the
+    greeting ("Dear Hiring Team,")."""
+    chunks = [c.strip() for c in re.split(r"\n\s*\n", (body_md or "").strip()) if c.strip()]
+    if chunks and _GREETING.match(chunks[0]):
+        chunks = chunks[1:]
+    return len(chunks)
+
+
+def over_length(body_md: str, kind: str) -> dict[str, int] | None:
+    """{words, limit, paragraphs, max_paragraphs} when a cover letter is over 350 words or four
+    paragraphs, else None. An outline has no such limit."""
+    if kind != COVER:
+        return None
+    n, paras, hi = word_count(body_md), paragraph_count(body_md), WORD_RANGE[COVER][1]
+    if n <= hi and paras <= MAX_PARAGRAPHS:
+        return None
+    return {"words": n, "limit": hi, "paragraphs": paras, "max_paragraphs": MAX_PARAGRAPHS}
+
+
+def length_flags(body_md: str, kind: str) -> list[dict[str, str]]:
+    """The length problem as a check flag, so the one plain-writing re-ask asks to shorten it."""
+    over = over_length(body_md, kind)
+    if over is None:
+        return []
+    return [{
+        "kind": LENGTH, "field": "body_md", "phrase": f"{over['words']} words",
+        "request": (
+            f"the body has {over['words']} words in {over['paragraphs']} paragraphs. Shorten it "
+            f"to at most {over['limit']} words and {over['max_paragraphs']} paragraphs after the "
+            "greeting, in whole sentences. Keep the same facts and do not add any."
+        ),
+    }]
+
+
+def save_refusal(text: str, kind: str) -> str | None:
+    """Why a text may not be saved (the hard cap above 600 words for a cover letter), or None."""
+    cap = MAX_SAVE_WORDS.get(kind)
+    n = word_count(text)
+    if cap is not None and n > cap:
+        return (f"Not saved: a cover letter can be at most {cap} words, and this one has {n}. "
+                "Cut it, then save.")
+    return None
 
 
 def build_letter_prompt(
     kind: str, *, proofs: list[dict[str, str]], variants: list[tuple[str, str]],
     headline: str = "", narrative: str = "", evaluation: dict | None = None,
     research: str = "", title: str = "", company: str = "", description: str = "",
-    org_line: str = "",
+    org_line: str = "", stories: list[dict[str, str]] | None = None,
 ) -> str:
     """The user message of P4 / P4C. It carries ONLY the person's own proof points and selected
     bullets, each with the key the reply must cite in `claims_used`, plus the posting and what
@@ -413,6 +589,13 @@ def build_letter_prompt(
     )
     lines += ["", f"{heading} (verbatim; cite each by its key in claims_used)"]
     lines += [f"- [{k}] {t}" for k, t in variants] or ["(none selected)"]
+    if kind == COVER:
+        lines += ["", "MY STORIES (accepted; the result and one action line each; cite each by its "
+                  "key in claims_used)"]
+        lines += [
+            f"- [{st['key']}] {st['title'] or 'Story'} | what I did: {st['action'] or 'n/a'} | "
+            f"what changed: {st['result'] or 'n/a'}" for st in stories or []
+        ] or ["(none)"]
     lines += ["", "GUIDANCE FOR THE " + ("OUTLINE" if kind == OUTLINE else "LETTER")
               + " (background for you; do not repeat these labels in your text)"]
     lines += [f"{label}: {value}" for label, value in ev.items() if value] or ["(none yet)"]

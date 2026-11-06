@@ -144,14 +144,16 @@ async def strip_context(s, track: str, settings, panel: dict | None = None, *,
                         first_run: bool = False) -> dict:
     """The three segments of the status strip (D-UI-92). The run is global, one figure for every
     track. Last run cross-fades to Next run and holds on Last run while a problem exists."""
-    from kestrel.web.app import current_run_mode
+    from kestrel.web.app import confirmed_run_settings, current_run_mode
     from kestrel.web.pages.runs_page import _model_card
 
     panel = panel or await run_panel(s, track, settings)
     run = panel["run"]
     sched = await schedule_card(s, settings)
     mode = current_run_mode() or settings.llm.mode
-    card = await _model_card(s, settings, None, mode in ("hosted", "both"))
+    # The run card shows what the run in flight is really using until it ends (#103).
+    card = await _model_card(s, confirmed_run_settings() or settings, None,
+                             mode in ("hosted", "both"))
     problem = bool(not first_run and (run["problem_count"] or run["failed"]))
     n_problems = int(run["problem_count"]) + (1 if run["failed"] else 0)
     state = ("paused" if run["paused"] else "active" if run["active"]
@@ -224,8 +226,9 @@ async def schedule_card(s, settings) -> dict:
     one went. The status bar's tooltip is the run panel's step words (run_summary.step_words)."""
     from kestrel.analytics.run_summary import local_when
     from kestrel.services import run_schedule as rs
-    from kestrel.web.app import current_run_mode
+    from kestrel.web.app import confirmed_run_settings, current_run_mode
 
+    settings = confirmed_run_settings() or settings  # the run in flight, until it ends (#103)
     sched, last = await rs.load(s)
     now_local = rs.local_now()
     nxt = rs.next_fire(sched, now_local, last)

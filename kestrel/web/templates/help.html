@@ -73,6 +73,7 @@
         {% if h.key == 'keys' %}
         <div class="hp-sc"><span>Search this page</span><kbd class="hp-kbd">/</kbd></div>
         <div class="hp-sc"><span>Search or jump anywhere</span><kbd class="hp-kbd">Ctrl K</kbd></div>
+        <div class="hp-sc"><span>Collapse or expand the sidebar</span><kbd class="hp-kbd">Ctrl B</kbd></div>
         <div class="hp-sc"><span>Close a panel or clear search</span><kbd class="hp-kbd">Esc</kbd></div>
         {% else %}
         <ul class="k-hcard__list">{% for l in h.lines %}<li>{{ l }}</li>{% endfor %}</ul>
@@ -124,6 +125,8 @@
   {% call ui.flyout('hp-fly-keys', 'Shortcuts', eyebrow='Help') %}
     <h6>On a Mac</h6>
     <p>Use Cmd in place of Ctrl.</p>
+    <h6>Sidebar</h6>
+    <p>Ctrl B shrinks the sidebar to icons, and opens it over the page again. The pushpin keeps it open beside the page. Kestrel remembers your choice.</p>
     <h6>Search or jump</h6>
     <p>Type a company, a role or a page name. It finds roles you have already seen, pages and settings.</p>
     <h6>Keyboard only</h6>
