@@ -393,14 +393,14 @@ async def practice_ctx(session: AsyncSession, sh: dict) -> dict:
 
 # ------------------------------------------------------------------------------ the story bank
 async def build_ctx(session: AsyncSession) -> dict:
-    from kestrel.interview.story_task import BUILD_SENDS, TIER
+    from kestrel.interview.story_task import BUILD_SENDS_ALL, TIER
     from kestrel.services.online_consent import online_route
     from kestrel.services.setting_overrides import load_settings_with_db
 
     state = await build_state(session)
     return {
         "build_route": await online_route(
-            session, await load_settings_with_db(session), TIER, this_send=BUILD_SENDS,
+            session, await load_settings_with_db(session), TIER, sends=BUILD_SENDS_ALL,
             reask=True,
         ),
         "building": state["state"] == "building",

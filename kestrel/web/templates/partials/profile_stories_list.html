@@ -7,7 +7,7 @@
       The same bank appears under Interview prep, and a change in either place changes both.</p>
     <a class="k-btn k-btn--sm" href="/stories" data-testid="pf-stories-open">Open my stories</a>
     <form hx-post="/profile/stories/build" hx-target="#pf-stories-list" hx-swap="outerHTML">
-      {{ online_ask.ask(build_route, 'build', 'build drafts') }}
+      {{ online_ask.ask(build_route, 'build', 'build drafts', online_ask.STORY_LOCAL) }}
       <button type="submit" class="k-btn k-btn--sm" data-consent-send data-testid="pf-stories-build"
             {% if building %}disabled{% endif %}>Build stories</button>
     </form>

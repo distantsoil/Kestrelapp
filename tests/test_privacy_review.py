@@ -231,7 +231,7 @@ async def test_a_queued_story_build_is_held_if_tier2_went_online(sm, monkeypatch
     _online(monkeypatch)
     called = []
 
-    async def fake(session, client, settings):
+    async def fake(session, client, settings, **_kw):
         called.append(1)
 
     monkeypatch.setattr(stories_mod, "consolidate_stories", fake)

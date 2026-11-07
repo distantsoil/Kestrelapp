@@ -53,7 +53,17 @@ async def build_pending(session: AsyncSession) -> bool:
 
 
 TIER = "tier2"  # prompt story_consolidate/v2 runs on this tier
-BUILD_SENDS = "your interview notes and the interview sketches saved with each scored role"
+# How long one pass of a build may run before it gives the worker back (D-STORY-2). A pass
+# always writes at least one group, then stops between groups once this has passed.
+PASS_SECONDS = 120.0
+_SKIP_KEY = "failed_sketch_ids"  # merges that failed earlier in this build: not sent again
+_TALLY_KEY = "progress"  # counts so far across the build's passes, for the last-build line
+# Everything a story build puts in its prompt (D-STORY-3): the notes and sketches, and the proof
+# points from the profile. The resume text stays on this computer (it only checks names).
+BUILD_SENDS_ALL = (
+    "your interview notes, the interview sketches saved with each scored role, and the proof "
+    "points in your profile (each claim with its evidence and metric)"
+)
 
 
 async def request_build(session: AsyncSession, *, consent: dict | None = None) -> bool:
@@ -133,11 +143,20 @@ async def drain_story_builds(
                          "and confirm the send.",
             })
             await queue.complete(task.id, worker_id=wid)
+            await _notify_owed(sm)  # drafts earlier passes saved are still announced
             continue
         beat = asyncio.create_task(_renew(queue, task.id, wid))
+        payload = dict(task.payload or {})
+        skip = frozenset(int(i) for i in payload.get(_SKIP_KEY) or [])
         try:
             async with sm() as s:
-                res = await consolidate_stories(s, client, settings)
+                # Passes only when Tier 2 is online: a local model shares the GPU with scoring,
+                # and giving the worker back between groups would swap models every pass (the
+                # drain-one-tier rule). A local build still saves each group as it finishes.
+                res = await consolidate_stories(
+                    s, client, settings, skip_ids=skip,
+                    pass_seconds=PASS_SECONDS if _use_passes(settings) else None,
+                )
         except Exception as exc:  # a failed build is reported on the page, never fatal
             beat.cancel()
             log.warning("build_stories_failed", task=task.id,
@@ -147,19 +166,57 @@ async def drain_story_builds(
                 with contextlib.suppress(Exception):
                     await _record(sm, {"at": utcnow_iso(), "ok": False,
                                        "error": task_failure_text(exc)[:300]})
+                with contextlib.suppress(Exception):
+                    await _notify_owed(sm)  # drafts earlier passes saved are still announced
             continue
         finally:
             beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await beat
+        tally = dict(payload.get(_TALLY_KEY) or {})
+        first = not tally
+        for key, n in (("created", len(res.created_story_ids)), ("attached", len(res.attached))):
+            tally[key] = int(tally.get(key, 0)) + n
+        # The first pass saw every sketch the build covers, and every blank or earlier-refused one
+        # it skips; later passes see only what is left, so they add only what they refused.
+        tally.setdefault("sketches", res.sketches)
+        tally["skipped"] = res.skipped if first else int(tally.get("skipped", 0)) + res.refused
+        if res.more:
+            # Stopped between groups at the pass deadline (D-STORY-2): what it wrote is saved,
+            # and the task goes back to the queue so the worker runs searches, letters and the
+            # rest before the next pass carries on. Not a failure: the attempt is refunded.
+            await queue.give_back(task.id, {
+                **payload, _SKIP_KEY: sorted(skip | set(res.failed_ids)), _TALLY_KEY: tally,
+            }, worker_id=wid)
+            log.info("build_stories_paused", task=task.id, created=tally["created"],
+                     attached=tally["attached"])
+            break
         await _record(sm, {
-            "at": utcnow_iso(), "ok": True, "sketches": res.sketches,
-            "created": len(res.created_story_ids), "attached": len(res.attached),
-            "skipped": res.skipped,
+            "at": utcnow_iso(), "ok": True, "sketches": tally["sketches"],
+            "created": tally["created"], "attached": tally["attached"],
+            "skipped": tally["skipped"],
         })
         await queue.complete(task.id, worker_id=wid)
         done += 1
     return done
+
+
+def _use_passes(settings: Settings) -> bool:
+    """Whether a build runs in passes that give the worker back (D-STORY-2): only when Tier 2 is
+    online, so a local model is never swapped out between groups."""
+    from kestrel.services.online_consent import tier_goes_online
+
+    return isinstance(settings, Settings) and tier_goes_online(settings, TIER)
+
+
+async def _notify_owed(sm: async_sessionmaker[AsyncSession]) -> None:
+    """Send the drafts notice a build that ends without a last pass (held or dead) still owes
+    for the drafts its earlier passes saved (D-STORY-2)."""
+    from kestrel.interview.stories import _notify_unsent
+
+    async with sm() as s:
+        await _notify_unsent(s)
+        await s.commit()
 
 
 async def _renew(queue: Any, task_id: int, worker_id: str, *, every_s: float = _RENEW_S) -> None:

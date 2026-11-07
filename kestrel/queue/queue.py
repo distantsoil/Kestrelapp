@@ -306,6 +306,28 @@ class TaskQueue:
             await s.commit()
             return task.status
 
+    async def _give_back(
+        self, task_id: int, payload: dict, *, worker_id: str | None = None
+    ) -> str:
+        """Return a leased task that made progress and stopped on purpose to let other work run
+        (a story build's pass, D-STORY-2): pending again with the lease's attempt refunded, its
+        payload replaced by `payload` (where the work got to), and no error recorded. Unlike
+        `defer` it is not a hold: the next lease takes it as soon as the worker gets back to it."""
+        async with self._sm() as s:
+            task = await s.get(Task, task_id)
+            if task is None:
+                return "missing"
+            if worker_id is not None and (task.worker_id != worker_id or task.status != "leased"):
+                return "not_owned"
+            task.payload = {k: v for k, v in payload.items() if k != DEFERRED_KEY}
+            task.updated_at = utcnow_iso()
+            task.status = "pending"
+            task.worker_id = None
+            task.lease_until = None
+            task.attempts = max(0, (task.attempts or 0) - 1)
+            await s.commit()
+            return task.status
+
     async def _reclaim_expired(self) -> int:
         """Return expired leases to the queue; dead-letter those already out of attempts."""
         now = utcnow_iso()
@@ -402,6 +424,11 @@ class TaskQueue:
     async def defer(self, task_id: int, note: str, *, worker_id: str | None = None) -> str:
         return await _with_lock_retry(
             "defer", lambda: self._defer(task_id, note, worker_id=worker_id)
+        )
+
+    async def give_back(self, task_id: int, payload: dict, *, worker_id: str | None = None) -> str:
+        return await _with_lock_retry(
+            "give_back", lambda: self._give_back(task_id, payload, worker_id=worker_id)
         )
 
     async def reclaim_expired(self) -> int:

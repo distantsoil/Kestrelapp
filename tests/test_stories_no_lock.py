@@ -124,7 +124,9 @@ async def test_no_write_lock_with_a_failed_merge_and_an_attach(sm, monkeypatch):
     assert edited.use_count == 2 and edited.title == "Delta"
 
 
-async def test_kill_mid_build_leaves_nothing_and_a_rerun_completes(sm):
+async def test_kill_mid_build_keeps_what_it_wrote_and_a_rerun_sends_only_the_rest(sm):
+    # D-STORY-2: each group is saved in its own commit as soon as its model call returns. A
+    # build killed mid-way keeps those drafts, and the rerun sends only what was not written.
     await _three_events(sm)
     killer = _ProbingClient(_db_file(sm), explode_on="sigma")
     async with sm() as s:
@@ -132,15 +134,26 @@ async def test_kill_mid_build_leaves_nothing_and_a_rerun_completes(sm):
             await consolidate_stories(s, killer, get_settings())
     assert killer.locked == []
     async with sm() as s:
-        assert (await s.execute(select(func.count()).select_from(Story))).scalar_one() == 0
-        assert (await s.execute(select(func.count()).select_from(StoryUsage))).scalar_one() == 0
+        kept = (await s.execute(select(func.count()).select_from(Story))).scalar_one()
+        assert kept == (await s.execute(select(func.count()).select_from(StoryUsage))).scalar_one()
+    assert 1 <= kept < 3  # what it wrote before the kill is kept
+    sent: list[str] = []
+
+    class _Recording(_ProbingClient):
+        async def complete(self, **kw):
+            sent.append(kw["messages"][-1]["content"].lower())
+            return await super().complete(**kw)
+
     async with sm() as s:
-        again = _ProbingClient(_db_file(sm))
+        again = _Recording(_db_file(sm))
         result = await consolidate_stories(s, again, get_settings())
     assert again.locked == []
-    assert len(result.created_story_ids) == 3
+    # Only the unwritten group is handled again (written as a new draft, or attached to one the
+    # first build saved); nothing the first build wrote is sent a second time.
+    assert result.sketches == 3 - kept
+    assert len(result.created_story_ids) + len(result.attached) == 3 - kept
+    assert len(sent) == len(result.created_story_ids)
     async with sm() as s:
-        assert (await s.execute(select(func.count()).select_from(Story))).scalar_one() == 3
         assert (await s.execute(select(func.count()).select_from(StoryUsage))).scalar_one() == 3
 
 
@@ -163,7 +176,9 @@ class _DeletingClient(_ProbingClient):
 
 
 async def test_an_attach_target_deleted_during_the_build_is_skipped_not_fatal(sm):
-    await _three_events(sm, order=("delta", "sigma"))
+    # Sigma's model call runs first and the operator deletes the target during it; delta's
+    # attach comes after, so it finds its target gone (each group is written as it finishes).
+    await _three_events(sm, order=("sigma", "delta"))
     async with sm() as s:
         victim = Story(
             title="Delta",

@@ -892,3 +892,36 @@ def test_a_restart_forgets_the_stop_request():
             await engine.dispose()
 
     assert asyncio.run(go()) is None
+
+
+def _own_work_rows(kind: str, *, search_running: bool = False) -> list:
+    """An open run whose next search is queued while the worker runs the person's own request
+    (a story build or a letter draft) under a live lease (D-WORKER-1)."""
+    later = _live()  # a live lease, not a seeded "ago"
+    rows: list = [
+        _both(),
+        _src("Waiting"),                                                   # 1
+        Run(name=runlog.APP_RUN_NAME, status="running", started_at=_ago(minutes=5), counts={}),
+        Task(type="scrape", status="pending", payload={"source_id": 1}, updated_at=_ago()),
+        Task(type=kind, status="leased", payload={}, lease_until=later, updated_at=_ago()),
+    ]
+    if search_running:
+        rows.append(ScrapeRun(source_id=1, status="running", started_at=_ago(minutes=1)))
+    return rows
+
+
+@pytest.mark.parametrize("kind,words", [
+    ("build_stories", "Building your stories, then search 1 of 1"),
+    ("letter_draft", "Drafting your letter, then search 1 of 1"),
+])
+def test_a_search_waiting_behind_the_persons_request_says_so(kind, words):
+    asyncio.run(_seed(_own_work_rows(kind)))
+    s = _summary()
+    assert s["stage"] == "searching" and s["own_work"] == kind
+    assert rs.step_words(s) == words
+    assert rs.rail_line(s) == words
+
+
+def test_a_search_actually_running_still_reads_as_searching():
+    asyncio.run(_seed(_own_work_rows("build_stories", search_running=True)))
+    assert rs.step_words(_summary()).startswith("Searching 1 of")

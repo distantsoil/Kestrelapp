@@ -486,6 +486,24 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
                 await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0,
                                    roles=t2.roles)
+                # What the person asked for comes before background work (D-WORKER-1): stories
+                # they asked to build, then the letters they asked to draft, ahead of the
+                # background lane and the scheduled jobs. A story build runs in short passes
+                # (D-STORY-2), so a long one never holds a search or a letter for more than a
+                # pass. Queued, never run on the request thread.
+                # A pause mid-cycle (finding 2): each drain above finished its leased task and
+                # claimed no more; nothing further starts until the operator resumes.
+                if not is_paused():
+                    await drain_story_builds(sm, client, settings, stop=stop)
+                    # Cover letter and outline drafts (D-UI-239): a draft cut short by a quit or
+                    # a crash is leased again here after the restart. An online one whose
+                    # confirmed model or destination changed is held, not sent.
+                    from kestrel.web.pages.role import run_letter_drafts
+
+                    try:  # a letter pass must never take the tiers, training or checks with it
+                        await run_letter_drafts(stop=stop)
+                    except Exception as exc:  # noqa: BLE001 - isolated; the next cycle retries
+                        log.warning("letter_drafts_pass_error", error_type=type(exc).__name__)
                 # Idle after every normal tier: free the day's share of roles waiting in the
                 # background lane (found company boards); they then drain tier by tier.
                 lane_n = await worker.release_lane()
@@ -497,12 +515,9 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                                        did_work=t1.completed > 0, roles=t1.roles)
                     await cycle.record("tier2", runlog.tier_counts(t2),
                                        did_work=t2.completed > 0, roles=t2.roles)
-                # Stories the operator asked to build from the My stories page (queued, never run
-                # on the request thread).
                 # A pause mid-cycle (finding 2): each drain above finished its leased task and
                 # claimed no more; nothing further starts until the operator resumes.
                 if not is_paused():
-                    await drain_story_builds(sm, client, settings, stop=stop)
                     # Likely questions for roles marked Applied (P14): the same Tier 2 model as
                     # the story build, so right after it keeps the tier drained (D-INTERVIEW-1).
                     await drain_interview_questions(sm, client, settings, stop=stop)
@@ -525,15 +540,6 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     from kestrel.services.follow_up import drain as drain_follow_ups
 
                     await drain_follow_ups(sm, lambda cfg: LLMClient(cfg, http=http), stop=stop)
-                    # Cover letter and outline drafts (D-UI-239): a draft cut short by a quit or
-                    # a crash is leased again here after the restart. An online one whose
-                    # confirmed model or destination changed is held, not sent.
-                    from kestrel.web.pages.role import run_letter_drafts
-
-                    try:  # a letter pass must never take the tiers, training or checks with it
-                        await run_letter_drafts(stop=stop)
-                    except Exception as exc:  # noqa: BLE001 - isolated; the next cycle retries
-                        log.warning("letter_drafts_pass_error", error_type=type(exc).__name__)
                     # Model check (D-DRIFT-11): its own drained step, after every tier has
                     # drained and never beside them, so it cannot swap models under the worker.
                     await drain_checks(sm, settings, make_client=lambda s: LLMClient(s, http=http),

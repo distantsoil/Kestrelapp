@@ -526,6 +526,12 @@ are disposable. Consolidated they become the operator's actual interview prepara
    constraint, difficult stakeholder, technical judgment, team building) have a strong story and
    which have a gap.
 
+**A build runs in short passes (D-STORY-2).** Each cluster is saved in its own commit as soon as
+its model call returns, so drafts appear while the build runs and a build cut short keeps what it
+wrote. After about two minutes a pass stops between clusters and gives the worker back, so a
+search or a letter the person is waiting for runs before the next pass carries on. A cluster
+whose merge failed is not sent again by the same build, only by the next one.
+
 **Gap analysis is the point.** Knowing you have no good failure story is more useful than
 having forty mediocre ones.
 

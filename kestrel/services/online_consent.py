@@ -190,17 +190,20 @@ def _provider_label(settings: Settings, tier: str) -> str:
 
 async def online_route(
     session: AsyncSession, settings: Settings, tier: str, *, this_send: str = "",
-    reask: bool = False,
+    reask: bool = False, sends: str = "",
 ) -> dict[str, Any]:
     """Where a `tier` call goes. {"online": False} when it stays on this computer. Otherwise the
     provider, the configured model, `sends` (the tier's line of the Hosted mode disclosure, the
     text the operator acknowledged), `this_send` (what this action adds) and the employer state.
     The server re-checks the same facts when the action is asked for. `reask=True` marks an
     action whose reply goes through the plain-writing check, which can send one more request to
-    the same model; the panel then says so (disclosure only, it changes nothing that is sent)."""
+    the same model; the panel then says so (disclosure only, it changes nothing that is sent).
+    `sends` replaces the tier's general line with exactly what this action sends, for an action
+    that sends less than the tier's whole line (a story build, D-STORY-3); it must never name
+    less than the action actually sends."""
     if not tier_goes_online(settings, tier):
         return {"online": False}
-    sends = settings.llm.hosted_mode.disclosure_terms()["sends"][tier]
+    sends = sends or settings.llm.hosted_mode.disclosure_terms()["sends"][tier]
     return {
         "online": True,
         "hosted_active": settings.llm.hosted_mode.active,

@@ -16,7 +16,11 @@
 <span class="k-consent {{ extra_cls }}" data-consent-row><label class="k-consent__label"><input type="checkbox" name="{{ name }}" value="{{ value }}" data-consent-box{% if when_field %} data-consent-field="{{ when_field }}"{% if when_prefix is not none %} data-consent-prefix="{{ when_prefix }}"{% endif %}{% endif %} data-testid="{{ tid }}" aria-describedby="{{ tid }}-hint"> <span>{{ text }}</span></label><span class="k-consent__hint" id="{{ tid }}-hint" data-consent-hint role="status" data-testid="{{ tid }}-hint">Tick the box to send</span></span>
 {% endmacro %}
 
-{% macro ask(route, tid, verb) %}
+{# The story-build panels name the step that stays on this computer (D-EMBED-8): matching notes
+   uses the bundled embedding model, which never goes online (D-EMBED-1). #}
+{% set STORY_LOCAL = "Kestrel matches your notes and saved interview sketches on this computer first, so the same experience becomes one story. Only the writing step uses the online model." %}
+
+{% macro ask(route, tid, verb, local_step='') %}
 {%- if route and route.online %}
 <div class="k-card" data-testid="{{ tid }}-ask">
   <b>An online model does this</b>
@@ -34,6 +38,9 @@
     <li data-testid="{{ tid }}-sends">{{ route.sends }}.</li>
     {%- if route.this_send %}<li>For this request that means {{ route.this_send }}.</li>{% endif %}
   </ul>
+  {%- endif %}
+  {%- if local_step %}
+  <p data-testid="{{ tid }}-local">{{ local_step }}</p>
   {%- endif %}
   {{ reask_note(route.reask, tid) }}
   {%- if route.employer == 'hidden' %}<p data-testid="{{ tid }}-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>

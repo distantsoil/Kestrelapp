@@ -434,7 +434,7 @@ def test_build_stories_enqueues_one_task_and_the_worker_runs_it_with_the_notes(m
 
     seen = {}
 
-    async def fake(session, client, settings):
+    async def fake(session, client, settings, **_kw):
         seen["sketches"] = len(await stories_mod.collect_note_sketches(session))
         return ConsolidationResult(sketches=1, clusters=1, created_story_ids=[7])
 
@@ -500,7 +500,7 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
 
     calls = {"n": 0}
 
-    async def boom(session, client, settings):
+    async def boom(session, client, settings, **_kw):
         calls["n"] += 1
         raise RuntimeError("model unreachable")
 

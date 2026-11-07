@@ -38,6 +38,11 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 ### Fixed
 
 - **A missing built-in embedding model now says what to do** instead of "an unexpected problem (EmbedModelMissing)". Matching stories and other text always runs on this computer, even with an online model, so a source checkout must fetch the model once; the developer guide now lists that step.
+- **The ask-first panel for building stories now says which step stays on this computer.** Your notes and saved interview sketches are matched on this computer first; only the writing step uses the online model.
+- **Building stories no longer holds everything else up.** Each story is saved as soon as it is written, so drafts appear while the build runs and quitting keeps them. Every two minutes or so the build lets a waiting search or cover letter run first.
+- **Stories and cover letters you ask for now run before background work**, and the status says "Building your stories, then search 3 of 5" instead of "Searching" while a search waits.
+- **Roles that missed their embedding** because the built-in model was missing are queued again once it is there.
+- **The story panel's list of what is sent** now names exactly what a story build sends: your notes, your interview sketches and the proof points in your profile.
 - **A cover letter no longer marks the employer's own name as unverified** unless it says you worked there, and a number or length of time from your own headline or narrative counts as yours. A company you never named is still marked, and the send dialog now says the headline and narrative are sent.
 - **A failed step on Settings > Your computer now says what happened in plain words** instead of naming an internal error type.
 - **A cover letter could claim things you never said.** A gap the review had found you already meet was passed to the letter as one to acknowledge, so a letter wrote "three years" for a person with eight. That gap is no longer passed on, a length of time now has to match your own text exactly (a "3" elsewhere no longer covers "three years"), and promises such as starting immediately or relocating are marked unless you wrote them (D-LETTER-9).
