@@ -614,20 +614,21 @@ def test_the_role_page_offers_i_applied_with_a_date_and_records_a_past_date(ids)
     past = (date.today() - timedelta(days=9)).isoformat()
     with _client() as c:
         before = c.get(f"/opportunities/{ids['second']}").text
-        assert 'data-testid="applied-form"' not in before  # not shortlisted: no pursuit yet
+        # #129: a role never shortlisted can be marked applied directly, so the form is there.
+        assert 'data-testid="applied-form"' in before
         c.post(f"/opportunities/{ids['second']}/role/shortlist")
         html = c.get(f"/opportunities/{ids['second']}").text
         soup = BeautifulSoup(html, "html.parser")
         form = soup.select_one('#rl-side [data-testid="applied-form"]')
-        assert form is not None and form["hx-post"].endswith("/act/applied/quick")
+        assert form is not None and form["hx-post"].endswith("/role/applied")
         date_in = form.select_one("input[type=date]")
         assert date_in["name"] == "applied_on" and date_in["value"] == date.today().isoformat()
         assert form.select_one('[data-testid="mark-applied"]') is not None
         assert "style=" not in str(form)
         p = _pursuit_for(ids["second"])
         r = c.post(form["hx-post"], data={"applied_on": past, "refresh_side": "1"})
-        assert r.status_code == 200 and 'data-testid="applied-done"' in r.text
-        assert "/role/side" in r.text  # the decision column reloads itself
+        assert r.status_code == 200 and 'id="rl-side"' in r.text  # the decision column, redrawn
+        assert 'data-testid="applied-on"' in r.text
         assert _pursuit_for(ids["second"]).applied_at.startswith(past)
         after = c.get(f"/opportunities/{ids['second']}").text
         board = c.get("/pursuits").text
@@ -636,7 +637,8 @@ def test_the_role_page_offers_i_applied_with_a_date_and_records_a_past_date(ids)
     assert shown is not None and soup.select_one('#rl-side [data-testid="applied-form"]') is None
     from kestrel.date_display import format_display
 
-    assert shown.get_text(" ", strip=True) == f"Applied on {format_display(past)}"
+    # D-UI-251: the saved line also names the follow-up (here overdue, the date being 9 days back).
+    assert shown.get_text(" ", strip=True).startswith(f"Applied on {format_display(past)}")
     assert p.id and past in board
 
 

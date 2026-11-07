@@ -630,10 +630,40 @@ def test_a_maybe_role_counts_in_decisions_waiting_and_in_the_your_call_chip():
     assert "Director of Enterprise Applications" in rows
     assert rows["Director of Enterprise Applications"]["status"] == "Not decided"
     assert waiting["n"] == 2  # the Maybe role plus the shortlisted one, counted once each
-    assert chips["your_call"] == 1
+    assert chips["your_call"] == waiting["n"] == 2
     with _client() as c:
         html = c.get("/today/decisions").text
     assert 'data-testid="dw-count">2<' in html
+
+
+def test_an_unflagged_maybe_role_needs_a_decision_on_every_surface():
+    """Issue #113: an undecided Maybe role that was NOT flagged for review is counted the same
+    way by Today's Decisions waiting, the Pipeline Your call chip and the shared count a
+    notification would read (needs_decision_count). One definition, one number."""
+    from kestrel.web.queries import OppFilters, chip_counts, needs_decision_count
+
+    ids = _seed()
+
+    async def make_maybe(s):
+        ev = (await s.execute(select(Evaluation).where(
+            Evaluation.opportunity_id == ids["backlog"]))).scalar_one()
+        ev.verdict, ev.verdict_model = "consider", "consider"
+        ev.score = ev.weighted_score = 3.4
+        ev.needs_review = False
+
+    _db(make_maybe)
+
+    async def read(s):
+        return (await tv.decisions_waiting(s, "employment"),
+                await chip_counts(s, OppFilters(track="employment", grouped=True)),
+                await needs_decision_count(s, "employment"))
+
+    waiting, chips, shared = _db(read)
+    assert "Director of Enterprise Applications" in {r["title"] for r in waiting["rows"]}
+    assert waiting["n"] == chips["your_call"] == shared == 2
+    with _client() as c:
+        page = c.get("/opportunities?needs_review=1").text
+    assert f'/opportunities/{ids["backlog"]}' in page
 
 
 def test_applications_needing_action_use_the_applications_verbs():

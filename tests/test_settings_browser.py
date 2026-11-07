@@ -9,7 +9,10 @@ already on the machine, else a Playwright Chromium (tests/browser.py)."""
 
 from __future__ import annotations
 
+import contextlib
 import os
+import pathlib
+import tempfile
 
 import pytest
 
@@ -260,3 +263,251 @@ def test_switching_to_online_updates_the_setup_checklist_without_leaving_setting
         assert not errors
     finally:
         ctx.close()
+
+
+# ------------------------------------------------ the MCP card: addresses, key note, narrow title
+_TEXT_BOXES = """root => {
+  const out = [];
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!n.textContent.trim()) continue;
+    const el = n.parentElement;
+    const det = el && el.closest('details');
+    if (!el || el.offsetParent === null || (det && !det.open && !el.closest('summary'))) continue;
+    const r = document.createRange(); r.selectNodeContents(n);
+    // Clipped text (an ellipsis) is judged by its own box, not by the full text behind the clip.
+    const clipped = getComputedStyle(el).textOverflow === 'ellipsis';
+    const rects = clipped ? [el.getBoundingClientRect()] : r.getClientRects();
+    for (const b of rects) if (b.width > 0 && b.height > 0)
+      out.push({t: n.textContent.trim().slice(0, 24), l: b.left, r: b.right, tp: b.top,
+                bt: b.bottom});
+  }
+  return out;
+}"""
+
+
+_SHOTS = pathlib.Path(os.environ.get("KESTREL_SHOTS_DIR") or tempfile.mkdtemp())
+
+
+@contextlib.contextmanager
+def _mcp_card_page(monkeypatch, lan_on, theme, width):
+    """The MCP card with the switch on, LAN access on or off, in a real browser."""
+    import httpx
+    from playwright.sync_api import sync_playwright
+
+    from kestrel import config as config_mod
+    from kestrel.db import migrate
+    from kestrel.web import auth
+    from kestrel.web.serve import running_server
+
+    if lan_on:
+        real = config_mod.get_settings()
+        lan = real.model_copy(update={"server": real.server.model_copy(update={"bind_all": True})})
+        monkeypatch.setattr(config_mod, "get_settings", lambda: lan)
+        monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    migrate.run_migrations()
+    with running_server(worker=False) as base, sync_playwright() as p:
+        httpx.post(f"{base}/settings/mcp", data={"enabled": "1"})
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+        page = ctx.new_page()
+        try:
+            page.goto(f"{base}/settings#privacy")
+            page.wait_for_selector('[data-testid="st-mcp"] [data-testid="mcp-address"]')
+            wait_for_layout(page)
+            card = page.query_selector('[data-testid="st-mcp"]')
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+            yield page, card
+        finally:
+            ctx.close()
+            browser.close()
+
+
+def _assert_no_text_overlap(page, card, label):
+    boxes = page.evaluate(_TEXT_BOXES, card)
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert not _overlaps(a, b), (label, a["t"], b["t"])
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1366, 390])
+def test_the_mcp_card_with_lan_access_on_shows_both_addresses_and_a_one_line_key_name(
+        monkeypatch, theme, width):
+    with _mcp_card_page(monkeypatch, True, theme, width) as (page, card):
+        _assert_no_text_overlap(page, card, ("lan_on", theme, width))
+        token = page.query_selector('[data-testid="mcp-secret-note"] .st-code')
+        assert token.inner_text() == "X-Kestrel-Key"
+        assert page.evaluate(_LINES, token) <= 1
+        assert token.bounding_box()["width"] > 80  # not the 26px monogram badge
+        assert page.query_selector('[data-testid="mcp-address-lan"]').is_visible()
+        assert page.query_selector('[data-testid="mcp-copy-lan"]').is_visible()
+        card.screenshot(path=str(_SHOTS / f"mcp-lan_on-{theme}-{width}.png"))
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1366, 390])
+def test_the_mcp_card_with_lan_access_off_points_to_lan_access_without_overlap(
+        monkeypatch, theme, width):
+    with _mcp_card_page(monkeypatch, False, theme, width) as (page, card):
+        _assert_no_text_overlap(page, card, ("lan_off", theme, width))
+        assert page.query_selector('[data-testid="mcp-lan-link"]').is_visible()
+        assert page.query_selector('[data-testid="mcp-address-lan"]') is None
+        card.screenshot(path=str(_SHOTS / f"mcp-lan_off-{theme}-{width}.png"))
+
+
+# ---------------------------------------------------------- the pairing QR code scales whole (#133)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1366, 390])
+def test_the_pairing_qr_scales_to_its_box_with_all_three_finders_and_a_white_margin(
+        monkeypatch, theme, width):
+    import io
+
+    import httpx
+    from PIL import Image
+    from playwright.sync_api import sync_playwright
+
+    from kestrel.db import migrate
+    from kestrel.web import auth
+    from kestrel.web.serve import running_server
+
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    migrate.run_migrations()
+    with running_server(worker=False) as base, sync_playwright() as p:
+        httpx.post(f"{base}/settings/privacy/access", data={"on": "1", "ack": "on"})
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+        page = ctx.new_page()
+        try:
+            page.goto(f"{base}/settings#privacy")
+            page.wait_for_selector('[data-testid="lan-qr"] svg')
+            wait_for_layout(page)
+            box = page.query_selector('[data-testid="lan-qr"]')
+            svg = page.query_selector('[data-testid="lan-qr"] svg')
+            b, sb = box.bounding_box(), svg.bounding_box()
+            assert abs(sb["width"] - (b["width"] - 2)) <= 1.5  # fills the box inside its border
+            assert abs(sb["width"] - sb["height"]) <= 1
+            vb = page.evaluate("document.querySelector('[data-testid=\"lan-qr\"] svg')"
+                               ".getAttribute('viewBox')")
+            n = int(float(vb.split()[2]))
+            border = 4
+            img = Image.open(io.BytesIO(svg.screenshot())).convert("L")
+            size = img.size[0]
+            mod = size / n
+
+            def dark(mx, my):
+                return img.getpixel((int((mx + 0.5) * mod), int((my + 0.5) * mod))) < 80
+
+            c = border + 3  # the centre module of each 7x7 finder pattern
+            assert dark(c, c) and dark(n - border - 4, c) and dark(c, n - border - 4)
+            # A white quiet zone on all four sides (a pixel or two of the box border is skipped).
+            for x in range(2, size - 2):
+                for y in list(range(2, int(mod * 3))) + list(range(size - int(mod * 3), size - 2)):
+                    assert img.getpixel((x, y)) > 200 and img.getpixel((y, x)) > 200
+            page.query_selector('[data-testid="st-access"]').screenshot(
+                path=str(_SHOTS / f"qr-{theme}-{width}.png"))
+        finally:
+            ctx.close()
+            browser.close()
+
+
+# ------------------------------------------- the Access card after turning it on (#133)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1366, 390])
+def test_the_access_card_status_line_and_title_never_overlap_or_leave_the_card(
+        monkeypatch, theme, width):
+    """The state the reporter saw: access just turned on, restart sentence in the status line.
+    Text boxes must not overlap each other, the title must end before its switch starts, and no
+    text may run past the card's right edge."""
+    import httpx
+    from playwright.sync_api import sync_playwright
+
+    from kestrel.db import migrate
+    from kestrel.web import auth
+    from kestrel.web.serve import running_server
+
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    migrate.run_migrations()
+    with running_server(worker=False) as base, sync_playwright() as p:
+        httpx.post(f"{base}/settings/privacy/access", data={"on": "1", "ack": "on"})
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+        page = ctx.new_page()
+        try:
+            page.goto(f"{base}/settings#privacy")
+            page.wait_for_selector('[data-testid="lan-bind-state"]')
+            wait_for_layout(page)
+            card = page.query_selector('[data-testid="st-access"]')
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+            _assert_no_text_overlap(page, card, ("access", theme, width))
+            cb = card.bounding_box()
+            for t in page.evaluate(_TEXT_BOXES, card):
+                assert t["r"] <= cb["x"] + cb["width"] + 0.5, ("past the card", t["t"], width)
+            title = page.query_selector('[data-testid="st-access"] h3').bounding_box()
+            switch = page.query_selector('[data-testid="st-access-switch"] + .k-switch__track')
+            sw = switch.bounding_box()
+            assert title["x"] + title["width"] <= sw["x"] + 1, ("title under switch", width)
+            # The title text itself must fit its box (a nowrap title overflows without moving
+            # its box, so the box check above alone passes while the last letter hides).
+            assert page.evaluate(
+                "(() => { const h = document.querySelector('[data-testid=\"st-access\"] h3');"
+                " return h.scrollWidth <= h.clientWidth + 1; })()") is True, (
+                "title clipped", width)
+            status = page.inner_text('[data-testid="lan-bind-state"]')
+            assert status.count("Takes effect after Kestrel restarts.") == 1
+            card.screenshot(path=str(_SHOTS / f"access-{theme}-{width}.png"))
+        finally:
+            ctx.close()
+            browser.close()
+
+
+# ---------------------------------- the MCP card after a failed start turned it off (#130)
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1366, 390])
+def test_the_mcp_card_turned_off_sentence_sits_clear_of_everything(monkeypatch, theme, width):
+    import asyncio
+
+    from playwright.sync_api import sync_playwright
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db import migrate
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Setting
+    from kestrel.services.setting_overrides import MCP_TURNED_OFF_KEY
+    from kestrel.web.app import mcp_turned_off_sentence
+    from kestrel.web.serve import running_server
+
+    migrate.run_migrations()
+    sentence = mcp_turned_off_sentence(
+        "a part the assistant connection needs is missing from this install; "
+        "the details are in the log")
+
+    async def seed():
+        engine = make_async_engine(paths.db_path())
+        async with async_sessionmaker(engine, expire_on_commit=False)() as s:
+            s.add(Setting(key="mcp.enabled", value=False))
+            s.add(Setting(key=MCP_TURNED_OFF_KEY, value=sentence))
+            await s.commit()
+        await engine.dispose()
+
+    asyncio.run(seed())
+    with running_server(worker=False) as base, sync_playwright() as p:
+        browser = launch_sync(p)
+        ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+        page = ctx.new_page()
+        try:
+            page.goto(f"{base}/settings#privacy")
+            page.wait_for_selector('[data-testid="mcp-turned-off"]')
+            wait_for_layout(page)
+            card = page.query_selector('[data-testid="st-mcp"]')
+            assert page.inner_text('[data-testid="mcp-turned-off"]') == sentence
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+            _assert_no_text_overlap(page, card, ("mcp_off", theme, width))
+            cb = card.bounding_box()
+            for t in page.evaluate(_TEXT_BOXES, card):
+                assert t["r"] <= cb["x"] + cb["width"] + 0.5, ("past the card", t["t"], width)
+            card.screenshot(path=str(_SHOTS / f"mcp-turned-off-{theme}-{width}.png"))
+        finally:
+            ctx.close()
+            browser.close()

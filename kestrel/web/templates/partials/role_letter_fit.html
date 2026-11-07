@@ -1,0 +1,6 @@
+{# The Preview's one-page check (D-LETTER-3), from the PDF Kestrel just made of the saved text.
+   It says so before the person saves the file; the font is never shrunk to make it fit. #}
+{% from "partials/role_icons.html" import ric %}
+{% if state == 'over' %}<p class="cl-warnline" role="status" data-testid="cover-letter-fit-over">{{ ric('alert', 'k-ic--sm') }}<span>This {{ noun }} runs to {{ pages }} pages. Kestrel will not shrink the type to fit, so shorten it in Edit text before you download it.</span></p>
+{% elif state == 'fits' %}<p class="rl-dsm" role="status" data-testid="cover-letter-fit-ok">{{ ric('check', 'k-ic--sm') }}<span>Fits on one page.</span></p>
+{% else %}<p class="rl-dsm" role="status" data-testid="cover-letter-fit-unknown"><span>Kestrel could not check the page count on this computer: {{ reason }}</span></p>{% endif %}

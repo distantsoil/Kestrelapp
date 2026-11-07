@@ -3,7 +3,8 @@ the Change model drawer and the speed setting. Each swaps its own section in pla
 
   GET  /models/health            the Health check card (polled while a check or fix runs)
   POST /models/health/run        Run check: the preflight in a background thread
-  POST /models/health/fix        Fix it: rebuild Kestrel's models, then test again
+  POST /models/health/fix        Fix it: rebuild Kestrel's models, then test again (a Scoring
+                                 steps row passes ?step= and gets its answer beside the click)
   GET  /models/downloads         the Models on this computer card (polled while work runs)
   POST /models/download          Download what is missing, then tune it automatically
   POST /models/download/pause    Pause (a later Resume continues where it stopped)
@@ -54,6 +55,34 @@ UNDO_PREFIX = "models.undo."
 _after: dict[str, bool] = {"retest": False, "tune": False}
 
 
+ONLINE_NOTE = "Not needed while Kestrel runs online."
+ONLINE_REFUSED = "Not needed while Kestrel runs online. Nothing was started."
+
+
+async def _online_only() -> bool:
+    """True under the Online choice. The routes that start a local check, rebuild or download ask
+    this on the server, so a stale page or a hand-made request cannot start local work (D-115)."""
+    from kestrel.web.pages.setup import _rows
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        rows = await _rows(s)
+    return ss.run_choice(settings, rows)[0] == "hosted"
+
+
+# Copyable, never run by Kestrel (#144). Blocks Ollama's outbound traffic, so models must be
+# downloaded first. Not verified on a real machine: BLOCKED, requires local (see the report).
+FIREWALL_TIP = (
+    ("Windows (PowerShell as administrator)",
+     'New-NetFirewallRule -DisplayName "Block Ollama outbound" -Direction Outbound '
+     '-Program "$env:LOCALAPPDATA\\Programs\\Ollama\\ollama.exe" -Action Block'),
+    ("Linux (when Ollama runs as the ollama user)",
+     "sudo iptables -A OUTPUT -m owner --uid-owner ollama ! -o lo -j REJECT"),
+    ("macOS", "Use an application firewall such as LuLu or Little Snitch to deny ollama "
+              "outbound connections."),
+)
+
+
 def _tier_key(tier: str) -> str | None:
     return tier if tier in mv.CHANGEABLE else None
 
@@ -84,21 +113,29 @@ async def health_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
             except ss.ActionBusy:
                 pass
     report = ss.load_report()
-    rows = mv.health_rows(report)
+    choice = (await setup_state()).choice
+    online = choice == "hosted"
+    # Under Online the rows of an earlier local check are hidden, not shown as current (D-115).
+    rows = [] if online else mv.health_rows(report)
+    la_rows = [] if online else mv.local_ai_rows(report)
     return {
-        "hc_rows": rows,
+        "hc_rows": rows, "la_rows": la_rows,
+        "hc_online": online, "hc_both": choice == "both",
         "hc_running": ctx["running"],
         "hc_fixing": bool(snap.get("live") and snap.get("kind") == "build"),
         "hc_percent": next(
             (i["percent"] for i in snap.get("items", []) if i.get("percent") is not None), None),
         "hc_when": format_display((report or {}).get("ran_at"), kind="datetime", time_style="24h"),
         "hc_failed": any(r["state"] == "fail" for r in rows),
+        "hc_la_warn": any(r["state"] in ("warn", "fail") for r in la_rows),
         "hc_any_fix": any(r["fixable"] for r in rows),
         "hc_message": message, "hc_ok": ok,
         "hc_log": (ctx["action"] or {}).get("lines", [])[-12:] if ctx["action"] else [],
+        "hc_note": ONLINE_NOTE,
+        "hc_firewall": FIREWALL_TIP,
         # The standalone re-renders (health poll, run/fix swaps) pass only this dict, so the
-        # template's `choice == 'hosted'` grey-out needs `choice` here too (#115).
-        "choice": (await setup_state()).choice,
+        # template's grey-out needs `choice` here too (#115).
+        "choice": choice,
     }
 
 
@@ -109,6 +146,8 @@ async def health(request: Request):
 
 @router.post("/models/health/run", response_class=HTMLResponse)
 async def health_run(request: Request):
+    if await _online_only():  # nothing runs while online, whatever the page showed
+        return _frag(request, "models_health.html", await health_ctx(ONLINE_REFUSED, True))
     try:
         await asyncio.to_thread(ss.forget_ollama_probe)
         ss.verify()
@@ -122,11 +161,23 @@ async def health_run(request: Request):
 async def health_fix(request: Request):
     from kestrel.web.pages.setup import start_action
 
-    state, message, status = await start_action("build")
-    if status is None:
-        _after["retest"] = True
-        message = "Rebuilding Kestrel's models. Kestrel tests again when it finishes."
-    return _frag(request, "models_health.html", await health_ctx(message or "", status is None))
+    step = request.query_params.get("step", "")
+    step = step if step in mv.CHANGEABLE else ""
+    if await _online_only():
+        message, started = ONLINE_REFUSED, True
+    else:
+        _state_, message, status = await start_action("build")
+        started = status is None
+        if started:
+            _after["retest"] = True
+            message = "Rebuilding Kestrel's models. Kestrel tests again when it finishes."
+    ctx = await health_ctx(message or "", started)
+    if step:
+        # A Scoring steps row asked: the answer goes beside the click, and the Health check card
+        # follows out of band (D-114).
+        ctx.update(fx_step=step, fx_message=message or "", fx_ok=started, hc_oob=True)
+        return _frag(request, "models_fix_result.html", ctx)
+    return _frag(request, "models_health.html", ctx)
 
 
 # ===================================================================================== downloads
@@ -178,6 +229,7 @@ async def downloads_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
         **speed_view(settings),
         "dl_rows": rows, "dl_missing": len(missing), "dl_gb": total_gb,
         "dl_live": live, "dl_stopping": bool(snap.get("stopping")),
+        "dl_online": state.choice == "hosted", "dl_note_online": ONLINE_NOTE,
         "dl_hosted": prof.hosted, "dl_engine_down": state.ollama_version is None
         and not prof.hosted,
         "dl_tuning": tuning, "dl_tune_missing": bool(state.missing_derived) and not missing,
@@ -200,6 +252,8 @@ async def downloads(request: Request):
 async def download(request: Request):
     from kestrel.web.pages.setup import start_action
 
+    if await _online_only():
+        return _downloads(request, await downloads_ctx(ONLINE_REFUSED, True))
     state, message, status = await start_action("pull")
     if status is None:
         _after["tune"] = True
@@ -212,6 +266,8 @@ async def download(request: Request):
 async def tune(request: Request):
     from kestrel.web.pages.setup import start_action
 
+    if await _online_only():
+        return _downloads(request, await downloads_ctx(ONLINE_REFUSED, True))
     _s, message, status = await start_action("build")
     return _downloads(request, await downloads_ctx(message or "", status is None))
 
@@ -920,13 +976,15 @@ async def page_ctx(rows: list, settings: Settings, track: str) -> dict[str, Any]
             online=online,
             override=bool((tr and tr.override) or f"llm.tiers.{key}.model" in locals_),
             changeable=True, base=base,
-            can_read={
-                "label": "Too small: cuts long postings short" if small else mv.READS[key],
-                "tone": "bad" if small else "good",
-                "tip": f"Needs about {mv.pages(need)} pages ({need:,} words-worth of room). "
-                + (f"This model took in about {mv.pages(capacity[key])} pages."
-                   if key in capacity else "Run the health check to test it."),
-            },
+            can_read=(
+                {"label": mv.ONLINE_READS, "tone": "muted", "tip": mv.ONLINE_READS_TIP}
+                if online else {
+                    "label": "Too small: cuts long postings short" if small else mv.READS[key],
+                    "tone": "bad" if small else "good",
+                    "tip": f"Needs about {mv.pages(need)} pages ({need:,} words-worth of room). "
+                    + (f"This model took in about {mv.pages(capacity[key])} pages."
+                       if key in capacity else "Run the health check to test it."),
+                }),
             fit=mv.fit_with_you(rows, st["tier"], shown.model if shown else "",
                                 step_name.get(key) in better),
             can_undo=(UNDO_PREFIX + key) in undo_tiers,

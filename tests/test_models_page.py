@@ -146,9 +146,10 @@ def test_model_summary_agreement_math_and_insufficient_label():
     local = by_model[_LOCAL]
     assert local.tier == 2 and local.prompt_version == "evaluate/v2"
     assert local.n == 9  # 8 recent plus the 100-day-old one
-    assert local.n_labeled == 9 and local.insufficient is False
-    # opps[0] carries two evaluations and one label: 7 of 9 pairings agree.
-    assert local.agreement_rate == 7 / 9
+    # opps[0] carries two evaluations and one label: it is one labeled role (#122), so 8 roles
+    # are compared and 6 of them agree.
+    assert local.n_labeled == 8 and local.insufficient is False
+    assert local.agreement_rate == 6 / 8
     assert local.mean_abs_score_error == 0.5
     assert local.verdicts == {"apply": 9}
     assert local.mean_score == 4.0
@@ -270,3 +271,63 @@ def test_get_models_page_with_no_data():
     with _client() as c:
         r = c.get("/models?track=consulting&since=7")
     assert r.status_code == 200 and "No evaluations" in r.text
+
+
+# --------------------------------------------------- #122: n_labeled counts duplicate groups
+async def _seed_groups(group_sizes: list[int], solos: int) -> None:
+    """One model rated every copy once; each group of copies has a label on every copy, the last
+    copy's label (the newest) saying "pass" while the evaluation said "apply"."""
+    await reset_engine()
+    engine = _fresh_engine()
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    base = datetime(2026, 11, 5, 3, 0, tzinfo=UTC)  # only compared with each other
+    async with sm() as s:
+        n = 0
+
+        async def role(group: str | None) -> Opportunity:
+            nonlocal n
+            n += 1
+            o = Opportunity(
+                track="employment", opp_type="job_posting", title=f"Role {n}", org_name="Acme",
+                url=f"https://x/groups-{n}", stage="t2_done", dedup_group_id=group,
+            )
+            s.add(o)
+            await s.flush()
+            s.add(Evaluation(opportunity_id=o.id, tier=2, track="employment", model=_LOCAL,
+                             prompt_version="evaluate/v2", verdict="apply", score=4.0))
+            return o
+
+        tick = 0
+        for g, size in enumerate(group_sizes):
+            for copy in range(size):
+                o = await role(f"grp-{g}")
+                tick += 1
+                s.add(Label(opportunity_id=o.id, track="employment",
+                            verdict="pass" if copy == size - 1 else "apply", score=2.0,
+                            created_at=iso(base + timedelta(minutes=tick))))
+        for _ in range(solos):
+            o = await role(None)
+            tick += 1
+            s.add(Label(opportunity_id=o.id, track="employment", verdict="apply", score=4.0,
+                        created_at=iso(base + timedelta(minutes=tick))))
+        await s.commit()
+    await engine.dispose()
+    forget_engine()
+
+
+def test_six_labeled_copies_of_two_postings_are_two_labeled_roles_and_insufficient():
+    asyncio.run(_seed_groups([3, 3], solos=0))
+    rows = asyncio.run(_with_session(lambda s: model_summary(s)))
+    row = next(r for r in rows if r.model == _LOCAL)
+    assert row.n == 6  # evaluations are still all counted
+    assert row.n_labeled == 2 and row.insufficient is True  # hard rule 6
+    assert row.agreement_rate is None
+
+
+def test_labeled_roles_count_groups_and_a_role_without_a_group_is_its_own():
+    asyncio.run(_seed_groups([3], solos=4))  # 7 labels, 5 distinct roles
+    rows = asyncio.run(_with_session(lambda s: model_summary(s)))
+    row = next(r for r in rows if r.model == _LOCAL)
+    assert row.n_labeled == 5 and row.insufficient is False
+    # The group's newest label wins ("pass" against the model's "apply"); 4 solos agree.
+    assert row.agreement_rate == 0.8

@@ -44,6 +44,7 @@ from kestrel.db.models import (
     StatusEvent,
     VerdictOverride,
 )
+from kestrel.learning.capture import bulk_marks, not_bulk
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
@@ -151,22 +152,26 @@ ADD_REASONS = (ADD_REASON, ADD_REASON_WITH_MODEL)
 
 
 async def _latest_label(
-    session: AsyncSession, opp_id: int, ev_id: int | None
+    session: AsyncSession, opp_id: int, ev_id: int | None, *, bulk: bool = True
 ) -> VerdictOverride | None:
-    """The operator's latest word on this evaluation (on no evaluation when ev_id is None)."""
+    """The operator's latest word on this evaluation (on no evaluation when ev_id is None). A
+    decision made one role at a time passes bulk=False: a bulk row is no considered word, so it
+    never stands in for one (D-PIPE-116)."""
     stmt = select(VerdictOverride).where(VerdictOverride.opportunity_id == opp_id)
     stmt = stmt.where(
         VerdictOverride.evaluation_id == ev_id
         if ev_id is not None
         else VerdictOverride.evaluation_id.is_(None)
     )
+    if not bulk:
+        stmt = stmt.where(not_bulk())
     return (
         await session.execute(stmt.order_by(VerdictOverride.id.desc()).limit(1))
     ).scalar_one_or_none()
 
 
 async def record_add_label(
-    session: AsyncSession, opp: Opportunity, *, commit: bool = True
+    session: AsyncSession, opp: Opportunity, *, commit: bool = True, bulk: bool = False
 ) -> VerdictOverride | None:
     """The label Add to my shortlist teaches the ranker. Idempotent per evaluation: it is
     skipped only when the operator's LATEST word on this evaluation is already a yes (apply /
@@ -180,23 +185,29 @@ async def record_add_label(
     Anything else (a maybe, a not a fit, nothing scored yet) records the "good fit" word,
     because adding a role the system did not rate is a disagreement, not an agreement."""
     ev = await latest_evaluation(session, opp.id)
-    latest = await _latest_label(session, opp.id, ev.id if ev else None)
+    latest = await _latest_label(session, opp.id, ev.id if ev else None, bulk=bulk)
     if latest is not None and latest.operator_verdict in _POSITIVE:
         return None
+    # A bulk Shortlist records the state (the role is decided) but carries the bulk mark, so no
+    # learning reader counts it (D-PIPE-116).
+    marks = bulk_marks() if bulk else None
     good_verdict, good_score = verdict_for_fit(GOOD, opp.track)
     if ev is not None and ev.tier != 1 and ev.verdict in _POSITIVE:
         return await record_override(
-            session, opp_id=opp.id, mode="agree", reason=ADD_REASON, commit=commit
+            session, opp_id=opp.id, mode="agree", reason=ADD_REASON, commit=commit,
+            dimension_corrections=marks,
         )
     if ev is not None and ev.needs_review and ev.verdict_model in _POSITIVE:
         score = ev.score if ev.score is not None and ev.score >= good_score else good_score
         return await record_override(
             session, opp_id=opp.id, mode="override", operator_verdict=ev.verdict_model,
             operator_score=score, reason=ADD_REASON_WITH_MODEL, commit=commit,
+            dimension_corrections=marks,
         )
     return await record_override(
         session, opp_id=opp.id, mode="override", operator_verdict=good_verdict,
         operator_score=good_score, reason=ADD_REASON, commit=commit,
+        dimension_corrections=marks,
     )
 
 
@@ -207,7 +218,7 @@ async def record_not_for_me_label(
     on this evaluation is already a pass."""
     ev = await latest_evaluation(session, opp.id)
     verdict, score = verdict_for_fit(NOT_FIT, opp.track)
-    latest = await _latest_label(session, opp.id, ev.id if ev else None)
+    latest = await _latest_label(session, opp.id, ev.id if ev else None, bulk=False)
     if latest is not None and latest.operator_verdict == verdict:
         return None
     return await record_override(
@@ -225,15 +236,19 @@ def _status_word(p: Pursuit) -> str:
     return col.label if col else p.status.replace("_", " ")
 
 
-async def add_to_list(session: AsyncSession, opp: Opportunity) -> tuple[Pursuit | None, str]:
+async def add_to_list(
+    session: AsyncSession, opp: Opportunity, *, bulk: bool = False
+) -> tuple[Pursuit | None, str]:
     """Create the pursuit (idempotent) and record the Add label in ONE transaction, so a label
     failure can never leave a pursuit the message says was not added. Returns
-    (pursuit, message); pursuit is None when the track has no valid first status."""
+    (pursuit, message); pursuit is None when the track has no valid first status. `bulk` marks a
+    Pipeline bulk Shortlist: the pursuit is made, the label carries the bulk mark and teaches
+    nothing (D-PIPE-116)."""
     existing = (
         await session.execute(select(Pursuit).where(Pursuit.opportunity_id == opp.id))
     ).scalar_one_or_none()
     if existing is not None:
-        await record_add_label(session, opp)
+        await record_add_label(session, opp, bulk=bulk)
         where = words(opp.track)["on_list"].replace("my", "your")
         return existing, f"Already {where} ({_status_word(existing)})."
     status = PURSUIT_STATUS[opp.track][0]
@@ -251,7 +266,7 @@ async def add_to_list(session: AsyncSession, opp: Opportunity) -> tuple[Pursuit 
     )
     session.add(pursuit)
     await session.flush()
-    await record_add_label(session, opp, commit=False)
+    await record_add_label(session, opp, commit=False, bulk=bulk)
     await session.flush()
     from kestrel.services import pursuit_undo
 

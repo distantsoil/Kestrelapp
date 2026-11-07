@@ -262,6 +262,89 @@ def test_loading_page_states_and_one_try_again_at_a_time(live):
         ctx.close()
 
 
+def test_loading_page_offers_safe_mode_after_two_failed_starts(live, monkeypatch):
+    """#130: the real offer (two failed starts, then the third) on the real loading page: the
+    button reads Start with optional features off, reaches the desktop API once, and a normal
+    failure card does not show it."""
+    import kestrel.desktop.shell as shell
+    from kestrel import startup_health
+    from kestrel.db import migrate
+
+    monkeypatch.setattr(startup_health, "_offered", False)
+    startup_health._write(2)
+    monkeypatch.setattr(migrate, "run_migrations", lambda: None)
+    with pytest.raises(shell.StartupError) as exc_info:
+        shell._start_backend(shell._Splash())
+    err = exc_info.value
+    startup_health._write(0)
+    _, browser, _ = live
+    ctx = browser.new_context(viewport={"width": 1200, "height": 760})
+    page = ctx.new_page()
+    try:
+        page.set_content(shell.splash_html())
+        page.evaluate(
+            FAKE_API.replace("window_info:", "splash_safe_start: rec('safe'), window_info:")
+        )
+        page.evaluate("([r, d, c]) => KSplash.fail(r, d, c)", [err.reason, err.details, err.code])
+        assert page.locator("#safe").is_visible()
+        assert page.locator("#safe").inner_text() == "Start with optional features off"
+        assert "last two times" in page.locator("#reason").inner_text()
+        page.click("#safe")
+        page.locator("#safe").dispatch_event("click")  # a second click while it runs
+        assert [c[0] for c in page.evaluate("window.__calls")].count("safe") == 1
+        page.evaluate("KSplash.fail('Something stopped it.', '', 'migrations_failed')")
+        assert page.locator("#safe").is_hidden()
+    finally:
+        ctx.close()
+
+
+def test_loading_page_for_a_newer_database_offers_download_and_no_retry(live):
+    """#105: the real StartupError for a database a newer Kestrel saved, rendered on the real
+    loading page: it names the release, offers Download latest, hides Try again, and the button
+    reaches the desktop API."""
+    import sqlite3
+
+    import kestrel.desktop.shell as shell
+    from kestrel import paths
+    from kestrel.db import migrate
+
+    migrate.run_migrations()
+    conn = sqlite3.connect(paths.db_path())
+    conn.execute("UPDATE alembic_version SET version_num = '9999'")
+    conn.execute(
+        "INSERT OR REPLACE INTO setting (key, value, updated_at) VALUES (?, '\"99.1.0\"', 'x')",
+        (migrate.SAVED_BY_KEY,),
+    )
+    conn.commit()
+    conn.close()
+    with pytest.raises(shell.StartupError) as exc_info:
+        shell._start_backend(shell._Splash())
+    err = exc_info.value
+    _, browser, _ = live
+    ctx = browser.new_context(viewport={"width": 1200, "height": 760})
+    page = ctx.new_page()
+    try:
+        page.set_content(shell.splash_html())
+        page.evaluate(
+            FAKE_API.replace("window_info:", "splash_download: rec('download'), window_info:")
+        )
+        page.evaluate(
+            "([r, d, c]) => KSplash.fail(r, d, c)", [err.reason, err.details, err.code]
+        )
+        assert page.locator("#prob").is_visible()
+        assert "saved by a newer Kestrel (99.1.0)" in page.locator("#reason").inner_text()
+        assert page.locator("#download").is_visible()
+        assert page.locator("#download").inner_text().strip() == "Download latest"
+        assert page.locator("#retry").is_hidden()
+        assert page.evaluate("document.activeElement.id") == "download"
+        page.click("#download")
+        assert [c[0] for c in page.evaluate("window.__calls")].count("download") == 1
+        page.evaluate("KSplash.fail('Something stopped it.', '', 'migrations_failed')")
+        assert page.locator("#retry").is_visible() and page.locator("#download").is_hidden()
+    finally:
+        ctx.close()
+
+
 LATE_API = FAKE_API.replace("window.pywebview = {api: {", "window.__late = {api: {") + """
 window.pywebview = {};  // the object exists early, its API arrives later
 setTimeout(() => { window.pywebview.api = window.__late.api;
@@ -834,6 +917,533 @@ def test_the_sidebar_collapse_snaps_under_reduced_motion(live):
         end = widths[-1]
         assert len([w for w in widths if end + 2 < w < widths[0] - 2]) == 0, widths
         assert all(d == 0 for d in sampled["glide"]), sampled["glide"]  # no transition runs
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# ------------------------------------------- the sidebar rail, first paint and shortcut (#126)
+_SIDE_IS_COLLAPSED = "document.querySelector('#kwin').classList.contains('is-side-collapsed')"
+_SIDE_IS_OPEN = "document.querySelector('#kwin').classList.contains('is-side-open')"
+_SIDE_IS_RAIL = "document.querySelector('#kwin').classList.contains('is-rail')"
+_BLOCK_STORAGE = "Object.defineProperty(window, 'localStorage', {get() { throw new Error('x'); }});"
+_RAIL_W = 68
+_FULL_W = 232
+_MAIN_BOX = ("() => { const r = document.querySelector('#main').getBoundingClientRect();"
+             " return [Math.round(r.left), Math.round(r.width)]; }")
+
+
+def _rail_page(browser, base, path="/help", collapsed=True, pinned=None, init="", width=1440,
+               **ctx_kw):
+    """A page opened the way a returning visitor sees it: the kestrel-side cookies already set."""
+    ctx = browser.new_context(viewport={"width": width, "height": 900}, **ctx_kw)
+    jar = []
+    if collapsed is not None:
+        jar.append({"name": "kestrel-side", "value": "1" if collapsed else "0", "url": base})
+    if pinned is not None:
+        jar.append({"name": "kestrel-side-pin", "value": "1" if pinned else "0", "url": base})
+    if jar:
+        ctx.add_cookies(jar)
+    page = ctx.new_page()
+    if init:
+        page.add_init_script(init)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base + path)
+    page.wait_for_load_state("networkidle")
+    return ctx, page, errors
+
+
+def _cookies(ctx):
+    return {c["name"]: c["value"] for c in ctx.cookies()}
+
+
+def _side_w(page):
+    return round(page.evaluate("document.querySelector('#sidebar').getBoundingClientRect().width"))
+
+
+def _tip(page):
+    """The toggle's state as a person would read it."""
+    return page.evaluate("""() => { const b = document.querySelector('.k-side-toggle');
+      return [b.getAttribute('aria-expanded'), b.getAttribute('aria-label')]; }""")
+
+
+def test_the_server_renders_the_collapsed_rail_on_first_paint(live):
+    """#126: with the cookie set the initial HTML already carries the collapsed classes, a page
+    with scripts off is already 68 px wide, and no frame of a scripted load shows the full width,
+    even with localStorage blocked."""
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=True, init=_BLOCK_STORAGE + """
+    window.__w = [];
+    (function tick() {
+      const s = document.querySelector('#sidebar');
+      if (s) window.__w.push(Math.round(s.getBoundingClientRect().width));
+      if (window.__w.length < 60) requestAnimationFrame(tick);
+    })();
+    """)
+    try:
+        html = ctx.request.get(base + "/help").text()
+        assert '<html lang="en" class="k-side-collapsed"' in html
+        assert 'class="k-win is-side-collapsed is-rail"' in html
+        toggle_tag = html.split('class="k-side-toggle"')[1].split(">")[0]
+        assert 'aria-expanded="false"' in toggle_tag and "Expand sidebar" in toggle_tag
+        seen = page.evaluate("window.__w")
+        assert seen and set(seen) == {_RAIL_W}, seen
+        assert page.evaluate(_SIDE_IS_COLLAPSED)
+        assert _tip(page) == ["false", "Expand sidebar"]
+        assert errors == []
+        bare = browser.new_context(
+            viewport={"width": 1440, "height": 900}, java_script_enabled=False)
+        bare.add_cookies([{"name": "kestrel-side", "value": "1", "url": base}])
+        p2 = bare.new_page()
+        p2.goto(base + "/help")
+        assert p2.locator("#sidebar").bounding_box()["width"] == _RAIL_W
+        bare.close()
+        plain = browser.new_context(viewport={"width": 1440, "height": 900})
+        assert 'class="k-win" id="kwin"' in plain.request.get(base + "/help").text()
+        plain.close()
+    finally:
+        ctx.close()
+
+
+def test_the_pinned_choice_is_server_rendered_and_holds_the_page_wide_at_1000(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=False, pinned=True, width=1000)
+    try:
+        assert '<html lang="en" class="k-side-pinned"' in ctx.request.get(base + "/help").text()
+        assert _side_w(page) == _FULL_W
+        assert page.evaluate(_SIDE_IS_RAIL) is False
+        assert _tip(page) == ["true", "Collapse sidebar"]
+        assert page.get_attribute(".k-side-pin", "aria-pressed") == "true"
+        assert errors == []
+    finally:
+        ctx.close()
+    # Unpinned at 1000 px is the rail, and the toggle says so from the first click.
+    ctx, page, errors = _rail_page(browser, base, collapsed=False, pinned=False, width=1000)
+    try:
+        assert _side_w(page) == _RAIL_W and page.evaluate(_SIDE_IS_RAIL)
+    finally:
+        ctx.close()
+
+
+def test_a_narrow_window_paints_the_rail_form_from_the_first_frame(live):
+    """The width-driven rail (no cookie at all): no frame shows the brand word or nav labels."""
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=1000, init="""
+    window.__d = [];
+    (function tick() {
+      const w = document.querySelector('.k-brand__word');
+      if (w) window.__d.push(getComputedStyle(w).display);
+      if (window.__d.length < 40) requestAnimationFrame(tick);
+    })();
+    """)
+    try:
+        seen = page.evaluate("window.__d")
+        assert seen and set(seen) == {"none"}, seen
+        assert _tip(page) == ["false", "Expand sidebar"]
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_choice_survives_a_reload_with_storage_blocked(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, init=_BLOCK_STORAGE)
+    try:
+        assert page.evaluate(_SIDE_IS_COLLAPSED) is False
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_COLLAPSED)
+        assert _cookies(ctx).get("kestrel-side") == "1", _cookies(ctx)
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        assert page.evaluate(_SIDE_IS_COLLAPSED)
+        assert 'class="k-win is-side-collapsed is-rail"' in ctx.request.get(base + "/help").text()
+        # Open it over the page and pin it: the pin is remembered in a cookie of its own.
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        page.click(".k-side-pin")
+        page.wait_for_function(f"!({_SIDE_IS_COLLAPSED}) && !({_SIDE_IS_OPEN})")
+        assert _cookies(ctx)["kestrel-side"] == "0" and _cookies(ctx)["kestrel-side-pin"] == "1"
+        page.reload()
+        page.wait_for_load_state("networkidle")
+        assert _side_w(page) == _FULL_W
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_track_switch_stays_reachable_in_the_collapsed_rail(live, monkeypatch):
+    """#126: the rail used to hide the track switch, the only way to change tracks."""
+    from kestrel.services import tracks
+
+    monkeypatch.setitem(tracks._cache, "value", ("employment", "consulting"))
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=True)
+    try:
+        tabs = page.locator(".side .track-switch a")
+        assert tabs.count() == 2
+        names = [t.get_attribute("aria-label") for t in tabs.all()]
+        assert all(names) and names[0] != names[1], names
+        assert all(t.get_attribute("title") == n for t, n in zip(tabs.all(), names, strict=True))
+        side = page.locator("#sidebar").bounding_box()
+        for t in tabs.all():
+            assert t.is_visible()
+            box = t.bounding_box()
+            assert box["width"] > 12 and box["height"] > 12, box
+            assert side["x"] <= box["x"] and box["x"] + box["width"] <= side["x"] + side["width"]
+            assert page.evaluate(
+                "el => getComputedStyle(el, '::before').content", t.element_handle()) != "none"
+        page.focus(".k-side-toggle")
+        reached = False
+        for _ in range(4):
+            page.keyboard.press("Tab")
+            if page.evaluate("document.activeElement.closest('.track-switch') !== null"):
+                reached = True
+                break
+        assert reached
+        other = page.locator(".side .track-switch a:not(.active)").first
+        want = other.get_attribute("data-tab-track")
+        other.click()
+        page.wait_for_function(
+            "w => { const a = document.querySelector('.side .track-switch a.active');"
+            " return !!a && a.dataset.tabTrack === w; }",
+            arg=want)
+        assert _cookies(ctx).get("kestrel-track") == want
+        assert page.evaluate(_SIDE_IS_COLLAPSED)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_ctrl_b_collapses_then_opens_the_rail_over_the_page(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None)
+    try:
+        assert "Ctrl B" in page.get_attribute(".k-side-toggle", "title")
+        page.keyboard.press("Control+b")
+        page.wait_for_function(_SIDE_IS_COLLAPSED)
+        assert _tip(page) == ["false", "Expand sidebar"]
+        assert _cookies(ctx)["kestrel-side"] == "1"
+        page.keyboard.press("Control+b")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        assert _tip(page) == ["true", "Collapse sidebar"]
+        page.keyboard.press("Control+b")
+        page.wait_for_function(f"!({_SIDE_IS_OPEN})")
+        # In an editable region B belongs to the text.
+        page.evaluate("""() => { const d = document.createElement('div');
+          d.contentEditable = 'true'; d.textContent = 'x'; document.body.append(d); d.focus(); }""")
+        page.keyboard.press("Control+b")
+        assert page.evaluate(_SIDE_IS_OPEN) is False
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_help_page_lists_the_sidebar_shortcut(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, path="/help", collapsed=None)
+    try:
+        row = page.locator(".hp-sc", has_text="Collapse or expand the sidebar")
+        assert row.count() == 1 and "Ctrl B" in row.inner_text()
+    finally:
+        ctx.close()
+
+
+def _center(page, selector):
+    return page.evaluate(
+        "s => { const r = document.querySelector(s).getBoundingClientRect();"
+        " return r.left + r.width / 2; }", selector)
+
+
+def test_fixed_elements_follow_the_one_sidebar_width_variable(live):
+    """#126: the toast stack and the Profile save bar are centered on the page column; collapsing
+    moves them with the sidebar because they read the same width variable."""
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, path="/profile", collapsed=False)
+    try:
+        vw = page.evaluate("document.documentElement.clientWidth")
+        var = "getComputedStyle(document.documentElement).getPropertyValue('--side-w-now').trim()"
+        full = float(page.evaluate(var)[:-2])
+        assert full > 200
+        page.evaluate("KUI.toast('Placed.', {timeout: 60000})")
+        page.wait_for_selector("#k-toasts .k-toast")
+        for sel in ("#k-toasts", ".pf-savebar"):
+            # The hidden save bar reaches its place up to about 1.5s after load (failed every time
+            # on Windows when read at once); wait for the end state, as the collapse step does.
+            page.wait_for_function(
+                "([s, w, vw]) => { const r = document.querySelector(s).getBoundingClientRect();"
+                " return Math.abs(r.left + r.width / 2 - (w + (vw - w) / 2)) <= 1.5; }",
+                arg=[sel, full, vw], timeout=10000)
+        page.click(".k-side-toggle")
+        page.wait_for_function(
+            "() => getComputedStyle(document.documentElement).getPropertyValue('--side-w-now')"
+            ".trim() === '68px'")
+        for sel in ("#k-toasts", ".pf-savebar"):
+            page.wait_for_function(
+                "([s, w, vw]) => { const r = document.querySelector(s).getBoundingClientRect();"
+                " return Math.abs(r.left + r.width / 2 - (w + (vw - w) / 2)) <= 1.5; }",
+                arg=[sel, _RAIL_W, vw])
+        # Poll for the exact end state: the sidebar and its neighbours have no running
+        # transition left, so its box is final before the width is read (INSTRUCTIONS 5.10).
+        page.wait_for_function(
+            "() => ['#sidebar', '#kwin', '#k-toasts', '.pf-savebar'].every(s => {"
+            " const e = document.querySelector(s); return !e || e.getAnimations()"
+            ".every(a => a.playState === 'finished' || a.playState === 'idle'); })")
+        page.wait_for_function(
+            f"{_RAIL_W} === Math.round("
+            "document.querySelector('#sidebar').getBoundingClientRect().width)")
+        assert _side_w(page) == _RAIL_W
+        for sel in ("#k-toasts", ".pf-savebar"):
+            assert abs(_center(page, sel) - (_RAIL_W + (vw - _RAIL_W) / 2)) <= 1.5, sel
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_toast_stack_glides_with_the_sidebar(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, path="/help", collapsed=False)
+    try:
+        got = page.evaluate("""() => {
+          document.querySelector('.k-side-toggle').click();
+          return document.getAnimations()
+            .filter(a => a.transitionProperty === 'left' &&
+                         a.effect.target.id === 'k-toasts')
+            .map(a => a.effect.getComputedTiming().duration);
+        }""")
+        assert got and min(got) >= 250, got
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# ------------------------------------- opened over the page, the pushpin, idle close (D-UI-249)
+@pytest.mark.parametrize("width", [1440, 1000, 960])
+def test_opening_the_rail_overlays_the_page_and_does_not_move_it(live, width):
+    """The owner's design: expanding a collapsed sidebar draws it OVER the page; the page's own
+    box does not change. Auto-collapsed by width (the toggle must act on the FIRST click and
+    point the right way) and collapsed by choice behave the same."""
+    base, browser, _bridge = live
+    chosen = width == 1440
+    ctx, page, errors = _rail_page(browser, base, collapsed=True if chosen else None, width=width)
+    try:
+        assert page.evaluate(_SIDE_IS_RAIL) and _side_w(page) == _RAIL_W
+        assert _tip(page) == ["false", "Expand sidebar"]
+        arrow_closed = page.evaluate(
+            "getComputedStyle(document.querySelector('.k-side-toggle')).transform")
+        before = page.evaluate(_MAIN_BOX)
+        page.click(".k-side-toggle")  # ONE click
+        page.wait_for_function(_SIDE_IS_OPEN)
+        page.wait_for_function(f"{_FULL_W} === Math.round("
+                               "document.querySelector('#sidebar').getBoundingClientRect().width)")
+        assert page.evaluate(_MAIN_BOX) == before
+        assert _tip(page) == ["true", "Collapse sidebar"]
+        assert page.evaluate(
+            "getComputedStyle(document.querySelector('.k-side-toggle')).transform") != arrow_closed
+        # Above the page, not beside it: the sidebar's box covers the page's left edge.
+        top = page.evaluate("""() => { const r = document.querySelector('#sidebar')
+          .getBoundingClientRect(); const e = document.elementFromPoint(r.right - 6, 300);
+          return !!e.closest('#sidebar'); }""")
+        assert top
+        assert page.get_attribute(".k-side-pin", "aria-pressed") == "false"
+        page.click(".k-side-toggle")
+        page.wait_for_function(f"!({_SIDE_IS_OPEN})")
+        assert _side_w(page) == _RAIL_W and page.evaluate(_MAIN_BOX) == before
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_rail_opens_at_the_minimum_width(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=720)
+    try:
+        before = page.evaluate(_MAIN_BOX)
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        assert page.evaluate(_MAIN_BOX) == before
+        # The pin is off at this width, and says why.
+        assert page.get_attribute(".k-side-pin", "aria-disabled") == "true"
+        assert "too narrow" in page.get_attribute(".k-side-pin", "title")
+        page.click(".k-side-pin", force=True)
+        assert page.evaluate(_MAIN_BOX) == before and _cookies(ctx).get("kestrel-side-pin") != "1"
+        assert page.evaluate(_SIDE_IS_RAIL)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_pinning_the_open_sidebar_pushes_the_page_and_is_remembered(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=1000)
+    try:
+        before = page.evaluate(_MAIN_BOX)
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        page.click(".k-side-pin")
+        page.wait_for_function(f"!({_SIDE_IS_OPEN}) && !({_SIDE_IS_RAIL})")
+        after = page.evaluate(_MAIN_BOX)
+        assert after[0] == before[0] + (_FULL_W - _RAIL_W)
+        assert after[1] == before[1] - (_FULL_W - _RAIL_W)
+        assert page.get_attribute(".k-side-pin", "aria-pressed") == "true"
+        assert _cookies(ctx)["kestrel-side-pin"] == "1"
+        # The next page opens pinned, and no idle timer closes a pinned sidebar.
+        page.goto(base + "/about")
+        page.wait_for_load_state("networkidle")
+        assert _side_w(page) == _FULL_W
+        # Unpinning returns it to the rail.
+        page.click(".k-side-pin")
+        page.wait_for_function(_SIDE_IS_RAIL)
+        assert _cookies(ctx)["kestrel-side-pin"] == "0"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def _open_with_idle(page, ms="150"):
+    page.evaluate(f"document.querySelector('#sidebar').dataset.idleMs = '{ms}'")
+    page.click(".k-side-toggle")
+    page.wait_for_function(_SIDE_IS_OPEN)
+
+
+def test_the_open_sidebar_closes_after_the_pointer_leaves_and_not_before(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=1000)
+    try:
+        _open_with_idle(page)
+        # The pointer is on the toggle, inside the sidebar: the timer is not running.
+        page.mouse.move(60, 400)
+        page.wait_for_timeout(500)
+        assert page.evaluate(_SIDE_IS_OPEN)
+        page.mouse.move(700, 400)  # out
+        page.wait_for_function(f"!({_SIDE_IS_OPEN})")
+        assert _side_w(page) == _RAIL_W
+        # Focus inside keeps it open even with the pointer outside.
+        _open_with_idle(page)
+        page.keyboard.press("Tab")
+        page.keyboard.press("Shift+Tab")
+        assert page.evaluate("document.activeElement.closest('#sidebar') !== null")
+        page.mouse.move(700, 400)
+        page.wait_for_timeout(500)
+        assert page.evaluate(_SIDE_IS_OPEN)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_escape_an_outside_press_and_choosing_a_page_close_it_at_once(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=1000)
+    try:
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        page.evaluate("document.querySelector('#sidebar').dataset.idleMs = '600000'")
+        page.keyboard.press("Escape")
+        page.wait_for_function(f"!({_SIDE_IS_OPEN})", timeout=8000)
+        assert page.evaluate("document.activeElement.className").find("k-side-toggle") >= 0
+        # The idle close is far off, so only the press itself can close it (and a page choice).
+        page.evaluate("document.querySelector('#sidebar').dataset.idleMs = '600000'")
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        page.mouse.click(800, 500)
+        page.wait_for_function(f"!({_SIDE_IS_OPEN})", timeout=8000)
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        page.click('.side .mainnav a[href="/about"]')
+        page.wait_for_function(f"!({_SIDE_IS_OPEN})")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_opening_and_closing_snap_under_reduced_motion(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=1000,
+                                   reduced_motion="reduce")
+    try:
+        got = page.evaluate("""() => {
+          const k = document.querySelector('#kwin');
+          document.querySelector('.k-side-toggle').click();
+          const open = k.classList.contains('is-side-open');
+          const anims = document.getAnimations().filter(a => a.effect.target &&
+            a.effect.target.closest && a.effect.target.closest('#sidebar')).length;
+          document.querySelector('.k-side-toggle').click();
+          return [open, anims, k.classList.contains('is-side-open')];
+        }""")
+        assert got == [True, 0, False], got
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_open_sidebar_fades_in_without_a_jump(live):
+    base, browser, _bridge = live
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, width=1000)
+    try:
+        got = page.evaluate("""() => {
+          document.querySelector('.k-side-toggle').click();
+          return document.getAnimations()
+            .filter(a => a.animationName === 'k-side-in')
+            .map(a => a.effect.getComputedTiming().duration);
+        }""")
+        assert got and min(got) >= 250, got
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_window_controls_are_whole_in_the_rail_at_every_width(live, theme):
+    """Owner bug 1: collapsed, the window controls were cut off by the frame edge at some widths."""
+    base, browser, bridge = live
+    bridge.set_quit_handler(lambda: None)
+    bridge.set_window_frame(True)
+    ctx, page, errors = _rail_page(browser, base, collapsed=True, init=FAKE_API,
+                                   color_scheme=theme, width=1400)
+    try:
+        page.wait_for_selector("#k-wctl:not([hidden])")
+        for width in range(720, 1401, 80):
+            page.set_viewport_size({"width": width, "height": 900})
+            for state in ("rail", "open"):
+                if state == "open":
+                    page.click(".k-side-toggle")
+                    page.wait_for_function(_SIDE_IS_OPEN)
+                boxes = page.evaluate("""() => {
+                  const side = document.querySelector('#sidebar').getBoundingClientRect();
+                  return ['min', 'max', 'close'].map(w => {
+                    const r = document.querySelector('[data-wc="' + w + '"]')
+                      .getBoundingClientRect();
+                    return [w, r.left, r.top, r.right, r.bottom, side.left, side.right,
+                            innerWidth, innerHeight];
+                  });
+                }""")
+                for w, left, top, right, bottom, sl, sr, vw, vh in boxes:
+                    where = (width, state, w, left, right)
+                    assert left >= sl - 0.5 and right <= sr + 0.5, where
+                    assert left >= 0 and top >= 0 and right <= vw and bottom <= vh, where
+                if state == "open":
+                    page.keyboard.press("Escape")
+                    page.wait_for_function(f"!({_SIDE_IS_OPEN})")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_track_switch_and_window_controls_work_in_the_open_sidebar(live, monkeypatch):
+    from kestrel.services import tracks
+
+    monkeypatch.setitem(tracks._cache, "value", ("employment", "consulting"))
+    base, browser, bridge = live
+    bridge.set_quit_handler(lambda: None)
+    bridge.set_window_frame(True)
+    ctx, page, errors = _rail_page(browser, base, collapsed=None, init=FAKE_API, width=1000)
+    try:
+        page.wait_for_selector("#k-wctl:not([hidden])")
+        page.click(".k-side-toggle")
+        page.wait_for_function(_SIDE_IS_OPEN)
+        assert page.locator(".side .track-switch a").first.is_visible()
+        for w in ("min", "max", "close"):
+            assert page.locator(f'[data-wc="{w}"]').is_visible()
         assert errors == []
     finally:
         ctx.close()

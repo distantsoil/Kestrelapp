@@ -14,7 +14,10 @@
   if (!doc || !root.KUI || !root.KUI.page) return;
 
   // Per visit: mount starts each of these afresh. cx is the mounted page's context (KUI.page).
-  var state = { sel: null, picked: [], last: null, mf: false, slide: '', poll: false, known: null };
+  var state = {
+    sel: null, picked: [], last: null, mf: false, slide: '', poll: false, known: null,
+    offer: null, whole: null
+  };
   var cx = null;
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
@@ -132,24 +135,87 @@
     var r = list.getBoundingClientRect();
     doc.documentElement.style.setProperty('--pl-bulk-left', Math.round(r.left + r.width / 2) + 'px');
   }
+  // The whole-group step (#116). `offer` is the group whose Select all just ticked every drawn
+  // row; `whole` is that group selected in full, resolved by the server when an action runs.
+  function groupEl(key) { return key ? $('#pipeline-list .pl-group[data-group="' + key + '"]') : null; }
+  function groupCount(el) { return el ? Number(el.getAttribute('data-count')) || 0 : 0; }
+  function plural(n) { return n + (n === 1 ? ' role' : ' roles'); }
+  function barCap() { return Number(($('#pl-bulk') || {}).getAttribute('data-cap')) || 200; }
+  function selectedCount() { return state.whole ? state.whole.n : state.picked.length; }
+  function setHidden(el, hide) { if (el && el.hidden !== hide) el.hidden = hide; }
+  // The step is offered only while exactly the drawn rows of that group are ticked and the group
+  // holds more than the page drew; any other change of the ticks puts the selection back to ticks.
+  function offerStands(present) {
+    var el = groupEl(state.offer);
+    if (!el) return false;
+    var drawn = $$('.pl-row[data-id]', el).map(function (r) { return Number(r.dataset.id); });
+    return drawn.length > 0 && drawn.length === present.length && groupCount(el) > drawn.length &&
+      drawn.every(function (id) { return present.indexOf(id) >= 0; });
+  }
+  function wholeStands() {
+    var el = groupEl(state.whole && state.whole.group);
+    return !!el && groupCount(el) === state.whole.count;
+  }
+  function paintBulkLabels(n, over) {
+    $$('#pl-bulk [data-bulk-label]').forEach(function (b) {
+      var label = b.getAttribute('data-bulk-label');
+      var off = over || (state.whole && b.getAttribute('data-bulk') === 'score-again');
+      b.textContent = n > 0 ? label + ', ' + plural(n) : label;
+      b.setAttribute('aria-disabled', off ? 'true' : 'false');
+      b.classList.toggle('is-off', !!off);
+    });
+  }
   function updateBulk() {
     var bar = $('#pl-bulk');
     if (!bar) return;
     var present = state.picked.filter(function (id) { return !!rowFor(id); });
     state.picked = present;
+    if (state.whole && !wholeStands()) state.whole = null;
+    if (!state.whole && state.offer && !offerStands(present)) state.offer = null;
     rows().forEach(function (r) {
       var on = present.indexOf(Number(r.dataset.id)) >= 0;
       r.classList.toggle('is-picked', on);
       var ck = $('.pl-ck', r);
       if (ck) ck.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+    var n = selectedCount();
+    var cap = barCap();
+    var over = !state.whole && n > cap;
     $$('#pipeline-list .pl-rows').forEach(function (l) { l.classList.toggle('is-selecting', present.length > 0); });
     var count = $('#pl-bcount');
-    if (count) count.textContent = present.length + ' selected';
+    if (count) count.textContent = n + ' selected';
+    var all = $('#pl-ball'), note = $('#pl-bnote');
+    var el = groupEl(state.offer);
+    if (state.offer && !state.whole && el) {
+      var total = groupCount(el), label = el.getAttribute('data-label') || '';
+      if (all) {
+        all.textContent = total > cap
+          ? 'Select the first ' + cap + ' of ' + total + ' in ' + label
+          : 'Select all ' + total + ' in ' + label;
+      }
+      setHidden(all, false);
+    } else {
+      setHidden(all, true);
+    }
+    if (note) {
+      var msg = '';
+      if (state.whole) {
+        var w = state.whole;
+        msg = w.count > w.n
+          ? 'the first ' + w.n + ' of ' + w.count + ' in ' + w.label + '; ' + cap + ' at a time'
+          : 'all ' + w.count + ' in ' + w.label;
+      } else if (over) {
+        msg = cap + ' at a time. Untick some, or select a group.';
+      }
+      note.textContent = msg;
+      setHidden(note, !msg);
+    }
+    paintBulkLabels(n, over);
     placeBulk();
     bar.classList.toggle('is-on', present.length > 0);
   }
   function pick(id, on) {
+    state.whole = null;
     var at = state.picked.indexOf(id);
     var want = on === undefined ? at < 0 : on;
     if (want && at < 0) state.picked.push(id);
@@ -158,6 +224,7 @@
     updateBulk();
   }
   function pickRange(id) {
+    state.whole = null;
     var ids = rows().map(function (r) { return Number(r.dataset.id); });
     var a = ids.indexOf(state.last === null ? id : state.last), b = ids.indexOf(id);
     if (a < 0 || b < 0) { pick(id); return; }
@@ -167,7 +234,21 @@
     state.last = id;
     updateBulk();
   }
-  function clearPicks() { state.picked = []; state.last = null; updateBulk(); }
+  function clearPicks() {
+    state.picked = []; state.last = null; state.offer = null; state.whole = null;
+    updateBulk();
+  }
+  // The second step: the whole group, not only the rows drawn. The ticks stay as they are.
+  function selectWholeGroup() {
+    var el = groupEl(state.offer);
+    if (!el) return;
+    var total = groupCount(el);
+    state.whole = {
+      group: state.offer, count: total, n: Math.min(total, barCap()),
+      label: el.getAttribute('data-label') || '', scope: el.getAttribute('data-scope') || ''
+    };
+    updateBulk();
+  }
 
   /* ------------------------------------------------------------------------- clicks */
   // Registered in the capture phase (mount).
@@ -176,6 +257,7 @@
     if (!t || !t.closest) return;
     var bulk = t.closest('#pl-bulk [data-bulk]');
     if (bulk) { runBulk(bulk.getAttribute('data-bulk')); return; }
+    if (t.closest('#pl-ball')) { selectWholeGroup(); return; }
     if (t.closest('#pl-bclear')) { clearPicks(); return; }
     var nx = t.closest('[data-pl-notice-x]');
     if (nx) {  // dismiss a notice: fade out, then remove
@@ -193,6 +275,8 @@
       var group = selall.closest('.pl-group');
       if (group) {
         $$('.pl-row[data-id]', group).forEach(function (r) { pick(Number(r.dataset.id), true); });
+        state.offer = group.getAttribute('data-group');
+        updateBulk();
       }
       return;
     }
@@ -314,14 +398,26 @@
   function runBulk(action) {
     var ids = state.picked.slice();
     if (!ids.length) return;
+    if (!state.whole && selectedCount() > barCap()) {
+      toast('One action changes at most ' + barCap() + ' roles. Untick some, or select a group.', { tone: 'warn' });
+      return;
+    }
     if (action === 'score-again') {
+      if (state.whole) {
+        toast('Score again works on the roles you tick. Clear the group selection and tick the roles to score again.', { tone: 'warn' });
+        return;
+      }
       // The same model choice every Score again offers, as its own page (#127).
       go('/rescore/choose?opp_ids=' + ids.join(',') + '&page=1&next=' +
         encodeURIComponent('/opportunities'));
       return;
     }
+    // A whole group names the group and the filters, never the ids: the server resolves it now.
+    var values = state.whole
+      ? { group: state.whole.group, scope: state.whole.scope, expect: String(state.whole.count) }
+      : { ids: ids.join(',') };
     ajax('POST', '/pipeline/bulk/' + action, {
-      source: '#pl-bulk', target: '#pl-bulk', swap: 'none', values: { ids: ids.join(',') }
+      source: '#pl-bulk', target: '#pl-bulk', swap: 'none', values: values
     });
   }
 

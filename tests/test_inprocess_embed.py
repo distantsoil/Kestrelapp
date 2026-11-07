@@ -641,3 +641,19 @@ def test_file_mode_installs_only_when_every_file_matches(tmp_path):
         mod.install_files(tmp_path / "bad", bad)
     assert not (tmp_path / "bad" / "model.onnx").exists()  # nothing installed on a mismatch
     assert not list((tmp_path / "bad").glob(".*.part"))
+
+
+def test_a_missing_model_reads_as_kestrels_own_sentence_on_a_page(tmp_path, monkeypatch):
+    """The story run and every other embed caller show this as written: no folder path and no
+    exception class name, and it says why an online model still needs it."""
+    from kestrel.errors import task_failure_text
+    from kestrel.web.errors import plain_error
+
+    where = tmp_path / "private-folder-xyz"
+    monkeypatch.setattr(ipe, "model_dir", lambda: where)
+    monkeypatch.setattr(ipe, "_cache", {})
+    with pytest.raises(ipe.EmbedModelMissing) as caught:
+        ipe.embed_sync(["anything"], model=MODEL)
+    for shown in (task_failure_text(caught.value), plain_error(caught.value)):
+        assert "private-folder-xyz" not in shown and "EmbedModelMissing" not in shown
+        assert "reinstall Kestrel" in shown and "even with an online model" in shown

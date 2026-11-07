@@ -69,6 +69,12 @@ def runtime_json() -> Path:
     return data_home() / "runtime.json"
 
 
+def startup_health_json() -> Path:
+    """How many starts in a row have not finished (kestrel.startup_health, D-UI-252). Next to
+    runtime.json, outside the database, so it can be read when the database is the problem."""
+    return data_home() / "startup.json"
+
+
 def window_state_json() -> Path:
     """The desktop window's own remembered state (its light or dark theme), read before the
     loading page paints so the first frame matches (D-UI-89)."""

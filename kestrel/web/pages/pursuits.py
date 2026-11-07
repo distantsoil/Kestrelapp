@@ -173,7 +173,7 @@ def _next_line(p: Pursuit, on: date) -> dict:
         when = f"{board_svc.short_date(p.next_action_at)}{', ' + clock if clock else ''}"
         return {"text": p.next_action, "icon": "cal", "when": when}
     if due < on:
-        when = f"was due {board_svc.short_date(p.next_action_at)}"
+        when = f"{board_svc.FOLLOW_UP_OVERDUE}, was due {board_svc.short_date(p.next_action_at)}"
         return {"text": p.next_action, "icon": "clock", "when": when}
     return {"text": p.next_action, "icon": "clock", "when": board_svc.due_label(due, on)}
 
@@ -877,7 +877,8 @@ async def set_allow_reposts(request: Request, pursuit_id: int):
             return HTMLResponse("not found", status_code=404)
         p.allow_reposts = allow
         await s.commit()
-    return HTMLResponse("", status_code=204)
+    said = "New listings of this role will show." if allow else "Re-posts of this role stay hidden."
+    return HTMLResponse("", status_code=204, headers={"HX-Trigger": _trigger(said)})
 
 
 @router.post("/pursuits/{pursuit_id}/next-action", response_class=HTMLResponse)

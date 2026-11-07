@@ -42,7 +42,7 @@
   {%- endfor %}
   {%- if review is defined and review %}
   <p class="pp-sub">{{ review.mode.replace('_', ' ')|capitalize }} · {{ review.started_at | iso_to_local }} · {{ review.question_count }} {{ 'answer' if review.question_count == 1 else 'answers' }}. This session is finished.</p>
-  <a class="k-btn k-btn--sm" href="{{ base }}?tab=practice" hx-get="{{ base }}?tab=practice" hx-target="#pp-body" hx-push-url="true">Back to practice</a>
+  <a class="k-btn k-btn--sm" href="{{ base }}?tab=practice" data-pp-tabin hx-get="{{ base }}?tab=practice" hx-target="#pp-tabbody" hx-swap="innerHTML" hx-push-url="true">Back to practice</a>
   {%- elif active %}
     {%- if just_answered %}
     <div class="pp-acts" id="pp-acts">

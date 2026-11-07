@@ -90,3 +90,11 @@ def test_the_shared_picker_script_is_a_singleton_that_binds_each_picker_once():
 def test_the_picker_macro_still_emits_the_script_beside_each_picker():
     text = (Path(paths.web_templates_dir()) / "partials" / "model_picker.html").read_text("utf-8")
     assert "js/model_combo.js" in text
+
+
+def test_the_settings_flush_listeners_go_through_the_page_lifecycle():
+    """The settle flush is registered with ctx.on in mount, never at top level (D-UI-210)."""
+    code = _code("settings.js")
+    assert "addEventListener" not in code
+    assert "ctx.on(doc, type, flushSettle, true)" in code
+    assert "unsettled = [];" in code

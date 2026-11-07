@@ -340,6 +340,7 @@ async def opportunities(request: Request):
     from kestrel.db.models import Source, Task
     from kestrel.queue.queue import in_flight
     from kestrel.services.tracks import switched_off_tracks
+    from kestrel.web.pages.pipeline import BULK_MAX
     from kestrel.web.queries import chip_counts, list_signals
     from kestrel.web.routes_control import run_active
 
@@ -435,6 +436,7 @@ async def opportunities(request: Request):
         "scoring_failed": counts["failed"],
         "total_open": sum(page.group_counts.values()),
         "page_ids": [r.opp.id for r in page.rows],
+        "bulk_cap": BULK_MAX,
         "picked_ids": picked_from(request.query_params),
         "open_id": open_id,
         "panel_html": "",
@@ -769,6 +771,26 @@ def _link(
     return {"text": redact_text(text or url, mapping, enabled=conf), "href": url}
 
 
+def _source_credit(source, posting_link: dict | None) -> dict | None:
+    """{"name", "href"} for the board credit Remotive, Arbeitnow and Jobicy ask for: the board's
+    name with a link to the posting on that board, or to the board's home page when the posting
+    link is not shown (confidential mode) or is not on the board. None for any other source."""
+    from urllib.parse import urlparse
+
+    from kestrel.services.export_terms import credit_for
+
+    found = credit_for(source.kind) if source is not None else None
+    if found is None:
+        return None
+    name, home = found
+    board = (urlparse(home).hostname or "").removeprefix("www.")
+    href = (posting_link or {}).get("href")
+    host = (urlparse(href).hostname or "").removeprefix("www.") if href else ""
+    if not (host == board or host.endswith("." + board)):
+        href = home
+    return {"name": name, "href": href}
+
+
 async def _detail_context(s, opp_id: int) -> dict | None:
     """The shared context for the detail page and its tab partials, with confidential-mode
     redaction applied once, here, to every org mention: the org row and opp.org_name (display-only
@@ -802,6 +824,7 @@ async def _detail_context(s, opp_id: int) -> dict | None:
     )
     posting_link = _link(opp.url, None, conf, mapping, tokens, "source posting")
     source_name = redact_text(source.name, mapping, enabled=conf) if source is not None else None
+    source_credit = _source_credit(source, posting_link)
     dedup_rows = [
         {
             "id": m.id,
@@ -823,6 +846,7 @@ async def _detail_context(s, opp_id: int) -> dict | None:
             "org_site": org_site,
             "posting_link": posting_link,
             "source_name": source_name,
+            "source_credit": source_credit,
             "dedup_rows": dedup_rows,
             "title_display": redact_text(opp.title, mapping, enabled=conf) or "(untitled)",
             "description_display": redact_text(opp.description_md, mapping, enabled=conf),

@@ -195,12 +195,15 @@ class _BrokenTier2(FakeLLM):
 
 
 def test_the_run_finished_notification_carries_the_failure_count():
+    # D-NOTIFY-1 (#110): with failures the one outcome is a warning under Something needs
+    # attention (its own kind), not the plain "Run finished" summary.
     _fresh_db(2)
     _run_once(_BrokenTier2)
-    notes = _notifications("run_finished")
+    notes = _notifications("roles_need_retry")
     assert len(notes) == 1
     assert notes[0].severity == "warning"
     assert re.search(r"2 roles", notes[0].title), notes[0].title
+    assert not _notifications("run_finished")
     assert not _notifications("high_score")
 
 

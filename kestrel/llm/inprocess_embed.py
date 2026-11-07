@@ -29,6 +29,7 @@ from typing import Any
 import structlog
 
 from kestrel import paths
+from kestrel.errors import UserFacingError
 
 log = structlog.get_logger()
 
@@ -95,13 +96,15 @@ BUNDLED = BundledModel(
 NOTICE_FILENAME = "NOTICE.txt"
 _BATCH = 32
 _FETCH_HINT = (
-    "run `uv run python scripts/fetch_embed_model.py` (a source checkout), or reinstall Kestrel; "
-    "the in-process embedding model ships inside the installer"
+    "reinstall Kestrel, since the model ships inside the installer (in a source checkout, run "
+    "`uv run python scripts/fetch_embed_model.py`)"
 )
 
 
-class EmbedModelMissing(RuntimeError):
-    """The bundled model files are absent or do not match their pinned hashes."""
+class EmbedModelMissing(UserFacingError, RuntimeError):
+    """The bundled model files are absent or do not match their pinned hashes. The message is
+    Kestrel's own sentence (file names, never the folder path), so a page or the Runs list can
+    show it as written; the folder goes to the log."""
 
 
 class EmbedModelMismatch(RuntimeError):
@@ -149,9 +152,11 @@ class InProcessEmbedder:
     def __init__(self, directory: Path) -> None:
         bad = missing_files(directory, verify=True)
         if bad:
+            log.warning("inprocess_embed_missing", directory=str(directory), files=bad)
             raise EmbedModelMissing(
-                f"in-process embedding model not usable in {directory}: "
-                f"{', '.join(bad)}; {_FETCH_HINT}"
+                "The built-in model Kestrel uses on this computer to compare your text is "
+                f"missing or damaged ({', '.join(bad)}). Embeddings never go to an online "
+                f"service, so this is needed even with an online model: {_FETCH_HINT}."
             )
         import onnxruntime as ort
         from tokenizers import Tokenizer

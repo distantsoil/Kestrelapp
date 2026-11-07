@@ -24,6 +24,24 @@ HX = {"HX-Request": "true"}
 
 
 @pytest.fixture(autouse=True)
+def _mcp_runtime_state_is_fresh():
+    """The MCP runtime keeps its state in one module-level dict (live flag, server task, stop
+    event, port, stored failure reason and detail). A test that leaves a stored failure behind
+    would leak it into the next test in the same worker, so the whole dict is put back to its
+    defaults before and after every test."""
+    from kestrel.mcp import runtime as _rt
+
+    def _reset() -> None:
+        _rt._state.clear()
+        _rt._state.update(live=False, task=None, stop=None, port=None, bind_all=False,
+                          reason=None, recorded=None, detail=None)
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _no_ollama(monkeypatch):
     from kestrel.web import routes_control
 
@@ -322,9 +340,11 @@ def test_mcp_switch_failure_is_a_plain_error_not_a_500(monkeypatch):
     with _client() as c:
         r = c.post("/settings/mcp", data={"enabled": "1"}, headers=HX)
     assert r.status_code == 200
-    # The exception text is logged, never shown (D-SEC-2): the type and a pointer to the log.
-    assert "The MCP server could not be started: an unexpected problem (RuntimeError)" in r.text
-    assert "no loop for you" not in r.text
+    # The exception text is logged, never shown (D-SEC-2), and neither is its class name
+    # (D-UI-242): plain words and a pointer to the log.
+    assert ("The MCP server could not be started: an unexpected problem; "
+            "the details are in the log") in r.text
+    assert "no loop for you" not in r.text and "RuntimeError" not in r.text
 
 
 # ------------------------------------------------------------- finding 5: open run is active

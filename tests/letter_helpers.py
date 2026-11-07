@@ -44,3 +44,19 @@ def generate(c, url: str, data=None):
         return r
     drain_letters()
     return c.get(url.rsplit("/", 1)[0] + "/status")
+
+
+def letter_body(render_id: int) -> str:
+    """The stored text of the letter attached to this render (the `letter` table, D-LETTER-1)."""
+    from sqlalchemy import select
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Letter
+
+    async def go() -> str:
+        async with get_sessionmaker()() as s:
+            row = (await s.execute(
+                select(Letter).where(Letter.render_id == render_id))).scalars().one()
+            return row.body_md
+
+    return asyncio.run(go())

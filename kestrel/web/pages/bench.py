@@ -86,7 +86,7 @@ def _online_gate(
     from kestrel.services.online_consent import approval_covers
 
     if expected and not approval_covers(expected, approval):
-        return "Confirm the model and online service destinations, then try again."
+        return APPROVAL_NEEDED
     return ""
 
 
@@ -388,6 +388,27 @@ async def panel(request: Request):
     return await _panel(request)
 
 
+NO_PROVIDER = ("Connect an online provider first. Online models need a key, and none is "
+               "connected. Set one up under Models.")
+
+
+APPROVAL_NEEDED = "Confirm the model and online service destinations, then try again."
+
+
+def _approves_provider(settings, value: object) -> bool:
+    """True when the posted approval names at least one destination at the connected provider
+    (its backend and address). The card discloses every model it offers there; without such an
+    approval nothing, not even the model list, is requested."""
+    from kestrel.services.online_consent import read_approval
+
+    found = models_ui.connected_backend(settings)
+    if found is None:
+        return False
+    name, backend = found
+    prefix = f"{name}|{getattr(backend, 'base_url', '') or ''}|"
+    return any(d.startswith(prefix) for ds in read_approval(value).values() for d in ds)
+
+
 async def _online_candidates(settings, steps: list[str]) -> tuple[dict, str]:
     """Online models to include, per step: one free and one paid that fit the step. The model
     list request carries only the key. ({}, message) when nothing can be offered."""
@@ -395,8 +416,7 @@ async def _online_candidates(settings, steps: list[str]) -> tuple[dict, str]:
 
     found = models_ui.connected_backend(settings)
     if found is None:
-        return {}, ("Connect an online provider first. Online models need a key, and none is "
-                    "connected. Set one up under Models.")
+        return {}, NO_PROVIDER
     name, backend = found
     try:
         listed = hm.picker_models(await hm.fetch_models(name, backend))
@@ -423,14 +443,24 @@ async def start(request: Request):
     notice, ok = "", True
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
-        if form.get("online") == "on":
-            online, refusal = await _online_candidates(settings, steps)
+        # The tick posts the provider the card named (`ck_provider_backend`), so a card shown for
+        # one provider never confirms another; `_online_gate` compares it to the connected one.
+        ticked = str(form.get("online") or "")
+        if ticked:
+            # No provider, then the disclosure, then an approval that names the connected provider,
+            # all before anything goes online: without them not even the request that lists the
+            # provider's models is sent (0.7.6 review). The approval names the candidate models,
+            # which are known only after listing, so the full coverage check follows the listing.
+            refusal = ("" if models_ui.connected_backend(settings) is not None
+                       else NO_PROVIDER)
             refusal = refusal or models_ui.online_problem(settings) or ""
+            if not refusal and not _approves_provider(settings, form.get("online_approval")):
+                refusal = APPROVAL_NEEDED
             if not refusal:
-                connected = check.connected_provider(settings)
+                online, refusal = await _online_candidates(settings, steps)
+            if not refusal:
                 refusal = _online_gate(
-                    settings, None, online, connected[0] if connected else "",
-                    form.get("online_approval"), steps,
+                    settings, None, online, ticked, form.get("online_approval"), steps,
                 )
             if refusal:
                 notice, ok = refusal, False

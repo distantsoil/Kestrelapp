@@ -539,3 +539,34 @@ def test_a_lead_chip_in_the_stacked_row_ends_in_an_ellipsis_too(live):
         assert c["span"][1] <= c["inner"] + 1 and c["h"] <= 24, c
     finally:
         ctx.close()
+
+
+def test_i_applied_on_a_role_never_shortlisted_with_quick_pick_undo_and_edit_date(live):
+    """#129: Yesterday fills the date and moves the follow-up with it; applying creates the
+    application; Edit date changes the dates; Undo puts the role back to not shortlisted."""
+    from datetime import date, timedelta
+
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        page.get_by_test_id("applied-form").wait_for()
+        assert page.get_by_test_id("add-to-list").count() == 1  # never shortlisted
+        page.get_by_test_id("pick-yesterday").click()
+        assert page.get_by_test_id("applied-on-date").input_value() == yesterday
+        follow = (date.today() + timedelta(days=6)).isoformat()
+        assert page.get_by_test_id("applied-follow-date").input_value() == follow
+        page.get_by_test_id("mark-applied").click()
+        page.get_by_test_id("applied-on").wait_for()
+        assert page.get_by_test_id("on-my-list").count() == 1
+        page.get_by_test_id("applied-edit-open").click()
+        page.get_by_test_id("applied-edit-form").wait_for(state="visible")
+        three_ago = (date.today() - timedelta(days=3)).isoformat()
+        page.get_by_test_id("applied-edit-date").fill(three_ago)
+        page.get_by_test_id("applied-edit-save").click()
+        page.get_by_test_id("applied-follow").wait_for()
+        page.get_by_test_id("applied-undo").click()
+        page.get_by_test_id("add-to-list").wait_for()
+        page.get_by_test_id("applied-form").wait_for()
+        assert not errors, errors
+    finally:
+        ctx.close()

@@ -735,7 +735,7 @@ async def stop():
     Run now or Resume picks up where it left off; nothing is lost."""
     from kestrel.ingest.scheduler import cancel_pending_scrapes
     from kestrel.pipeline import runlog
-    from kestrel.web.app import set_paused
+    from kestrel.web.app import release_confirmed_run, set_paused
     from kestrel.web.db_retry import write_with_retry
 
     global _stop_in_flight
@@ -750,6 +750,7 @@ async def stop():
         # The in-memory flag first: nothing new starts even if the database writes below have to
         # wait out another writer (D-DB-1).
         set_paused(True)
+        release_confirmed_run()  # a stopped run no longer holds its settings (#103)
         step = (summary.get("headline") or "").replace("Paused", "").strip(": ")
         run_id = summary.get("run_id")
         note = f"Stopped by you{' at ' + step if step else ''}."

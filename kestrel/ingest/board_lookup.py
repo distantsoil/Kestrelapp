@@ -58,6 +58,30 @@ class LookupResult:
     inconclusive: bool = False
 
 
+_PAREN = re.compile(r"\(([^()]*)\)")
+_ALIAS_SPLIT = re.compile(r"[/,;&]")
+_ALIAS_LEAD = re.compile(r"^\s*(?:formerly|fka|f/k/a|dba|d/b/a|now|part of|a division of)\s+", re.I)
+
+
+def name_variants(name: str) -> list[str]:
+    """The names to probe, plain name first. "Acme Foods (Northwind Group / Palmex)" is the plain
+    "Acme Foods", then each name inside the parentheses. A name with no parentheses is itself
+    (#123 finding 3: "Company (Qualifier)" used to become the slug "companyqualifier")."""
+    plain = " ".join(_PAREN.sub(" ", name).split()) or name.strip()
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in [plain] + [
+        _ALIAS_LEAD.sub("", part)
+        for inner in _PAREN.findall(name)
+        for part in _ALIAS_SPLIT.split(inner)
+    ]:
+        key = "".join(w.lower() for w in _words(item))
+        if key and key not in seen:
+            seen.add(key)
+            out.append(" ".join(item.split()))
+    return out
+
+
 def _words(name: str) -> list[str]:
     words = re.findall(r"[A-Za-z0-9]+", name.replace("'", ""))
     while words and words[-1].lower() in SUFFIXES:
@@ -68,7 +92,8 @@ def _words(name: str) -> list[str]:
 def candidate_slugs(name: str) -> dict[str, list[str]]:
     """Likely identifiers per platform, most likely first. Empty when the name has no letters
     or digits left once the suffixes are gone."""
-    words = _words(name)
+    variants = name_variants(name)
+    words = _words(variants[0] if variants else name)
     if not words:
         return {}
     joined = "".join(w.lower() for w in words)
@@ -91,22 +116,27 @@ def candidate_slugs(name: str) -> dict[str, list[str]]:
     }
 
 
-def _probes(name: str) -> list[tuple[str, dict]]:
-    """(kind, config) pairs in the order they are tried: the most likely identifier on every
-    platform first, then the variants, so a common case answers in four requests or fewer."""
-    slugs = candidate_slugs(name)
+def _probes(name: str) -> list[tuple[str, dict, str]]:
+    """(kind, config, variant name) in the order they are tried: the most likely identifier on
+    every platform for the plain name, then for each name in parentheses, then the next most
+    likely identifiers; MAX_PROBES caps the lot."""
+    variants = name_variants(name)
+    per_variant = [candidate_slugs(v) for v in variants]
     key = {"greenhouse": "token", "lever": "company", "ashby": "token",
            "smartrecruiters": "company"}
-    out: list[tuple[str, dict]] = []
-    depth = max((len(v) for v in slugs.values()), default=0)
+    out: list[tuple[str, dict, str]] = []
+    seen: set[tuple] = set()
+    depth = max((len(o) for slugs in per_variant for o in slugs.values()), default=0)
     for i in range(depth):
-        for kind in ("greenhouse", "lever", "ashby", "smartrecruiters"):
-            options = slugs.get(kind) or []
-            if i < len(options):
-                config: dict[str, Any] = {key[kind]: options[i]}
-                if kind == "smartrecruiters":
-                    config["max_results"] = 1
-                out.append((kind, config))
+        for variant, slugs in zip(variants, per_variant, strict=True):
+            for kind in ("greenhouse", "lever", "ashby", "smartrecruiters"):
+                options = slugs.get(kind) or []
+                if i < len(options) and (kind, options[i]) not in seen:
+                    seen.add((kind, options[i]))
+                    config: dict[str, Any] = {key[kind]: options[i]}
+                    if kind == "smartrecruiters":
+                        config["max_results"] = 1
+                    out.append((kind, config, variant))
     return out[:MAX_PROBES]
 
 
@@ -128,10 +158,11 @@ def _transient(exc: BaseException | None) -> bool:
 async def find_company_board(name: str, http: Any) -> LookupResult:
     """Try each candidate until a board answers with at least one job. A 404, a refused request,
     a non-JSON body or an empty board is simply "not this one"; nothing here raises for them."""
-    company = " ".join(_words(name)) or name.strip()
+    variants = name_variants(name)
+    company = " ".join(_words(variants[0])) if variants else name.strip()
     tried: list[str] = []
     unanswered = 0
-    for kind, config in _probes(name):
+    for kind, config, variant in _probes(name):
         adapter = get_adapter(kind)
         if adapter is None:
             continue
@@ -148,6 +179,7 @@ async def find_company_board(name: str, http: Any) -> LookupResult:
             unanswered += 1  # the board slowed us down before answering
         if postings:
             saved = {k: v for k, v in config.items() if k != "max_results"}
+            company = " ".join(_words(variant)) or company
             if kind == "ashby":
                 saved["company_name"] = company
             jobs = None if kind == "smartrecruiters" else len(postings)

@@ -96,11 +96,9 @@ class RemotiveAdapter:
                 raise TypeError("jobs")
         except (ValueError, KeyError, TypeError) as exc:
             log.warning("remotive_bad_shape", error=type(exc).__name__)
-            batch = PostingBatch()
-            batch.partial_error = (
-                "Remotive sent a reply Kestrel could not read; the format may have changed."
-            )
-            return batch
+            raise AdapterError(
+                "Remotive sent a reply Kestrel could not read; the format may have changed"
+            ) from exc
 
         batch = PostingBatch()
         seen: set[str] = set()
@@ -144,6 +142,8 @@ def _map_job(job: dict[str, Any]) -> RawPosting | None:
     description = job.get("description")
     if description is not None and not isinstance(description, str):
         description = str(description)
+    # The live API sends "" for a job with no text (captured 2026-11-05): that is no description.
+    description = description if description and description.strip() else None
 
     # Use the job id for dedup; fall back to the url if id is missing.
     raw_id = job.get("id")

@@ -42,7 +42,7 @@ router = APIRouter()
 
 MODES = (
     ("local", "local", "On this computer", "laptop",
-     ("Free to use", "Stays private", "Needs a capable computer")),
+     ("Free to use", "Private when Ollama is set up as shipped", "Needs a capable computer")),
     ("online", "hosted", "Online model", "cloud",
      ("Fast", "You pay the service per use", "Asks before sending")),
     ("both", "both", "Both", "both",

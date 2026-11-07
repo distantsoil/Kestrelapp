@@ -34,7 +34,7 @@
         </div>
       </div>
       {%- endif %}
-      <a class="k-btn k-btn--sm" href="{{ base }}?tab=practice&qh={{ r.qh }}" hx-get="{{ base }}?tab=practice&qh={{ r.qh }}" hx-target="#pp-body" hx-swap="innerHTML" hx-push-url="true" data-testid="pp-practice">Practice</a>
+      <a class="k-btn k-btn--sm" href="{{ base }}?tab=practice&qh={{ r.qh }}" hx-get="{{ base }}?tab=practice&qh={{ r.qh }}" hx-target="#pp-tabbody" hx-swap="innerHTML" hx-push-url="true" data-pp-tabin data-testid="pp-practice">Practice</a>
     </div>
   </div>
   {%- else %}

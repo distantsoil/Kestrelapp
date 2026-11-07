@@ -177,10 +177,10 @@ The scene choice and scene rotation are separate: the new-install rotation inclu
 
 | Exact label | Effect | New-install default |
 |---|---|---|
-| **New strong matches** | Alerts for roles that score high for you. | On. |
+| **New roles worth a look** | One alert per run for new roles rated Your call or better. | On. |
 | **Follow-ups due** | Alerts for applications waiting on your next step. | On. |
 | **Run finished** | Alerts when a search run finishes. | On. |
-| **Something needs attention** | Alerts about a source, model, or backup problem. | On. |
+| **Something needs attention** | Alerts about a source, model, or backup problem, or roles that need another try after a run. | On. |
 | **Bell in Kestrel** | Keeps alerts in the in-app bell. | Always on; cannot be turned off here. |
 | **Computer notifications** | Allows small pop-ups from your computer. | On. |
 | **Play a sound** | Saved preference. Alerts do not play sounds yet; **Play** previews the chosen sound. | On. |

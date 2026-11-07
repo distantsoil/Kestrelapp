@@ -32,7 +32,12 @@
         {# ------------------------------------------------------------ This computer #}
         <section class="k-card mo-card {{ 'mo-edge-warn' if (cpu_only or local_pill[1] == 'warn') else 'mo-edge-good' }} {{ 'mo-disabled' if choice == 'hosted' }}" id="mo-computer" data-testid="mo-computer">
           <header class="mo-head"><span class="k-badge k-badge--lg {{ 'k-badge--warn' if cpu_only else 'k-badge--good' }}">{{ ui.icon('laptop') }}</span>
-            <div class="k-grow"><h3>On this computer {{ ui.pill(local_pill[0], local_pill[1]) }}</h3><p class="k-muted">Private. Works offline.</p></div></header>
+            <div class="k-grow"><h3>On this computer {{ ui.pill(local_pill[0], local_pill[1]) }}</h3><p class="k-muted" data-testid="mo-private-line">Private when Ollama is set up as shipped</p></div></header>
+          <details class="mo-details mo-privacy" data-testid="mo-privacy-details"><summary>Show details</summary>
+            <p class="mo-note"><b>What Kestrel does.</b> Kestrel runs the local AI through Ollama on this computer. It sends the model a prompt and reads text back. It gives the model no tools, no web access and no files. Every answer is checked against a fixed format.</p>
+            <p class="mo-note"><b>What Kestrel cannot control.</b> Ollama is a separate program. Its own settings decide whether it checks for updates, uses its cloud models, or listens beyond this computer. If you point Kestrel at an Ollama on another machine, or use a custom or cloud-hosted model, your text goes there. Models are files made by other people: Kestrel tests that they run and answer in the right format, but it cannot inspect how they were trained.</p>
+            <p class="mo-note"><b>How to keep it local.</b> Keep Ollama on this computer. Turn off Ollama's cloud models in its settings. For certainty, block Ollama's internet access in your firewall once your models are downloaded. Kestrel keeps working, because it talks to Ollama on this computer.</p>
+          </details>
           <div class="mo-row"><b class="mo-name" title="{{ local_model }}">{{ local_model }}</b>
             <button type="button" class="k-btn k-btn--sm" data-k-slideover="#mo-change" hx-get="/models/change/tier2" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-local" {{ 'disabled' if choice == 'hosted' }}>Change model</button></div>
           <dl class="mo-strip">
@@ -67,7 +72,7 @@
     </div>
     {% call ui.help_column() %}
       {{ ui.help_card('What each step does', ['Rules and Quick screen: fast filters.', 'Rating: reads the whole posting.', 'Deeper read: only when you ask.'], 'info', 'cpu', 'mo-steps-fly') }}
-      {{ ui.help_card('On this computer or online', ['This computer: private and free.', 'Online: faster than this computer, paid per use.', 'Kestrel asks before anything goes online.'], 'warn', 'cloud', 'mo-where-fly') }}
+      {{ ui.help_card('On this computer or online', ['This computer: free, and private when Ollama is set up as shipped.', 'Online: faster than this computer, paid per use.', 'Kestrel asks before anything goes online.'], 'warn', 'cloud', 'mo-where-fly') }}
       {{ ui.help_card('Checks and fixes', ['Model check: after a new model or 30 ratings.', 'Can read: pages a model takes in at once.', 'Health check tests it with a hidden word.'], 'good', 'shield', 'mo-checks-fly') }}
     {% endcall %}
   </div>

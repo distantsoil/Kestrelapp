@@ -483,3 +483,145 @@ def test_red_first_is_skipped_on_the_public_export(monkeypatch, tmp_path):
     problems, warnings = tf.red_first_problems("origin/main", repo=tmp_path)
     assert problems == []
     assert len(warnings) == 1 and "public export" in warnings[0]
+
+
+# ---- changelog guard (D-CI-17) -----------------------------------------------------------------
+
+VER = "kestrel/__init__.py"
+APP = "kestrel/app.py"
+LOG = "CHANGELOG.md"
+
+
+@pytest.fixture
+def release_repo(tmp_path):
+    repo = tmp_path / "release"
+    (repo / "kestrel").mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "INSTRUCTIONS.md").write_text("private\n", encoding="utf-8")
+    (repo / VER).write_text('__version__ = "1.0.0"\n', encoding="utf-8")
+    (repo / APP).write_text("x = 1\n", encoding="utf-8")
+    (repo / LOG).write_text("## [1.0.0] - 2026-01-01\n\n- Old note\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore: start")
+    return repo
+
+
+def _commit(repo: Path, subject: str, files: dict[str, str]) -> None:
+    for name, text in files.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", subject)
+
+
+def _head(repo: Path) -> str:
+    return _git(repo, "rev-parse", "HEAD")
+
+
+BUMP = {VER: '__version__ = "1.1.0"\n'}
+NOTES_110 = {LOG: "## [1.1.0] - 2026-02-01\n\n- **Score again** says what happened.\n"
+                  "\n## [1.0.0] - 2026-01-01\n\n- Old note\n"}
+NOTES_UNRELEASED = {LOG: "## [Unreleased]\n\n- **Score again** says what happened.\n"
+                         "\n## [1.0.0] - 2026-01-01\n\n- Old note\n"}
+
+
+def test_work_then_bump_without_notes_is_flagged(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix(web): score again", {APP: "x = 2\n"})
+    _commit(release_repo, "chore: bump", BUMP)
+    problems = tf.changelog_problems(base, repo=release_repo)
+    assert problems and all("RULE changelog" in p for p in problems)
+    assert "fix(web): score again" in problems[0]
+    assert "[1.1.0] section of CHANGELOG.md" in problems[0]
+
+
+def test_work_then_bump_with_notes_passes(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix(web): score again", {APP: "x = 2\n"})
+    _commit(release_repo, "chore: bump", {**BUMP, **NOTES_110})
+    assert tf.changelog_problems(base, repo=release_repo) == []
+
+
+def test_work_then_notes_then_bump_passes(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix: score again", {APP: "x = 2\n"})
+    _commit(release_repo, "docs: notes", NOTES_UNRELEASED)
+    _commit(release_repo, "chore: bump", {**BUMP, **NOTES_110})
+    assert tf.changelog_problems(base, repo=release_repo) == []
+
+
+def test_bump_notes_then_a_later_fix_is_flagged(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "chore: bump", {**BUMP, **NOTES_110})
+    _commit(release_repo, "fix: one more thing", {APP: "x = 3\n"})
+    problems = tf.changelog_problems(base, repo=release_repo)
+    assert len(problems) == 1 and "after the last CHANGELOG.md edit" in problems[0]
+    assert "one more thing" in problems[0]
+
+
+def test_a_changelog_edit_that_adds_no_bullet_does_not_count(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix: score again", {APP: "x = 2\n"})
+    empty = "## [1.1.0]\n\n## [1.0.0]\n\n- Old note\n"
+    _commit(release_repo, "chore: bump", {**BUMP, LOG: empty})
+    assert tf.changelog_problems(base, repo=release_repo)
+
+
+def test_no_bump_and_a_fix_without_an_unreleased_note_is_flagged(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix: quiet", {APP: "x = 2\n"})
+    problems = tf.changelog_problems(base, repo=release_repo)
+    assert len(problems) == 1 and "[Unreleased] section" in problems[0]
+
+
+def test_no_bump_with_an_unreleased_note_passes(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "feat: new page", {APP: "x = 2\n", **NOTES_UNRELEASED})
+    assert tf.changelog_problems(base, repo=release_repo) == []
+
+
+def test_no_bump_a_note_in_an_old_release_section_is_not_an_unreleased_note(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix: quiet", {APP: "x = 2\n"})
+    older = "## [1.0.0] - 2026-01-01\n\n- Old note\n- More\n"
+    _commit(release_repo, "docs: edit old", {LOG: older})
+    assert tf.changelog_problems(base, repo=release_repo)
+
+
+def test_commits_that_are_not_user_facing_are_ignored(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "test: more", {"tests/test_x.py": "def test_x():\n    assert 1\n"})
+    _commit(release_repo, "fix: tooling only", {"scripts/tool.py": "y = 1\n"})
+    _commit(release_repo, "chore: tidy", {APP: "x = 4\n"})
+    _commit(release_repo, "chore: bump", BUMP)
+    assert tf.changelog_problems(base, repo=release_repo) == []
+
+
+def test_the_bump_commit_itself_is_not_held_to_the_changelog_rule(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "feat: release 1.1.0", BUMP)
+    assert tf.changelog_problems(base, repo=release_repo) == []
+
+
+def test_the_changelog_guard_is_skipped_on_the_public_export(release_repo):
+    base = _head(release_repo)
+    _commit(release_repo, "fix: x", {APP: "x = 2\n"})
+    (release_repo / "INSTRUCTIONS.md").unlink()
+    assert tf.changelog_problems(base, repo=release_repo) == []
+
+
+def test_run_static_reports_the_changelog_problem(release_repo, monkeypatch):
+    base = _head(release_repo)
+    _commit(release_repo, "fix: x", {APP: "x = 2\n"})
+    monkeypatch.setattr(tf, "ROOT", release_repo)
+    problems, _warnings = tf.run_static(base, {}, [APP])
+    assert any("RULE changelog" in p for p in problems)
+
+
+def test_a_note_that_was_already_on_the_base_does_not_cover_a_new_fix(release_repo):
+    _commit(release_repo, "docs: earlier note", {LOG: "## [Unreleased]\n\n- Earlier note\n"})
+    base = _head(release_repo)
+    _commit(release_repo, "fix: new thing", {APP: "x = 5\n"})
+    problems = tf.changelog_problems(base, repo=release_repo)
+    assert len(problems) == 1 and "new thing" in problems[0]

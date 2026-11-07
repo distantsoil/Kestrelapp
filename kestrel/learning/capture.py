@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import utcnow_iso
@@ -28,6 +28,30 @@ from kestrel.db.models import (
     SelectionOverride,
     VerdictOverride,
 )
+from kestrel.learning.groups import group_keys
+
+# A Pipeline bulk decision (Shortlist, Not for me or Mark reviewed on a selection, including a whole
+# group) applies to every selected role but is not the operator's considered word on any one of
+# them, so it never teaches (D-PIPE-116, owner 2026-11-05). The row that records the state carries
+# this mark in `dimension_corrections`, and every reader that teaches skips it.
+BULK_KEY = "bulk"
+
+
+def bulk_marks() -> dict[str, bool]:
+    """The `dimension_corrections` a bulk decision's row carries."""
+    return {BULK_KEY: True}
+
+
+def is_bulk(row: VerdictOverride) -> bool:
+    """Whether a verdict_override row was written by a bulk decision."""
+    marks = row.dimension_corrections
+    return isinstance(marks, dict) and bool(marks.get(BULK_KEY))
+
+
+def not_bulk():
+    """SQL twin of `not is_bulk`: true for a row written one role at a time, whether its
+    `dimension_corrections` is a SQL NULL, a JSON null or an object without the mark."""
+    return func.coalesce(func.json_extract(VerdictOverride.dimension_corrections, "$.bulk"), 0) == 0
 
 
 @dataclass
@@ -185,8 +209,9 @@ async def _eval_by_id(session: AsyncSession, eval_ids: list[int]) -> dict[int, E
 
 async def labeled_examples(session: AsyncSession, track: str) -> list[LabeledExample]:
     """The operator's judgments for a track: explicit `label` rows plus `verdict_override` rows that
-    carry an operator_score. One example per opportunity — the MOST RECENT judgment wins across both
-    kinds (a later correction supersedes an earlier label). Dimensions come from the evaluation the
+    carry an operator_score. One example per opportunity, then one per duplicate group (#122): the
+    MOST RECENT judgment wins across both kinds and across the copies of one posting (a later
+    correction supersedes an earlier label). Dimensions come from the evaluation the
     operator actually judged (the override's evaluation_id, or the label's stored dimensions), else
     the latest Tier 2 evaluation. Returned oldest-first so the caller can take the most-recent N
     (the drift window)."""
@@ -197,7 +222,11 @@ async def labeled_examples(session: AsyncSession, track: str) -> list[LabeledExa
         await session.execute(
             select(VerdictOverride, Opportunity.track)
             .join(Opportunity, Opportunity.id == VerdictOverride.opportunity_id)
-            .where(Opportunity.track == track, VerdictOverride.operator_score.is_not(None))
+            .where(
+                Opportunity.track == track,
+                VerdictOverride.operator_score.is_not(None),
+                not_bulk(),  # a bulk decision never teaches (D-PIPE-116)
+            )
         )
     ).all()
 
@@ -229,6 +258,17 @@ async def labeled_examples(session: AsyncSession, track: str) -> list[LabeledExa
                 created_at=lb.created_at or "",
             )
         )
+
+    # One judgment per duplicate group (#122, D-LRN-1): copies of one posting are one role, so
+    # the most recent judgment across the group stands and the others are not counted again.
+    keys = await group_keys(session, list(candidates))
+    newest: dict[str, LabeledExample] = {}
+    for oid, ex in sorted(candidates.items()):
+        key = keys.get(oid, f"__solo_{oid}")
+        held = newest.get(key)
+        if held is None or (ex.created_at or "") >= (held.created_at or ""):
+            newest[key] = ex
+    candidates = {ex.opportunity_id: ex for ex in newest.values()}
 
     missing = [oid for oid, ex in candidates.items() if ex.dimensions is None]
     if missing:

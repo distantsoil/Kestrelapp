@@ -328,6 +328,16 @@
   padding: 6px 11px; font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .pl-bulk button:hover { background: var(--line); color: var(--ink); }
 .pl-bulk .pl-bulk__x { border: 0; background: none; opacity: .75; padding: 4px; display: grid; place-items: center; }
+/* The whole-group step and its note (issue 116): a quiet text button beside the count, and a line that
+   says exactly what the selection is. They fade in when they appear; nothing jumps. */
+.pl-bulk .pl-bulk__all { background: none; border-color: transparent; text-decoration: underline;
+  text-underline-offset: 3px; padding: 6px 6px; animation: pl-bulk-in .28s var(--ease) backwards; }
+.pl-bulk .pl-bulk__all:hover { background: none; color: inherit; text-decoration-thickness: 2px; }
+.pl-bulk__note { font-size: var(--fs-xs); opacity: .85; padding: 0 4px; max-width: 34ch;
+  animation: pl-bulk-in .28s var(--ease) backwards; }
+.pl-bulk button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.pl-bulk button { transition: background var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); }
+@keyframes pl-bulk-in { from { opacity: 0; transform: translateY(4px); } }
 
 /* ------------------------------------------------------------------ narrow: panel is a sheet */
 @container (max-width: 760px) {
@@ -359,7 +369,8 @@
 @media (prefers-reduced-motion: reduce) {
   .pl-cue svg, .pl-arrive > * { animation: none !important; }
   .pl-panel, .pl-panel__in > *, .pl-bulk, .pl-foot, .pl-foot__a, .pl-fr, .pl-fl, .pl-mf, .pl-row, .pl-ring, .pl-dim u,
-  .pl-list .pl-rows, .pl-drop, .pl-more__menu, .pl-chip, .pl-notice, .pl-delta, .pl-tag--ok, .pl-notice__x { animation: none !important; transition: none !important; }
+  .pl-list .pl-rows, .pl-drop, .pl-more__menu, .pl-chip, .pl-notice, .pl-delta, .pl-tag--ok, .pl-notice__x,
+  .pl-bulk button, .pl-bulk__note { animation: none !important; transition: none !important; }
   .pl-delta { transform: none; }
 }
 

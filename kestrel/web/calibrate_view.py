@@ -21,6 +21,7 @@ from kestrel.learning import calibration as calib
 from kestrel.learning import reranker as reranker_mod
 from kestrel.learning.active import UncertainItem, rank_uncertain
 from kestrel.learning.capture import labeled_examples
+from kestrel.learning.groups import group_keys
 
 log = structlog.get_logger()
 
@@ -167,13 +168,19 @@ async def build_queue(
     s: AsyncSession, track: str, settings: Settings, *, since: str, skip: str | None
 ) -> QueueView:
     """The session: ten roles, one at a time. Skipped roles move to the end of the queue."""
-    done = (
-        await s.execute(
-            select(func.count(func.distinct(Label.opportunity_id))).where(
-                Label.track == track, Label.source == "active_learning", Label.created_at >= since
+    rated = [
+        oid
+        for (oid,) in (
+            await s.execute(
+                select(Label.opportunity_id).where(
+                    Label.track == track, Label.source == "active_learning",
+                    Label.created_at >= since,
+                )
             )
-        )
-    ).scalar_one()
+        ).all()
+    ]
+    # Roles rated this session, one per duplicate group (#122): the count is judgments, not rows.
+    done = len(set((await group_keys(s, rated)).values()))
     pool = await rank_uncertain(s, track, settings, limit=SESSION_SIZE + 1)
     left = pool[: max(0, SESSION_SIZE - done)]
     skipped = [i for i in _ids(skip) if any(u.opportunity.id == i for u in left)]
@@ -201,7 +208,9 @@ async def session_line(s: AsyncSession, track: str, since: str) -> str:
             .order_by(Label.id)
         )
     ).all()
-    said = dict(rows)  # the latest rating of each role wins
+    keys = await group_keys(s, [oid for oid, _ in rows])
+    said_by_group = {keys.get(oid, f"__solo_{oid}"): (oid, score) for oid, score in rows}
+    said = dict(said_by_group.values())  # the latest rating of each role, once per group, wins
     if len(said) < FLOOR:
         return f"Not enough ratings in this session to compare yet. {len(said)} so far."
     evs = {

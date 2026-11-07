@@ -37,6 +37,7 @@ from kestrel.db.engine import get_sessionmaker
 from kestrel.db.models import (
     DocRender,
     DocSlot,
+    Letter,
     Offer,
     PrepPack,
     Pursuit,
@@ -725,6 +726,10 @@ FILE_ROUTES = {
     "GET /opportunities/{opp_id}/role/cover-letter/{render_id}/download",
     "POST /opportunities/{opp_id}/role/cover-letter/{render_id}/save",
     "POST /opportunities/{opp_id}/role/cover-letter/{render_id}/discard",
+    # Draft again (D-LETTER-4): keeping one draft deletes another, and Undo deletes the newer.
+    "POST /opportunities/{opp_id}/role/cover-letter/{render_id}/keep-new",
+    "POST /opportunities/{opp_id}/role/cover-letter/{render_id}/keep-previous",
+    "POST /opportunities/{opp_id}/role/cover-letter/{render_id}/undo",
     "POST /documents/{master_id}/delete",
 }
 
@@ -764,8 +769,6 @@ async def _file_world(doc_pdf: str, prep_pdf: str) -> dict[str, int]:
             template="cover_letter",
             config={
                 "kind": "cover_letter",
-                "body_md": body,
-                "words": 3,
                 "pdf_digest": hashlib.sha256(body.encode("utf-8")).hexdigest(),
             },
             pdf_path=doc_pdf,
@@ -785,6 +788,9 @@ async def _file_world(doc_pdf: str, prep_pdf: str) -> dict[str, int]:
         )
         s.add_all([letter, tailored, pack])
         await s.flush()
+        # The letter's text lives in the letter table, attached to its render (D-LETTER-1).
+        s.add(Letter(render_id=letter.id, opportunity_id=ids["strong"], kind="cover_letter",
+                     body_md=body, generated_md=body, word_count=3))
         # The seeded render is the one the master delete removes: it names the file too.
         seeded = await s.get(DocRender, ids["render"])
         seeded.pdf_path = doc_pdf
@@ -812,15 +818,43 @@ def no_browser(monkeypatch):
     monkeypatch.setattr(docrender, "render_pdf", refuse)
 
 
+async def _letter_state(path: str, ids: dict[str, int]) -> int:
+    """Keep new, Keep previous and Undo delete a letter only in one state (D-LETTER-4): put the
+    seeded letter, the one that names the file, in the state each one deletes. Returns the render
+    id the route is asked about."""
+    async with get_sessionmaker()() as s:
+        seeded = (await s.execute(
+            select(Letter).where(Letter.render_id == ids["letter"]))).scalars().one()
+        if path.endswith("/keep-previous"):
+            seeded.status = "proposed"  # the new draft the person declines
+        elif path.endswith(("/keep-new", "/undo")):
+            other = DocRender(opportunity_id=ids["strong"], doc_master_id=ids["master"],
+                              template="cover_letter", config={"kind": "cover_letter"})
+            s.add(other)
+            await s.flush()
+            keeping = path.endswith("/keep-new")
+            s.add(Letter(render_id=other.id, opportunity_id=ids["strong"], kind="cover_letter",
+                         body_md="Another invented letter.",
+                         status="proposed" if keeping else "previous"))
+            if keeping:  # keeping the new draft lets go of the oldest one, the seeded one
+                seeded.status = "previous"
+                await s.commit()
+                return other.id
+        await s.commit()
+    return ids["letter"]
+
+
 def _drive_file_route(route, where, tmp_path):
     doc = _stored(where, tmp_path, paths.documents_dir())
     prep = _stored(where, tmp_path / "prep", paths.prep_packs_dir())
     ids = asyncio.run(_file_world(str(doc), str(prep)))
     method, path = route.split(" ", 1)
     ids["prep_pack_id"] = ids["pack"]
-    ids["render_id"] = ids["letter"] if "cover-letter" in path else ids["tailored"]
+    ids["render_id"] = (asyncio.run(_letter_state(path, ids)) if "cover-letter" in path
+                        else ids["tailored"])
     url = _fill(path, ids)
-    data = {"body_md": "A new invented text."} if path.endswith("/save") else {}
+    data = ({"body_md": "A new invented text."} if path.endswith("/save")
+            else {"sure": "1"} if path.endswith("/undo") else {})
     with TestClient(_build_app(), raise_server_exceptions=False) as client:
         r = client.request(method, url, data=data or None)
     shown = f"{route} ({where}) -> {r.status_code}: {r.text[:200]!r}"

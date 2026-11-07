@@ -212,13 +212,14 @@ def test_including_online_models_names_them_in_the_task_with_the_ticked_consent(
         _mock(router)
         # Ticking without the destinations the card discloses (D-UI-178) is refused and queues
         # nothing; the card that comes back names them, and posting those goes through.
-        bare = client.post("/bench/start", data={"online": "on"})
+        # The tick posts the provider the card named (0.7.6 review item 2).
+        bare = client.post("/bench/start", data={"online": "frontier"})
         assert "Confirm the model and online service destinations" in bare.text
         assert 'data-testid="ck-live"' not in bare.text and _tasks() == []
         approval = html.unescape(
             re.search(r"name=\"online_approval\" value='([^']*)'", bare.text).group(1))
         assert "acme/plain-chat-70b" in approval
-        r = client.post("/bench/start", data={"online": "on", "online_approval": approval})
+        r = client.post("/bench/start", data={"online": "frontier", "online_approval": approval})
     assert 'data-testid="ck-live"' in r.text
     online = _tasks()[0].payload["online"]
     assert online["quick_screen"] and online["rating"]
@@ -481,6 +482,24 @@ def test_including_online_models_needs_the_operators_approval_first():
     assert "Online models need your approval first" in r.text and _tasks() == []
 
 
+def test_without_the_approval_the_model_list_is_never_requested(monkeypatch):
+    """Nothing goes online before the disclosure is accepted, not even the model-list request."""
+    from kestrel.services import hosted_models as hm
+
+    calls: list = []
+
+    async def _fetch(*args, **kwargs):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(hm, "fetch_models", _fetch)
+    client = _fresh_app()
+    seed_labels(6)
+    r = client.post("/bench/start", data={"online": "on"})
+    assert "Online models need your approval first" in r.text
+    assert calls == [] and _tasks() == []
+
+
 def test_an_online_switch_needs_the_approval_too(monkeypatch):
     client = _fresh_app()
     seed_labels(9)
@@ -517,3 +536,49 @@ def test_a_tuned_model_reads_as_the_model_it_was_built_from():
     done = bv.step_view(verdict, {**bases, "kestrel-tier2-gemma3-12b": "gemma3:12b"},
                         current_model="kestrel-tier2-gemma3-12b")
     assert done["applied"] is True
+
+
+# ----------------------------- 0.7.6 review item 2: no model-list request before the approval
+# Invariant: with "Include online models" ticked, nothing goes online, not even the request that
+# lists the provider's models, until the person's approval for this check names the connected
+# provider; and the tick is bound to the provider the card named.
+@pytest.mark.parametrize("approval", [
+    None, "", "not json", '{"tier2":["someone-else|https://example.invalid/v1|x"]}',
+])
+def test_a_ticked_check_without_an_approval_for_the_provider_never_lists_models(
+    monkeypatch, approval,
+):
+    client = _fresh_app()
+    seed_labels(6)
+    with respx.mock as router:
+        _connect(client, router)
+    calls: list = []
+
+    async def _fetch(*args, **kwargs):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(hm, "fetch_models", _fetch)
+    data = {"online": "frontier"}
+    if approval is not None:
+        data["online_approval"] = approval
+    r = client.post("/bench/start", data=data)
+    assert calls == [], "the model list was requested before the approval"
+    assert 'data-testid="ck-live"' not in r.text and _tasks() == []
+    assert "Confirm the model and online service destinations" in r.text
+
+
+def test_the_tick_is_bound_to_the_provider_the_card_named():
+    client = _fresh_app()
+    seed_labels(6)
+    with respx.mock as router:
+        _connect(client, router)
+    with respx.mock as router:
+        _mock(router)
+        card = client.get("/bench/panel").text
+        approval = html.unescape(
+            re.search(r"name=\"online_approval\" value='([^']*)'", card).group(1))
+        assert 'name="online" value="frontier"' in card
+        r = client.post("/bench/start", data={"online": "other-provider",
+                                              "online_approval": approval})
+    assert "Tick the box to confirm what will be sent to" in r.text and _tasks() == []

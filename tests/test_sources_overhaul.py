@@ -824,11 +824,12 @@ def test_suggestions_come_from_pursuits_and_skip_covered_and_closed_companies():
     with _client() as c:
         html = c.get("/sources").text
     sug = html.split('data-testid="group-sug"')[1].split('data-testid="group-boards"')[0]
-    assert "Tidewater Freight Group" in sug and "You shortlisted a role here" in sug
-    assert "Ironbridge Supply" in sug and "You have an application here" in sug
+    # An unchecked company says it is being checked (D-SRC-19), not "You have an application here".
+    assert "Tidewater Freight Group" in sug and "Checking for a public board" in sug
+    assert "Ironbridge Supply" in sug and 'data-state="checking"' in sug
     assert "Northwind Health" not in sug and "Old Co" not in sug
     assert "Nothing is added until you say so" in sug
-    assert 'data-testid="suggestion-add"' in sug and 'data-testid="suggestion-dismiss"' in sug
+    assert 'data-testid="suggestion-dismiss"' in sug
 
 
 def test_dismiss_is_remembered_per_track_and_undo_brings_it_back():

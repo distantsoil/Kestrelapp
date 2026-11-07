@@ -16,8 +16,10 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    event,
     func,
     text,
+    update,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -454,6 +456,50 @@ class DocRender(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     defaults_used: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+
+
+class Letter(Base):
+    """A cover letter or engagement outline (SPEC-MODULES 1.6, D-LETTER-1). Its PDF render is the
+    `doc_render` row it is attached to (`render_id`): that row holds the file, its name and page
+    count, and is the id the role page's links carry. `status` is `current` (the one in Documents
+    and on the application), `proposed` (a Draft again waiting for Keep new draft) or `previous`
+    (the one Undo brings back)."""
+
+    __tablename__ = "letter"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    render_id: Mapped[int] = mapped_column(
+        ForeignKey("doc_render.id", ondelete="CASCADE"), unique=True)
+    opportunity_id: Mapped[int] = mapped_column(
+        ForeignKey("opportunity.id", ondelete="CASCADE"), index=True)
+    pursuit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pursuit.id", ondelete="SET NULL"), nullable=True)
+    kind: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="current")
+    body_md: Mapped[str] = mapped_column(Text, default="")
+    generated_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claims_used: Mapped[list | None] = mapped_column(JSON, default=list)
+    flags: Mapped[list | None] = mapped_column(JSON, default=list)
+    prompt_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    extras: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso, onupdate=utcnow_iso)
+
+
+# At most one current letter per role and kind (D-LETTER-5); SQLite supports the partial index.
+Index("ux_letter_one_current", Letter.opportunity_id, Letter.kind, unique=True,
+      sqlite_where=text("status = 'current'"))
+
+
+@event.listens_for(Pursuit, "after_insert")
+def _link_letters_to_new_pursuit(_mapper, connection, target) -> None:
+    """A letter drafted before the role was shortlisted belongs to the application made later
+    (`letter.pursuit_id`, D-LETTER-5): every ORM insert of a pursuit links its role's letters."""
+    connection.execute(
+        update(Letter).where(Letter.opportunity_id == target.opportunity_id)
+        .values(pursuit_id=target.id)
+    )
 
 
 # ============================================================================ Modules 2: Research

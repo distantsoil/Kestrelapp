@@ -115,9 +115,19 @@ async def remove_snapshot(session: AsyncSession, p: Pursuit, opp: Opportunity) -
     }
 
 
-async def dependents(session: AsyncSession, pid: int) -> dict:
+# The rows a person's own actions hang on a card, compared by the Undo of a fresh pursuit (Shortlist
+# and "I applied"). The interview-question set and notifications are left out on purpose: the worker
+# writes them on its own after "I applied" (P14), so comparing them would take Undo away the moment
+# the list was written (issue #129, D-UI-252). That Undo runs remove_from_list, which deletes the
+# set and unlinks the notifications, which is what the role was before the click. Every other
+# caller (the applied-history import's Undo) still compares all of them.
+PERSON_ROWS = (StatusEvent, Outcome, Offer, EngagementOffer)
+ALL_ROWS = (*PERSON_ROWS, InterviewQuestionSet, Notification)
+
+
+async def dependents(session: AsyncSession, pid: int, models: tuple = ALL_ROWS) -> dict:
     result = {}
-    for model in (StatusEvent, Outcome, Offer, EngagementOffer, InterviewQuestionSet, Notification):
+    for model in models:
         rows = (
             await session.execute(select(model).where(model.pursuit_id == pid).order_by(model.id))
         ).scalars()
@@ -125,17 +135,67 @@ async def dependents(session: AsyncSession, pid: int) -> dict:
     return result
 
 
-async def save_added(session: AsyncSession, p: Pursuit, label_ids: list[int]) -> str:
+async def save_added(
+    session: AsyncSession, p: Pursuit, label_ids: list[int], *, applied: bool = False
+) -> str:
+    """Keep what Undo needs to take a fresh pursuit away again. `applied` marks the snapshot as
+    the one for "I applied" on a role that was never shortlisted (issue #129): its Undo removes
+    the whole pursuit, as the role was before the click."""
     await session.flush()
-    return await save(
-        session,
-        {
-            "kind": "added",
-            "pursuit": row_dict(p),
-            "dependents": await dependents(session, p.id),
-            "label_ids": label_ids,
-        },
-    )
+    data: dict = {
+        "kind": "added",
+        "pursuit": row_dict(p),
+        "dependents": await dependents(session, p.id, PERSON_ROWS),
+        "label_ids": label_ids,
+    }
+    if applied:
+        data["applied_undo"] = True
+    return await save(session, data)
+
+
+async def applied_undo_token(session: AsyncSession, p: Pursuit) -> str | None:
+    """The token of the newest "I applied" snapshot for this card that can still be put back, or
+    None (used up, expired, or the card changed since). The role page's Undo button uses it."""
+    rows = (
+        await session.execute(
+            select(Setting).where(Setting.key.like(PREFIX + "%"))
+            .order_by(Setting.updated_at.desc(), Setting.key.desc())
+        )
+    ).scalars().all()
+    cutoff = (datetime.now(UTC) - KEEP).isoformat()
+    for row in rows:
+        data = row.value
+        if not isinstance(data, dict) or not data.get("applied_undo"):
+            continue
+        if row.updated_at < cutoff:
+            continue
+        if data.get("kind") == "fields" and data.get("pursuit_id") == p.id:
+            return row.key[len(PREFIX):] if await can_restore(session, data) else None
+        if data.get("kind") == "added" and (data.get("pursuit") or {}).get("id") == p.id:
+            same = row_dict(p) == data["pursuit"] and (
+                await dependents(session, p.id, PERSON_ROWS) == data["dependents"]
+            )
+            return row.key[len(PREFIX):] if same else None
+    return None
+
+
+async def applied_dates_changed(session: AsyncSession, p: Pursuit, token: str) -> None:
+    """Edit date moved the dates after the snapshot was taken: record the new values as what the
+    change wrote, so Undo still puts the card back to before it was applied."""
+    row = await session.get(Setting, PREFIX + token)
+    if row is None or not isinstance(row.value, dict):
+        return
+    data = dict(row.value)
+    if data.get("kind") == "fields":
+        after = dict(data.get("after") or {})
+        for key in ("applied_at", "next_action_at", "next_action", "last_activity_at"):
+            if key in after:
+                after[key] = getattr(p, key)
+        data["after"] = after
+    elif data.get("kind") == "added":
+        data["pursuit"] = row_dict(p)
+    row.value = data
+    await session.flush()
 
 
 async def _write_lock(session: AsyncSession) -> None:
@@ -160,22 +220,82 @@ async def undo_added(session: AsyncSession, token: str, oid: int) -> bool:
     if row is None or row.updated_at < (datetime.now(UTC) - KEEP).isoformat():
         return False
     data = row.value
+    if not isinstance(data, dict):
+        return False
     if data.get("kind") != "added" or data["pursuit"]["opportunity_id"] != oid:
         return False
     p = await session.get(Pursuit, data["pursuit"]["id"])
     if (
         p is None
         or row_dict(p) != data["pursuit"]
-        or await dependents(session, p.id) != data["dependents"]
+        or await dependents(session, p.id, PERSON_ROWS) != data["dependents"]
     ):
         return False
     opp = await session.get(Opportunity, oid)
+    await _cancel_question_task(session, p.id)
     # Add never writes archive fields, so its Undo must preserve independent hiding.
     await remove_from_list(
         session, opp, commit=False, label_ids=data["label_ids"], clear_import_archive=False
     )
     await session.delete(row)
     return True
+
+
+async def _cancel_question_task(session: AsyncSession, pid: int) -> None:
+    """Undo of a fresh application takes back the interview-question task it queued, while that
+    task is still waiting (D-UI-252). Conditional on the status read, so a task the worker has
+    leased meanwhile is left alone: it finds the pursuit gone and completes as skipped. Leaving a
+    waiting task would block the next application's list (enqueue_once dedups on the role)."""
+    from sqlalchemy import func, update
+
+    from kestrel.db.models import Task
+    from kestrel.interview.question_task import TASK_TYPE
+
+    result = await session.execute(
+        update(Task)
+        .where(
+            Task.type == TASK_TYPE,
+            Task.status == "pending",
+            func.json_extract(Task.payload, "$.pursuit_id") == pid,
+        )
+        .values(status="cancelled", last_error="Undone before it ran", updated_at=utcnow_iso())
+        .execution_options(synchronize_session=False)
+    )
+    log.info("applied_undo_cancelled_questions", pursuit_id=pid,
+             cancelled=getattr(result, "rowcount", 0))
+
+
+async def question_set_ids(session: AsyncSession, pid: int) -> list[int]:
+    """The interview-question sets a card has now, recorded before I applied so its Undo knows
+    which set the application made."""
+    return list((await session.execute(
+        select(InterviewQuestionSet.id).where(InterviewQuestionSet.pursuit_id == pid)
+    )).scalars().all())
+
+
+async def undo_applied_questions(session: AsyncSession, data: dict) -> None:
+    """After the Undo of I applied on a card that was already on the list (the `fields`
+    snapshot) restored a status before Applied: cancel the question task the application queued
+    while it still waits (a leased one is left; it completes on its own), and delete a set the
+    application led to, one that was not there before. Nothing references a set by id, so it
+    has no other user. A snapshot from before this was recorded (no `question_sets_before`)
+    keeps its sets: which one the application made is unknown."""
+    from kestrel.db.enums import APPLIED_OR_LATER
+
+    pid = int(data.get("pursuit_id") or 0)
+    before_status = (data.get("fields") or {}).get("status")
+    if not pid or before_status in APPLIED_OR_LATER:
+        return
+    await _cancel_question_task(session, pid)
+    if "question_sets_before" not in data:
+        return
+    keep = set(data.get("question_sets_before") or [])
+    made = [i for i in await question_set_ids(session, pid) if i not in keep]
+    if made:
+        await session.execute(
+            delete(InterviewQuestionSet).where(InterviewQuestionSet.id.in_(made))
+        )
+        log.info("applied_undo_removed_question_sets", pursuit_id=pid, removed=len(made))
 
 
 async def _mark_changes(session: AsyncSession, data: dict) -> None:
@@ -257,7 +377,10 @@ async def restore(
             )
         )
     for key in changed:
-        setattr(p, key, fields[key])
+        value = fields[key]
+        if key == "cover_letter_id":
+            value = await _letter_link(session, p.opportunity_id, value)
+        setattr(p, key, value)
     if data.get("outcome_changed"):
         prev = data.get("prev_outcome")
         newest = await _latest_outcome(session, p.id)
@@ -269,6 +392,20 @@ async def restore(
                     setattr(newest, key, value)
     await session.flush()
     return p.track, "Undone."
+
+
+async def _letter_link(session: AsyncSession, opp_id: int, saved: int | None) -> int | None:
+    """The cover letter an Undo may point the application at (D-LETTER-5): the saved one only
+    while it is still the role's current letter; else the role's current letter, or none (and
+    none when it had none). The
+    saved render may since have become a previous draft or been deleted, and pointing at a deleted
+    one would break the foreign key."""
+    from kestrel.docs import letter_store
+
+    if saved is None:
+        return None  # it had no letter attached; an Undo does not attach one
+    current = await letter_store.render_in(session, opp_id, letter_store.CURRENT)
+    return current.id if current is not None else None
 
 
 async def can_restore(session: AsyncSession, data: dict) -> bool:
@@ -311,6 +448,8 @@ async def _restore_removed(session: AsyncSession, data: dict) -> tuple[str | Non
     for label in data.get("labels", []):
         if await session.get(VerdictOverride, label["id"]) is not None:
             return None, "This can no longer be undone."
+    if "cover_letter_id" in saved:
+        saved["cover_letter_id"] = await _letter_link(session, opp.id, saved["cover_letter_id"])
     p = Pursuit(**saved)
     session.add(p)
     await session.flush()

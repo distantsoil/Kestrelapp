@@ -138,7 +138,7 @@ follow-up.
 percentages; "2,5" is not 25). A number in the story found in no sketch or proof point is flagged.
 Named details are not checked (deferred).
 
-**Version history.** `cover/v3` and `engagement_outline/v3` (D-UI-241: first person, to the employer or organization), `cover/v2`, `engagement_outline/v2`, `story_consolidate/v2`,
+**Version history.** `cover/v4` (D-LETTER-2: accepted stories are a third source, with their own claim keys), `cover/v3` and `engagement_outline/v3` (D-UI-241: first person, to the employer or organization), `cover/v2`, `engagement_outline/v2`, `story_consolidate/v2`,
 `mock_critique/v2`, `negotiate/v2`, `analytics_summary/v2`, `interview_questions/v2`,
 `org_summary/v2`, `follow_up/v2` (the block). `evaluate/v2` is unchanged. The `/v1` files stay for stored rows; a queued
 follow-up task written under `follow_up/v1` is drafted with `v2`.
@@ -767,7 +767,8 @@ done (P2 post-processing rule 8, O20).
 
 ## P4 — Cover Letter Draft
 
-**Version:** `cover/v3` (D-UI-241; `cover/v2` and `cover/v1` stay for stored rows)
+**Version:** `cover/v4` (D-LETTER-2: accepted stories as a source; `cover/v3`, `cover/v2` and
+`cover/v1` stay for stored rows)
 **Model tier:** `tier3`
 **Temperature:** 0.4
 **Max tokens:** 1200
@@ -791,10 +792,10 @@ Constraints:
 2. Write in the first person throughout. Never refer to the person in the third person: never
    "the candidate", "the applicant", "he", "she" or "they" for the person.
 
-3. Every factual claim about the person must come from the supplied proof points or the
-   supplied resume bullets. You may rephrase for flow. You may not add a fact, a metric, a
-   company, a title, or a date that is not supplied. Figures and names that appear only in the
-   posting describe the role; do not claim them as the person's own.
+3. Every factual claim about the person must come from the supplied proof points, the
+   supplied resume bullets or the supplied stories. You may rephrase for flow. You may not add
+   a fact, a metric, a company, a title, or a date that is not supplied. Figures and names that
+   appear only in the posting describe the role; do not claim them as the person's own.
 
 4. Length: 250 to 350 words in the body. Four paragraphs at most.
 
@@ -823,6 +824,9 @@ Constraints:
 SELECTED RESUME BULLETS FOR THIS APPLICATION
 {rendered variants, verbatim}
 
+MY STORIES (accepted; the result and one action line each; cite each by its key in claims_used)
+{at most two accepted stories}
+
 GUIDANCE FOR THE LETTER (background for you; do not repeat these labels in the letter)
 What to lead with: {block_e.lead_with}
 Phrases from the posting worth echoing: {block_e.jd_citations}
@@ -838,6 +842,16 @@ JOB
 ANGLE PREFERENCE (operator-selected, may be null)
 {one of: why_this_company | problem_i_would_solve | how_i_operate | direct_and_short}
 ```
+
+**Inputs (D-LETTER-2, D-LETTER-3).** At most three proof points or resume bullets in total and
+two stories, ranked by the words they share with the posting and the title. A story is supplied
+only when the person accepted it (canonical and `operator_edited`); a proposed story never is. A
+story appears as its key `story-<id>`, its title, its first action sentence and its result,
+never whole (the ask-first panel names the same four).
+
+The gap line is the worst `fatal` or `addressable` gap from block B. A `noise` gap is one the
+evaluation found the person already meets, so it is never offered as a gap to acknowledge; with
+only noise gaps the line is left out (D-LETTER-9).
 
 The person's name and contact details are never in the message. Kestrel prints "Sincerely," and
 the name from the local profile when it renders the preview, the PDF and the saved view, so the
@@ -856,7 +870,7 @@ name is never part of an online payload.
     "claims_used": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "proof point keys or resume variant keys this letter relies on"
+      "description": "proof point, resume variant or story keys this letter relies on"
     },
     "opening_alternatives": { "type": "array", "maxItems": 2, "items": { "type": "string", "maxLength": 300 } }
   }
@@ -870,6 +884,10 @@ name is never part of an online payload.
   not, flag the draft as "unverified claims present" in the UI and highlight it. Do not
   silently accept.
 - Run a banned-phrase check on `body_md` from rule 8 and surface any hits to the operator.
+- **Length (D-LETTER-3).** A `body_md` over 350 words or four paragraphs (the greeting line does
+  not count) is asked once to shorten, inside the single plain-writing re-ask (one request lists
+  every problem); a reply that changes `claims_used` is not taken. A body still too long is kept
+  and marked "Over length (N words, limit 350)", never cut or rejected.
 - **Third person (D-UI-241).** A `body_md` that refers to the person in the third person ("the
   candidate", "the applicant", "candidate's", "applicant's", as whole words) gets the one repair
   attempt with a short reason; a second such reply is a clear failure shown on the Documents row

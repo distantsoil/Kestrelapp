@@ -163,12 +163,12 @@ async def access_save(request: Request):
     except lan_access.LanAccessError as exc:
         return _acc_card(request, await access_ctx(request, note=plain_error(exc), ok=False))
     ctx = await access_ctx(request)
-    note = "Takes effect after Kestrel restarts."
+    # "Takes effect after Kestrel restarts." is the status line's own sentence (lan.restart_needed,
+    # st_access.html); the note adds only what the status line does not say (#133: it was twice).
     after = ctx["lan"]
     if after.env_name and after.effective_on != want_on:
-        note += (f" The environment variable {after.env_name} is set to {after.env_value} and "
-                 "wins over this switch until you remove it.")
-    ctx["lan_note"] = note
+        ctx["lan_note"] = (f"The environment variable {after.env_name} is set to "
+                           f"{after.env_value} and wins over this switch until you remove it.")
     msg = ("Other devices on your network can open Kestrel." if want_on
            else "Other devices can no longer open Kestrel.")
     return _acc_card(request, ctx, trigger(

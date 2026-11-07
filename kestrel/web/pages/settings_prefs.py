@@ -310,8 +310,8 @@ async def save_notify(request: Request) -> Response:
             await io.write(s, f"notify.events.{k}", io.ABSENT if on else False)
         await s.commit()
     words = {
-        "matches": ("You will hear about new strong matches.",
-                    "No more alerts for new strong matches."),
+        "matches": ("You will hear about new roles worth a look.",
+                    "No more alerts for new roles worth a look."),
         "followups": ("You will hear about follow-ups due.", "No more alerts for follow-ups."),
         "runs": ("You will hear when a run finishes.", "No more alerts when a run finishes."),
         "attention": ("You will hear when something needs attention.",

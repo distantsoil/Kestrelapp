@@ -4,6 +4,80 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-11-06
+
+### Changed
+
+- **Diagnostics no longer carry network addresses.** The Local AI connection check names the addresses Ollama connected to; a saved diagnostics file now shows "a public address: <redacted>" instead of the address and port, in every mode. The Local AI notes list each shipped model with its size and checked digest, and point to the Ollama library for who made it and its license.
+- **Models page counts roles, not copies.** The labeled count and agreement for each model count a role posted on several boards once, and fewer than five shows as not enough yet.
+- **A setting changed while a run works says so.** A change to where the models run, the model, reasoning or parallel requests applies to the next run, because a run keeps what you confirmed. The save now answers "This run is still using the model you confirmed, as confirmed. Your change applies to the next run" with a Stop the run button, and the sidebar and Today's run card keep showing what the run is really using until it ends.
+- **Run notifications say what happened.** A run that ends with roles needing another try raises one warning under Something needs attention that opens Needs another try, and a role that fails again on a later run is not announced again. New roles worth a look names the role when there is one ("1 new role worth a look: Title at Company"), shows how many are strong, and opens the role or the new roles in Pipeline. The switch is now called New roles worth a look; your saved choice still applies.
+- **Runs that finish inside the app now notify.** Only the command line's run raised these notifications before.
+- **Models page, online mode.** When Kestrel runs online, the Health check and Models on this computer cards are greyed and say "Not needed while Kestrel runs online." Rows from an earlier local check are hidden, not shown as current. There is no Run check, Fix it or Download button, and the server refuses to start local work. Switching back to this computer or Both runs one new check.
+- **Can read for an online step** says "Set by the online model" instead of a local verdict. Fix it on a Scoring steps row now answers beside the click.
+- **Local AI check on the Health check card.** Backend address, Ollama's bind address, cloud model tags, Ollama's cloud features, connections and model digests show there with their real states, and a check that could not run says Unverified. Connections are now sampled while the model tests run. A firewall tip and a Local AI notes guide are added.
+- **Select all works on a whole Pipeline group.** After Select all ticks the rows on screen, the bar offers "Select all 40 in Maybe". The server resolves the group when you act, so a role that left it is untouched, and a group that changed since you selected it changes nothing. The bar's actions carry the count ("Not for me, 40 roles"), one Undo reverses the whole action and names the number, and Deeper read stays per role. One action changes at most 200 roles; the bar and the toast say so, and nothing is cut silently.
+- **Bulk decisions no longer teach Kestrel.** Shortlist, Not for me and Mark reviewed on a selection still apply to every selected role, but only decisions made one role at a time feed calibration, examples and the reranker.
+- **Local AI privacy is stated with its limits.** The Models card now reads "Private when Ollama is set up as shipped", with Show details saying what Kestrel does, what only your Ollama controls (updates, its cloud models, other machines, how a model was trained), and how to keep everything on this computer. Setup, Settings and the Help article carry the same qualified line, and the outbound-calls document has a "Local AI and Ollama" section.
+- **Suggested companies check themselves.** On Sources, each suggested company is checked in the background for a public job board, a few at a time and no more than once in 30 days. Its row says Checking, then Found on Greenhouse (Add), No board Kestrel can read (Add by hand, Check again) or Could not check (Try again). Kestrel reads the board from your role's link or its duplicate copies first, without any request. Only public pages are read, and nothing is added until you press Add.
+- **I applied on any role.** The role page can mark a role applied even if you never shortlisted it, with quick picks for Today and Yesterday, a Follow up on date (a week later by default), then Undo and Edit date. A date in the future is refused. A follow-up that has already passed reads "Follow-up overdue".
+- **Undo after Edit date on the role page.** Undo and Save dates no longer race: each waits for the other, so a quick Undo after changing the dates is no longer lost while the page still showed the role as applied. Undo also stays available after Kestrel has written the likely interview questions, and it takes back a question list that is still waiting to be written.
+- **Resume used, the Pipeline panel and re-posts for I applied.** The role page's I applied form asks which resume you sent (the documents made for that role) and shows it afterward; Applications lists it too. The Pipeline side panel has the same I applied control, with Undo and Edit date. A saved application says that re-posts of the role are hidden, with the Show new listings switch, which now confirms each change.
+- **Suggested titles from an older deleted resume.** Suggestions saved before Kestrel linked them to a resume are now matched to a deleted resume by the bullet they quote, so that resume's words do not stay on Profile while another resume remains.
+- **A cover letter shows the words it was written from.** Each claim's source in the check view is the text that was sent when the letter was drafted, with a note when that proof point, resume line or story has changed or been deleted since. Two sources sharing one key are refused before anything is sent, so one can never show as the other.
+- **The sidebar opens over the page.** Opening the icon rail draws the full sidebar above the page without moving anything, then closes by itself after a few idle seconds, on Esc, on a click outside or after you pick a page. Works at every window width, the smallest included.
+- **A pushpin keeps the sidebar open.** Pin it and it takes its place beside the page; Kestrel remembers it, and every page opens that way with no flash.
+- **The sidebar rail keeps the track switch.** Collapsed, it shows one letter per track, with the full name on hover and for screen readers.
+- **Ctrl B (Cmd B on a Mac) collapses or opens the sidebar.** It is listed in the toggle's tooltip and in Help.
+- **Toasts and the Profile save bar follow the sidebar** as it changes width.
+- **Cover letters can draw on your stories.** Stories you wrote or edited in the story bank can now back a cover letter, next to your proof points and resume lines. Kestrel sends only the one or two most relevant, and only one action line and the result of each. A story Kestrel proposed but you have not saved is never used. Select a story-backed sentence to see the story behind it.
+- **Cover letters keep to their length.** Kestrel sends at most three of your lines and two stories per letter. A draft over 350 words or four paragraphs is asked once to shorten (the same one extra request the ask-first panel already names); one still too long is kept and marked "Over length". The editor warns above 350 words and will not save above 600. Preview checks that the PDF fits on one page before you save it.
+- **Draft again keeps your draft.** A new draft now waits beside the one you have, which stays in Documents and on the application until you choose Keep new draft or Keep previous draft. After keeping the new one, Undo (it asks first, since it deletes the newer draft and any edits to it) brings the previous draft back exactly as it was.
+- Letters now have their own place in the database. Letters saved by earlier versions are moved over when you update and open as before.
+
+### Fixed
+
+- **A missing built-in embedding model now says what to do** instead of "an unexpected problem (EmbedModelMissing)". Matching stories and other text always runs on this computer, even with an online model, so a source checkout must fetch the model once; the developer guide now lists that step.
+- **A cover letter no longer marks the employer's own name as unverified** unless it says you worked there, and a number or length of time from your own headline or narrative counts as yours. A company you never named is still marked, and the send dialog now says the headline and narrative are sent.
+- **A failed step on Settings > Your computer now says what happened in plain words** instead of naming an internal error type.
+- **A cover letter could claim things you never said.** A gap the review had found you already meet was passed to the letter as one to acknowledge, so a letter wrote "three years" for a person with eight. That gap is no longer passed on, a length of time now has to match your own text exactly (a "3" elsewhere no longer covers "three years"), and promises such as starting immediately or relocating are marked unless you wrote them (D-LETTER-9).
+- **The run notification counted a role twice.** A role rated by the quick screen and then the full review was counted once per step, so one role read as "2 roles rated". Each role now counts once (D-RUN-2).
+- **A fast press on a Settings form sent unticked boxes.** The entry motion draws ticked boxes unticked for two frames after a card opens; a press in that window, such as Add on the import review, sent nothing ticked and added 0 applications. Any press, key or submit now puts the real values back first (D-UI-262).
+- **The safe-mode offer only appears when it can help.** A start that fails because your data was saved by a newer Kestrel, or could not be opened, now shows its own message every time instead of offering to start with optional features off.
+- **Deleting a resume keeps title suggestions another resume still backs.** A suggested title that quotes both the deleted resume and one you kept stays as it was, and deleting a capability statement no longer removes any suggested titles.
+- **A paused run keeps the settings it was started with.** After a pause, the run in progress no longer picks up a model or parallel-requests change made in the meantime, as the notice says, and a run that starts from a scheduled search now shows the notice too.
+- **A cover letter's source is never called deleted when it was not.** If another of your sources takes the same key after a draft, the check view now says so instead of "Deleted since this draft", and still shows the text the draft was written from.
+- **A failed I applied leaves nothing behind.** If saving I applied on a role you had not shortlisted fails, the role is no longer left on your shortlist with its learning labels while the page says nothing was recorded.
+- **Undo of I applied on a shortlisted role takes back the interview questions too.** The question list the application queued is canceled while it waits, and a list already written for it is removed, so the role is exactly as it was.
+- **Check my models asks before it lists online models.** With Include online models ticked, Kestrel no longer requests the provider's model list until your confirmation for that provider is in place, and the tick only confirms the provider the card named.
+- **Diagnostics hide every form of an observed address.** An IPv6 address written with its port and no brackets, an address joined to a word (`ip_8.8.8.8`), and an address written with leading zeros are now masked too, and the Local AI connection check writes IPv6 addresses in brackets.
+- **A Remotive job with no description reads as having none.** It was stored as an empty description instead.
+
+- **A failed assistant connection switches itself off.** If the AI assistant (MCP) server cannot start when Kestrel opens, Kestrel turns the switch off and Settings says why: "MCP was turned off because it could not start: ... Turn it on again to retry."
+- **Safe mode.** After two starts in a row that did not finish, the loading window offers "Start with optional features off". It opens Kestrel with your data and roles as they are and leaves the assistant connection, update check, notifications, schedules, model setup and keep-awake off for that run.
+- **Access from other devices.** "Takes effect after Kestrel restarts." shows once, the title no longer runs under its switch on a narrow window, and if the QR code cannot be drawn the card says to copy the address.
+- **Kestrel always starts, whatever happens to the AI assistant connection (MCP).** If the MCP server cannot load, Kestrel still opens, Settings says in plain words that it is not running, and the technical detail sits under Show details. Before, a saved MCP switch plus a failing server could stop Kestrel from starting at all.
+- **The installed app now ships the package information the MCP server needs to start.**
+- **The AI assistant card shows the right address.** The local address is labeled "this computer only". With LAN access on, the card also shows the address on your network, skipping VPN and virtual adapters, with its own Copy button; with it off, the card links to LAN access.
+- **The shared-key note reads cleanly.** The key name no longer collapses into a narrow column over the next line.
+- **The phone pairing code is no longer cropped.** The QR code now scales whole, with the standard white margin on every side.
+- **Remotive roles stay on this computer.** Exports (applications file, ratings, command-line export, diagnostics) and the read API and MCP tools leave out roles that came from Remotive, as its terms ask. A role also found on another board is shared from that board's copy.
+- **Source credit on every Remotive, Arbeitnow and Jobicy role.** The Posting tab reads "Source: <board>" with a link to the board.
+- **A Remotive reply Kestrel cannot read** now shows as a failed check with a plain sentence, like the other boards, instead of a quiet empty run.
+- **The online balance never slows the sidebar.** A slow or failed balance read no longer delays the status polls, and it never reads as zero.
+- **An older Kestrel on newer data names the version.** The window says which release saved the data when Kestrel can tell, and "a newer Kestrel" when it cannot.
+- **Calibrate asks about a role once.** A role posted on several boards is one role: once you rate or override any copy, Calibrate never asks about another copy, and the sidebar count is the number of roles it can still ask about. Calibration and your sorting model count each role once (your most recent rating of it), and every count of ratings is a count of distinct roles. Nothing stored is merged or deleted.
+- **Applications table.** A third press on a column header returns to the default order, the Date applied column follows your date format and hides on a narrow window before anything overlaps, and Stage, Fit and Applied sorts are covered by tests.
+- **Interview prep tabs.** Changing tabs keeps the tab row in place: the underline slides, the pane eases in and the help cards arrive one after another. The Story bank checks for changes while a build runs and leaves the page alone when nothing is new. Reduced motion turns the motion off.
+- **Profile title versions are searched fairly.** Abbreviations and spelled-out forms (such as VP and Vice President) are searched first, one title at a time, so every title gets its turn before the cap of 9. Each chip names the title it came from, a note lists titles with no searched version, and the help text states the real rule.
+- **Names in parentheses are searched properly.** "Company (Qualifier)" now looks up the plain name first, then the names inside the parentheses, instead of a joined name that never exists.
+- **A company covered under a variant name is not suggested.** Parentheses and endings such as Inc, LLC, Ltd, Corp, Co and GmbH are ignored when Kestrel compares names with your sources.
+- **Add updates the row at once.** When a lookup finds no board or could not answer, the row changes on the first press instead of the second. A lookup that could not answer is never remembered as "not found".
+- **One count for decisions.** Today's Decisions waiting and the Pipeline Your call chip now use the same rule, so a Maybe role you have not decided counts on both. The chip also includes shortlisted roles you have not applied to, and a role first seen today waits in Top matches until tomorrow.
+- **Suggested titles after a resume is deleted.** With no resume, the card says to import one and ignores leftover rows. Deleting a resume removes its waiting suggestions and the resume wording stored with the rest, and keeps dismissed titles as bare titles so they do not come back.
+- **Window controls are whole in the collapsed rail.** Minimize, maximize and close were cut off by the frame edge at some widths.
+- **The sidebar toggle always matches the sidebar.** When the window made it collapse by itself, the arrow pointed the wrong way and the first click did nothing visible.
+
 ## [0.7.5] - 2026-11-04
 
 Cover letters are rebuilt and written in your own voice, every online send waits for your tick, and setup checks report honestly.
@@ -15,6 +89,8 @@ Cover letters are rebuilt and written in your own voice, every online send waits
 - **Every online send waits for your tick.** On every panel that asks before sending to an online model, Send is at full strength; pressing it without ticking the box shows a hint and sends nothing.
 - **I applied is on the role page.** Mark a role applied without leaving it.
 - **The setup checklist refreshes** as you finish each step.
+- **Score again tells you what happened.** Pipeline names each role's outcome, keeps your picks ticked, and adds your request to a role already waiting. A role that needs your OK to go online reads "Waiting for your OK" with Confirm, on Pipeline and Today.
+- **A posting with no description says so** instead of staying silent, and a thin copy of a role links to the copy Kestrel already scored from another board.
 
 ### Fixed
 
@@ -23,6 +99,7 @@ Cover letters are rebuilt and written in your own voice, every online send waits
 - **Run-finished notification, re-import and duplicates.** The run-finished notice is reliable, re-imported possible duplicates are flagged, and calibration skips duplicate decisions.
 - **Remotive** is fetched within its published limits and credited as its terms ask.
 - **Polish.** The sidebar, Applications sort, Select all, Today and narrow Documents rows behave as expected.
+- **Suggested companies keep their layout** while Add looks the company up.
 
 ## [0.7.4] - 2026-11-02
 

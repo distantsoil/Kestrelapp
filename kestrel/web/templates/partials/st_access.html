@@ -9,13 +9,13 @@
   {% endcall %}
   <p class="st-sub" data-testid="lan-bind-state">{% if lan.file_on %}On. A phone or laptop on your Wi-Fi can open Kestrel by scanning this code.{% else %}Off. Only this computer can open Kestrel.{% endif %}
     {% if lan.restart_needed %} <b>Takes effect after Kestrel restarts.</b>{% endif %}
-    {% if lan.env_name %}<br><span class="st-mono">{{ lan.env_name }}</span> is set to <span class="st-mono">{{ lan.env_value }}</span>, and it wins over this switch. Remove it to use the switch.{% endif %}</p>
+    {% if lan.env_name %}<br><span class="st-code">{{ lan.env_name }}</span> is set to <span class="st-code">{{ lan.env_value }}</span>, and it wins over this switch. Remove it to use the switch.{% endif %}</p>
   {% if lan_note %}<p class="st-note st-note--{{ 'good' if lan_ok else 'bad' }}" role="status" data-testid="lan-bind-note">{{ lan_note }}</p>{% endif %}
   {% if lan.file_on %}
   <div class="st-accp" data-testid="st-accp">
     <div class="st-acc">
       {% if lan_qr %}<div class="st-qr" data-testid="lan-qr" role="img" aria-label="QR code for the address">{{ lan_qr|safe }}</div>{% endif %}
-      <div class="st-accm"><b>Scan with your phone's camera</b><span class="st-dsm">Only works on your own network</span>
+      <div class="st-accm">{% if lan_qr %}<b>Scan with your phone's camera</b>{% else %}<b>Open the address on the other device</b><span class="st-dsm" data-testid="lan-no-qr">The code could not be drawn here. Use Copy address, then type or paste it on the other device.</span>{% endif %}<span class="st-dsm">Only works on your own network</span>
         <div class="st-btns">
           {% if lan_join %}<button type="button" class="k-btn k-btn--sm" data-st-copy="{{ lan_join }}" data-testid="copy-join-url">{{ st.sic('copy', 'k-ic--sm') }}Copy address</button>{% endif %}
           <button type="button" class="k-btn k-btn--sm" hx-post="/settings/privacy/access" hx-vals='{"on": "0"}' hx-target="#st-access" hx-swap="outerHTML" data-testid="lan-bind-off">Turn off</button>

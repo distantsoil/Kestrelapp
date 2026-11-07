@@ -275,3 +275,183 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         assert errors == []
     finally:
         ctx.close()
+
+
+# ---- #125: a tab change leaves the tab row alone, and the story bank poll is quiet -----------
+_TAB_PROBE = """() => {
+  const row = document.querySelector('[data-testid="pp-tabs"]');
+  window.__row = row;
+  window.__tabEls = Array.from(row.querySelectorAll('.pp-tab'));
+  window.__rowMutations = 0;
+  new MutationObserver(list => {
+    for (const m of list) if (m.type === 'childList') window.__rowMutations += 1;
+  }).observe(row, {childList: true, subtree: true});
+  window.__cap = null;
+  const names = el => el.getAnimations()
+    .map(a => a.animationName || ('transition:' + a.transitionProperty));
+  document.addEventListener('htmx:afterSwap', e => {
+    if (!e.detail.target || e.detail.target.id !== 'pp-tabbody') return;
+    setTimeout(() => {   // one tick after the swap: the animations it started are running
+      const help = Array.from(document.querySelectorAll('.k-help-col > *'));
+      window.__cap = {
+        pane: names(document.querySelector('#pp-pane')),
+        tiles: Array.from(document.querySelectorAll('.pp-ready')).map(names),
+        help: help.map(el => ({names: names(el),
+          delay: el.getAnimations().length
+            ? el.getAnimations()[0].effect.getTiming().delay : null})),
+        bar: names(document.querySelector('.k-tabink')),
+        rowAnimations: row.getAnimations({subtree: true}).filter(a => a.animationName).length,
+      };
+    }, 0);
+  });
+}"""
+_SAME_ROW = """() => ({same: window.__row === document.querySelector('[data-testid="pp-tabs"]')
+    && window.__row.isConnected,
+  tabs: window.__tabEls.every(a => a.isConnected && a.parentElement.closest('.pp-tabs')),
+  mutations: window.__rowMutations,
+  on: Array.from(document.querySelectorAll('.pp-tab.is-on')).map(a => a.dataset.testid),
+  selected: Array.from(document.querySelectorAll('.pp-tab[aria-selected=true]'))
+    .map(a => a.dataset.testid)})"""
+
+
+def _switch(page, tab: str) -> dict:
+    page.evaluate("window.__cap = null")
+    page.click(f'[data-testid="pp-tab-{tab}"]')
+    page.wait_for_selector(f'#pp-layout[data-tab="{tab}"]')
+    page.wait_for_function("window.__cap !== null")
+    return page.evaluate("window.__cap")
+
+
+def test_a_tab_change_leaves_the_tab_row_in_place_and_eases_in_the_pane_and_help(live):
+    base, browser, ids = live
+    opp = ids["Larkspur Logistics"]["opp"]
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900}, color_scheme="light")
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/prep/{opp}?tab=pack")
+        page.wait_for_selector("#pp-layout")
+        wait_for_layout(page)
+        page.evaluate(_TAB_PROBE)
+        for tab in ("practice", "bank", "pack"):
+            cap = _switch(page, tab)
+            got = page.evaluate(_SAME_ROW)
+            # The tab row is the very same element, with no child added or removed.
+            assert got["same"] and got["tabs"] and got["mutations"] == 0, (tab, got)
+            assert got["on"] == [f"pp-tab-{tab}"] == got["selected"], (tab, got)
+            # The pane eases in, the help cards arrive one after another, nothing else moves.
+            assert "k-inUp" in cap["pane"], (tab, cap)
+            delays = [h["delay"] for h in cap["help"]]
+            assert len(delays) >= 3 and all(d is not None for d in delays), (tab, cap)
+            assert delays[0] < delays[1] < delays[2], (tab, delays)
+            assert all("k-inUp" in h["names"] for h in cap["help"]), (tab, cap)
+            assert cap["rowAnimations"] == 0, (tab, cap)  # no entrance replay on the tab row
+            # the ink bar slides to the new tab by a transition on its own box
+            assert any(n.startswith("transition:") for n in cap["bar"]), (tab, cap)
+            tiles_fade = any("k-inFade" in t for t in cap["tiles"])
+            assert tiles_fade == (tab == "pack"), (tab, cap)  # the tiles exist on the pack only
+        # once its slide has finished the bar sits under the active tab
+        page.wait_for_function("""() => { const b = document.querySelector('.k-tabink');
+          const on = document.querySelector('.pp-tab.is-on');
+          return b.getAnimations().length === 0 && Math.abs(b.offsetLeft - on.offsetLeft) < 1
+            && Math.abs(b.offsetWidth - on.offsetWidth) < 1; }""")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_reduced_motion_turns_the_tab_change_motion_off_and_the_row_still_stays(live):
+    base, browser, ids = live
+    opp = ids["Larkspur Logistics"]["opp"]
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce")
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/prep/{opp}?tab=pack")
+        page.wait_for_selector("#pp-layout")
+        wait_for_layout(page)
+        page.evaluate(_TAB_PROBE)
+        cap = _switch(page, "practice")
+        assert cap["pane"] == [] and all(h["names"] == [] for h in cap["help"]), cap
+        assert cap["bar"] == [], cap  # no slide either
+        got = page.evaluate(_SAME_ROW)
+        assert got["same"] and got["on"] == ["pp-tab-practice"], got
+    finally:
+        ctx.close()
+
+
+def _insert_building_task(opp_db) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(str(opp_db))) as con:
+        con.execute(
+            "INSERT INTO task (type, payload, status, priority, attempts, max_attempts, "
+            "created_at, updated_at) VALUES ('build_stories', '{}', 'pending', 0, 0, 3, "
+            "'2026-11-05T00:00:00+00:00', '2026-11-05T00:00:00+00:00')")
+        con.commit()
+
+
+def _add_story(title: str) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    from kestrel import paths
+
+    with closing(sqlite3.connect(str(paths.db_path()))) as con:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(story)")]
+        row = con.execute("SELECT * FROM story WHERE is_canonical = 1 LIMIT 1").fetchone()
+        values = dict(zip(cols, row, strict=True))
+        values.pop("id")
+        values["title"] = title
+        names = ", ".join(values)
+        marks = ", ".join("?" for _ in values)
+        con.execute(f"INSERT INTO story ({names}) VALUES ({marks})", list(values.values()))
+        con.commit()
+
+
+def test_the_story_bank_poll_changes_nothing_when_nothing_changed(live):
+    """While a build runs the bank asks every 5 s. A poll with nothing new is answered 204: no
+    swap, the same elements, the same open details; a new story is then swapped in once."""
+    from kestrel import paths
+
+    base, browser, ids = live
+    opp = ids["Larkspur Logistics"]["opp"]
+    _insert_building_task(paths.db_path())
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/prep/{opp}?tab=bank")
+        page.wait_for_selector('[data-testid="pp-bank"]')
+        wait_for_layout(page)
+        page.evaluate("""() => { window.__bank = document.querySelector('[data-testid="pp-bank"]');
+          window.__layout = document.querySelector('#pp-layout');
+          window.__swaps = 0;
+          document.addEventListener('htmx:afterSwap', e => {
+            const t = e.detail.target;
+            if (t && t.id === 'pp-tabbody') window.__swaps += 1; }); }""")
+        with page.expect_response(lambda r: "tab=bank&version=" in r.url, timeout=15000) as one:
+            pass
+        assert one.value.status == 204
+        with page.expect_response(lambda r: "tab=bank&version=" in r.url, timeout=15000) as two:
+            pass
+        assert two.value.status == 204
+        got = page.evaluate("""() => ({swaps: window.__swaps,
+          sameBank: window.__bank === document.querySelector('[data-testid="pp-bank"]'),
+          sameLayout: window.__layout === document.querySelector('#pp-layout')})""")
+        assert got == {"swaps": 0, "sameBank": True, "sameLayout": True}, got
+        # Something new arrives: the next poll swaps it in, exactly once.
+        _add_story("A story that arrived during the build")
+        page.wait_for_function(
+            "document.body.innerText.includes('A story that arrived during the build')",
+            timeout=20000)
+        assert page.evaluate("window.__swaps") == 1
+        with page.expect_response(lambda r: "tab=bank&version=" in r.url, timeout=15000) as three:
+            pass
+        assert three.value.status == 204
+        assert page.evaluate("window.__swaps") == 1
+        assert not errors, errors
+    finally:
+        ctx.close()

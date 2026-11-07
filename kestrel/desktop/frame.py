@@ -64,6 +64,7 @@ class WindowApi:
         close_intent: Callable[[], str],
         close: Callable[[], None],
         retry: Callable[[], None] | None = None,
+        safe_start: Callable[[], Any] | None = None,
         open_logs: Callable[[], None] | None = None,
         quit_app: Callable[[], None] | None = None,
         download: Callable[[], None] | None = None,
@@ -74,6 +75,7 @@ class WindowApi:
         self._close_intent = close_intent
         self._close = close
         self._retry = retry
+        self._safe_start = safe_start
         self._open_logs = open_logs
         self._quit = quit_app
         self._download = download
@@ -198,6 +200,10 @@ class WindowApi:
     def splash_retry(self) -> None:
         if self._retry:
             self._retry()
+
+    def splash_safe_start(self) -> None:
+        if self._safe_start:
+            self._safe_start()
 
     def splash_download(self) -> None:
         if self._download:

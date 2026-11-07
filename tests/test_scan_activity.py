@@ -85,6 +85,17 @@ def _no_ollama(monkeypatch):
     deps.set_ui_scheme_cache(None)
 
 
+@pytest.fixture(autouse=True)
+def _restore_loop_globals(monkeypatch):
+    """The loop records its mode and holds a run's settings in module globals; a test that drives
+    it must not leave either behind for the next file (monkeypatch restores the mode)."""
+    from kestrel.web import app as app_mod
+
+    monkeypatch.setitem(app_mod._run_mode, "mode", None)
+    yield
+    app_mod._release_run()
+
+
 def _ago_iso(**kw) -> str:
     return iso(clock_seed.ago(**kw))
 
@@ -723,3 +734,230 @@ def test_toast_markup_is_a_link_with_a_warning_tone_and_stays_announced():
     assert warn in style
     # Marked seen only when shown, as before.
     assert html.index("setSeen(ev);\n        var n") > html.index("Marked seen only when shown")
+
+
+# ------------------------------------------------ the loop's notifications (#109, #110, #111)
+def _work_with(monkeypatch, *, fail_role: bool = False, stop_event=None, boom: bool = False):
+    """Make the patched loop's scrape step bring in a worth-a-look role (and, optionally, one
+    that failed scoring) INSIDE the run's window, the way a real cycle's work lands."""
+    from kestrel.db.models import Evaluation, Opportunity, Quarantine
+    from kestrel.pipeline import tier0
+    from kestrel.pipeline.worker import TierStats, Worker
+
+    async def _drain_scrapes(self, stats=None):
+        stats = stats or TierStats()
+        async with self._sm() as s:
+            q = select(Task).where(Task.type == "scrape", Task.status == "pending")
+            todo = list((await s.execute(q)).scalars())
+            if not todo:
+                return stats  # the idle cycle after the work brings in nothing
+            for t in todo:
+                t.status = "done"
+            now = utcnow_iso()
+            ids = []
+            for title in ("Operations Lead", "Second Role") if fail_role else ("Operations Lead",):
+                opp = Opportunity(
+                    track="employment", opp_type="job_posting", source_id=1, title=title,
+                    org_name="Acme", url=f"https://example.test/{title.replace(' ', '-')}",
+                    stage="t2_pass", seen_count=1, ghost_score=0.0, first_seen_at=now, version=1,
+                    description_md="Own reporting for three distribution centers." + " More." * 30,
+                )
+                s.add(opp)
+                await s.flush()
+                ids.append(opp.id)
+            s.add(Evaluation(opportunity_id=ids[0], tier=2, track="employment", verdict="apply",
+                             score=4.2, weighted_score=4.2, needs_review=False, created_at=now))
+            if fail_role:
+                s.add(Quarantine(opportunity_id=ids[1], tier=2, error="the model could not finish",
+                                 attempts=3, created_at=now))
+            s.add(ScrapeRun(source_id=1, status="ok", counts={"new": 2}, started_at=now))
+            await s.commit()
+        stats.completed = 1
+        if stop_event is not None:
+            stop_event.set()  # the person quits mid-cycle
+        return stats
+
+    async def _tier0_boom(sm, *, settings, track=None, limit=None):
+        raise RuntimeError("the sweep broke")
+
+    monkeypatch.setattr(Worker, "drain_scrapes", _drain_scrapes)
+    if boom:
+        monkeypatch.setattr(tier0, "run_tier0_batch", _tier0_boom)
+
+
+def _kinds() -> list[str]:
+    from kestrel.db.models import Notification
+
+    return sorted(n.kind for n in _rows(Notification))
+
+
+def _run_loop(monkeypatch, **kw) -> None:
+    from kestrel.web import app as app_mod
+
+    asyncio.run(_seed([_src(), Task(type="scrape", status="pending", payload={"source_id": 1})]))
+    stop = asyncio.Event()
+    _patch_loop(monkeypatch, stop, scrape_work=True)
+    _work_with(monkeypatch, stop_event=stop if kw.pop("quit_mid_cycle", False) else None, **kw)
+    asyncio.run(asyncio.wait_for(app_mod._worker_loop(stop), timeout=20.0))
+    forget_engine()
+
+
+def test_loop_cycle_with_work_raises_one_run_finished_and_one_worth_a_look(monkeypatch):
+    _run_loop(monkeypatch)
+    assert _kinds() == ["high_score", "run_finished"]
+
+
+def test_loop_cycle_with_a_failed_role_raises_one_retry_warning_in_singular(monkeypatch):
+    from kestrel.db.models import Notification
+
+    _run_loop(monkeypatch, fail_role=True)
+    assert _kinds() == ["high_score", "roles_need_retry"]
+    warn = [n for n in _rows(Notification) if n.kind == "roles_need_retry"][0]
+    assert warn.title == "Run finished: 1 role needs another try"  # #110 singular wording
+
+
+def test_loop_cycle_stopped_mid_run_raises_nothing(monkeypatch):
+    _run_loop(monkeypatch, quit_mid_cycle=True)
+    assert _rows(Run)[0].status == "stopping" and _kinds() == []
+
+
+def test_loop_cycle_that_fails_raises_nothing(monkeypatch):
+    _run_loop(monkeypatch, boom=True)
+    assert [r.status for r in _rows(Run)] == ["failed"] and _kinds() == []
+
+
+def test_loop_holds_the_run_s_settings_while_it_works_and_releases_them_after(monkeypatch):
+    """#103 through the app's own loop: the cycle holds what it was confirmed on while working
+    (what the change notice compares against) and lets go when the run ends."""
+    from kestrel.pipeline.worker import TierStats, Worker
+    from kestrel.web import app as app_mod
+
+    seen: list = []
+
+    asyncio.run(_seed([_src(), Task(type="scrape", status="pending", payload={"source_id": 1})]))
+    stop = asyncio.Event()
+    _patch_loop(monkeypatch, stop, scrape_work=True)
+
+    async def _drain(self, stats=None):
+        stats = TierStats()
+        async with self._sm() as s:
+            todo = list((await s.execute(
+                select(Task).where(Task.type == "scrape", Task.status == "pending"))).scalars())
+            for t in todo:
+                t.status = "done"
+            await s.commit()
+        if todo:
+            seen.append(app_mod.confirmed_run_settings())
+            stats.completed = 1
+        return stats
+
+    monkeypatch.setattr(Worker, "drain_scrapes", _drain)
+    asyncio.run(asyncio.wait_for(app_mod._worker_loop(stop), timeout=20.0))
+    forget_engine()
+    assert seen and seen[0] is not None and seen[0].llm.mode == "local"
+    assert app_mod.confirmed_run_settings() is None
+
+
+# ------------------- 0.7.6 review item 6: the held run settings match what the notice promises
+# The notice says the run keeps the settings it was confirmed on until it ends. So the hold must
+# cover a cycle whose work only appears once its own scrape ran, and a run a pause carried into
+# the next cycle must keep its held settings, whatever was saved meanwhile.
+def _settings_with(tier1: int):
+    from kestrel.config import get_settings
+
+    s = get_settings().model_copy(deep=True)
+    s.concurrency.tier1 = tier1
+    return s
+
+
+def test_the_hold_covers_a_cycle_whose_work_its_own_scrape_created(monkeypatch):
+    from kestrel.pipeline.worker import TierStats, Worker
+    from kestrel.web import app as app_mod
+
+    asyncio.run(_seed([_src()]))  # no work at all when the cycle starts
+    stop = asyncio.Event()
+    _patch_loop(monkeypatch, stop, scrape_work=False)
+    seen: list = []
+    first = {"done": False}
+
+    async def _drain_scrapes(self, stats=None):
+        stats = stats or TierStats()
+        if not first["done"]:  # the scheduled scrape found new postings this cycle
+            first["done"] = True
+            stats.completed = 1
+        return stats
+
+    async def _drain_tier(self, task_type, concurrency, handler, stats):
+        if task_type == "t2":
+            seen.append(app_mod.confirmed_run_settings())
+
+    monkeypatch.setattr(Worker, "drain_scrapes", _drain_scrapes)
+    monkeypatch.setattr(Worker, "drain_tier", _drain_tier)
+    app_mod._release_run()
+    asyncio.run(asyncio.wait_for(app_mod._worker_loop(stop), timeout=20.0))
+    forget_engine()
+    assert seen and seen[0] is not None, "the run worked unheld: no notice could appear"
+    assert app_mod.confirmed_run_settings() is None  # released when the run ended
+    assert len(_rows(Run)) == 1
+
+
+def test_a_paused_run_carried_into_the_next_cycle_keeps_its_held_settings(monkeypatch):
+    from kestrel.pipeline.worker import Worker
+    from kestrel.services import setting_overrides
+    from kestrel.web import app as app_mod
+
+    asyncio.run(_seed([_src(), Task(type="scrape", status="pending", payload={"source_id": 1})]))
+    stop = asyncio.Event()
+    _patch_loop(monkeypatch, stop, scrape_work=True)
+    stored = {"tier1": 3}  # what Settings holds now; the person saves 9 during the pause
+
+    async def _load(s, mode=None):
+        return _settings_with(stored["tier1"])
+
+    monkeypatch.setattr(setting_overrides, "load_settings_with_db", _load)
+    applied: list[int] = []
+    real_apply = Worker.apply_settings
+
+    def _apply(self, settings, *, online_approval=None):
+        applied.append(settings.concurrency.tier1)
+        real_apply(self, settings, online_approval=online_approval)
+
+    monkeypatch.setattr(Worker, "apply_settings", _apply)
+    held_in_cycle: list[int | None] = []
+    calls = {"t2": 0}
+
+    async def _drain_tier(self, task_type, concurrency, handler, stats):
+        if task_type != "t2":
+            return
+        calls["t2"] += 1
+        run = app_mod.confirmed_run_settings()
+        held_in_cycle.append(run.concurrency.tier1 if run is not None else None)
+        if calls["t2"] == 1:
+            stats.completed = 1
+            app_mod.set_paused(True)  # the tray paused mid-run: the run is carried
+
+    monkeypatch.setattr(Worker, "drain_tier", _drain_tier)
+
+    async def resume_later():
+        await asyncio.sleep(0.3)
+        stored["tier1"] = 9  # saved while paused
+        app_mod.set_paused(False)
+
+    async def go():
+        resumer = asyncio.create_task(resume_later())
+        await asyncio.wait_for(app_mod._worker_loop(stop), timeout=20.0)
+        await resumer
+
+    app_mod._release_run()
+    try:
+        asyncio.run(go())
+    finally:
+        app_mod.set_paused(False)
+    forget_engine()
+    assert held_in_cycle[0] == 3
+    # The carried cycle is still the same run: it keeps 3, never the 9 saved meanwhile.
+    assert len(held_in_cycle) == 2 and held_in_cycle[1] == 3 and applied[1] == 3, (
+        held_in_cycle, applied)
+    runs = _rows(Run)
+    assert len(runs) == 1 and runs[0].status == "done"
+    assert app_mod.confirmed_run_settings() is None

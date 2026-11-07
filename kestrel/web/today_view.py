@@ -19,15 +19,12 @@ from sqlalchemy import select
 from kestrel.analytics.today import actions_due
 from kestrel.db.models import DocMaster, Evaluation, Opportunity, Org, Pursuit, VerdictOverride
 from kestrel.web import pipeline_view as pv
-from kestrel.web.fit import GROUP_FAILED, GROUP_MAYBE, GROUP_NEW, GROUP_WORTH
+from kestrel.web.fit import GROUP_FAILED, GROUP_NEW
 from kestrel.web.queries import (
-    GROUP_ORDER,
     OppFilters,
     _base_stmt,
-    _group_expr,
     _with_operator,
     list_signals,
-    local_day_start_iso,
     row_fit,
     saved_clause,
 )
@@ -313,38 +310,23 @@ async def decisions_waiting(s, track: str, *, limit: int = PANEL_LIMIT,
     roles not yet applied to; in Consulting, undecided work plus leads not yet contacted. The
     undecided ones are the backlog: today's new roles wait in Top matches instead, so a role never
     sits in both."""
-    since = local_day_start_iso()
     if settings is None:
         from kestrel.services.setting_overrides import load_settings_with_db
 
         settings = await load_settings_with_db(s)
+    # Which roles wait is decided by the one shared clause (issue #113); this only builds rows.
     stmt = _with_operator(
         _base_stmt(
-            OppFilters(track=track), Opportunity, Evaluation, Org.name, Pursuit.id,
-            Pursuit.status, Pursuit.applied_at, Pursuit.closed_at,
-            VerdictOverride.operator_verdict, saved_clause(),
+            OppFilters(track=track, grouped=True, needs_review=True), Opportunity, Evaluation,
+            Org.name, Pursuit.id, Pursuit.status,
         )
-    ).where(
-        _group_expr().in_([GROUP_ORDER.index(GROUP_WORTH), GROUP_ORDER.index(GROUP_MAYBE)]),
-        Opportunity.opp_type != "trigger_event"
     )
     conf, mapping = await confidential_once(s)
     undecided: list[dict[str, Any]] = []
     listed: list[dict[str, Any]] = []
-    for opp, ev, org_name, pid, pstatus, applied_at, closed_at, label, saved in (
-        await s.execute(stmt)
-    ).all():
+    for opp, ev, org_name, pid, pstatus in (await s.execute(stmt)).all():
         fit = row_fit(opp, ev)
-        if pid is None:
-            if saved or label is not None or (opp.first_seen_at or "") >= since:
-                continue
-            bucket = undecided
-        else:
-            first = "researching" if track == "consulting" else ("shortlisted", "preparing")
-            wanted = (first,) if isinstance(first, str) else first
-            if closed_at or applied_at or pstatus not in wanted:
-                continue
-            bucket = listed
+        bucket = undecided if pid is None else listed
         key, words_ = _decision_status(track, pstatus if pid is not None else None)
         bucket.append(
             {

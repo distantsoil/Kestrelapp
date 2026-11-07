@@ -146,3 +146,79 @@ def test_a_toast_auto_dismisses_when_test_mode_is_off_and_stays_in_test_mode(liv
     page.evaluate("KUI.toast('Goes.', {timeout: 150})")
     page.locator(".k-toast", has_text="Goes.").wait_for(state="detached")
     assert page.locator(".k-toast", has_text="Stays.").count() == 1
+
+
+def test_a_change_during_a_run_raises_a_notice_whose_button_stops_the_run(live):
+    """#103: a save answered with the run-notice event shows the notice with a Stop the run
+    button, and the button posts to /runs/stop, once."""
+    import json
+
+    base, browser = live
+    page = browser.new_page()
+    page.goto(f"{base}/about")
+    page.wait_for_selector("h1")
+    detail = {
+        "message": "This run is still using qwen3:14b on this computer, as confirmed. Your change "
+                   "applies to the next run. Stop the run if you do not want it to continue.",
+        "tone": "warn", "undoUrl": "/runs/stop", "undoLabel": "Stop the run", "timeout": 20000,
+    }
+    page.route("**/x-save", lambda route: route.fulfill(
+        status=200, body="saved", content_type="text/html",
+        headers={"HX-Trigger": json.dumps({"k-run-notice": detail})}))
+    stops: list[str] = []
+    page.route("**/runs/stop", lambda route: (stops.append(route.request.method),
+                                              route.fulfill(status=204)))
+    page.evaluate("htmx.ajax('POST', '/x-save', {target: 'body', swap: 'none'})")
+    page.wait_for_selector(".k-toast__undo")
+    assert page.locator(".k-toast__undo").inner_text() == "Stop the run"
+    assert "Your change applies to the next run" in page.locator(".k-toast").inner_text()
+    assert page.locator(".k-toast").get_attribute("data-tone") == "warn"
+    page.click(".k-toast__undo")
+    page.locator(".k-toast__undo").wait_for(state="detached")
+    assert stops == ["POST"]
+
+
+def test_a_real_settings_save_during_a_run_shows_the_notice_and_stop_ends_the_hold(live):
+    """#103 end to end: the run is held the way the worker loop holds it, a real save goes to the
+    real route from the page, the real middleware answers with the notice, and pressing its Stop
+    button posts to the real /runs/stop, which ends the run and releases the held settings."""
+    import asyncio
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web import app as app_mod
+    from kestrel.web.deps import sessionmaker
+    from tests import runs_seed
+
+    async def _held():
+        async with sessionmaker()() as s:
+            return await load_settings_with_db(s)
+
+    def _setup():  # off the browser's event loop: seeding and loading run their own
+        runs_seed.seed(active=True)
+        return asyncio.run(_held())
+
+    base, browser = live
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        held = pool.submit(_setup).result()
+    app_mod._hold_run(held)
+    try:
+        page = browser.new_page()
+        page.goto(f"{base}/about")
+        page.wait_for_selector("h1")
+        page.evaluate("htmx.ajax('POST', '/models/speed', "
+                      "{values: {tier1: '9', tier2: '2'}, target: 'body', swap: 'none'})")
+        page.wait_for_selector(".k-toast__undo")
+        assert page.locator(".k-toast__undo").inner_text() == "Stop the run"
+        assert "Your change applies to the next run" in page.locator(".k-toast").inner_text()
+        assert app_mod.confirmed_run_settings() is not None
+        page.click(".k-toast__undo")
+        page.locator(".k-toast__undo").wait_for(state="detached")
+        deadline = time.monotonic() + 10
+        while app_mod.confirmed_run_settings() is not None:
+            assert time.monotonic() < deadline, "Stop did not release the run hold"
+            time.sleep(0.05)
+    finally:
+        app_mod._release_run()
+        app_mod.set_paused(False)

@@ -20,14 +20,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import config as config_mod
-from kestrel import paths
+from kestrel import paths, startup_health
 from kestrel.config import HOSTED_TIER_SENDS, UI_SCHEMES, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Calibration, Opportunity, Org, Setting, Source
 from kestrel.learning.calibration import accept_calibration, reject_calibration
 from kestrel.pipeline.profile import load_profile
 from kestrel.rules import helpers
-from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.services.setting_overrides import MCP_TURNED_OFF_KEY, load_settings_with_db
 from kestrel.web.auth import SETTING_KEY as SHARED_SECRET_KEY
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache, templates
 from kestrel.web.errors import authored_error, fixed_reason, plain_error
@@ -1520,12 +1520,17 @@ async def _mcp_ctx(s: AsyncSession, *, message: str | None = None, ok: bool = Tr
     settings = await load_settings_with_db(s)
     bind_all = config_mod.get_settings().server.bind_all
     secret_row = await s.get(Setting, SHARED_SECRET_KEY)
+    off_row = await s.get(Setting, MCP_TURNED_OFF_KEY)
     return {
+        "mcp_turned_off_note": (off_row.value if off_row and isinstance(off_row.value, str)
+                                and not settings.mcp.enabled else None),
+        "mcp_safe_mode": startup_health.safe_mode(),
         "mcp_enabled": settings.mcp.enabled,
         "mcp_port": settings.mcp.port,
         "mcp_address": mcp_runtime.address(settings.mcp.port, bind_all),
         "mcp_running": mcp_runtime.running(),
         "mcp_stopped_reason": mcp_runtime.stopped_reason(),
+        "mcp_stopped_detail": mcp_runtime.stopped_detail(),
         "mcp_live": mcp_runtime.is_live(),
         "mcp_bind_all": bind_all,
         "mcp_has_secret": bool(secret_row and isinstance(secret_row.value, str)
@@ -1554,6 +1559,8 @@ async def mcp_switch(request: Request):
     on = str(form.get("enabled") or "") in ("1", "on", "true")
     async with sessionmaker()() as s:
         await _set(s, MCP_ENABLED_KEY, on)
+        if on:
+            await _unset(s, MCP_TURNED_OFF_KEY)  # the person chose again: the old reason is stale
         await s.commit()
         settings = await load_settings_with_db(s)
         message, ok = None, True
@@ -1574,7 +1581,8 @@ async def mcp_switch(request: Request):
         except Exception as exc:
             log.warning("mcp_switch_failed", on=on, error=f"{type(exc).__name__}: {exc}")
             message, ok = ("The MCP server could not be "
-                           f"{'started' if on else 'stopped'}: {plain_error(exc)}"), False
+                           f"{'started' if on else 'stopped'}: "
+                           f"{mcp_runtime.plain_start_reason(exc)}"), False
     from kestrel.web.pages.settings_privacy import mcp_ctx
 
     return templates().TemplateResponse(

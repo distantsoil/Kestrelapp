@@ -117,6 +117,29 @@ remediation and, where possible, a one-click fix.
 | Profile configured for at least one track | Open the profile editor. **Blocking.** |
 | At least one enabled source | Open the sources page. Warn only. |
 
+**Local AI check** (issues #144, #166; read-only, nothing is sent anywhere, no Ollama setting,
+firewall rule or model is ever changed, and a warning is advice that never stops scoring). It runs
+with the preflight when the local engine is in use, and reports each row as *pass*, *warn*, *info* or
+**unverified**; a check that could not run (Ollama not reachable, the operating system refusing to list
+connections, a setting that cannot be read) is "unverified" and is never shown as a pass:
+
+| Local AI row | Reads | Result |
+|---|---|---|
+| Backend address | `llm.backends.local.base_url` | Loopback passes; any other address warns "Your text goes to <address>, not this computer." |
+| Ollama bind address | `OLLAMA_HOST` | Unset or loopback passes; otherwise warns that other devices can reach it |
+| Cloud model tags | Ollama's installed tags | A tag ending `-cloud` warns (prompts go to Ollama's servers) |
+| Ollama cloud features | `disable_ollama_cloud` in `~/.ollama/server.json` or `OLLAMA_NO_CLOUD` (Ollama FAQ, "How do I disable Ollama's cloud features?", verified 2026-11-05 from the docs, not from a running Ollama) | On: passes. Not seen turned off: info (that is Ollama's default). Backend not on this computer, or the file unreadable: unverified |
+| Connections | Remote addresses of Ollama's processes (psutil), sampled about every 100 ms **while the model probes run** and for a few seconds after; loopback is fine, a private-network address warns, a public address warns with address and port, Ollama's own download and update services are listed apart | Access denied or no list readable: unverified |
+| Model digests | Installed digests against `model_digests.json` | Matches, differs (the tag has moved: warns), or not a tag Kestrel tested. Kestrel's own `kestrel-*` models are never "unknown" |
+
+Stated limits (UI and docs): sampling can miss very short connections; name lookups are not visible;
+only Ollama's processes are watched; macOS may refuse to show other processes' connections
+(unverified); it proves nothing about the future. The firewall tip is copyable text for blocking
+Ollama from the internet, with the note that models must be downloaded first; Kestrel does not
+change system settings. A **Local AI notes** guide (`docs/guide/local-ai-notes.md`) lists, per shipped
+model, what Kestrel tested and what it did not. Under the Online choice the whole check is not
+needed, is not run and is not shown (see `/models`).
+
 The same checks reach the operator in plain words as the Health check on Models, the Health check
 article in Help, and step 2 of onboarding (D-UI-105); a failed check offers **Fix it**, never a
 command.
@@ -328,6 +351,20 @@ design; frameless is no longer a later trial behind a setting.
   Try again, Open logs folder and Quit, and a Show details block with the startup step and the
   cause (ports tried, log file name). Never a stack trace. The reassurance line says the operator's
   roles and settings are safe on this computer.
+- **Safe mode** (#130, D-UI-252): each start attempt is counted in `startup.json` in the data folder
+  (`paths.startup_health_json`) and the count is cleared when the app is up. After two failed starts in
+  a row the next start does not try again by itself: the same window says "Kestrel could not start
+  the last two times" and offers **Start with optional features off** beside Try again. Safe mode
+  lasts for that run only. It leaves the database, the web app and the pipeline worker on and skips
+  the optional starts: the MCP server, the scheduler, the update check, the notification delivery
+  loop, model setup tasks and keep-awake. The Settings MCP card says so while it is on.
+- **Data saved by a newer Kestrel** (#105): when the database's revision is newer than this build
+  knows, the same window says "This data was saved by a newer Kestrel (x.y.z). Install the latest
+  version to open it." with a Download latest button and no Try again (it would fail the same way).
+  Kestrel never changes or downgrades that database. The release number comes from one setting row,
+  `app.saved_by_version`, which every build writes when it opens the database and never lowers; it
+  is named only when it is newer than this build, and a database saved before the row existed (or
+  with an unreadable one) reads "a newer Kestrel" with no number, never an invented one.
 - **Relaunch while the old copy is still closing:** the new launch finds the mutex held, reads
   `runtime.json`, and instead of failing or opening a second window shows "Finishing closing the
   last session" and opens by itself when the old process has exited. The operator never has to
@@ -381,6 +418,34 @@ nav entry are reached from where they are needed: a role, the company page, the 
 page, Needs another try and the interview-prep pack for one role. Every nav item has an icon.
 Below 1100 px the sidebar collapses to an icon rail; it never disappears.
 
+**The icon rail, the open sidebar and the pushpin (#126, D-UI-249).** The sidebar has two forms in
+the page: the full sidebar (232 px) and the 68 px rail. The rail is chosen (the toggle at the top
+of the sidebar, or Ctrl B / Cmd B) or forced by the window: under 1100 px unless pinned, and under
+900 px always (700 px and under is the bottom bar). Owner decision (2026-11-05): "The original
+intent was that it does not resize the window, but expands /over/ existing content until a
+pushpin is selected. After inactivity the sidebar should collapse."
+- *Open over the page.* The toggle (or Ctrl B) on the rail draws the full sidebar OVER the page.
+  The page does not move or reflow; the rail's column stays 68 px. It fades and slides in and out;
+  reduced motion snaps. This works at every width the sidebar exists, the minimum included.
+- *Close.* An open sidebar closes by the toggle, Esc (focus returns to the toggle), a press
+  outside it, choosing a page, and after 5 seconds of inactivity. The idle timer runs only while
+  the pointer is outside the sidebar and no keyboard focus is inside it; the pointer entering or
+  focus arriving cancels it.
+- *Pushpin.* A pushpin in the open (or in-page) sidebar keeps it in the page: it then takes layout
+  space and pushes the content. Pinned is `aria-pressed` and is remembered. On the open rail it is
+  off; pressing it pins (the grid eases to the wide width while the sidebar stays drawn at full
+  width, so no text clips). In the page it is on; pressing it returns the sidebar to the rail.
+  Under 900 px the pin is disabled with a tooltip, and a pinned choice falls back to the overlay.
+- *Remembered, server-rendered.* The `kestrel-side` (rail chosen) and `kestrel-side-pin` cookies,
+  with localStorage copies. The server renders `k-side-collapsed` or `k-side-pinned` on `<html>`
+  and `is-side-collapsed is-rail` on the window, so first paint is right; blocked storage falls
+  back to the cookies, and a missing or bad value renders the default (full above 1100 px).
+- *The rail keeps* a compact track switch (one letter per track, full name as tooltip and
+  accessible name), the counts as badges, the status dot and the window controls, stacked so all
+  three fit 68 px. The toggle's arrow, `aria-expanded` and tooltip always reflect the real state.
+- *One width variable.* `--side-w-now` is the sidebar's width in the page; the grid, the toast
+  stack and the Profile save bar read it and move with it. An overlay does not change it.
+
 There is no fixed top band. The search field, the bell, the theme toggle and the avatar sit at
 the top of the page and scroll with it, with the page title and today's date under them. The
 avatar is a link to Profile; Kestrel has no accounts. Company logos and job-board logos are not
@@ -395,10 +460,20 @@ used anywhere (D-UI-126): a company is shown as a lettered monogram badge.
    "Local + OpenRouter · $4.82 left". A provider that does not report a balance shows no amount.
    Low credit turns the line amber (default threshold $1) and raises a "needs attention"
    notification (§6).
+   While a run is working, this line and the Today run card show what that run is really using
+   (#103): a run keeps the settings it was confirmed with, so a change to where the models run,
+   the model, reasoning or parallel requests applies to the NEXT run. The line's tooltip says so,
+   and the save that made the change answers with a notice ("This run is still using <model>
+   <online|on this computer>, as confirmed. Your change applies to the next run. Stop the run if
+   you do not want it to continue.") and a Stop the run button (the Runs page's Stop). No notice
+   appears when no run is working, and each distinct change is announced once.
 
 The balance comes from the provider's key endpoint (OpenRouter `/key`, `limit_remaining_usd`
 through `providers.verify_key`). It is refreshed on a timer and after online work, never on a
-page view, and a failed refresh keeps the last value and says nothing.
+page view, and a failed refresh keeps the last value and says nothing. The status polls
+(`/status/rail`, `/api/status`) never wait for it (#106): a cached reading answers at once, an
+expired one is shown while a background read replaces it, and with none yet the read starts in the
+background and the line appears on a later poll. A slow or failed read is unknown, never $0.
 
 **Command palette (D-UI-91).** The search field opens a palette (Ctrl+K on Windows and Linux,
 Cmd+K on macOS; the label in the field follows the operating system). With an empty query it
@@ -474,7 +549,13 @@ to bottom:
   Review opens the role in a slide-over panel on the right (§2.4) with "Open full role".
 - **Decisions waiting**: roles the operator has not decided (shortlist, applied or set aside)
   plus shortlisted roles not yet applied to. In Consulting: undecided work plus leads not yet
-  contacted (Draft outreach, I reached out). Rows slide out when actioned.
+  contacted (Draft outreach, I reached out). Rows slide out when actioned. **One definition of
+  "needs a decision" (D-UI-249, issue #113):** a role in Worth a look or Maybe that is either
+  undecided (no shortlist entry, not saved, no label of the operator's, first seen before today
+  because today's roles wait in Top matches) or shortlisted and not yet applied to. The count
+  here, the Pipeline **Your call** chip and any alert that counts decisions all read that one
+  definition (`needs_decision_clause`, `needs_decision_count`), so they always agree. A Maybe
+  role counts whether or not it was flagged for review.
 - **Applications needing action** (Leads needing action in Consulting): follow-ups and interviews
   coming up (Consulting: proposal due, follow-up, call), with the same verbs as Applications.
 
@@ -557,7 +638,7 @@ Restart setup (§2.6).
 **`/opportunities` Pipeline** (D-UI-96)
 The main working surface for decisions. Server-side pagination and filtering over several thousand
 rows. Under the title sit a search field, a saved-view dropdown and a sort control; below it a row
-of chips with counts: All, My shortlist, Your call (roles the operator has not decided), Scored,
+of chips with counts: All, My shortlist, Your call (roles that need a decision, the one definition under Decisions waiting in §2.1), Scored,
 New today, Saved (roles bookmarked with Save for later), Failed scoring (which opens Needs another
 try), Hidden, and More filters. Sort is a Best fit | Newest toggle plus a menu (Date posted, First
 seen, Oldest first, Company A to Z, Quick-screen score, Ghost posting risk); it sits on the chip row,
@@ -592,6 +673,33 @@ right-aligned.
   slides up under the list with Shortlist, Not for me, Score again, Deeper read (which says it
   needs a per-role OK because data leaves the machine) and Mark reviewed. Esc clears. Actions
   slide the rows out and show an Undo toast.
+  - **Select all in a group** (issue #116, D-PIPE-116). A group header's Select all ticks the rows
+    drawn (25 a group). When the group holds more, the bar adds a second step beside the count:
+    "25 selected. Select all 40 in Maybe." Pressing it selects the whole group, not only the
+    drawn rows, and the bar then says 40. Nothing is applied until the person presses a bar
+    action; selecting changes nothing. It is a button in the bar, so the keyboard reaches it, and
+    Esc clears the whole selection.
+  - **The server resolves the group at action time.** A whole-group request names the group key
+    and the same filters the page was drawn with (the page's effective query, track included),
+    never a list of role ids, so a role that left the group since the page loaded is not touched.
+    The request also carries the count the bar showed; when the group now holds a different
+    number, the server changes nothing, says so, and the page refreshes, so the count in the bar
+    and the number of roles changed are always the same.
+  - **The cap.** One bulk action changes at most 200 roles, because its Undo link names the roles
+    it changed. The cap is never applied silently: a group larger than 200 offers "Select the
+    first 200 of 340 in Maybe" (the first 200 in the order the list shows), the bar and the
+    toast say "200 of 340", and a request that names more than 200 roles by id is refused whole,
+    never cut.
+  - **Counts.** Each bar action carries the count: "Shortlist, 40 roles", "Not for me, 40 roles",
+    "Mark reviewed, 40 roles". The toast names the same number and its Undo reads "Undo Not for me,
+    40 roles". One Undo reverses the whole bulk action and nothing else.
+  - **Per-role consent actions.** Deeper read is never applied in bulk (it sends role and profile
+    text to an online model): it stays per role, with or without a group selection. Score again
+    works on ticked roles; it is disabled, with the reason, while a whole group is selected.
+  - **Learning.** Bulk decisions are excluded from learning (D-PIPE-116, owner 2026-11-05): a bulk
+    Shortlist, Not for me or Mark reviewed still applies to every selected role, but only
+    decisions made one role at a time feed calibration, few-shot examples and the reranker.
+    SPEC-MODULES.md section 5.1 states the storage rule.
 - **Consulting** shows two tabs under the title, Opportunities and Signals (a gliding
   underline; the list swaps with a slide). Opportunities show the type (contract posting, RFP,
   referral), day rate, engagement value, "Seen twice", "In my leads". Signals are trigger events
@@ -638,6 +746,25 @@ right-aligned.
 - Empty list: "Select a role to see why it fits", with the j / k / Enter keyboard hint.
 
 **`/opportunities/{id}` Role page** (D-UI-97)
+**I applied on the Role page (D-UI-251, issue #129).** The decision panel's Application block works on a
+shortlisted role and on one never shortlisted (the pursuit is made as Shortlist makes it, then the
+existing Applications verb runs; nothing is sent). Fields: Applied on (today by default, quick picks
+Today and Yesterday) and Follow up on (a week after the applied date by default). The server refuses
+a malformed date and an applied date after today with a plain sentence and records nothing, whatever
+the date input allowed. A follow-up already past (a backdated application) is kept and shown as
+"Follow-up overdue", the same words on the board card. A saved application reads "Applied on May 4.
+Follow up May 11" with Undo (status, dates and follow-up come back exactly; a role never shortlisted
+goes back to not being on the shortlist) and Edit date (dates only, no status change; Undo still goes
+back to before it was applied). The interview-question task keeps its ask-first rule for an online
+model. **Resume used** (D-UI-253) lists the documents made for this role (never a cover letter),
+labeled by master and date only; the one picked is stored on the application
+(`pursuit.document_id`), the saved block says "Resume used: ...", and Applications lists it under
+the documents used. A saved application also says "Re-posts of a role you applied to are hidden."
+with the existing switch (Show new listings of this role, `POST /pursuits/{id}/reposts`, a short
+confirmation on change; SPEC.md 5.6). The **Pipeline side panel** shows the same block (owner,
+2026-11-03): the same form, route, Undo and Edit date, answered with the panel when the request
+targets `#pl-panel`. Undo and Save dates disable each other while either request is open, and the
+Undo of a fresh application cancels its still-waiting interview-question task (D-UI-252).
 The full page for one role. Breadcrumb, Previous and Next beside it ("3 of 11", the content
 slides), the title with no fit pill beside it, a facts row (company, location, pay, type, posted,
 live), and an "Open original posting" primary button that opens the posting in the system browser.
@@ -769,8 +896,10 @@ as the nav switch, and the page always names its track, so the nav and the page 
 `profile.yml.bak` and the result confirmed through the real loader. The operator never edits
 `profile.yml` by hand; the file stays the storage format so backup and restore are unchanged.
 Under the Employment tab, **Other ways your titles are searched** lists the near-title variants
-the generated searches also ask for (D-TTL-2: up to 3 per target title, 9 in all, at most half again
-the searches without them and never past the generated-search cap), states that each variant is searched on every board, and lets each one be
+the generated searches also ask for (D-TTL-2, D-TTL-4: up to 3 per target title, 9 in all, abbreviation and expansion swaps ranked first and filled
+round-robin across titles, at most half again
+the searches without them and never past the generated-search cap; each chip names its source title, and a note
+names target titles with no searched variant), states that each variant is searched on every board, and lets each one be
 removed or searched again (`GET /profile/title-variants`, `POST /title-variants/remove|restore`;
 removals are the `sources.title_variants_removed` setting row).
 Above it, **Suggested titles** (P15, D-TTL-3, #31; also under the Employment step of onboarding)
@@ -779,7 +908,12 @@ and the operator's own bullets it rests on. **Accept** adds the title to the tar
 the same profile edit as the form (the generated searches and the Tier 0 re-check follow);
 **Dismiss** keeps it from ever being suggested again; **Suggest again** queues a pass. Nothing is
 added without an Accept (`GET /profile/title-suggestions`, `POST /title-suggestions/{id}/accept|
-dismiss|refresh`).
+dismiss|refresh`). With no active resume the card shows "Import a resume first." and ignores any
+leftover rows (D-UI-250, issue #118). Deleting a resume removes its waiting suggestions; a
+dismissed or accepted title stays as a bare title (evidence and reason blanked) so it is never
+suggested again; rows from before the resume link existed are cleaned the same way when their
+stored evidence quotes a bullet of the deleted resume that no remaining active resume also has
+(D-UI-254), and all of them once no active resume remains.
 
 **Names, photo and pay margin (D-UI-117, D-RULES-2).** About you has a required first name and a
 last name in place of one full-name field; Kestrel greets by the first name and the resume header
@@ -862,7 +996,13 @@ once, politely, robots.txt respected; a failure is reported and pasted text is k
 pasted text, ingests it through the manual path so it is scored through the normal queue, and
 puts the card in the first column at once with the arrival glow and a New tag. A Board and Table
 toggle, a search field, column chips and More filters sit above the board; the Table view lists
-every pursuit. "Import past applications" links to Settings > Your data (§2.6) and appears in
+every pursuit. Its Role, Stage, Due, Date applied and Fit headers are buttons that sort (D-APP-1):
+a first press sorts the most useful end first, a second reverses, a third returns to the default
+order; Stage sorts in pipeline order, and rows with no value (no due step, not yet applied, not
+scored) stay last in both directions. Date applied shows in the person's Region date format and its
+column hides when the table is too narrow to show it without overlap. The Board or Table choice
+and the sort are remembered together and restored on a revisit (an explicit `?view=` wins); filters
+are not. "Import past applications" links to Settings > Your data (§2.6) and appears in
 the empty state. Interview debrief capture stays on the role page.
 
 *The right rail* has two cards. **Upcoming interviews** (calls, in Consulting) with Prepare,
@@ -1049,7 +1189,17 @@ a job-board search (Indeed's one-filter rule is a radio group with a plain messa
 career page link (checked before Add is enabled, with hiring-system detection), a company by name,
 a feed, a public bid search. LinkedIn is not in the picker; it is explained under "Good to know"
 (§5.1 of `SPEC.md`, D-SRC-5). **Suggested companies** (from the operator's shortlist and
-applications) offer Add and Dismiss with Undo. The helper column has How sources work, What to
+applications) offer Add and Dismiss with Undo. Building the list reads local data only. Whether a
+company can be added is decided in the background (D-SRC-19): a queued `suggestion_check` task per
+company reads the board from the pursued role's link or its duplicate copies first (no request),
+and only then runs the name lookup (the plain name, then each name inside parentheses) with public
+lookups only: the shared rate-limited client, the descriptive User-Agent, robots.txt, the
+existing per-company request ceiling and at most three companies a pass. A definite answer is
+remembered for 30 days; a lookup that got no answer (network down, timeout, 429, 5xx) is never
+remembered as "not found". Each row updates by itself: Checking, Found on a platform (Add), No
+board Kestrel can read (Add by hand, Check again), or Could not check (Try again). Nothing is
+added until Add is pressed. A company is treated as covered when a source matches it after
+parentheses and legal suffixes (Inc, LLC, Ltd, Corp, Co, GmbH and similar) are removed. The helper column has How sources work, What to
 add, What the colors mean and Good to know (why some sites cannot be added or always come back
 empty, and how to tell which case applies), each with a "More about this" flyout that adds
 detail and links to Help. The sources the page may name as "Limited" (Dice, ZipRecruiter, Google
@@ -1166,15 +1316,27 @@ Which model does each step, where it runs, and whether it is working. Layout:
 - *This computer*: detected hardware as chips and the recommendation drawn from it (a CPU-only
   machine turns amber and offers to set up an online model). *Health check* (the preflight of
   §1.2 in plain words): the AI engine, the models, room to read (the hidden-word test), thinking
-  off, and structured answers, each pass or fail; Run check animates them and a failure offers
-  **Fix it** (rebuild with progress, then re-test). Commands sit behind Show details. *Where the
+  off, and structured answers, each pass or fail, then the Local AI check rows of §1.2 (backend
+  address, bind address, cloud tags, cloud features, connections, digests, each with its
+  "unverified" state); Run check animates them and a failure offers
+  **Fix it** (rebuild with progress, then re-test). Commands sit behind Show details, with the
+  firewall tip. **Under the Online choice (D-115-ONLINE-CARDS)** the Health check and Models on this
+  computer cards are greyed (`mo-disabled`) and show one line, "Not needed while Kestrel runs
+  online."; the rows of an earlier local check are hidden, not shown as current; there is no Run
+  check, no Fix it and no Download button, and the server refuses `/models/health/run`,
+  `/models/health/fix` and the download routes under that choice without calling Ollama.
+  Switching back to On this computer or Both queues one new check (a persisted flag the idle task
+  loop consumes), so the rows are current again. Under Both the check says it covers the local
+  steps and the matching model only. *Where the
   AI runs*: On this computer, Online model, Both (the saved choice and OpenRouter credit; the
   mode is changed in Settings, one place).
 - *Scoring steps*: a color-coded table of Rules (no AI model), Quick screen, Scoring (Rating),
   Resume picking, Deep read, with plain names leading and tier codes as small captions. Each row
   shows what the step does, the model, where it runs (Default or Override), **Can read** in
   plain units (pages, about 500 words a page: "Reads a whole posting", "Reads the start of each
-  posting", or in red "Too small: cuts long postings short" with Fix it; the need-versus-capacity
+  posting", or in red "Too small: cuts long postings short" with Fix it, whose result appears beside the
+  click; a step that runs online never shows that label (it is a local-model test) and reads "Set by the
+  online model" in muted text, because Kestrel does not test an online model's reading room; the need-versus-capacity
   numbers sit in a tooltip, per tier from SPEC.md §8.2), and how well it matches the operator's
   calls, with its count; under five ratings it reads "Too few ratings yet (n)" (hard rule 6).
   Under Both only Deep read shows online; under Online every AI step does; the embedding model
@@ -1484,7 +1646,7 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    number from 0.0 to 5.0 in steps of 0.1, with Worth a look required to be lower than Strong
    match, plain error text, and Restore defaults. They are the `apply` (`pursue`) and `consider`
    thresholds of SPEC.md §7.3 and are now editable (`thresholds.apply`, `thresholds.consider`).
-   The "new strong match" notification follows the Strong match cutoff.
+   The "New roles worth a look" alert covers Your call and better; it does not use the cutoffs.
 3. **Scoring and learning** (D-UI-108). *What matters most*: the five weights per track as bars
    with plain names (role fit, domain match, company context, comp and logistics, career
    direction; Consulting: engagement fit, buyer access, economics, delivery feasibility,
@@ -1516,7 +1678,9 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    and "The code includes a private key. Turn access off to make it stop working." behind Show
    details; it states that the change takes effect after Kestrel restarts (D-SEC-3). The QR code is
    drawn dark on white regardless of theme, the one color exception besides the window controls,
-   because scanners need it. *Connect an AI assistant (MCP)* (§4): see there.
+   because scanners need it. It is an SVG with a `viewBox` and no fixed width or height, with the
+   four-module quiet zone the standard asks for, so CSS scales the whole code to its box (#133).
+   *Connect an AI assistant (MCP)* (§4): see there.
 5. **Your data**. *Backups*: where the data lives (the folder path, its size, Open folder),
    **Download a backup** (a timestamped zip through the Save dialog, with progress; "Last backup:
    ..."), **Restore from a file** (a confirm sheet that says Kestrel first saves a backup of
@@ -1554,7 +1718,7 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
    absolute date and clock labels app-wide, including HTMX fragments. Relative ages remain words.
    Stored timestamps, form values, exports, filenames, and the operator's own resume text keep
    their original formats. *Notifications*
-   (§6): "Tell me about" New strong matches, Follow-ups due, Run finished, Something needs
+   (§6): "Tell me about" New roles worth a look, Follow-ups due, Run finished, Something needs
    attention; "Where": the bell (always on), Computer notifications, Play a sound (D-UI-95) with
    the sound choice (Chime, Soft click, Bell), a volume and a Play button, and Quiet hours
    (start and end; no pop-ups and no sounds, the bell still collects them, a night such as 9:00
@@ -1648,7 +1812,22 @@ into an MCP client (`http://127.0.0.1:<port>/sse`, plus the LAN address under `b
 with `bind_all` on, the note that another device needs the shared secret. It writes the
 `mcp.enabled` setting row and starts or stops the server at once in the running app, with the
 same Host/Origin pinning and shared-secret rule; a busy port is refused with a reason. A server
-that stopped on its own reads "On, stopped: <reason>" with Start again. A process
+that stopped on its own, or could not start at all, reads "On, stopped: <reason>" with Start
+again. **Kestrel always starts, whatever happens to MCP (#130):** a saved switch plus a server that
+cannot load (a missing package, a bad install, any exception) never stops the app from
+opening. The start is guarded at the lifespan call site and inside `kestrel.mcp.runtime.start`; the
+failure is logged with context (`mcp_start_failed`), the panel gives a plain reason with no
+exception class name, and the technical text sits under Show details (D-UI-242). **Self-heal
+(D-MCP-4):** when the start at launch fails, Kestrel turns the saved switch off and the card says
+"MCP was turned off because it could not start: <plain reason>. Turn it on again to retry." until
+the person turns it on again, so the next launch is clean. The loopback
+address is labeled "this computer only". With LAN access off, the card says "To connect from
+another device, turn on LAN access in Settings" with a link. With LAN access on, both addresses
+show in the card, each labeled and with its own Copy button; the network address is the real
+(Wi-Fi or Ethernet) adapter, chosen by `kestrel.web.auth.lan_host_ip`: the default-route adapter
+when it is real, else the one real adapter, never a VPN, tunnel, WSL, Hyper-V, Docker or VirtualBox
+adapter or a link-local address; when it cannot tell, the card says "Could not tell which network
+address to use." and shows no guess. A process
 that cannot host it says "Restart Kestrel to apply".
 
 **The card's wording (D-UI-113).** Title "Connect an AI assistant (MCP)", with an On pill and the
@@ -1738,8 +1917,9 @@ phone push, optional generic webhook.
 
 | Event | Default |
 |---|---|
-| Run finished, with a summary count | on |
-| A new opportunity scored at or above the Strong match cutoff (`thresholds.apply`, default 4.0) | on |
+| Run finished, with a summary count (one per run) | on |
+| A run finished with roles that need another try: one warning, "Run finished: N roles need another try", that opens Needs another try; a role that fails again on a later run is not announced again (#110) | on |
+| New roles worth a look: one alert per run for the roles that were new in that run and rated Your call, Good fit or Strong ("Not a fit" never counts): "1 new role worth a look: <title> at <company>" or "N new roles worth a look (K strong)", opening the role or the Pipeline's New today filter; a role rated again later is not announced again (#111) | on |
 | A shortlisted opportunity went `closed` | on |
 | A pursuit next-action is due today | on |
 | A pursuit has had no response past the ghosting threshold | on |
@@ -1754,9 +1934,11 @@ phone push, optional generic webhook.
 | Every individual scored item | off, and it must stay off by default |
 
 **Settings groups (D-UI-94).** Settings > Preferences > Notifications shows four groups, each a
-set of the kinds above: *New strong matches* (a role at or above the Strong match cutoff, §2.6),
+set of the kinds above: *New roles worth a look* (a new role rated Your call or better; the stored
+keys are unchanged from when it was named New strong matches),
 *Follow-ups due* (next action due today, no response past the ghosting threshold),
-*Run finished*, and *Something needs attention* (a source auto-disabled, quarantine count, a
+*Run finished*, and *Something needs attention* (a source auto-disabled, roles that need another
+try after a run, quarantine count, a
 shortlisted role closed, the reranker awaiting approval or demoted, calibration available, low
 credit, a newer version, a suggested model check). Individual kinds stay individually
 toggleable: the bell's menu has "Turn off this kind" (below).

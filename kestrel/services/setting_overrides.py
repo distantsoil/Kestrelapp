@@ -34,8 +34,10 @@ HOSTED_MODEL_DEFAULTS_KEY = "hosted_model_defaults"
 HOSTED_MODEL_OVERRIDES_KEY = "hosted_model_overrides"
 # The update checker's state (etag, last answer, skipped version; services/updater.py STATE_KEY).
 # State, not configuration: it must never be read back as a Settings override.
+# Why MCP was switched off after a start that failed (#130, D-MCP-4); shown on the Settings card.
+MCP_TURNED_OFF_KEY = "mcp_turned_off_notice"
 TRANSIENT_KEYS = frozenset({
-    PENDING_RUN_MODE_KEY, EMBED_SWEPT_MODEL_KEY, HOSTED_MODEL_DEFAULTS_KEY,
+    MCP_TURNED_OFF_KEY, PENDING_RUN_MODE_KEY, EMBED_SWEPT_MODEL_KEY, HOSTED_MODEL_DEFAULTS_KEY,
     HOSTED_MODEL_OVERRIDES_KEY, UPDATE_STATE_KEY,
 })
 

@@ -733,13 +733,13 @@
      in their place the first time, never moved after paint. */
   function applySort(animate) {
     markSort();
-    if (!sortState.col) return;
     var tbody = $('.ap-table tbody');
     if (!tbody) return;
     var rows = $$('tr', tbody);
     var before = animate ? rowSnap(rows) : null;
     var dir = sortState.dir, col = sortState.col;
     rows.sort(function (a, b) {
+      if (!col) return ordOf(a) - ordOf(b);  // no sort: the server's order
       var av = sortVal(a, col), bv = sortVal(b, col);
       // A row with no value for this column is last in both directions.
       if (av === null && bv === null) return ordOf(a) - ordOf(b);
@@ -759,8 +759,11 @@
     var th = e.target.closest('th[data-sort]');
     if (!th || !th.closest('.ap-table')) return;
     var col = th.getAttribute('data-sort');
-    if (sortState.col === col) sortState.dir = -sortState.dir;
-    else sortState = { col: col, dir: SORT_FIRST[col] || 1 };
+    // First press: the most useful end. Second: reverse. Third: back to the default order.
+    if (sortState.col === col) {
+      if (sortState.dir === (SORT_FIRST[col] || 1)) sortState.dir = -sortState.dir;
+      else sortState = { col: '', dir: 1 };
+    } else sortState = { col: col, dir: SORT_FIRST[col] || 1 };
     saveSort();
     applySort(true);
   }

@@ -169,7 +169,9 @@ def test_status_rail_follows_the_stored_mode_not_the_idle_workers_last_cycle(mon
     row = asyncio.run(routes_control._model_row(s, s.llm.mode))
     assert row["label"].startswith("Hosted mode") and not probed
     src = Path(routes_control.__file__).read_text(encoding="utf-8")
-    assert "_model_row(settings, settings.llm.mode)" in src
+    # Idle: the row follows the stored settings; a working run shows its own (#103).
+    assert "shown = run_settings or settings" in src
+    assert "_model_row(shown, shown.llm.mode)" in src
 
 
 def test_status_probe_uses_a_short_connect_timeout_and_remembers_down(monkeypatch):

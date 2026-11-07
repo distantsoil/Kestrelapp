@@ -106,7 +106,7 @@ def test_every_registered_prose_prompt_has_a_schema():
 
 # --------------------------------------------------------------------------- the shared block
 _PROSE_PROMPTS = [
-    "cover/v3", "engagement_outline/v3", "cover/v2", "engagement_outline/v2",
+    "cover/v4", "cover/v3", "engagement_outline/v3", "cover/v2", "engagement_outline/v2",
     "story_consolidate/v2", "mock_critique/v2",
     "negotiate/v2", "analytics_summary/v2", "interview_questions/v2", "org_summary/v2",
     "follow_up/v2",

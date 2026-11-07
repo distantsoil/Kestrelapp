@@ -27,7 +27,7 @@ from typing import Annotated, Any, Literal
 
 import structlog
 from pydantic import BaseModel, create_model
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import Settings
@@ -448,10 +448,114 @@ async def dismiss(session: AsyncSession, suggestion_id: int) -> bool:
     return True
 
 
+def _evidence_key(text: Any) -> str:
+    """How a stored evidence quote is compared with a resume bullet: whitespace collapsed and cut
+    to the length evidence is stored at (EVIDENCE_CHARS)."""
+    return " ".join(str(text or "").split())[:EVIDENCE_CHARS]
+
+
+async def _bullet_keys(session: AsyncSession, where: Any) -> set[str]:
+    """The evidence keys of every bullet text (all variants) of the resumes `where` selects."""
+    from kestrel.db.models import DocSection, DocSlot, DocVariant
+
+    texts = (
+        await session.execute(
+            select(DocVariant.text)
+            .join(DocSlot, DocSlot.id == DocVariant.doc_slot_id)
+            .join(DocSection, DocSection.id == DocSlot.doc_section_id)
+            .join(DocMaster, DocMaster.id == DocSection.doc_master_id)
+            .where(where)
+        )
+    ).scalars().all()
+    keys = set()
+    for text in texts:
+        keys.add(_evidence_key(text))
+        keys.add(_evidence_key(str(text or "")[:EVIDENCE_CHARS]))
+    keys.discard("")
+    return keys
+
+
+async def forget_resume(session: AsyncSession, master_id: int) -> None:
+    """A resume is being deleted: remove what was derived from it (issue #118). Its waiting
+    suggestions go. A decided title (dismissed or accepted) stays as a bare title, so it is never
+    suggested again, but the resume's own words (the evidence and the why) are blanked. Rows
+    written before the link existed (no doc_master_id) are matched to this resume by their
+    stored evidence: a row quoting a bullet of this resume, none of whose quotes a remaining
+    active resume also has, came from it, and is cleaned the same way (D-UI-254, D-UI-260).
+    Once no active resume remains, every such row is cleaned. Only an employment resume counts:
+    deleting a capability statement leaves every suggestion as it is. Call it BEFORE the
+    resume's bullets are deleted: the match reads them. Flushes; the caller commits."""
+    deleted = await session.get(DocMaster, master_id)
+    if deleted is None or deleted.track != "employment" or deleted.doc_kind != "resume":
+        # Suggestions are read from employment resumes only: deleting a capability statement
+        # (or anything else) matches none of them, by link or by evidence (0.7.6 review).
+        log.info("title_suggestions_forgot_resume", master_id=master_id, skipped="not a resume")
+        return
+    remaining_where = (
+        (DocMaster.track == "employment") & (DocMaster.doc_kind == "resume")
+        & DocMaster.is_active.is_(True) & (DocMaster.id != master_id)
+    )
+    remaining = (
+        await session.execute(select(func.count()).select_from(DocMaster).where(remaining_where))
+    ).scalar_one()
+    prelink: list[int] = []
+    if remaining:
+        kept = await _bullet_keys(session, remaining_where)
+        own = await _bullet_keys(session, DocMaster.id == master_id) - kept
+        if own:
+            rows = (
+                await session.execute(
+                    select(TitleSuggestion).where(TitleSuggestion.doc_master_id.is_(None))
+                )
+            ).scalars().all()
+            # A row came from the deleted resume alone when one of its quotes is that resume's
+            # and none is still backed by a kept one (0.7.6 review: one kept quote keeps it).
+            for r in rows:
+                quotes = {_evidence_key(e.get("text")) for e in (r.evidence or [])
+                          if isinstance(e, dict)}
+                if quotes & own and not quotes & kept:
+                    prelink.append(r.id)
+    await session.execute(
+        delete(TitleSuggestion).where(
+            TitleSuggestion.doc_master_id == master_id, TitleSuggestion.status == "suggested"
+        )
+    )
+    await session.execute(
+        update(TitleSuggestion)
+        .where(TitleSuggestion.doc_master_id == master_id)
+        .values(evidence=[], why="", doc_master_id=None)
+    )
+    if prelink:
+        await session.execute(
+            delete(TitleSuggestion).where(
+                TitleSuggestion.id.in_(prelink), TitleSuggestion.status == "suggested"
+            )
+        )
+        await session.execute(
+            update(TitleSuggestion).where(TitleSuggestion.id.in_(prelink))
+            .values(evidence=[], why="")
+        )
+    if not remaining:
+        await session.execute(
+            delete(TitleSuggestion).where(
+                TitleSuggestion.doc_master_id.is_(None), TitleSuggestion.status == "suggested"
+            )
+        )
+        await session.execute(
+            update(TitleSuggestion)
+            .where(TitleSuggestion.doc_master_id.is_(None))
+            .values(evidence=[], why="")
+        )
+    log.info("title_suggestions_forgot_resume", master_id=master_id, matched_prelink=len(prelink))
+
+
 async def view(session: AsyncSession) -> dict:
     """What the Suggested titles list shows: the waiting suggestions (newest first), whether a
     run is queued, whether there is a resume to read, and how the last run went."""
-    rows = (
+    has_resume = await employment_resume(session) is not None
+    # With no active resume nothing here was read from a resume that exists: leftover rows are
+    # ignored, so the card says "Import a resume first" (issue #118).
+    rows = [] if not has_resume else (
         await session.execute(
             select(TitleSuggestion)
             .where(TitleSuggestion.status == "suggested")
@@ -465,6 +569,6 @@ async def view(session: AsyncSession) -> dict:
             for r in rows
         ],
         "pending": await pending(session),
-        "has_resume": await employment_resume(session) is not None,
+        "has_resume": has_resume,
         "last": last.value if last is not None and isinstance(last.value, dict) else None,
     }

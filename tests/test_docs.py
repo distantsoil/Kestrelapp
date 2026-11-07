@@ -360,3 +360,24 @@ async def test_render_pdf_per_kind_passes_all_pdf_asserts(sm, monkeypatch):
             for bullet in html_bullets:
                 assert bullet in variant_texts  # byte-for-byte vs the DB
                 assert " ".join(bullet.split()) in norm  # and actually in the PDF
+
+
+def test_the_local_ai_notes_page_lists_every_shipped_model_tag_with_its_recorded_facts():
+    """#144: the page names each model Kestrel ships a digest for, with only values recorded in
+    model_digests.json, and points to the Ollama library page for maker and license."""
+    import json
+    from importlib import resources
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    page = (root / "docs" / "guide" / "local-ai-notes.md").read_text(encoding="utf-8")
+    catalog = json.loads(
+        resources.files("kestrel.resources.config").joinpath("model_digests.json")
+        .read_text(encoding="utf-8")
+    )["models"]
+    assert catalog, "the digest list is empty"
+    for tag, info in catalog.items():
+        assert f"`{tag}`" in page, tag
+        assert f"{info['size_gb']} GB" in page and info["digest"][:19] in page
+        assert f"https://ollama.com/library/{tag.split(':')[0]}" in page
+    assert "—" not in page

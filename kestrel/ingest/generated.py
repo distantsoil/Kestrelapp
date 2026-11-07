@@ -235,38 +235,45 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def title_variants(titles: list[str], removed: Any = ()) -> list[str]:
-    """The other phrasings searched beside `titles` (D-TTL-2): up to VARIANTS_PER_TITLE each,
-    interleaved across titles so no title is favored, never a target title itself, never one
-    the operator removed, no duplicate (case-insensitive), at most MAX_VARIANTS."""
-    from kestrel.rules.titles import phrasings
+def variant_sources(titles: list[str], removed: Any = ()) -> list[tuple[str, str, str]]:
+    """The other phrasings searched beside `titles` (D-TTL-2, D-TTL-4) as (variant, source
+    title, kind), in the order they are kept. Up to VARIANTS_PER_TITLE each, never a target
+    title itself, never one the operator removed, no duplicate (case-insensitive), at most
+    MAX_VARIANTS. Ranked so a cut is fair: abbreviation and expansion swaps (VP and Vice
+    President) first, then other phrasings; inside a kind, round-robin across titles, so every
+    title gets its first variant before any title gets a second."""
+    from kestrel.rules.titles import ranked_phrasings
 
     targets = [t for t in (" ".join(str(x).split()) for x in titles) if t]
     gone = {str(r).casefold() for r in removed or ()}
     seen = {t.casefold() for t in targets}
-    out: list[str] = []
 
-    # Generate variants for each title, then interleave them fairly.
-    per_title: list[list[str]] = []
+    per_title: list[list[tuple[str, str, str]]] = []
     for t in targets:
-        variants = []
-        for v in phrasings(t, VARIANTS_PER_TITLE):
+        found: list[tuple[str, str, str]] = []
+        for v, kind in ranked_phrasings(t, VARIANTS_PER_TITLE):
             key = v.casefold()
             if key in seen or key in gone:
                 continue
             seen.add(key)
-            variants.append(v)
-        per_title.append(variants)
+            found.append((v, t, kind))
+        per_title.append(found)
 
-    # Interleave: take one from each title in round-robin order.
-    max_variants = max((len(v) for v in per_title), default=0)
-    for i in range(max_variants):
-        for variants in per_title:
-            if i < len(variants):
-                out.append(variants[i])
-                if len(out) >= MAX_VARIANTS:
-                    return out
+    out: list[tuple[str, str, str]] = []
+    for kind in ("abbrev", "family"):
+        by_title = [[x for x in found if x[2] == kind] for found in per_title]
+        for i in range(max((len(v) for v in by_title), default=0)):
+            for found in by_title:
+                if i < len(found):
+                    out.append(found[i])
+                    if len(out) >= MAX_VARIANTS:
+                        return out
     return out
+
+
+def title_variants(titles: list[str], removed: Any = ()) -> list[str]:
+    """`variant_sources` without the source and kind."""
+    return [v for v, _, _ in variant_sources(titles, removed)]
 
 
 def _suffix(i: int, n: int) -> str:
@@ -551,10 +558,48 @@ async def variants_view(session: AsyncSession) -> dict[str, Any]:
         blocks, tracks, email, sec_use_titles=await sec_titles_opt_in(session),
         removed_variants=gone,
     )
+    emp = blocks.get("employment")
+    titles = [
+        t for t in (" ".join(str(x).split()) for x in
+                    (_get(_get(emp, "employment_terms") or {}, "target_titles") or [])) if t
+    ]
+    # Where each phrasing came from, over every title (removed ones included), uncapped.
+    from kestrel.rules.titles import ranked_phrasings
+
+    source: dict[str, str] = {}
+    for t in titles:
+        for v, _kind in ranked_phrasings(t, VARIANTS_PER_TITLE):
+            source.setdefault(v.casefold(), t)
+
+    def rows(values: list[str]) -> list[dict[str, str]]:
+        return [{"text": v, "title": source.get(v.casefold(), "")} for v in values]
+
+    dropped = [v for v in offered if v not in used]
+    searched_titles = {source.get(v.casefold(), "") for v in used}
+    gone_keys = {g.casefold() for g in gone}
+    without: list[dict[str, str]] = []
+    if "employment" in tracks:
+        for t in titles:
+            if t in searched_titles:
+                continue
+            mine = [v for v, _k in ranked_phrasings(t, VARIANTS_PER_TITLE)]
+            if any(v.casefold() not in gone_keys for v in mine):
+                why = "left out to stay under the search limit"
+            elif mine:
+                why = "all of its versions were removed"
+            else:
+                why = "no close versions to add"
+            without.append({"title": t, "why": why})
     return {
         "used": used,
-        "dropped": [v for v in offered if v not in used],
+        "dropped": dropped,
         "removed": gone,
+        "used_rows": rows(used),
+        "dropped_rows": rows(dropped),
+        "removed_rows": rows(gone),
+        "without": without,
+        "cap": MAX_VARIANTS,
+        "per_title": VARIANTS_PER_TITLE,
         "boards": " and ".join(_BOARD_NAMES.get(s, s) for s in SITES),
         "searches": sum(1 for s in specs if s.track == "employment"),
         "employment_on": "employment" in tracks,

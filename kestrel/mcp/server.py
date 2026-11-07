@@ -25,6 +25,12 @@ from kestrel.db.models import (
     Story,
 )
 from kestrel.research.connections import not_imported_connection
+from kestrel.services.export_terms import (
+    RESTRICTED_SENTENCE,
+    export_copies,
+    restricted_ids,
+    shareable_clause,
+)
 from kestrel.web.redact import confidential, redact_json, redact_name, redact_text
 
 TOOL_NAMES = [
@@ -83,7 +89,7 @@ def build_mcp() -> FastMCP:
         from kestrel.web.queries import list_opportunities as _list
 
         f = OppFilters(track=track, stage=stage, verdict=verdict, score_min=score_min,
-                       page_size=min(limit, 200))
+                       page_size=min(limit, 200), shareable=True)
         async with sm()() as s:
             page = await _list(s, f)
             conf, mapping = await confidential(s)
@@ -96,6 +102,8 @@ def build_mcp() -> FastMCP:
             opp = await s.get(Opportunity, opportunity_id)
             if opp is None:
                 return {"error": "not found"}
+            if await restricted_ids(s, [opportunity_id]):  # source terms (D-SRC-19)
+                return {"error": RESTRICTED_SENTENCE}
             ev = (
                 await s.execute(
                     select(Evaluation).where(Evaluation.opportunity_id == opportunity_id)
@@ -130,6 +138,9 @@ def build_mcp() -> FastMCP:
                 conf, mapping = await confidential(s)
         finally:
             await client._http.aclose() if getattr(client, "_http", None) else None
+        async with sm()() as s:
+            blocked = await restricted_ids(s, [h.opportunity_id for h in hits])
+        hits = [h for h in hits if h.opportunity_id not in blocked]  # source terms (D-SRC-19)
         # SearchHit carries org_name and title directly rather than going through _opp_summary, so
         # returning `h.__dict__` raw made this the one read tool that leaked the current employer.
         return [
@@ -159,6 +170,7 @@ def build_mcp() -> FastMCP:
                 .join(latest, latest.c.opportunity_id == Opportunity.id)
                 .join(Evaluation, (Evaluation.id == latest.c.mid)
                       & (Evaluation.verdict.in_(("apply", "pursue"))))
+                .where(shareable_clause())  # source terms (D-SRC-19)
                 .order_by(Evaluation.score.desc().nulls_last())
                 .limit(min(limit, 200))
             )
@@ -178,6 +190,9 @@ def build_mcp() -> FastMCP:
             if track:
                 stmt = stmt.where(Pursuit.track == track)
             rows = (await s.execute(stmt)).all()
+            # Source terms (D-SRC-19): a Remotive role is shown from its other-board copy, or not.
+            copies = await export_copies(s, [o.id for _p, o in rows])
+            rows = [(p, c) for p, o in rows if (c := copies.get(o.id)) is not None]
             conf, mapping = await confidential(s)
         return [
             {"pursuit_id": p.id, "opportunity_id": p.opportunity_id, "track": p.track,

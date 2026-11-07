@@ -405,3 +405,117 @@ def test_the_page_mounts_unmounts_and_mounts_again_and_keeps_its_history(live):
         assert errors == []
     finally:
         ctx.close()
+
+
+def _shot(page, name: str) -> None:
+    """Screenshots for the report when KESTREL_SHOTS_DIR is set; a no-op in the suite."""
+    out = os.environ.get("KESTREL_SHOTS_DIR")
+    if out:
+        os.makedirs(out, exist_ok=True)
+        page.screenshot(path=os.path.join(out, f"{name}.png"))
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 1440), ("light", 390)])
+def test_select_all_then_the_whole_group_counts_labels_and_one_undo(live, theme, width):
+    """#116: Select all ticks the 25 drawn rows and offers "Select all N in <group>"; pressing it
+    selects the whole group (the bar says N, the labels carry N), selecting sends nothing, Score
+    again is off with a reason, Esc clears, and one Undo reverses the whole Not for me."""
+    ctx, page, errors = _page(live, theme, width, "/opportunities")
+    posts: list[str] = []
+    page.on("request", lambda r: posts.append(r.url) if "/pipeline/bulk/" in r.url else None)
+    try:
+        total = int(page.get_attribute('.pl-group[data-group=worth]', "data-count"))
+        assert total > 25
+        page.click('[data-selall="worth"]')
+        page.wait_for_selector("#pl-bulk.is-on")
+        assert page.inner_text("#pl-bcount") == "25 selected"
+        page.wait_for_selector("#pl-ball:not([hidden])")
+        assert page.inner_text("#pl-ball") == f"Select all {total} in Worth a look"
+        assert page.inner_text("#pl-bulk [data-bulk=not-for-me]") == "Not for me, 25 roles"
+        page.click("#pl-ball")
+        page.wait_for_function(
+            "n => document.querySelector('#pl-bcount').textContent === n + ' selected'", arg=total)
+        assert page.inner_text("#pl-bnote") == f"all {total} in Worth a look"
+        assert page.inner_text("#pl-bulk [data-bulk=not-for-me]") == f"Not for me, {total} roles"
+        assert page.inner_text("#pl-bulk [data-bulk=shortlist]") == f"Shortlist, {total} roles"
+        mark = page.inner_text("#pl-bulk [data-bulk=mark-reviewed]")
+        assert mark == f"Mark reviewed, {total} roles"
+        assert page.get_attribute("#pl-bulk [data-bulk=score-again]", "aria-disabled") == "true"
+        assert page.inner_text("#pl-bulk [data-bulk=deeper-read]") == "Deeper read"
+        assert page.is_hidden("#pl-ball")
+        # Nothing is applied by selecting.
+        assert posts == []
+        # The bar fits the window and its parts do not overlap.
+        boxes = page.evaluate(_BOXES, "#pl-bulk > *")
+        bar = page.evaluate(
+            "() => { const b = document.querySelector('#pl-bulk').getBoundingClientRect();"
+            " return {l: b.left, r: b.right, w: innerWidth}; }")
+        assert bar["l"] >= -1 and bar["r"] <= bar["w"] + 1
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                assert not _overlaps({**a, "tp": a["tp"], "bt": a["bt"]},
+                                     {**b, "tp": b["tp"], "bt": b["bt"]}), (a["t"], b["t"])
+        _shot(page, f"bulk-whole-group-{theme}-{width}")
+        # Esc clears the whole selection.
+        page.keyboard.press("Escape")
+        page.wait_for_function("() => !document.querySelector('#pl-bulk.is-on')")
+        assert posts == []
+        # Select the group again and act: Not for me on all of them, then one Undo.
+        page.click('[data-selall="worth"]')
+        page.click("#pl-ball")
+        page.wait_for_function(
+            "n => document.querySelector('#pl-bcount').textContent === n + ' selected'", arg=total)
+        page.click("#pl-bulk [data-bulk=not-for-me]")
+        page.wait_for_selector(".k-toast .k-toast__undo")
+        assert page.inner_text(".k-toast .k-toast__undo") == f"Undo Not for me, {total} roles"
+        assert f"{total} roles moved to Hidden." in page.inner_text(".k-toast")
+        assert len(posts) == 1
+        page.click(".k-toast .k-toast__undo")
+        page.wait_for_function(
+            "() => document.querySelectorAll('.pl-group[data-group=worth] .pl-row').length >= 25")
+        assert int(page.get_attribute('.pl-group[data-group=worth]', "data-count")) == total
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_i_applied_in_the_side_panel_with_quick_pick_undo_and_edit_date(live, theme):
+    """Issue #129 (owner, 2026-11-03): the Pipeline side panel has the Role page's I applied
+    control, on the same route. Yesterday fills the date and moves the follow-up with it; the
+    answer redraws the panel; Edit date saves; Undo puts the shortlisted role back as it was."""
+    from datetime import date
+
+    _base, _browser, ids, _sig = live
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    ctx, page, errors = _page(live, theme, 1680)
+    try:
+        page.click(f"#row-{ids['a']} .pl-title__t")
+        block = page.locator("#pl-panel [data-testid=panel-applied]")
+        block.get_by_test_id("applied-form").wait_for()
+        assert page.get_by_test_id("panel-on-list").count() == 1  # shortlisted, not applied
+        block.get_by_test_id("pick-yesterday").click()
+        assert block.get_by_test_id("applied-on-date").input_value() == yesterday
+        follow = (date.today() + timedelta(days=6)).isoformat()
+        assert block.get_by_test_id("applied-follow-date").input_value() == follow
+        overflow = page.evaluate(
+            "() => Array.from(document.querySelectorAll('#pl-panel [data-testid=panel-applied] *'))"
+            ".filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 1"
+            " && getComputedStyle(e).overflowX !== 'visible').map(e => e.outerHTML.slice(0, 80))")
+        assert overflow == []
+        with page.expect_response(lambda r: r.url.endswith("/role/applied")):
+            block.get_by_test_id("mark-applied").click()
+        block.get_by_test_id("applied-on").wait_for()
+        assert block.get_by_test_id("applied-form").count() == 0
+        assert block.get_by_test_id("repost-note").is_visible()
+        block.get_by_test_id("applied-edit-open").click()
+        block.get_by_test_id("applied-edit-form").wait_for(state="visible")
+        three_ago = (date.today() - timedelta(days=3)).isoformat()
+        block.get_by_test_id("applied-edit-date").fill(three_ago)
+        block.get_by_test_id("applied-edit-save").click()
+        block.get_by_test_id("applied-undo").click()  # waits while the save is on its way
+        block.get_by_test_id("applied-form").wait_for()
+        assert page.get_by_test_id("panel-on-list").count() == 1  # still on the shortlist
+        assert errors == []
+    finally:
+        ctx.close()

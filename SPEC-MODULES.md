@@ -232,7 +232,14 @@ Generated prose is permitted here, under constraint.
 the prompt supplies only those and forbids asserting anything else. 250-350 words, markdown, in
 an editor, operator edits before rendering. A `claims_used` array is returned and every entry
 must resolve to a real key; any that does not flags the draft "unverified claims present". A
-banned-phrase check runs on the body.
+banned-phrase check runs on the body. A number or name in the body that the person's own text
+does not support is marked unverified. A length of time ("three years") is supported only by the
+same value and unit in their text, never by a bare number elsewhere ("3 warehouses"), and a
+promise about when they can start, relocating, travel, sponsorship or pay is supported only when
+their own text makes it (D-LETTER-9). "The person's own text" is everything of theirs the prompt
+carried: proof points, resume lines, headline and narrative. The employer's name is not an
+unverified claim unless the sentence places the person there in the past. The promise check matches known wordings, so its silence is not a guarantee that
+no promise was made (D-LETTER-10).
 
 **Engagement outline** (consulting): situation, proposed scope, phases with durations, named
 deliverables, commercial model (day rate × days, or fixed fee, or retainer), assumptions, and
@@ -251,17 +258,67 @@ person (I, my, me, we, our); one found in neither the person's text nor the post
 flagged; the posting is never a grounding source. The engagement outline (`engagement_outline/v3`)
 is written as the consultant ("I" or "we") to the organization ("you").
 
-**The saved draft (D-UI-239).** A draft is a `doc_render` row (`template` is `cover_letter` or
-`engagement_outline`; its text, `claims_used` and marks live in `config`), so it survives a reload
-and the Documents tab offers "Open draft". The prompt carries only the person's proof points and
-the resume lines chosen for the role, each with the key a claim must cite. On this computer the
+**The saved draft (D-UI-239, D-LETTER-1).** A draft is a `letter` row with its PDF render
+attached, so it survives a reload and the Documents tab offers "Open draft":
+
+**`letter`** — `id`, `render_id` (fk `doc_render`, unique, deleted with it: the render record the
+PDF, its file name and page count are attached to, and the id the role page's links carry),
+`opportunity_id`, `pursuit_id` nullable (the application), `kind` (`cover_letter` or
+`engagement_outline`), `status` (`current`, `proposed`, `previous` or `older`; at most one
+`current` per role and kind, held by a partial unique index), `body_md`, `generated_md`
+(the text as drafted), `claims_used` json, `flags` json (the plain-writing marks), `prompt_version`,
+`word_count`, `edited`, `extras` json (the document pick it was drafted from; an outline's
+assumptions, exclusions and commercial shape), `created_at`, `updated_at`. A letter saved by an
+earlier version as a render record (its text in `doc_render.config`) is moved into this table by
+migration 0028 and opens as before; the render keeps its PDF and `pdf_digest`. A role with several
+such letters gets the one its application points at (else the newest) as `current`; the rest become
+`older`, which nothing shows or undoes (0.7.5 showed only the newest). The move is safe to run again
+and a value it cannot read is stored empty, never stopping the rest (D-LETTER-5).
+
+The prompt carries only the person's proof points, the resume lines chosen for the role and, for a
+cover letter, accepted stories, each with the key a claim must cite.
+
+**Stories as a source (cover letter, D-LETTER-2).** The story bank is a second allowed source.
+Only an accepted story (one the person wrote or edited: canonical and `operator_edited`) is ever
+supplied; a proposed story is never in the prompt, so a claim naming it does not resolve. A story
+has its own claim key (`story-<id>`), its source shows on a click like any other, and the prompt
+gets at most the title, the first action sentence and the result of each story, never the whole
+story; the ask-first panel names those parts. A claim resolves only to a key the prompt actually
+carried (`extras.sent_keys`): the key of a real story or proof point that was not sent is
+"unverified claims present" (hard rule 2). While a role's current letter uses a story, the role
+holds one `story_usage` row for it (question "Cover letter") and the story's `use_count` counts it
+once; when the letter stops using it (a new draft, an edit that removes the sentence that traced to
+it, a discard, or the resume it came from being deleted), the row goes.
+
+**Length guards (cover letter, D-LETTER-3).** (1) Input: at most 3 proof points or resume lines in
+total and 2 stories per letter, chosen by how many words they share with the posting and the
+title; the rest are not sent. (2) The output cap stays the prompt's `max_tokens`. (3) A body over
+350 words or four paragraphs (the greeting line is not a paragraph) triggers one request to
+shorten it, which is the same single re-ask the plain-writing check uses (the ask-first panel names
+it). (4) A draft still too long is kept and marked "Over length (N words, limit 350)" (or "Too many
+paragraphs (N, limit 4)"); Kestrel never cuts it and never rejects it. (5) The editor shows a live
+word count with the limit, a soft warning above 350, and refuses to save above 600 words, and the
+server refuses the same (the typed text stays in the editor). (6) The PDF must fit one page: the
+Preview makes the PDF and says so when it runs past one page, before it is saved; the font is never
+shrunk. (7) Draft again does not feed the old draft to the model.
+
+**Draft again (D-LETTER-4).** Draft again asks first, then goes the same way as a first draft (an
+online model shows the ask-first panel again). The new draft is saved as `proposed` beside the
+current one, which stays as it is, in Documents and attached to the application, until the person
+chooses "Keep new draft" (the old one becomes `previous`) or "Keep previous draft" (the new one is
+deleted). After keeping the new one, Undo brings the previous draft back exactly as it was and
+deletes the newer one; it asks first, like Discard, saying that the current draft and any edits to
+it are deleted, and it acts only on the draft named on screen. While a draft for the role is being
+written, Undo and Keep previous wait. A draft that finishes when the role already has a current one
+waits as `proposed`; it never replaces the current one by itself (D-LETTER-5, D-LETTER-7). Discard
+still asks first and removes the draft and any previous one. On this computer the
 draft starts with no consent step; an online model first shows the ask-first panel (what is sent,
 what is not, the model and service, the plain-writing re-ask sentence) and nothing is sent until the
 confirmed form is posted, checked again on the server for every call including the re-ask. The
 draft has a check view (dotted underline: a claim traced to the person's own text, with its source
 on a click; solid underline: unverified, "remove it or add it as a proof point"; stock phrasing
 highlighted), an Edit text tab (markdown, word count against 250 to 350, or 600 to 900 for an
-outline; Save confirms; Discard asks first), and a Preview that is one true-size page scaled, with
+outline; Save confirms; Discard asks first; a cover letter over 600 words is not saved), and a Preview that is one true-size page scaled, with
 Download PDF and a warning while an unverified claim remains. A failure shows one fixed sentence;
 a reply that fails its schema twice is quarantined with the raw reply kept.
 
@@ -639,9 +696,27 @@ the rating is given. The optional "Tell Kestrel why" stores reason chips and per
 as `label.rationale` and `label.dimensions`, and a verdict derived from the score with the
 operator's cutoffs (SPEC.md §7.3). The role page's "Your view" card (Yes or Adjust) and the four
 "Not for me because..." reasons in Pipeline write the same records; shortlisting a low score and
-hiding a high score for a fit reason are read implicitly as "too low" and "too high". Skipping a
+hiding a high score for a fit reason are read implicitly as "too low" and "too high". **Bulk decisions are
+excluded (D-PIPE-116).** A Pipeline bulk action (Shortlist, Not for me or Mark reviewed on a
+selection of roles, including a whole group) applies to every selected role, but it is not the
+operator's considered word on any one of them, so it never teaches. A bulk Not for me writes no
+`verdict_override` row. A bulk Shortlist or Mark reviewed writes the row that records the state
+(the role is decided, so Today stops asking) with `dimension_corrections` = `{"bulk": true}`, and
+`labeled_examples`, and so calibration, the reranker and drift, skip every row carrying that
+mark. Few-shot reads `label` rows only, which bulk never writes. A single decision on a role
+later still teaches, even when a bulk row came first. Skipping a
 queue item writes nothing and can be undone. Ratings can be changed later, and a changed rating
 replaces the label and is shown as Changed in the history.
+
+**One judgment per duplicate group (D-LRN-1).** Ingest groups copies of one posting
+(`opportunity.dedup_group_id`) and keeps every row; a role with no group is its own group. A group
+counts as labeled once any copy is rated or overridden, so Calibrate never asks about a second copy
+of a rated role and the sidebar badge counts the groups Calibrate can ask about. Training and
+calibration read one judgment per group (`capture.labeled_examples`: the most recent across the
+copies, an earlier label or override on another copy is superseded, as a later correction replaces
+an earlier label on one role), the reranker's rows are one per group, and every sample size shown or
+used for a floor or promotion criterion counts distinct groups, not label rows (hard rule 6).
+Stored rows are never merged or deleted.
 
 ### 5.2 Weight recalibration
 

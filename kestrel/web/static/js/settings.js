@@ -158,11 +158,24 @@
       back.push(function () { el.style.width = w; });
     });
     if (!back.length) return;
+    unsettled.push(back);
     void scope.offsetWidth;                       // commit the default state
     root.requestAnimationFrame(function () {
-      root.requestAnimationFrame(function () { back.forEach(function (f) { f(); }); });
+      root.requestAnimationFrame(function () { finishSettle(back); });
     });
   }
+  /* The default state is only drawn, never sent: a press, key or submit inside the two frames
+     restores every saved value first, so a fast Add or Save sends what the page shows. Capture
+     on the document runs before htmx and the form read the boxes. */
+  var unsettled = [];
+  function finishSettle(back) {
+    var i = unsettled.indexOf(back);
+    if (i < 0) return;
+    unsettled.splice(i, 1);
+    back.forEach(function (f) { f(); });
+  }
+  function flushSettle() { unsettled.slice().forEach(finishSettle); }
+  var FLUSH_ON = ['pointerdown', 'mousedown', 'click', 'keydown', 'submit'];
   function onSettleLoad(e) {
     var t = e.target;
     if (!t || t === doc.body || t === doc || !t.closest || !t.closest('[data-st-sec]')) return;
@@ -913,6 +926,8 @@
       mg = { kind: null, tab: 'nature', sel: null, msg: '', msgT: 0 };
       ctx.on(doc, 'k-toast', onToastUndo, true);
       ctx.on(doc, 'htmx:load', onSettleLoad);
+      unsettled = [];
+      FLUSH_ON.forEach(function (type) { ctx.on(doc, type, flushSettle, true); });
       ctx.on(doc, 'change', onChange);
       ctx.on(doc, 'click', onClick);
       ctx.on(doc, 'input', onInput);

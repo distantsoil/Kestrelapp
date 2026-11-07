@@ -163,9 +163,36 @@
   gap: .4rem; height: 18px; font-size: 13px; line-height: 18px; color: var(--muted);
   white-space: nowrap; overflow: hidden; animation: src-sug-in .18s ease both; }
 @keyframes src-sug-in { from { opacity: 0; } to { opacity: 1; } }
+/* The background check (issue 123): the row says Checking, polls itself alone, and settles into its
+   answer with a short fade; the other rows are not redrawn. */
+.src-sugchk { display: inline-flex; align-items: center; gap: .4rem; }
+.src-sugbtns { display: inline-flex; gap: 6px; }
+.src-sugc.is-settling .src-rn, .src-sugc.is-settling > .k-btn, .src-sugc.is-settling > .src-sugbtns {
+  animation: src-sug-in .24s ease both; }
 @media (prefers-reduced-motion: reduce) {
   .src-sugc .src-ty { transition: none; }
   .src-sugc > .busy-status { animation: none; }
+  .src-sugc.is-settling .src-rn, .src-sugc.is-settling > .k-btn,
+  .src-sugc.is-settling > .src-sugbtns { animation: none; }
+}
+html[data-reduce-motion="1"] .src-sugc.is-settling .src-rn,
+html[data-reduce-motion="1"] .src-sugc.is-settling > .k-btn,
+html[data-reduce-motion="1"] .src-sugc.is-settling > .src-sugbtns { animation: none; }
+@container kwin (max-width: 420px) {
+  /* A narrow window: badge and text on the first line, the actions under them, grouped on the
+     right (Dismiss beside them, or directly below when they do not fit together). */
+  .src-sugc { display: flex; flex-wrap: wrap; justify-content: flex-end; height: auto;
+    padding: 8px 6px 8px 48px; gap: 6px; }
+  .src-sugc > .src-mono { position: absolute; left: 6px; top: 10px; }
+  .src-sugc > .src-rn { flex: 1 0 100%; min-width: 0; max-width: 100%; }
+  .src-sugc .src-nm { white-space: normal; overflow-wrap: anywhere; }
+  .src-sugc .src-ty { white-space: normal; }
+  .src-sugbtns { flex-wrap: wrap; justify-content: flex-end; }
+  /* The lookup status stands in for the Add button, so the row keeps its height. */
+  .src-sugc:has(> .busy-status) .src-ty { opacity: 1; }
+  .src-sugc:has(> .busy-status) > [data-testid="suggestion-add"] { display: none; }
+  .src-sugc > .busy-status { position: static; height: auto; }
+}
 }
 
 /* ---------------------------------------------------------------- keys for some sources */

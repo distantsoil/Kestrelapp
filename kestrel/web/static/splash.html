@@ -79,7 +79,7 @@ button{font:inherit;cursor:pointer;color:inherit}
     <div class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg></div>
     <h2>Kestrel couldn't start</h2>
     <p id="reason"></p>
-    <div class="row"><button class="btn p" id="download" type="button" style="display:none">Download latest</button><button class="btn p" id="retry" type="button">Try again</button><button class="btn" id="logs" type="button">Open logs folder</button><button class="btn" id="quit" type="button">Quit</button></div>
+    <div class="row"><button class="btn p" id="download" type="button" style="display:none">Download latest</button><button class="btn p" id="safe" type="button" style="display:none">Start with optional features off</button><button class="btn p" id="retry" type="button">Try again</button><button class="btn" id="logs" type="button">Open logs folder</button><button class="btn" id="quit" type="button">Quit</button></div>
     <button class="link" id="detBtn" type="button" aria-expanded="false" aria-controls="det">Show details</button>
     <div class="det" id="det"></div>
   </div>
@@ -125,6 +125,10 @@ button{font:inherit;cursor:pointer;color:inherit}
     dl.style.display = is_newer ? '' : 'none';
     $('retry').style.display = is_newer ? 'none' : '';
     $('retry').disabled = false;
+    var offer = code === 'safe_mode_offer';
+    $('safe').style.display = offer ? '' : 'none';
+    $('safe').disabled = false;
+    $('retry').classList.toggle('p', !offer);
     $('reason').textContent = reason || '';
     $('det').textContent = details || '';
     $('det').classList.remove('is-on');
@@ -140,6 +144,13 @@ button{font:inherit;cursor:pointer;color:inherit}
     $('retry').disabled = true;
     say('Opening your data', 10);
     api('splash_retry');
+  });
+  $('safe').addEventListener('click', function () {
+    if ($('safe').disabled) return;
+    $('safe').disabled = true;
+    $('retry').disabled = true;
+    say('Opening your data', 10);
+    api('splash_safe_start');
   });
   $('download').addEventListener('click', function () { api('splash_download'); });
   $('logs').addEventListener('click', function () { api('splash_open_logs'); });

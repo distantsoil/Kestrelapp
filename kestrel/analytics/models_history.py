@@ -142,12 +142,29 @@ async def _evaluations(
 
 
 async def _latest_labels(session: AsyncSession) -> dict[tuple[int, str], Label]:
-    """(opportunity_id, track) -> the operator's most recent label. One label per evaluation keeps
-    `n_labeled` equal to a count of evaluations rather than of pairings, so the n reads plainly."""
+    """(opportunity_id, track) -> the operator's most recent label (the per-evaluation history view;
+    model counts use `_latest_group_labels`)."""
     rows = (await session.execute(select(Label).order_by(Label.created_at, Label.id))).scalars()
     latest: dict[tuple[int, str], Label] = {}
     for lbl in rows:
         latest[(lbl.opportunity_id, lbl.track)] = lbl  # later rows overwrite earlier ones
+    return latest
+
+
+async def _latest_group_labels(session: AsyncSession) -> dict[tuple[str, str], Label]:
+    """(duplicate group, track) -> the group's most recent label across all its copies (#122,
+    D-LRN-1: one role posted on several boards is one judgment; latest wins). A role with no
+    group is its own group."""
+    from kestrel.learning.groups import group_keys
+
+    rows = list((await session.execute(select(Label).order_by(Label.created_at, Label.id)))
+                .scalars())
+    keys = await group_keys(session, [lbl.opportunity_id for lbl in rows])
+    latest: dict[tuple[str, str], Label] = {}
+    for lbl in rows:
+        key = keys.get(lbl.opportunity_id)
+        if key is not None:
+            latest[(key, lbl.track)] = lbl  # later rows overwrite earlier ones
     return latest
 
 
@@ -198,7 +215,10 @@ async def model_summary(
     evaluations = await _evaluations(session, track=track, since_days=since_days)
     if not evaluations:
         return []
-    labels = await _latest_labels(session)
+    labels = await _latest_group_labels(session)
+    from kestrel.learning.groups import group_keys
+
+    opp_group = await group_keys(session, [ev.opportunity_id for ev in evaluations])
     sends = await _transmissions(session, [ev.id for ev in evaluations])
 
     groups: dict[tuple[int, str, str], list[Evaluation]] = defaultdict(list)
@@ -208,11 +228,14 @@ async def model_summary(
 
     rows: list[ModelRow] = []
     for (tier, model, version), evs in groups.items():
-        pairs = [
-            (ev, labels[(ev.opportunity_id, ev.track)])
-            for ev in evs
-            if (ev.opportunity_id, ev.track) in labels
-        ]
+        # One pair per duplicate group (#122): copies of one posting are one role, so n_labeled
+        # counts groups, and the group's newest evaluation by this model is the one compared.
+        newest: dict[tuple[str, str], Evaluation] = {}
+        for ev in sorted(evs, key=lambda e: (e.created_at or "", e.id)):
+            gkey = opp_group.get(ev.opportunity_id)
+            if gkey is not None and (gkey, ev.track) in labels:
+                newest[(gkey, ev.track)] = ev
+        pairs = [(ev, labels[key]) for key, ev in newest.items()]
         n_labeled, rate, mae, insufficient = _agreement(pairs)
         group_sends = [t for ev in evs for t in sends.get(ev.id, ())]
         costed = [t.cost_usd for t in group_sends if t.cost_usd is not None]

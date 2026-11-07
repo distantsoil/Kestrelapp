@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from kestrel.config import get_settings
-from kestrel.db.models import Setting
+from kestrel.db.models import Opportunity, Setting
 from kestrel.llm.client import LLMClient
 from kestrel.pipeline.worker import Worker
 
@@ -85,3 +85,119 @@ async def test_mid_run_switch_note_reset_on_new_run(sm, settings):
     # so we verify the reset logic by checking the initial value in __init__
     worker2 = Worker(sm, client, settings)
     assert worker2._mid_run_switch_note is None
+
+
+# ---- the invariant, counted at the provider (#103) ----------------------------------------------
+async def test_after_the_switch_to_local_no_further_request_reaches_the_online_model(
+    sm, monkeypatch
+):
+    """Three roles are waiting for the full review on an online model the run was confirmed for.
+    The person turns Hosted mode off while the first is being rated. The provider is mocked and
+    counted: exactly the one request already under way reaches it, none after the switch, and the
+    other roles are not marked done (they stay for a run on this computer)."""
+    import httpx
+    import respx
+    from httpx import Response
+
+    from kestrel.db.models import Task
+    from kestrel.pipeline.tier2 import handle_t2
+    from kestrel.pipeline.worker import TierStats
+    from kestrel.queue.queue import TaskQueue
+    from tests.pipeline_fakes import _p2
+    from tests.test_hosted_mode import _OR_CHAT, _hosted_settings, _seed
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    first = await _seed(sm, stage="t1_pass", with_map=True)
+    ids = [first]
+    async with sm() as s:
+        base = await s.get(Opportunity, first)
+        for n in (2, 3):
+            more = Opportunity(
+                track=base.track, opp_type=base.opp_type, source_id=base.source_id,
+                org_id=base.org_id, org_name=base.org_name, title=f"Director of IT {n}",
+                url=f"https://x/{n}", description_md=base.description_md, stage="t1_pass",
+                version=1, seen_count=1, ghost_score=0.0, pre_score=0.5,
+            )
+            s.add(more)
+            await s.flush()
+            ids.append(more.id)
+        await s.commit()
+    settings = _hosted_settings("tier2")
+    queue = TaskQueue(sm)
+    for opp_id in ids:
+        await queue.enqueue("t2", {"opportunity_id": opp_id})
+    sent: list[int] = []
+
+    async def provider(request: httpx.Request) -> Response:
+        sent.append(1)
+        if len(sent) == 1:  # the person switches to local while this request is in flight
+            async with sm() as s:
+                s.add(Setting(key="llm.hosted_mode.enabled", value=False))
+                await s.commit()
+        return Response(200, json={
+            "choices": [{"message": {"content": _p2(None)}}],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+        })
+
+    with respx.mock:
+        route = respx.post(_OR_CHAT).mock(side_effect=provider)
+        async with httpx.AsyncClient() as http:
+            worker = Worker(sm, LLMClient(settings, http=http), settings)
+            await worker.drain_tier("t2", 1, handle_t2, TierStats())
+    assert route.call_count == 1  # zero further online requests after the switch
+    assert worker._mid_run_switch_note is not None
+    async with sm() as s:
+        done = (await s.execute(select(Task).where(Task.type == "t2", Task.status == "done"))
+                ).scalars().all()
+    assert len(done) == 1  # the others were not completed against a refused send
+
+
+async def test_after_stop_no_new_online_request_starts(sm, monkeypatch):
+    """The notice's Stop button pauses the worker (/runs/stop). The request under way finishes;
+    no other role is sent to the online model after it."""
+    import httpx
+    import respx
+    from httpx import Response
+
+    from kestrel.pipeline.tier2 import handle_t2
+    from kestrel.pipeline.worker import TierStats
+    from kestrel.queue.queue import TaskQueue
+    from tests.pipeline_fakes import _p2
+    from tests.test_hosted_mode import _OR_CHAT, _hosted_settings, _seed
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    first = await _seed(sm, stage="t1_pass", with_map=True)
+    ids = [first]
+    async with sm() as s:
+        base = await s.get(Opportunity, first)
+        for n in (2, 3):
+            more = Opportunity(
+                track=base.track, opp_type=base.opp_type, source_id=base.source_id,
+                org_id=base.org_id, org_name=base.org_name, title=f"Director of IT {n}",
+                url=f"https://x/{n}", description_md=base.description_md, stage="t1_pass",
+                version=1, seen_count=1, ghost_score=0.0, pre_score=0.5,
+            )
+            s.add(more)
+            await s.flush()
+            ids.append(more.id)
+        await s.commit()
+    settings = _hosted_settings("tier2")
+    queue = TaskQueue(sm)
+    for opp_id in ids:
+        await queue.enqueue("t2", {"opportunity_id": opp_id})
+    stopped = {"on": False}
+
+    async def provider(request: httpx.Request) -> Response:
+        stopped["on"] = True  # the person presses Stop while this request is in flight
+        return Response(200, json={
+            "choices": [{"message": {"content": _p2(None)}}],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 10},
+        })
+
+    with respx.mock:
+        route = respx.post(_OR_CHAT).mock(side_effect=provider)
+        async with httpx.AsyncClient() as http:
+            worker = Worker(sm, LLMClient(settings, http=http), settings,
+                            paused=lambda: stopped["on"])
+            await worker.drain_tier("t2", 1, handle_t2, TierStats())
+    assert route.call_count == 1

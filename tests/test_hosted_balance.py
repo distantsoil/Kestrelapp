@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -285,11 +286,18 @@ def test_the_rail_shows_the_row_and_polls_use_the_cache(monkeypatch):
     _seed_web(*_HOSTED_ON)
     _ollama()
     route = respx.get(KEY_URL).mock(return_value=_key_json(usage_monthly=4.2))
-    first = client.get("/status/rail").text
-    second = client.get("/status/rail").text
+    with client:
+        # #106: the read starts in the background, so the first poll has no balance line yet.
+        client.get("/status/rail")
+        deadline = time.monotonic() + 10
+        first = client.get("/status/rail").text
+        while "$4.20" not in first and time.monotonic() < deadline:
+            time.sleep(0.02)
+            first = client.get("/status/rail").text
+        second = client.get("/status/rail").text
+        label = client.get("/api/status").json()["balance"]["label"]
     assert 'data-rail="balance"' in first and "$4.20 spent this month" in first
     assert "$4.20 spent this month" in second
-    label = client.get("/api/status").json()["balance"]["label"]
     assert label == "$4.20 spent this month"
     assert route.call_count == 1
     assert SECRET not in first + second

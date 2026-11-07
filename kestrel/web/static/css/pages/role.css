@@ -435,6 +435,7 @@
 .cl-src.is-on { display: block; animation: cl-in .25s var(--ease) both; }
 .cl-src p { margin: 4px 0 0; font-size: var(--fs-md); line-height: 1.5; }
 .cl-src__tag { font-size: var(--fs-xs); font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.cl-src p.cl-src__since { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--warn-ink); }
 .cl-legend, .cl-list { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: 4px; font-size: var(--fs-sm); color: var(--muted); }
 .cl-list { list-style: disc; padding-left: 18px; }
 .cl-marks { margin-top: 4px; }
@@ -449,6 +450,25 @@
 .cl-count[data-state="off"] { color: var(--warn-ink); }
 .cl-count[data-state="ok"] { color: var(--good-ink); }
 .cl-count__aim { font-weight: 500; color: var(--muted); }
+.cl-count[data-state="over"] { color: var(--warn-ink); }
+.cl-count[data-state="stop"] { color: var(--bad-ink, var(--bad)); }
+/* Length guards (D-LETTER-3): the soft warning above 350 words and the hard stop above 600. */
+.cl-limit { margin: 0; font-size: var(--fs-md); font-weight: 700; }
+.cl-limit > span { display: none; }
+.cl-edit:has([data-cl-count][data-state="over"]) .cl-limit__over,
+.cl-edit:has([data-cl-count][data-state="stop"]) .cl-limit__stop { display: inline; animation: cl-in var(--dur-2) var(--ease) both; }
+.cl-limit__over { color: var(--warn-ink); }
+.cl-limit__stop { color: var(--bad-ink, var(--bad)); }
+.cl-limit.is-on .cl-limit__stop { animation: cl-tick-in var(--dur-2) var(--ease) both; }
+/* Draft again (D-LETTER-4): the new-draft banner and the Undo bar. */
+.cl-banner { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: center; margin: 0; padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--chip-i-bg); color: var(--chip-i-ink);
+  font-size: var(--fs-md); animation: cl-in .3s var(--ease) both; }
+.cl-banner > span { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.cl-banner .k-btn { flex: none; }
+.cl-fit { min-height: 1.5em; margin-bottom: var(--sp-2); }
+.cl-fit > * { animation: cl-in .25s var(--ease) both; }
+.cl-fit p { margin: 0; display: flex; gap: var(--sp-2); align-items: center; }
 .cl-saved { display: inline-flex; align-items: center; gap: 4px; color: var(--good-ink); font-weight: 700; opacity: 0;
   visibility: hidden; }
 .cl-saved.is-on { visibility: visible; animation: cl-saved 2.2s var(--ease) both; }
@@ -488,6 +508,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .cl-main > *, .cl-pane.is-on, .cl-alert, .cl-warnline, .cl-src.is-on, .cl-ask.htmx-request .cl-wait--sent, .cl-pulse { animation: none; }
+  .cl-banner, .cl-fit > *, .cl-limit > span, .cl-limit.is-on .cl-limit__stop { animation: none !important; }
   .cl-saved.is-on { animation: none; opacity: 1; }
   .cl-tick { transition: none; }
   .cl-tick.is-on { animation: none; opacity: 1; }
@@ -497,11 +518,5 @@
 html[data-reduce-motion="1"] .cl-tick { transition: none; }
 html[data-reduce-motion="1"] .cl-tick.is-on { animation: none; opacity: 1; }
 
-/* "I applied" in the decision panel (the issue 145 form): the shared block from applied_block.html. */
-.rl-applied { min-width: 0; }
-.rl-applied .oa-applied { margin-top: 0; }
-.rl-applied .oa-applied__date { flex-wrap: wrap; }
-.rl-applied .oa-date { min-width: 0; max-width: 100%; }
-.rl-applied .oa-hint { font-size: var(--fs-sm); color: var(--muted); }
-.oa-applied-on { color: var(--ink); font-size: var(--fs-md); animation: oa-in var(--dur-2) var(--ease); }
-@media (prefers-reduced-motion: reduce) { .oa-applied-on { animation: none; } }
+/* "I applied" in the decision panel: the shared block from applied_block.html, styled in
+   components.css (.oa-block) because the Pipeline side panel shows it too (issue 129). */

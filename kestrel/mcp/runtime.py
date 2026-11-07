@@ -25,6 +25,7 @@ SSE_PATH = "/sse"
 _state: dict[str, Any] = {
     "live": False, "task": None, "stop": None, "port": None, "bind_all": False, "reason": None,
     "recorded": None,  # the task whose end is already in "reason" (recorded once, then kept)
+    "detail": None,  # the technical text behind "reason", for Show details only (D-UI-242)
 }
 
 
@@ -61,6 +62,32 @@ def stopped_reason() -> str | None:
     return _state["reason"]
 
 
+def stopped_detail() -> str | None:
+    """The technical text behind stopped_reason (exception type and message), shown only under
+    Show details; never in the main text of the page (D-UI-242)."""
+    return _state["detail"] if stopped_reason() else None
+
+
+def plain_start_reason(exc: BaseException) -> str:
+    """A start failure in plain words: no class name, no path, no library text."""
+    if isinstance(exc, ImportError):  # PackageNotFoundError is a ModuleNotFoundError
+        return ("a part the assistant connection needs is missing from this install; "
+                "the details are in the log")
+    return "an unexpected problem; the details are in the log"
+
+
+def note_start_failure(exc: BaseException, *, port: int | None = None,
+                       bind_all: bool = False) -> str:
+    """Record that the server could not start, log it with context, and return the plain
+    sentence. Leaves no half-started state behind. Never raises."""
+    reason = plain_start_reason(exc)
+    detail = f"{type(exc).__name__}: {exc}"
+    log.error("mcp_start_failed", port=port, bind_all=bind_all, error=detail)
+    _state.update(task=None, stop=None, port=port, bind_all=bind_all, reason=reason,
+                  recorded=None, detail=detail)
+    return reason
+
+
 def port_free(port: int, bind_all: bool = False) -> bool:
     """Whether the port can be bound, checked before uvicorn tries (a failed bind inside
     uvicorn exits the process). On Linux and macOS SO_REUSEADDR is set, as uvicorn sets it, so
@@ -77,15 +104,22 @@ def port_free(port: int, bind_all: bool = False) -> bool:
     return True
 
 
+LAN_UNKNOWN = "Could not tell which network address to use."
+
+
 def address(port: int, bind_all: bool = False) -> dict[str, str | None]:
-    """What to paste into an MCP client: the loopback address, and the LAN one when bind_all."""
+    """What to paste into an MCP client: the loopback address (this computer only), and under
+    bind_all the network one; `lan_note` says so plainly when no network address can be chosen
+    (several real adapters, or only virtual ones), never a guess."""
     lan = None
+    note = None
     if bind_all:
         from kestrel.web.auth import lan_host_ip
 
         ip = lan_host_ip()
         lan = f"http://{ip}:{port}{SSE_PATH}" if ip else None
-    return {"local": f"http://127.0.0.1:{port}{SSE_PATH}", "lan": lan}
+        note = None if ip else LAN_UNKNOWN
+    return {"local": f"http://127.0.0.1:{port}{SSE_PATH}", "lan": lan, "lan_note": note}
 
 
 def _reason(exc: BaseException) -> str:
@@ -128,12 +162,17 @@ async def start(port: int, *, bind_all: bool = False) -> str | None:
     if not port_free(port, bind_all):
         return (f"Port {port} is in use by another program. Change mcp.port in settings, or "
                 "close the program using it.")
-    from kestrel.mcp.server import serve_mcp
+    # Any failure to load or launch the server (a missing package, a bad install, the OS) is an
+    # answer, never an exception: Kestrel starts whatever happens to MCP.
+    try:
+        from kestrel.mcp.server import serve_mcp
 
-    stop_ev = asyncio.Event()
-    task = asyncio.create_task(serve_mcp(stop_ev, port=port, bind_all=bind_all), name="mcp")
+        stop_ev = asyncio.Event()
+        task = asyncio.create_task(serve_mcp(stop_ev, port=port, bind_all=bind_all), name="mcp")
+    except Exception as exc:  # noqa: BLE001 - optional feature; logged with context, recorded
+        return note_start_failure(exc, port=port, bind_all=bind_all)
     _state.update(task=task, stop=stop_ev, port=port, bind_all=bind_all, reason=None,
-                  recorded=None)
+                  recorded=None, detail=None)
     task.add_done_callback(_done)
     log.info("mcp_server_started", port=port, bind_all=bind_all)
     return None
@@ -169,5 +208,5 @@ async def stop() -> None:
         log.warning("mcp_server_stop_failed", port=_state["port"],
                     error=f"{type(exc).__name__}: {exc}")
     finally:
-        _state.update(task=None, stop=None, reason=None, recorded=None)
+        _state.update(task=None, stop=None, reason=None, recorded=None, detail=None)
     log.info("mcp_server_stopped_by_operator")

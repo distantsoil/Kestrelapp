@@ -56,9 +56,9 @@
       {% endif %}
     {% endif %}
 
-    {% if pursuit and not hidden %}
+    {% if not hidden %}
     <div class="rl-lbl">{{ 'REACHED OUT' if consulting else 'APPLICATION' }}</div>
-    <div class="rl-applied" data-testid="applied-block">{% set refresh_side = true %}{% include "partials/applied_block.html" %}</div>
+    <div class="oa-block" data-testid="applied-block">{% set refresh_side = true %}{% set role_applied_url = base ~ '/role/applied' %}{% include "partials/applied_block.html" %}</div>
     {% endif %}
 
     <div class="rl-lbl">{{ 'PREPARE' if consulting else 'PREPARE YOUR APPLICATION' }}</div>

@@ -423,7 +423,12 @@
       if (p) b.classList.toggle('k-btn--primary', p === name);
     });
     var hid = $('input[name="tab"]', box); if (hid) hid.value = name === 'edit' ? 'edit' : 'check';
-    if (name === 'preview') fitPreview(box);
+    if (name === 'preview') {
+      fitPreview(box);
+      // The one-page check makes the PDF, so it is asked for only when the Preview is opened.
+      var fit = $('[data-cl-fit]', box);
+      if (fit && root.htmx) root.htmx.trigger(fit, 'cl-fit');
+    }
   }
   function showSource(box, key) {
     var any = false;
@@ -436,14 +441,30 @@
     });
     var hint = $('[data-cl-hint]', box); if (hint) hint.hidden = any;
   }
+  function wordsIn(area) { return (area.value.trim().match(/\S+/g) || []).length; }
   function countWords(area) {
-    var n = (area.value.trim().match(/\S+/g) || []).length;
+    var n = wordsIn(area);
     var lo = parseInt(area.getAttribute('data-lo'), 10), hi = parseInt(area.getAttribute('data-hi'), 10);
+    var max = parseInt(area.getAttribute('data-max'), 10) || 0;
     var out = $('[data-cl-count]', area.form || doc);
     if (!out) return;
     var first = out.firstChild;
     if (first && first.nodeType === 3) first.nodeValue = n + ' words';
-    out.setAttribute('data-state', n >= lo && n <= hi ? 'ok' : 'off');
+    // Over the limit is a soft warning; over the save cap is a hard stop (the server agrees).
+    out.setAttribute('data-state', max && n > max ? 'stop' : n > hi ? 'over' : n >= lo ? 'ok' : 'off');
+  }
+  function onLetterSubmit(e) {
+    var form = e.target;
+    if (!form || form.id !== 'cl-edit-form') return;
+    var area = $('[data-cl-text]', form);
+    var max = area ? parseInt(area.getAttribute('data-max'), 10) || 0 : 0;
+    if (area && max && wordsIn(area) > max) {
+      // Not posted: the hard cap. The typed text stays as it is; the server refuses it as well.
+      e.preventDefault(); e.stopPropagation();
+      var lim = $('[data-cl-limit]', form);
+      if (lim) { lim.classList.remove('is-on'); void lim.offsetWidth; lim.classList.add('is-on'); }
+      area.focus();
+    }
   }
   function onLetterClick(e) {
     var t = e.target, box = letter();
@@ -538,6 +559,7 @@
       ctx.on(doc, 'keydown', onLetterKey);
       ctx.on(doc, 'change', onLetterChange);
       ctx.on(doc, 'input', onLetterInput);
+      ctx.on(doc, 'submit', onLetterSubmit, true);
       ctx.on(doc, 'rl-letter-close', onLetterClose);
       ctx.on(doc, 'htmx:afterSettle', onLetterSwap);
       ctx.on(doc, 'keydown', onEscape);

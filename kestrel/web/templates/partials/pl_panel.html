@@ -161,6 +161,9 @@
       {% for g in gaps %}<div class="pl-reason"><span class="pl-m pl-m--a">!</span><div>{{ g.text }}{% if g.fatal %}<span class="pl-lvl">Could rule it out</span>{% endif %}{% if g.how %}<div class="pl-dsm">{{ g.how }}</div>{% endif %}</div></div>{% endfor %}</div>{% endif %}
     {% if lead %}<div class="pl-dsec pl-lead"><h4>{{ lead.title }}</h4><div class="pl-dsum">{{ lead.text }}</div></div>{% endif %}
     {% if summary %}<div class="pl-dsec"><h4>Summary</h4><div class="pl-dsum" data-testid="panel-summary">{{ summary }}<small>Written by Kestrel's AI from the posting. {{ ai_disclaimer }}</small></div></div>{% endif %}
+    {% if applied_on_default is defined %}<div class="pl-dsec oa-block" data-testid="panel-applied"><h4>{{ 'Reached out' if consulting else 'Application' }}</h4>
+      {%- set role_applied_url = '/opportunities/' ~ opp.id ~ '/role/applied' %}{% set applied_target = '#pl-panel' %}{% set applied_swap = 'innerHTML' %}
+      {%- include "partials/applied_block.html" %}</div>{% endif %}
     <div class="pl-facts"><span>{{ ui.icon('clock', 'k-ic--sm') }}{{ posted }}</span><span><span class="k-dot{% if liveness.tone == 'good' %} k-dot--live{% elif liveness.tone == 'bad' %} k-dot--bad{% endif %}"></span>{{ liveness.text }}</span></div>
   </div>
   <div class="pl-foot" id="pl-foot">

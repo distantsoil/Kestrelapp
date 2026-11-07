@@ -26,7 +26,7 @@ from kestrel.db.models import DocRender, DocSection, Opportunity, Setting, Task
 from kestrel.docs import render as docrender
 from kestrel.services.online_consent import APPROVAL_HOLD, CONSENT_DEST_KEY, CONSENT_KEY
 from tests import role_seed
-from tests.letter_helpers import form_fields, generate
+from tests.letter_helpers import form_fields, generate, letter_body
 from tests.test_cover_letter_draft import (
     GEN,
     MODEL,
@@ -118,7 +118,7 @@ def test_a_poisoned_letter_pdf_path_is_neither_served_nor_deleted(ids, monkeypat
     with _client() as c:
         generate(c, GEN.format(ids["strong"]), {})
         row = _letter_row(ids["strong"])[0]
-        body = row.config["body_md"]
+        body = letter_body(row.id)  # the text lives in the letter table (D-LETTER-1)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
 
         async def poison(s):

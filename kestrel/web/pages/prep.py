@@ -11,13 +11,14 @@ people the operator adds are their own notes."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import date
 
 import structlog
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import paths
@@ -95,10 +96,21 @@ async def page_response(request: Request, opportunity_id: int | None, tab: str):
         request.query_params.get("auto") == "1" and tab == "pack"
         and ctx["opp"] is not None and not ctx.get("has_pack")
     )
-    hx = request.headers.get("HX-Request") and request.headers.get("HX-Target") == "pp-body"
-    return templates().TemplateResponse(
-        request, "partials/pp_body.html" if hx else "prep.html", ctx
+    target = request.headers.get("HX-Target") if request.headers.get("HX-Request") else None
+    name = {"pp-body": "partials/pp_body.html", "pp-tabbody": "partials/pp_tabbody.html"}.get(
+        target or "", "prep.html"
     )
+    if tab == "bank" and ctx.get("building"):
+        # The story bank polls while a build runs. A version of what is on screen rides on each
+        # poll; when nothing changed the answer is 204 and the page is not touched (#125).
+        ctx["bank_version"] = ""
+        digest = hashlib.sha256(
+            templates().TemplateResponse(request, "partials/pp_tabbody.html", ctx).body
+        ).hexdigest()[:16]
+        if target == "pp-tabbody" and request.query_params.get("version") == digest:
+            return Response(status_code=204)
+        ctx["bank_version"] = digest
+    return templates().TemplateResponse(request, name, ctx)
 
 
 @router.get("/prep", response_class=HTMLResponse)
