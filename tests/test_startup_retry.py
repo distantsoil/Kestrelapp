@@ -38,6 +38,38 @@ def _clean_shell(monkeypatch):
     sh._stop_server()  # no test may leave a live uvicorn thread behind
 
 
+@pytest.fixture(autouse=True)
+def _off_the_ladder(monkeypatch):
+    """Real servers here bind an ephemeral loopback port, never a rung of the 8765 ladder.
+
+    A rung is shared with other test workers and with a real Kestrel the operator may be
+    running. On Windows a loopback bind succeeds beside a Kestrel bound to 0.0.0.0 on the same
+    rung, and these tests' servers stay bound but not listening while their lifespan is held
+    back, so a health probe there would be answered by the other Kestrel instead."""
+    from kestrel.web import serve
+
+    real_bind = serve.bind_free_port
+
+    def _ephemeral(*, ladder=True, host=None):
+        return real_bind(ladder=False, host="127.0.0.1")
+
+    monkeypatch.setattr(serve, "bind_free_port", _ephemeral)
+
+
+@pytest.fixture
+def reserved_port():
+    """A port nothing answers on and nothing else can take for the test's duration: bound to
+    loopback (ephemeral, off the ladder) and held open, never listening."""
+    from kestrel.web import serve
+
+    sock, port = serve.bind_free_port(ladder=False, host="127.0.0.1")
+    assert port not in serve.PORT_LADDER
+    try:
+        yield port
+    finally:
+        sock.close()
+
+
 class _Rec:
     """A splash recorder standing in for the loading page."""
 
@@ -200,6 +232,7 @@ def test_a_slow_start_that_finishes_inside_the_extended_wait_opens_with_no_error
     rec = _Rec()
     port = sh._start_backend(rec)
     assert port == sh._port
+    assert port not in serve.PORT_LADDER  # its own port: no other Kestrel can answer the probe
     assert sh.server_thread.is_alive()
     try:
         assert serve.wait_for_health(port, 5.0) is True
@@ -221,6 +254,7 @@ def test_a_forced_health_timeout_writes_a_thread_dump_and_task_counts(monkeypatc
     from kestrel.db.engine import make_sync_engine
     from kestrel.desktop import shell as sh
     from kestrel.web import app as app_mod
+    from kestrel.web import serve
 
     real_build = app_mod.build_app
     monkeypatch.setattr(app_mod, "build_app", lambda **k: real_build(worker=False, scheduler=False))
@@ -247,6 +281,7 @@ def test_a_forced_health_timeout_writes_a_thread_dump_and_task_counts(monkeypatc
     rec = _Rec()
     monkeypatch.setattr(sh, "_Splash", lambda win: rec)
     sh._boot_steps(busy=False)
+    assert sh._port not in serve.PORT_LADDER  # its own port: no other Kestrel can answer
     assert rec.failed, "the problem card must be shown"
     reason, details, code = rec.failed[0]
     assert code == "health_never_up"
@@ -264,12 +299,13 @@ def test_a_forced_health_timeout_writes_a_thread_dump_and_task_counts(monkeypatc
 
 
 # ------------------------------------------------------------------ the invariant: one server
-def test_try_again_refuses_to_start_beside_a_live_server(monkeypatch):
+def test_try_again_refuses_to_start_beside_a_live_server(monkeypatch, reserved_port):
     """If a server is already running and answering, a second start is refused; the live
     one keeps running and the second attempt is counted as a failed start."""
     from kestrel.db import migrate
     from kestrel.desktop import shell as sh
     from kestrel.web import app as app_mod
+    from kestrel.web import serve
 
     real_build = app_mod.build_app
     monkeypatch.setattr(app_mod, "build_app", lambda **k: real_build(worker=False, scheduler=False))
@@ -278,8 +314,12 @@ def test_try_again_refuses_to_start_beside_a_live_server(monkeypatch):
     live_port = sh.start_server()  # a running server (a prior instance) answers fine
     live_server, live_thread = sh.server, sh.server_thread
     try:
+        # start_server returns once the thread starts, before uvicorn listens: the premise
+        # (a prior instance that answers) holds only once its health answers, as the shell waits.
+        assert serve.wait_for_health(live_port, 10.0) is True
         assert httpx.get(f"http://127.0.0.1:{live_port}/health", timeout=5).status_code == 200
-        monkeypatch.setattr(sh, "start_server", lambda: 8765)  # the new start: stuck, never binds
+        # The new start: stuck, its port answered by nothing.
+        monkeypatch.setattr(sh, "start_server", lambda: reserved_port)
         monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
         monkeypatch.setattr(sh, "HEALTH_WAIT_S", 0.2)
         monkeypatch.setattr(sh, "HEALTH_EXTENDED_S", 0.3)
@@ -338,7 +378,7 @@ def test_try_again_after_a_timeout_stops_the_first_server_and_leaves_one(monkeyp
 
 
 # ------------------------------------------------------------------ cancel, not quit
-def test_cancelling_the_wait_abandons_the_attempt_and_keeps_the_card(monkeypatch):
+def test_cancelling_the_wait_abandons_the_attempt_and_keeps_the_card(monkeypatch, reserved_port):
     """Cancel during the health wait is not a failure and not a quit: the count is not
     spent, the window stays (the card offers Try again and Quit), and no server is left."""
     import json
@@ -351,7 +391,7 @@ def test_cancelling_the_wait_abandons_the_attempt_and_keeps_the_card(monkeypatch
     paths.runtime_json().unlink(missing_ok=True)
 
     monkeypatch.setattr(migrate, "run_migrations", lambda *a, **k: None)
-    monkeypatch.setattr(sh, "start_server", lambda: 8765)  # never actually starts
+    monkeypatch.setattr(sh, "start_server", lambda: reserved_port)  # never actually starts
     monkeypatch.setattr("kestrel.web.serve.wait_for_health", lambda port, timeout=30.0: False)
     monkeypatch.setattr(sh, "HEALTH_WAIT_S", 2.0)
     rec = _Rec()
