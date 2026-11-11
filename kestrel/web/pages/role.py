@@ -56,15 +56,17 @@ from kestrel.db.models import (
     Task,
     VerdictOverride,
 )
-from kestrel.llm import credit
 from kestrel.llm import providers as prov
+from kestrel.match_text import norm as _norm
 from kestrel.research import jobs as research_jobs
 from kestrel.services import pursuit_board as board_svc
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
 from kestrel.web import calibrate_view as cv
+from kestrel.web import correction_view as cvw
 from kestrel.web import pipeline_view as pv
 from kestrel.web import role_view as rv
+from kestrel.web.auth import release_credit_hold
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.fit import EMPTY_POSTING_STAGE_REASON, fit_word_for_verdict
@@ -178,21 +180,13 @@ def _terms(profile, track: str) -> tuple[float | None, float | None]:
     return num(keys[0]), num(keys[1])
 
 
-def _norm(text: str | None) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-
-
-async def _evidence_sources(
-    s, reqs: list[dict[str, Any]], track: str, conf: bool, mapping
-) -> dict[int, dict[str, str]]:
-    """{requirement k: {label, href}} for each met or partly met row whose evidence quotes one of
-    the operator's stories or resume bullets, found by comparing the model's evidence text with
-    the stored text. A row with no match gets no link (the page says "Source not recorded"), never
-    a nearest guess (hard rule 2)."""
-    wanted = [r for r in reqs if r["state"] != rv.GAP and r.get("evidence")]
-    if not wanted:
-        return {}
-    stories = list((await s.execute(select(Story).where(Story.is_canonical.is_(True)))).scalars())
+async def stored_sources(s, track: str) -> tuple[list[Story], list[Any]]:
+    """Everything a model's evidence can be matched against: every story (not only canonical
+    ones, D-UI-290; canonical first so a duplicate credits the bank's copy) and every bullet of
+    every active resume or capability statement on the track."""
+    stories = list(
+        (await s.execute(select(Story).order_by(Story.is_canonical.desc(), Story.id))).scalars()
+    )
     variants = (
         await s.execute(
             select(DocVariant.text, DocMaster.id, DocMaster.name, DocSection.title)
@@ -202,30 +196,107 @@ async def _evidence_sources(
             .where(DocMaster.track == track, DocMaster.is_active.is_(True))
         )
     ).all()
-    out: dict[int, dict[str, str]] = {}
+    return stories, list(variants)
+
+
+STORY_MIN = 18  # normalized characters a story field or a quoted evidence must have
+RESUME_MIN = 25  # the same for a resume bullet
+
+
+def _whole_words(inner: str, outer: str) -> bool:
+    """`inner` occurs in `outer` as whole words (normalized text), so "java" is not in
+    "javascript"."""
+    return f" {inner} " in f" {outer} "
+
+
+def _quotes(ev: str, line: str, minimum: int) -> bool:
+    """Whether normalized evidence `ev` and a normalized stored line quote each other: the line
+    in the evidence, or the evidence in the line. Both sides must reach `minimum` characters and
+    the shorter must sit in the longer as whole words."""
+    if len(line) < minimum or len(ev) < minimum:
+        return False
+    return _whole_words(line, ev) or _whole_words(ev, line)
+
+
+def match_source(evidence: str, stories: list[Story], variants: list[Any]) -> dict[str, Any] | None:
+    """The stored line the model's evidence quotes, or None. A line matches only when its
+    normalized text contains, or is contained in, the normalized evidence as whole words, and
+    both sides reach the minimum (18 characters for a story field, 25 for a resume bullet), so a
+    short or generic evidence ("SQL", "a") or a word inside another ("Java" in "JavaScript")
+    matches nothing. Never a nearest guess (hard rule 2, invariant 4 of issue 170)."""
+    ev = _norm(evidence)
+    if not ev:
+        return None
+    for st in stories:
+        for field in (st.title, st.result, st.action):
+            if _quotes(ev, _norm(field), STORY_MIN):
+                return {
+                    "kind": "story",
+                    "label": f"Story · {st.title}",
+                    "href": f"/stories#story-{st.id}",
+                    "story_id": st.id,
+                    "edited": bool(st.operator_edited),
+                    "line": field,
+                }
+    for text, master_id, master_name, title in variants:
+        if _quotes(ev, _norm(text), RESUME_MIN):
+            where = f" · {title}" if title else ""
+            return {
+                "kind": "resume",
+                "label": f"Resume · {master_name}{where}",
+                "href": f"/documents?master_id={master_id}",
+                "story_id": None,
+                "edited": True,
+                "line": text,
+            }
+    return None
+
+
+async def _story_options(
+    s, conf: bool, mapping, extra_ids: set[int] | None = None, limit: int = 30
+) -> list[dict[str, Any]]:
+    """The stories a correction can be backed by (the Add a story sheet's own bank: canonical
+    stories), the ones the person wrote or edited first, then newest. Titles are redacted in
+    confidential mode."""
+    rows = (
+        await s.execute(
+            select(Story)
+            .where(Story.is_canonical.is_(True))
+            .order_by(Story.operator_edited.desc(), Story.id.desc())
+            .limit(limit)
+        )
+    ).scalars()
+    out = [
+        {"id": st.id, "title": redact_text(st.title, mapping, enabled=conf) or st.title}
+        for st in rows
+    ]
+    seen = {o["id"] for o in out}
+    for sid in sorted((extra_ids or set()) - seen):
+        st = await s.get(Story, sid)
+        if st is not None:
+            out.append(
+                {"id": st.id, "title": redact_text(st.title, mapping, enabled=conf) or st.title}
+            )
+    return out
+
+
+async def _evidence_sources(
+    s, reqs: list[dict[str, Any]], track: str, conf: bool, mapping
+) -> dict[int, dict[str, Any]]:
+    """{requirement k: source} for each row whose model evidence quotes one of the operator's
+    stories or resume bullets, found by comparing the model's evidence text with the stored
+    text (`match_source`). A row with no match gets no entry: the page says Inferred, never a
+    nearest guess (hard rule 2). Labels and quoted lines are redacted in confidential mode."""
+    wanted = [r for r in reqs if r.get("evidence")]
+    if not wanted:
+        return {}
+    stories, variants = await stored_sources(s, track)
+    out: dict[int, dict[str, Any]] = {}
     for r in wanted:
-        ev = _norm(r["evidence"])
-        hit = None
-        for st in stories:
-            for field in (st.title, st.result, st.action):
-                n = _norm(field)
-                if len(n) >= 18 and (n in ev or ev in n):
-                    hit = {"label": f"Story · {st.title}", "href": f"/stories#story-{st.id}"}
-                    break
-            if hit:
-                break
-        if hit is None:
-            for text, master_id, master_name, title in variants:
-                n = _norm(text)
-                if len(n) >= 25 and (n in ev or ev in n):
-                    where = f" · {title}" if title else ""
-                    hit = {
-                        "label": f"Resume · {master_name}{where}",
-                        "href": f"/documents?master_id={master_id}",
-                    }
-                    break
+        hit = match_source(r["evidence"], stories, variants)
         if hit:
-            hit["label"] = redact_text(hit["label"], mapping, enabled=conf) or hit["label"]
+            for key in ("label", "line"):
+                hit[key] = redact_text(hit[key], mapping, enabled=conf) or hit[key]
             out[r["k"]] = hit
     return out
 
@@ -235,7 +306,7 @@ async def _sequence(s, opp: Opportunity) -> dict[str, Any] | None:
     for Previous and Next ("3 of 11"), or None when it is not in that list (a Not a fit role,
     a hidden one, one reached from elsewhere)."""
     from kestrel.services import saved_views
-    from kestrel.web.queries import list_opportunities
+    from kestrel.web.queries import sequence_ids
     from kestrel.web.routes_pages import page_filters
 
     views = await saved_views.list_views(s, opp.track)
@@ -244,10 +315,7 @@ async def _sequence(s, opp: Opportunity) -> dict[str, Any] | None:
     f.track = opp.track
     f.kind = "opportunities"
     f.grouped = True
-    f.page_size = 200
-    f.limits = {k: 200 for k in ("worth", "maybe", "applied", "new", "failed")}
-    page = await list_opportunities(s, f)
-    ids = [r.opp.id for r in page.rows]
+    ids = await sequence_ids(s, f)
     if opp.id not in ids:
         return None
     i = ids.index(opp.id)
@@ -378,8 +446,30 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
         from kestrel.services.profile_readiness import operator_profile_is_thin
 
         thin = await asyncio.to_thread(operator_profile_is_thin, track)
-        reqs = rv.requirements(opp, ev_json, thin=thin)
+        from kestrel.learning.corrections import corrected_requirements
+
+        # The operator's corrections laid over the model's rows (D-LEARN-3): the wheel and the
+        # counts use the corrected states; the stored evaluation is never changed.
+        reqs = await corrected_requirements(s2, opp, ev, ev_json, thin=thin)
+        from kestrel.learning.score_age import changed_for, older_for
+
+        # The same older-score rule as the Pipeline row and panel (issue 179, D-SCORE-4), and the
+        # corrections strip opens on exactly the same answer: this role's block changed.
+        detail["score_older"] = await older_for(s2, opp, ev)
+        cx_n = await changed_for(s2, opp, ev) if detail["score_older"] else 0
         sources = await _evidence_sources(s2, reqs, track, conf, mapping)
+        backing = {
+            r["correction"]["story_id"] for r in reqs if r.get("correction")
+            and r["correction"]["story_id"]
+        }
+        story_opts = await _story_options(s2, conf, mapping, backing)
+        cvw.decorate(reqs, sources, {st["id"]: st for st in story_opts})
+        for r in reqs:  # the operator's note can name the current employer (confidential mode)
+            if r.get("correction") and r["correction"].get("note"):
+                r["correction"]["note"] = redact_text(
+                    r["correction"]["note"], mapping, enabled=conf
+                )
+        sources = {r["k"]: r["src"] for r in reqs if r["src"]}
         labels = list(
             (
                 await s2.execute(
@@ -449,6 +539,13 @@ async def page_context(request: Request, opp_id: int, tab: str) -> dict[str, Any
             "favor": [r for r in reqs if r["state"] != rv.GAP],
             "gaps": [r for r in reqs if r["state"] == rv.GAP],
             "evidence": rv.evidence_rows(reqs, sources),
+            "evidence_n": rv.evidence_counts(rv.evidence_rows(reqs, sources)),
+            "older_text": pv.OLDER_TEXT,
+            "changed_n": cx_n,
+            "strip_text": cvw.strip_text(cx_n, fit.score),
+            "story_chips": story_opts,
+            "story_prompt": cvw.STORY_PROMPT,
+            "new_story": cvw.NEW_STORY,
             "summary": rv.summary_card(opp, ev_json, org),
             "seq": seq,
             "labels_state": _label_state(ev, labels),
@@ -1243,14 +1340,21 @@ async def add_story(request: Request, opp_id: int):
     """Add a story from a gap or from Evidence. The three boxes are the operator's own words and
     are stored as written (situation, action, result); Kestrel rewrites nothing. Save and re-score
     also queues one re-score task for this role: a resumable task row, on the configured model.
-    When that model is online the dialog's confirmation is required and checked here."""
+    When that model is online the dialog's confirmation is required and checked here.
+
+    A story written from a requirement's correction panel (the sheet's For names it: `for_text`)
+    never queues a re-score, whatever `rescore` says (#54): the correction is applied right after
+    with the new story, and the page's strip then offers Score again with my changes. A task
+    queued here would be bound to the lines before that correction and be held, as role.js
+    knows; a direct POST is held to the same rule."""
     from kestrel.queue.rescore import enqueue_rescore
 
     form = await request.form()
     situation = str(form.get("situation") or "").strip()
     action = str(form.get("action") or "").strip()
     result = str(form.get("result") or "").strip()
-    rescore = str(form.get("rescore") or "") == "1"
+    from_correction = bool(str(form.get("for_text") or "").strip())
+    rescore = str(form.get("rescore") or "") == "1" and not from_correction
     if not (situation or action or result):
         return _answer(
             {"k-toast": _toast("Write at least one of the three boxes first.", tone="warn")}
@@ -1303,35 +1407,46 @@ async def add_story(request: Request, opp_id: int):
             return _answer({"k-toast": _toast(verdict, tone="warn")})
         first = next((t for t in (situation, action, result) if t), "")
         title = re.split(r"(?<=[.!?])\s", first, maxsplit=1)[0][:60].rstrip(" .") or "My story"
-        s.add(
-            Story(
-                title=title,
-                situation=situation or None,
-                action=action or None,
-                result=result or None,
-                themes=[],
-                is_canonical=True,
-                operator_edited=True,
-            )
+        story = Story(
+            title=title,
+            situation=situation or None,
+            action=action or None,
+            result=result or None,
+            themes=[],
+            is_canonical=True,
+            operator_edited=True,
         )
+        s.add(story)
         await s.flush()
-        queued = None
+        story_id = story.id
+        queued = held = None
         if rescore:
-            credit.clear()
+            from kestrel.services.online_consent import APPROVAL_HOLD
+
+            release_credit_hold(request)
             res = await enqueue_rescore(
                 s, [opp_id], online_approval=form.get("online_approval"), score_stubs=True
             )
             queued = bool(res.queued)
+            # A task held for the person's OK is not a score on its way: never promise one.
+            held = (await s.execute(select(Task.id).where(
+                Task.type.in_(("t1", "t2")), Task.status == "pending",
+                Task.last_error == APPROVAL_HOLD,
+                func.json_extract(Task.payload, "$.opportunity_id") == opp_id,
+            ).limit(1))).first() is not None
         await s.commit()
     if rescore:
+        from kestrel.web.rescoring import APPROVAL_HINT
+
         msg = (
-            "Story saved. Kestrel will score this role again. Stories are not part of scoring yet."
-            if queued
+            f"Story saved. {APPROVAL_HINT}" if held
+            else "Story saved. Kestrel will score this role again. Stories are not part of "
+            "scoring yet." if queued
             else "Story saved. This role is already waiting to be scored."
         )
     else:
         msg = "Story saved. It is yours; Kestrel does not rewrite it."
-    return _answer({"k-toast": _toast(msg), "rl-story-saved": {"title": title}})
+    return _answer({"k-toast": _toast(msg), "rl-story-saved": {"title": title, "id": story_id}})
 
 
 # ------------------------------------------------------------------------ Research and Contacts
@@ -1363,7 +1478,7 @@ async def research(request: Request, opp_id: int):
         )
     if verdict:
         return _answer({"k-toast": _toast(verdict, tone="warn")})
-    credit.clear()
+    release_credit_hold(request)
     async with sessionmaker()() as s:
         opp = await s.get(Opportunity, opp_id)
         settings = await load_settings_with_db(s)
@@ -1420,7 +1535,13 @@ async def deeper_dialog(request: Request, opp_id: int):
             return HTMLResponse("", status_code=404)
         settings = await load_settings_with_db(s)
         preview = await build_escalation_preview(s, settings, opp_id)
-    ctx: dict[str, Any] = {"opp": opp, "preview": preview, "error": preview.error}
+        from kestrel.learning.correction_lines import lines_for
+
+        # The operator's corrections the deeper read states, listed in plain words (D-SCORE-3);
+        # the payload behind Show details carries the same lines.
+        corr_lines = await lines_for(s, [opp_id])
+    ctx: dict[str, Any] = {"opp": opp, "preview": preview, "error": preview.error,
+                           "correction_lines": corr_lines}
     if not preview.error:
         ctx.update(
             {
@@ -2181,7 +2302,7 @@ async def cover_letter_generate(request: Request, opp_id: int):
             await s.refresh(live)  # the bulk update did not touch this loaded copy
             task = live
         else:
-            task = live
+            task, _created = live, False
             if task is None:
                 task, _created = await letter_task.enqueue_or_join(
                     s, opp_id, kind=kind, consent=consent, replace_id=replace_id)
@@ -2193,6 +2314,8 @@ async def cover_letter_generate(request: Request, opp_id: int):
                     request, s, opp, shell=False,
                     events={"k-toast": _toast(_JOIN_REFUSED, tone="warn")},
                 )
+            if not _created:  # joined the waiting draft: a backoff wait ends now (D-QUEUE-7)
+                await letter_task.run_now(s, task)
         # The worker loop drains the task (after the tiers, never while paused); this answer is
         # the drafting card, which asks the status route until the draft is there.
         return await _entry(request, s, opp, shell=False)

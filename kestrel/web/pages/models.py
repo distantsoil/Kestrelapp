@@ -30,6 +30,7 @@ from kestrel.config import Settings
 from kestrel.llm import providers as prov
 from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import LOCAL_ONLY, request_is_local
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.pages import models_ui
@@ -193,15 +194,19 @@ async def overrides_panel(request: Request):
     """The panel, closed, or with `open=1` the picker (fetching the list; `refresh=1` skips the
     cache)."""
     q = request.query_params
+    # Opening the picker asks the provider for its model list WITH the saved key. A key holder
+    # (a phone, a tunnel) gets the closed panel instead, so a page view never uses the key (#155).
+    local = request_is_local(request)
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
         ctx = await _overrides_ctx(
-            s, settings, open_picker=q.get("open") == "1", refresh=q.get("refresh") == "1"
+            s, settings, open_picker=local and q.get("open") == "1",
+            refresh=local and q.get("refresh") == "1",
         )
     return _overrides_partial(request, ctx)
 
 
-@router.post("/models/hosted/overrides", response_class=HTMLResponse)
+@router.post("/models/hosted/overrides", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def overrides_save(request: Request):
     """Save all: every row with a model picked AND its Save box ticked becomes an override.
     Ids are checked against the provider's list (the cache, or a fresh fetch) and each tier's
@@ -239,7 +244,7 @@ async def overrides_save(request: Request):
     return _overrides_partial(request, ctx)
 
 
-@router.post("/models/hosted/reset", response_class=HTMLResponse)
+@router.post("/models/hosted/reset", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def overrides_reset(request: Request):
     form = await request.form()
     tier = str(form.get("tier") or "").strip()

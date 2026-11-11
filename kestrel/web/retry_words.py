@@ -39,6 +39,7 @@ HELD_REASON = "Waiting for you to choose your current employer"
 # Checked in this order: a loop's message also names the max_tokens it ran into, and the loop
 # is the truer reason; a refused key also says "http 4". Plain words, no jargon, no model names.
 _REASONS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("leave no room for this posting",), "Too long for your local model"),  # D-SCORE-21
     (("generation loop", "degenerate", "repeated"), "The AI repeated itself"),
     (("finish_reason: length", "finish_reason length", "max_tokens", "hit the cap"),
      "The AI ran out of room"),

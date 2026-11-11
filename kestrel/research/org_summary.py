@@ -51,6 +51,11 @@ from kestrel.llm.schemas import (
     _dedupe_cap,
     _max_items,
 )
+from kestrel.services.online_consent import (
+    CONFIRMED_DEST_KEY,
+    CONFIRMED_MODEL_KEY,
+    CONFIRMED_ONLINE_KEY,
+)
 
 log = structlog.get_logger()
 
@@ -517,11 +522,11 @@ async def request_org_summary(
                 "automatic": automatic,
                 # The operator's Refresh click, made while Tier 2 was online, is the consent for
                 # the online send. A click made on a local model is not (checked again at drain).
-                "confirmed_online": online and not automatic,
+                CONFIRMED_ONLINE_KEY: online and not automatic,
                 # The confirmation is for THIS model (the one the dialog showed). A drain that
                 # finds another one configured refuses to send.
-                "confirmed_model": await _configured_model(session) if online else None,
-                "confirmed_dest": await _configured_dest(session) if online else None,
+                CONFIRMED_MODEL_KEY: await _configured_model(session) if online else None,
+                CONFIRMED_DEST_KEY: await _configured_dest(session) if online else None,
                 "online_approval": {
                     "tier2": [await _configured_dest(session)]
                 } if online else {},
@@ -681,7 +686,7 @@ async def drain_org_summaries(
     unexpected failure goes back to the queue while attempts remain; a quarantined reply completes
     the task (the raw reply is kept; retrying would loop). Never raises into the worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
-    from kestrel.queue.queue import TaskQueue
+    from kestrel.queue.queue import REASON_CREDIT, TaskQueue
 
     get = acquire or acquire_public_excerpts
     queue = TaskQueue(sm)
@@ -708,10 +713,10 @@ async def drain_org_summaries(
                 live_dest = destination_id(live_settings, "tier2")
                 client_dest = destination_id(getattr(client, "settings", settings), "tier2")
                 online_now = await _runs_online(s) and not (
-                    payload.get("confirmed_online")
-                    and payload.get("confirmed_model") == await _configured_model(s)
-                    and payload.get("confirmed_dest") == await _configured_dest(s)
-                    and payload.get("confirmed_dest") == client_dest
+                    payload.get(CONFIRMED_ONLINE_KEY)
+                    and payload.get(CONFIRMED_MODEL_KEY) == await _configured_model(s)
+                    and payload.get(CONFIRMED_DEST_KEY) == await _configured_dest(s)
+                    and payload.get(CONFIRMED_DEST_KEY) == client_dest
                     and not held_for_approval(live_settings, ("tier2",), payload)
                 )
                 if online_now and payload.get("automatic"):
@@ -762,7 +767,9 @@ async def drain_org_summaries(
             with contextlib.suppress(asyncio.CancelledError):
                 await beat
         if outcome.status == "error" and outcome.out_of_credit:
-            await queue.defer(task.id, outcome.error or "", worker_id=wid)
+            await queue.defer(
+                task.id, outcome.error or "", worker_id=wid, reason=REASON_CREDIT
+            )
             break
         if outcome.status == "error":
             status = await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)

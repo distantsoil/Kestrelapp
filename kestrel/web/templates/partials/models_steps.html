@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 {# Scoring steps: plain names lead, tier codes are small captions. Fit with you carries its n
    (hard rule 6). Model names are friendly, never raw ids. #}
@@ -15,12 +16,12 @@
         <td><b>{{ s.name }}</b>{% if s.asks %} <span class="k-muted mo-asks">{{ ui.icon('lock', 'k-ic--sm') }}Asks you first</span>{% endif %}
           <div class="k-muted mo-does">{{ s.does }}</div></td>
         <td>{% if s.key == 'rules' %}<span class="mo-model">{{ ui.icon('check', 'k-ic--sm') }}<b>No AI model</b></span>
-          {% else %}<span class="mo-model" title="{{ s.model }}, {{ 'online with your key' if s.online else 'on this computer' }}{{ ', your choice' if s.override else '' }}">{{ ui.icon('cloud' if s.online else 'laptop', 'k-ic--sm') }}<b title="{{ s.model }}">{{ s.model|short_model }}</b>
-          <span class="k-muted">· {{ 'Online' if s.online else 'This computer' }}{% if s.override %} · Override{% endif %}</span></span>{% endif %}</td>
+          {% else %}<span class="mo-model" title="{{ s.model }}, {{ 'online with your key' if s.online else (('on another computer on your network (' ~ s.where_host ~ ')') if s.where_host else 'on this computer') }}{{ ', your choice' if s.override else '' }}">{{ ui.icon('cloud' if s.online else ('network' if s.where_host else 'laptop'), 'k-ic--sm') }}<b title="{{ s.model }}">{{ s.model|short_model }}</b>
+          <span class="k-muted" data-testid="mo-where-{{ s.key }}">· {{ s.where }}{% if s.where_host %} ({{ s.where_host }}){% endif %}{% if s.override %} · Override{% endif %}</span></span>{% endif %}</td>
         <td>{% if s.can_read %}
           {% if s.can_read.tone != 'muted' %}<div class="mo-meter {{ 'is-bad' if s.can_read.tone == 'bad' else '' }}"><i style="width: {{ '45' if s.can_read.tone == 'bad' else '100' }}%"></i></div>{% endif %}
           <div class="mo-cr {{ 'is-bad' if s.can_read.tone == 'bad' else 'k-muted' }}" title="{{ s.can_read.tip }}" data-testid="mo-canread-{{ s.key }}">{{ s.can_read.label }}
-            {% if s.can_read.tone == 'bad' %}<button type="button" class="k-link" hx-post="/models/health/fix?step={{ s.key }}" hx-target="#mo-fixres-{{ s.key }}" hx-swap="innerHTML" data-testid="mo-fix-{{ s.key }}">Fix it</button>{% endif %}</div>
+            {% if s.can_read.tone == 'bad' %}<button{{ lo.dis(request) }} type="button" class="k-link" hx-post="/models/health/fix?step={{ s.key }}" hx-target="#mo-fixres-{{ s.key }}" hx-swap="innerHTML" data-testid="mo-fix-{{ s.key }}">Fix it</button>{% endif %}</div>
           <div class="mo-fixslot" id="mo-fixres-{{ s.key }}" aria-live="polite"></div>
           {% else %}<span class="k-muted">Not needed</span>{% endif %}</td>
         <td><span class="mo-fit is-{{ s.fit.tone }}" data-testid="mo-fit-{{ s.key }}">{{ s.fit.label }}</span>

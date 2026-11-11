@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.web import announcements
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 
 log = structlog.get_logger()
@@ -34,7 +35,8 @@ async def _model_upgrade_notice() -> dict | None:
     return announcements.model_upgrade_notice(gb) if gb else None
 
 
-@router.post("/announcements/model-upgrade/download", response_class=HTMLResponse)
+@router.post("/announcements/model-upgrade/download", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
 async def model_upgrade_download(request: Request):
     """The notice's button: queue the pulls exactly as Settings > Download models does (start_action
     also owes the rebuild of the derived models for when they are present)."""

@@ -21,7 +21,6 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import sklearn
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -355,11 +354,21 @@ def _default_weights(track: str) -> dict[str, float]:
     return model.model_dump()
 
 
+def _sklearn_version() -> str:
+    """scikit-learn's version, imported on first use: the import costs most of a second, and
+    only training, loading or the Learning page need it (D-PERF). Recorded beside every
+    artifact because pickles are version-locked."""
+    import sklearn
+
+    return sklearn.__version__
+
+
 def _artifact_loadable(ml: MlModel) -> bool:
-    """Mirrors reranker.load_active_reranker's two refusal conditions, read-only."""
-    if ml.sklearn_version != sklearn.__version__:
-        return False
-    return all(p and Path(p).exists() for p in (ml.artifact_path, ml.pca_artifact_path))
+    """Mirrors reranker.load_active_reranker's refusal conditions, read-only: the same check the
+    Calibrate panel uses, signatures included (D-SEC-13), so two pages never disagree."""
+    from kestrel.learning.reranker import _artifact_is_loadable
+
+    return _artifact_is_loadable(ml)
 
 
 async def _reranker_state(
@@ -537,7 +546,7 @@ async def summary(session: AsyncSession, settings: Settings) -> LedgerSummary:
     return LedgerSummary(
         db_path=str(paths.db_path()),
         ml_dir=str(paths.ml_dir()),
-        sklearn_version=sklearn.__version__,
+        sklearn_version=_sklearn_version(),
         tracks=tracks,
         files=await _ml_files(session),
         confidential=settings.confidential_mode,

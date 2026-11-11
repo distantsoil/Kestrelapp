@@ -78,10 +78,6 @@ def page_view_requests(rec) -> list[str]:
 # Routes the crawler does not call. Every entry carries its reason; a route not listed here is
 # crawled, so a new route is covered the day it is added.
 ALLOWLIST: dict[str, str] = {
-    "GET /docs": "FastAPI's own Swagger page; framework code that loads assets from a CDN",
-    "GET /redoc": "FastAPI's own ReDoc page; framework code that loads assets from a CDN",
-    "GET /openapi.json": "FastAPI's generated schema; framework code, not Kestrel's",
-    "GET /docs/oauth2-redirect": "FastAPI's own OAuth redirect page; framework code",
     "POST /api/quit": "asks the desktop shell to quit the whole app; the one route whose "
     "success ends the process the test runs in",
     "POST /api/focus": "raises the desktop window (a second launch posts it); a no-op headless "

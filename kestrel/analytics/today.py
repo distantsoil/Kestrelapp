@@ -25,7 +25,6 @@ from kestrel.db.models import (
     Pursuit,
     Run,
     ScrapeRun,
-    Setting,
     Source,
 )
 from kestrel.services.hidden_orgs import any_hidden, not_hidden_org_clause, opp_visible_clause
@@ -292,6 +291,39 @@ async def worth_a_look(
     Pipeline shows (D-UI-60, Today's Review card), each with its fit word and tone, the title
     and the org, redacted under confidential mode exactly as the Pipeline list redacts them
     (redact_text on the title, redact_name on the org)."""
+    from kestrel.services import count_cache
+
+    track = _track_scope(track)
+    found = await count_cache.cached(
+        session, "worth_rows", lambda: _worth_rows(session, track), arg=track
+    )
+    out: dict[str, Any] = {
+        "n": found["n"], "strong": found["strong"], "your_call": found["your_call"],
+    }
+    if top:
+        from kestrel.web.redact import confidential_once
+
+        conf, mapping = await confidential_once(session)
+        out["top"] = [
+            {
+                "id": oid,
+                "title": redact_text(title or "Untitled", mapping, enabled=conf),
+                "org": redact_name(org, mapping, enabled=conf),
+                "word": word,
+                "tone": tone,
+                "score": score,
+            }
+            for _rank, oid, title, org, word, tone, score in found["ranked"][:top]
+        ]
+    return out
+
+
+async def _worth_rows(session: AsyncSession, track: str | None) -> dict[str, Any]:
+    """The Worth a look group's rows as plain columns (never an ORM row: no description, no model
+    reply), classified by the Pipeline's own fit_for through row_fit, best first. Cached by
+    count_cache; `ranked` is shared, so it is a tuple of tuples."""
+    from types import SimpleNamespace
+
     from kestrel.web.fit import GROUP_WORTH, STRONG, YOUR_CALL
     from kestrel.web.queries import (
         GROUP_ORDER,
@@ -302,38 +334,54 @@ async def worth_a_look(
         row_fit,
     )
 
-    track = _track_scope(track)
     stmt = _with_operator(
-        _base_stmt(OppFilters(track=track), Opportunity, Evaluation, Org.name)
+        _base_stmt(
+            OppFilters(track=track), Opportunity.id, Opportunity.title, Opportunity.org_name,
+            Opportunity.stage, Opportunity.stage_reason, Opportunity.archive_reason, Org.name,
+            Evaluation.id, Evaluation.verdict, Evaluation.tier, Evaluation.score,
+            Evaluation.weighted_score, Evaluation.needs_review,
+        )
     ).where(_group_expr() == GROUP_ORDER.index(GROUP_WORTH))
     n = strong = your_call = 0
-    ranked: list[tuple[float, int, Any, Any, str | None]] = []
-    for opp, ev, org_name in (await session.execute(stmt)).all():
+    ranked: list[tuple[float, int, str | None, str | None, str, str, float | None]] = []
+    for (oid, title, opp_org, stage, reason, archive, org, eid, verdict, tier, score, weighted,
+         needs_review) in (await session.execute(stmt)).all():
+        opp = SimpleNamespace(stage=stage, stage_reason=reason, archive_reason=archive)
+        ev = None if eid is None else SimpleNamespace(
+            verdict=verdict, tier=tier, score=score, weighted_score=weighted,
+            needs_review=needs_review,
+        )
+        fit = row_fit(opp, ev)  # type: ignore[arg-type]
         n += 1
-        fit = row_fit(opp, ev)
         strong += int(fit.word == STRONG)
         your_call += int(fit.word == YOUR_CALL)
-        if top:
-            score = fit.score if fit.score is not None else -1.0
-            ranked.append((score, opp.id, opp, fit, org_name or opp.org_name))
-    out: dict[str, Any] = {"n": n, "strong": strong, "your_call": your_call}
-    if top:
-        from kestrel.web.redact import confidential_once
+        ranked.append((
+            fit.score if fit.score is not None else -1.0, oid, title, org or opp_org, fit.word,
+            fit.tone, fit.score,
+        ))
+    ranked.sort(key=lambda r: (r[0], r[1]), reverse=True)
+    return {"n": n, "strong": strong, "your_call": your_call, "ranked": tuple(ranked)}
 
-        conf, mapping = await confidential_once(session)
-        ranked.sort(key=lambda r: (r[0], r[1]), reverse=True)
-        out["top"] = [
-            {
-                "id": opp.id,
-                "title": redact_text(opp.title or "Untitled", mapping, enabled=conf),
-                "org": redact_name(org, mapping, enabled=conf),
-                "word": fit.word,
-                "tone": fit.tone,
-                "score": fit.score,
-            }
-            for _score, _id, opp, fit, org in ranked[:top]
-        ]
-    return out
+
+async def worth_count(session: AsyncSession, track: str | None = None) -> int:
+    """`worth_a_look`'s `n` without a row: the Pipeline's Worth a look header, from one grouped
+    count of every track (count_cache). The nav badge, the status rail and the track tabs call
+    this, so the three never disagree with the Pipeline (D-UI-56, D-UI-70, D-UI-133)."""
+    from kestrel.web.fit import GROUP_WORTH
+    from kestrel.web.queries import group_total
+
+    counts = await group_counts(session)
+    return group_total(counts, GROUP_WORTH, _track_scope(track))
+
+
+async def group_counts(session: AsyncSession) -> dict[str, dict[str, int]]:
+    """The Pipeline's group counts for every track, cached (see count_cache)."""
+    from kestrel.services import count_cache
+    from kestrel.web.queries import group_counts_by_track
+
+    return await count_cache.cached(
+        session, "group_counts", lambda: group_counts_by_track(session)
+    )
 
 
 async def act_summary(
@@ -698,68 +746,11 @@ async def honest_line(session: AsyncSession, track: str | None = None) -> dict[s
 # --------------------------------------------------------------------------------------- asks
 def _ask(
     key: str, title: str, line: str, href: str, button: str, priority: int,
-    *, dismissable: bool = False,
 ) -> dict[str, Any]:
     return {
         "key": key, "title": title, "line": line, "href": href, "button": button,
-        "priority": priority, "dismissable": dismissable,
+        "priority": priority,
     }
-
-
-# Asks the operator can wave away for good (a settings row, like the guide strips). Every other
-# ask clears itself when its cause is fixed, so it is never dismissable.
-ASKS_DISMISSED_KEY = "ui.asks_dismissed"
-DISMISSABLE_ASKS: tuple[str, ...] = ("taste",)
-# The calibrate ask appears once enough roles are scored to rate (D-UI-49 mockup section 1).
-TASTE_MIN_SCORED = 15
-
-
-async def dismissed_asks(session: AsyncSession) -> list[str]:
-    row = await session.get(Setting, ASKS_DISMISSED_KEY)
-    value = row.value if row is not None else None
-    return [str(k) for k in value] if isinstance(value, list) else []
-
-
-async def dismiss_ask(session: AsyncSession, key: str) -> bool:
-    """Record that the operator dismissed a dismissable ask. False for any other key."""
-    if key not in DISMISSABLE_ASKS:
-        return False
-    keys = await dismissed_asks(session)
-    if key not in keys:
-        keys.append(key)
-        row = await session.get(Setting, ASKS_DISMISSED_KEY)
-        if row is None:
-            session.add(Setting(key=ASKS_DISMISSED_KEY, value=keys))
-        else:
-            row.value = keys
-        await session.commit()
-    return True
-
-
-async def _scored_roles(session: AsyncSession, track: str | None) -> int:
-    """Visible roles with a finished full read (Tier 2 or above, a fit verdict)."""
-    stmt = (
-        select(func.count(func.distinct(Evaluation.opportunity_id)))
-        .select_from(Evaluation)
-        .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
-        .where(
-            Evaluation.tier >= 2,
-            Evaluation.verdict.in_(("apply", "pursue", "consider", "pass")),
-            Opportunity.archived_at.is_(None),
-            opp_visible_clause(),
-        )
-    )
-    if track:
-        stmt = stmt.where(Opportunity.track == track)
-    return await _count(session, stmt)
-
-
-async def _a_run_finished(session: AsyncSession) -> bool:
-    return bool(
-        await _count(
-            session, select(func.count()).select_from(Run).where(Run.finished_at.is_not(None))
-        )
-    )
 
 
 def _operator_profile_tracks() -> set[str] | None:
@@ -875,9 +866,8 @@ async def system_asks(
 ) -> list[dict[str, Any]]:
     """What the system wants from the operator, highest priority first: a missing profile,
     missing derived models, hosted mode with no key, confidential mode with no redaction map,
-    quarantine items waiting, and calibration labels short of the few-shot and reranker floors
-    (n of N). Each ask is a title, one line, a link, a button label, and a priority."""
-    from kestrel.learning.capture import labeled_examples
+    and quarantine items waiting. Each ask is a title, one line, a link, a button label, and a
+    priority. (The rating asks moved to the quick-round strip, issue 171.)"""
     from kestrel.web.redact import confidential_is_inert
 
     track = _track_scope(track)
@@ -1006,52 +996,9 @@ async def system_asks(
             )
         )
 
-    few = settings.learning.min_labels_for_few_shot
-    rr = settings.learning.min_labels_for_reranker
-    counts = {t: len(await labeled_examples(session, t)) for t in tracks}
-    short = [t for t in tracks if counts[t] < few]
-    # Teach Kestrel your taste: once, after the first finished run that left enough scored roles
-    # to rate, until the operator dismisses it. It replaces the bare label-count ask meanwhile.
-    taste = (
-        bool(short)
-        and "taste" not in await dismissed_asks(session)
-        and await _a_run_finished(session)
-        and await _scored_roles(session, track) >= TASTE_MIN_SCORED
-    )
-    if taste:
-        asks.append(
-            _ask(
-                "taste", "Teach Kestrel your taste.",
-                f"Rate {TASTE_MIN_SCORED} scored {words(short[0])['roles']} and it starts ranking "
-                "the way you would. "
-                "Takes about five minutes.",
-                f"/calibrate?track={short[0]}", "Rate roles", 4, dismissable=True,
-            )
-        )
-    for t in tracks:
-        n = counts[t]
-        if n < few and taste:
-            continue
-        if n < few:
-            need = few - n
-            asks.append(
-                _ask(
-                    f"labels:{t}", f"{need} more {'rating' if need == 1 else 'ratings'}",
-                    f"{need} more and Kestrel starts learning from your examples for {t} "
-                    f"({n} of {few}).",
-                    f"/calibrate?track={t}", "Rate roles", 4,
-                )
-            )
-        elif n < rr:
-            need = rr - n
-            asks.append(
-                _ask(
-                    f"labels:{t}", f"{need} more ratings",
-                    f"{need} more and Kestrel can learn your ranking for {t} ({n} of {rr}).",
-                    f"/calibrate?track={t}", "Rate roles", 5,
-                )
-            )
-
+    # The rating asks ("Teach Kestrel your taste", "N more ratings") are gone (issue 171, D-UI-277):
+    # nothing rendered them. The quick-round strip on Today (learning.quick, routes_quick) is the
+    # one place that asks for answers, and it can be snoozed or switched off.
     return sorted(asks, key=lambda a: a["priority"])
 
 

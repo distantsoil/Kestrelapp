@@ -433,16 +433,20 @@ def test_restore_upload_read_failure_shows_a_fixed_reason(monkeypatch):
     _nothing_of_it(r.text)
 
 
-def test_restore_refusal_shows_the_listed_sentence_or_the_fallback(monkeypatch):
+# D-QUEUE-10: the route checks the upload (`check_backup`) before it stops the loops, then
+# restores; a refusal or a failure from either stage is rendered the same way.
+@pytest.mark.parametrize("stage", ["check_backup", "restore_backup"])
+def test_restore_refusal_shows_the_listed_sentence_or_the_fallback(monkeypatch, stage):
     from kestrel.services import backup as bs
 
     client = _fresh_app()
+    monkeypatch.setattr(bs, "check_backup", lambda path: None)
 
     def refused(text: str) -> str:
-        def _raise(path):
+        def _raise(path, **_kwargs):
             raise bs.InvalidBackupError(text)
 
-        monkeypatch.setattr(bs, "restore_backup", _raise)
+        monkeypatch.setattr(bs, stage, _raise)
         return client.post("/settings/restore", files=_zip_upload()).text
 
     assert html.escape(bs.NEWER_BACKUP) in refused(bs.NEWER_BACKUP)
@@ -459,13 +463,15 @@ def test_restore_refusal_shows_the_listed_sentence_or_the_fallback(monkeypatch):
         (zipfile.BadZipFile(PLANTED), "the file is not a usable zip archive"),
     ],
 )
-def test_restore_failure_shows_a_fixed_reason(monkeypatch, exc, reason):
+@pytest.mark.parametrize("stage", ["check_backup", "restore_backup"])
+def test_restore_failure_shows_a_fixed_reason(monkeypatch, exc, reason, stage):
     from kestrel.services import backup as bs
 
-    def broken(path):
+    def broken(path, **_kwargs):
         raise exc
 
-    monkeypatch.setattr(bs, "restore_backup", broken)
+    monkeypatch.setattr(bs, "check_backup", lambda path: None)
+    monkeypatch.setattr(bs, stage, broken)
     r = _fresh_app().post("/settings/restore", files=_zip_upload())
     assert f"Restore failed: {reason}" in r.text
     _nothing_of_it(r.text)

@@ -284,3 +284,16 @@ def test_the_failure_count_ignores_dead_tasks_from_earlier_runs(monkeypatch):
     _run_once()
     titles = [n.title for n in _notifications("run_finished")]
     assert titles == ["Run finished"], titles
+
+
+def test_a_finished_run_is_listed_in_the_bell_with_a_link_to_the_run():
+    """Issue #125: the bell is where the person looks. One real run, then the bell's own list
+    shows the one "Run finished" entry and its way to the run details."""
+    from kestrel.web.app import build_app
+
+    _fresh_db(2)
+    _run_once()
+    with TestClient(build_app(worker=False)) as c:
+        html = c.get("/notifications/list").text
+    assert html.count("Run finished") == 1, html
+    assert 'href="/runs"' in html

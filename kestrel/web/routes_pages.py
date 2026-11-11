@@ -22,6 +22,7 @@ from kestrel.pipeline import lane
 from kestrel.services import tier0_override
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
+from kestrel.web.auth import LOCAL_ONLY, refuse_unless_local, request_is_local
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.fit import (
     FAILED_NOTE,
@@ -235,7 +236,14 @@ async def _redact_rows(s, settings, rows) -> None:
     """Confidential mode: redact the operator's current employer in the list, not only toggle.
     The summary line is the model's own prose and names the employer routinely, so it is
     redacted with the same map as the org name and the title. Then each row gets the parts a
-    template prints (`row.view`), computed from what the operator will actually read."""
+    template prints (`row.view`), computed from what the operator will actually read. Which
+    scores read as older is read first, in one query for the whole list, before any ORM field is
+    edited for display (a later query would flush those edits)."""
+    from kestrel.learning.score_age import older_ids
+
+    older = await older_ids(s, [(row.opp, row.ev) for row in rows])
+    for row in rows:
+        row.older = row.opp.id in older
     if settings.confidential_mode:
         mapping = await redaction_map(s)
         for row in rows:
@@ -1006,7 +1014,7 @@ async def _keep_awake_context(s) -> dict:
     return {"keep_awake": await ka.load(s)}
 
 
-@router.post("/runs/keep-awake", response_class=HTMLResponse)
+@router.post("/runs/keep-awake", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def runs_keep_awake(request: Request):
     """The Runs page toggle: hold off system sleep while Kestrel runs (D-RUNS-2). Stores the
     choice, applies it on this thread (uvicorn's loop thread, the one that holds the state) and
@@ -1045,12 +1053,16 @@ async def runs_now(request: Request):
         queue_run_mode,
     )
 
-    credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     form = await request.form()
     mode = str(form.get("mode") or "")
     async with sessionmaker()() as s:
         if mode not in MODES:
             mode = (await load_settings_with_db(s)).llm.mode
+        elif not request_is_local(request) and mode != (await load_settings_with_db(s)).llm.mode:
+            refuse_unless_local(request)  # a one-time route other than the configured one
+    if request_is_local(request):  # a key holder never releases a hold on the online key (D-SEC-10)
+        credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
+    async with sessionmaker()() as s:
         if mode in ("hosted", "both") and str(form.get("confirmed") or "") != "1":
             return HTMLResponse(
                 '<span class="warnbox">Nothing was sent. Please confirm the online send '

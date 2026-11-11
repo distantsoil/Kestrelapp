@@ -570,3 +570,492 @@ def test_i_applied_on_a_role_never_shortlisted_with_quick_pick_undo_and_edit_dat
         assert not errors, errors
     finally:
         ctx.close()
+
+
+# ------------------------------------------------- issue 170: basis and corrections on the rows
+SHOTS = (
+    __import__("pathlib").Path(__file__).resolve().parents[1]
+    / "the locked design mockup (kept privately)/role-match/built"
+)
+_PROCESS = "Process improvement across distribution centers"
+_SIX = "Six Sigma Green Belt preferred"
+
+
+def _shot(page, name: str) -> None:
+    if os.environ.get("KESTREL_SHOTS") == "1":
+        SHOTS.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(SHOTS / f"{name}.png"), full_page=False)
+
+
+def _no_overlap_in_match(page, label: str) -> None:
+    """The overlap check for the match area: no two text parts of a row meet, no row meets the
+    next, and nothing in the area scrolls sideways or is clipped by its own box."""
+    boxes = page.evaluate(
+        """() => Array.from(document.querySelectorAll('#rl-match .rl-mrow'))
+          .filter(r => r.offsetParent).map(r => ({
+            row: r.getBoundingClientRect().toJSON(),
+            parts: Array.from(r.querySelectorAll(
+              ':scope > .rl-mbody > :is(.rl-mt, .rl-dsm, .rl-mmeta, .rl-mquick)'))
+              .filter(e => e.offsetParent).map(e => e.getBoundingClientRect().toJSON()),
+            wide: r.scrollWidth > r.clientWidth + 1,
+          }))"""
+    )
+    def conv(b):
+        return {"l": b["left"], "r": b["right"], "tp": b["top"], "bt": b["bottom"]}
+
+    for b in boxes:
+        assert not b["wide"], (label, "a row scrolls sideways")
+        parts = [conv(p) for p in b["parts"]]
+        for i, a in enumerate(parts):
+            for c in parts[i + 1 :]:
+                assert not _overlaps(a, c), (label, a, c)
+    rows = [conv(b["row"]) for b in boxes]
+    for i, a in enumerate(rows):
+        for c in rows[i + 1 :]:
+            assert not _overlaps(a, c), (label, "two rows overlap")
+
+
+def _row(page, text):
+    return page.locator(".rl-mrow", has_text=text).first
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1440, 1024])
+def test_corrections_every_state_without_overlap(live, theme, width):
+    ctx, page, errors = _page(live, theme, width)
+    tag = f"{'narrow-' if width == 1024 else ''}{theme}"
+    try:
+        page.locator("#rl-match").scroll_into_view_if_needed()
+        _no_overlap_in_match(page, "before")
+        _shot(page, f"{tag}-before")
+        # the basis: Inferred expands in place
+        row = _row(page, _PROCESS)
+        row.get_by_test_id("inferred-tag").click()
+        page.wait_for_timeout(450)
+        assert "No line in your resume or stories says this" in row.inner_text()
+        _no_overlap_in_match(page, "basis")
+        _shot(page, f"{tag}-inferred-open")
+        # the pencil, by mouse: Not true of me, with the effect line
+        row.get_by_test_id("match-pencil").click()
+        row.get_by_test_id("pick-not_me").click()
+        page.wait_for_timeout(450)
+        assert "Moves to Not met on this role" in row.locator("[data-rl-effect]").inner_text()
+        row.locator("[data-rl-note]").fill("I never ran carriers.")
+        _no_overlap_in_match(page, "correcting")
+        _shot(page, f"{tag}-correcting")
+        # the story step on a gap
+        six = _row(page, _SIX)
+        six.get_by_test_id("match-done").click()
+        page.wait_for_timeout(450)
+        assert "Kestrel can only credit what you've written down" in six.inner_text()
+        assert six.get_by_test_id("match-save").is_disabled()
+        six.locator("[data-rl-story-pick]").first.click()
+        _no_overlap_in_match(page, "proof")
+        _shot(page, f"{tag}-proof")
+        six.get_by_test_id("match-save").click()
+        page.locator(".k-toast", has_text="Saved. Now met").wait_for()
+        page.wait_for_timeout(700)
+        _no_overlap_in_match(page, "corrected")
+        _shot(page, f"{tag}-corrected")
+        # Evidence opens
+        page.get_by_test_id("evidence-toggle").click()
+        page.wait_for_timeout(450)
+        assert page.get_by_test_id("evidence-row").first.is_visible()
+        _no_overlap_in_match(page, "evidence")
+        _shot(page, f"{tag}-evidence")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def _scored_by_the_current_prompt(ids) -> None:
+    """Every read scored by the current prompt with no corrections (D-SCORE-4, D-SCORE-5), so
+    the strip opens exactly when a correction changes the role's block."""
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Evaluation
+
+    async def run():
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            for track, v in (("employment", "evaluate/v3"),
+                             ("consulting", "evaluate_consulting/v3")):
+                await s.execute(update(Evaluation).where(Evaluation.track == track)
+                                .values(prompt_version=v, correction_ids=[]))
+            await s.commit()
+        await engine.dispose()
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as pool:  # Playwright's sync API holds this thread's loop
+        pool.submit(asyncio.run, run()).result()
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1280), ("dark", 1280), ("light", 1024)])
+def test_a_story_written_from_a_correction_does_not_queue_a_rescore_that_would_be_held(
+    live, theme, width
+):
+    """The correction that follows the story changes the correction lines a queued online
+    re-score was stamped with, so it would be held. The sheet opened from a correction offers
+    Save only and posts rescore=0; Score again with my changes is the page's own strip."""
+    # The strip opens only when a correction changes what the current prompt was given, so the
+    # read must be the current prompt's (as in every other strip test). Without this the result
+    # depended on which test ran first on the shared seed.
+    _scored_by_the_current_prompt(live[2])
+    ctx, page, errors = _page(live, theme, width)
+    posted: list[dict] = []
+    page.on("request", lambda r: posted.append(
+        {"url": r.url, "body": r.post_data or ""}) if r.method == "POST" else None)
+    try:
+        page.locator("#rl-match").scroll_into_view_if_needed()
+        six = _row(page, _SIX)
+        six.get_by_test_id("match-done").click()
+        page.wait_for_timeout(450)
+        six.locator("[data-rl-story-new]").click()
+        sheet = page.locator("#rl-story")
+        sheet.wait_for(state="visible")
+        wait_for_layout(page)
+        assert sheet.get_by_role("button", name="Save", exact=True).is_visible()
+        assert not page.get_by_test_id("story-rescore").is_visible()
+        sheet.locator("textarea").first.fill("Led the green belt project at an invented depot.")
+        page.screenshot(path=f"{SHOTS_FIXD}/story-from-correction-{theme}-{width}.png")
+        sheet.get_by_role("button", name="Save", exact=True).click()
+        page.locator(".k-toast", has_text="Saved. Now met").wait_for()
+        story_posts = [p for p in posted if p["url"].endswith("/role/story")]
+        assert len(story_posts) == 1 and "rescore=0" in story_posts[0]["body"]
+        page.get_by_test_id("corrections-strip").wait_for(state="visible")  # Score again follows
+        # the plain link still offers Save and re-score
+        page.locator("a[data-rl-story]").first.click()
+        sheet.wait_for(state="visible")
+        assert page.get_by_test_id("story-rescore").is_visible()
+        page.screenshot(path=f"{SHOTS_FIXD}/story-plain-{theme}-{width}.png")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+SHOTS_FIXD = "/tmp/claude-0/-home-user/b7db7f2a-4231-54ed-b731-e6f6c37a62fa/scratchpad/shots-fixD"
+
+
+def test_corrections_save_moves_the_row_and_undo_restores_it(live):
+    _scored_by_the_current_prompt(live[2])
+    ctx, page, errors = _page(live, "light", 1440)
+    try:
+        center = page.get_by_test_id("wheel-center")
+        before = center.text_content()
+        row = _row(page, _PROCESS)
+        assert row.locator("xpath=ancestor::section").get_attribute("class").count("rl-card--good")
+        row.get_by_test_id("match-pencil").click()
+        row.get_by_test_id("pick-not_me").click()
+        row.get_by_test_id("match-save").click()
+        toast = page.locator(".k-toast", has_text="Saved. Now not met on this role.")
+        toast.wait_for()
+        moved = _row(page, _PROCESS)
+        assert "rl-card--warn" in moved.locator("xpath=ancestor::section").get_attribute("class")
+        assert moved.get_by_test_id("match-pill").inner_text() == "You: Not met"
+        assert center.text_content() != before
+        page.get_by_test_id("corrections-strip").wait_for(state="visible")
+        strip = page.get_by_test_id("corrections-strip")
+        assert "Score again with my changes" in strip.inner_text()
+        # the toast's Undo puts the row back
+        toast.get_by_role("button", name="Undo").click()
+        page.wait_for_function(
+            "() => !document.querySelector('[data-testid=match-pill]')", timeout=8000
+        )
+        back = _row(page, _PROCESS)
+        assert "rl-card--good" in back.locator("xpath=ancestor::section").get_attribute("class")
+        assert page.get_by_test_id("wheel-center").text_content() == before
+        page.wait_for_function(
+            "() => !document.querySelector('#rl-cx.on')", timeout=5000
+        )
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_corrections_save_and_undo_keep_the_keyboard_on_the_row(live):
+    """Fable C4: #rl-match is replaced by a Save and by a row Undo; the row takes the
+    focus back so the next Tab does not start from the top of the page."""
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        row = _row(page, _PROCESS)
+        row.get_by_test_id("match-pencil").click()
+        row.get_by_test_id("pick-not_me").click()
+        row.get_by_test_id("match-save").focus()
+        page.keyboard.press("Enter")
+        page.locator(".k-toast", has_text="Saved. Now not met on this role.").wait_for()
+        page.wait_for_timeout(500)
+        assert page.evaluate("document.activeElement.getAttribute('data-testid')") == "match-undo"
+        assert page.evaluate("document.activeElement.closest('.rl-mrow').dataset.id") == \
+            _row(page, _PROCESS).get_attribute("data-id")
+        _row(page, _PROCESS).get_by_test_id("match-undo").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => !document.querySelector('[data-testid=match-pill]')",
+                               timeout=8000)
+        page.wait_for_timeout(500)
+        assert page.evaluate("document.activeElement.getAttribute('data-testid')") == "match-pencil"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_corrections_pencil_by_keyboard_and_escape_closes(live):
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        row = _row(page, _PROCESS)
+        pen = row.get_by_test_id("match-pencil")
+        assert pen.get_attribute("aria-label") == f"Correct: {_PROCESS}"
+        box = pen.bounding_box()
+        assert box["width"] >= 26 and box["height"] >= 26
+        pen.focus()
+        page.keyboard.press("Enter")
+        panel = row.get_by_test_id("match-panel")
+        page.wait_for_timeout(450)
+        assert panel.is_visible() and pen.get_attribute("aria-expanded") == "true"
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(450)
+        assert not panel.is_visible()
+        assert page.evaluate("document.activeElement.getAttribute('data-testid')") == "match-pencil"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_corrections_reduced_motion_turns_the_motion_off(live):
+    base, browser, ids = live
+    ctx = browser.new_context(
+        viewport={"width": 1280, "height": 1000}, reduced_motion="reduce"
+    )
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/opportunities/{ids['strong']}")
+        page.wait_for_selector("#rl-match")
+        wait_for_layout(page)
+        for sel in (".rl-xp", ".rl-mrow", ".rl-mchip", ".rl-pen"):
+            assert page.evaluate(
+                "s => getComputedStyle(document.querySelector(s)).transitionDuration", sel
+            ) in ("0s", "0.001s"), sel
+        row = _row(page, _PROCESS)
+        row.get_by_test_id("match-pencil").click()
+        assert row.get_by_test_id("match-panel").is_visible()  # opens at once, nothing animated
+        row.get_by_test_id("pick-not_me").click()
+        row.get_by_test_id("match-save").click()
+        page.locator(".k-toast", has_text="Saved. Now not met").wait_for()
+        assert page.evaluate(
+            "() => getComputedStyle(document.querySelector('.rl-mrow.is-flash')"
+            " || document.body).animationName"
+        ) in ("none",)
+    finally:
+        ctx.close()
+
+
+def _seed_correction(opp: int, note: str) -> None:
+    """A correction with a note on the strong role's Process row, written as the role page's
+    route writes it (a separate engine on the same file; the server reads it next request)."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.engine import make_async_engine
+    from kestrel.learning import corrections as corr
+
+    async def go():
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            await corr.save_correction(
+                s, opportunity_id=opp, requirement_text=_PROCESS, kestrel_state="met",
+                reason="not_me", note=note)
+        await engine.dispose()
+
+    # Playwright's sync API holds this thread's loop: the write runs on its own thread's loop.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as pool:
+        pool.submit(lambda: asyncio.run(go())).result()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1440, 1024])
+def test_the_deeper_read_dialog_lists_the_corrections_it_sends(live, theme, width):
+    """Issue 170 review: the Tier 3 ask-first dialog lists the correction lines under What will
+    be sent, without overlap or sideways scroll, in both themes and at the narrow width."""
+    _seed_correction(live[2]["strong"], "I never ran carriers, only the night shift rota.")
+    ctx, page, errors = _page(live, theme, width)
+    tag = f"{'narrow-' if width == 1024 else ''}{theme}"
+    try:
+        page.get_by_test_id("more").click()
+        page.get_by_test_id("escalate").click()
+        dlg = page.locator("#rl-deeper")
+        dlg.wait_for(state="visible")
+        page.wait_for_timeout(450)
+        listed = dlg.get_by_test_id("deeper-corrections")
+        assert listed.is_visible()
+        text = listed.inner_text()
+        assert _PROCESS in text and "I never ran carriers, only the night shift rota." in text
+        items = dlg.evaluate(
+            """d => Array.from(d.querySelectorAll('.rl-send li')).filter(e => e.offsetParent)
+              .map(e => { const b = e.getBoundingClientRect();
+                return {l: b.left, r: b.right, tp: b.top, bt: b.bottom,
+                        wide: e.scrollWidth > e.clientWidth + 1,
+                        nested: !!e.querySelector('li')}; })"""
+        )
+        flat = [i for i in items if not i["nested"]]
+        assert not any(i["wide"] for i in items), "a line scrolls sideways"
+        for i, a in enumerate(flat):
+            for c in flat[i + 1 :]:
+                assert not _overlaps(a, c), (theme, width, a, c)
+        body = dlg.locator(".k-modal__body").first
+        assert body.evaluate("e => e.scrollWidth <= e.clientWidth + 1")
+        _shot(page, f"{tag}-deeper-corrections")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+_COUNT_ANIMATE_JS = """() => {
+  window.__anims = [];
+  const real = Element.prototype.animate;
+  Element.prototype.animate = function (frames, opts) {
+    window.__anims.push(JSON.stringify(frames).slice(0, 60));
+    return real.call(this, frames, opts);
+  };
+}"""
+
+
+def _save_not_me(page) -> None:
+    row = _row(page, _PROCESS)
+    row.get_by_test_id("match-pencil").click()
+    row.get_by_test_id("pick-not_me").click()
+    row.get_by_test_id("match-save").click()
+    page.locator(".k-toast", has_text="Saved. Now not met").wait_for()
+    page.wait_for_timeout(700)
+
+
+def test_a_toasts_undo_after_moving_to_another_role_leaves_that_role_alone(live):
+    """D-UI-322: Save a correction, go to the next role (the toast stays), press the toast's
+    Undo. The undo is applied to the first role; the role now on screen keeps its own rows."""
+    _base, _browser, ids = live
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        _save_not_me(page)
+        page.evaluate(
+            "id => htmx.ajax('GET', '/opportunities/' + id, "
+            "{target: '#rl-body', swap: 'outerHTML'})", ids["second"])
+        page.wait_for_function(
+            "id => document.querySelector('#rl-body').getAttribute('data-opp') === String(id)",
+            arg=ids["second"])
+        page.locator(".k-toast", has_text="Saved. Now not met").get_by_role(
+            "button", name="Undo").click()
+        page.wait_for_timeout(1200)
+        strong = f"/opportunities/{ids['strong']}/"
+        assert page.evaluate(
+            "u => [...document.querySelectorAll('#rl-body [hx-post]')]"
+            ".filter(e => e.getAttribute('hx-post').startsWith(u)).length", strong) == 0
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("app_setting", [True, False])
+def test_corrections_motion_follows_the_apps_reduce_motion_setting(live, app_setting):
+    """The app's Reduce motion switch (data-reduce-motion) stops the FLIP and the card
+    animations even when the OS asks for motion; with it off the move is animated."""
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        page.evaluate(
+            "v => document.documentElement.setAttribute('data-reduce-motion', v)",
+            "1" if app_setting else "0",
+        )
+        assert page.evaluate("matchMedia('(prefers-reduced-motion: reduce)').matches") is False
+        page.evaluate(_COUNT_ANIMATE_JS)
+        _save_not_me(page)
+        moved = [a for a in page.evaluate("window.__anims") if "translate" in a]
+        assert (moved == []) if app_setting else (len(moved) > 0), moved
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+# ------------------------------------- issue 179: an older score only where a correction bears
+def _upgrade_and_correct(ids, *, correct: bool) -> None:
+    """Every read under the pre-upgrade prompt version, then (optionally) one correction about the
+    strong role. Writes the database the live server reads."""
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Evaluation
+    from kestrel.learning import corrections as corr
+
+    async def run():
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            for track, v in (("employment", "evaluate/v2"),
+                             ("consulting", "evaluate_consulting/v2")):
+                await s.execute(update(Evaluation).where(Evaluation.track == track)
+                                .values(prompt_version=v))
+            await s.commit()
+            if correct:
+                await corr.save_correction(s, opportunity_id=ids["strong"],
+                                           requirement_text=_PROCESS, kestrel_state="met",
+                                           reason="not_me")
+        await engine.dispose()
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(1) as pool:  # Playwright's sync API holds this thread's loop
+        pool.submit(asyncio.run, run()).result()
+
+
+def _no_overlap_in(page, sel: str, label: str) -> None:
+    boxes = page.evaluate(_BOXES, sel)
+    for i, a in enumerate(boxes):
+        for c in boxes[i + 1:]:
+            assert not _overlaps(a, c), (label, a, c)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True, label
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1440, 1024])
+def test_older_score_mark_only_where_a_correction_bears(live, theme, width):
+    base, _browser, ids = live
+    tag = f"stale-{'narrow-' if width == 1024 else ''}{theme}"
+    for state, correct in (("none", False), ("marked", True)):
+        _upgrade_and_correct(ids, correct=correct)
+        ctx, page, errors = _page(live, theme, width)
+        try:
+            older = page.locator('[data-testid="score-older"]')
+            assert older.count() == (1 if correct else 0), (state, theme, width)
+            card = page.locator('[data-testid="score-card"]')
+            card.scroll_into_view_if_needed()
+            _no_overlap_in(page, ".rl-card--score > :is(.rl-score, p, details)", f"role {state}")
+            clipped = page.evaluate(
+                "els => els.some(e => e.scrollWidth > e.clientWidth + 1)",
+                older.element_handles())
+            assert clipped is False, (state, theme, width)
+            _shot(page, f"{tag}-role-{state}")
+            page.goto(f"{base}/opportunities")
+            page.wait_for_selector('[data-testid="pl-row"]')
+            wait_for_layout(page)
+            row = page.locator(f'#row-{ids["strong"]}')
+            other = page.locator(f'#row-{ids["second"]}')
+            warn = row.locator('[data-testid="row-warning"]')
+            label = warn.get_attribute("aria-label") if warn.count() else ""
+            assert ("older scoring instructions" in (label or "")) is correct, (state, label)
+            other_warn = other.locator('[data-testid="row-warning"]')
+            other_label = other_warn.get_attribute("aria-label") if other_warn.count() else ""
+            assert "older scoring instructions" not in (other_label or ""), other_label
+            _no_overlap_in(page, f'#row-{ids["strong"]} .pl-title > *', f"row {state}")
+            if correct:
+                warn.focus()
+                page.wait_for_timeout(250)
+            _shot(page, f"{tag}-pipeline-{state}")
+            assert not errors, errors
+        finally:
+            ctx.close()

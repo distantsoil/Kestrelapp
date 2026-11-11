@@ -42,7 +42,7 @@ _LIVE = ("pending", "leased")
 PLATFORM_LABELS = {
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
     "smartrecruiters": "SmartRecruiters", "rippling": "Rippling", "recruitee": "Recruitee",
-    "teamtailor": "Teamtailor", "breezy": "Breezy", "personio": "Personio",
+    "teamtailor": "Teamtailor", "breezy": "Breezy", "jobvite": "Jobvite", "personio": "Personio",
     "workable": "Workable", "paylocity": "Paylocity", "adp": "ADP", "workday": "Workday",
 }
 _CLOSED = {"rejected", "withdrawn", "ghosted", "declined", "closed", "lost"}
@@ -413,7 +413,7 @@ async def drain_checks(
     """Run queued suggestion checks, at most `cap` companies in this pass, one at a time. A task
     cut short by a quit keeps its row and is leased again after the restart (hard rule 5)."""
     from kestrel.interview.story_task import _renew
-    from kestrel.queue.queue import TaskQueue
+    from kestrel.queue.queue import REASON_STOPPED, TaskQueue
 
     queue = TaskQueue(sm)
     wid = "pipeline-suggestions"
@@ -430,7 +430,10 @@ async def drain_checks(
                 http=http)
         except asyncio.CancelledError:
             beat.cancel()
-            await queue.defer(task.id, "Stopped; resumes at the next start", worker_id=wid)
+            await queue.defer(
+                task.id, "Stopped; resumes at the next start", worker_id=wid,
+                reason=REASON_STOPPED,
+            )
             raise
         except Exception as exc:  # noqa: BLE001 - one company never takes the cycle with it
             log.warning("suggestion_check_failed", task=task.id, error_type=type(exc).__name__)

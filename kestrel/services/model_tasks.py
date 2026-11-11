@@ -44,7 +44,7 @@ from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
@@ -220,6 +220,12 @@ async def queue_pulls(session: AsyncSession, tags: list[str]) -> int:
             if t.type == PULL_TYPE}
     batch = uuid.uuid4().hex[:12]
     n = 0
+    joined = [tag for tag in tags if tag in live]
+    if joined:  # asked again: a pull waiting out a retry backoff runs now (D-QUEUE-7)
+        from kestrel.queue.queue import run_now
+
+        await run_now(session, and_(
+            Task.type == PULL_TYPE, func.json_extract(Task.payload, "$.tag").in_(joined)))
     for tag in tags:
         if tag in live:
             continue
@@ -406,7 +412,7 @@ def _row_view(t: Task) -> dict[str, Any]:
     elif t.status == "done":
         view["step"], view["percent"] = "Done", 100
     elif t.status == "cancelled":
-        view["step"] = "Stopping…" if t.id in _running else "Cancelled"
+        view["step"] = "Stopping…" if t.id in _running else "Canceled"
     else:  # dead or failed
         view["step"] = "Failed"
         view["error"] = (shown_failure(t.last_error) or "it stopped before it finished")[:300]

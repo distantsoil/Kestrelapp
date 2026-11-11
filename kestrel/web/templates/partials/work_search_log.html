@@ -1,0 +1,23 @@
+{# The work search log sheet body (D-EXPORT-1). A pick or a date change re-asks the server, which
+   answers with this same fragment, so the count and the file always agree. #}
+{% import "partials/local_only.html" as lo with context %}
+<form class="ap-addform ap-wsl" id="wsl-form" hx-get="/work-search-log/panel" hx-trigger="change"
+      hx-target="#wsl-body" hx-swap="innerHTML" data-testid="wsl-form">
+  <p class="ap-v">Every application with a date in the range, whatever happened to it afterward: turned down, withdrawn, no reply or a posting that has closed. Roles you never applied for are left out. The file is saved on this computer and nothing is sent.</p>
+  <div class="ap-wsl-picks" role="group" aria-label="Quick ranges">
+    {% for key, name in picks %}<button type="button" class="k-chip{% if pick == key %} is-on{% endif %}" hx-get="/work-search-log/panel?pick={{ key }}" hx-target="#wsl-body" hx-swap="innerHTML" aria-pressed="{{ 'true' if pick == key else 'false' }}" data-testid="wsl-pick-{{ key }}">{{ name }}</button>{% endfor %}
+  </div>
+  <div class="ap-frow2">
+    <label class="ap-fl">From<input type="date" id="wsl-from" name="from" value="{{ start }}" required data-testid="wsl-from"></label>
+    <label class="ap-fl">To<input type="date" id="wsl-to" name="to" value="{{ end }}" required data-testid="wsl-to"></label>
+  </div>
+  {% if no_employer %}<p class="ap-notice" data-testid="wsl-warn">Confidential mode is on but no employer is set, so your current employer cannot be hidden. Add it in Profile first, or save the file as it is.</p>{% endif %}
+  {% if error %}<p class="ap-sherr" role="alert" data-testid="wsl-error">{{ error }}</p>
+  {% else %}<p class="ap-wsl-count" role="status" aria-live="polite" data-testid="wsl-count"><b>{{ log.rows|length }} application{{ '' if log.rows|length == 1 else 's' }}</b>, {{ label }}{% if log.unknown %}<span class="k-muted"> and {{ log.unknown|length }} more with no applied date, listed at the end</span>{% endif %}</p>
+  {% if log.withheld %}<p class="ap-notice" data-testid="wsl-withheld">{{ log.withheld }} application{{ ' is' if log.withheld == 1 else 's are' }} left out of this file because the posting came from a source whose terms do not allow passing it on. {{ 'It is' if log.withheld == 1 else 'They are' }} still tracked in Kestrel; add {{ 'it' if log.withheld == 1 else 'them' }} to your log by hand.</p>{% endif %}{% endif %}
+  <div class="ap-actions">
+    {% if error %}<span class="k-btn k-btn--primary k-btn--sm" aria-disabled="true" data-testid="wsl-save">Save CSV</span>
+    {% else %}{{ lo.download(request, '/analytics/export/work-search-log.csv?from=' ~ start ~ '&to=' ~ end, 'Save CSV', 'k-btn k-btn--primary k-btn--sm', 'wsl-save') }}{% endif %}
+    <button type="button" class="k-btn k-btn--sm" data-k-close>Close</button>
+  </div>
+</form>

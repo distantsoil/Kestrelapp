@@ -1,0 +1,332 @@
+{
+ "data": [
+  {
+   "id": "00000000-0000-4000-8000-000000000001",
+   "slug": "property-paralegal-at-northwind-studio-aaaa1111",
+   "title": "Property Paralegal",
+   "description": "### **About the team**\n\nInvented text for a test fixture.\n\n#### **The role**\n\n- Manage a caseload of client matters\n- Draft and review documents\n\n#### **Requirements**\n\n- Two years of related experience.\n\nDeadline to apply: 30th November 2026.",
+   "url": "https://4dayweek.io/job/property-paralegal-at-northwind-studio-aaaa1111",
+   "category": "legal",
+   "role": "Property Solicitor",
+   "level": "entry",
+   "schedule_type": "4_day_week",
+   "hours_per_week_min": 32,
+   "hours_per_week_max": 32,
+   "work_arrangement": "hybrid",
+   "locations": [
+    {
+     "city": "Leeds",
+     "state": "England",
+     "country": "United Kingdom",
+     "continent": "Europe",
+     "latitude": 53.8,
+     "longitude": -1.55,
+     "work_arrangement": "hybrid",
+     "is_primary": true
+    }
+   ],
+   "skills": [
+    {
+     "name": "Client Service",
+     "slug": "client-service"
+    },
+    {
+     "name": "Commercial Property",
+     "slug": "commercial-property"
+    },
+    {
+     "name": "Contract Negotiation",
+     "slug": "contract-negotiation"
+    },
+    {
+     "name": "Conveyancing",
+     "slug": "conveyancing"
+    },
+    {
+     "name": "Lease drafting",
+     "slug": "lease-drafting"
+    },
+    {
+     "name": "matter management",
+     "slug": "matter-management"
+    }
+   ],
+   "tools": [
+    {
+     "name": "Case Management",
+     "slug": "case-management"
+    },
+    {
+     "name": "Microsoft Office",
+     "slug": "microsoft-office"
+    }
+   ],
+   "posted_at": "2026-11-07T04:21:32Z",
+   "company": {
+    "id": "00000000-0000-4000-9000-000000000001",
+    "slug": "northwind-studio",
+    "name": "Northwind Studio",
+    "url": "https://4dayweek.io/company/northwind-studio",
+    "website": "https://northwind-studio.example.org/",
+    "logo_url": "https://media.4dayweek.io/files/northwind-studio.jpg",
+    "short_description": "A fictional employer for tests.",
+    "country": "United Kingdom",
+    "employees": 23,
+    "schedule_type": "4_day_week",
+    "hours_full_time": 32,
+    "remote_level": "hybrid",
+    "hires_worldwide": false
+   }
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000002",
+   "slug": "communications-lead-at-harbor-cooperative-bbbb2222",
+   "title": "Communications Lead",
+   "description": "### **Summary**\n\nA full-time (32 hours) role leading communications. Fictional.\n\n- Plan the editorial calendar\n- Write & edit newsletters",
+   "url": "https://4dayweek.io/job/communications-lead-at-harbor-cooperative-bbbb2222",
+   "category": "marketing",
+   "role": "Communications",
+   "level": "executive",
+   "contract_type": "permanent",
+   "schedule_type": "4_day_week",
+   "hours_per_week_min": 32,
+   "hours_per_week_max": 32,
+   "work_arrangement": "remote",
+   "locations": [
+    {
+     "country": "United States",
+     "continent": "North America",
+     "latitude": 39.83,
+     "longitude": -98.58,
+     "work_arrangement": "remote",
+     "is_primary": true
+    }
+   ],
+   "timezones": [
+    "EST"
+   ],
+   "skills": [
+    {
+     "name": "Analytics",
+     "slug": "analytics"
+    },
+    {
+     "name": "Communications Strategy",
+     "slug": "communications-strategy"
+    },
+    {
+     "name": "Content production",
+     "slug": "content-production"
+    },
+    {
+     "name": "Editorial Calendar",
+     "slug": "editorial-calendar"
+    },
+    {
+     "name": "Email Engagement",
+     "slug": "email-engagement"
+    },
+    {
+     "name": "Facilitation",
+     "slug": "facilitation"
+    },
+    {
+     "name": "Project Management",
+     "slug": "project-management"
+    },
+    {
+     "name": "Public Speaking",
+     "slug": "public-speaking"
+    },
+    {
+     "name": "Relationship Building",
+     "slug": "relationship-building"
+    },
+    {
+     "name": "Staff Training",
+     "slug": "staff-training"
+    },
+    {
+     "name": "Writing & Editing",
+     "slug": "writing-and-editing"
+    }
+   ],
+   "stack": [
+    {
+     "name": "CSS",
+     "slug": "css"
+    },
+    {
+     "name": "HTML",
+     "slug": "html"
+    }
+   ],
+   "tools": [
+    {
+     "name": "Action Network",
+     "slug": "action-network"
+    },
+    {
+     "name": "Airtable",
+     "slug": "airtable"
+    },
+    {
+     "name": "Asana",
+     "slug": "asana"
+    },
+    {
+     "name": "Canva",
+     "slug": "canva"
+    },
+    {
+     "name": "Google Workspace",
+     "slug": "google-workspace"
+    },
+    {
+     "name": "Powerbase",
+     "slug": "powerbase"
+    },
+    {
+     "name": "Slack",
+     "slug": "slack"
+    },
+    {
+     "name": "WordPress",
+     "slug": "wordpress"
+    },
+    {
+     "name": "Zoom",
+     "slug": "zoom"
+    }
+   ],
+   "posted_at": "2026-11-06T04:21:32Z",
+   "company": {
+    "id": "00000000-0000-4000-9000-000000000002",
+    "slug": "harbor-cooperative",
+    "name": "Harbor Cooperative",
+    "url": "https://4dayweek.io/company/harbor-cooperative",
+    "website": "https://harbor-cooperative.example.org/",
+    "logo_url": "https://media.4dayweek.io/files/harbor-cooperative.jpg",
+    "short_description": "A fictional employer for tests.",
+    "country": "United States",
+    "employees": 14,
+    "schedule_type": "4_day_week",
+    "hours_full_time": 32,
+    "remote_level": "hybrid",
+    "hires_worldwide": false
+   }
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000003",
+   "slug": "finance-lead-at-harbor-cooperative-cccc3333",
+   "title": "Finance Lead",
+   "description": "### **Summary**\n\nA full-time (32 hours) role leading finance. Fictional.\n\n- Prepare budgets\n- Support the audit",
+   "url": "https://4dayweek.io/job/finance-lead-at-harbor-cooperative-cccc3333",
+   "category": "finance",
+   "role": "Finance & Operations",
+   "level": "executive",
+   "contract_type": "permanent",
+   "schedule_type": "4_day_week",
+   "hours_per_week_min": 32,
+   "hours_per_week_max": 32,
+   "work_arrangement": "remote",
+   "locations": [
+    {
+     "country": "United States",
+     "continent": "North America",
+     "latitude": 39.83,
+     "longitude": -98.58,
+     "work_arrangement": "remote",
+     "is_primary": true
+    }
+   ],
+   "timezones": [
+    "EST"
+   ],
+   "salary_min": 7800000,
+   "salary_max": 15000000,
+   "salary_currency": "USD",
+   "salary_period": "year",
+   "skills": [
+    {
+     "name": "Auditing",
+     "slug": "auditing"
+    },
+    {
+     "name": "Budgeting",
+     "slug": "budgeting"
+    },
+    {
+     "name": "Compliance",
+     "slug": "compliance"
+    },
+    {
+     "name": "Financial Management",
+     "slug": "financial-management"
+    },
+    {
+     "name": "Financial Reporting",
+     "slug": "financial-reporting"
+    },
+    {
+     "name": "Policy Writing",
+     "slug": "policy-writing"
+    },
+    {
+     "name": "Project Management",
+     "slug": "project-management"
+    },
+    {
+     "name": "Relationship Building",
+     "slug": "relationship-building"
+    },
+    {
+     "name": "Time Management",
+     "slug": "time-management"
+    }
+   ],
+   "tools": [
+    {
+     "name": "Action Network",
+     "slug": "action-network"
+    },
+    {
+     "name": "Google Workspace",
+     "slug": "google-workspace"
+    },
+    {
+     "name": "Loomio",
+     "slug": "loomio"
+    },
+    {
+     "name": "Powerbase",
+     "slug": "powerbase"
+    },
+    {
+     "name": "Slack",
+     "slug": "slack"
+    }
+   ],
+   "posted_at": "2026-11-05T04:21:32Z",
+   "company": {
+    "id": "00000000-0000-4000-9000-000000000003",
+    "slug": "harbor-cooperative",
+    "name": "Harbor Cooperative",
+    "url": "https://4dayweek.io/company/harbor-cooperative",
+    "website": "https://harbor-cooperative.example.org/",
+    "logo_url": "https://media.4dayweek.io/files/harbor-cooperative.jpg",
+    "short_description": "A fictional employer for tests.",
+    "country": "United States",
+    "employees": 14,
+    "schedule_type": "4_day_week",
+    "hours_full_time": 32,
+    "remote_level": "hybrid",
+    "hires_worldwide": false
+   }
+  }
+ ],
+ "page": 1,
+ "limit": 3,
+ "total": 3,
+ "has_more": false
+}

@@ -381,3 +381,24 @@ async def test_held_lane_does_not_starve_other_tier2_model_groups(sm):
     await worker.drain_tier("t2", 1, handler, TierStats())
     handler.assert_awaited_once()
     assert handler.call_args.kwargs["opportunity_id"] == oid
+
+
+async def test_release_waits_for_normal_tier_work_that_is_only_backing_off(sm):
+    """D-QUEUE-8: a t1 task waiting out a retry backoff is not claimable for a while, but it is
+    still the worker's own work: the lane does not run ahead of it."""
+    from datetime import timedelta
+
+    from kestrel.db.base import iso, utcnow
+
+    await _lane_tasks(sm, 2)
+    async with sm() as s:
+        busy = Task(type="t1", payload={"opportunity_id": 9999}, attempts=1,
+                    retry_at=iso(utcnow() + timedelta(minutes=5)))
+        s.add(busy)
+        await s.commit()
+        busy_id = busy.id
+    assert await lane.release_due(sm, cap=3) == 0  # backing off counts as busy
+    async with sm() as s:
+        (await s.get(Task, busy_id)).status = "done"
+        await s.commit()
+    assert await lane.release_due(sm, cap=3) == 2

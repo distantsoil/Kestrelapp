@@ -415,8 +415,38 @@ def test_access_needs_the_confirm_and_only_this_computer(monkeypatch):
         off = c.post("/settings/privacy/access", data={"on": "0"})
         assert "Off. Only this computer" in off.text and "lan-qr" not in off.text
         c.post("/settings/privacy/access", data={"on": "1", "ack": "on"})
-        rotated = c.post("/settings/privacy/access/rotate")
+        rotated = c.post("/settings/privacy/access/rotate", data={"ack": "on"})
         assert "New key made" in rotated.text
+
+
+def test_rotate_asks_first_and_the_old_key_stops_working(monkeypatch):
+    """D-UI-267: making a new key still asks for confirmation first (a bare POST is refused,
+    nothing changes), and it still invalidates the old key. The button sits where it is visible
+    without opening Show details, and only while access is on."""
+    from kestrel import paths as p
+    from kestrel.web import auth
+
+    monkeypatch.setattr(auth, "lan_host_ip", lambda: "192.168.1.20")
+    p.ensure_dirs()
+    (p.config_dir() / "settings.yml").write_text(
+        (p.packaged_config() / "settings.yml").read_text(encoding="utf-8"), encoding="utf-8")
+    with _client() as c:
+        c.post("/settings/privacy/access", data={"on": "1", "ack": "on"})
+        old_key = _row("server.shared_secret")
+        on = c.get("/settings/privacy/access").text
+        assert "Make a new key" in on
+        det = on[on.index("<details") : on.index("</details>")]
+        assert "rotate" not in det and "Make a new key" not in det
+        refused = c.post("/settings/privacy/access/rotate")
+        assert "Confirm that you understand first." in refused.text
+        assert _row("server.shared_secret") == old_key
+        rotated = c.post("/settings/privacy/access/rotate", data={"ack": "on"})
+        assert "New key made" in rotated.text
+        new_key = _row("server.shared_secret")
+        assert new_key and new_key != old_key
+        assert auth.key_is_valid(old_key, new_key) is False
+        off = c.post("/settings/privacy/access", data={"on": "0"})
+        assert "Make a new key" not in off.text
 
 
 # ------------------------------------------------------------------------------ computer

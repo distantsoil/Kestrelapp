@@ -40,6 +40,7 @@ from kestrel.llm.prompts import all_versions
 from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import bench_view as bv
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages import models_ui
@@ -430,7 +431,7 @@ async def _online_candidates(settings, steps: list[str]) -> tuple[dict, str]:
     return out, ""
 
 
-@router.post("/bench/start", response_class=HTMLResponse)
+@router.post("/bench/start", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def start(request: Request):
     """Check my models from the card: Quick screen and Rating, plus Deeper read when ticked, plus
     online models only when the operator ticked that (the consent to send the rated roles)."""
@@ -506,7 +507,7 @@ async def cancel(request: Request):
     )
 
 
-@router.post("/bench/apply", response_class=HTMLResponse)
+@router.post("/bench/apply", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def apply(request: Request):
     """Switch the steps a result recommends. A local switch is an override of that step's model;
     an online one needs the tick (what is sent, what it costs) and a connected provider, and is
@@ -579,7 +580,7 @@ async def apply(request: Request):
     )
 
 
-@router.post("/bench/undo", response_class=HTMLResponse)
+@router.post("/bench/undo", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def undo(request: Request):
     from kestrel.bench import check
 
@@ -634,7 +635,7 @@ async def _form_check_args(session, tier: str, model: str, backend: str) -> dict
     return {"steps": [step], "models": {step: [in_use, picked]}}
 
 
-@router.post("/bench/run", response_class=HTMLResponse)
+@router.post("/bench/run", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def run(request: Request):
     """The Advanced form: check one step against one chosen model. Queues the background task
     (never a model call on the request). A refusal (too few ratings, one already running, an
@@ -678,7 +679,7 @@ async def run(request: Request):
     return await _panel(request, notice=ctx["notice"], ok=ctx["notice"] == QUEUED_NOTICE)
 
 
-@router.post("/bench/check")
+@router.post("/bench/check", dependencies=[LOCAL_ONLY])
 async def check_queue(request: Request):
     """Queue Check my models. Body (all optional JSON): steps, deeper, models, online, confirm.
     Any online candidate needs `"confirm": true` as well as a connected provider and approval."""
@@ -742,7 +743,7 @@ async def check_cancel():
         return JSONResponse({"cancelled": await check.cancel_check(s)})
 
 
-@router.post("/bench/promote", response_class=HTMLResponse)
+@router.post("/bench/promote", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def promote(request: Request):
     """Use the operator's chosen model for a step, with no restart. A model on this computer goes
     through `models_ui.switch_local` (tuned for the step first, never a raw tag); an online one

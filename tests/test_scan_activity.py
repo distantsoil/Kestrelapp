@@ -409,6 +409,55 @@ def test_cancel_scan_cancels_pending_and_lets_the_leased_one_finish():
     assert later == 3  # once the hold lapses the due searches run (A is still leased)
 
 
+def test_the_cancel_scan_stops_a_queue_held_scrape_and_clears_its_mark():
+    """D-QUEUE-3: the hold keeps the queue from leasing a held scrape, but not the operator's
+    own command: Cancel reaches it and clears the deferred mark with the cancellation, so the
+    deferred count stays honest and a search held for an approval can still be stopped."""
+    asyncio.run(_seed([
+        _src("A"),
+        Task(type="scrape", status="pending", payload={
+            "source_id": 1, "deferred": True, "defer_reason": "approval"}),
+    ]))
+
+    async def _go(sm):
+        from sqlalchemy import func
+
+        from kestrel.ingest.scheduler import cancel_pending_scrapes
+        from kestrel.queue.queue import claimable, deferred_count
+
+        async with sm() as s:
+            before = await s.scalar(
+                select(func.count()).select_from(Task).where(claimable(utcnow_iso()))
+            )
+            n = await cancel_pending_scrapes(s)
+            return before, n, await deferred_count(sm)
+
+    before, n, held = _with_session(_go)
+    assert before == 0, "the hold kept the queue from leasing it"
+    assert n == 1, "the operator's Cancel stopped the held scrape"
+    assert held == 0, "the mark cleared with the cancellation"
+    t = _rows(Task, Task.type == "scrape")[0]
+    assert t.status == "cancelled"
+    assert "deferred" not in (t.payload or {})
+    assert "defer_reason" not in (t.payload or {})
+
+
+def test_cancel_scan_reaches_a_scrape_waiting_out_its_retry_backoff():
+    # issue #153: a scrape that failed and is waiting out its backoff (30 s to 10 min out)
+    # is still the operator's to cancel; the explicit stop must not leave it queued behind
+    # its retry_at, where it would run against the stop.
+    future = iso(datetime.now(UTC) + timedelta(minutes=10))
+    asyncio.run(_seed([
+        _src("A"),
+        Task(type="scrape", status="pending", attempts=1, last_error="the source timed out",
+             retry_at=future, payload={"source_id": 1}),
+    ]))
+    with _client() as c:
+        html = c.post("/scan/cancel").text
+    assert "Cancelled 1 search" in html
+    assert _rows(Task, Task.type == "scrape")[0].status == "cancelled"
+
+
 def test_scan_now_and_the_tray_clear_the_cancel_hold():
     asyncio.run(_seed([_src("A"), Task(type="scrape", status="pending", payload={"source_id": 1})]))
     with _client() as c:

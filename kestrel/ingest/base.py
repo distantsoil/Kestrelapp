@@ -6,6 +6,7 @@ board adapter be written independently."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -15,6 +16,20 @@ from kestrel.errors import UserFacingError
 class SourceConfigError(UserFacingError, ValueError):
     """A source config is structurally invalid. Raised at config load / source creation, never at
     scan time, so a dead config never silently produces an empty run."""
+
+
+# A board id that is spliced into a URL path (after a fixed host). One path segment: no slash, no
+# query or fragment mark, no userinfo or port, no whitespace, not a dot segment (D-SEC-10).
+_SEGMENT = re.compile(r"[^\s/\\?#@:%]{1,100}")
+
+
+def path_segment(config: dict, key: str, what: str) -> str:
+    """CONFIG[KEY] as one safe URL path segment, or SourceConfigError naming WHAT."""
+    value = config.get(key)
+    if not isinstance(value, str) or value in (".", "..") or not _SEGMENT.fullmatch(value):
+        raise SourceConfigError(f"{what} is not valid: use only the board's own id, with no "
+                                "slash, question mark, at sign, colon or space")
+    return value
 
 
 class AdapterError(Exception):
@@ -43,7 +58,7 @@ class RawPosting:
     comp_min: float | None = None
     comp_max: float | None = None
     comp_currency: str | None = None
-    comp_interval: str | None = None  # 'year' | 'month' | 'day' | 'hour'
+    comp_interval: str | None = None  # 'year' | 'month' | 'week' | 'day' | 'hour'
     # The board's own estimate (Glassdoor's p10-p90 pay band), not pay the employer posted:
     # stored with comp_source 'inferred' so it is labelled an estimate everywhere (issue #66).
     comp_is_estimate: bool = False

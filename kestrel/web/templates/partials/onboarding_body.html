@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {# The body of each onboarding step (D-UI-30, D-UI-155), chosen by `key`. Six steps, built from the
    shared k- components; ob- classes come from pages/onboarding.css. Copy follows the locked
    mockup. Forms save through the Profile services and return the whole #ob-step. #}
@@ -74,6 +75,7 @@
       ('both', 'Both', 'both', ['This computer for most roles', 'Online for the hardest ones', 'Shows what is sent first']),
     ] %}
     {% set picked = st.choice_explicit and st.choice == value %}
+    {% call lo.fence(request) %}
     <form hx-post="/onboarding/models/mode" hx-target="#ob-step" hx-swap="outerHTML" method="post" action="/onboarding/models/mode">
       <input type="hidden" name="mode" value="{{ value }}">
       <button type="submit" class="ob-c" role="radio" aria-checked="{{ 'true' if picked else 'false' }}" data-testid="ob-mode-{{ value }}">
@@ -82,6 +84,7 @@
         <ul class="ob-bl">{% for b in bullets %}<li>{{ b }}</li>{% endfor %}</ul>
       </button>
     </form>
+    {% endcall %}
     {% endfor %}
   </div>
 
@@ -103,6 +106,7 @@
   <section class="k-card" data-testid="ob-online-card">
     {{ head('Connect an online model', 'cloud') }}
     <p class="ob-dsm" data-testid="ob-byok"><b>Bring your own key.</b> You open an account with the service, create an API key on their site (a long password made for programs), and paste it here. Kestrel keeps the key on this computer and uses it only to call that service; the service bills you directly for what you use, often cents a day, and OpenRouter has free models. Kestrel never sees your bill and never sends the key anywhere else.</p>
+    {% call lo.fence(request) %}
     <form id="ob-connect" hx-post="/onboarding/models/connect" hx-target="#ob-step" hx-swap="outerHTML" autocomplete="off"
           data-busy-text="Checking the key and choosing a model for each tier…" data-ob-connect>
       <div class="ob-svc" role="radiogroup" aria-label="Service">
@@ -141,6 +145,7 @@
       <p class="ob-dsm">Kestrel asks the service two things: is this key valid, and which models can it use. Nothing about you is sent.</p>
       {% if connect_result %}{% with r = connect_result, testid = 'ob-connect-message' %}{% include "partials/onboarding_connect_result.html" %}{% endwith %}{% endif %}
     </form>
+    {% endcall %}
   </section>
   {% endif %}
 

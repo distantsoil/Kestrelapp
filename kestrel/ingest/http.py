@@ -9,8 +9,11 @@ import ipaddress
 import socket
 import time
 import urllib.robotparser
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
+import httpcore
 import httpx
 
 from kestrel.errors import RobotsDisallowed
@@ -50,9 +53,11 @@ def _is_public(addr: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-async def assert_public_url(url: str) -> None:
+async def assert_public_url(url: str) -> list[str]:
     """Refuse a user-supplied URL unless it is http(s) and EVERY address its host resolves to is
-    public. Call it again for each redirect hop. Raises UnsafeURLError (plain message)."""
+    public. Call it again for each redirect hop. Raises UnsafeURLError (plain message). Returns
+    the addresses it checked, so the caller can connect to one of THOSE (a second lookup at
+    connect time could answer a private address: DNS rebinding, D-SEC-10)."""
     parts = urlparse(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise UnsafeURLError("The link must start with http:// or https://")
@@ -64,6 +69,87 @@ async def assert_public_url(url: str) -> None:
         raise UnsafeURLError("Kestrel could not find that address") from exc
     if not addrs or not all(_is_public(a) for a in addrs):
         raise UnsafeURLError(UNSAFE_MSG)
+    return addrs
+
+
+def _ascii_host(host: str) -> str:
+    """The host as httpx hands it to the connection: lower case, no trailing dot, and an
+    internationalized name in its ASCII (IDNA) spelling."""
+    name = host.lower().rstrip(".")
+    try:
+        return name.encode("idna").decode("ascii")
+    except UnicodeError:
+        return name
+
+
+class _PinnedBackend(httpcore.AsyncNetworkBackend):
+    """Connects `host` to one of the addresses that were already checked, never to a fresh lookup.
+    The request still names the host, so TLS verifies the certificate for it and sends it as SNI.
+
+    Every address `assert_public_url` returned was public, so each is tried in the order the
+    resolver gave them, each with the normal connect timeout: an unreachable first address (an
+    IPv6 route that does not exist) falls back to the next, as httpx's own connection does."""
+
+    def __init__(
+        self, host: str, ips: str | Sequence[str], inner: httpcore.AsyncNetworkBackend | None = None
+    ):
+        self._host = _ascii_host(host)
+        self._ips = [ips] if isinstance(ips, str) else list(ips)
+        # Any: httpcore's AnyIOBackend is a try/except import, which a type checker reads as a
+        # stub class without the backend methods.
+        self._wrapped: Any = inner if inner is not None else httpcore.AnyIOBackend()
+
+    async def connect_tcp(self, host, port, **kwargs):
+        # kwargs: timeout, local_address, socket_options, passed through as httpcore gives them.
+        if _ascii_host(str(host)) != self._host:
+            raise httpcore.ConnectError("refused a connection to a host that was not checked")
+        last: Exception | None = None
+        for ip in self._ips:
+            try:
+                return await self._wrapped.connect_tcp(ip, port, **kwargs)
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last = exc
+        raise last or httpcore.ConnectError("no checked address to connect to")
+
+    async def connect_unix_socket(self, path, **kwargs):
+        raise httpcore.ConnectError("refused a connection that was not checked")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._wrapped.sleep(seconds)
+
+
+class _PinnedTransport(httpx.AsyncHTTPTransport):
+    """httpx's own transport with its connection pool replaced by one that uses `_PinnedBackend`."""
+
+    def __init__(self, backend: httpcore.AsyncNetworkBackend) -> None:
+        super().__init__()
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=httpx.create_ssl_context(), max_connections=1, network_backend=backend,
+        )
+
+
+def _proxied(url: str) -> bool:
+    """Whether httpx itself would send this URL through a proxy: the same decision as its own
+    client (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY and NO_PROXY, plus whatever
+    `urllib.request.getproxies` reads from the Windows registry or macOS settings), because the
+    unpinned client is the one that would do it.
+
+    A proxy resolves the name itself, so the address Kestrel checked cannot be pinned: the check
+    is advisory then, and the request goes through the proxy as the person configured (D-SEC-10).
+    When httpx would NOT use a proxy (none set, NO_PROXY matches, or a system setting that only
+    names another scheme), the request is NOT handed to the unpinned client: it stays a direct,
+    pinned connection to a checked address."""
+    from httpx._utils import URLPattern, get_environment_proxies  # private: a test pins both
+
+    target = httpx.URL(url)
+    mounts = sorted(
+        ((URLPattern(k), v) for k, v in get_environment_proxies().items()),
+        key=lambda item: item[0].priority,
+    )
+    for pattern, proxy in mounts:
+        if pattern.matches(target):
+            return proxy is not None
+    return False
 
 
 def _literal_ip(host: str) -> bool:
@@ -236,24 +322,39 @@ class HttpClient:
         most MAX_PUBLIC_BYTES, and (when `follow`) vet and follow each redirect by hand."""
         current = url
         for _ in range(MAX_PUBLIC_HOPS + 1):
-            await assert_public_url(current)
-            async with self._client.stream(
-                method, current, headers=headers, json=json, follow_redirects=False,
-                timeout=PUBLIC_TIMEOUT_S,
-            ) as resp:
-                body = bytearray()
-                async for chunk in resp.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_PUBLIC_BYTES:
-                        raise UnsafeURLError(TOO_BIG_MSG)
-                # The body is already decoded, so the encoding and length headers no longer apply.
-                kept = [
-                    (k, v) for k, v in resp.headers.items()
-                    if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
-                ]
-                out = httpx.Response(
-                    resp.status_code, headers=kept, content=bytes(body), request=resp.request,
+            addrs = await assert_public_url(current)
+            host = urlparse(current).hostname or ""
+            pinned = None if _proxied(current) else _PinnedTransport(_PinnedBackend(host, addrs))
+            client = (
+                self._client if pinned is None
+                else httpx.AsyncClient(
+                    transport=pinned, headers={"User-Agent": self.user_agent},
+                    timeout=PUBLIC_TIMEOUT_S, follow_redirects=False,
                 )
+            )
+            try:
+                async with client.stream(
+                    method, current, headers=headers, json=json, follow_redirects=False,
+                    timeout=PUBLIC_TIMEOUT_S,
+                ) as resp:
+                    body = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_PUBLIC_BYTES:
+                            raise UnsafeURLError(TOO_BIG_MSG)
+                    # The body is already decoded, so the encoding and length headers no longer
+                    # apply.
+                    kept = [
+                        (k, v) for k, v in resp.headers.items()
+                        if k.lower()
+                        not in ("content-encoding", "content-length", "transfer-encoding")
+                    ]
+                    out = httpx.Response(
+                        resp.status_code, headers=kept, content=bytes(body), request=resp.request,
+                    )
+            finally:
+                if pinned is not None:
+                    await client.aclose()
             if follow and out.is_redirect and out.headers.get("location"):
                 current = urljoin(current, out.headers["location"])
                 method, json = "GET", None

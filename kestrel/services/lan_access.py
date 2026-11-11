@@ -66,7 +66,8 @@ def _read_text() -> str:
     try:
         return Path(str(source)).read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise LanAccessError(f"settings.yml could not be read: {type(exc).__name__}.") from exc
+        log.warning("settings_read_failed", error_type=type(exc).__name__)
+        raise LanAccessError("settings.yml could not be read.") from exc
 
 
 def _edit(text: str, value: bool) -> str:
@@ -168,7 +169,7 @@ def set_bind_all(value: bool) -> Path:
         tmp.unlink(missing_ok=True)
         log.warning("settings_write_failed", error_type=type(exc).__name__)
         raise LanAccessError(
-            f"settings.yml could not be written ({type(exc).__name__}). Nothing was changed."
+            "settings.yml could not be written. Nothing was changed."
         ) from exc
     _fsync_dir(target.parent)
     log.info("lan_bind_all_written", bind_all=value)

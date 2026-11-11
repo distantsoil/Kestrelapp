@@ -249,6 +249,7 @@ PROSE_FIELDS: dict[str, tuple[str, ...]] = {
     "engagement_outline/v2": (
         "body_md", "assumptions[]", "exclusions[]", "commercial_shape.caveat",
     ),
+    "story_consolidate/v3": ("situation", "task", "action", "result", "reflection"),
     "story_consolidate/v2": ("situation", "task", "action", "result", "reflection"),
     "mock_critique/v2": (
         "worked_well", "improvements[]", "revised_opening", "next_question_rationale",

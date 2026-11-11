@@ -136,6 +136,27 @@ html.st-rm *, html.st-rm *::before, html.st-rm *::after { animation: none !impor
 .st-keep--warn { background: var(--tint-warn); border-color: var(--tint-warn-line); }
 .st-keep--warn .k-ic { color: var(--warn); }
 
+/* Restore opt-in (D-SEC-11): the list of what the backup would set, beside the unticked box. */
+.st-rp { margin-top: 12px; }
+.st-rp__box { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px;
+  background: var(--soft); animation: st-rp-in .22s ease-out both; }
+@keyframes st-rp-in { from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; } }
+.st-rp__opt { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.st-rp__opt input { margin-top: 3px; flex: none; }
+.st-rp__opt .st-dsm { display: block; }
+.st-rp .st-rp__h { margin: 12px 0 4px; font-size: 13px; font-weight: 700; }
+.st-rp__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.st-rp__row { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
+  padding: 4px 8px; border-radius: var(--r-sm, 8px); transition: background .15s; }
+.st-rp__row.is-warn { background: var(--tint-warn); }
+.st-rp__k { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.st-rp__v { color: var(--muted); min-width: 0; overflow-wrap: anywhere; flex: 1 1 14ch; }
+.st-rp__tag { flex: none; }
+.st-rp__warn { margin: 8px 0 0; padding: 8px 10px; border-radius: var(--r-lg);
+  background: var(--tint-warn); border: 1px solid var(--tint-warn-line); }
+.st-rp__kept { margin: 10px 0 0; padding-left: 18px; }
+
 /* ----------------------------------------------------------------------- run mode cards */
 .st-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); }
 .st-mc { text-align: left; border: 1.5px solid var(--line); background: var(--paper);
@@ -356,7 +377,11 @@ html.st-rm *, html.st-rm *::before, html.st-rm *::after { animation: none !impor
   text-overflow: ellipsis; white-space: nowrap; }
 .st-map .k-ic { color: var(--muted); }
 .st-nw td, .st-nw th { white-space: nowrap; }
+.st-nw td:last-child { white-space: normal; min-width: 150px; }
 .st-nw small { display: block; color: var(--muted); font-size: 12px; }
+.st-impsec { margin-top: 14px; animation: k-fold-in .28s var(--ease) backwards; }
+.st-impsec__t { margin: 0 0 2px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.st-filewins { margin-top: 14px; cursor: pointer; align-items: flex-start; gap: 12px; }
 .st-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .st-sp { flex: 1; }
 .st-sample { margin-top: 10px; }

@@ -102,7 +102,7 @@
   {% if retry %}
   <div class="td-retry" id="td-retry" data-testid="td-retry">
     <span class="k-badge k-badge--warn">{{ icon('scan') }}</span>
-    <span class="k-grow"><b>{{ retry.n }} {{ w.role + ' needs' if retry.n == 1 else w.roles + ' need' }} another try.</b> The AI could not read its own answer. They are kept in Pipeline.</span>
+    <span class="k-grow"><b>{{ retry.n }} {{ 'item needs' if retry.n == 1 else 'items need' }} another try.</b> The AI could not read its own answer. See them on Needs another try.</span>
     <a class="k-link" href="/quarantine" data-testid="td-retry-review">Review</a>
   </div>
   {% endif %}

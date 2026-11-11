@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 
 from kestrel import paths
 from kestrel.services import backup as backup_service
+from kestrel.web.auth import LOCAL_DOWNLOAD, LOCAL_ONLY
 from kestrel.web.deps import templates
 from kestrel.web.errors import authored_error, fixed_reason
 from kestrel.web.uploads import closing_upload
@@ -41,7 +42,7 @@ async def page(request: Request):
     return templates().TemplateResponse(request, "backup.html", ctx)
 
 
-@router.get("/backup/download")
+@router.get("/backup/download", dependencies=[LOCAL_DOWNLOAD])
 async def download_backup():
     """Stream a fresh backup zip. The build (migrations + zip) is file I/O, so it runs in a
     thread; the temp copy is deleted after the bytes have gone out."""
@@ -64,7 +65,7 @@ async def download_backup():
     )
 
 
-@router.get("/backup/export-profile")
+@router.get("/backup/export-profile", dependencies=[LOCAL_DOWNLOAD])
 async def export_profile():
     """Just profile.yml. There is no separate service for the document masters, so the profile
     goes alone; the masters travel inside the full backup's database."""
@@ -78,7 +79,7 @@ async def export_profile():
     return FileResponse(p, media_type="application/yaml", filename=backup_service.PROFILE_NAME)
 
 
-@router.post("/backup/import-profile", response_class=HTMLResponse)
+@router.post("/backup/import-profile", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def import_profile(request: Request):
     """Accept a profile.yml upload. A refused file leaves the previous profile untouched and
     comes back as a readable message in the page (HTMX swaps a 200 fragment; a 4xx would be

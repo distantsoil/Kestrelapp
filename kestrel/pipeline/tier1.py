@@ -52,6 +52,7 @@ async def handle_t1(
     online_approval: dict | None = None,
     lane_local_only: bool = False,
     score_stub: bool = False,
+    t2_carry: dict | None = None,
 ) -> HandlerOutcome:
     """`model_override` is set on a score-again task run on another model this time only
     (D-UI-50): `settings` already carry it for Tier 1, and the Tier 2 task enqueued here carries
@@ -84,6 +85,10 @@ async def handle_t1(
         t2_extra = {**(t2_extra or {}), "lane_local_only": True}
     if online_approval is not None:
         t2_extra = {**(t2_extra or {}), "online_approval": dict(online_approval)}
+    if t2_carry:
+        # Payload keys of the operator's confirmation that only Tier 2 checks (D-SCORE-3), handed
+        # on unread: Tier 1 itself never reads them.
+        t2_extra = {**(t2_extra or {}), **t2_carry}
     if rescore:
         # The Tier 2 step of an operator's Score again is requested too (finding 10).
         #

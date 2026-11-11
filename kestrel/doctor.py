@@ -70,11 +70,14 @@ class DoctorReport:
 
 # ------------------------------------------------------------------------------- budget math
 def input_budget(tier: str, s: Settings) -> int:
+    from kestrel.pipeline.context import OPERATOR_CORRECTIONS_MAX_TOKENS as facts
+
     jd = s.pipeline.max_jd_tokens
+    # tier2 and tier3 carry the operator's stated facts block (SPEC.md 8.2, D-SCORE-1).
     return {
         "tier1": 1200 + 400 + 400,
-        "tier2": jd + 2500 + 1500 + 1000,
-        "tier3": jd + 2500 + 2000 + 1000,
+        "tier2": jd + 2500 + 1500 + facts + 1000,
+        "tier3": jd + 2500 + 2000 + facts + 1000,
         "docsel": 2000 + 1500 + 500,
         "trigger": 1500 + 400,
     }[tier]
@@ -350,11 +353,14 @@ def _check_needle(rep: DoctorReport, client: OllamaClient, s: Settings, present:
                         "verified",
                         _NOT_READY)
             elif len(out) >= NEEDLE_REPLY_TOKENS * 3:
-                # About the whole budget used and no code in it: the reply was cut off (a model
-                # that talks first), which says nothing about its context window.
+                # About the whole budget used and no code in it: the model answered at length
+                # (a model that talks first), which says nothing about its context window, and
+                # waiting will not change it (#109).
                 rep.add(f"needle {model}", WARN,
-                        f"filled ~{budget} tok; the reply was cut off before the code; context "
-                        "not verified", _NOT_READY)
+                        f"filled ~{budget} tok; the model answered at length instead of repeating "
+                        "the code; context not verified",
+                        "the model talks before it answers; use an instruct build that answers "
+                        "briefly (not a thinking build), then run the check again")
             else:
                 rep.add(
                     f"needle {model}", FAIL,
@@ -910,7 +916,7 @@ def _check_ingest_contact(rep: DoctorReport, s: Settings) -> None:
 _ATS_KINDS = (
     "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp", "paylocity",
     "workable", "recruitee", "teamtailor",
-    "personio", "breezy",
+    "personio", "breezy", "jobvite",
 )
 
 

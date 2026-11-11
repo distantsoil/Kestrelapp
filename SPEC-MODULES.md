@@ -687,7 +687,41 @@ render-dependent parts of a detached row and keep the learning signal.
 
 **`label`** — an explicit gold judgment, usually from the active-learning queue.
 `id`, `opportunity_id`, `track`, `score`, `verdict`, `dimensions` json nullable, `rationale`,
-`source` (`active_learning` | `manual` | `derived_from_outcome`), `created_at`.
+`source` (`active_learning` | `manual` | `quick` | `derived_from_outcome`), `created_at`.
+A `quick` label is one answer from a Quick round (§5.5, D-LEARN-2): Top pick stores score 5, Yes
+score 4, Not for me score 2, and the verdict is derived from that score exactly as for a Detailed
+rating. "Not sure" stores nothing. Quick labels count fully toward the 15, 30 and 200 thresholds and
+the sidebar count; the separate source exists so they can be weighted or filtered later without a
+migration. Undo deletes the row.
+
+**`requirement_correction`** — the operator corrects one thing a posting asks for (D-LEARN-3,
+D-UI-290). `id`, `track`, `opportunity_id`, `evaluation_id`, `requirement_text`, `requirement_hash`
+(normalized text, so a rescore that reorders rows still finds it: lowercase, letters and digits of
+any script plus `+` and `#` kept, everything else one space, so C++, C# and C stay apart, D-LEARN-11), `kestrel_state` and
+`operator_state` (`met` | `part` | `gap`), `reason` (`overstated` | `not_me` | `misread` | `all` |
+`some` | `none` | `agree`; the one-click answers map to `all`, `some`, `none`; `agree` is "It's a
+fair gap", confirming Kestrel's state), `scope` (`person` for every reason but `misread`, which is `posting`),
+`note` nullable, `story_id` nullable (FK ON DELETE SET NULL), `basis` (`quoted` | `inferred` |
+`none`), `agrees_now` bool, `archived_at` nullable, `story_deleted_at` nullable (set when the
+linked story is deleted, D-LEARN-5), `created_at`, `updated_at`. A `person` row
+applies to every role on its track whose requirement has the same `requirement_hash` (exact
+normalized match; the rescore offer uses the same match, listing the roles first) and is listed in
+Profile › Corrections; at most one `person` row per (`track`, `requirement_hash`), and a newer
+answer replaces the older. A `posting` row applies to its role only and is archived, never deleted,
+when the requirement leaves that posting; a `person` row is never archived by one posting. "Counts on
+N roles" is computed live: open (not archived) opportunities on the track whose latest evaluation
+has that hash. Rows persist across rescores: when the new read agrees, `agrees_now` is set; when it
+disagrees, the operator's state wins. If the linked story is deleted, a Met from `all` or `some`
+stops applying (the row falls back to Kestrel's state) and Profile › Corrections shows "The story
+behind this was deleted". Removing a row deletes it, with Undo. Corrections are not `label` rows:
+they do not count toward the 15, 30 or 200 thresholds or the Calibrate learning history, and they
+never change a Tier 0 or Tier 1 keep or kill (hard rule 4). A role's scoring prompt states only its
+own `posting` rows and the `person` rows whose hash is among its latest read's requirements (before
+its first read, whose requirement text appears on whole words in its description, D-SCORE-7), never
+every `person` row on the track (PROMPTS.md P2, D-SCORE-1), and the read records which corrections
+it stated (`evaluation.correction_ids`), so its score reads as older exactly when that set changed
+(D-SCORE-4). When a correction or its note is part of what an online model receives, the consent
+dialog lists it, every line, never cut.
 
 **`outcome`** — what actually happened. `id`, `pursuit_id`, `opportunity_id`, `final_status`,
 `furthest_stage`, `days_to_first_response` nullable, `rejection_reason`, `operator_retrospective`,
@@ -839,6 +873,14 @@ only after the operator has rated, so the rating is not anchored on the model's 
 an optional "Tell Kestrel why" captures reasons and per-dimension nudges, and Skip is available.
 Target under 30 seconds per item. Ten minutes a week meaningfully improves everything downstream.
 
+**Quick round (issue 171, D-UI-272, D-LEARN-2).** The same ranking also feeds an optional round of
+up to ten roles, one card at a time, answered yes or no from the title, organization, place, work
+style, pay and age alone (Top pick, Yes, Not for me, Not sure). Kestrel's score is neither shown nor
+computed for the round, nothing is sent anywhere and no model is called. Each answer is saved at
+once as a `quick` label (§5.1); Not sure saves nothing, so the role stays in the queue. A finished
+round offers "Keep going: 10 more", so a round can continue past ten. The ranking, the thresholds and
+the Detailed rating card are unchanged.
+
 The gold set used by `bench` is **regenerated from these labels** once there are enough, so
 model comparison is measured against the operator's real judgment rather than synthetic
 placeholders.
@@ -869,7 +911,13 @@ point of collecting it.
 Every prompt is a versioned file. `evaluation.prompt_version` records what produced each result.
 `bench` accepts a prompt version so two versions can be compared on the same gold set with the
 same model, **changing exactly one variable**. Results from a superseded version carry a subtle
-marker in the UI so stale scores are visible.
+marker in the UI so stale scores are visible. One exception (D-SCORE-4): an `evaluate/v2` or
+`evaluate_consulting/v2` result is current under v3 unless a correction bears on its role (a
+`posting` row on it, or a `person` row about a requirement it asks for, within the set the scoring
+prompt would state), since v3 differs from v2 only by that block. A current-version result is
+marked when a correction bearing on its role was added or changed after it was scored. The
+Pipeline row, its panel, the role page and the rescore offers all use the one rule
+(`kestrel/learning/score_age.py`).
 
 ---
 
@@ -974,6 +1022,24 @@ source, and current pipeline age with stale items flagged.
 **Exports (D-UI-101).** An Export menu offers the summary and charts as a PDF, all numbers as a
 CSV, and every application with its history as a CSV. Files are written locally through the Save
 dialog; nothing is sent. This is new scope recorded in the private decision log.
+
+**Work search log (D-EXPORT-1).** Applications (employment track) has an "Export work search log"
+button that opens a sheet: a date range (quick picks This week, Last week and This month, each
+Monday to Sunday, or a custom From and To) and a live line "12 applications, May 4 to May 10"
+that counts what the file will hold. The CSV is served at `/analytics/export/work-search-log.csv`
+(`from`, `to` as YYYY-MM-DD) and is local only (D-SEC-9). Columns: Role, Company, Applied. A row is a
+pursuit whose status is in `APPLIED_OR_LATER` and whose `applied_at` falls in the range (a date
+given when the application was logged after the fact counts, as it is the stored date); the
+current status never filters, so rejected, withdrawn, ghosted, accepted and closed-posting roles
+all stay. The title and company are read from the stored role, never a live page. One row per
+application. A shortlisted or researching role is not an application and never appears. A pursuit
+in an applied-or-later status with no applied date, other than one closed straight from
+shortlisted, is listed after a "Date unknown" line instead of being dropped; the sheet counts it
+separately. The Remotive rule (D-SRC-19) applies as for the other exports. Confidential mode
+redacts the current employer; with no employer set the export is not held (unlike the other
+exports), and the sheet shows a warning so the person chooses. The file count always equals the
+count shown. No rates are computed. Address, link, method and result columns, and a PDF, are
+deferred (owner decision on issue 136).
 
 **The honest summary.** Titled "Summary" on the page, with a Rewrite summary button and an
 "Updated" time. A short generated narrative at the top: what is working, what is not,

@@ -113,7 +113,7 @@ def test_plain_error_never_carries_a_path():
     assert SECRET_PATH not in plain_error(OSError(5, "I/O error", SECRET_PATH))
     assert SECRET_PATH not in plain_error(RuntimeError(SECRET_PATH))
     assert plain_error(RuntimeError(SECRET_PATH)) == (
-        "an unexpected problem (RuntimeError); the details are in the log"
+        "an unexpected problem; the details are in the log"
     )
 
 

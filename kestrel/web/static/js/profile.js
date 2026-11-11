@@ -487,6 +487,244 @@
     if (root.KUI && root.KUI.closeModal) root.KUI.closeModal();
   }
 
+  /* ----------------------------------------------------------------------------- corrections
+     Profile > Corrections (D-UI-291). The cards are server-rendered; this opens the pencil panel,
+     filters as you type, folds a removed card away before its request, and shows the toast with
+     Undo. Undo posts the exact snapshot the server gave and puts the answer back in its place.
+     Nothing here sends anything online: a rescore only ever opens /rescore/choose. */
+  function crReduced() {
+    return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches) ||
+      doc.documentElement.getAttribute('data-reduce-motion') === '1';
+  }
+  function crList() { return doc.getElementById('pf-cr-list'); }
+  function crCards() {
+    var l = crList();
+    return l ? Array.prototype.slice.call(l.querySelectorAll(':scope > .pf-cr')) : [];
+  }
+  // Fold a card's height away (hide) or back (show). Reduced motion is instant.
+  function crFold(card, hide, done) {
+    if (crReduced()) {
+      if (!done) card.classList.toggle('is-filtered', hide);
+      else if (!hide) card.classList.remove('is-filtered', 'is-in');
+      if (done) done();
+      return;
+    }
+    card.classList.add('is-folding');
+    var end = function () {
+      card.classList.remove('is-folding');
+      if (!hide) card.style.maxHeight = '';
+      if (done) done();
+    };
+    if (hide) {
+      card.style.maxHeight = card.offsetHeight + 'px';
+      void card.offsetWidth;
+      card.classList.add(done ? 'is-out' : 'is-filtered');
+      cx.after(420, end);
+    } else {
+      card.classList.remove('is-filtered', 'is-in');
+      card.style.maxHeight = card.scrollHeight + 'px';
+      cx.after(420, end);
+    }
+  }
+  function crSync() {
+    var wrap = doc.getElementById('pf-corrections');
+    if (!wrap) return;
+    var cards = crCards();
+    var shown = cards.filter(function (c) { return !c.classList.contains('is-filtered'); }).length;
+    var none = doc.getElementById('pf-cr-none');
+    var nomatch = doc.getElementById('pf-cr-nomatch');
+    var q = doc.getElementById('pf-crq');
+    if (none) none.hidden = cards.length > 0;
+    if (nomatch) nomatch.hidden = !(cards.length > 0 && shown === 0);
+    var qn = doc.querySelector('[data-pf-cr-q]');
+    if (qn && q) qn.textContent = q.value.trim();
+    wrap.setAttribute('data-pf-cr-total', String(cards.length));
+    var tab = doc.querySelector('.pf-tabs a[data-tab="corrections"]');
+    if (tab) {
+      var b = tab.querySelector('.pf-tabs__n');
+      if (cards.length && !b) {
+        b = doc.createElement('b');
+        b.className = 'pf-tabs__n';
+        b.setAttribute('data-testid', 'pf-corr-n');
+        tab.appendChild(b);
+      }
+      if (b && !cards.length) b.parentNode.removeChild(b);
+      else if (b) b.textContent = String(cards.length);
+      var tabs = doc.querySelector('.pf-tabs');
+      if (tabs && root.KUI) root.KUI.ink(tabs);
+    }
+  }
+  function crApplyFilter(animate) {
+    var q = doc.getElementById('pf-crq');
+    var words = (q ? q.value : '').toLowerCase().split(/\s+/).filter(Boolean);
+    crCards().forEach(function (card) {
+      var hay = card.getAttribute('data-hay') || '';
+      var match = words.every(function (w) { return hay.indexOf(w) >= 0; });
+      var off = card.classList.contains('is-filtered');
+      if (match && off) {
+        if (animate) crFold(card, false); else card.classList.remove('is-filtered');
+      } else if (!match && !off) {
+        if (animate) crFold(card, true); else card.classList.add('is-filtered');
+      }
+    });
+    crSync();
+  }
+  function onCrInput(e) {
+    if (e.target && e.target.matches && e.target.matches('[data-pf-cr-search]')) crApplyFilter(true);
+  }
+  function onCrSubmit(e) {
+    if (e.target && e.target.matches && e.target.matches('[data-pf-cr-searchform]')) e.preventDefault();
+  }
+  function crOpenPanel(card, on) {
+    var pen = card.querySelector('[data-pf-cr-edit]');
+    card.classList.toggle('is-open', on);
+    if (pen) pen.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (on) {
+      var first = card.querySelector('.pf-cr__chip input:checked') ||
+        card.querySelector('.pf-cr__chip input');
+      if (first) first.focus({ preventScroll: true });
+    } else {
+      var f = card.querySelector('[data-pf-cr-form]');
+      if (f) f.reset();   // an edit that was not saved is dropped
+      if (pen && card.contains(doc.activeElement)) pen.focus({ preventScroll: true });
+    }
+  }
+  function crCloseOthers(except) {
+    crCards().forEach(function (c) {
+      if (c !== except && c.classList.contains('is-open')) crOpenPanel(c, false);
+    });
+  }
+  function crRemoveFail(btn) {
+    var card = btn.closest('.pf-cr');
+    if (!card) return;
+    card.classList.remove('is-out');
+    card.style.maxHeight = '';
+    if (root.KUI && root.KUI.toast) root.KUI.toast('Could not remove it. Nothing changed.', { tone: 'warn' });
+  }
+  function onCrClick(e) {
+    var t = e.target;
+    if (!t.closest) return;
+    var n;
+    if ((n = t.closest('[data-pf-cr-edit]'))) {
+      var card = n.closest('.pf-cr');
+      var on = !card.classList.contains('is-open');
+      if (on) crCloseOthers(card);
+      crOpenPanel(card, on);
+      return;
+    }
+    if ((n = t.closest('[data-pf-cr-cancel]'))) { crOpenPanel(n.closest('.pf-cr'), false); return; }
+    if ((n = t.closest('[data-pf-cr-remove]'))) {
+      // Fold the card away first, then send the request; a failure unfolds it again.
+      var c2 = n.closest('.pf-cr');
+      c2.classList.remove('is-open');
+      crFold(c2, true, function () { if (root.htmx) root.htmx.trigger(n, 'pf-go'); });
+      return;
+    }
+    if ((n = t.closest('[data-pf-cr-dismiss]'))) {
+      var strip = n.closest('.pf-cr-offer');
+      if (!strip) return;
+      strip.classList.add('is-leaving');
+      cx.after(crReduced() ? 0 : 320, function () {
+        if (strip.parentNode) strip.parentNode.removeChild(strip);
+      });
+    }
+  }
+  function onCrKey(e) {
+    if (e.key !== 'Escape' || !e.target.closest) return;
+    var card = e.target.closest('.pf-cr.is-open');
+    if (card) { e.stopPropagation(); crOpenPanel(card, false); }
+  }
+  /* A Save replaces the whole card, and htmx gives focus back only to an element with an id: the
+     keyboard would fall to the page. The card that had it gets it back on its pencil. */
+  var crFocus = '';
+  function onCrBefore(e) {
+    var t = e.detail && e.detail.target;
+    if (!t || !t.classList || !t.classList.contains('pf-cr')) return;
+    var a = doc.activeElement;
+    crFocus = a && t.contains(a) && !(a.matches && a.matches('[data-pf-cr-remove]')) ? t.id : '';
+  }
+  function crRefocus() {
+    if (!crFocus) return;
+    var card = doc.getElementById(crFocus), pen = card && card.querySelector('[data-pf-cr-edit]');
+    crFocus = '';
+    if (pen) pen.focus({ preventScroll: true });
+  }
+  function onCrError(e) {
+    var elt = e.detail && e.detail.elt;
+    if (!elt || !elt.matches) return;
+    if (elt.matches('[data-pf-cr-remove]')) crRemoveFail(elt);
+    else if (elt.matches('[data-pf-cr-form]')) {
+      var xhr = e.detail && e.detail.xhr;
+      say((xhr && xhr.responseText && xhr.responseText.length < 200 && xhr.responseText) ||
+        'Could not save. Nothing changed.');
+    }
+  }
+  // A card from Undo goes back where it was: newest first, then by id.
+  function crPlace(html) {
+    var parsed = new root.DOMParser().parseFromString(html, 'text/html').querySelector('.pf-cr');
+    var list = crList();
+    if (!parsed || !list) return false;
+    var node = doc.importNode(parsed, true);
+    var id = node.getAttribute('data-cr-id');
+    var old = doc.getElementById('pf-cr-' + id);
+    if (old) {
+      old.parentNode.replaceChild(node, old);
+      if (root.htmx) root.htmx.process(node);
+      crApplyFilter(false);
+      if (root.KUI) root.KUI.saved(node, { tick: false });
+      return true;
+    }
+    var key = node.getAttribute('data-updated') || '';
+    var before = null;
+    crCards().some(function (c) {
+      var k = c.getAttribute('data-updated') || '';
+      var cid = Number(c.getAttribute('data-cr-id'));
+      if (k < key || (k === key && cid < Number(id))) { before = c; return true; }
+      return false;
+    });
+    var fold = !crReduced();
+    if (fold) node.classList.add('is-in');
+    list.insertBefore(node, before);
+    if (root.htmx) root.htmx.process(node);
+    crApplyFilter(false);
+    if (fold && !node.classList.contains('is-filtered')) {
+      void node.offsetWidth;
+      crFold(node, false);
+      if (root.KUI) root.KUI.arrive(node);
+    } else node.classList.remove('is-in');
+    return true;
+  }
+  var crToast = null;
+  function crUndo(d) {
+    var body = new root.URLSearchParams();
+    body.set('undo', d.undo || '');
+    body.set('stamp', d.stamp || '');
+    root.fetch(d.undoUrl, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+    }).then(function (r) {
+      return r.text().then(function (t) { return { ok: r.ok, text: t }; });
+    }).then(function (res) {
+      if (!res.ok) { say(res.text.indexOf('Undo is no longer') === 0 ? res.text : UNDO_CORR); return; }
+      var offer = doc.querySelector('.pf-cr-offer');
+      if (offer && offer.parentNode) offer.parentNode.removeChild(offer);
+      crPlace(res.text);
+      crSync();
+      if (root.KUI && root.KUI.toast) root.KUI.toast('Undone. It is back as it was.');
+    }).catch(function () { say(UNDO_CORR); });
+  }
+  var UNDO_CORR = 'Could not undo. Nothing changed.';
+  function onCrSaved(e) {
+    var d = e.detail || {};
+    if (!root.KUI || !root.KUI.toast) return;
+    if (crToast) crToast.dismiss();
+    crToast = root.KUI.toast(d.message || 'Saved', { undo: function () { crUndo(d); } });
+    crToast.el.setAttribute('data-testid', 'pf-cr-toast');
+    var card = d.id ? doc.getElementById('pf-cr-' + d.id) : null;
+    if (card && d.kind === 'change') root.KUI.saved(card, { tick: false });
+    crSync();
+  }
+
   /* Leaving the page with unsaved changes is held like a tab switch (owner round 13): any link
      to another page (the sidebar, a card, the command palette) nudges the Save bar instead. The
      guard is window.kLeaveGuard while the page is mounted, and released at unmount. */
@@ -659,6 +897,18 @@
     ctx.on(doc, 'change', onCustomAccent, true);
     ctx.on(doc, 'pf-saved', onSaved);
     ctx.on(doc, 'htmx:afterRequest', onStorySaved);
+    ctx.on(doc, 'click', onCrClick);
+    ctx.on(doc, 'input', onCrInput);
+    ctx.on(doc, 'submit', onCrSubmit);
+    ctx.on(doc, 'keydown', onCrKey);
+    ctx.on(doc, 'pf-corr-saved', onCrSaved);
+    ctx.on(doc, 'htmx:afterSettle', crSync);
+    ctx.on(doc, 'htmx:beforeSwap', onCrBefore);
+    ctx.on(doc, 'htmx:afterSettle', crRefocus);
+    ctx.on(doc, 'htmx:responseError', onCrError);
+    ctx.on(doc, 'htmx:sendError', onCrError);
+    crToast = null;
+    crApplyFilter(false);
     root.kLeaveGuard = leaveGuard;
     ctx.onUnmount(function () { if (root.kLeaveGuard === leaveGuard) delete root.kLeaveGuard; });
     ctx.on(doc, 'click', onLeaveClick, true);

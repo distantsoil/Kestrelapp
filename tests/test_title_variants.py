@@ -194,6 +194,23 @@ def test_every_title_gets_its_expansion_before_any_title_gets_a_third_phrasing()
     assert [k for _, _, k in got].count("family") == 0
 
 
+ELEVEN = ["Director of Information Technology", "Head of IT", "CIO",
+          "Director of IT Infrastructure", "VP of IT Operations", "Senior Director of IT",
+          "Director of Technology", "IT Director", "Head of Technology",
+          "Sr Director of Engineering", "Director of Enterprise Applications"]
+
+
+def test_eleven_titles_search_the_spelled_out_vice_president_and_senior_director():
+    """#133 owner feedback: with 11 titles the late ones (positions 5 and 6) still get their
+    spelled-out form searched, and so does an accepted suggestion added last."""
+    used = gen.plan({"employment": _emp(ELEVEN, metros=2)}, ("employment",), None)[1]
+    assert "Vice President of IT Operations" in used
+    assert "Senior Director of Information Technology" in used
+    # An accepted suggestion lands at the end of the list; under the cap it is still searched.
+    more = [*ELEVEN[:4], "VP of QA"]
+    assert "Vice President of QA" in gen.title_variants(more)
+
+
 def _seed_suggestion(title):
     from kestrel.db.engine import forget_engine, get_sessionmaker
     from kestrel.services.title_suggest import TitleSuggestion

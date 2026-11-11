@@ -53,16 +53,16 @@ class AdpAdapter:
 
     def validate_config(self, config: dict) -> None:
         cid = config.get("cid")
-        if not isinstance(cid, str) or not _CID.match(cid):
+        if not isinstance(cid, str) or not _CID.fullmatch(cid):
             raise SourceConfigError(
                 "adp source requires a 'cid' (the employer UUID in the career-center link: "
                 "workforcenow.adp.com/.../recruitment.html?cid={cid})"
             )
         cc_id = config.get("cc_id")
-        if cc_id is not None and not (isinstance(cc_id, str) and _CC_ID.match(cc_id)):
+        if cc_id is not None and not (isinstance(cc_id, str) and _CC_ID.fullmatch(cc_id)):
             raise SourceConfigError("adp 'cc_id' must be the ccId from the career-center link")
         lang = config.get("lang")
-        if lang is not None and not (isinstance(lang, str) and _LANG.match(lang)):
+        if lang is not None and not (isinstance(lang, str) and _LANG.fullmatch(lang)):
             raise SourceConfigError("adp 'lang' must look like en_US")
         max_results = config.get("max_results")
         if max_results is not None and (

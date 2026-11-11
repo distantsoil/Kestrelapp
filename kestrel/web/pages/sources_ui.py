@@ -68,7 +68,7 @@ TYPES = {  # the tile per type, in order: (key, title, plain line)
     ],
 }
 SUPPORTED = ("Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP, Paylocity, "
-             "Workable, Recruitee, Teamtailor, Personio and Breezy HR")
+             "Workable, Recruitee, Teamtailor, Personio, Breezy HR and Jobvite")
 # Boards the sheet offers: (jobspy site, label, why it is limited or "")
 BOARDS = (
     ("indeed", "Indeed", ""), ("glassdoor", "Glassdoor", ""),
@@ -95,10 +95,12 @@ REMOTE_BOARDS = (
     ("arbeitnow", "Arbeitnow", "Whole feed"),
     ("jobicy", "Jobicy", "Whole feed, with pay when the feed has it"),
     ("remotive", "Remotive", "Whole feed, up to 4 checks a day"),
+    ("fourdayweek", "4 Day Week", "Four-day and reduced-hour employers"),
+    ("hn_hiring", "Hacker News", "This month's Who is hiring? thread"),
 )
 # Every board the sheet adds as its own source, beside the JobSpy ones.
 EXTRA_BOARDS = ("usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "jobicy",
-                "remotive")
+                "remotive", "fourdayweek", "hn_hiring")
 EXTRAS_ONLY = "extras"  # a sheet add whose boards all have a source of their own
 DICE = ("Dice", "Dice has no public feed Kestrel can read yet, so it cannot be added.")
 INDEED_FILTERS = ("hours", "type", "remote", "easy", "none")
@@ -327,7 +329,7 @@ async def _existing(session, spec: dict) -> Source | None:
                 return row
         return None
     if spec["kind"] in ("usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow",
-                        "jobicy", "remotive"):
+                        "jobicy", "remotive", "fourdayweek", "hn_hiring"):
         cfg = spec["config"]
         want = (str(cfg.get("keyword") or "").lower(), str(cfg.get("location") or "").lower())
         for row in (await session.execute(
@@ -401,9 +403,11 @@ def _extra_spec(name: str, track: str, title: str, place: str, base: dict) -> di
         config["location"] = place
     label = {"usajobs": "USAJobs", "adzuna": "Adzuna", "himalayas": "Himalayas",
              "weworkremotely": "We Work Remotely", "arbeitnow": "Arbeitnow",
-             "jobicy": "Jobicy", "remotive": "Remotive"}[name]
+             "jobicy": "Jobicy", "remotive": "Remotive",
+             "fourdayweek": "4 Day Week", "hn_hiring": "Hacker News"}[name]
     # The whole feed: no search to name.
-    if name in ("weworkremotely", "arbeitnow", "jobicy", "remotive"):
+    if name in ("weworkremotely", "arbeitnow", "jobicy", "remotive", "fourdayweek",
+                "hn_hiring"):
         return {"track": track, "kind": name, "name": label, "config": {}}
     shown = f"{title} on {label}" + (f" in {place}" if place and "location" in config else "")
     return {"track": track, "kind": name, "name": shown[:MAX_FIELD], "config": config}

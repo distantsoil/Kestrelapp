@@ -29,6 +29,12 @@ def _session(tmp_path: Path, body: str, *extra: str) -> subprocess.CompletedProc
         str(ROOT / "pyproject.toml"),
         "--rootdir",
         str(tmp_path),
+        # confcutdir defaults to the ini file's parent (the repo root). The session then
+        # collects every ancestor of the test file up to that root, which for a temp-dir
+        # session is the whole %TEMP% tree; under load a sibling test deleting a temp dir
+        # mid-scan makes that stat fail and the inner session dies at collection.
+        "--confcutdir",
+        str(tmp_path),
         *extra,
         str(tmp_path / "test_broken.py"),
     ]
@@ -98,6 +104,7 @@ def test_a_timeout_under_xdist_fails_that_test_and_the_worker_lives_on(tmp_path)
     cmd = [
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
         "-c", str(ROOT / "pyproject.toml"), "--rootdir", str(tmp_path),
+        "--confcutdir", str(tmp_path),
         "-n", "1", "-o", "timeout=2", str(tmp_path / "test_slow.py"),
     ]
     proc = subprocess.run(

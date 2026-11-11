@@ -496,8 +496,8 @@ def test_the_retry_note_shows_only_when_a_role_needs_another_try():
         body = c.get("/").text
         first = c.get("/?tour=1").text
     note = body.split('data-testid="td-retry"')[1].split("</div>")[0]
-    assert "1 role needs another try." in note
-    assert "The AI could not read its own answer. They are kept in Pipeline." in note
+    assert "1 item needs another try." in note
+    assert "The AI could not read its own answer. See them on Needs another try." in note
     assert 'href="/quarantine"' in note and ">Review<" in note
     # The first-run Today (here, the walkthrough replay) shows no retry note.
     assert 'data-testid="td-retry"' not in first
@@ -514,6 +514,35 @@ def test_the_retry_note_is_hidden_on_the_first_run_whatever_is_parked():
         body = c.get("/").text
     assert 'data-first-run="1"' in body and 'data-testid="td-retry"' not in body
     assert "The AI could not read its own answer" not in body
+
+
+def test_a_story_failure_reads_as_an_item_not_a_role_on_all_three_surfaces():
+    """A failed story merge parks a quarantine row with no role (tier 8, opportunity_id None).
+    All three Today surfaces must call it an item, never a role: the rewording exists for
+    exactly this row, which has no role to point at. A failed role is a different row and the
+    existing tests already cover it; this one is the row that has none."""
+    _seed()
+
+    async def park(s):
+        s.add(Quarantine(opportunity_id=None, tier=8,
+                         error="story merge failed: the invented reason",
+                         raw_response='{"invented": "text"}'))
+
+    _db(park)
+    with _client() as c:
+        page = c.get("/").text
+        prog = c.get("/today/progress").text
+        run = c.get("/today/run").text
+
+    # The strip's retry note, on the Today page.
+    strip = page.split('data-testid="td-retry"')[1].split("</div>")[0]
+    assert "1 item needs another try." in strip
+    assert "role needs" not in strip and "roles need" not in strip
+
+    # The progress panel and the run panel each carry their own open-failed line.
+    for label, text in (("progress", prog), ("run", run)):
+        assert "1 item needs another try" in text, label
+        assert "role needs" not in text and "roles need" not in text, label
 
 
 # ----------------------------------------------------------- the Strong match cutoff
@@ -634,6 +663,28 @@ def test_a_maybe_role_counts_in_decisions_waiting_and_in_the_your_call_chip():
     with _client() as c:
         html = c.get("/today/decisions").text
     assert 'data-testid="dw-count">2<' in html
+
+
+def test_an_old_undecided_maybe_role_is_in_decisions_waiting_on_today():
+    """#129: a scored Maybe role first seen before today, with no decision, shows in Today's
+    Decisions waiting (the page, not only the query), so the card never reads "nothing is
+    waiting" while Pipeline lists it under Maybe."""
+    ids = _seed()
+
+    async def make_maybe(s):
+        ev = (await s.execute(select(Evaluation).where(
+            Evaluation.opportunity_id == ids["backlog"]))).scalar_one()
+        ev.verdict, ev.verdict_model = "consider", "consider"
+        ev.score = ev.weighted_score = 3.5
+        ev.needs_review = False
+        opp = await s.get(Opportunity, ids["backlog"])
+        opp.first_seen_at = "2020-01-01T00:00:00+00:00"
+
+    _db(make_maybe)
+    with _client() as c:
+        html = c.get("/today/decisions").text
+    assert "Nothing is waiting on you" not in html
+    assert f"/opportunities/{ids['backlog']}" in html
 
 
 def test_an_unflagged_maybe_role_needs_a_decision_on_every_surface():

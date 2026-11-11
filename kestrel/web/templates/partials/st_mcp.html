@@ -1,18 +1,20 @@
 {# Connect an AI assistant (MCP) (D-MCP-1, SPEC-INTERFACES 4): off by default. Lists every action
    the server exposes in plain words (owner decision), what it cannot do through Kestrel, and a
    plain warning that the assistant is a separate app with its own rules. #}
+{% import "partials/local_only.html" as lo with context %}
 {% import "partials/st_macros.html" as st with context %}
 <section class="k-card st-card" id="st-mcp" data-testid="st-mcp">
  <div id="mcp-switch" data-testid="mcp-switch" data-on="{{ '1' if mcp_enabled else '0' }}">
   <form hx-post="/settings/mcp" hx-target="#st-mcp" hx-swap="outerHTML" hx-trigger="change">
     {% call st.head('Connect an AI assistant (MCP)', 'plug') %}
       <span class="k-pill k-pill--good" {% if not mcp_enabled %}hidden{% endif %}>On</span>
-      <label class="k-switch st-sw"><input type="checkbox" role="switch" name="enabled" value="1" {% if mcp_enabled %}checked{% endif %} aria-label="Connect an AI assistant" data-testid="mcp-toggle"><span class="k-switch__track" aria-hidden="true"></span></label>
+      <label class="k-switch st-sw"><input type="checkbox" role="switch" name="enabled" value="1" {% if mcp_enabled %}checked{% endif %} aria-label="Connect an AI assistant" data-testid="mcp-toggle"{{ lo.dis(request) }}><span class="k-switch__track" aria-hidden="true"></span></label>
     {% endcall %}
   </form>
+  {{ lo.note(request) }}
   <p class="st-sub">Lets an AI app on this computer, such as Claude Desktop, read your roles and applications.</p>
   <p class="st-dsm" data-testid="mcp-status">{% if mcp_running %}Running on port {{ mcp_port }}{% elif mcp_enabled and not mcp_live %}On; starts with Kestrel{% elif mcp_enabled and mcp_stopped_reason %}On, stopped: {{ mcp_stopped_reason }}
-      <button type="button" class="k-btn k-btn--sm" data-testid="mcp-restart" hx-post="/settings/mcp" hx-vals='{"enabled": "1"}' hx-target="#st-mcp" hx-swap="outerHTML">Start again</button>{% elif mcp_enabled %}On, not running{% else %}Off{% endif %}</p>
+      <button type="button" class="k-btn k-btn--sm" data-testid="mcp-restart"{{ lo.dis(request) }} hx-post="/settings/mcp" hx-vals='{"enabled": "1"}' hx-target="#st-mcp" hx-swap="outerHTML">Start again</button>{% elif mcp_enabled %}On, not running{% else %}Off{% endif %}</p>
   {% if mcp_turned_off_note %}<p class="st-note st-note--bad" role="status" data-testid="mcp-turned-off">{{ mcp_turned_off_note }}</p>{% endif %}
   {% if mcp_safe_mode %}<p class="st-note st-note--bad" data-testid="mcp-safe-mode">Kestrel started with optional features off this time, so the assistant connection is not running. Restart Kestrel to turn them back on.</p>{% endif %}
   {% if mcp_message %}<p class="st-note st-note--{{ 'good' if mcp_ok else 'bad' }}" role="status" data-testid="mcp-message">{{ mcp_message }}</p>{% endif %}
@@ -45,7 +47,7 @@ Address (this computer only): {{ mcp_address.local }}{% if mcp_stopped_detail %}
 Why it stopped: {{ mcp_stopped_detail }}{% endif %}{% if mcp_bind_all and mcp_address.lan %}
 On your network: {{ mcp_address.lan }}{% endif %}</pre>
       <form class="st-port" hx-post="/settings/privacy/mcp/port" hx-target="#st-mcp" hx-swap="outerHTML" hx-trigger="change">
-        <label for="st-port-in">Change port</label><input class="k-input" id="st-port-in" name="port" inputmode="numeric" maxlength="5" value="{{ mcp_port }}" aria-label="Change port" data-testid="mcp-port"></form>
+        <label for="st-port-in">Change port</label><input class="k-input" id="st-port-in" name="port" inputmode="numeric" maxlength="5" value="{{ mcp_port }}" aria-label="Change port" data-testid="mcp-port"{{ lo.dis(request) }}></form>
   </details>
  </div>
 </section>

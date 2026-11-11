@@ -150,6 +150,7 @@ async def save_ui_key(request: Request) -> Response:
         log.info("settings_ui_refused", key=key, error=str(exc))
         return io.refuse(_refusal(key, exc))
     quiet = bool(body.get("quiet"))
+    io.refuse_remote(request, key, clean)
     async with sessionmaker()() as s:
         prev = await io.read(s, key)
         if prev == clean:
@@ -367,6 +368,7 @@ async def undo_setting(request: Request) -> Response:
         return io.refuse(io.NO_UNDO)
     if not io.plausible(key, prev):
         return io.refuse(io.NO_UNDO)
+    io.refuse_remote(request, key, prev)  # Undo must not reach a key its own route guards
     async with sessionmaker()() as s:
         if await io.read(s, key) != now:
             return io.refuse(io.NO_UNDO)

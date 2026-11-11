@@ -3,10 +3,12 @@
    sent anywhere from here: an online call is only made after the person approves what is sent,
    on the page that sends it. A local tier keeps its "stays private" wording; nothing here says
    that of an online one. #}
+{% import "partials/local_only.html" as lo with context %}
 {% import "partials/st_macros.html" as st with context %}
 {% import "ui/macros.html" as ui %}
 <section class="k-card st-card" id="st-mode" data-testid="st-mode">
   {{ st.head('How should Kestrel run?', 'laptop') }}
+  {% call lo.fence(request) %}
   <div class="st-modes" role="radiogroup" aria-label="How should Kestrel run?">
     {% for key, value, name, icon, lines in modes %}
     <button type="button" class="st-mc{% if choice == value %} is-on{% endif %}" role="radio"
@@ -76,4 +78,5 @@ Saved keys: {{ provider_names|join(', ') or 'none yet' }}</pre></details>
       <p class="st-note" id="st-online-note" data-testid="st-online-note">{% if online_problem %}Online starts once this is done: {{ online_problem }}. Add a key above, then approve what is sent on Models.{% endif %}</p>
     </div>
   </div>
+  {% endcall %}
 </section>

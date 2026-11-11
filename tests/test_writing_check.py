@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from kestrel.llm.client import json_schema_for
 from kestrel.llm.plain_repair import enforce
 from kestrel.llm.prompts import global_rules, load_prompt, plain_writing
 from kestrel.llm.schemas import SCHEMA_BY_VERSION, P8Story
@@ -201,7 +202,7 @@ def _story(**over) -> dict:
     base = {
         "title": "Merge", "situation": "Vendors overlapped.", "task": "Cut spend.",
         "action": "I ran the program.", "result": "Savings were $1M.", "reflection": "Plan sooner.",
-        "themes": ["cost_reduction"], "uncertain_details": [], "spoken_seconds_estimate": 90,
+        "themes": ["turnaround"], "uncertain_details": [], "spoken_seconds_estimate": 90,
         "source_sketch_ids": [1], "unsupported_claims": [],
     }
     return {**base, **over}
@@ -284,6 +285,36 @@ async def test_ungrounded_detail_triggers_the_reask_and_is_flagged_if_it_stays()
 
 def test_replies_stay_json_serializable():
     assert json.dumps(P8Story.model_validate(_story()).model_dump(mode="json"))
+
+
+# ------------------------------------------------- the loop dies at the schema (D-LLM-13)
+# A model that loops the same theme in a row used to be quarantined after 8000 tokens.
+# Now the schema handles the shape in one parse, so no repair round-trip and no quarantine.
+def test_a_story_looping_the_same_valid_theme_is_truncated_not_rejected():
+    themes = ["conflict"] * 849  # a model repeating itself, like the loop in the bug
+    assert P8Story.model_validate(_story(themes=themes)).themes == ["conflict"]
+
+
+def test_a_story_tagging_a_dropped_theme_is_truncated_not_rejected():
+    # A tag list is advisory: a theme outside the eight is dropped, never a validation failure.
+    # The owner's online model favors "scaling"; it used to quarantine a good story for it.
+    assert P8Story.model_validate(_story(themes=["scaling", "conflict"])).themes == ["conflict"]
+    assert P8Story.model_validate(_story(themes=["scaling"])).themes == []
+    # a looping reply of a dropped theme is dropped the same way, never a failure
+    assert P8Story.model_validate(_story(themes=["crisis"] * 1298)).themes == []
+    # a short list over the cap of three is also capped, never a failure
+    over = ["conflict", "failure", "team_building", "turnaround"]
+    assert P8Story.model_validate(_story(themes=over)).themes == over[:3]
+
+
+def test_the_story_schema_still_shows_the_eight_themes_and_the_cap():
+    # the model is still held to the eight it can track (the drop is leniency, not a free-for-all)
+    themes = json_schema_for(P8Story)["properties"]["themes"]
+    assert themes["items"]["enum"] == [
+        "conflict", "failure", "influence_without_authority", "turnaround",
+        "prioritization", "difficult_stakeholder", "technical_judgment", "team_building",
+    ]
+    assert themes["maxItems"] == 3
 
 
 # ------------------------------------------------- a prose call site through the real guard
@@ -387,15 +418,20 @@ def test_the_scoring_prompts_keep_their_version_and_get_no_plain_writing_block()
     from kestrel.pipeline import tier2, tier3
     from kestrel.web import pipeline_view
 
+    # v3 is the operator-corrections change (D-LEARN-3, D-SCORE-1), not plain writing: its system
+    # prompts are v2's byte for byte, so D-SCORE-PW still holds.
     assert tier2._VERSION == tier3._VERSION == {
-        "employment": "evaluate/v2", "consulting": "evaluate_consulting/v2",
+        "employment": "evaluate/v3", "consulting": "evaluate_consulting/v3",
     }
-    assert harness.DEFAULT_PROMPT_VERSION["employment"] == "evaluate/v2"
-    assert "evaluate/v3" not in SCHEMA_BY_VERSION
-    for version in ("evaluate/v2", "evaluate_consulting/v2"):
+    assert harness.DEFAULT_PROMPT_VERSION == tier2._VERSION
+    assert "evaluate/v4" not in SCHEMA_BY_VERSION
+    for version in ("evaluate/v2", "evaluate_consulting/v2", "evaluate/v3",
+                    "evaluate_consulting/v3"):
         assert plain_writing() not in load_prompt(version).system
+    for track in ("evaluate", "evaluate_consulting"):
+        assert load_prompt(f"{track}/v3").system == load_prompt(f"{track}/v2").system
     # An evaluation scored under the current version does not show as stale.
-    ev = SimpleNamespace(tier=2, prompt_version="evaluate/v2", legitimacy=None, needs_review=False)
+    ev = SimpleNamespace(tier=2, prompt_version="evaluate/v3", legitimacy=None, needs_review=False)
     opp = SimpleNamespace(track="employment", ghost_score=0.0, liveness=None, seen_count=1)
     assert "older scoring instructions" not in (pipeline_view.warning_text(opp, ev) or "")
 

@@ -56,8 +56,9 @@ def test_the_page_is_on_the_design_system_with_a_help_column_and_no_legacy_sheet
 def test_every_tab_names_its_help_and_stays_in_the_mockup_order(client):
     soup = _soup(client.get("/profile").text)
     assert [a["data-tab"] for a in soup.select(".pf-tabs a")] == [
-        "about", "documents", "employment", "consulting", "location", "stories"]
-    for tab in ("about", "employment", "consulting", "location", "stories"):
+        "about", "documents", "employment", "consulting", "location", "stories",
+        "corrections"]
+    for tab in ("about", "employment", "consulting", "location", "stories", "corrections"):
         track = tab if tab in ("employment", "consulting") else "employment"
         page = _soup(client.get(f"/profile?tab={tab}&track={track}").text)
         assert page.select_one(".k-help-col .k-hcard"), tab

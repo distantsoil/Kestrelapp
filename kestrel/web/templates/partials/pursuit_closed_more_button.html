@@ -1,0 +1,6 @@
+{# Show more closed (D-PERF-3, D-PERF-4): one page of a column's Closed group per press. The
+   board draws it after the first page and every page drawn in brings the next one. #}
+{% macro closed_more(column, track) -%}
+{% if column.folded_more %}<button type="button" class="k-btn k-btn--sm ap-closedmore" data-testid="closed-more" data-closed-more data-col="{{ column.col.key }}" data-extra="{{ column.folded_more }}"
+              hx-get="/pursuits/closed?col={{ column.col.key }}&track={{ track }}&after={{ column.folded_cursor|urlencode }}" hx-target="this" hx-swap="outerHTML settle:400ms">Show {{ column.folded_more }} more closed</button>{% endif %}
+{%- endmacro %}

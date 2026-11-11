@@ -154,6 +154,7 @@ async def test_a_task_that_dies_records_no_override(sm):
         async with sm() as s:
             for t in (await s.execute(select(Task).where(Task.status == "pending"))).scalars():
                 t.lease_until = None
+                t.retry_at = None  # the backoff wait has passed (issue #153)
             await s.commit()
         await _drain(worker, "t1")
     (task,) = await _tasks(sm)
@@ -173,12 +174,17 @@ async def test_an_existing_ordinary_t1_task_becomes_the_score_anyway(sm):
     async with sm() as s:
         await enqueue_once(s, "t1", oid, extra={"t2_model_override": {"backend": "local",
                                                                       "model": "kestrel-tier3"}})
+        # The waiting task is mid-retry-wait (a retryable failure, issue #153): the
+        # operator's explicit ask must run now, not after the backoff.
+        (t,) = (await s.execute(select(Task).where(Task.type == "t1"))).scalars()
+        t.retry_at = "2030-01-01T00:00:00+00:00"
         await s.commit()
     async with sm() as s:
         res = await enqueue_rescore(s, [oid], tier0_anyway=True)
         await s.commit()
     assert res.queued == [oid] and res.anyway == [oid] and res.already == []
     (task,) = await _tasks(sm)
+    assert task.retry_at is None  # the "Try again" cleared the backoff wait
     p = task.payload
     assert p["tier0_override"] and p["rescore"] and p["requested"] and p["requested_at"]
     assert "t2_model_override" not in p and "model_override" not in p  # usual models asked for

@@ -36,6 +36,7 @@ CREDIT: dict[str, tuple[str, str]] = {
     "remotive": ("Remotive", "https://remotive.com"),
     "arbeitnow": ("Arbeitnow", "https://www.arbeitnow.com"),
     "jobicy": ("Jobicy", "https://jobicy.com"),
+    "fourdayweek": ("4 Day Week", "https://4dayweek.io"),
 }
 
 # The same list as SQL text, for the diagnostics bundle's raw sqlite query.

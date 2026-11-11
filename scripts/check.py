@@ -85,7 +85,7 @@ def _run_pytest(
     started = time.monotonic()
     proc = subprocess.Popen(
         cmd, env={**os.environ, **CI_ENV, **(extra_env or {})}, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, text=True, errors="replace", cwd=diff_gate.ROOT,
+        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", cwd=diff_gate.ROOT,
     )
     skips: list[tuple[int, str, str]] = []
     assert proc.stdout is not None
@@ -129,7 +129,8 @@ def _plan_diff_guards() -> tuple[list[str], dict[str, set[int]], list[str]] | No
     print(f"==> diff guards: {note}")
     names, lines = diff_gate.git_changes(base)
     dirty = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True, check=False,
+        ["git", "status", "--porcelain"], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False,
         cwd=diff_gate.ROOT,
     ).stdout
     if problem := diff_gate.empty_diff_problem(names, lines, dirty):
@@ -399,7 +400,8 @@ def _gate(args: argparse.Namespace) -> int:
     if not _red_first_gate():
         return 1
     dirty = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True, check=False,
+        ["git", "status", "--porcelain"], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False,
         cwd=diff_gate.ROOT,
     ).stdout.strip()
     if dirty:

@@ -74,6 +74,7 @@ button{font:inherit;cursor:pointer;color:inherit}
     <div class="status" id="status" role="status" aria-live="polite">Opening your data</div>
     <div class="bar" id="bar"><i></i></div>
     <div class="note" id="note"></div>
+    <div class="row" id="cancelRow" style="display:none"><button class="btn" id="cancel" type="button">Cancel</button></div>
   </div>
   <div class="prob" id="prob" role="alert">
     <div class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/></svg></div>
@@ -100,6 +101,8 @@ button{font:inherit;cursor:pointer;color:inherit}
     else { b.classList.remove('is-indet'); b.firstElementChild.style.width = pct + '%'; }
   }
   function note(text) { $('note').textContent = text || ''; $('note').classList.toggle('is-on', !!text); }
+  // Cancel appears only while the start is waiting (the shell drives it); a new attempt re-arms it.
+  function cancelBtn(show) { $('cancelRow').style.display = show ? 'flex' : 'none'; if (show) $('cancel').disabled = false; }
   function show(which) {
     $('sp').style.display = which === 'prob' ? 'none' : '';
     $('prob').classList.toggle('is-on', which === 'prob');
@@ -120,6 +123,7 @@ button{font:inherit;cursor:pointer;color:inherit}
   }
   function fail(reason, details, code) {
     clearTimeout(noteTimer);
+    cancelBtn(false);
     var dl = $('download');
     var is_newer = code === 'newer_database';
     dl.style.display = is_newer ? '' : 'none';
@@ -137,7 +141,7 @@ button{font:inherit;cursor:pointer;color:inherit}
     show('prob');
     (is_newer ? dl : $('retry')).focus();
   }
-  function ready() { say('Ready', 100); setTimeout(function () { $('splash').classList.add('is-out'); }, 250); }
+  function ready() { cancelBtn(false); say('Ready', 100); setTimeout(function () { $('splash').classList.add('is-out'); }, 250); }
   // One start at a time: the button is disabled until this attempt ends on the card again.
   $('retry').addEventListener('click', function () {
     if ($('retry').disabled) return;
@@ -153,6 +157,11 @@ button{font:inherit;cursor:pointer;color:inherit}
     api('splash_safe_start');
   });
   $('download').addEventListener('click', function () { api('splash_download'); });
+  $('cancel').addEventListener('click', function () {
+    if ($('cancel').disabled) return;
+    $('cancel').disabled = true;
+    api('splash_cancel');
+  });
   $('logs').addEventListener('click', function () { api('splash_open_logs'); });
   $('quit').addEventListener('click', function () { api('splash_quit'); });
   $('detBtn').addEventListener('click', function () {
@@ -194,7 +203,7 @@ button{font:inherit;cursor:pointer;color:inherit}
   document.addEventListener('dblclick', function (e) {
     if (os !== 'win' && e.target.hasAttribute('data-k-drag')) api('window_toggle_maximize');
   });
-  window.KSplash = { say: say, fail: fail, ready: ready, note: note };
+  window.KSplash = { say: say, fail: fail, ready: ready, note: note, cancelBtn: cancelBtn };
   bar(8);
 })();
 </script>

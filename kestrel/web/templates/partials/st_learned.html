@@ -14,5 +14,5 @@
   </div>
   {% endfor %}
   <div class="st-agree"><p data-testid="st-agree">{% if agree_insufficient %}Agrees with your calls: <b>Too few to tell ({{ agree_n }})</b>.{% else %}Agrees with your calls <b>{{ agree_pct }}%</b> of the time ({{ agree_n }} ratings).{% endif %}</p>
-    <a class="k-link" href="/calibrate">See your rating history</a></div>
+    <a class="k-link" href="/calibrate?track={{ track }}&amp;tab=detailed">See your rating history</a></div>
 </section>

@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 {% from "partials/online_ask.html" import consent_check %}
 {# Model check result (D-UI-105): a summary line, a card per step with a change, one quiet line for
@@ -44,6 +45,7 @@
 
     {% set todo = changes|rejectattr('applied')|list %}
     {% set online_todo = todo|selectattr('online')|list %}
+    {% call lo.fence(request) %}
     {% if todo %}
     <form class="mo-undo-row" hx-post="/bench/apply" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-apply-form">
       {% for c in todo %}<input type="hidden" name="step" value="{{ c.step }}">{% endfor %}
@@ -57,13 +59,16 @@
     </div>
     {% endif %}
     {% endif %}
+    {% endcall %}
     {% set undoable = changes|selectattr('applied')|selectattr('tier', 'in', ck_undo)|list %}
+    {% call lo.fence(request) %}
     {% if undoable %}
     <form class="mo-undo-row" hx-post="/bench/undo" hx-target="#ck-card" hx-swap="outerHTML">
       {% for c in undoable %}<input type="hidden" name="step" value="{{ c.step }}"><input type="hidden" name="token_{{ c.step }}" value="{{ ck_undo[c.tier] }}">{% endfor %}
       <button class="k-btn" type="submit" data-testid="ck-undo">Undo</button><span class="k-muted">Puts {{ undoable|map(attribute='label')|join(' and ') }} back as it was.</span>
     </form>
     {% endif %}
+    {% endcall %}
 
     <details class="mo-adv" data-testid="ck-numbers">
       <summary>See the numbers</summary>

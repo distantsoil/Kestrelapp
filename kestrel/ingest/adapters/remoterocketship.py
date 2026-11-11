@@ -25,12 +25,12 @@ Rules that bind this module:
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import httpx
 import structlog
 
+from kestrel.ingest import source_secrets
 from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
 from kestrel.pipeline.profile import load_profile
 
@@ -41,7 +41,6 @@ DEFAULT_KEY_ENV = "REMOTEROCKETSHIP_API_KEY"
 DEFAULT_MAX_PAGES = 2
 MAX_PAGES_LIMIT = 5
 MAX_PER_PAGE = 50
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _RATE = 1.0
 _NEEDS_SUBSCRIPTION = (
     "RemoteRocketship needs an active paid subscription with API access. Kestrel stays free; "
@@ -94,7 +93,8 @@ def _profile_filters() -> dict:
 def _key(config: dict) -> str:
     from kestrel.config import get_secret
 
-    name = config.get("api_key_env") or DEFAULT_KEY_ENV
+    name = source_secrets.secret_name(
+        "remoterocketship", config, "api_key_env", DEFAULT_KEY_ENV)  # D-SEC-21
     key = get_secret(name)
     if not key:
         raise SourceConfigError(
@@ -144,9 +144,7 @@ class RemoteRocketshipAdapter:
                 "Never put the key in the source. Save it in Kestrel's .env file and, if you "
                 "use a name other than REMOTEROCKETSHIP_API_KEY, give that name as 'api_key_env'"
             )
-        env = config.get("api_key_env", DEFAULT_KEY_ENV)
-        if not isinstance(env, str) or not _ENV_NAME.match(env):
-            raise SourceConfigError("'api_key_env' must be an environment variable name")
+        source_secrets.secret_name("remoterocketship", config, "api_key_env", DEFAULT_KEY_ENV)
         _int_in(config, "max_pages", DEFAULT_MAX_PAGES, 1, MAX_PAGES_LIMIT)
         _int_in(config, "items_per_page", MAX_PER_PAGE, 1, MAX_PER_PAGE)
         filters = config.get("filters", {})

@@ -121,8 +121,12 @@ async def test_progress_mid_run_with_an_estimate(sm):
     waiting = [await _opp(sm, stage="t1_pass") for _ in range(3)]
     running = await _opp(sm, stage="t1_pass")
     old = await _opp(sm, stage="t2_done")  # scored before this batch began: not in it
+    # One clock read for every completion: with a read per row, a slow machine stretches the
+    # one-minute spacing and the estimate rounds to 5 instead of 4.
+    seeded_at = datetime.now(UTC)
     for i, oid in enumerate(done):  # one Tier 2 completion a minute
-        await _eval(sm, oid, model="m", score=4.0, created=_ago(minutes=10 - i))
+        created = iso(clock_seed.ago(seeded_at, minutes=10 - i))
+        await _eval(sm, oid, model="m", score=4.0, created=created)
         await _finished_task(sm, oid)
     await _finished_task(sm, parked, status="dead")
     await _finished_task(sm, aside, task_type="t1")

@@ -878,7 +878,7 @@ async def drain_checks(
     """Run every queued check, one at a time, on the worker. A failed task goes back to the
     queue while attempts remain, then dead with the reason; never raises into the worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
-    from kestrel.queue.queue import TaskQueue
+    from kestrel.queue.queue import REASON_APPROVAL, REASON_STOPPED, TaskQueue
 
     run = runner or default_runner(make_client, gold_dir)
     queue = TaskQueue(sm)
@@ -905,10 +905,15 @@ async def drain_checks(
             continue  # the row is already cancelled
         if outcome.status == "stopped":
             # The app is quitting: give the task back with its finished results kept (resume).
-            await queue.defer(task.id, "stopped; resumes at the next start", worker_id=wid)
+            await queue.defer(
+                task.id, "stopped; resumes at the next start", worker_id=wid,
+                reason=REASON_STOPPED,
+            )
             break
         if outcome.status == "held":
-            await queue.defer(task.id, outcome.error or "held", worker_id=wid)
+            await queue.defer(
+                task.id, outcome.error or "held", worker_id=wid, reason=REASON_APPROVAL
+            )
             break
         if outcome.status == "error":
             await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=False)

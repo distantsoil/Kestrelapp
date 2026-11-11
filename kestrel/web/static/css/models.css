@@ -285,7 +285,26 @@
 .mo-checks .k-pill { margin-left: 6px; }
 .mo-fwlabel { margin: 8px 0 0; font-size: 13px; font-weight: 600; }
 .mo-fwcmd { overflow-wrap: anywhere; user-select: all; background: var(--soft); padding: 8px 10px; border-radius: var(--r-sm); }
+
+/* On your network: servers on another computer, and the drawer that adds one (D-LLM-60). */
+.mo-servers { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mo-server { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); min-width: 0;
+  transition: background-color .15s var(--ease); }
+.mo-server:hover { background: var(--soft); }
+.mo-server .k-grow { min-width: 0; overflow-wrap: anywhere; }
+.mo-server__t { display: block; }
+.mo-nwform { display: grid; gap: 10px; }
+.mo-nwrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.mo-nwfound { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px;
+  background: var(--soft); display: grid; gap: 10px; animation: k-inUp .2s ease both; }
+.mo-nwfound h4 { margin: 0; }
+.mo-nwassign { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.mo-nwassign .k-field { flex: 1 1 200px; min-width: 0; margin: 0; }
+.mo-hint { display: block; font-size: 12.5px; margin-top: 4px; }
+.mo-msg { animation: k-inUp .18s ease both; }
 @media (prefers-reduced-motion: reduce) {
   .mo-card { transition: none; }
-  .mo-fixres { animation: none; }
+  .mo-fixres, .mo-nwfound, .mo-msg { animation: none; }
+  .mo-server { transition: none; }
 }

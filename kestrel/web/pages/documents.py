@@ -280,6 +280,7 @@ async def documents(request: Request):
     """Documents is the first tab of the Profile page (D-UI-21); this path stays so every link
     into it, with or without a master_id, keeps working."""
     from kestrel.web.pages.profile import (
+        _correction_count,
         _section_ctx,
         _story_count,
         _tabs,
@@ -293,7 +294,7 @@ async def documents(request: Request):
     ctx = {
         "title": "Profile", "query": dict(request.query_params), "tab": "documents",
         "tabs": _tabs(), **_section_ctx(_track(request)), **data,
-        "story_count": await _story_count(),
+        "story_count": await _story_count(), "correction_count": await _correction_count(),
     }
     ctx.update(await readiness_ctx(request, ctx["track"]))
     return templates().TemplateResponse(request, "profile.html", ctx)

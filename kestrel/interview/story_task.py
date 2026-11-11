@@ -77,6 +77,11 @@ async def request_build(session: AsyncSession, *, consent: dict | None = None) -
     if held_for_consent(await load_settings_with_db(session), TIER, consent):
         return False
     if await build_pending(session):
+        # Asked again while a build waits out a retry backoff: it runs now (D-QUEUE-7).
+        from kestrel.queue.queue import run_now
+
+        if await run_now(session, Task.type == TASK_TYPE):
+            await session.commit()
         return False
     session.add(Task(type=TASK_TYPE, payload=dict(consent or {}), max_attempts=MAX_ATTEMPTS))
     await session.commit()
@@ -118,13 +123,35 @@ async def _record(sm: async_sessionmaker[AsyncSession], value: dict) -> None:
         await s.commit()
 
 
+async def _record_failed_ids(sm: async_sessionmaker[AsyncSession], task_id: int,
+                             failed_ids: list[int] | None) -> None:
+    """Record the ids of the groups a pass that raised had already failed, in the task's payload
+    (D-STORY-2). The pass hands them back on the exception (stories.FAILED_IDS_ATTR) because its
+    `result` is lost to the raise; writing them before `queue.fail` means the retry of this build
+    reads the same skip list the give_back path would have written, so a failed group is never
+    resent. Merged with any skip list an earlier pass of this build already left behind."""
+    if not failed_ids:
+        return
+    async with sm() as s:
+        task = await s.get(Task, task_id)
+        if task is None:
+            return
+        payload = dict(task.payload or {})
+        skip = {int(i) for i in payload.get(_SKIP_KEY) or []}
+        skip |= {int(i) for i in failed_ids}
+        payload[_SKIP_KEY] = sorted(skip)
+        task.payload = payload
+        task.updated_at = utcnow_iso()
+        await s.commit()
+
+
 async def drain_story_builds(
     sm: async_sessionmaker[AsyncSession], client: Any, settings: Settings, *, stop: Any = None
 ) -> int:
     """Run every queued build, one at a time. A failure goes back to the queue while attempts
     remain (the page shows it as building) and is recorded once the task is dead (the page
     shows the reason and Try again); it never raises into the caller's worker cycle."""
-    from kestrel.interview.stories import consolidate_stories
+    from kestrel.interview.stories import FAILED_IDS_ATTR, consolidate_stories
     from kestrel.queue.queue import TaskQueue
     from kestrel.services.online_consent import held_at_run_time
 
@@ -157,10 +184,31 @@ async def drain_story_builds(
                     s, client, settings, skip_ids=skip,
                     pass_seconds=PASS_SECONDS if _use_passes(settings) else None,
                 )
+        except asyncio.CancelledError as exc:
+            # Quit cut the pass off (D-STORY-4). The groups this pass already failed are kept in
+            # the payload before the cancel goes on, exactly as for a pass that raised, so the
+            # build that resumes at the next start does not send them again. The lease itself is
+            # handed back by the quit (attempt refunded). Shielded: the write finishes even if a
+            # second cancel lands.
+            beat.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.shield(
+                    _record_failed_ids(sm, task.id, getattr(exc, FAILED_IDS_ATTR, None)))
+            raise
         except Exception as exc:  # a failed build is reported on the page, never fatal
             beat.cancel()
             log.warning("build_stories_failed", task=task.id,
                         error=f"{type(exc).__name__}: {exc}")
+            # A pass that died may have already failed a group before the raise (D-STORY-2): it
+            # hands those ids back on the exception (stories.FAILED_IDS_ATTR). Record them in the
+            # task's payload before the task is failed, so the retry of this build skips them
+            # exactly as the give_back path records them for a pass that stopped on purpose.
+            # Best-effort: this is the moment a DB write just failed (a commit can be the one that
+            # raised), so a lock here is plausible; if the recording itself fails we fall back to
+            # the pre-fix behaviour (the retry may resend) rather than strand the task or break the
+            # worker cycle, the same as the suppressed _record below.
+            with contextlib.suppress(Exception):
+                await _record_failed_ids(sm, task.id, getattr(exc, FAILED_IDS_ATTR, None))
             status = await queue.fail(task.id, failure_record(exc), worker_id=wid, retry=True)
             if status == "dead":
                 with contextlib.suppress(Exception):

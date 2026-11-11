@@ -45,11 +45,12 @@
     <button type="button" class="k-btn k-btn--primary k-btn--sm" data-k-modal="#ap-add" data-testid="add-role">{{ ic.icon('plus') }}{{ 'Add a lead I found elsewhere' if wide else 'Add a role I found elsewhere' }}</button>
   </div>
   <div class="ap-bar" id="ap-chips" role="group" aria-label="Stage">
-    <button type="button" class="k-chip is-on" data-chip="all" aria-pressed="true" data-testid="stage-chip" data-stage="all">All<span class="k-chip__n">{{ counts.open + counts.closed }}</span></button>
-    {% for column in columns %}<button type="button" class="k-chip" data-chip="{{ column.col.key }}" aria-pressed="false" data-testid="stage-chip" data-stage="{{ column.col.key }}">{{ column.col.label }}<span class="k-chip__n">{{ column.cards|length }}</span></button>{% endfor %}
+    <button type="button" class="k-chip is-on" data-chip="all" aria-pressed="true" data-testid="stage-chip" data-stage="all" data-total="{{ total_cards }}">All<span class="k-chip__n">{{ total_cards }}</span></button>
+    {% for column in columns %}<button type="button" class="k-chip" data-chip="{{ column.col.key }}" aria-pressed="false" data-testid="stage-chip" data-stage="{{ column.col.key }}" data-total="{{ column.total }}">{{ column.col.label }}<span class="k-chip__n">{{ column.total }}</span></button>{% endfor %}
     <button type="button" class="k-chip" id="ap-mf-btn" aria-expanded="false" aria-controls="ap-mf" data-testid="more-filters">{{ ic.icon('filters', 'k-ic--sm') }}More filters</button>
+    {% if not wide %}<button type="button" class="k-btn k-btn--sm k-btn--quiet" data-k-modal="#ap-wsl" hx-get="/work-search-log/panel" hx-target="#wsl-body" hx-swap="innerHTML" data-testid="work-search-log">{{ ic.icon('table') }}Export work search log</button>{% endif %}
     <button type="button" class="k-btn k-btn--sm k-btn--quiet" data-clear-filters hidden data-testid="clear-filters-inline">Clear filters</button>
-    <span class="k-muted ap-count" role="status" aria-live="polite" data-testid="filter-count">Showing {{ cards|length }} of {{ cards|length }}</span>
+    <span class="k-muted ap-count" role="status" aria-live="polite" data-testid="filter-count">Showing {{ total_cards }} of {{ total_cards }}</span>
   </div>
   <div class="ap-mf" id="ap-mf" data-mf><div class="ap-mfi">
     <label class="ap-fl">Fit score<select data-f="fit"><option value="">Any</option><option value="3.5">3.5 and up</option><option value="4">4.0 and up</option></select></label>
@@ -101,6 +102,8 @@
     <div id="ap-follow-up-body"{% if auto_draft %} data-auto-draft="{{ auto_draft }}"{% endif %}></div>
     <div class="ap-actions"><button type="button" class="k-btn" data-k-close>Close</button></div>
   {% endcall %}
+
+  {% if not wide %}{% call ui.modal('ap-wsl', 'Export work search log') %}<div id="wsl-body" data-testid="wsl-body"><p class="ap-v">Loading.</p></div>{% endcall %}{% endif %}
 
   {# Add a role found elsewhere: a link (read once, politely) and/or pasted text. #}
   {% call ui.modal('ap-add', 'Add ' ~ ('a lead' if wide else 'a role') ~ ' you found elsewhere') %}

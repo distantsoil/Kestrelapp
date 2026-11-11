@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "repeated-container-text",
+        "value": "*",
+        "files": [
+          "the locked design mockup (kept privately)"
+        ],
+        "createdAt": "2026-11-10T00:07:07.484Z",
+        "reason": "Claude: 'Today' is nav item, page title and back button, standard navigation"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "the locked design mockup (kept privately)"
+        ],
+        "createdAt": "2026-11-10T00:07:07.495Z",
+        "reason": "Claude: flagged element is the decorative mini card-stack illustration in the Today prompt"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "the locked design mockup (kept privately)"
+        ],
+        "createdAt": "2026-11-10T00:11:11.537Z",
+        "reason": "Claude: house light-theme shadow token rgba(20,26,51) read against the dark mockup backdrop, not a glow"
+      }
+    ]
+  }
+}

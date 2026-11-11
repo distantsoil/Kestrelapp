@@ -5,7 +5,8 @@
    subscripted because `models.items` would be the dict method. #}
 
 {% macro step_details(s) %}
-{% if s.commands %}
+{# Host paths are for this computer only: a key holder gets no terminal commands (#155). #}
+{% if s.commands and not remote_view() %}
 <details class="setup-details" data-testid="setup-details-{{ s.key }}">
   <summary>Show details</summary>
   <p class="quiet">The same step from a terminal, if you prefer one:</p>

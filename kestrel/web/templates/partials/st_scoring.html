@@ -1,5 +1,6 @@
 {# Scoring and learning (D-UI-108): what matters most, what Kestrel has learned, your ratings.
    All learning uses only your ratings and stays on this computer. #}
+{% import "partials/local_only.html" as lo with context %}
 {% import "partials/st_macros.html" as st with context %}
 {% set pane = 'scoring' %}
 {% include "partials/st_trackbar.html" %}
@@ -8,7 +9,7 @@
 <section class="k-card st-card" id="st-ratings" data-testid="st-ratings">
   {{ st.head('Your ratings', 'up') }}
   <div class="st-hact st-hact--first">
-    <a class="k-btn k-btn--sm k-btn--primary" href="/settings/scoring/export" download data-testid="st-export">{{ st.sic('dl', 'k-ic--sm') }}Export my ratings</a>
+    {{ lo.download(request, '/settings/scoring/export', 'Export my ratings', 'k-btn k-btn--sm k-btn--primary', 'st-export') }}
     <span class="st-dsm">Includes your employer name unless Confidential mode is on.</span>
   </div>
 </section>
@@ -21,7 +22,8 @@
       <label class="st-ck"><input type="checkbox" checked data-st-forget="model"> Your own sorting model</label>
       <label class="st-ck"><input type="checkbox" checked data-st-forget="weights"> Suggested weight changes</label>
     </div>
-    <div class="st-hact"><button type="button" class="k-btn k-btn--sm k-btn--danger" id="st-forget-open" data-testid="st-forget-open" data-k-modal="#st-forget-dialog">Forget my ratings</button></div>
+    <div class="st-hact"><button type="button" class="k-btn k-btn--sm k-btn--danger" id="st-forget-open" data-testid="st-forget-open" data-k-modal="#st-forget-dialog"{{ lo.dis(request) }}>Forget my ratings</button></div>
+    {{ lo.note(request) }}
   </div>
 </section>
 {% import "ui/macros.html" as ui %}

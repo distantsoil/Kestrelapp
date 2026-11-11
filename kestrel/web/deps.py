@@ -522,6 +522,13 @@ def templates() -> Jinja2Templates:
         t.env.globals["desktop_window"] = desktop_window
         t.env.globals["consulting_enabled"] = consulting_enabled
         t.env.globals["ui_schemes"] = UI_SCHEMES
+        from kestrel.web.auth import request_is_local
+
+        # #155: a page draws controls disabled for a key holder by the route guard's own test.
+        t.env.globals["is_local"] = request_is_local
+        from kestrel.services import viewer as _viewer
+
+        t.env.globals["remote_view"] = _viewer.is_remote  # for macros, which see no `request`
         from kestrel.services import run_model as _run_model
 
         # D-UI-72: a run's counts without its one-run model choice, and that choice in words.

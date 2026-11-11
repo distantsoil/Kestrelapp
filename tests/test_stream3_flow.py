@@ -515,7 +515,18 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
         finally:
             await engine.dispose()
 
-    assert asyncio.run(_drain()) == 0
+    for _ in range(MAX_ATTEMPTS + 1):  # one attempt per drain; the wait passes between them
+        assert asyncio.run(_drain()) == 0
+        (t,) = _read(_tasks)
+        if t.status != "pending":
+            break
+
+        async def _rewind(s, tid=t.id):
+            row = await s.get(Task, tid)
+            row.retry_at = None  # the backoff wait has passed (issue #153)
+            await s.commit()
+
+        _read(_rewind)
     assert calls["n"] == MAX_ATTEMPTS - 1  # one attempt was used by the killed run
     (dead,) = _read(_tasks)
     assert dead.status == "dead" and "model unreachable" in (dead.last_error or "")

@@ -34,6 +34,7 @@
         <div class="rl-ai" data-testid="ai-disclaimer">Written by Kestrel's AI from the posting and your profile. {{ ai_disclaimer }}</div></div>
       {% endif %}
     </div>
+    {% if score_older %}<p class="rl-quiet" data-testid="score-older">{{ older_text }}</p>{% endif %}
     {% if model_word %}<p class="rl-quiet" data-testid="agreement">The model said {{ model_word }}, the scoring rules said {{ rules_word }}. Your call, below: the word you pick teaches the ranker.</p>{% endif %}
     <details class="rl-details" data-testid="eval-details"><summary>Show details</summary>
       {% set both = ev.score is not none and ev.weighted_score is not none and (ev.score - ev.weighted_score)|abs >= 0.05 %}
@@ -100,50 +101,10 @@
   </section>
  </div>
 
- {% if wheel.n %}
- <div class="rl-wheelrow" id="rl-wheelrow" data-testid="match-map">
-  <section class="k-card rl-card rl-card--good">
-    <header class="k-sec-head"><span class="k-badge k-badge--good">{{ ric('check') }}</span><div class="k-grow"><h3>In your favor</h3></div></header>
-    <div class="rl-kr">
-      {% for r in reqs if r.state == 'met' %}<div class="rl-fl" data-k="{{ r.k }}" data-c="met"><span class="rl-m rl-m--g">+</span><span>{{ r.text }}{% if r.evidence %}<span class="rl-dsm">{{ r.evidence }}</span>{% endif %}</span></div>
-      {% else %}<p class="rl-quiet">Nothing the posting asks for is fully covered yet.</p>{% endfor %}
-    </div>
-  </section>
-  <section class="k-card rl-card rl-card--warn">
-    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>Gaps</h3></div></header>
-    <div class="rl-kr">
-      {% for r in reqs if r.state != 'met' %}<div class="rl-fl" data-k="{{ r.k }}" data-c="{{ r.state }}"><span class="rl-m rl-m--{{ 'b' if r.state == 'part' else 'a' }}">{{ r.mark }}</span><span>{{ r.text }}{% if r.fatal %} <span class="k-pill k-pill--bad">Could rule it out</span>{% endif %}{% if r.how %}<span class="rl-dsm">{{ r.how }}</span>{% elif r.evidence %}<span class="rl-dsm">{{ r.evidence }}</span>{% endif %}<a class="rl-storyln" href="#" data-rl-story="{{ r.text }}">+ I have a story for this</a></span></div>
-      {% else %}<p class="rl-quiet">No gaps found in what the posting asks for.</p>{% endfor %}
-    </div>
-  </section>
-  <section class="k-card rl-card rl-wheelc" id="rl-wheelc">
-    <header class="k-sec-head"><span class="k-badge">{{ ric('target') }}</span><div class="k-grow"><h3>Match map</h3></div></header>
-    <svg viewBox="0 0 140 140" class="rl-wheel" role="img" aria-label="{{ wheel.center }} of the things they ask for are met">
-      <g transform="rotate(-90 70 70)"><circle r="{{ wheel.r }}" cx="70" cy="70" fill="none" class="rl-wtrack" stroke-width="16"/>
-        {% for a in wheel.arcs %}<circle class="rl-wseg rl-wseg--{{ a.state }}" data-k="{{ a.k }}" data-c="{{ a.state }}" r="{{ wheel.r }}" cx="70" cy="70" fill="none" stroke-width="16" style="--d: {{ a.dash }}; stroke-dashoffset: {{ a.offset }}; animation-delay: {{ a.k * 90 }}ms"><title>{{ a.text }}: {{ a.word|lower }}</title></circle>{% endfor %}
-      </g><text x="70" y="78" text-anchor="middle" class="rl-wn" data-testid="wheel-center">{{ wheel.center }}</text></svg>
-    <div class="rl-wleg">
-      <button type="button" class="rl-wchip" data-f="met"><i class="rl-wdot rl-wdot--met"></i>{{ wheel.met }} met</button>
-      <button type="button" class="rl-wchip" data-f="part"><i class="rl-wdot rl-wdot--part"></i>{{ wheel.part }} partly met</button>
-      <button type="button" class="rl-wchip" data-f="gap"><i class="rl-wdot rl-wdot--gap"></i>{{ wheel.gap }} not met</button>
-    </div>
-    <div class="rl-dsm rl-wsub">{{ wheel.n }} thing{{ '' if wheel.n == 1 else 's' }} they ask for · click to focus</div>
-    <div class="rl-wfocus" id="rl-wfocus" aria-live="polite"></div>
-  </section>
- </div>
- {% endif %}
+ {% if wheel.n or scored %}{% include "partials/role_match.html" %}{% endif %}
+ <div id="rl-offer" class="rl-offerslot" aria-live="polite"></div>
 
  {% if scored %}
- <section class="k-card rl-card rl-card--map" data-testid="evidence">
-   <header class="k-sec-head"><span class="k-badge">{{ ric('doc') }}</span><div class="k-grow"><h3>Evidence</h3></div></header>
-   <p class="rl-dsm">What the posting asks for, and where your own resume and stories already show it.</p>
-   <div class="rl-ev">
-     {% for e in evidence %}<div class="rl-evi" data-k="{{ e.k }}"><div><div class="rl-q">“{{ e.quote }}”</div><div class="rl-a">{{ e.proof }}</div></div>
-       {% if e.source %}<a class="rl-src" href="{{ e.source.href }}">{{ e.source.label }} →</a>{% else %}<span class="rl-src rl-src--none">Source not recorded</span>{% endif %}</div>
-     {% else %}<p class="rl-quiet">Kestrel did not match any of your own proof to what the posting asks for.</p>{% endfor %}
-   </div>
-   <a class="rl-storyln rl-storyln--block" href="#" data-rl-story="">+ I have a story that shows something else they ask for</a>
- </section>
 
  <section class="k-card rl-card" data-testid="role-summary">
    <header class="k-sec-head"><span class="k-badge k-badge--tier">{{ ric('brief') }}</span><div class="k-grow"><h3>{{ 'The situation' if consulting else 'What the role is' }}</h3></div></header>

@@ -373,12 +373,6 @@ def build_mcp() -> FastMCP:
     return mcp
 
 
-# Numeric loopback peers only, the same set kestrel/web/auth.py exempts and for the same reason:
-# scope["client"] is always an address, and "localhost" here would be a trust entry that could
-# activate under any server that put a hostname there.
-_LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1"})
-
-
 class RequireLanKey:
     """ASGI middleware: a non-loopback peer must present the LAN shared key in X-Kestrel-Key.
 
@@ -396,15 +390,19 @@ class RequireLanKey:
         if scope["type"] == "lifespan":
             await self.app(scope, receive, send)
             return
-        client = scope.get("client")
-        peer = client[0] if client else None
-        if peer in _LOOPBACK_PEERS:
-            await self.app(scope, receive, send)
-            return
         from starlette.datastructures import Headers
         from starlette.responses import JSONResponse
 
-        from kestrel.web.auth import current_key, key_is_valid
+        from kestrel.web.auth import current_key, key_is_valid, peer_is_loopback, public_hostnames
+
+        client = scope.get("client")
+        headers = Headers(scope=scope)
+        # The same decision as the web app (D-SEC-10): a loopback peer is this computer only when
+        # the Host is a loopback name and no proxy header is present. A tunnel or proxy on this
+        # machine connects from 127.0.0.1 too, and is a remote visitor.
+        if peer_is_loopback(client[0] if client else None, headers, public_hostnames()):
+            await self.app(scope, receive, send)
+            return
 
         expected = await current_key()
         if not key_is_valid(Headers(scope=scope).get("x-kestrel-key"), expected):

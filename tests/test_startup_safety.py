@@ -224,6 +224,8 @@ def _recorded_lifespan(monkeypatch):
     from kestrel.web import app as app_mod
 
     ran: list[str] = []
+    # These tests assert the loops started right after the health answer; no delay here.
+    monkeypatch.setattr(app_mod, "WORKER_DELAY_S", 0.0)
 
     def recorder(name):
         async def idle(stop, *a, **k):

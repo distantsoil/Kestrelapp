@@ -1,4 +1,5 @@
 {# Everything below the title band: the range bar and every card. One date range for the page. #}
+{% import "partials/local_only.html" as lo with context %}
 {% from "ui/macros.html" import icon %}
 {% set r = report %}
 {% set w = r.words %}
@@ -22,10 +23,15 @@
   <details class="an-export" id="an-export" data-testid="an-export">
     <summary class="k-chip" aria-haspopup="menu">Export</summary>
     <div class="an-menu" role="menu">
+      {% if is_local(request) %}
       <a role="menuitem" href="/analytics/export/summary.pdf?range={{ range }}" download>Summary and charts (PDF)</a>
       <a role="menuitem" href="/analytics/export/numbers.csv?range={{ range }}" download>All numbers on this page (CSV)</a>
       <a role="menuitem" href="/analytics/export/applications.csv?range={{ range }}" download>Every application and its history (CSV)</a>
       <p>Saved to your computer. Nothing is sent anywhere.</p>
+      {% else %}
+      <button type="button" role="menuitem" disabled aria-disabled="true" data-testid="local-only-download">Export</button>
+      {{ lo.note(request, 'download') }}
+      {% endif %}
     </div>
   </details>
 </div>{% endif %}

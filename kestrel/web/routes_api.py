@@ -14,6 +14,7 @@ from kestrel import __version__
 from kestrel.db.enums import VERDICTS
 from kestrel.db.models import Opportunity
 from kestrel.services.export_terms import RESTRICTED_SENTENCE
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.fit import fit_word_for_verdict, verdict_for_fit
 from kestrel.web.queries import (
@@ -155,7 +156,7 @@ async def diag_page(change: PageChange) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@router.post("/api/quit")
+@router.post("/api/quit", dependencies=[LOCAL_ONLY])
 async def quit_app():
     """The in-app "Quit Kestrel" button: the same real quit as the tray's Quit (D-UI-27), never
     the close-to-tray hide. Headless serve has no shell to quit and says so."""
@@ -256,6 +257,30 @@ async def api_opportunity(opp_id: int):
         "dedup_members": [m.id for m in detail["dedup_members"] if m.id not in hidden],
         "override": _override_json(detail["override"]),
     }
+
+
+@router.get("/api/pursuits")
+async def api_pursuits(request: Request):
+    """The person's applications, read only (D-IMPORT-10): `id` is the Kestrel ID, the same one
+    the applications export carries. Filters: `track`, `status`, `since` (an ISO date or time, on
+    the last change). Pages: `limit` (up to 500) and `cursor` (the previous `next_cursor`).
+    The shared key and Confidential mode apply as they do to /api/opportunities."""
+    from kestrel.services import pursuit_api
+
+    q = request.query_params
+    try:
+        limit = int(q.get("limit") or pursuit_api.DEFAULT_LIMIT)
+    except ValueError:
+        return JSONResponse({"error": "limit must be a whole number"}, status_code=400)
+    async with sessionmaker()() as s:
+        try:
+            page = await pursuit_api.list_applications(
+                s, track=q.get("track") or None, status=q.get("status") or None,
+                since=q.get("since"), cursor=q.get("cursor"), limit=limit,
+            )
+        except pursuit_api.BadQuery as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"rows": page.rows, "next_cursor": page.next_cursor}
 
 
 async def oob_nav_counts(session) -> str:

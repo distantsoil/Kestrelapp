@@ -249,15 +249,27 @@ class RenderedPdf:
     page_count: int
 
 
+async def _inline_only(route: Any) -> None:
+    """Let the page load only what is inside it. The pages are built from the person's own text
+    and escaped model text; if markup ever slipped through, an address in it (an image, a style
+    link, a frame) must still never be fetched while a PDF is printed, so every request for
+    anything but an inline `data:`, `blob:` or `about:` address is refused."""
+    if route.request.url.lower().startswith(("data:", "blob:", "about:")):
+        await route.continue_()
+    else:
+        await route.abort()
+
+
 async def render_pdf(html: str) -> RenderedPdf:
     """HTML -> PDF via the first launchable browser (launch_plan), then scrub metadata and count
-    pages. Runs on the caller loop."""
+    pages. Runs on the caller loop. The page can reach nothing outside itself (`_inline_only`)."""
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
         browser = await launch_browser(p)
         try:
             page = await browser.new_page()
+            await page.route("**/*", _inline_only)
             await page.set_content(html, wait_until="load")
             raw = await page.pdf(
                 print_background=True,

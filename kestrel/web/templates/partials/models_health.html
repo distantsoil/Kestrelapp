@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 {# Health check: the preflight in plain words, then the Local AI check rows (#144). Polls while a
    check or a fix runs. Under the Online choice (D-115) the card is greyed, shows one line and
@@ -18,12 +19,13 @@
   {% if hc_both %}<p class="k-muted mo-bothnote" data-testid="mo-health-both">Kestrel runs some steps online. This check covers the steps on this computer and the matching model only.</p>{% endif %}
   {% if hc_message %}<p class="mo-msg {{ 'is-good' if hc_ok else 'is-bad' }}" role="status" data-testid="mo-health-message">{{ hc_message }}</p>{% endif %}
   {% if hc_fixing %}<div class="mo-prog" role="progressbar" aria-label="Rebuilding Kestrel's models" {% if hc_percent is not none %}aria-valuenow="{{ hc_percent }}"{% endif %}><i style="width: {{ hc_percent or 5 }}%"></i></div><p class="k-muted">Rebuilding Kestrel's models, then testing again.</p>{% endif %}
+  {{ lo.note(request) }}
   <ul class="mo-checks">
     {% for r in hc_rows %}
     <li class="is-{{ r.state }}" data-testid="mo-hc-{{ r.key }}">
       <span class="mo-state">{{ ui.icon('check' if r.state == 'ok' else ('alert' if r.state in ('fail', 'warn') else 'clock')) }}</span>
       <div class="k-grow"><b>{{ r.title }}</b><span class="k-muted">{{ r.detail }}</span></div>
-      {% if r.fixable and not hc_running %}<button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/models/health/fix" hx-target="#mo-health" hx-swap="outerHTML" data-testid="mo-hc-fix-{{ r.key }}">Fix it</button>{% endif %}
+      {% if r.fixable and not hc_running %}<button{{ lo.dis(request) }} type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/models/health/fix" hx-target="#mo-health" hx-swap="outerHTML" data-testid="mo-hc-fix-{{ r.key }}">Fix it</button>{% endif %}
     </li>
     {% endfor %}
   </ul>

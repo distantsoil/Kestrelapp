@@ -160,7 +160,8 @@ async def test_a_url_and_a_path_in_a_tier2_reply_are_text_not_instructions(sm, o
     async with sm() as s:
         evals = (await s.execute(select(Evaluation))).scalars().all()
         quarantined = (await s.execute(select(Quarantine))).scalars().all()
-    assert evals or quarantined, "the reply was neither kept nor set aside"
+    assert evals, "the schema-valid reply was not kept as an evaluation"
+    assert not quarantined, "a schema-valid reply must not be set aside"
 
 
 async def test_a_hostile_reply_that_is_not_json_is_set_aside_without_a_fetch(sm, opened):

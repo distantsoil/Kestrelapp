@@ -1,9 +1,11 @@
+{% import "partials/local_only.html" as lo with context %}
 {% from "partials/hosted_disclosure.html" import disclosure_text with context %}
 <div id="hosted-panel">
   {% if connect_result %}{% with r = connect_result, testid = 'hosted-connect-result' %}{% include "partials/hosted_connect_result.html" %}{% endwith %}
   {% elif message %}<p class="{{ 'panel' if ok else 'warnbox' }}" style="padding:.6rem 1rem">{{ message }}{% if return_to == 'setup' and ok %} <a class="btn pri" href="/setup" data-testid="return-to-setup" style="margin-left:.6rem">Return to setup</a>{% endif %}</p>{% endif %}
   {% if return_to == 'setup' and not (message and ok) %}<p class="muted" data-testid="setup-origin" style="margin:0 0 .6rem">You came here from <a href="/setup">Setup</a> (step 6). Connect below; a "Return to setup" button appears once the provider accepts the key.</p>{% endif %}
 
+  {% call lo.fence(request) %}
   {% include "partials/hosted_keys.html" %}
 
   <h3>Run Kestrel on</h3>
@@ -156,7 +158,7 @@
         <td class="mono">{{ name }}</td>
         <td>{{ b.label }} <span class="muted mono">{{ b.base_url }}</span></td>
         <td class="mono">{{ b.protocol }}</td>
-        <td>{% if b.key_present %}saved{% if b.key_tail %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}<span class="muted">no key saved</span>{% endif %}</td>
+        <td>{% if b.key_present %}saved{% if b.key_tail and is_local(request) %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}<span class="muted">no key saved</span>{% endif %}</td>
         <td>{% if hosted.backend_name == name %}<b>yes</b> · {{ hosted.model }}{% else %}<span class="muted">no</span>{% endif %}</td>
       </tr>
     {% endfor %}
@@ -242,4 +244,5 @@
       {% if system_keys_ignored %}Present in your system environment and ignored: {% for e in system_keys_ignored %}<span class="mono">{{ e }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
   </details>
   </details>
+{% endcall %}
 </div>

@@ -83,6 +83,8 @@ _AUTHORED_SITES = (  # (file, the start of the source line)
     ("errors.py", "text = str(exc)"),
     ("pages/opportunity_actions.py", "error = str(exc)"),
     ("pages/role.py", 'return _answer({"k-toast": _toast(str(exc)'),
+    # pursuit_api.BadQuery: two authored sentences naming the bad parameter (D-IMPORT-10)
+    ("routes_api.py", 'return JSONResponse({"error": str(exc)}, status_code=400)'),
     ("pages/settings_data.py", "return _imp_card(request, _imp_base(error=str(exc)"),
     ("pages/settings_prefs.py", "cause = str(exc)"),
     ("pages/settings_roles.py", "request, track, error=str(exc)"),
@@ -175,7 +177,7 @@ def test_a_non_model_failure_keeps_no_exception_text_for_the_runs_page():
     from kestrel.errors import task_failure_text
 
     text = task_failure_text(ValueError("/home/pat/secret/path.txt is bad"))
-    assert "secret" not in text and "ValueError" in text and "details are in the log" in text
+    assert "secret" not in text and "ValueError" not in text and "details are in the log" in text
     assert "secret" not in task_failure_text(PermissionError(13, "denied", "/home/pat/secret"))
 
 

@@ -27,7 +27,11 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from functools import lru_cache
 
+import structlog
+
 from kestrel.web.errors import fixed_reason
+
+log = structlog.get_logger()
 
 
 @dataclass
@@ -95,7 +99,11 @@ def _ollama_service_ips() -> frozenset[str]:
             try:
                 for info in socket.getaddrinfo(host, None):
                     ips.add(str(info[4][0]))
-            except OSError:
+            except Exception as exc:  # noqa: BLE001 - a failed lookup degrades to "no service IPs"
+                # (OSError on the network, or the test guard's RuntimeError); never a raised thread.
+                log.warning(
+                    "ollama_service_lookup_failed", host=host,
+                    error_type=type(exc).__name__, error=str(exc))
                 continue
         return ips
 
@@ -128,15 +136,27 @@ def _classify_address(
     return "public"
 
 
+# The desktop tray app checks for Ollama updates on its own; the owner chose to leave it out of
+# the spot check (#166, 2026-11-11) so its update check is not reported as a model connection.
+# Windows names it "ollama app.exe" and macOS "Ollama" (capital O; the server is "ollama").
+# Unverified on a live macOS install: the server process name is from Ollama's packaging.
+_TRAY_NAMES = frozenset({"ollama app.exe", "ollama app"})
+
+
+def _is_tray_app(name: str) -> bool:
+    return name.lower() in _TRAY_NAMES or name == "Ollama"
+
+
 def _find_ollama_pids() -> list[tuple[int, str]]:
-    """Find PIDs of Ollama processes (server, model runners, tray app)."""
+    """Find PIDs of Ollama's server and model runners. The tray app is left out (#166)."""
     import psutil
 
     pids: list[tuple[int, str]] = []
     for proc in psutil.process_iter(["pid", "name"]):
         try:
-            name = (proc.info.get("name") or "").lower()
-            if "ollama" in name:
+            raw = proc.info.get("name") or ""
+            name = raw.lower()
+            if "ollama" in name and not _is_tray_app(raw):
                 pids.append((proc.info["pid"], proc.info.get("name") or "ollama"))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
@@ -260,7 +280,10 @@ class ConnectionWatcher:
         try:
             self._result = sample_connections(
                 interval_s=self._interval_s, until=self._done, tail_s=self._tail_s)
-        except (ImportError, OSError) as exc:
+        # Contract: a failed thread gives an unverified result, never a raised thread.
+        except Exception as exc:  # noqa: BLE001 - the row degrades to unverified, cause in the log
+            log.warning(
+                "egress_check_failed", error_type=type(exc).__name__, error=str(exc))
             self._result = EgressResult(
                 unverified=f"the connection check failed ({fixed_reason(exc)})")
 

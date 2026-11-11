@@ -67,6 +67,7 @@ class WindowApi:
         safe_start: Callable[[], Any] | None = None,
         open_logs: Callable[[], None] | None = None,
         quit_app: Callable[[], None] | None = None,
+        cancel_start: Callable[[], None] | None = None,
         download: Callable[[], None] | None = None,
         remember_theme: Callable[[str], None] | None = None,
         platform: str | None = None,
@@ -78,6 +79,7 @@ class WindowApi:
         self._safe_start = safe_start
         self._open_logs = open_logs
         self._quit = quit_app
+        self._cancel_start = cancel_start
         self._download = download
         self._remember_theme = remember_theme
         self._os = os_key(platform)
@@ -216,6 +218,13 @@ class WindowApi:
     def splash_quit(self) -> None:
         if self._quit:
             self._quit()
+
+    def splash_cancel(self) -> None:
+        """Cancel the start while the loading page still waits for the server (#148): the
+        attempt is abandoned and the problem card offers Try again and Quit. Not a quit: the
+        window stays."""
+        if self._cancel_start:
+            self._cancel_start()
 
 
 # ------------------------------------------------------------------------------------ Windows
@@ -626,9 +635,11 @@ def show_traffic_lights(window: Any) -> None:
 
         def go() -> None:
             try:
-                for kind in (AppKit.NSWindowCloseButton, AppKit.NSWindowMiniaturizeButton,
-                             AppKit.NSWindowZoomButton):
-                    button = native.standardWindowButton_(kind)
+                # Read by name: the AppKit type stubs lack these constants, though they exist
+                # at runtime, so the macOS type check cannot see them as attributes.
+                for name in ("NSWindowCloseButton", "NSWindowMiniaturizeButton",
+                             "NSWindowZoomButton"):
+                    button = native.standardWindowButton_(getattr(AppKit, name))
                     if button is not None:
                         button.setHidden_(False)
             except Exception as exc:

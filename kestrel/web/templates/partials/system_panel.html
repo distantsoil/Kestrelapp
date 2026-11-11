@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {# Settings > System (D-UI-31): the machine checks that used to be the Setup page, then Restart
    onboarding. Loaded into the System tab on first view; the run mode cards and the profile
    change swap this whole panel so every step's state is current after a save. #}
@@ -26,12 +27,14 @@
             ('hosted', 'Hosted', 'Every tier on a provider you choose under your own key: OpenRouter (free models available), OpenModel, Anthropic or OpenAI. No Ollama, no downloads. You read and accept what each tier sends.'),
             ('both', 'Both', 'Local models for daily runs, a hosted set ready to switch to per run or for Tier 3. Steps 2 to 6 all apply.'),
           ] %}
+          {% call lo.fence(request) %}
           <form hx-post="/setup/mode" hx-target="#system-panel" hx-swap="outerHTML" method="post" action="/setup/mode">
             <input type="hidden" name="mode" value="{{ value }}">
             <button type="submit" class="card{% if st.choice == value %} sel{% endif %}" aria-pressed="{{ 'true' if st.choice == value else 'false' }}">
               <b>{{ label }}</b><div class="d">{{ blurb }}</div>
             </button>
           </form>
+          {% endcall %}
           {% endfor %}
         </div>
         <div class="d">Detected: {{ st.hardware_line }}.
@@ -57,6 +60,7 @@
   <p class="muted" style="margin-top:0">Walk through the setup guide again, from how Kestrel thinks
     to your first search. Pick one.</p>
   <div class="restart" data-testid="restart-onboarding">
+    {% call lo.fence(request) %}
     <form method="post" action="/onboarding/restart" class="panel" style="padding:.8rem 1rem">
       <input type="hidden" name="choice" value="keep">
       <b>Keep my details</b>
@@ -77,5 +81,6 @@
         <input type="text" name="confirm" x-model="typed" autocomplete="off" style="width:8rem"></label>
       <button class="btn danger" type="submit" style="margin-top:.6rem" :disabled="typed !== 'RESET'">Clear everything</button>
     </form>
+    {% endcall %}
   </div>
 </div>

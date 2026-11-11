@@ -146,8 +146,16 @@ async def test_the_training_writer_stores_a_record_and_the_page_is_plain(sm, mon
         return []
 
     monkeypatch.setattr(training, "labeled_examples", no_examples)
-    for _ in range(3):
+    for _ in range(3):  # one attempt per cycle; the backoff wait passes between them
         await training.run_cycle(sm)
+        async with sm() as s:
+            from sqlalchemy import select
+
+            t = (await s.execute(select(Task).where(Task.type == training.TASK_TYPE))).scalar_one()
+            if t.status != "pending":
+                break
+            t.retry_at = None  # the backoff wait has passed (issue #153)
+            await s.commit()
     stored = await _stored(sm, training.TASK_TYPE)
     _kept_and_plain(stored)
     async with sm() as s:

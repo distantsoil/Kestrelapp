@@ -10,7 +10,7 @@
     <span class="cl-pulse" aria-hidden="true"></span>
     <div>
       <b>Drafting your {{ noun }}</b>
-      <p class="rl-quiet">{% if route and route.online %}It is with {{ route.provider }} and can take a few minutes.{% else %}This runs on this computer and can take a few minutes.{% endif %} It uses only your own proof points and resume lines. You can close this and keep working: the draft is saved to Documents when it is done. Kestrel never sends it.</p>
+      <p class="rl-quiet">{% if route and route.online %}It is with {{ route.provider }} and can take a few minutes.{% else %}This runs {{ route.where if route and route.where else 'on this computer' }} and can take a few minutes.{% endif %} It uses only your own proof points and resume lines. You can close this and keep working: the draft is saved to Documents when it is done. Kestrel never sends it.</p>
     </div>
   </div>
   <div class="rl-btns"><button type="button" class="k-btn" data-cl-leave data-testid="cover-letter-leave">Close and keep working</button></div>

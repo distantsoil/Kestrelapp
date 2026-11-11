@@ -51,7 +51,7 @@ class BreezyAdapter:
 
     def validate_config(self, config: dict) -> None:
         slug = config.get("slug")
-        if not isinstance(slug, str) or not _SLUG.match(slug):
+        if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
             raise SourceConfigError(
                 "breezy source requires a 'slug' (the name in {slug}.breezy.hr: letters, digits "
                 "and '-')"
@@ -164,7 +164,7 @@ def _description(html: str) -> str | None:
 
 def _to_posting(row: dict, config: dict) -> RawPosting | None:
     friendly_id = row.get("friendly_id")
-    if not isinstance(friendly_id, str) or not _FRIENDLY_ID.match(friendly_id):
+    if not isinstance(friendly_id, str) or not _FRIENDLY_ID.fullmatch(friendly_id):
         return None
     slug = config["slug"]
     page = f"https://{slug}.breezy.hr/p/{friendly_id}"

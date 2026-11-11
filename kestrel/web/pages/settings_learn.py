@@ -35,6 +35,7 @@ from kestrel.services import tracks as tracks_svc
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import settings_io as io
 from kestrel.web import settings_view as sv
+from kestrel.web.auth import LOCAL_DOWNLOAD, LOCAL_ONLY
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.pages.settings_roles import trigger
 from kestrel.web.redact import confidential
@@ -309,7 +310,7 @@ async def learn_switch(request: Request):
 
 
 # ----------------------------------------------------------------------------- ratings
-@router.get("/settings/scoring/export")
+@router.get("/settings/scoring/export", dependencies=[LOCAL_DOWNLOAD])
 async def export_ratings():
     """Every rating as a JSON file. With Confidential mode on the employer name is replaced the
     same way every other output replaces it, so the export is redacted."""
@@ -336,7 +337,7 @@ async def export_ratings():
     )
 
 
-@router.post("/settings/scoring/forget", response_class=HTMLResponse)
+@router.post("/settings/scoring/forget", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def forget(request: Request):
     """Forget what the operator chose: their ratings, their own sorting model, suggested weight
     changes. Permanent, refused unless RESET was typed and something was ticked. Never touches

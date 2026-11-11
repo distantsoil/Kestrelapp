@@ -109,3 +109,35 @@ def test_workday_validate_config_requires_tenant_dc_site():
         adapter.validate_config({"tenant": "nvidia", "site": "X"})  # missing dc
     # A complete config is accepted.
     adapter.validate_config(_CONFIG)
+
+
+# ---- D-SEC-10: the host labels and the site are checked whole, at config load and at fetch time
+_BAD_TENANTS = ["x@10.0.0.1/", "x@127.0.0.1:443/#", "a.b", "a/b", "a b", "", "-a", "a\n",
+                "x" * 64, "evil.example.com#"]
+
+
+@pytest.mark.parametrize("tenant", _BAD_TENANTS)
+def test_workday_refuses_a_tenant_that_could_point_at_another_host(tenant):
+    with pytest.raises(SourceConfigError):
+        WorkdayAdapter().validate_config({**_CONFIG, "tenant": tenant})
+
+
+@pytest.mark.parametrize("dc", ["wd5.evil.example", "wd5@10.0.0.1", "wd5/", "wd5:443", "wd 5"])
+def test_workday_refuses_a_data_center_that_could_point_at_another_host(dc):
+    with pytest.raises(SourceConfigError):
+        WorkdayAdapter().validate_config({**_CONFIG, "dc": dc})
+
+
+@pytest.mark.parametrize("site", ["a/../b", "a?x=1", "a#b", "a@b", "../x", "a b", "a\n"])
+def test_workday_refuses_a_site_that_is_not_one_path_segment(site):
+    with pytest.raises(SourceConfigError):
+        WorkdayAdapter().validate_config({**_CONFIG, "site": site})
+
+
+@respx.mock
+async def test_workday_fetch_refuses_before_any_request_is_made():
+    route = respx.route().mock(return_value=Response(200, json={}))
+    for tenant in ("x@10.0.0.1/", "x@127.0.0.1:443/#"):
+        with pytest.raises(SourceConfigError):
+            await WorkdayAdapter().fetch({**_CONFIG, "tenant": tenant}, client=None)
+    assert route.call_count == 0

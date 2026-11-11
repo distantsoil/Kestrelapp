@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% extends "base.html" %}
 {% block title %}Backup · Kestrel{% endblock %}
 {# No script of its own; named for the page lifecycle (D-UI-210). #}
@@ -12,12 +13,12 @@ database. Restore is on <a href="/settings">Settings</a> under Your data.</p>
     <h2>Download a backup</h2>
     <p>One zip, built fresh when you click, identical to what <span class="mono">kestrel backup</span>
     writes.</p>
-    <a class="btn primary" href="/backup/download">Download a backup</a>
+    {{ lo.download(request, '/backup/download', 'Download a backup', 'btn primary') }}
     <h3 style="margin-top:1rem">What it contains</h3>
     <ul>
       <li>The database <span class="mono">kestrel.db</span>, as one consistent copy: every
       opportunity, evaluation, pursuit, story, label, and document master and variant.</li>
-      <li>Every <span class="mono">*.yml</span> under <span class="mono">{{ config_dir }}</span>:
+      <li>Every <span class="mono">*.yml</span> under <span class="mono">{{ config_dir if is_local(request) else "the config folder" }}</span>:
       settings, filters, sources, and your profile.</li>
       <li>Generated PDFs: resumes and capability statements, and interview prep packs.</li>
     </ul>
@@ -31,7 +32,7 @@ database. Restore is on <a href="/settings">Settings</a> under Your data.</p>
       <li>Logs, the learned ranking, the computer check, and the downloaded AI models. Open Setup
       to rebuild the models.</li>
     </ul>
-    <p class="muted">Data folder: <span class="mono">{{ data_dir }}</span></p>
+    {% if is_local(request) %}<p class="muted">Data folder: <span class="mono">{{ data_dir }}</span></p>{% endif %}
   </div>
 
   <div class="panel">
@@ -39,7 +40,7 @@ database. Restore is on <a href="/settings">Settings</a> under Your data.</p>
     <p>Your <span class="mono">profile.yml</span> is the part of the configuration that is hardest
     to rewrite. Export it on its own to keep a copy or to carry it to another machine.</p>
     {% if has_profile %}
-      <a class="btn" href="/backup/export-profile">Export profile</a>
+      {{ lo.download(request, '/backup/export-profile', 'Export profile', 'btn') }}
     {% else %}
       <span class="pill">no profile.yml yet</span>
       <span class="muted">Kestrel is on the shipped example profile, which is fiction and is not
@@ -50,6 +51,7 @@ database. Restore is on <a href="/settings">Settings</a> under Your data.</p>
     is no separate masters export.</p>
 
     <h3 style="margin-top:1rem">Import a profile</h3>
+    {% call lo.fence(request) %}
     <form hx-post="/backup/import-profile" hx-target="#import-result"
           hx-encoding="multipart/form-data">
       <div class="formgrid">
@@ -58,9 +60,10 @@ database. Restore is on <a href="/settings">Settings</a> under Your data.</p>
       </div>
       <button class="btn" type="submit" style="margin-top:.6rem">Import profile</button>
       <p class="muted">The file is parsed and loaded for at least one track before it replaces
-      anything. The previous file is kept at <span class="mono">{{ profile_bak }}</span>.
+      anything. {% if is_local(request) %}The previous file is kept at <span class="mono">{{ profile_bak }}</span>.{% else %}The previous file is kept beside it.{% endif %}
       Your saved keys are never touched.</p>
     </form>
+    {% endcall %}
     <div id="import-result"></div>
   </div>
 </div>

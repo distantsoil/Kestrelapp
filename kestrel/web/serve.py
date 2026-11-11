@@ -16,6 +16,8 @@ import threading
 import time
 import webbrowser
 from collections.abc import Callable
+from datetime import UTC
+from pathlib import Path
 
 import httpx
 import structlog
@@ -240,6 +242,79 @@ def wait_for_health(port: int, timeout: float = 30.0) -> bool:
             pass
         time.sleep(0.2)
     return False
+
+
+def record_stuck_startup(port: int, waited_s: float) -> Path | None:
+    """What a start that never answered is doing (#148, acceptance 2): every thread's stack,
+    the task queue by type and status, and the last errors on the unfinished rows (a database
+    lock error, when there is one), written to a file the operator can send back. Returns the
+    file, or None when it cannot be written (the start still fails, with the log pointer)."""
+    import io
+    import sys
+    import threading
+    import traceback
+    from datetime import datetime
+
+    from kestrel import __version__
+
+    buf = io.StringIO()
+    buf.write(f"Kestrel {__version__} stuck-start dump\n")
+    buf.write(f"time: {datetime.now(UTC).isoformat()}\n")
+    buf.write(f"pid: {os.getpid()}  port: {port}  waited: {waited_s:.1f} s\n")
+    buf.write("threads:\n")
+    # faulthandler.dump_traceback needs a real file (it calls fileno); a StringIO raises
+    # io.UnsupportedOperation. Every thread's stack is captured portably instead.
+    frames = sys._current_frames()
+    for ident, frame in frames.items():
+        name = next((th.name for th in threading.enumerate() if th.ident == ident),
+                    f"thread {ident}")
+        buf.write(f"--- {name} ---\n")
+        buf.writelines(traceback.format_stack(frame))
+    buf.write("tasks by type and status:\n")
+    try:
+        from sqlalchemy import func, select
+
+        from kestrel.db.engine import make_sync_engine
+        from kestrel.db.models import Task
+
+        engine = make_sync_engine(paths.db_path())
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    select(Task.type, Task.status, func.count(Task.id))
+                    .group_by(Task.type, Task.status)
+                    .order_by(Task.type, Task.status)
+                ).all()
+                for t, s, n in rows:
+                    buf.write(f"  {t}\t{s}\t{n}\n")
+                if not rows:
+                    buf.write("  (no tasks)\n")
+                errs = conn.execute(
+                    select(Task.type, Task.status, Task.last_error)
+                    .where(Task.last_error.is_not(None), Task.status.in_(("pending", "leased")))
+                    .limit(5)
+                ).all()
+        finally:
+            engine.dispose()
+        buf.write("last errors on unfinished tasks:\n")
+        for t, s, stored in errs:
+            buf.write(f"  {t}\t{s}\t{str(stored)[:200]}\n")
+        if not errs:
+            buf.write("  (none recorded)\n")
+    except Exception as exc:  # noqa: BLE001 - the dump is best effort; the start fails either way
+        log.warning("startup_stuck_task_counts_failed",
+                    error_type=type(exc).__name__, error=str(exc))
+        buf.write("  task counts unavailable (the cause is in kestrel.log, in the logs folder)\n")
+    try:
+        paths.ensure_dirs()
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        target = paths.logs_dir() / f"startup-stuck-{stamp}.txt"
+        target.write_text(buf.getvalue(), encoding="utf-8")
+        log.info("startup_stuck_dump", path=str(target))
+        return target
+    except OSError as exc:
+        log.warning("startup_stuck_dump_failed", error=str(exc))
+        return None
 
 
 @contextlib.contextmanager

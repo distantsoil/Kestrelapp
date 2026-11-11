@@ -201,6 +201,13 @@ def presets(settings: Settings) -> dict[str, dict[str, str]]:
     return {**PRESETS, **({"other": PRESET} if BACKEND in settings.llm.backends else {})}
 
 
+def online_key_env_names() -> frozenset[str]:
+    """Every key name an online provider uses: the presets' and the Other service's."""
+    from kestrel.services.other_service import KEY_ENV
+
+    return frozenset({p["env"] for p in PRESETS.values()} | {KEY_ENV})
+
+
 def secret_present(env_name: str | None) -> bool:
     from kestrel.config import get_secret
 
@@ -500,7 +507,8 @@ async def verify_key(
     except RuntimeError as exc:  # ProviderError
         return _key_failure(provider, exc)
     except (ValueError, AttributeError, TypeError) as exc:  # a 200 that is not JSON
-        return KeyStatus(False, provider, f"unexpected provider response: {type(exc).__name__}")
+        log.warning("key_check_unexpected_response", error_type=type(exc).__name__)
+        return KeyStatus(False, provider, "unexpected provider response")
     finally:
         if http is None:
             await client.aclose()

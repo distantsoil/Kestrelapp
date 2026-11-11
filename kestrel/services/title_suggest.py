@@ -53,6 +53,7 @@ WEEKLY_DAYS = 7
 APPLIED_STEP = 10  # new applied roles since the last run that make another run due
 MAX_TITLES = 10
 MAX_PURSUED = 30
+EXPIRE_DAYS = 60  # a waiting suggestion the model no longer proposes is retired after this
 EVIDENCE_CHARS = 160
 _LIVE = ("pending", "leased")
 _CHECK_EVERY_S = 600.0
@@ -217,6 +218,8 @@ def title_schema(model_cls: type[BaseModel]) -> dict:
 class Outcome:
     status: str  # stored | skipped | quarantined | error
     added: int = 0
+    seen: int = 0  # proposed titles dropped as already shown or already in the target titles
+    expired: int = 0  # waiting suggestions retired by this pass
     error: str | None = None
     # The online key is out of credit (D-LLM-8): the task is deferred and no error run recorded.
     out_of_credit: bool = False
@@ -254,10 +257,14 @@ async def _record_failure(sm: async_sessionmaker[AsyncSession]) -> None:
         log.warning("title_suggestions_record_failed", error_type=type(exc).__name__)
 
 
-async def _record_run(session: AsyncSession, *, added: int, status: str) -> None:
+async def _record_run(
+    session: AsyncSession, *, added: int, status: str, seen: int = 0, expired: int = 0
+) -> None:
+    """Record how a pass ended: `seen` is the proposed titles dropped as already shown or already
+    targeted, `expired` the waiting suggestions retired by it (the card says both, #135)."""
     value = {
         "at": utcnow_iso(), "applied_count": await _applied_count(session), "added": added,
-        "status": status,
+        "status": status, "seen": seen, "expired": expired,
     }
     row = await session.get(Setting, LAST_RUN_KEY)
     if row is None:
@@ -334,11 +341,46 @@ async def generate(
             "error", error=result.error or "no reply", out_of_credit=result.out_of_credit
         )
 
+    # Retire waiting suggestions whose resume is no longer active (archived or gone), or that the
+    # model has not proposed for EXPIRE_DAYS: a stale title must not sit beside the new ones for
+    # ever (#135). A row from another still-active resume is left to the age rule.
+    live_masters = set(
+        (await session.execute(
+            select(DocMaster.id).where(
+                DocMaster.track == "employment", DocMaster.doc_kind == "resume",
+                DocMaster.is_active.is_(True),
+            )
+        )).scalars().all()
+    )
+    # A retired row is deleted, not decided, so a later pass may propose the title again. A title
+    # the model proposes again now is confirmed and kept, whatever its age.
+    reply: Any = result.value  # the per-master subclass of P15TitleSuggestions
+    proposed = {norm(" ".join(i.title.split())) for i in reply.titles}
+    cutoff = datetime.now(UTC) - timedelta(days=EXPIRE_DAYS)
+    stale: list[int] = []
+    for r in seen_rows:
+        if r.status != "suggested":
+            continue
+        other = r.doc_master_id is not None and r.doc_master_id not in live_masters
+        made = _parse(r.created_at)
+        old = made is not None and made < cutoff
+        if other or (old and norm(r.title) not in proposed):
+            stale.append(r.id)
+        elif norm(r.title) in proposed:
+            r.created_at = utcnow_iso()
+    if stale:
+        await session.execute(delete(TitleSuggestion).where(TitleSuggestion.id.in_(stale)))
+        seen -= {norm(r.title) for r in seen_rows if r.id in stale}
+
     blocked = {norm(t) for t in targets} | seen
     added = 0
+    skipped = 0
     for item in result.value.titles:
         title = " ".join(item.title.split())
-        if not title or norm(title) in blocked:
+        if not title:
+            continue
+        if norm(title) in blocked:
+            skipped += 1
             continue
         blocked.add(norm(title))
         evidence = [
@@ -351,9 +393,9 @@ async def generate(
             )
         )
         added += 1
-    await _record_run(session, added=added, status="ok")
+    await _record_run(session, added=added, status="ok", seen=skipped, expired=len(stale))
     await session.commit()
-    return Outcome("stored", added=added)
+    return Outcome("stored", added=added, seen=skipped, expired=len(stale))
 
 
 # --------------------------------------------------------------------------------- draining
@@ -365,7 +407,7 @@ async def drain_title_suggestions(
     back to the queue while attempts remain; a quarantined reply completes the task, since the
     raw reply is kept for review and retrying would loop. Never raises into the worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
-    from kestrel.queue.queue import TaskQueue
+    from kestrel.queue.queue import REASON_CREDIT, TaskQueue
     from kestrel.services.online_consent import held_at_run_time
 
     queue = TaskQueue(sm)
@@ -403,7 +445,9 @@ async def drain_title_suggestions(
         if outcome.status == "error" and outcome.out_of_credit:
             # The key has no credit: back to the queue unstarted (hard rule 5), no "error" run
             # recorded (it would push the next try a week out), and stop this drain.
-            await queue.defer(task.id, outcome.error or "", worker_id=wid)
+            await queue.defer(
+                task.id, outcome.error or "", worker_id=wid, reason=REASON_CREDIT
+            )
             break
         if outcome.status == "error":
             await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)
@@ -549,6 +593,34 @@ async def forget_resume(session: AsyncSession, master_id: int) -> None:
     log.info("title_suggestions_forgot_resume", master_id=master_id, matched_prelink=len(prelink))
 
 
+def describe_last(last: dict | None) -> str | None:
+    """One plain sentence for how the last pass ended, whatever the list holds (#135). None when
+    no pass has been recorded. No model text: counts and fixed wording only."""
+    if not last:
+        return None
+    status = last.get("status")
+    if status == "no_resume":
+        return "There was no resume to read. Import one, then try again."
+    if status == "quarantined":
+        return "The model's reply could not be read, so nothing was added. Try Suggest again."
+    if status == "skipped_online":
+        return ("Waiting for your OK to send your resume to the online model. "
+                "Confirm below, then press Suggest again.")
+    if status != "ok":
+        return "The pass could not finish, so nothing was added. Try Suggest again."
+    added, seen = int(last.get("added") or 0), int(last.get("seen") or 0)
+    expired = int(last.get("expired") or 0)
+    noun = "suggestion" if expired == 1 else "suggestions"
+    gone = f" {expired} old {noun} retired." if expired else ""
+    if added:
+        return f"{added} new, {seen} already seen.{gone}"
+    if seen:
+        return (f"Nothing new. {seen} {'title' if seen == 1 else 'titles'} proposed "
+                f"{'was' if seen == 1 else 'were'} already seen or in your target titles; "
+                f"these are the closest to your resume.{gone}")
+    return f"Nothing new found.{gone}"
+
+
 async def view(session: AsyncSession) -> dict:
     """What the Suggested titles list shows: the waiting suggestions (newest first), whether a
     run is queued, whether there is a resume to read, and how the last run went."""
@@ -563,6 +635,7 @@ async def view(session: AsyncSession) -> dict:
         )
     ).scalars().all()
     last = await session.get(Setting, LAST_RUN_KEY)
+    last_value = last.value if last is not None and isinstance(last.value, dict) else None
     return {
         "suggestions": [
             {"id": r.id, "title": r.title, "why": r.why, "evidence": list(r.evidence or [])}
@@ -570,5 +643,7 @@ async def view(session: AsyncSession) -> dict:
         ],
         "pending": await pending(session),
         "has_resume": has_resume,
-        "last": last.value if last is not None and isinstance(last.value, dict) else None,
+        "last": last_value,
+        "last_note": None if (has_resume and (last_value or {}).get("status") == "no_resume")
+        else describe_last(last_value),
     }

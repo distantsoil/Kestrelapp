@@ -117,6 +117,8 @@ async def test_training_failure_is_retried_from_durable_task(sm, monkeypatch):
     async with sm() as s:
         task = (await s.execute(select(Task))).scalar_one()
         assert task.status == "pending" and "disk busy" in task.last_error
+        task.retry_at = None  # the backoff wait has passed (issue #153)
+        await s.commit()
     assert await training.run_cycle(sm) == 1
     assert train.await_count == 2
 

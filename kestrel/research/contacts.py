@@ -20,6 +20,7 @@ bodies are capped at 300 characters, matching the schema's own truncation."""
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,14 +53,26 @@ def _canonical_url(url: str) -> str:
     return u.removeprefix("www.")
 
 
+def _is_linkedin_host(key: str) -> bool:
+    """Whether a canonical URL (no scheme) is on linkedin.com. Read with a URL parser, so a
+    login part, a query or a look-alike name ("linkedin.com.example", "x?.linkedin.com") fails."""
+    try:
+        host = (urlsplit(f"https://{key}").hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "linkedin.com" or host.endswith(".linkedin.com")
+
+
 def linkedin_url_verbatim(url: str | None, source_texts: list[str]) -> str | None:
     """Return the URL ONLY if it appears as a whole URL token in some supplied source (same rule as
-    `email_verbatim`); otherwise None. A prefix or near-miss of a real profile URL does not pass."""
+    `email_verbatim`) and is on linkedin.com; otherwise None. A prefix or near-miss of a real
+    profile URL does not pass, and neither does another site's address a page happens to contain:
+    the field is shown as a LinkedIn link, so the model cannot choose where it points."""
     if not url or not isinstance(url, str):
         return None
     candidate = url.strip()
     key = _canonical_url(candidate)
-    if not key:
+    if not key or not _is_linkedin_host(key):
         return None
     for text in source_texts:
         if isinstance(text, str) and key in {_canonical_url(m) for m in _URL_RE.findall(text)}:

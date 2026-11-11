@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kestrel.config import BackendConfig, Settings
 from kestrel.db.models import FrontierTransmission, Setting
 from kestrel.llm import providers as prov
+from kestrel.services import viewer
 
 log = structlog.get_logger()
 
@@ -213,7 +214,10 @@ def _month_start() -> str:
 
 async def local_spend(session: AsyncSession) -> dict[str, str] | None:
     """This month's deeper reads from the transmission log: the sum of the costs the provider
-    reported. A send with no reported cost is unknown, never zero. None when nothing was sent."""
+    reported. A send with no reported cost is unknown, never zero. None when nothing was sent.
+    None for a key holder: money is shown on this computer only."""
+    if viewer.is_remote():
+        return None
     total, sent, unknown = (
         await session.execute(
             select(
@@ -242,7 +246,10 @@ async def local_spend(session: AsyncSession) -> dict[str, str] | None:
 # ------------------------------------------------------------------------------ the rail row
 async def rail_row(session: AsyncSession, settings: Settings) -> dict[str, str] | None:
     """The rail's balance line: {"kind", "label", "state"}, or None for no line. At most one
-    request per five minutes, and none unless the user is opted in (see the module docstring)."""
+    request per five minutes, and none unless the user is opted in (see the module docstring).
+    Never for a key holder: no balance line and no request with the saved key."""
+    if viewer.is_remote():
+        return None
     eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
     if eligible is not None:
         return _row_from(await _reading(*eligible))
@@ -257,7 +264,9 @@ async def rail_row_nowait(session: AsyncSession, settings: Settings) -> dict[str
     the provider (#106). A fresh cached reading, or a remembered failure, answers at once. With
     nothing cached the read starts in the background and this returns None (or the last reading,
     when there is an old one), so the rail shows no balance line for that poll: unknown, never
-    zero. The next poll finds the answer."""
+    zero. The next poll finds the answer. A key holder gets no line and starts no read."""
+    if viewer.is_remote():
+        return None
     eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
     if eligible is not None:
         key = _cache_key(*eligible)
@@ -276,7 +285,9 @@ async def rail_row_nowait(session: AsyncSession, settings: Settings) -> dict[str
 async def credit_left(session: AsyncSession, settings: Settings) -> str | None:
     """"$4.20 left on your key's limit" when the provider reports a limit for the key, else None
     (an uncapped key has no credit to be left: nothing is invented). Same eligibility, cache and
-    opt-in as the rail line, so it never adds a request."""
+    opt-in as the rail line, so it never adds a request. Never for a key holder."""
+    if viewer.is_remote():
+        return None
     eligible = eligible_backend(settings, show_balance=await show_balance_enabled(session))
     if eligible is None:
         return None

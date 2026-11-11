@@ -43,7 +43,8 @@ from kestrel.web.redact import confidential
 
 log = structlog.get_logger()
 
-_VERSION = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
+# Tier 3 sends the same P2 and P2C prompts as Tier 2 and stays on the same version (D-SCORE-1).
+_VERSION = {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}
 # The tier role for the hosted escalation. Separate from "tier3" (the LOCAL deep model used by cover
 # letters and local work) so nothing local is ever routed to the external backend.
 _FRONTIER_TIER = "frontier"
@@ -72,6 +73,8 @@ class EscalationPreview:
     # D-PRIV-1: the stand-in codes the payload was built with (a privacy.CodeBook). They are part
     # of the confirmation token, so a transmit restores the reply with exactly these codes.
     mapping: Any = None
+    # The corrections the payload states, stored on the read (D-SCORE-4).
+    correction_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -166,6 +169,10 @@ async def build_escalation_preview(
     profile = load_profile(opp.track)
     spec = prompt_spec(_VERSION[opp.track])
     comp_intel = await comp_intel_summary(session, opp)
+    from kestrel.learning.corrections import scoring_corrections
+    from kestrel.pipeline.context import stated_correction_ids
+
+    corrections = await scoring_corrections(session, opp)
     values = build_tier2_values(
         opp=opp,
         org=org,
@@ -179,6 +186,9 @@ async def build_escalation_preview(
         ),
         few_shot="",
         comp_intel=comp_intel,
+        # The operator's stated facts (D-LEARN-3): part of the previewed payload, so the
+        # confirmation shows them and its token changes if they change before the send.
+        corrections=corrections,
     )
     user = render_user(
         spec.user,
@@ -233,6 +243,7 @@ async def build_escalation_preview(
         confirmation_token=token,
         unavailable=unavailable,
         mapping=book,
+        correction_ids=stated_correction_ids(corrections),
     )
 
 
@@ -544,6 +555,7 @@ async def _record_escalation(
         blocks=value.blocks.model_dump(),
         blockers=post.blockers,
         legitimacy=value.legitimacy.model_dump(),
+        correction_ids=list(preview.correction_ids),
         raw_response=result.raw,
         prompt_tokens=result.prompt_tokens,
         completion_tokens=result.completion_tokens,
@@ -556,6 +568,9 @@ async def _record_escalation(
     session.add(trans)
     opp.stage = "t3_done"
     opp.stage_reason = f"t3 {post.verdict} ({post.displayed_score:.2f}, hosted {preview.model})"
+    from kestrel.learning.corrections import after_evaluation
+
+    await after_evaluation(session, opp.id)  # agrees_now, archive a gone posting note
     await session.commit()
     await session.refresh(trans)
     return EscalationResult(

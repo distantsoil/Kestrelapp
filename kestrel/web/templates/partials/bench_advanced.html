@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% from "partials/model_picker.html" import model_select with context %}
 {% from "partials/online_ask.html" import consent_check %}
 {# Advanced (D-UI-105, D-UI-147), inside the Model check card as the mockup shows: choose a step and
@@ -11,6 +12,7 @@
     <p class="k-muted"><a class="k-btn k-btn--sm" href="/bench?hosted=1#ck-advanced" data-testid="bench-load-hosted">Load hosted models</a> adds the models {{ hosted_label }} lists to both pickers.</p>
   {% endif %}
   <div class="mo-adv-grid">
+    {% call lo.fence(request) %}
     <form hx-post="/bench/run" hx-target="#ck-card" hx-swap="outerHTML" hx-disabled-elt="find button" data-busy-text="Queuing the check. It runs in the background." class="mo-card">
       <input type="hidden" name="online_approval" value='{{ ck_approval }}'>
       <h4>Check one step against one model</h4>
@@ -34,6 +36,8 @@
       {% endif %}
       <button class="k-btn k-btn--primary" type="submit"{% if ck_provider %} data-consent-send{% endif %} data-testid="bench-run-btn">Check this one</button>
     </form>
+    {% endcall %}
+    {% call lo.fence(request) %}
     <form hx-post="/bench/promote" hx-target="#promote-result" hx-swap="innerHTML" class="mo-card">
       <h4>Use a model for a step</h4>
       <p class="k-muted">A model on this computer replaces that step's model right away. An online model is saved as that step's hosted override, shown as "(Override)" on <a class="k-link" href="/models#hosted-overrides">Models</a>. No restart.</p>
@@ -44,6 +48,7 @@
       <button class="k-btn" type="submit" data-testid="bench-promote-btn">Use this model</button>
       <div id="promote-result"></div>
     </form>
+    {% endcall %}
   </div>
   <h4>Earlier comparison from your stored answers</h4>
   <div id="bench-results">{% include "partials/bench_table.html" %}</div>

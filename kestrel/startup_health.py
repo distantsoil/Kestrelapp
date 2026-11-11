@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Mapping
 
 import structlog
 
@@ -107,3 +109,103 @@ def take_offer(before: int) -> bool:
         _offered = True
         return True
     return False
+
+
+# ------------------------------------------------------------ the real cause of a failed start
+# #148: a server that crashes while starting writes its traceback to logs/stderr.log, and the
+# launcher used to report only "did not answer in time". These read that file back, for this
+# attempt only, and give the card a few plain, redacted lines.
+_CAUSE_READ_BYTES = 65536
+_CAUSE_MAX_LINES = 3
+_CAUSE_LINE_CHARS = 200
+_STARTUP_FAILED = "Application startup failed"
+_MASK = "a file on this computer"
+_EXC_LINE = re.compile(r"^[A-Za-z_][\w.]*(Error|Exception|Exit|Interrupt)\b")
+# Where a path starts on a cause line: a quote opening one, a drive letter, a network share, or a
+# POSIX path with at least one folder. Everything from there to the END OF THE LINE is masked
+# (D-SEC-19): a folder or file name can hold any of `,` `;` `)` `]` `'` and spaces ("Smith, Jane",
+# "Acme (Holdings) Ltd", "O'Brien Files"), so no end inside a line is safe. The full line stays in
+# stderr.log for anyone reading the log on this computer.
+# A quote or a bracket whose text holds a path separator before it closes starts a path too, so a
+# relative path with a space in a folder name ('Jane Smith/kestrel.db', (Users/Jane Smith/x)) is
+# masked from the quote or bracket on (fable review, 0.7.6).
+_PATH_START = re.compile(
+    r"""['"](?=[A-Za-z]:[\\/]|\\\\|~?/)"""
+    r"""|['"(\[](?=[^'"()\[\]\n]*[\\/])"""
+    r"""|(?<![A-Za-z])[A-Za-z]:[\\/]"""
+    r"""|\\\\[^\\/\s]+[\\/]"""
+    r"""|(?<![\w.])~?/[^/\s]*/"""
+)
+
+
+def stderr_log_size() -> int:
+    """Where stderr.log ends now, so a later read sees only what this attempt wrote."""
+    try:
+        return (paths.logs_dir() / "stderr.log").stat().st_size
+    except OSError:
+        return 0
+
+
+_ROOTED = re.compile(r"^(?:[/\\~]|\.{1,2}[/\\]|[A-Za-z]:)")
+_RELATIVE = re.compile(r"[/\\].*[/\\]|[/\\][^/\\\s]*\.[A-Za-z0-9]{1,6}$")
+
+
+def _mask_loose_path(out: str) -> str:
+    """Catch a path the main pattern missed (a root folder with a space, a single part, a
+    relative or drive-relative path). A word that starts like a path hides from there to the end;
+    a relative-looking one hides everything after the exception's name. "read/write" stays."""
+    pos = 0
+    for word in out.split(" "):
+        if _ROOTED.match(word) and len(word) > 1:
+            return out[:pos] + _MASK
+        if _RELATIVE.search(word):
+            head, sep, _rest = out.partition(": ")
+            if sep and " " not in head and not _RELATIVE.search(head):
+                return f"{head}{sep}{_MASK}"
+            return _MASK
+        pos += len(word) + 1
+    return out
+
+
+def _plain(line: str, scrub) -> str:
+    out = line.strip()
+    found = _PATH_START.search(out)
+    if found:
+        out = out[: found.start()] + _MASK
+    out = _mask_loose_path(out)
+    out = scrub(out)
+    if len(out) > _CAUSE_LINE_CHARS:
+        out = out[: _CAUSE_LINE_CHARS - 3].rstrip() + "..."
+    return out
+
+
+def startup_cause(since: int = 0, redaction: Mapping[str, str] | None = None) -> list[str]:
+    """Up to three plain lines saying why the server stopped while starting, read from the part of
+    stderr.log written after byte `since`. Empty when the log shows no failed startup (so a slow
+    start is never described as a crash), is missing, or cannot be read. Paths and anything shaped
+    like a key are removed with the same masking the diagnostics bundle uses; REDACTION, the
+    confidential-mode employer map when the caller has one, hides the current employer too."""
+    try:
+        with (paths.logs_dir() / "stderr.log").open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            end = fh.tell()
+            fh.seek(max(since, end - _CAUSE_READ_BYTES, 0))
+            text = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    failed = [i for i, ln in enumerate(lines) if _STARTUP_FAILED in ln]
+    if not failed:
+        return []
+    from kestrel.services.diagnostics import make_scrubber, saved_secret_values
+
+    try:
+        scrub = make_scrubber(redaction, saved_secret_values())
+    except (OSError, ValueError):  # secrets unreadable: still mask by shape
+        scrub = make_scrubber(redaction)
+    exc = [ln for ln in lines[: failed[0] + 1] if _EXC_LINE.match(ln)]
+    # The traceback is printed before uvicorn's "Application startup failed" line.
+    out = ["The server stopped while it was starting."]
+    if exc:
+        out.append(_plain(exc[-1], scrub))
+    return out[:_CAUSE_MAX_LINES]

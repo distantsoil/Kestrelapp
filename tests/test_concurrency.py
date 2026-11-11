@@ -130,3 +130,47 @@ def test_legacy_settings_route_cannot_persist_invalid_concurrency(models_client,
     response = models_client.post("/settings", data={"concurrency.tier1": value})
     assert response.status_code == 200
     assert _db_settings().concurrency.tier1 == 4
+
+
+def test_saving_the_speed_form_unchanged_keeps_the_automatic_online_count():
+    """#92 / fable review: with Tier 2 online and no count chosen, the Speed card shows the
+    automatic 4. Saving the form with only the quick screen changed must not store that 4 as the
+    person's choice; back on local models, Tier 2 runs the shipped 2 again."""
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    from kestrel.config import HostedMode
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.web.app import build_app
+    from tests import role_seed
+
+    async def seed(rows, first=False):
+        if first:
+            await role_seed.seed_async()
+        async with get_sessionmaker()() as s:
+            for k, v in rows.items():
+                await s.merge(Setting(key=k, value=v))
+            await s.commit()
+            return await load_settings_with_db(s)
+
+    online = asyncio.run(seed({
+        "llm.hosted_mode.enabled": True,
+        "llm.hosted_mode.acknowledged_at": "2026-10-15T00:00:00Z",
+        "llm.hosted_mode.acknowledged_terms": HostedMode().disclosure_terms(),
+        "llm.tiers.tier2.backend": "frontier", "llm.tiers.tier2.model": "vendor/invented",
+    }, first=True))
+    assert online.concurrency.tier2 == 4
+    with TestClient(build_app(worker=False)) as c:
+        r = c.post("/models/speed", data={"tier1": "3", "tier2": "4"})
+        assert r.status_code == 200
+    local = asyncio.run(seed({"llm.tiers.tier2.backend": "local",
+                              "llm.tiers.tier2.model": "kestrel-tier2"}))
+    assert (local.concurrency.tier1, local.concurrency.tier2) == (3, 2)
+    # A count the person does type is their choice and stays.
+    with TestClient(build_app(worker=False)) as c:
+        c.post("/models/speed", data={"tier1": "3", "tier2": "5"})
+    chosen = asyncio.run(seed({}))
+    assert chosen.concurrency.tier2 == 5

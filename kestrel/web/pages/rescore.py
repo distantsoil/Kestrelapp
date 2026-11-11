@@ -33,12 +33,12 @@ from sqlalchemy import select
 from kestrel.analytics.progress import model_label, tier2_label, tier2_pace_seconds
 from kestrel.date_display import format_display
 from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine
-from kestrel.llm import credit
 from kestrel.pipeline._shared import derived_num_ctx
 from kestrel.pipeline.profile import load_profile
 from kestrel.queue.rescore import MAX_ROLES, enqueue_rescore, parse_ids
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import models_view as mv
+from kestrel.web.auth import refuse_unless_local, release_credit_hold
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason
 from kestrel.web.fit import RuleWhy, explain_rule, fit_for
@@ -282,6 +282,23 @@ async def online_refusal(session, settings, form) -> str | None:
     return "not_confirmed"
 
 
+CORRECTIONS_CHANGED = (
+    "Not queued: nothing was sent. Your corrections changed since this dialog opened. Open "
+    "Score again to see what would be sent."
+)
+
+
+async def corrections_changed(session, settings, override, ids: list[int], form) -> bool:
+    """True when the send goes online and the correction lines the dialog listed (its posted
+    `corrections_digest`) are not the lines a score of these roles would state now (D-SCORE-3).
+    A send that stays on this computer binds nothing."""
+    from kestrel.learning.correction_lines import dialog_digest
+
+    if not _approval_for_override(settings, override):
+        return False
+    return str(form.get("corrections_digest") or "") != await dialog_digest(session, ids)
+
+
 def estimate_minutes(n: int, pace_s: float | None) -> int | None:
     if pace_s is None or n <= 0:
         return None
@@ -305,6 +322,7 @@ OUTCOMES: dict[str, tuple[bool, str]] = {
     "running": (False, "Nothing queued: that role is already running."),
     "rules": (False, "Not queued: your rules set this role aside. Open it to see which rule and "
                      "where to change it, or choose Score this role anyway."),
+    "corrections_changed": (False, CORRECTIONS_CHANGED),
 }
 
 
@@ -430,6 +448,12 @@ async def choose(request: Request):
         consent = await _consent(s, settings)
         role = await s.get(Opportunity, ids[0]) if len(ids) == 1 else None
         last_fit = await _last_fit(s, role.id) if role is not None else None
+        from kestrel.learning.correction_lines import dialog_digest, lines_for
+
+        # What you told Kestrel that a score would carry (issue 170): listed here so an online
+        # send is never a surprise, and bound to it (D-SCORE-3).
+        corr_lines = await lines_for(s, ids)
+        corr_digest = await dialog_digest(s, ids)
     local, local_note = await asyncio.to_thread(_local_models, settings)
     label, _name, _raw, hosted, reasons, hosted_note = await _hosted_models(settings)
     bases = await _bases()
@@ -471,6 +495,8 @@ async def choose(request: Request):
         "minutes": estimate_minutes(len(ids), pace),
         "max_roles": MAX_ROLES,
         "set_aside": aside,
+        "correction_lines": corr_lines,
+        "corrections_digest": corr_digest,
     }
     if page:
         ctx.update(title="Score again", query=dict(qp))
@@ -499,7 +525,7 @@ async def _count_retry(session, quarantine_id: str, queued: list[int]) -> None:
 
 @router.post("/rescore", response_class=HTMLResponse)
 async def rescore(request: Request):
-    credit.clear()  # Score again is what the out-of-credit message tells the operator to use
+    release_credit_hold(request)  # Score again is what the out-of-credit message says to use
     form = await request.form()
     ids = parse_ids([str(v) for v in form.getlist("opp_ids")])
     pick = str(form.get("model") or "same").strip()[:240]
@@ -507,6 +533,8 @@ async def rescore(request: Request):
     anyway = str(form.get("tier0_anyway") or "") == "1"
     if choice == "same":
         pick = "same"  # the radio wins over a model left picked in the select
+    if pick != "same":
+        refuse_unless_local(request)  # another model than the configured one: this computer only
     # Without script, a no-HX submit returns to the page it came from with the outcome.
     back = None
     if form.get("next") is not None and not request.headers.get("HX-Request"):
@@ -547,6 +575,10 @@ async def rescore(request: Request):
                 override, _label, why = await _override_for(settings, pick)
                 if override is None:
                     return answer(f"Not queued: {why}", ok=False)
+            if (pick == "same" or pick.startswith(HOSTED_PREFIX)) and await corrections_changed(
+                s, settings, override, ids, form
+            ):
+                return answer(CORRECTIONS_CHANGED, ok=False, code="corrections_changed")
             result = await enqueue_rescore(
                 s, ids, model_override=override, tier0_anyway=anyway, score_stubs=True,
                 explain=rule_explainer(s, settings),

@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from kestrel import __version__
+from kestrel import __version__, netloc
 from kestrel.analytics.progress import scoring_progress
 from kestrel.analytics.run_summary import rail_line, run_summary
 from kestrel.analytics.today import failing_sources, latest_scan
@@ -40,6 +40,7 @@ from kestrel.services.setting_overrides import (
     queue_run_mode,
 )
 from kestrel.web.app import current_run_mode, is_paused, set_paused
+from kestrel.web.auth import refuse_unless_local, request_is_local
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.queries import live_activity
 from kestrel.web.words import PLAIN
@@ -93,13 +94,17 @@ async def run_now(request: Request, mode: str | None = None):
     return to the stored mode. "hosted" is refused (400, with the reason) until the disclosure is
     acknowledged and tier1 and tier2 have hosted assignments. Queues only; never calls a model
     here, never acts externally."""
-    credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
     try:
         request_form = await request.form()
     except (ValueError, RuntimeError):
         request_form = {}
     async with sessionmaker()() as s:
-        chosen = mode or (await load_settings_with_db(s)).llm.mode
+        configured = (await load_settings_with_db(s)).llm.mode
+        chosen = mode or configured
+        if chosen in MODES and chosen != configured:
+            refuse_unless_local(request)  # a one-time route other than the configured one
+        if request_is_local(request):  # a key holder never releases a hold (D-SEC-10)
+            credit.clear()  # the operator asked for a run: let sends to an online key resume
         if chosen not in MODES:
             return JSONResponse(
                 {"queued": False, "reason": f"unknown mode {chosen!r}; use local or hosted"},
@@ -363,6 +368,8 @@ async def scan_start(request: Request):
     from kestrel.web.pages.sources import _run_choice
 
     form = await request.form()
+    if str(form.get("model_choice") or "usual") == "other":
+        refuse_unless_local(request)  # one model other than the usual: this computer only
     # Only the no-script dialog page sends `next`; every other caller gets the button back.
     hx = bool(request.headers.get("HX-Request")) or form.get("next") is None
     sm = sessionmaker()
@@ -567,6 +574,13 @@ async def _model_row(settings: Settings, mode: str) -> dict[str, Any]:
         displayed = _model_display_name(name)
         return {"state": "good", "label": f"Hosted mode · {displayed}", "loaded": [], "up": None,
                 "display": displayed}
+    from kestrel.services import lan_servers
+
+    on_net, host = lan_servers.scoring_on_network(settings)
+    if on_net:  # D-LLM-15: the models run on another computer on the person's network
+        where = netloc.label_for(netloc.LOCAL_NETWORK, host)
+        return {"state": "good", "label": f"Models {where}", "loaded": [], "up": None,
+                "display": None, "lan": where}
     if not ollama_needed(settings):  # no tier on Ollama: its absence is not a fault (D-SETUP-8)
         return {"state": "idle", "label": "Ollama not needed", "loaded": [], "up": None}
     ps = await _probe_ollama(settings.llm.ollama_native_url)
@@ -662,9 +676,11 @@ def readout(payload: dict[str, Any]) -> dict[str, Any]:
     problem = None
     if failed:
         # The total (failure_summary), not the Pipeline group's stage subset (D-UI-70).
+        # The count can include a story-build failure, which has no role, so it says "item(s)",
+        # never "role(s)".
         problem = {"dot": "bad", "word": "Problem", "rail": "failed", "href": "/quarantine",
-                   "text": f"{failed} {'role needs' if failed == 1 else 'roles need'} another try",
-                   "title": "Roles the model could not finish: open Needs another try"}
+                   "text": f"{failed} {'item needs' if failed == 1 else 'items need'} another try",
+                   "title": "Something the model could not finish: open Needs another try"}
     elif scan.get("state") == "bad":
         problem = {"dot": "bad", "word": "Problem", "rail": "scan", "href": "/sources",
                    "text": scan.get("label") or "", "title": "A search is failing: open Sources"}
@@ -691,6 +707,10 @@ def readout(payload: dict[str, Any]) -> dict[str, Any]:
     if credit_notes:
         engine = {"dot": "warn", "rail": "credit", "text": credit_notes[0],
                   "href": "/settings#hosted", "title": "Your online model key is out of credit"}
+    elif model and model.get("lan") and mode != "hosted":
+        engine = {"dot": "good", "rail": "engine",
+                  "text": model["lan"][0].upper() + model["lan"][1:], "href": None,
+                  "title": model["label"]}
     elif mode == "hosted" or (model and model.get("label") == "Ollama not needed") or balance:
         provider = hosted.get("provider") or "Online model"
         text = f"{provider} key" if hosted.get("key_present") else "Online model, no key yet"
@@ -759,19 +779,16 @@ async def _nav_counts(s: AsyncSession, track: str | None = None) -> dict[str, in
       roles on the track with a Tier 2 evaluation, a description, not hidden (active.calibratable,
       #32), counted once per duplicate group, and no label or override on any copy (#122).
       Ranking loads embeddings, which is too much for a 30 s poll, so the pool is counted."""
-    from kestrel.analytics.today import worth_a_look
+    from kestrel.analytics.today import group_counts, worth_count
+    from kestrel.db.enums import TRACKS
     from kestrel.learning.active import askable_group_count_stmt
     from kestrel.web.fit import GROUP_NEW
-    from kestrel.web.queries import GROUP_ORDER, OppFilters, _base_stmt, _group_expr, _with_operator
+    from kestrel.web.queries import group_total
 
-    shortlist = (await worth_a_look(s, track))["n"]
-    unrated = (
-        await s.execute(
-            _with_operator(_base_stmt(OppFilters(track=track), func.count())).where(
-                _group_expr() == GROUP_ORDER.index(GROUP_NEW)
-            )
-        )
-    ).scalar_one()
+    # One grouped count of every track (cached, D-PERF-2): the Pipeline's own groups, so the
+    # badge, the Today card and the group headers never disagree.
+    shortlist = await worth_count(s, track)
+    unrated = group_total(await group_counts(s), GROUP_NEW, track if track in TRACKS else None)
     calibrate = (await s.execute(askable_group_count_stmt(track))).scalar_one()
     # No needs_review count (review finding 12): no nav badge shows it, so its out-of-band span
     # had no target and its query was wasted on every 30 s poll.
@@ -804,7 +821,7 @@ async def track_badges(s: AsyncSession) -> dict[str, int]:
     """The track tabs' badges (D-UI-57), keyed `track-<track>`: what waits for the operator on
     that track, which is its Worth a look count (the one shared query) plus its follow-ups due.
     Empty when only one track is in use: there are no tabs to badge."""
-    from kestrel.analytics.today import act_summary, worth_a_look
+    from kestrel.analytics.today import act_summary, worth_count
     from kestrel.services.tracks import enabled_tracks_cached
 
     enabled = tuple(enabled_tracks_cached())
@@ -812,7 +829,7 @@ async def track_badges(s: AsyncSession) -> dict[str, int]:
         return {}
     out: dict[str, int] = {}
     for track in enabled:
-        worth = (await worth_a_look(s, track))["n"]
+        worth = await worth_count(s, track)
         due = (await act_summary(s, track))["follow_up"]
         out[f"track-{track}"] = int(worth) + int(due)
     return out

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from statistics import median
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -153,13 +153,36 @@ class _Window:
         return (self.start is None or when >= self.start) and when < self.end
 
 
+class _Role(NamedTuple):
+    """The few columns of an opportunity the page reads (D-PERF-3), instead of the whole row with
+    its posting body and raw payload. Attribute names match the model, so the grouping lambdas
+    read it exactly as they read an Opportunity."""
+    id: int
+    stage: str | None
+    first_seen_at: str | None
+    title: str | None
+    org_name: str | None
+    employment_type: str | None
+    remote_type: str | None
+    trigger_data: Any
+
+
+class _OrgCols(NamedTuple):
+    size_band: str | None
+    ownership: str | None
+
+
+class _SrcCols(NamedTuple):
+    name: str | None
+
+
 @dataclass
 class _P:
     """One pursuit with everything the page needs to place it."""
     id: int
-    opp: Opportunity
-    org: Org | None
-    src: Source | None
+    opp: _Role
+    org: _OrgCols | None
+    src: _SrcCols | None
     status: str
     when: datetime  # the date that places it in a range (see the module docstring)
     sent_at: datetime | None
@@ -178,17 +201,29 @@ class _P:
 class _Data:
     track: str
     now: datetime
-    opps: list[tuple[Opportunity, Org | None, Source | None]]
+    opps: list[tuple[_Role, _OrgCols | None, _SrcCols | None]]
     read_ids: set[int]
     pursuits: list[_P]
 
 
 async def _load(session: AsyncSession, track: str, now: datetime) -> _Data:
+    # Columns, not rows: a track holds thousands of roles and each full row carries the posting
+    # text. The outer joins give None for a missing org or source, as the ORM pair did.
     opps = [
-        (o, org, src)
-        for o, org, src in (
+        (
+            _Role(oid, stage, first_seen, title, org_name, emp, remote, trig),
+            _OrgCols(size, own) if org_id is not None else None,
+            _SrcCols(src_name) if src_id is not None else None,
+        )
+        for (oid, stage, first_seen, title, org_name, emp, remote, trig, org_id, size, own,
+             src_id, src_name) in (
             await session.execute(
-                select(Opportunity, Org, Source)
+                select(
+                    Opportunity.id, Opportunity.stage, Opportunity.first_seen_at,
+                    Opportunity.title, Opportunity.org_name, Opportunity.employment_type,
+                    Opportunity.remote_type, Opportunity.trigger_data,
+                    Org.id, Org.size_band, Org.ownership, Source.id, Source.name,
+                )
                 .join(Org, Org.id == Opportunity.org_id, isouter=True)
                 .join(Source, Source.id == Opportunity.source_id, isouter=True)
                 .where(Opportunity.track == track)
@@ -225,28 +260,41 @@ async def _load(session: AsyncSession, track: str, now: datetime) -> _Data:
         ).all()
     }
     opp_by_id = {o.id: (o, org, src) for o, org, src in opps}
-    outcomes: dict[int, Outcome] = {}
-    for oc in (await session.execute(select(Outcome).order_by(Outcome.id))).scalars():
-        outcomes[oc.pursuit_id] = oc  # the latest outcome per pursuit
+    outcomes: dict[int, tuple[str | None, int | None]] = {}
+    for pid, stage, days in (
+        await session.execute(
+            select(Outcome.pursuit_id, Outcome.furthest_stage, Outcome.days_to_first_response)
+            .order_by(Outcome.id)
+        )
+    ).all():
+        outcomes[pid] = (stage, days)  # the latest outcome per pursuit
     pursuits: list[_P] = []
-    for p in (await session.execute(select(Pursuit).where(Pursuit.track == track))).scalars():
-        found = opp_by_id.get(p.opportunity_id)
+    for pid, opp_id, status, applied_at, last_activity_at in (
+        await session.execute(
+            select(
+                Pursuit.id, Pursuit.opportunity_id, Pursuit.status, Pursuit.applied_at,
+                Pursuit.last_activity_at,
+            ).where(Pursuit.track == track)
+        )
+    ).all():
+        found = opp_by_id.get(opp_id)
         if found is None:
             continue
         opp, org, src = found
-        oc = outcomes.get(p.id)
-        responded = oc is not None and oc.days_to_first_response is not None
-        reached = _furthest_step(p.status, oc.furthest_stage if oc else None, responded, track)
-        sent_at = _dt(p.applied_at)
-        shortlisted_at = first_event.get(p.id)
+        oc = outcomes.get(pid)
+        days_to_reply = oc[1] if oc else None
+        responded = oc is not None and days_to_reply is not None
+        reached = _furthest_step(status, oc[0] if oc else None, responded, track)
+        sent_at = _dt(applied_at)
+        shortlisted_at = first_event.get(pid)
         when = (
-            sent_at or shortlisted_at or _dt(p.last_activity_at) or _dt(opp.first_seen_at) or now
+            sent_at or shortlisted_at or _dt(last_activity_at) or _dt(opp.first_seen_at) or now
         )
         pursuits.append(
             _P(
-                id=p.id, opp=opp, org=org, src=src, status=p.status, when=when, sent_at=sent_at,
+                id=pid, opp=opp, org=org, src=src, status=status, when=when, sent_at=sent_at,
                 shortlisted_at=shortlisted_at, reached=reached, replied=reached >= _REPLY,
-                reply_days=oc.days_to_first_response if oc else None,
+                reply_days=days_to_reply,
                 score=scores.get(opp.id),
             )
         )
@@ -254,7 +302,7 @@ async def _load(session: AsyncSession, track: str, now: datetime) -> _Data:
 
 
 # ------------------------------------------------------------------------------------ counting
-def _roles_in(data: _Data, win: _Window) -> list[tuple[Opportunity, Org | None, Source | None]]:
+def _roles_in(data: _Data, win: _Window) -> list[tuple[_Role, _OrgCols | None, _SrcCols | None]]:
     return [t for t in data.opps if win.has(_dt(t[0].first_seen_at))]
 
 

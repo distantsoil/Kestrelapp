@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.models import Quarantine, Run, Setting, Task
@@ -57,8 +57,12 @@ def worth_title(n: int, strong: int, first: dict[str, Any] | None, *, redact) ->
 
 async def _failed_role_ids(s: AsyncSession, start: str | None) -> set[int]:
     """The roles that need another try because of THIS run: an open failure recorded since the
-    run began, or a scoring task that gave up since then. With no start that resolves, nothing
-    (never every old failure)."""
+    run began, a scoring task that gave up since then, or a scoring task that failed since then
+    and is waiting for its retry (issue #153's backoff): a role that failed this run is a
+    failure of this run, whether it has spent its attempts yet or is waiting for the wait to
+    pass. With no start that resolves, nothing (never every old failure)."""
+    from kestrel.queue.queue import is_deferred
+    from kestrel.services.online_consent import APPROVAL_HOLD
     from kestrel.web.queries import quarantine_needs_you_clause
 
     if not start:
@@ -73,7 +77,10 @@ async def _failed_role_ids(s: AsyncSession, start: str | None) -> set[int]:
     ids.update(int(oid) for (oid,) in rows.all())
     dead = await s.execute(
         select(Task.payload).where(
-            Task.type.in_(("t1", "t2")), Task.status == "dead", Task.updated_at >= start
+            Task.type.in_(("t1", "t2")), Task.updated_at >= start, ~is_deferred(),
+            or_(Task.status == "dead",
+                and_(Task.status == "pending", Task.last_error.is_not(None),
+                     Task.last_error != APPROVAL_HOLD))
         )
     )
     for (payload,) in dead.all():

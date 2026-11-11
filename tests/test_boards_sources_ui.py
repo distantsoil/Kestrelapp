@@ -150,7 +150,7 @@ def test_the_remote_boards_add_keyless_sources_named_after_the_board():
     assert (him.kind, him.config) == ("himalayas", {"keyword": "Operations Analyst"})
     assert (wwr.kind, wwr.config) == ("weworkremotely", {})
     assert (an.kind, an.config) == ("arbeitnow", {})
-    assert _env() == "" or "ADZUNA" not in _env()
+    assert "ADZUNA" not in _env()
 
 
 def test_remotive_is_added_from_the_sheet_as_a_keyless_source_and_shows_on_the_page():
@@ -160,7 +160,7 @@ def test_remotive_is_added_from_the_sheet_as_a_keyless_source_and_shows_on_the_p
         page = c.get("/sources").text
     rem = _sources()["Remotive"]
     assert (rem.kind, rem.config) == ("remotive", {})
-    assert ">Remotive<" in page or "Remotive" in page.split('data-testid="group-boards"', 1)[-1]
+    assert ">Remotive<" in page
 
 
 def test_a_sheet_with_no_board_ticked_still_asks_for_one():

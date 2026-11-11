@@ -26,7 +26,6 @@ Rules that bind this module:
 from __future__ import annotations
 
 import html
-import re
 from typing import Any
 from urllib.parse import urlencode
 
@@ -34,6 +33,7 @@ import httpx
 import structlog
 
 from kestrel.errors import ROBOTS_SENTENCE
+from kestrel.ingest import source_secrets
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.pipeline.profile import load_profile
 
@@ -51,7 +51,6 @@ MAX_DAYS = 60
 MAX_TITLES = 5
 MAX_REQUESTS = 12  # across all search terms in one run
 _RATE = 2.0
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 MAX_EMAIL_LENGTH = 254  # the longest address SMTP allows (RFC 5321)
 
 
@@ -88,7 +87,8 @@ def is_key_problem(error: str | None) -> bool:
 
 
 def key_env(config: dict) -> str:
-    return config.get("api_key_env") or DEFAULT_KEY_ENV
+    """The saved key this source sends: USAJOBS_API_KEY, or another USAJOBS_ name (D-SEC-21)."""
+    return source_secrets.secret_name("usajobs", config, "api_key_env", DEFAULT_KEY_ENV)
 
 
 # ------------------------------------------------------------------------------ the search terms
@@ -254,9 +254,7 @@ class UsaJobsAdapter:
                 "Never put the key in the source. Save it on the Sources page under Sources that "
                 "need your own key"
             )
-        env = config.get("api_key_env", DEFAULT_KEY_ENV)
-        if not isinstance(env, str) or not _ENV_NAME.match(env):
-            raise SourceConfigError("'api_key_env' must be an environment variable name")
+        key_env(config)  # D-SEC-21: only a USAJOBS_ key may be named
         for name in ("keyword", "location", "contact_email"):
             if config.get(name) is not None and not isinstance(config[name], str):
                 raise SourceConfigError(f"'{name}' must be text")

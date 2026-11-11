@@ -3,6 +3,7 @@
    metadata), never from this file. The promises and helper cards open flyouts; component
    versions and the third-party notices sit behind animated toggles; the diagnostics save lives in
    the Something wrong? flyout (the mockup has no diagnostics block). #}
+{% import "partials/local_only.html" as lo with context %}
 {% extends "base.html" %}
 {# Imported under `ui`: base.html defines its own one-argument `icon` macro. #}
 {% import "ui/macros.html" as ui %}
@@ -96,11 +97,12 @@
     {% call ui.help_column() %}
       <article class="k-hcard k-hcard--good" id="files" data-testid="about-files">
         <div class="k-hcard__head"><span class="k-badge k-badge--good">{{ ui.icon('folder') }}</span><h3>Where your files live</h3></div>
-        {% for key, label, path in [('data', 'Your data', data_home), ('logs', 'Logs', logs_dir)] %}
+        {% if not is_local(request) %}<p class="k-muted">Folder locations are shown on this computer only.</p>{% endif %}
+        {% for key, label, path in [('data', 'Your data', data_home), ('logs', 'Logs', logs_dir)] if is_local(request) %}
         <div class="ab-frow">
           <div class="ab-frow__l"><b>{{ label }}</b>
             <button type="button" class="k-btn k-btn--sm" data-copy-target="ab-path-{{ key }}">Copy</button>
-            {% if can_open_folder %}<button type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "{{ key }}"}' hx-target="#ab-open-note" hx-swap="innerHTML" data-testid="open-{{ key }}">Open</button>{% endif %}
+            {% if can_open_folder %}<button{{ lo.dis(request) }} type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "{{ key }}"}' hx-target="#ab-open-note" hx-swap="innerHTML" data-testid="open-{{ key }}">Open</button>{% endif %}
           </div>
           <code id="ab-path-{{ key }}" class="mono" title="{{ path }}" data-testid="path-{{ key }}">{{ path }}</code>
         </div>
@@ -165,11 +167,12 @@
     {% if desktop %}
     <p>When something goes wrong, save one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click, saved to your Downloads folder, and is never sent anywhere by Kestrel.</p>
     {# Desktop app: saved straight to Downloads, no browser download flyout (D-UI-41). #}
-    <button class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="diagnostics-save" hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
+    <button{{ lo.dis(request) }} class="k-btn k-btn--sm k-btn--primary" type="button" data-testid="diagnostics-save" hx-post="/about/diagnostics/save" hx-target="#diagnostics-result" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…">Save diagnostics</button>
+    {{ lo.note(request) }}
     <div id="diagnostics-result"></div>
     {% else %}
     <p>When something goes wrong, download one zip and attach it to a GitHub issue or hand it to whoever asked for it. It is built when you click and is never sent anywhere by Kestrel.</p>
-    <a class="k-btn k-btn--sm k-btn--primary" href="/about/diagnostics" download data-testid="diagnostics-download">Download diagnostics</a>
+    {{ lo.download(request, '/about/diagnostics', 'Download diagnostics', 'k-btn k-btn--sm k-btn--primary', 'diagnostics-download') }}
     {% endif %}
     <h4>What it contains</h4>
     <ul>{% for name, what in bundle_contents %}<li><span class="mono">{{ name }}</span>: {{ what }}.</li>{% endfor %}</ul>

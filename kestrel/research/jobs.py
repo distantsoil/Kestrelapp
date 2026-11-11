@@ -17,11 +17,12 @@ from kestrel.db.models import Opportunity, Org, Quarantine, Task
 from kestrel.ingest.http import HttpClient
 from kestrel.llm.client import LLMClient
 from kestrel.pipeline._shared import plan_hosted_send
-from kestrel.queue.queue import TaskQueue
+from kestrel.queue.queue import REASON_STOPPED, TaskQueue
 from kestrel.research.company import research_org
 from kestrel.research.contacts import discover_contacts
 from kestrel.research.errors import ModelTransportError
 from kestrel.research.excerpts import acquire_excerpts
+from kestrel.services.online_consent import CONFIRMED_ONLINE_KEY
 from kestrel.services.setting_overrides import load_settings_with_db
 
 log = structlog.get_logger()
@@ -57,7 +58,7 @@ async def enqueue(
         "org_id": opp.org_id,
         "requested": True,
         "destination": destination(settings),
-        "confirmed_online": confirmed_online,
+        CONFIRMED_ONLINE_KEY: confirmed_online,
         "progress": "Waiting for the worker",
     }
     now = utcnow_iso()
@@ -166,7 +167,7 @@ async def _approval_error(
     if payload.get("destination") != target:
         return "Model or service changed. Start again to confirm where this runs."
     if target["external"] and (
-        not settings.llm.hosted_mode.active or not payload.get("confirmed_online")
+        not settings.llm.hosted_mode.active or not payload.get(CONFIRMED_ONLINE_KEY)
     ):
         return "Online approval is needed. Start again to confirm the send."
     return (await plan_hosted_send(session, settings, "tier3")).refuse
@@ -298,7 +299,10 @@ async def drain(sm: async_sessionmaker[AsyncSession], *, stop: asyncio.Event | N
                     with contextlib.suppress(asyncio.CancelledError):
                         await run
                     await queue.defer(
-                        task.id, "Stopped; resumes at the next start", worker_id=worker_id
+                        task.id,
+                        "Stopped; resumes at the next start",
+                        worker_id=worker_id,
+                        reason=REASON_STOPPED,
                     )
                     break
             if not run.cancelled():
@@ -308,7 +312,12 @@ async def drain(sm: async_sessionmaker[AsyncSession], *, stop: asyncio.Event | N
             run.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await run
-            await queue.defer(task.id, "Stopped; resumes at the next start", worker_id=worker_id)
+            await queue.defer(
+                task.id,
+                "Stopped; resumes at the next start",
+                worker_id=worker_id,
+                reason=REASON_STOPPED,
+            )
             raise
         except ModelTransportError as exc:
             # A transport failure is neither a validated empty result nor a schema quarantine:

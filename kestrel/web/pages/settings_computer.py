@@ -33,6 +33,7 @@ from kestrel.services import autostart, keep_awake, pursuit_undo
 from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import settings_io as io
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import CLOSE_TO_TRAY_KEY, sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.pages.settings_roles import trigger
@@ -152,7 +153,7 @@ _SAID = {
 }
 
 
-@router.post("/settings/computer/mode", response_class=HTMLResponse)
+@router.post("/settings/computer/mode", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def mode_save(request: Request):
     form = await request.form()
     asked = str(form.get("mode") or "")
@@ -184,7 +185,7 @@ async def mode_save(request: Request):
     )
 
 
-@router.post("/settings/computer/mode/undo")
+@router.post("/settings/computer/mode/undo", dependencies=[LOCAL_ONLY])
 async def mode_undo(request: Request):
     async with sessionmaker()() as s:
         row = await s.get(Setting, pursuit_undo.PREFIX + request.query_params.get("token", ""))
@@ -201,7 +202,7 @@ async def mode_undo(request: Request):
     return io.reply("Put back.")
 
 
-@router.post("/settings/computer/key", response_class=HTMLResponse)
+@router.post("/settings/computer/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def key_save(request: Request):
     """Test, Save or Remove one provider's key. Test writes nothing. The value is never echoed
     back or logged; only the last four characters can appear."""
@@ -234,7 +235,7 @@ async def key_save(request: Request):
     return _mode_card(request, ctx, headers, setup=bool(headers))
 
 
-@router.post("/settings/computer/free", response_class=HTMLResponse)
+@router.post("/settings/computer/free", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def free_save(request: Request):
     """Free models only (OpenRouter). On needs the training tick; without it nothing is written
     and the card comes back with the ticks as they were. On with the tick goes through the one
@@ -396,7 +397,8 @@ async def checklist(request: Request):
     return _ck_card(request, await checklist_ctx())
 
 
-@router.post("/settings/computer/action/{name}", response_class=HTMLResponse)
+@router.post("/settings/computer/action/{name}", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
 async def checklist_action(request: Request, name: str):
     from kestrel.web.pages.setup import start_action
 
@@ -408,7 +410,7 @@ async def checklist_action(request: Request, name: str):
     return _ck_card(request, await checklist_ctx(message or "", status is None))
 
 
-@router.post("/settings/computer/profile", response_class=HTMLResponse)
+@router.post("/settings/computer/profile", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def profile_save(request: Request):
     form = await request.form()
     name = str(form.get("profile") or "").strip()
@@ -435,7 +437,7 @@ async def option_state() -> dict:
     }
 
 
-@router.post("/settings/computer/option")
+@router.post("/settings/computer/option", dependencies=[LOCAL_ONLY])
 async def option_save(request: Request) -> Response:
     try:
         body = await request.json()
@@ -488,7 +490,7 @@ def _toggle_undo(key: str, prev: Any, now: Any) -> str:
         {"key": key, "prev": io.dumps(prev), "now": io.dumps(now)})
 
 
-@router.post("/settings/computer/option/undo")
+@router.post("/settings/computer/option/undo", dependencies=[LOCAL_ONLY])
 async def option_undo(request: Request) -> Response:
     q = request.query_params
     key = q.get("key", "")

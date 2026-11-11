@@ -19,7 +19,8 @@ from kestrel.config import Settings
 from kestrel.db.models import Calibration, Evaluation, Label, MlModel, Opportunity, Org
 from kestrel.learning import calibration as calib
 from kestrel.learning import reranker as reranker_mod
-from kestrel.learning.active import UncertainItem, rank_uncertain
+from kestrel.learning import uncertain_cache
+from kestrel.learning.active import UncertainItem
 from kestrel.learning.capture import labeled_examples
 from kestrel.learning.groups import group_keys
 
@@ -181,7 +182,7 @@ async def build_queue(
     ]
     # Roles rated this session, one per duplicate group (#122): the count is judgments, not rows.
     done = len(set((await group_keys(s, rated)).values()))
-    pool = await rank_uncertain(s, track, settings, limit=SESSION_SIZE + 1)
+    pool = await uncertain_cache.ranked(s, track, settings, limit=SESSION_SIZE + 1)
     left = pool[: max(0, SESSION_SIZE - done)]
     skipped = [i for i in _ids(skip) if any(u.opportunity.id == i for u in left)]
     ordered = [u for u in left if u.opportunity.id not in skipped] + [
@@ -388,6 +389,7 @@ class HistoryRow:
     kestrel: float | None
     result: str  # "Close" | "Different" | "Changed"
     changed: bool
+    quick: bool = False  # the standing answer came from a Quick round (issue 171)
 
 
 @dataclass
@@ -449,6 +451,17 @@ async def build_history(s: AsyncSession, track: str, *, page: int = 0) -> Histor
             )
         ).all()
     )
+    # The answer that stands for a role is a Quick one when a quick label carries its timestamp.
+    quick_at = {
+        (oid, at)
+        for oid, at in (
+            await s.execute(
+                select(Label.opportunity_id, Label.created_at).where(
+                    Label.opportunity_id.in_(ids), Label.source == "quick"
+                )
+            )
+        ).all()
+    }
     rows: list[HistoryRow] = []
     for e in examples:
         opp = opps.get(e.opportunity_id)
@@ -465,6 +478,7 @@ async def build_history(s: AsyncSession, track: str, *, page: int = 0) -> Histor
                 said_word=word_for(e.operator_score),
                 kestrel=ks,
                 changed=changed,
+                quick=(opp.id, e.created_at) in quick_at,
                 result="Changed"
                 if changed
                 else ("Close" if is_close(ks, e.operator_score) else "Different"),

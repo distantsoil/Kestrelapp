@@ -32,7 +32,7 @@ question was worth asking, but the app around FastAPI is what does not fit.
 The app keeps running on the GPU PC, bound to `127.0.0.1` exactly as today. `cloudflared` opens an
 outbound connection to Cloudflare and publishes the local port at a hostname you own. Cloudflare
 Access sits in front of that hostname and requires a login before any request reaches the tunnel.
-Nothing is port-forwarded and the LAN shared secret is not involved.
+Nothing is port-forwarded. Kestrel also requires its shared key on every tunnel request (step 3).
 
 Requirements: a domain on Cloudflare DNS (any registrar; the free plan is enough) and the PC awake.
 
@@ -44,8 +44,13 @@ Requirements: a domain on Cloudflare DNS (any registrar; the free plan is enough
 2. **Zero Trust > Networks > Tunnels > Create a tunnel.** Install `cloudflared` on the PC as a
    Windows service (the dashboard gives the one-line installer with the token). Public hostname
    `kestrel.yourdomain.com` -> service `http://127.0.0.1:8765` (the port from `runtime.json`).
-3. Leave `server.bind_all` **off**. The tunnel connects to loopback, so every request arrives as a
-   local peer and the LAN key is not required. Do not generate one for this.
+3. Leave `server.bind_all` **off**. The tunnel connects from loopback, but Kestrel sees the public
+   `Host` on each request and treats tunnel traffic as remote: it needs the shared key (issue
+   #151). Once step 4 lists the hostname, Kestrel makes the key itself at its next start (and
+   again after a restore, if the restored data holds none), so a tunnel host is never open without
+   one. You do not generate it by hand. Cloudflare Access stays the front gate; the key is
+   Kestrel's own backstop, so a missing or loosened Access policy can no longer hand an anonymous
+   visitor full control.
 4. Add the hostname to Kestrel's allow list. Requests through the tunnel reach loopback, but they
    carry the public hostname as `Host` and, on HTMX POSTs, as `Origin`; the cross-origin guard and
    TrustedHost refuse both until the hostname is listed. Set, in `settings.yml`:
@@ -56,10 +61,13 @@ Requirements: a domain on Cloudflare DNS (any registrar; the free plan is enough
    ```
 
    Exact lowercase hostnames only; a wildcard or a scheme is refused at config load, because a
-   wildcard here would re-open DNS rebinding on the loopback bind. Restart Kestrel. The key is
-   implemented and tested against a simulated tunnel request; verifying it against a live tunnel
+   wildcard here would re-open DNS rebinding on the loopback bind. Restart Kestrel; the key is
+   made on that start. The key check is implemented and tested against a simulated tunnel request; verifying it against a live tunnel
    is operator-required, so test one POST from the phone before trusting it.
-5. Open the hostname on your phone, enter the PIN from your email, use Kestrel.
+5. Open the hostname on your phone, enter the PIN from your email, then give Kestrel the shared
+   secret once: open `https://kestrel.yourdomain.com/auth?key=YOUR-KEY` (the key is shown under
+   Settings > LAN). The browser stores it as a cookie and the phone is in until the cookie is
+   cleared.
 
 ### Gotchas
 
@@ -81,6 +89,8 @@ Requirements: a domain on Cloudflare DNS (any registrar; the free plan is enough
 
 ### What you get
 
-A password-protected Kestrel on any device, over HTTPS, without the plain-HTTP LAN mode and its
-shared-password caveats. The privacy model is unchanged: inference stays on the PC, and the only
-thing that ever leaves it is a Tier 3 payload you confirmed.
+A password-protected Kestrel on any device, over HTTPS, with two gates: Cloudflare Access in
+front, and the shared secret on every tunnel request (issue #151), because the tunnel reaches the
+app from loopback and Access would otherwise be the only gate it has. The privacy model is
+unchanged: inference stays on the PC, and the only thing that ever leaves it is a Tier 3 payload
+you confirmed.

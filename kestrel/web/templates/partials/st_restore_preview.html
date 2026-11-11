@@ -1,0 +1,22 @@
+{# The restore opt-in (D-SEC-11): what this backup's AI and connection settings would set, read
+   without applying it. Every value is autoescaped text; nothing is sent by showing it. #}
+{% macro rows(items, testid) %}
+  {% if items %}<ul class="st-rp__list" data-testid="{{ testid }}">
+    {% for i in items %}<li class="st-rp__row{{ ' is-warn' if i.warn }}"><span class="st-rp__k">{{ i.label }}</span><span class="st-rp__v">{{ i.value }}</span>{% if i.warn %}<span class="k-pill k-pill--warn st-rp__tag">Internet</span>{% endif %}</li>{% endfor %}
+  </ul>{% endif %}
+{% endmacro %}
+<div class="st-rp__box">
+  <label class="st-rp__opt"><input type="checkbox" name="restore_local" value="1" form="st-restore-form" data-testid="st-restore-local"> <span><b>Also restore this backup's AI and connection settings</b><span class="st-dsm"> Leave this off to keep the model servers, online service and connection settings you have on this computer. Turn it on when you are moving to a new computer.</span></span></label>
+  {% if pv.empty %}
+    <p class="st-dsm" data-testid="st-restore-preview-none">This backup sets no AI or connection settings.</p>
+  {% else %}
+    <p class="st-dsm"><b>If you turn it on, the backup sets these.</b> Nothing has been sent anywhere to show this list.</p>
+    {% if pv.any_internet %}<p class="st-rp__warn" role="alert" data-testid="st-restore-preview-warn">This backup points a model at an address on the internet. Anything sent to a model there leaves your network. Kestrel still asks before each online send.</p>{% endif %}
+    {% if pv.servers %}<h4 class="st-rp__h">Model servers</h4>{{ rows(pv.servers, 'st-restore-preview-servers') }}{% endif %}
+    {% if pv.tiers %}<h4 class="st-rp__h">Which model each step uses</h4>{{ rows(pv.tiers, 'st-restore-preview-tiers') }}{% endif %}
+    {% if pv.destinations %}<h4 class="st-rp__h">Where notices, searches and updates go</h4>{{ rows(pv.destinations, 'st-restore-preview-dest') }}{% endif %}
+    {% if pv.switches %}<h4 class="st-rp__h">Switches</h4>{{ rows(pv.switches, 'st-restore-preview-switches') }}{% endif %}
+    {% if pv.other_count %}<p class="st-dsm">{{ pv.other_count }} other setting{{ '' if pv.other_count == 1 else 's' }} of this kind {{ 'is' if pv.other_count == 1 else 'are' }} not listed.</p>{% endif %}
+  {% endif %}
+  <ul class="st-rp__kept" data-testid="st-restore-preview-kept">{% for line in pv.kept_here %}<li class="st-dsm">{{ line }}</li>{% endfor %}</ul>
+</div>

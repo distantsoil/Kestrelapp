@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+from sqlalchemy import select
+
 from kestrel.db.base import iso, utcnow
 from kestrel.db.models import Task
 from kestrel.queue import TaskQueue
@@ -57,6 +60,11 @@ async def test_retry_increments_then_dead_letters(sm):
     t = await q.get(tid)
     assert t.attempts == 1 and t.last_error == "boom"
     # attempt 2 -> exhausts max_attempts -> dead
+    # the 30 s backoff after attempt 1 has passed (issue #153)
+    async with sm() as s:
+        t = await s.get(Task, tid)
+        t.retry_at = iso(utcnow().replace(year=2000))
+        await s.commit()
     await q.lease("w1")
     status = await q.fail(tid, "boom again")
     assert status == "dead"
@@ -168,3 +176,186 @@ async def test_a_cancelled_heartbeat_still_finishes_its_write(sm):
     with pytest.raises(asyncio.CancelledError):
         await beat
     assert finished == [True]
+
+
+@pytest.mark.parametrize(
+    "method,call,private,ret",
+    [
+        ("complete", lambda q: q.complete(1, "w1"), "_complete", True),
+        ("fail", lambda q: q.fail(1, "boom", worker_id="w1"), "_fail", "pending"),
+        ("defer", lambda q: q.defer(1, "out of credit", worker_id="w1"), "_defer", "deferred"),
+        ("give_back", lambda q: q.give_back(1, {"n": 1}, worker_id="w1"), "_give_back", "pending"),
+        ("release_all_leased", lambda q: q.release_all_leased(), "_release_all_leased", 1),
+    ],
+)
+async def test_a_cancelled_queue_write_still_finishes_its_write(sm, method, call, private, ret):
+    # D-QUEUE-4: every queue write is shielded the way heartbeat is (issue #153 point 4): a
+    # cancel landing inside the database call must not abandon the connection; the write runs
+    # to the end (closing its session) and only then reports the cancel.
+    import asyncio
+
+    import pytest
+
+    q = TaskQueue(sm)
+    started, release = asyncio.Event(), asyncio.Event()
+    finished: list[bool] = []
+
+    async def slow_write(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        finished.append(True)
+        return ret
+
+    setattr(q, private, slow_write)
+    job = asyncio.create_task(call(q))
+    await started.wait()
+    job.cancel()
+    await asyncio.sleep(0)
+    assert finished == []  # still writing: the cancel waits for it
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await job
+    assert finished == [True]
+
+
+async def test_a_clean_quit_never_spends_a_scoring_tasks_attempts(sm):
+    # issue #153: an intentional quit is not a failure. Three quit/restart cycles while a
+    # scoring task is running leave it pending with no change in attempts.
+    q = TaskQueue(sm)
+    await q.enqueue("t1", {"opportunity_id": 1})
+    for _ in range(3):  # running, quit, restart
+        assert await q.lease("w", types=["t1"]) is not None
+        await q.release_all_leased()
+    async with sm() as s:
+        (t,) = (await s.execute(select(Task))).scalars().all()
+    assert t.status == "pending" and t.attempts == 0
+    # Only a real failure counts.
+    task = await q.lease("w", types=["t1"])
+    assert await q.fail(task.id, "boom", worker_id="w") == "pending"
+    async with sm() as s:
+        assert (await s.get(Task, t.id)).attempts == 1
+
+
+async def test_a_retryable_failure_backs_off_until_its_wait_passes(sm):
+    # issue #153: a retryable failure is requeued with a backoff (30 s out after the first
+    # failed attempt); not claimable before the wait, claimable after it.
+    q = TaskQueue(sm)
+    await q.enqueue("t1", {"opportunity_id": 1})
+    task = await q.lease("w", types=["t1"])
+    assert await q.fail(task.id, "boom", worker_id="w") == "pending"
+    async with sm() as s:
+        t = await s.get(Task, task.id)
+    assert t.attempts == 1 and t.retry_at is not None and t.retry_at > iso(utcnow())
+    assert await q.lease("w2", types=["t1"]) is None  # not claimable before the wait
+    async with sm() as s:
+        t = await s.get(Task, task.id)
+        t.retry_at = iso(utcnow().replace(year=2000))  # the wait has passed
+        await s.commit()
+    again = await q.lease("w3", types=["t1"])
+    assert again is not None and again.id == t.id  # claimable after the wait
+
+
+async def test_the_backoff_ladder_is_30_seconds_2_minutes_then_10(sm):
+    # issue #153: 30 s after the first failed attempt, 2 min after the second, 10 min from the
+    # third onward (the clamp); a rung makes the task unclaimable until the wait passes.
+    from datetime import timedelta
+
+    q = TaskQueue(sm)
+    await q.enqueue("t1", {"opportunity_id": 44})
+    async with sm() as s:
+        t = (await s.execute(select(Task))).scalar_one()
+        t.max_attempts = 4  # so the third failure still requeues (the 10 min rung)
+        await s.commit()
+    for wait in (timedelta(seconds=30), timedelta(minutes=2), timedelta(minutes=10)):
+        task = await q.lease("w", types=["t1"])
+        assert await q.fail(task.id, "boom", worker_id="w") == "pending"
+        async with sm() as s:
+            t = await s.get(Task, task.id)
+        # the wait is the rung, not any other value
+        assert iso(utcnow() + wait - timedelta(seconds=1)) <= t.retry_at <= \
+            iso(utcnow() + wait + timedelta(seconds=1))
+        assert await q.lease("w2", types=["t1"]) is None  # not claimable during the wait
+        async with sm() as s:
+            t = await s.get(Task, task.id)
+            t.retry_at = iso(utcnow().replace(year=2000))  # the wait has passed
+            await s.commit()
+    task = await q.lease("w", types=["t1"])
+    assert await q.fail(task.id, "boom", worker_id="w") == "dead"  # no attempts left
+    async with sm() as s:
+        assert (await s.get(Task, task.id)).retry_at is None
+
+
+async def test_a_permanent_failure_dead_letters_without_a_backoff(sm):
+    # issue #153: permanent errors dead-letter at once, as before, with no backoff wait.
+    q = TaskQueue(sm)
+    await q.enqueue("t1", {"opportunity_id": 2})
+    task = await q.lease("w", types=["t1"])
+    assert await q.fail(task.id, "no such model", worker_id="w", retry=False) == "dead"
+    async with sm() as s:
+        t = await s.get(Task, task.id)
+    assert t.status == "dead" and t.retry_at is None
+
+
+async def test_a_try_again_clears_the_backoff_wait(sm):
+    # issue #153: the operator's fresh request (Score again on the waiting row) clears the
+    # backoff, so the task is claimable at once.
+    from kestrel.queue import rescore
+
+    q = TaskQueue(sm)
+    await q.enqueue("t1", {"opportunity_id": 3})
+    task = await q.lease("w", types=["t1"])
+    assert await q.fail(task.id, "boom", worker_id="w") == "pending"
+    async with sm() as s:
+        assert (await s.get(Task, task.id)).retry_at is not None
+        assert await rescore._upgrade_waiting(s, "t1", 3, {}) == "upgraded"
+        await s.commit()
+        assert (await s.get(Task, task.id)).retry_at is None
+    assert await q.lease("w2", types=["t1"]) is not None  # the wait is gone
+
+
+
+async def test_a_clean_quit_never_revives_a_lease_a_crash_left_out_of_attempts(sm):
+    """D-QUEUE-9: a task whose attempts a crash spent is reclaimed as an expired lease would be,
+    never given its attempt back by the next clean quit, so a poison task still dead-letters."""
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    q = TaskQueue(sm)
+    tid = await q.enqueue("t2", {"opportunity_id": 1}, max_attempts=3)
+    for _ in range(3):  # three crashes: each lease spends an attempt and is left to expire
+        assert await q.lease("w", types=["t2"], lease_seconds=900) is not None
+        async with sm() as s:
+            await s.execute(update(Task).where(Task.id == tid).values(
+                lease_until=iso(utcnow() - timedelta(seconds=5))))
+            await s.commit()
+    await q.release_all_leased()
+    async with sm() as s:
+        assert (await s.get(Task, tid)).status == "dead"
+    assert await q.lease("w", types=["t2"], lease_seconds=900) is None
+
+
+async def test_a_lease_an_earlier_process_left_is_not_refunded_by_this_ones_quit(sm, monkeypatch):
+    """The relaunch came inside the crashed lease's window, so the lease has not expired; it was
+    claimed before this process claimed anything, so the quit reclaims it without a refund."""
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from kestrel.queue import queue as qmod
+
+    q = TaskQueue(sm)
+    crashed = await q.enqueue("t2", {"opportunity_id": 1}, max_attempts=3)
+    live = await q.enqueue("t2", {"opportunity_id": 2}, max_attempts=3)
+    assert await q.lease("w", types=["t2"], lease_seconds=900) is not None  # crashed's
+    async with sm() as s:
+        await s.execute(update(Task).where(Task.id == crashed).values(
+            updated_at=iso(utcnow() - timedelta(hours=1))))
+        await s.commit()
+    monkeypatch.setattr(qmod, "_CLAIMS_SINCE", [qmod.utcnow_iso()])  # this process starts now
+    assert await q.lease("w", types=["t2"], lease_seconds=900) is not None  # live's
+    await q.release_all_leased()
+    async with sm() as s:
+        a, b = await s.get(Task, crashed), await s.get(Task, live)
+    assert (a.status, a.attempts) == ("pending", 1)  # the crash spent its attempt
+    assert (b.status, b.attempts) == ("pending", 0)  # a clean quit gives it back

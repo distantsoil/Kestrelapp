@@ -16,6 +16,7 @@ keeps the phase migration-free (see the private decision log)."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 import time
@@ -31,7 +32,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.config import Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Evaluation, Notification, Opportunity, Setting, Story, StoryUsage
+from kestrel.db.models import (
+    Evaluation,
+    Notification,
+    Opportunity,
+    RequirementCorrection,
+    Setting,
+    Story,
+    StoryUsage,
+)
 from kestrel.llm.embeddings import cosine
 from kestrel.llm.guard import QuarantineHook
 from kestrel.llm.plain_repair import enforce
@@ -41,7 +50,7 @@ from kestrel.writing_check import operator_spans, ungrounded_details
 
 log = structlog.get_logger()
 
-PROMPT = "story_consolidate/v2"
+PROMPT = "story_consolidate/v3"
 _WATERMARK_KEY = "consolidation.stories_watermark"
 _PROOF_MARKER = '{for each: "- {claim} | evidence: {evidence} | metric: {metric}"}'
 _SKETCH_MARKER = (
@@ -74,6 +83,10 @@ _UNNOTIFIED_KEY = "stories.drafts_not_yet_notified"
 # re-read later: a note's created_at is its last save, so an edit made after it was consumed stays
 # above the watermark and is read again by the next build.
 _CONSUMED_NEWEST_KEY = "consolidation.consumed_newest"
+# The attribute a pass that raises uses to hand back the ids of the groups it had already failed
+# before the raise, so the task's payload can record them for the retry of this build (D-STORY-2).
+# A raise loses the pass's `result` to the caller, so this is how the partial progress survives.
+FAILED_IDS_ATTR = "kestrel_story_failed_ids"
 
 
 @dataclass
@@ -261,8 +274,14 @@ async def dismiss_draft(
         if (sk.opportunity_id, question_key(sk.question)) in wanted:
             dismissed[str(sk.id)] = sketch_fingerprint(sk)
     if undo_token:
+        backed = (await session.scalars(
+            select(RequirementCorrection.id).where(RequirementCorrection.story_id == story_id)
+        )).all()
         snapshot = {
             "expires": time.time() + 600,
+            # The corrections resting on this draft: deleting it unlinks them, and Undo links
+            # them again (issue 170, D-LEARN-5).
+            "corrections": [int(i) for i in backed],
             "story": {
                 column.name: getattr(story, column.name) for column in Story.__table__.columns
             },
@@ -342,6 +361,22 @@ def dismissal_token() -> str:
     return uuid.uuid4().hex
 
 
+async def _relink_corrections(session: AsyncSession, snapshot: Any) -> None:
+    """A draft that comes back is the story an `all` or `some` correction rested on: link those
+    corrections to it again and clear their deleted mark, unless the answer moved on since."""
+    ids = [int(i) for i in snapshot.get("corrections") or ()]
+    if ids:
+        await session.execute(
+            update(RequirementCorrection)
+            .where(
+                RequirementCorrection.id.in_(ids),
+                RequirementCorrection.story_id.is_(None),
+                RequirementCorrection.story_deleted_at.is_not(None),
+            )
+            .values(story_id=snapshot["story"]["id"], story_deleted_at=None)
+        )
+
+
 async def undo_dismissal(session: AsyncSession, token: str) -> bool:
     """Restore the exact proposal once, without replacing later work."""
     await session.execute(sql_text("BEGIN IMMEDIATE"))
@@ -377,6 +412,7 @@ async def undo_dismissal(session: AsyncSession, token: str) -> bool:
     session.add(Story(**snapshot["story"]))
     await session.flush()
     session.add_all(StoryUsage(**usage) for usage in snapshot["usages"])
+    await _relink_corrections(session, snapshot)
     await session.delete(row)
     await session.commit()
     return True
@@ -705,7 +741,21 @@ async def consolidate_stories(
     work = [s for s in sketches if s.id not in skip_ids]
     done_ids: set[int] = set()  # sketches consolidated (created or attached) in this pass
     if work:
-        await _write_clusters(session, client, settings, work, result, done_ids, pass_seconds)
+        try:
+            await _write_clusters(session, client, settings, work, result, done_ids, pass_seconds)
+        except (Exception, asyncio.CancelledError) as exc:
+            # A cancel (Quit cutting a pass off, D-STORY-4) carries the ids the same way.
+            # The pass died mid-way (a model call or a commit raised). It has already recorded the
+            # groups that failed before the raise in result.failed_ids, but the caller never sees
+            # result because this raises. Hand those ids to the caller on the exception so the
+            # task's payload records them before the task is failed: the retry of this build must
+            # not send a group that already failed in it (D-STORY-2 known limit, now closed).
+            if result.failed_ids:
+                try:
+                    setattr(exc, FAILED_IDS_ATTR, sorted(result.failed_ids))
+                except AttributeError:  # this exception type cannot carry the ids
+                    pass
+            raise
     if result.more:
         return result
     # The last pass of the build: move the durable progress once, over everything this pass

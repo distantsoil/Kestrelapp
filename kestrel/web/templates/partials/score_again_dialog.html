@@ -37,6 +37,8 @@
     {% if role_title %}<p class="sf-sub sf-t" data-testid="score-again-role">{{ role_title }}{% if role_org %} · {{ role_org }}{% endif %}</p>{% endif %}
     <input type="hidden" name="opp_ids" value="{{ opp_ids | join(',') }}">
     <input type="hidden" name="online_approval" value='{{ consent.approval_json }}'>
+    {# The correction lines listed below, bound to the online send (D-SCORE-3). #}
+    <input type="hidden" name="corrections_digest" value="{{ corrections_digest }}">
     {% if quarantine_id %}<input type="hidden" name="quarantine_id" value="{{ quarantine_id }}">{% endif %}
     {% if page and next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
     <div class="sf-body">
@@ -92,6 +94,13 @@
           <div class="sf-ln">{{ kicon('clock') }}<span data-testid="score-again-speed">Free models are often much slower and less reliable than paid ones. Local models depend on your hardware.{% if minutes %} {{ roles[:1] | upper }}{{ roles[1:] }} may take about {{ minutes }} minute{{ 's' if minutes != 1 }}.{% endif %}</span></div>
           <div class="sf-ln">{{ kicon('info') }}<span>Your full-review model setting does not change. The new scores sit beside the old ones so you can compare.</span></div>
         </div>
+        {% if correction_lines %}
+        <div class="sf-card sf-card--info sf-what" data-testid="score-again-corrections">
+          <b>What you told Kestrel</b>
+          <span class="sf-small sf-muted">Your own corrections count when {{ 'this role is' if n == 1 else 'these roles are' }} scored{% if current_online %}, and go to your online service with the posting{% endif %}. Change or remove them in Profile before you score.</span>
+          <ul class="sf-small sf-lines" data-testid="score-again-correction-lines">{% for line in correction_lines %}<li>{{ line }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
         {% if hosted_models and hosted_while_local %}<p class="score-again-note sf-small" data-testid="score-again-external-note"><b>Kestrel is on local models. If you pick an online model, these {{ roles }} are scored on {{ hosted_label }}: what Hosted mode sends for a full review leaves this computer, with the same redaction. Kestrel asks first.</b></p>{% endif %}
         {% if preselect_note %}<p class="score-again-note sf-small" data-testid="score-again-preselect-note">{{ preselect_note }}</p>{% endif %}
         {% if local_note %}<p class="score-again-note sf-small sf-muted">{{ local_note }}</p>{% endif %}
@@ -109,6 +118,7 @@
           {% elif consent.employer == 'held' %}
           <div class="sf-ln">{{ kicon('alert') }}<span data-testid="score-again-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a class="sf-a" href="/settings">Choose your employer in Settings</a>, then try again.</span></div>
           {% endif %}
+          {% if correction_lines %}<div class="sf-ln">{{ kicon('check') }}<div data-testid="score-again-sends-corrections">Also sent, because you stated them:<ul class="sf-small sf-lines">{% for line in correction_lines %}<li>{{ line }}</li>{% endfor %}</ul></div></div>{% endif %}
           <div class="sf-ln">{{ kicon('x') }}<span>Not sent: your name, contact details and your resume file.</span></div>
           <div class="sf-ln">{{ kicon('clock') }}<span>Cost: charged to your own key{% if consent.credit %}. {{ consent.credit }}{% endif %}.</span></div>
           <span class="sf-small sf-muted">{{ hosted_label or 'The service' }} handles what it receives under its own terms, and a free model may use it for training.</span>

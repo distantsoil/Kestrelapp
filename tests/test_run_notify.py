@@ -292,6 +292,45 @@ async def test_no_failure_is_only_the_plain_summary(sm):
     assert await _notes(sm, "roles_need_retry") == []
 
 
+async def test_a_role_waiting_on_online_consent_is_not_announced_as_failed(sm):
+    """A scoring task held for the operator's online re-confirmation carries its hold marker in
+    last_error, exactly like a failure, but waiting is not failing (issue #153's backoff branch
+    must not sweep it in): no retry warning, and the seen-record is not spent on the role, which
+    could have suppressed the announcement of a real failure later."""
+    from kestrel.db.models import Task
+    from kestrel.services.online_consent import APPROVAL_HOLD
+
+    src = await _source(sm)
+    run = await _run(sm, RUN1)
+    opp = await _role(sm, src, "Operations Lead", "Acme", IN_RUN1)
+    async with sm() as s:
+        s.add(Task(type="t1", status="pending", payload={"opportunity_id": opp},
+                   last_error=APPROVAL_HOLD, updated_at=IN_RUN1))
+        await s.commit()
+    await _finish(sm, run, rated=1)
+    assert await _notes(sm, "roles_need_retry") == []
+    assert [n.title for n in await _notes(sm, "run_finished")] == ["Run finished"]
+
+
+async def test_a_role_awaiting_its_retry_wait_is_announced_with_its_run(sm):
+    """A scoring task that failed this run and is waiting out its retry backoff (issue #153) is
+    a failure of this run: announced with the run that failed it, not only after it gives up."""
+    from kestrel.db.models import Task
+
+    src = await _source(sm)
+    run = await _run(sm, RUN1)
+    opp = await _role(sm, src, "Operations Lead", "Acme", IN_RUN1)
+    async with sm() as s:
+        s.add(Task(type="t1", status="pending", attempts=1,
+                   payload={"opportunity_id": opp}, last_error="the model could not finish",
+                   updated_at=IN_RUN1))
+        await s.commit()
+    await _finish(sm, run, rated=1)
+    notes = await _notes(sm)
+    assert [(n.kind, n.severity, n.title) for n in notes] == [
+        ("roles_need_retry", "warning", "Run finished: 1 role needs another try")]
+
+
 async def test_a_role_that_fails_again_on_a_later_run_does_not_notify_again(sm):
     src = await _source(sm)
     first = await _run(sm, RUN1)

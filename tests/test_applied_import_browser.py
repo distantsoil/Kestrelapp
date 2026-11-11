@@ -199,3 +199,102 @@ def test_a_background_request_that_fails_stays_quiet(live):
     page.wait_for_timeout(600)
     assert page.locator(".k-toast").count() == 0
     assert not errors
+
+
+_REIMPORT = (
+    "Company,Job title,Applied on,Status,Notes\n"
+    "Birchwood Freight,Operations Analyst,2026-09-04,Interview,Phone screen\n"  # file is ahead
+    "Northgate Supply,Supply Chain Planner,2026-08-29,Interview,Phone screen 9/5\n"  # in sync
+    "Harbor and Pine,Logistics Coordinator,2026-08-12,Applied,Followed up\n"  # closed: kept
+    "Alder Works,Process Engineer,2026-09-25,Applied,Referral again\n"  # applied again
+    "Fernhill Mills,Buyer,2026-10-01,Applied,Company site\n"  # new
+    "Self,Resume refresh,2026-10-02,Completed,activity type: cv\n"  # not an application
+)
+
+
+def _shots(name: str):
+    """A folder for review screenshots when KESTREL_SHOTS is set, else None."""
+    import pathlib
+
+    root = os.environ.get("KESTREL_SHOTS")
+    if not root:
+        return None
+    folder = pathlib.Path(root) / name
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def test_a_reimport_lists_only_exceptions_keeps_progress_and_undoes_in_one_step(live, tmp_path):
+    base, browser = live
+    page, errors = _page(base, browser)
+    page.goto(f"{base}/settings#data/st-imp")
+    page.wait_for_selector('[data-testid="st-imp-sample"]')
+    wait_for_layout(page)
+    page.click('[data-testid="st-imp-sample"]')
+    page.click('[data-testid="st-imp-next"]')
+    page.click('[data-testid="st-imp-add"]')
+    page.wait_for_selector('[data-testid="st-imp-done"]')
+    again = tmp_path / "again.csv"
+    again.write_text(_REIMPORT, encoding="utf-8")
+    page.click("text=Import another")
+    page.wait_for_selector('[data-testid="st-imp-file"]', state="attached")
+    wait_for_layout(page)
+    page.set_input_files('[data-testid="st-imp-file"]', str(again))
+    page.click('[data-testid="st-imp-next"]')
+    page.wait_for_selector('[data-testid="st-imp-summary"]')
+    wait_for_layout(page)
+    card = page.locator("#st-imp")
+    assert "1 row already match" in card.inner_text()
+    for key in ("differs", "reapply", "new", "activity"):
+        assert page.locator(f'[data-testid="st-imp-sec-{key}"]').count() == 1
+    assert page.locator('[data-testid="st-imp-filewins"]').count() == 1
+    assert page.locator('[data-testid="st-imp-filewins"]').is_checked() is False
+    from tests.test_layout_crawl_browser import _CHECK_JS
+
+    shots = _shots("reimport")
+    for name, scheme, width in (("light", "light", 1280), ("dark", "dark", 1280),
+                                ("narrow", "light", 390)):
+        page.emulate_media(color_scheme=scheme)
+        page.set_viewport_size({"width": width, "height": 1000})
+        wait_for_layout(page)
+        page.evaluate("document.getElementById('k-toasts')?.remove()")  # a transient overlay
+        # The card's own content. The step strip's ellipsized labels are the shared component's
+        # existing narrow-width behavior and are not part of this review pane.
+        found = [f for f in page.evaluate(_CHECK_JS)
+                 if "st-imp" in f["selector"] and "k-step" not in f["selector"]
+                 and "bottombar" not in f["selector"]]
+        assert found == [], f"{name}: {found}"  # no overlapping or clipped text in the card
+        if shots:
+            page.locator("#st-imp").screenshot(path=str(shots / f"review-{name}.png"))
+    page.emulate_media(color_scheme="light")
+    page.set_viewport_size({"width": 1280, "height": 1000})
+    # Tick the two matched rows (they are never ticked for the person), then Add.
+    for box in page.locator('[data-testid="st-imp-sec-differs"] input.st-check').all():
+        box.check()
+    page.click('[data-testid="st-imp-add"]')
+    page.wait_for_selector('[data-testid="st-imp-done"]')
+    # M2: the copy of the person's own file with Kestrel IDs filled in is offered and downloads.
+    page.wait_for_selector('[data-testid="st-imp-copy"]')
+    assert "was not changed" in page.inner_text('[data-testid="st-imp-copy-note"]')
+    for name, scheme, width in (("light", "light", 1280), ("dark", "dark", 1280),
+                                ("narrow", "light", 390)):
+        page.emulate_media(color_scheme=scheme)
+        page.set_viewport_size({"width": width, "height": 1000})
+        wait_for_layout(page)
+        page.evaluate("document.getElementById('k-toasts')?.remove()")
+        found = [f for f in page.evaluate(_CHECK_JS)
+                 if "st-imp" in f["selector"] and "k-step" not in f["selector"]
+                 and "bottombar" not in f["selector"]]
+        assert found == [], f"done {name}: {found}"
+        if shots:
+            page.locator("#st-imp").screenshot(path=str(shots / f"done-{name}.png"))
+    page.emulate_media(color_scheme="light")
+    page.set_viewport_size({"width": 1280, "height": 1000})
+    with page.expect_download() as dl:
+        page.click('[data-testid="st-imp-copy"]')
+    copy = open(dl.value.path(), encoding="utf-8-sig").read().splitlines()
+    assert copy[0].endswith("Kestrel ID") and "again-with-ids" in dl.value.suggested_filename
+    assert sum(1 for line in copy[1:] if "K-" in line) >= 3
+    assert not errors
+    page.goto(f"{base}/pursuits?view=table")
+    assert "Fernhill Mills" in page.content()

@@ -116,8 +116,11 @@ def _resolve_api_key(config: dict) -> str | None:
     key = config.get("api_key")
     if isinstance(key, str) and key:
         return key
-    env_var = config.get("api_key_env", "SAM_GOV_API_KEY")
     from kestrel.config import get_secret
+    from kestrel.ingest import source_secrets
+
+    # D-SEC-21: only a SAM_GOV_ key may be named; another name sends nothing.
+    env_var = source_secrets.secret_name("sam_gov", config, "api_key_env", "SAM_GOV_API_KEY")
 
     env_key = get_secret(env_var)
     return env_key if env_key else None

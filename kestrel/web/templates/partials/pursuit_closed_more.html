@@ -1,0 +1,8 @@
+{# The next page of one column's Closed group (D-PERF-3, D-PERF-4): bare cards the Show more
+   button swaps itself for, then the button for the page after, when there is one. htmx marks
+   them while they settle, which draws them in (applications.css). #}
+{% import "partials/pursuit_icons.html" as ic %}
+{% from "partials/pursuit_card.html" import card %}
+{% import "partials/pursuit_closed_more_button.html" as more %}
+{% for c in cards %}{{ card(c, track, ic) }}{% endfor %}
+{{ more.closed_more(column, track) }}

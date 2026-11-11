@@ -164,7 +164,9 @@ async def run_source(
                     await session.flush()
                     if model_override and res.opportunity.stage == "new":
                         # This run is processing the role right now: its pick goes with it.
-                        await run_model.attach(session, res.opportunity.id, model_override)
+                        await run_model.attach(
+                            session, res.opportunity.id, model_override, online_approval
+                        )
                     if res.enqueue_embed:
                         session.add(
                             Task(type="embed", payload={"opportunity_id": res.opportunity.id})

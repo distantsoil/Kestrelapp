@@ -1,0 +1,27 @@
+{# The done screen of a quick round (D-UI-272, D-UI-273). The line under the heading depends on
+   the real total (quick_view.done_line). Counts are this round's; unlocks use the real totals. #}
+{% import "ui/macros.html" as ui %}
+<div class="qr-donebox" data-testid="qr-done">
+  <h2 data-testid="qr-done-h">Done. Kestrel now has {{ done.total }} of your answers.</h2>
+  <p class="qr-lead" data-testid="qr-done-line">{{ done.line }}</p>
+  <div class="qr-split" data-testid="qr-split">
+    <span><i class="qr-dot qr-dot--yes"></i><b>{{ done.yes }}</b>&nbsp;yes{% if done.yes %}, <b>{{ done.top }}</b>&nbsp;of them a top pick{% endif %}</span>
+    <span><i class="qr-dot qr-dot--no"></i><b>{{ done.no }}</b>&nbsp;not for me</span>
+    <span><i class="qr-dot qr-dot--unsure"></i><b>{{ done.unsure }}</b>&nbsp;not sure</span>
+  </div>
+  <ul class="qr-steps" data-testid="qr-unlocks">
+    {% for u in done.unlocks %}
+    <li class="{{ 'hit' if u.state == 'hit' else ('next' if u.state == 'next' else '') }}" data-state="{{ u.state }}">
+      <span class="qr-ic">{% if u.state == 'hit' %}{{ ui.icon('check', 'k-ic--sm') }}{% elif u.state == 'next' %}{{ ui.icon('clock', 'k-ic--sm') }}{% else %}<i class="qr-ic__dot"></i>{% endif %}</span>
+      <span><b>{{ u.title }}</b>{% if u.detail %}<span class="qr-d">{{ u.detail }}</span>{% endif %}</span>
+      <span class="qr-k">{% if u.state == 'hit' %}{{ u.at }} answers{% else %}{{ u.left }} to go{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if not done.remaining %}<p class="k-muted" data-testid="qr-none-left">Kestrel is not unsure about any other {{ w.role }} right now. It finds more after the next run.</p>{% endif %}
+  <div class="qr-btns">
+    {% if done.remaining %}<button type="button" class="k-btn k-btn--primary" id="qr-more" data-testid="qr-more">Keep going: {{ [done.remaining, 10]|min }} more</button>{% endif %}
+    <a class="k-btn{{ '' if done.remaining else ' k-btn--primary' }}" href="/" data-testid="qr-today">Back to Today</a>
+    <a class="k-btn k-btn--quiet" href="/calibrate?track={{ track }}&amp;tab=detailed" data-testid="qr-detail">Rate in detail</a>
+  </div>
+</div>

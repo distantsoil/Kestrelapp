@@ -2,6 +2,7 @@
    to /setup/profile and the override panel is partials/model_overrides.html, loaded from
    /models/hosted/overrides (D-UI-42), so a change here has the same effect as on the Models or
    System page. Theme variables only. #}
+{% import "partials/local_only.html" as lo with context %}
 <div id="settings-models" data-testid="settings-models">
   <p class="muted" style="margin-top:0">What each tier runs on now. <a href="/models">Compare models</a></p>
   <table class="data" data-testid="effective-tiers">
@@ -21,6 +22,7 @@
   <p class="muted" style="margin-top:0">Which local models fit this machine.</p>
   <details data-testid="profile-details"><summary class="muted">Show details</summary>
     <p class="muted">Changing it only records the profile. The System tab shows the downloads and builds it needs.</p></details>
+  {% call lo.fence(request) %}
   <form method="post" action="/setup/profile" hx-post="/setup/profile"
         hx-target="#models-profile-result" hx-select="[role=status]" hx-swap="innerHTML"
         style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
@@ -30,6 +32,7 @@
     </select>
     <button class="btn quiet" type="submit">Change</button>
   </form>
+  {% endcall %}
   <div id="models-profile-result" aria-live="polite" style="margin-top:.4rem"></div>
 
   <div hx-get="/models/hosted/overrides" hx-trigger="intersect once" hx-swap="outerHTML"

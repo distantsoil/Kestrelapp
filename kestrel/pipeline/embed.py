@@ -198,18 +198,31 @@ async def _due_recheck(session: AsyncSession, swept: Any, now: float) -> bool:
     return True
 
 
-async def _dead_and_stale(session: AsyncSession, model: str) -> bool:
-    """A role whose embed task died and whose vector is still missing or from another model."""
-    dead_opp = func.json_extract(Task.payload, "$.opportunity_id")
+async def _stale_and_unqueued(session: AsyncSession, model: str) -> bool:
+    """A role whose vector is missing or from another model and that no live embed task is
+    working on. This is the state a dead embed task leaves, but it does not ask for the dead task:
+    retention (D-PERF-3) removes finished tasks after 30 days, and a role whose embed died must
+    still be found once the install is fixed (hard rule 5). Read through the indexed
+    task.opportunity_id, at most every RESWEEP_S."""
+    live = (
+        select(Task.id)
+        .where(
+            Task.type == "embed", Task.opportunity_id == Opportunity.id,
+            Task.status.in_(("pending", "leased")),
+        )
+        .correlate(Opportunity)
+        .exists()
+    )
     row = (
         await session.execute(
-            select(Task.id)
-            .join(Opportunity, Opportunity.id == dead_opp)  # a deleted role never re-sweeps
-            .outerjoin(OpportunityEmbedding, OpportunityEmbedding.opportunity_id == dead_opp)
+            select(Opportunity.id)
+            .outerjoin(
+                OpportunityEmbedding, OpportunityEmbedding.opportunity_id == Opportunity.id
+            )
             .where(
-                Task.type == "embed", Task.status == "dead",
                 (OpportunityEmbedding.opportunity_id.is_(None))
                 | (OpportunityEmbedding.model != model),
+                ~live,
             )
             .limit(1)
         )
@@ -251,11 +264,12 @@ async def enqueue_stale_embeddings(
             # This model's backlog drained; ingestion enqueues new postings itself. But a sweep
             # can finish before the first search stores anything (a first run), and an embed
             # task can then die for good (the model files missing, D-EMBED-7): nothing would
-            # ever look again. So at most every RESWEEP_S, check for a role whose embed task is
-            # dead and whose vector is still missing or stale, and sweep again if there is one.
+            # ever look again. So at most every RESWEEP_S, check for a role whose vector is
+            # missing or stale and that no live embed task covers (a dead task may be long
+            # pruned, D-PERF-3), and sweep again if there is one.
             if not await _due_recheck(session, swept, now):
                 return 0
-            if not await _dead_and_stale(session, model):
+            if not await _stale_and_unqueued(session, model):
                 await session.commit()  # the recheck stamp
                 return 0
             state = ""

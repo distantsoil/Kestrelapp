@@ -153,7 +153,7 @@ async def run_tier0_batch(
             )
             counts["seen"] += 1
             # Consumed on every first pass, pass or reject, in this commit (run_model.take).
-            chosen = await run_model.take(session, opp.id)
+            chosen, run_approval = run_model.split(await run_model.take(session, opp.id))
             if result.passed:
                 opp.stage = "t0_pass"
                 opp.pre_score = result.pre_score
@@ -168,6 +168,10 @@ async def run_tier0_batch(
                 # its Tier 1 task for Tier 2 only; Tier 1 itself runs on the configured model.
                 # Any later pass (no marker left) uses the configured models.
                 extra: dict = {T2_ONLY_KEY: chosen} if chosen else {}
+                if chosen and run_approval is not None:
+                    # The run's confirmation goes with its pick, so the Tier 2 task is stamped
+                    # (an unstamped online pick is held, never sent: D-SEC-22).
+                    extra["online_approval"] = run_approval
                 priority = int(result.pre_score * 100)
                 await enqueue_once(
                     session, "t1", opp.id, priority=priority, extra=extra or None,

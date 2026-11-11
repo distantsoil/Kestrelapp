@@ -354,7 +354,7 @@ async def run_guarded(
         # Hosted Tier 1 on a reasoning model: triage is a short classification, so its first
         # attempt runs with reasoning off (D-LLM-5, hosted.tier1_reasoning_off).
         default_of = getattr(client, "default_reasoning_hint", None)
-        hint = default_of(tier) if default_of is not None else None
+        hint = default_of(tier, prompt=schema_name) if default_of is not None else None
     exhausted = False
     # The one retry of a reply cut off at its cap, with a larger budget (D-LLM-7). Separate from
     # the schema repair below: it neither uses nor is counted against that attempt.

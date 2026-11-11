@@ -65,6 +65,7 @@ FAILED_WHY = "scoring failed"
 # A quarantine error in plain words (D-UI-56), checked in this order: a loop's message also
 # names the max_tokens it ran into, and the loop is the truer reason.
 _FAILURE_WORDS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("leave no room for this posting",), "too long for your local model"),  # D-SCORE-21
     (("generation loop", "degenerate", "repeated"), "the model repeated itself"),
     (("finish_reason: length", "finish_reason length", "max_tokens", "hit the cap"),
      "the reply ran out of room"),

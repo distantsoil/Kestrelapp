@@ -360,19 +360,39 @@ def wheel(reqs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------- evidence
-def evidence_rows(reqs: list[dict[str, Any]], sources: dict[int, dict[str, str]]) -> list[dict]:
-    """For each met or partly met thing: the posting's words, the operator's matching proof (the
-    model's `evidence`), and a link to the exact resume bullet or story when one could be found
-    (`sources` maps a row's `k` to {label, href}). With none found the row says "Source not
-    recorded" rather than pointing at a guess."""
+def evidence_rows(reqs: list[dict[str, Any]], sources: dict[int, dict[str, Any]]) -> list[dict]:
+    """One line per Met or Partly met thing that has model evidence (an unverified row has none:
+    O20) or that the operator's own story backs: the posting's words (`quote`), the model's
+    reasoning (`proof`), the stored line that matched it (`line`, verbatim) with its source, or
+    `inferred` when no stored line matched (hard rule 2: never a nearest guess). `sources` maps a
+    row's `k` to {label, href, line, ...}. No cap (D-UI-290): the card is collapsed by default."""
     out = []
     for r in reqs:
-        if r["state"] == GAP or not r.get("evidence"):
+        if r["state"] == GAP:
             continue
+        c = r.get("correction") or {}
+        mine = bool(c.get("applies") and c.get("story_id"))
+        if not r.get("evidence") and not mine:
+            continue
+        src = sources.get(r["k"])
         out.append(
-            {"k": r["k"], "quote": r["text"], "proof": r["evidence"], "source": sources.get(r["k"])}
+            {
+                "k": r["k"],
+                "quote": r["text"],
+                "proof": r.get("evidence") or "",
+                "source": src,
+                "line": src["line"] if src else None,
+                "inferred": src is None,
+            }
         )
-    return out[:6]
+    return out
+
+
+def evidence_counts(rows: list[dict]) -> dict[str, int]:
+    """The Evidence header's two numbers: lines that rest on the operator's own words, and
+    inferred ones."""
+    inferred = sum(1 for r in rows if r["inferred"])
+    return {"stored": len(rows) - inferred, "inferred": inferred}
 
 
 # ------------------------------------------------------------------------------------ pay band

@@ -254,6 +254,24 @@ _DESCRIPTIONS: dict[str, dict] = {
         "rate_limit": "1 request/second; one request per scan; robots.txt respected.",
         "region": _WORLDWIDE,
     },
+    "jobvite": {
+        "name": "Jobvite",
+        "category": CATEGORY_ATS,
+        "track": "employment",
+        "fetches": (
+            "The public XML job feed for one company: app.jobvite.com/CompanyJobs/Xml.aspx. The "
+            "feed carries every role with its full description, so there are no detail requests. "
+            "The feed is keyed on an id that is not in the careers address, so Kestrel reads it "
+            "once from the company's board page (jobs.jobvite.com/{slug}) when you give the name."
+        ),
+        "provide": (
+            "The company's Jobvite name, the part after jobs.jobvite.com/ (or a company_eid if "
+            "you have it). Optionally company_name."
+        ),
+        "config_example": {"slug": "examplecompany"},
+        "rate_limit": "1 request/second; at most 2 requests a scan; robots.txt respected.",
+        "region": _WORLDWIDE,
+    },
     "careers_page": {
         "name": "Careers page",
         "category": CATEGORY_ATS,
@@ -441,6 +459,44 @@ _DESCRIPTIONS: dict[str, dict] = {
             "makes the run partial."
         ),
         "region": "Remote roles open to the US.",
+    },
+    "fourdayweek": {
+        "name": "4 Day Week (four-day and reduced-hour employers)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "Job listings from the 4 Day Week public API, 4dayweek.io/api/v2/jobs: up to "
+            "max_pages pages of count jobs (default 2 pages, 100 a page), each with its full "
+            "description and, when the employer gave it, pay. Optional filters: schedule, "
+            "category, level, work_arrangement and a keyword. Each role links to its page on "
+            "4 Day Week, where you apply yourself, and is credited to 4 Day Week."
+        ),
+        "provide": "Nothing: no key or account. Optional filters, count and max_pages.",
+        "config_example": {"schedule": "4_day_week", "max_pages": 2, "count": 100},
+        "rate_limit": (
+            "At most 1 request/second (the board allows 60 a minute) and at most max_pages "
+            "requests a check; robots.txt respected; a 403, 429 or 5xx makes the run partial."
+        ),
+        "region": "Employers worldwide; filter by country in your profile.",
+    },
+    "hn_hiring": {
+        "name": "Hacker News (Who is hiring?)",
+        "category": CATEGORY_AGGREGATOR,
+        "track": "employment",
+        "fetches": (
+            "The newest monthly Ask HN: Who is hiring? thread, read through the official Hacker "
+            "News API, hacker-news.firebaseio.com: each top-level comment is one role, with the "
+            "company and title read from the comment's first line and the whole comment as the "
+            "description. Up to max_comments comments (default 100, at most 500). The link in a "
+            "comment is where you apply yourself; Kestrel never sends anything."
+        ),
+        "provide": "Nothing: no key or account. Optional max_comments and thread_id.",
+        "config_example": {"max_comments": 100},
+        "rate_limit": (
+            "At most 4 requests/second and max_comments plus 10 requests a check; only the API's "
+            ".json addresses, which its robots.txt allows; a 403, 429 or 5xx makes the run partial."
+        ),
+        "region": "Mostly tech roles; read each comment for its place.",
     },
     "jobicy": {
         "name": "Jobicy (remote jobs with pay)",
@@ -710,6 +766,12 @@ _EASY_ADD = {
     "jobicy": (
         "Easiest: Sources > Add a source > Job board search, tick Jobicy. By hand: "
     ),
+    "fourdayweek": (
+        "Easiest: Sources > Add a source > Job board search, tick 4 Day Week. By hand: "
+    ),
+    "hn_hiring": (
+        "Easiest: Sources > Add a source > Job board search, tick Hacker News. By hand: "
+    ),
     "jobspy": (
         "Usually nothing to do: your searches are built from Profile > Employment and Location "
         "and listed under Sources > Your searches. For an extra search of your own: "
@@ -734,9 +796,11 @@ def _ordered_kinds() -> list[str]:
     a stable operator-facing order (ATS boards before the aggregator; triggers before feeds)."""
     preferred = [
         "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "rippling", "adp",
-        "paylocity", "workable", "recruitee", "teamtailor", "personio", "breezy", "careers_page",
+        "paylocity", "workable", "recruitee", "teamtailor", "personio", "breezy", "jobvite",
+        "careers_page",
         "jobspy",
-        "usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "jobicy",
+        "usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "jobicy", "fourdayweek",
+        "hn_hiring",
         "remoterocketship",
         "sec_edgar", "sam_gov", "rss", "pe_portfolio", "manual", "import", "page",
     ]

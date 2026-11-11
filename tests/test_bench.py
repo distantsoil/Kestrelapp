@@ -232,12 +232,12 @@ def test_validate_bench_args_allows_one_axis_varying(models, versions):
 def test_build_variants_default_fans_models_across_both_tracks():
     variants = build_variants(["a", "b"], None)
     assert variants["employment"] == [
-        BenchVariant(track="employment", model="a", prompt_version="evaluate/v2"),
-        BenchVariant(track="employment", model="b", prompt_version="evaluate/v2"),
+        BenchVariant(track="employment", model="a", prompt_version="evaluate/v3"),
+        BenchVariant(track="employment", model="b", prompt_version="evaluate/v3"),
     ]
     assert variants["consulting"] == [
-        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v2"),
-        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v2"),
+        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v3"),
+        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v3"),
     ]
 
 
@@ -261,8 +261,8 @@ def test_build_variants_single_version_keeps_every_model():
         BenchVariant(track="employment", model="b", prompt_version="evaluate/v2"),
     ]
     assert variants["consulting"] == [
-        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v2"),
-        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v2"),
+        BenchVariant(track="consulting", model="a", prompt_version="evaluate_consulting/v3"),
+        BenchVariant(track="consulting", model="b", prompt_version="evaluate_consulting/v3"),
     ]
 
 
@@ -324,7 +324,7 @@ async def test_run_bench_good_model_perfect_agreement_and_zero_mae(gold_dir: Pat
 
     emp = by_track["employment"]
     assert emp.model == GOOD_MODEL
-    assert emp.prompt_version == "evaluate/v2"
+    assert emp.prompt_version == "evaluate/v3"
     assert emp.n_items == 2
     assert emp.n_parsed == 2
     assert emp.first_attempt_validity_rate == 1.0
@@ -337,7 +337,7 @@ async def test_run_bench_good_model_perfect_agreement_and_zero_mae(gold_dir: Pat
     assert emp.mean_completion_tokens == 222
 
     con = by_track["consulting"]
-    assert con.prompt_version == "evaluate_consulting/v2"
+    assert con.prompt_version == "evaluate_consulting/v3"
     assert con.exact_verdict_agreement_rate == 1.0
     assert con.mean_absolute_score_error == 0.0
 

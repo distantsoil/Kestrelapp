@@ -50,12 +50,15 @@ PLATFORMS = {
     "personio": "Personio",
     "breezy": "Breezy HR",
     "recruitee": "Recruitee",
+    "jobvite": "Jobvite",
 }
 _SIGNAL_TYPE = {
     "sec_edgar": "SEC filings", "sam_gov": "SAM.gov", "pe_portfolio": "PE portfolio page",
     "remoterocketship": "RemoteRocketship", "usajobs": "USAJobs", "adzuna": "Adzuna",
     "himalayas": "Himalayas", "weworkremotely": "We Work Remotely",
     "arbeitnow": "Arbeitnow", "jobicy": "Jobicy", "remotive": "Remotive",
+    "fourdayweek": "4 Day Week",
+    "hn_hiring": "Hacker News",
 }
 
 # Where a source came from (Source.origin). `suggested` is a company the operator added from
@@ -87,7 +90,7 @@ def is_removed(src: Source) -> bool:
 
 BOARD_KINDS = (
     "jobspy", "remoterocketship", "usajobs", "adzuna", "himalayas", "weworkremotely",
-    "arbeitnow", "jobicy", "remotive",
+    "arbeitnow", "jobicy", "remotive", "fourdayweek", "hn_hiring",
 )
 KEYED_BOARDS = ("usajobs", "adzuna")  # boards that need a key of the user's own
 

@@ -154,11 +154,41 @@ PR branch runs CI. So CI confirms; it does not discover.
 
 ---
 
+## Hard-won rules (0.7.6; full record in the private lessons file)
+
+- **Hostile input is imported, never adopted and filtered.** A backup, upload, feed or model reply is
+  read; what we keep is rebuilt from our own schema through an explicit allowlist (D-SEC-20). When a
+  security fix needs a second round, redesign as an allowlist instead of patching again.
+- **Never chain a push after a pipe.** Run a gate into a file and push only after
+  `grep -q "^<exact line>$"` on that file.
+- **"Done" includes every test that imports a changed module** (grep tests/ for it), and the full
+  non-browser suite runs before a merge.
+- **Never weaken, skip or delete an assertion to get green.** Reproduce the failure and fix its cause.
+- **Never run process-killing commands in a shared environment; never push an empty commit.**
+- **Before a build: rebase onto the current release head, `ls` the migrations for the next number,
+  grep every decision ID the brief uses.** Parallel agents get reserved decision ID ranges.
+- **A benchmark counts only if it could have failed:** report the verdict distribution and a
+  noise-floor repeat. Unchanged prompt content renders byte-identical (D-SCORE-6).
+- **Each test sets every precondition it asserts on**; never rely on test order or a shared seed.
+- **Subprocess text output names `encoding="utf-8"`.**
+- **Model by risk:** Opus for restore, consent, online sends, queue and worker, scoring and learning;
+  Sonnet only for scoped UI, copy, adapters and tests with explicit invariants, reviewed before
+  merge. Every security fix gets an adversarial re-review aimed at the fix itself.
+- **At most three agents at once in the cloud container**, no `-n` while agents run in parallel,
+  and agents commit after every finished item.
+
+---
+
 ## Subagent strategy
 
 The main agent's context window is the scarcest resource across eighteen phases, more than time
 or credits. A subagent has its own context and returns only its conclusion, so the parent never
 ingests what it read. Use subagents for that first and for cost second.
+
+**Every brief follows the agent contract.** In the private repository, every subagent or local-agent
+prompt starts with "Follow docs/handoff/AGENT-RULES.md." and contains every item in its Part 2 table
+(the invariant, off-limits files, reserved decision IDs, base commit, gate and passing line). The
+contract is model-neutral, so the same brief works for Claude, Qwen through OMP, or any other agent.
 
 **Mandatory: a reviewer subagent before any gate is declared passed.** Fresh context, given the
 phase's diff and that phase's constraints, asked only *what is wrong with this*. Never asked to

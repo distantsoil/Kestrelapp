@@ -172,6 +172,9 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     await scoring_states(s, [probe])
     await attach_rescoring(s, [probe])
     await attach_twins(s, [probe])
+    from kestrel.learning.score_age import older_for
+
+    older = await older_for(s, opp0, ev0)  # before the detail context edits ORM fields
     detail = await _detail_context(s, opp_id)
     if detail is None:
         return None
@@ -220,9 +223,11 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         watch = list(
             detail.get("watch") or watch_lines(ev_json.get("legitimacy"), opp.ghost_score, opp)
         )
-        warn = pv.warning_text(opp, ev)
+        warn = pv.warning_text(opp, ev, older)
         if warn and not watch:
             watch = [warn]
+        elif older and pv.OLDER_TEXT not in watch:  # the row's mark, never hidden by the others
+            watch.append(pv.OLDER_TEXT)
         ctx.update(
             score=fit.score,
             ring_pct=round((fit.score or 0) / 5 * 100),

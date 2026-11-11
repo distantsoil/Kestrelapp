@@ -105,7 +105,8 @@ async def test_no_key_is_a_plain_config_error_not_a_crash(monkeypatch):
 def test_config_validation():
     a = RemoteRocketshipAdapter()
     a.validate_config({})
-    a.validate_config({"max_pages": 3, "items_per_page": 10, "api_key_env": "MY_RR_KEY"})
+    a.validate_config(
+        {"max_pages": 3, "items_per_page": 10, "api_key_env": "REMOTEROCKETSHIP_KEY2"})
     for bad in (
         {"api_key": "x"},  # a key never lives in a config row
         {"max_pages": 0}, {"max_pages": 99}, {"items_per_page": 51}, {"items_per_page": 0},

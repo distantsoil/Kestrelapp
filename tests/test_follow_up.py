@@ -280,7 +280,15 @@ async def test_transport_failure_stops_after_three_attempts(sm, monkeypatch):
         async def complete(self, **kwargs):
             raise ConnectionError("offline")
 
-    await drafts.drain(sm, lambda cfg: Unavailable(cfg))
+    for _ in range(5):  # one attempt per drain; the wait passes between them (issue #153)
+        await drafts.drain(sm, lambda cfg: Unavailable(cfg))
+        task = await stored(sm, pid)
+        if task.status != "pending":
+            break
+        async with sm() as session:
+            row = await drafts.latest(session, pid)
+            row.retry_at = None  # the backoff wait has passed (issue #153)
+            await session.commit()
     task = await stored(sm, pid)
     assert task.status == "dead" and task.attempts == 3
     assert "offline" not in task.last_error
@@ -398,3 +406,28 @@ def test_saved_draft_is_reused_only_while_its_facts_still_match(monkeypatch):
         later = client.get(path).text
     assert "Old application draft." not in later
     assert "Write the draft" in later and "Interview" in later
+
+
+async def test_a_restored_online_follow_up_is_held_for_a_fresh_confirmation(sm, monkeypatch):
+    """The draft's confirmation lives under the shared consent keys, so a restore removes it and
+    the drain refuses to send until the person confirms again (D-SEC-10)."""
+    from kestrel.services.backup import _strip_consent
+    from kestrel.services.online_consent import CONSENT_PAYLOAD_KEYS
+
+    settings = settings_for(online=True)
+    loader(monkeypatch, settings)
+    pid = await seed(sm, "employment")
+    assert await queue(sm, pid, settings) is None
+    task = await stored(sm, pid)
+    assert task.payload["consented_model"] == "test-model"
+    assert set(task.payload) & {"confirmed", "model"} == set()
+    stripped, changed = _strip_consent(task.payload)
+    assert changed and not set(stripped) & set(CONSENT_PAYLOAD_KEYS)
+    async with sm() as session:
+        row = await drafts.latest(session, pid)
+        row.payload = stripped
+        await session.commit()
+    client = FakeClient(settings)
+    await drafts.drain(sm, lambda _cfg: client)
+    assert client.calls == []  # nothing was sent
+    assert "Confirm the online draft again" in (await stored(sm, pid)).payload["error"]

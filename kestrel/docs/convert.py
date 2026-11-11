@@ -139,7 +139,7 @@ def _convert_docx(data: bytes, *, source_format: str) -> ConvertResult:
     except Exception as exc:  # a corrupt zip or a non-OOXML file wearing a .docx extension
         log.info("convert_docx_unreadable", error_type=type(exc).__name__, error=str(exc))
         raise ConvertError(
-            f"Could not read the .docx file ({type(exc).__name__}). It may be damaged or not "
+            "Could not read the .docx file. It may be damaged or not "
             "a Word document."
         ) from exc
 
@@ -275,7 +275,7 @@ def _convert_pdf(data: bytes) -> ConvertResult:
     except Exception as exc:  # malformed PDF
         log.info("convert_pdf_unreadable", error_type=type(exc).__name__, error=str(exc))
         raise ConvertError(
-            f"Could not read the PDF ({type(exc).__name__}). It may be damaged."
+            "Could not read the PDF. It may be damaged."
         ) from exc
 
     pages, dropped = _drop_page_furniture(pages)
@@ -421,7 +421,7 @@ def _convert_doc(data: bytes, name: str) -> ConvertResult:
         except (OSError, subprocess.TimeoutExpired) as exc:
             log.warning("convert_soffice_failed", error_type=type(exc).__name__, error=str(exc))
             raise ConvertError(
-                f"LibreOffice could not convert {name!r} ({type(exc).__name__})."
+                f"LibreOffice could not convert {name!r}."
             ) from exc
         produced = out_dir / "input.docx"
         if proc.returncode != 0 or not produced.exists():

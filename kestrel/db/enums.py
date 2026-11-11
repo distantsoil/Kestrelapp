@@ -30,6 +30,7 @@ SOURCE_KINDS = (
     "personio",
     "breezy",
     "recruitee",
+    "jobvite",
     "careers_page",
     "remoterocketship",
     "usajobs",
@@ -38,6 +39,8 @@ SOURCE_KINDS = (
     "himalayas",
     "weworkremotely",
     "jobicy",
+    "fourdayweek",
+    "hn_hiring",
     "remotive",
     "page",
     "rss",
@@ -165,7 +168,7 @@ MOCK_MODES = ("behavioral", "technical_leadership", "executive_panel", "consulti
 
 OFFER_STATUS = ("verbal", "written", "accepted", "declined", "expired")
 
-LABEL_SOURCES = ("active_learning", "manual", "derived_from_outcome")
+LABEL_SOURCES = ("active_learning", "manual", "quick", "derived_from_outcome")
 CALIBRATION_STATUS = ("proposed", "accepted", "rejected")
 ML_PROMOTED_BY = ("auto", "operator")
 

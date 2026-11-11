@@ -138,7 +138,7 @@ class WeWorkRemotelyAdapter:
 
     def validate_config(self, config: dict) -> None:
         cat = config.get("category")
-        if cat is not None and (not isinstance(cat, str) or not _SLUG.match(cat)):
+        if cat is not None and (not isinstance(cat, str) or not _SLUG.fullmatch(cat)):
             raise SourceConfigError(
                 "'category' must look like remote-programming-jobs (a We Work Remotely category)"
             )

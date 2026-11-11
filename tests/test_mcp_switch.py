@@ -157,7 +157,9 @@ def test_runtime_serves_with_the_host_guard_and_stops():
         await runtime.stop()
         return r.status_code
 
-    assert asyncio.run(go()) == 421
+    # D-SEC-10: a loopback peer with a foreign Host is a remote visitor now, so the key check
+    # refuses it (401) before the Host guard would (421); either way it is refused.
+    assert asyncio.run(go()) in (401, 421)
     assert not runtime.running() and runtime.port_free(port)
 
 

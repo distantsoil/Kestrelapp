@@ -50,6 +50,7 @@ from kestrel.config import Settings, get_settings
 from kestrel.services import diagnostics
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import desktop_bridge
+from kestrel.web.auth import LOCAL_DOWNLOAD, LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages import help as help_page
@@ -305,7 +306,7 @@ async def ollama_row():
     )
 
 
-@router.post("/about/folder/open", response_class=HTMLResponse)
+@router.post("/about/folder/open", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def open_folder(which: str = Form("")):
     """Ask the desktop shell to open the data or the logs folder. Only those two, never a path
     from the request."""
@@ -325,7 +326,7 @@ async def open_folder(which: str = Form("")):
     )
 
 
-@router.get("/about/diagnostics")
+@router.get("/about/diagnostics", dependencies=[LOCAL_DOWNLOAD])
 async def download_diagnostics():
     """Stream a fresh diagnostics zip; the temp copy is deleted after the bytes have gone out."""
     settings, redaction, conservative = await _effective()
@@ -361,7 +362,7 @@ def _saved_partial(request: Request, **ctx) -> HTMLResponse:
     return templates().TemplateResponse(request, "partials/diagnostics_saved.html", ctx)
 
 
-@router.post("/about/diagnostics/save", response_class=HTMLResponse)
+@router.post("/about/diagnostics/save", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def save_diagnostics(request: Request):
     """Desktop app: write the zip to Downloads (or Kestrel's exports folder when Downloads cannot
     be written) and say where, inline. No browser download, so no WebView2 flyout (D-UI-41)."""
@@ -410,7 +411,7 @@ async def save_diagnostics(request: Request):
     return _saved_partial(request, ok=False, error="; ".join(errors))
 
 
-@router.post("/about/diagnostics/reveal", response_class=HTMLResponse)
+@router.post("/about/diagnostics/reveal", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def reveal_diagnostics(request: Request, name: str = Form("")):
     """Ask the desktop shell to show a zip this page saved in Explorer. A local action on the
     operator's own file; anything that is not such a file is refused."""

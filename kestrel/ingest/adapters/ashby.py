@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kestrel.ingest.base import RawPosting, SourceConfigError
+from kestrel.ingest.base import RawPosting, SourceConfigError, path_segment
 
 _BASE = "https://api.ashbyhq.com/posting-api/job-board"
 
@@ -35,6 +35,8 @@ class AshbyAdapter:
     kind = "ashby"
 
     def validate_config(self, config: dict) -> None:
+        if config.get("token"):
+            path_segment(config, "token", "ashby 'token'")
         if not config.get("token"):
             raise SourceConfigError("ashby source requires a 'token' (the case-sensitive board id)")
 

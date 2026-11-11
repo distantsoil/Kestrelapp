@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import String, and_, case, cast, func, literal, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer
 
 from kestrel.db.base import iso, utcnow_iso
 from kestrel.db.enums import APPLIED_OR_LATER
@@ -178,6 +178,9 @@ class OppRow:
     rescoring: Any = None
     # Kept with Save for later (kestrel.services.saved_roles).
     saved: bool = False
+    # Whether the score reads as older than what scoring would send now (kestrel.learning.
+    # score_age, issue 179), set by the page for the whole list in one query; None until then.
+    older: bool | None = None
     # What the Pipeline template prints for the row (kestrel.web.pipeline_view.row_view), set
     # by the page after confidential-mode redaction.
     view: dict | None = None
@@ -312,7 +315,7 @@ def live_scoring_exists():
     enclosing statement's Opportunity). The line between Being scored and Scoring failed
     (D-UI-56), shared by _group_expr, the grouped list and scoring_failed_count. A task the
     track switch holds is not in flight, so it never hides a failure (D-UI-70)."""
-    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    oid = Task.opportunity_id  # the indexed copy of payload.opportunity_id (0030)
     return (
         select(Task.id)
         .where(Task.type.in_(_RESCORING_TASKS), _in_flight_now(), oid == Opportunity.id)
@@ -327,7 +330,7 @@ def scoring_task_exists():
     group (issue #90): _group_expr, the grouped list, the panel and queries.hidden_unscored all
     use it, so a Score anyway task a switched-off track holds keeps the role in Being scored,
     reading Paused, instead of leaving it among the roles nothing will score."""
-    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    oid = Task.opportunity_id  # the indexed copy of payload.opportunity_id (0030)
     return (
         select(Task.id)
         .where(Task.type.in_(_RESCORING_TASKS), Task.status.in_(("pending", "leased")),
@@ -433,7 +436,7 @@ def quarantine_queued_clause():
     """A Tier 1 or Tier 2 failure whose role has an in-flight task of a tier that would resolve
     it (D-UI-70): Being scored again, not failed. A held task, a Tier 3 or research row, or an
     unrelated task never makes a row queued."""
-    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    oid = Task.opportunity_id  # the indexed copy of payload.opportunity_id (0030)
     resolving = or_(
         *(and_(Quarantine.tier == tier, Task.type.in_(types))
           for tier, types in _RESOLVING_TASKS.items())
@@ -502,7 +505,9 @@ async def failure_summary(session: AsyncSession, track: str | None = None) -> Fa
     stmt = stmt.where(quarantine_needs_you_clause(),
                       or_(Quarantine.opportunity_id.is_(None), listed_clause()))
     if track in ("employment", "consulting"):
-        stmt = stmt.where(Opportunity.track == track)
+        # A story failure is an orphan row: no role, hence no track. It is not a member of one
+        # track or the other, so the track filter must not hide it on the track the operator is on.
+        stmt = stmt.where(or_(Quarantine.opportunity_id.is_(None), Opportunity.track == track))
     for qid, oid, tier, error in (await session.execute(stmt)).all():
         if oid is None:
             put(("q", int(qid)), "other")
@@ -759,7 +764,7 @@ async def scoring_states(session: AsyncSession, rows: list[OppRow]) -> None:
     hidden = await hidden_unscored(session, [r.opp for r in todo])
     off = set(switched_off_tracks())
     track_of = {r.opp.id: r.opp.track for r in todo}
-    oid = func.json_extract(Task.payload, "$.opportunity_id")
+    oid = Task.opportunity_id  # the indexed copy of payload.opportunity_id (0030)
     lane_flag = func.coalesce(func.json_extract(Task.payload, "$.lane"), 0)
     live = (
         await session.execute(
@@ -1170,6 +1175,16 @@ async def chip_counts(session: AsyncSession, f: OppFilters) -> dict[str, int]:
     return out
 
 
+# What a list row never reads (D-PERF-3): the posting body and raw payload, and the model's raw
+# reply and per-dimension prose. Deferred, so a page of 25 rows per group does not pull the
+# megabytes the detail page alone needs. A page that did touch one would fail loudly in async
+# (MissingGreenlet), and the list tests read every column the templates print.
+_LIST_DEFERS = (
+    defer(Opportunity.description_md), defer(Opportunity.previous_description_md),
+    defer(Opportunity.raw), defer(Evaluation.raw_response), defer(Evaluation.dimensions),
+)
+
+
 async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
     col, desc = _SORTS.get(f.sort, _SORTS["score"])
     if f.grouped and f.sort == "score":
@@ -1180,7 +1195,7 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
     page_size = max(1, min(f.page_size, 200))
     page = max(1, f.page)
     if not f.grouped:
-        stmt = _base_stmt(f).order_by(order, Opportunity.id.desc())
+        stmt = _base_stmt(f).options(*_LIST_DEFERS).order_by(order, Opportunity.id.desc())
         rows = (
             await session.execute(stmt.limit(page_size).offset((page - 1) * page_size))
         ).all()
@@ -1218,6 +1233,7 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
     def _group_stmt(key: str):
         return (
             _with_operator(_base_stmt(f, *cols))
+            .options(*_LIST_DEFERS)
             .where(grp == _G[key])
             .order_by(order, Opportunity.id.desc())
         )
@@ -1227,11 +1243,40 @@ async def list_opportunities(session: AsyncSession, f: OppFilters) -> OppPage:
         stmt = _group_stmt(GROUP_NOT_FIT)
         rows = (await session.execute(stmt.limit(page_size).offset((page - 1) * page_size))).all()
     else:
-        for key in GROUP_ORDER:
-            if key == GROUP_NOT_FIT:
-                continue
-            take = max(1, int(f.limits.get(key) or GROUP_ROWS))
-            rows.extend((await session.execute(_group_stmt(key).limit(take))).all())
+        # The group is computed once per role, not once per group: one statement ranks every
+        # role inside its group (the list's own order, newest id last), keeps each visible
+        # group's first `take`, and the rows themselves are then read by id.
+        takes = {
+            key: max(1, int(f.limits.get(key) or GROUP_ROWS))
+            for key in GROUP_ORDER if key != GROUP_NOT_FIT
+        }
+        ranked = (
+            _with_operator(
+                _base_stmt(
+                    f, Opportunity.id.label("oid"), grp.label("g"),
+                    func.row_number().over(
+                        partition_by=grp, order_by=(order, Opportunity.id.desc())
+                    ).label("rn"),
+                )
+            )
+        ).subquery()
+        kept = (
+            await session.execute(
+                select(ranked.c.oid, ranked.c.g, ranked.c.rn).where(
+                    or_(*(and_(ranked.c.g == _G[k], ranked.c.rn <= n) for k, n in takes.items()))
+                )
+            )
+        ).all()
+        place = {int(oid): (int(g), int(rn)) for oid, g, rn in kept}
+        if place:
+            got = (
+                await session.execute(
+                    _with_operator(_base_stmt(f, *cols))
+                    .options(*_LIST_DEFERS)
+                    .where(Opportunity.id.in_(list(place)))
+                )
+            ).all()
+            rows = sorted(got, key=lambda r: place[r[0].id])
     counts_stmt = _with_operator(
         _base_stmt(
             f, grp.label("g"), (Opportunity.stage == "t0_reject").label("rule"), func.count()
@@ -1321,6 +1366,61 @@ async def group_role_ids(session: AsyncSession, f: OppFilters, group: str) -> li
         .order_by(order, Opportunity.id.desc())
     )
     return [int(i) for i in (await session.execute(stmt)).scalars()]
+
+
+async def group_counts_by_track(session: AsyncSession) -> dict[str, dict[str, int]]:
+    """{track: {group: roles}} for every Pipeline fit group, in ONE statement: the Pipeline's own
+    base statement and `_group_expr`, grouped, so the nav badge, the status rail, the tray and
+    Today's Review count read the same numbers the Pipeline's group headers do and load no row
+    (D-PERF-2). A track with no role is absent."""
+    stmt = _with_operator(
+        _base_stmt(
+            OppFilters(track=None), Opportunity.track, _group_expr().label("g"), func.count()
+        )
+    ).group_by(Opportunity.track, "g")
+    out: dict[str, dict[str, int]] = {}
+    for track, g, n in (await session.execute(stmt)).all():
+        out.setdefault(track, dict.fromkeys(GROUP_ORDER, 0))[GROUP_ORDER[int(g)]] += int(n)
+    return out
+
+
+def group_total(counts: dict[str, dict[str, int]], group: str, track: str | None) -> int:
+    """One group's count over `track`, or over every track when it is None."""
+    return sum(c.get(group, 0) for t, c in counts.items() if track is None or t == track)
+
+
+async def sequence_ids(session: AsyncSession, f: OppFilters, per_group: int = 200) -> list[int]:
+    """The ids list_opportunities(grouped) would draw, in its order: each visible group in
+    GROUP_ORDER (Not a fit is its own section and never part of it), the first `per_group` of
+    each in the list's sort, then newest id. One statement over (id, group) only, so Previous
+    and Next on a role page never hydrate a description or a model reply (D-PERF-2)."""
+    col, desc = _SORTS.get(f.sort, _SORTS["score"])
+    if f.grouped and f.sort == "score":
+        col = func.coalesce(Evaluation.score, Evaluation.weighted_score)
+    order = col.desc() if desc else col.asc()
+    grp = _group_expr()
+    if f.section == "not_fit":  # that section alone, paged, as list_opportunities draws it
+        size = max(1, min(per_group, 200))
+        stmt = (
+            _with_operator(_base_stmt(f, Opportunity.id))
+            .where(grp == _G[GROUP_NOT_FIT])
+            .order_by(order, Opportunity.id.desc())
+            .limit(size).offset((max(1, f.page) - 1) * size)
+        )
+        return [int(i) for i in (await session.execute(stmt)).scalars()]
+    stmt = (
+        _with_operator(_base_stmt(f, Opportunity.id, grp.label("g")))
+        .where(grp != _G[GROUP_NOT_FIT])
+        .order_by(grp, order, Opportunity.id.desc())
+    )
+    taken: dict[int, int] = {}
+    ids: list[int] = []
+    for oid, g in (await session.execute(stmt)).all():
+        n = taken.get(g, 0)
+        if n < per_group:
+            taken[g] = n + 1
+            ids.append(int(oid))
+    return ids
 
 
 async def get_detail(session: AsyncSession, opp_id: int) -> dict[str, Any] | None:

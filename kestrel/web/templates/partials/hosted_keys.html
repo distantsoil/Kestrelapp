@@ -17,7 +17,7 @@
     {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
     <div class="key-row-head">
       <b>{{ p.label }}</b>{% if pid in free_providers %} <span class="pill apply" data-testid="free-models-{{ pid }}">Free models available</span>{% endif %}
-      <span class="muted" data-testid="key-status-{{ pid }}">{% if b.key_present %}Key saved{% if b.key_tail %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}No key saved{% endif %}</span>
+      <span class="muted" data-testid="key-status-{{ pid }}">{% if b.key_present %}Key saved{% if b.key_tail and is_local(request) %}, ends in <span class="mono">{{ b.key_tail }}</span>{% endif %}{% else %}No key saved{% endif %}</span>
       <a href="{{ p.console }}" target="_blank" rel="noopener" class="muted">Get a key</a>
     </div>
     <div class="key-row-input">

@@ -163,6 +163,9 @@ patterns = [
   "kestrel/web/pages/opportunity_actions.py",
   "kestrel/web/pages/rescore.py",
   "kestrel/web/role_view.py",
+  "kestrel/web/correction_view.py",
+  "kestrel/web/correction_undo.py",
+  "kestrel/web/pages/role_corrections.py",
   "kestrel/web/rescoring.py",
   "kestrel/web/score_again_ask.py",
 ]
@@ -187,16 +190,20 @@ patterns = [
   "kestrel/web/templates/partials/pursuit_*.html",
   "kestrel/web/templates/partials/follow_up.html",
   "kestrel/web/pages/pursuits.py",
+  "kestrel/web/pages/work_search_log.py",
+  "kestrel/web/templates/partials/work_search_log.html",
 ]
 files = [
   "test_applications_browser.py", "test_pursuit_filters_browser.py",
-  "test_follow_up_browser.py", "test_consent_hint_browser.py",
+  "test_follow_up_browser.py", "test_consent_hint_browser.py", "test_perf3_board_browser.py",
+  "test_work_search_log_browser.py",
 ]
 
 [[rule]]
 patterns = [
   "kestrel/web/templates/partials/applied_*.html",
   "kestrel/web/pages/applied.py",
+  "kestrel/web/attachment.py",
 ]
 files = ["test_applied_import_browser.py", "test_applied_panel_browser.py"]
 
@@ -303,6 +310,7 @@ patterns = [
   "kestrel/web/retry_words.py",
   "kestrel/web/settings_io.py",
   "kestrel/web/score_again_ask.py",
+  "kestrel/web/templates/partials/local_only.html",
 ]
 files = ["@shell"]
 
@@ -363,6 +371,7 @@ patterns = [
 ]
 files = [
   "test_models_browser.py", "test_other_service_browser.py", "test_consent_dialogs_browser.py",
+  "test_lan_browser.py",
 ]
 
 # ---- Calibrate ---------------------------------------------------------------------------------
@@ -374,7 +383,20 @@ patterns = [
   "kestrel/web/templates/partials/calibrate_*.html",
   "kestrel/web/calibrate_view.py",
 ]
-files = ["test_calibrate_browser.py"]
+files = ["test_calibrate_browser.py", "test_quick_round_browser.py"]
+
+# ---- Quick round (issue 171) -----------------------------------------------------------------
+[[rule]]
+patterns = [
+  "kestrel/web/templates/quick_round.html",
+  "kestrel/web/templates/partials/quick_*.html",
+  "kestrel/web/templates/partials/td_quick.html",
+  "kestrel/web/static/js/quick_round.js",
+  "kestrel/web/static/css/pages/quick_round.css",
+  "kestrel/web/quick_view.py",
+  "kestrel/web/routes_quick.py",
+]
+files = ["test_quick_round_browser.py", "test_calibrate_browser.py", "test_today_browser.py"]
 
 # ---- Runs ------------------------------------------------------------------------------------
 [[rule]]

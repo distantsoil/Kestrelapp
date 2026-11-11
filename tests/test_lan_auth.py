@@ -96,6 +96,121 @@ def test_loopback_still_works_with_no_key_at_all():
     assert r.status_code == 200, "loopback must still be served, not merely not-401"
 
 
+# ------------------------------------------------------------------ the tunnel carve-out (#151)
+
+
+def test_a_tunnel_request_from_loopback_needs_the_key(monkeypatch):
+    """Issue #151: cloudflared connects to the app from 127.0.0.1 and forwards the public
+    hostname as Host, so a tunnel visitor must be treated as a stranger, not the operator at
+    the keyboard. The invariant's first half: a tunnel request without the key gets a 401."""
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["k.example.com"]')
+    auth.set_cached_key("s3cret-key")
+    with _client("127.0.0.1") as c:
+        r = c.get("/opportunities", headers={"Host": "k.example.com"})
+    assert r.status_code == 401, "a tunnel request must need the key even from loopback"
+    assert "shared secret" in r.json()["detail"]
+
+
+def test_a_tunnel_request_with_the_key_is_served(monkeypatch):
+    """The operator's own phone, through the tunnel: with the key the request is served, so the
+    carve-out gates tunnel traffic without breaking the tunnel itself."""
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["k.example.com"]')
+    auth.set_cached_key("s3cret-key")
+    with _client("127.0.0.1") as c:
+        r = c.get(
+            "/opportunities",
+            headers={"Host": "k.example.com", "X-Kestrel-Key": "s3cret-key"},
+        )
+    assert r.status_code == 200, "a VALID key must let the tunnel operator through"
+
+
+def test_a_plain_local_request_still_needs_no_key_with_a_tunnel_configured(monkeypatch):
+    """The invariant's second half: with a tunnel configured, the operator at the keyboard is
+    still exempt, because the plain request's Host is a loopback address, not the public
+    hostname."""
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["k.example.com"]')
+    auth.set_cached_key("s3cret-key")
+    with _client("127.0.0.1") as c:
+        r = c.get("/opportunities")
+    assert r.status_code == 200, "loopback with a loopback Host must stay exempt"
+
+
+def _stored_key() -> str | None:
+    import asyncio
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+
+    async def read():
+        async with get_sessionmaker()() as s:
+            row = await s.get(Setting, auth.SETTING_KEY)
+            return row.value if row is not None else None
+
+    return asyncio.run(read())
+
+
+def test_a_tunnel_host_gets_a_key_on_first_need_and_is_never_open(monkeypatch):
+    """#151 owner decision 2: with a public hostname set and no key stored, the first tunnel
+    request is refused AND a key now exists. Invariant: a tunnel host is never reachable without
+    a key, including the first start after the hostname is set."""
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["k.example.com"]')
+    auth.reset_cache()
+    assert _stored_key() is None
+    with _client("127.0.0.1") as c:
+        first = c.get("/opportunities", headers={"Host": "k.example.com"})
+    assert first.status_code == 401
+    key = _stored_key()
+    assert key and len(key) >= 32
+    with _client("127.0.0.1") as c:
+        r = c.get("/opportunities", headers={"Host": "k.example.com", "X-Kestrel-Key": key})
+        wrong = c.get("/opportunities", headers={"Host": "k.example.com", "X-Kestrel-Key": "x"})
+        local = c.get("/opportunities")
+    assert r.status_code == 200
+    assert wrong.status_code == 401
+    assert local.status_code == 200, "the operator at the keyboard stays exempt"
+
+
+def test_the_key_is_made_at_startup_and_after_a_restore(monkeypatch):
+    """The key exists before any remote request (so Settings can show it), and a restore that
+    leaves no key behind (reset_cache, an empty row) cannot open the tunnel host."""
+    import asyncio
+
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["k.example.com"]')
+    auth.reset_cache()
+    with _client("127.0.0.1"):  # entering the client runs the lifespan
+        started = _stored_key()
+    assert started, "startup must make the key when a public hostname is set"
+
+    # A restore replaces the database: simulate a database with no key, then the cache reset.
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+
+    async def drop():
+        async with get_sessionmaker()() as s:
+            row = await s.get(Setting, auth.SETTING_KEY)
+            await s.delete(row)
+            await s.commit()
+
+    asyncio.run(drop())
+    auth.reset_cache()
+    with _client("127.0.0.1") as c:
+        r = c.get("/opportunities", headers={"Host": "k.example.com"})
+        after = _stored_key()
+    assert r.status_code == 401
+    assert after and after != started
+
+
+def test_an_existing_key_is_never_replaced_and_no_hostname_means_no_key(monkeypatch):
+    import asyncio
+
+    auth.reset_cache()
+    assert asyncio.run(auth.ensure_tunnel_key()) is None  # no public hostname set
+    assert _stored_key() is None
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["k.example.com"]')
+    first = asyncio.run(auth.ensure_tunnel_key())
+    assert first and asyncio.run(auth.ensure_tunnel_key()) == first
+
+
 # --------------------------------------------------------------------------- failing closed
 
 

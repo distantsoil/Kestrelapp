@@ -303,15 +303,21 @@ def test_lifespan_runs_the_worker_shutdown_even_when_mcp_stop_fails(monkeypatch)
     async def bad_stop():
         raise RuntimeError("stop exploded")
 
-    async def graceful(task, stop):
+    async def graceful(task, stop, grace_s=None, *, also=()):
         calls.append("graceful")
-        task.cancel()
+        for t in (task, *also):  # the worker and, since D-QUEUE-6, the online lane
+            if t is not None:
+                t.cancel()
 
     async def rebuild():
         calls.append("rebuild")
 
+    # #148: the loops start a beat after health, so zero the delay here; this test wants the
+    # worker already running so it can be the one gracefully shut down.
+    monkeypatch.setattr(app_mod, "WORKER_DELAY_S", 0.0)
     for name in ("_worker_loop", "_delivery_loop", "_stall_monitor", "_setup_models_loop"):
         monkeypatch.setattr(app_mod, name, idle)
+    monkeypatch.setattr(app_mod, "_online_lane", idle)  # not on the old allowlist; keep it out
     for name in ("_seed_shipped_sources", "_seed_shipped_layouts", "_apply_keep_awake",
                  "_start_mcp_if_enabled"):
         monkeypatch.setattr(app_mod, name, noop)

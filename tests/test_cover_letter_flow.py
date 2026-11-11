@@ -139,8 +139,10 @@ def test_online_generate_without_confirmation_never_calls_the_model(ids, monkeyp
     assert "Nothing was sent" in _seen(wrong_model)
     assert "Nothing was sent" in _seen(no_dest)
     assert "Nothing was sent" in _seen(stale)
-    # With no confirmation at all the person is either refused or shown the ask-first dialog.
-    assert "Nothing was sent" in _seen(none) or 'data-testid="rl-send"' in none.text
+    # With no confirmation at all the person is told nothing was sent, and the send button
+    # stays under the confirmed dialog's control.
+    assert "Nothing was sent" in _seen(none)
+    assert 'data-testid="rl-send"' in none.text
 
 
 def test_online_generate_with_the_dialogs_confirmation_shows_the_letter_verbatim(ids, monkeypatch):
@@ -171,8 +173,8 @@ def test_a_model_error_shows_a_fixed_sentence_never_its_text(ids, monkeypatch):
         assert r.status_code < 500, f"online={online}"
         assert secret not in _seen(r), f"online={online}"
         assert "secret-path" not in _seen(r)
-        assert BeautifulSoup(r.text, "html.parser").get_text(strip=True) or r.headers.get(
-            "hx-trigger"), "the person is told nothing"
+        assert BeautifulSoup(r.text, "html.parser").get_text(strip=True), (
+            f"the person is told nothing, online={online}")
 
 
 def test_local_route_drafts_without_any_hosted_confirmation(ids, monkeypatch):

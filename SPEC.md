@@ -325,6 +325,7 @@ change re-embeds the corpus (§8.1.1).
 | blocks | json | the structured evaluation output |
 | blockers, legitimacy | json | |
 | few_shot_ids | json | which past evaluations were injected as examples |
+| correction_ids | json nullable | which requirement corrections the OPERATOR_CORRECTIONS block stated (D-SCORE-4); NULL for Tier 1 and for reads stored before migration 0033 |
 | raw_response | text | |
 | prompt_tokens, completion_tokens, latency_ms | int | |
 | created_at | ts | |
@@ -359,7 +360,16 @@ application, a consulting pursuit is a business-development thread.
 
 **`task`** — the queue. `id`, `type`, `payload` json, `status`
 (`pending`/`leased`/`done`/`failed`/`dead`), `priority`, `attempts`, `max_attempts`,
-`lease_until`, `worker_id`, `last_error`, timestamps.
+`lease_until`, `retry_at`, `worker_id`, `last_error`, timestamps.
+
+**A clean quit never spends an attempt, and a retryable failure backs off** (issue #153,
+D-QUEUE-3). Quitting the app returns every leased task to `pending` with the in-flight
+attempt given back, for every task type: an intentional quit is not a failure. A crash or an
+expired lease still spends the attempt, except the model-download and build types
+(`ollama_pull`, `ollama_create`), whose lease is long and a restart is normal. A retryable
+failure is requeued with `retry_at` 30 s out after its first failed attempt, 2 min after the
+second, and 10 min after the third and later ones; a permanent failure is dead-lettered at
+once; a "Try again" from the UI clears `retry_at` and the task is claimable at once.
 
 Task types: `scrape`, `normalize`, `embed`, `t1`, `t2`, `t3`, `doc_select`, `render`,
 `research`, `org_summary`, `contacts`, `liveness`, `calibrate`, `train_reranker`,
@@ -414,6 +424,30 @@ with a matching spec edit.
 
 Tables belonging to specific modules (documents, contacts, research, stories, offers, labels,
 overrides, models) are defined in `SPEC-MODULES.md`.
+
+### 4.7 Data retention
+
+A long-lived install stays fast because finished background work leaves the database (D-PERF-3).
+`kestrel/services/prune.py` runs from the worker's idle cycle when no run is open, at most once a
+day (the stamp `housekeeping.last_prune`, written only after a complete pass), in transactions of
+500 rows that yield between batches:
+
+| What | Kept | Never removed |
+|---|---|---|
+| `task` rows `done` or `cancelled` | 30 days from `updated_at` | `pending`, `leased`, `failed`; the newest `follow_up` task of each application (its payload is the drafted text the Follow up dialog shows, D-PERF-5); the newest `train_reranker` task of each track and every one carrying `replaces_refused` (the training markers, D-LEARN-10) |
+| `task` rows `dead` | 30 days, longer while the role is parked (stage `quarantined` or `error`) or has an open failure on Needs another try (`queries.open_quarantine_clause`) | a task of a role still needing another try; the newest `follow_up` task of each application; the training markers |
+| `run`, `scrape_run` | 365 days from `finished_at` | a run with no `finished_at` (still open) |
+| `notification` | 365 days from `created_at` | |
+
+A role never goes with its run: when a scrape run is removed the roles it found keep their row and
+only `opportunity.scrape_run_id` (nullable, read only by the live run summary) is cleared in the
+same transaction, and its raw payload file (`raw_path`) is deleted after the row, only when it
+resolves inside the data folder. The background-lane mark of a role (`opportunity.lane_local_only`,
+D-SRC-13) lives on the role, so pruning the tasks that carried it never lets a lane role reach an
+online model. A kill at any moment leaves a consistent database and the next pass finishes the
+rest (hard rule 5). `task.opportunity_id` (migration 0030) is the indexed copy of
+`payload.opportunity_id`, kept equal by the ORM and by two SQL triggers; the per-role task lookups
+read it.
 
 ---
 
@@ -817,6 +851,44 @@ mapped status, `applied_at`, `notes_md`, one `status_event` (`None -> status`), 
 and skipped unless ticked; ticking updates that pursuit's status and applied date instead of
 making a second one.
 
+**Importing the same tracker again (D-IMPORT-8).** A re-import brings Kestrel up to date and never
+loses what Kestrel already knows. Matching: the same link, else the same org and a title with
+Jaccard above 0.85 plus the date rule: 0 to 3 days apart is the same application, 4 to 14 days
+asks (never ticked, ticking adds a new application), over 14 days is a re-application and is
+imported as a new one. An approximate date (the notes or date text say "approx") compares by
+month, matches within the same month, asks one month away, and never overwrites an exact date.
+Pairing is one to one: each tracked application is claimed by at most one file row, a row from
+the board an earlier import recorded pairs first, and a second row for the same role and day from
+another source stays its own application. Two rows identical in company, title, date and source
+collapse to one with a note. The review lists exceptions, in buckets: already in sync (a count
+only), same application but differs (Kestrel's and the file's stage side by side), needs your
+call, looks like a re-application, not found, and not an application. Status rule: the furthest
+along wins; a closed status (rejected, withdrawn, ghosted; lost, no_response) is final, but a
+closed status in the file closes an open application; a per-import switch "Let the file win" makes
+the file's stage win. The applied date is only filled in when empty. An application absent from
+the file is never touched or deleted. Undo is one action: it restores the status, dates and notes
+of every application the import changed and removes what it created, refusing when the person has
+changed any of them since. A failed write commits nothing. Nothing in matching or the review is
+sent anywhere.
+
+**The Kestrel ID (D-IMPORT-9).** Every application has a short, opaque, stable ID shown as
+`K-XXXXX-XXXXX`. It is derived, not stored: an HMAC of the pursuit id and its role's
+`first_seen_at` under a random per-install salt kept in the `setting` table (`ids.salt`), so it
+carries nothing about the person, the company or the role, and an application that was removed
+cannot share an ID with a later one that reuses its row number. The salt is created the first time
+an ID is handed out (the applications export, or the copy below); a review never writes it. The
+Analytics applications export (`GET /analytics/export/applications.csv`) ends with a `Kestrel ID`
+column, and the importer reads `Sent` as the applied date, so that file imports as it is. An
+import row with a `Kestrel ID` (header `Kestrel ID`, matched like any column) is matched by it
+before anything else; the ID is trusted over the words, so an edited title, company or date still
+matches, and the stage rule and "never overwrite" rules above still apply. An ID no application
+holds, or text that is not an ID, makes the row a new application with a warning and is never
+guessed from the words; the same ID on two rows holds the second until the file is fixed. A blank
+cell falls back to matching by role and date. After an import, Add offers "Download a copy of your
+file with IDs filled in": the person's own file as CSV with the column added and filled for every
+row that is an application in Kestrel (matched rows included, ticked or not). Kestrel never edits
+the file they chose. The copy is kept for a day for the download and removed by Undo.
+
 **Suppression of re-posts.** Dedup (§5.5) now consults pursuits. When a NEW opportunity lands
 in a dedup group that holds an opportunity whose pursuit has status `applied` or later, or whose
 `archive_reason` is `applied`, and no such pursuit has `allow_reposts` on, the new row is
@@ -1197,6 +1269,17 @@ Any OpenAI-compatible chat-completions server can be added as `provider: generic
   a generic external backend available to the existing Models connection and consent flow;
   it does not enable Hosted mode, acknowledge a disclosure or assign a model.
 
+- **Where a model server runs is decided by its address (D-LLM-15).** `kestrel/netloc.py`
+  classifies a backend's `base_url`: loopback is *this computer*; RFC 1918, IPv6 unique-local and
+  link-local addresses are the *local network*; everything else, every host name and every
+  `*.local` name included, is the *internet* (no DNS is used; only a literal address decides). A server
+  on this computer or the local network is not external: no Hosted mode, no consent dialog, for
+  any OpenAI-compatible server type (Ollama, oMLX, vLLM, llama.cpp), so the example backend
+  `mini` below (192.168.2.25) is a local-network server. An internet address is external whatever
+  `external` says (`BackendConfig.external` is the declared flag or an internet address), so it
+  is online exactly as described here. Models > On your network adds such a server without
+  editing settings.yml (SPEC-INTERFACES §2.1 `/models`).
+
 - The `frontier` **tier** names exactly one external backend and is reachable only through the
   per-item preview-and-confirm escalation. The worker never passes `allow_external`.
 - **Hosted mode** (`llm.hosted_mode`, off by default) is the only other way an external backend
@@ -1428,7 +1511,7 @@ llm:
       protocol: chat_completions           # chat_completions | responses | messages
       json_mode: json_schema               # strict dialect on hosted paths
       thinking_control: none
-      external: true                       # the only kind of backend allowed off-machine
+      external: true                       # internet backends are external by address anyway (D-LLM-15)
       hosted: { require_parameters: true, data_collection: deny, zdr: false, reasoning_effort: null,
                 repetition_penalty: 1.05, frequency_penalty: null,     # penalties: §8.5, D-LLM-2
                 repair_frequency_penalty: 0.3, tier1_reasoning_off: true }   # D-LLM-5
@@ -1574,10 +1657,21 @@ would make the tier 1 model fail a check it has no reason to pass.
 | Tier | Input budget | `max_tokens` | Required `num_ctx` | Ship |
 |---|---|---|---|---|
 | tier1 | 1200 description + 400 profile + 400 instructions | 350 | ~2400 | **4096** |
-| tier2 | 6000 description + 2500 profile + 1500 few-shot + 1000 instructions | 4000 | ~15000 | **16384** |
-| tier3 | 6000 + 2500 + 2000 research + 1000 | 6000 | ~17500 | **20480** |
+| tier2 | 6000 description + 2500 profile + 1500 few-shot + 1100 operator facts + 1000 instructions | 4000 | ~16300 | **16384** |
+| tier3 | 6000 + 2500 + 2000 research + 1100 operator facts + 1000 | 6000 | ~18800 | **20480** |
 | docsel | 2000 catalog + 1500 evaluation extract + 500 | 1500 | ~5500 | **8192** |
 | trigger | 1500 filing excerpt + 400 | 600 | ~2500 | **4096** |
+
+The operator facts allowance is the `OPERATOR_CORRECTIONS` block (PROMPTS.md P2 User): this role's
+posting notes and the person corrections about a requirement this posting asks for (by hash, or
+before the role's first read by whole-word text in its description, D-SCORE-7), at most 20
+lines and at most 1100 tokens, lines past it left out oldest first (D-SCORE-1).
+
+A local Tier 2 prompt is measured before it is sent. One over the tier's window (less the reply,
+the template overhead and a tokenizer margin) has its description cut until it fits (D-LLM-63,
+D-SCORE-11). One that is still over with the description cut as far as it goes is **never sent**:
+the role goes to quarantine with the reason and no attempt counted, as a refused send does, and a
+Score again of a role already scored keeps its score and stage (D-SCORE-20, hard rule 4).
 
 Preflight computes the requirement from the live settings for each tier and compares against
 that tier's actual `num_ctx`. Larger `num_ctx` costs VRAM for KV cache, which is exactly why this
@@ -1767,7 +1861,9 @@ is an empirical question and this is how it gets answered.
   recent logs, settings without keys and health check results; it is made only on request, never
   holds the profile, resumes, keys, roles or applications, and is never sent by Kestrel.
 - **Local backup:** a `kestrel backup` command and a UI button produce a single timestamped zip
-  of the database, config, and generated documents. Restore from the setup window.
+  of the database, config, and generated documents. Restore from the setup window. A restore is
+  an import (D-SEC-20): a new database is built from Kestrel's own migrations and only the rows of
+  Kestrel's own tables are copied into it from the backup; the task queue is not restored.
 
 ---
 
@@ -2016,6 +2112,35 @@ Detail: `GET https://{slug}.breezy.hr/p/{friendly_id}` → `200` HTML; the descr
 
 **Gotchas:** the description needs one page request per role, so Kestrel reads at most `max_results` pages a run (default 100), one a second; roles past the cap are kept without a description and the run is `partial` with a sentence saying how many. The page address is built from `friendly_id` on `{slug}.breezy.hr`, never taken from the payload. The place is built from city, state name and country name, because the payload's own `name` has no country. `is_remote` is an explicit boolean (`null` on most rows) and is the only thing that sets the remote flag. `salary` is display text and is not parsed into numbers.
 
+### Jobvite (XML job feed; no key)
+
+`GET https://app.jobvite.com/CompanyJobs/Xml.aspx?c={companyEId}` -> 200 `text/xml`, no key.
+**Verified live 2026-11-10** on two tenants (one empty, one with 363 postings and a 6.9 MB reply; the fixture
+`tests/fixtures/jobvite_feed.xml` is a trimmed shaped copy with invented values). The retired
+`jobs.jobvite.com/api/company/{slug}/jobs` JSON endpoint is not used. Root `<result>`; each `<job>` has `id`,
+`externalJobPostingId`, `title`, `requisitionid`, `category`, `jobtype` ("Full-Time", "Evergreen", "Fixed-term
+Contract", "Intern-PT", ...), `region`, `location` (display text), `date` (`M/D/YYYY`), `detail-url` and
+`apply-url` (CDATA; they point at app.jobvite.com over http, or at an employer's own domain), `description`
+(entity-escaped HTML, the full body), `briefdescription`, optional `parentId` (a multi-place copy of another
+posting), and custom fields such as `business_x0020_unit`. `hiring_x0020_team` holds a person's name and is
+never read. An empty tenant answers 200 `<result />` ("no openings"); a retired tenant answers a redirect to
+`Recruiting/Home.aspx`, read as "board gone" (redirects are not followed). **The tenant id trap:** `c` is an
+opaque `companyEId` that is not in the careers URL. It appears in the board page's inline script as
+`companyEId: '...'` on `https://jobs.jobvite.com/{slug}` (an unknown slug answers 302). Resolution order: the
+source's `company_eid`, then `c=` in a pasted feed link, then that board page for the source's `slug`. The id
+is checked with `re.fullmatch(r"[A-Za-z0-9]{4,32}", ...)` and the slug with the same pattern as the other
+boards; both hosts are fixed (`jobs.jobvite.com`, `app.jobvite.com`) over HTTPS and the posting and apply links
+are display-only. Invalid XML characters are removed before parsing, and a reply that declares a DOCTYPE or
+ENTITY is refused (stdlib XML has no entity-expansion hardening, as for the RSS source). The timeout is 45
+seconds; at most 2 requests a check at 1 a second.
+**Terms and robots (read 2026-11-10).** `https://app.jobvite.com/robots.txt` disallows many application paths
+(`/API/`, `/Jobs/`, `/Careers/`, `/CompanyJobs/PreviewApplication.aspx`, ...) but not `/CompanyJobs/Xml.aspx`;
+`https://jobs.jobvite.com/robots.txt` answers 404. The XML feed is the employer-facing public job feed Jobvite
+offers customers for their career sites. Jobvite's Terms of Use (https://www.jobvite.com/terms-of-use/) say you
+may not "copy, distribute, scrape ... any of these materials" of the Site (its own marketing site and
+software); they do not mention the customer job feeds. A 429 or 5xx is a `partial` run; a reply that is not
+the expected XML is an `AdapterError`.
+
 ### USAJobs (search API; keyed)
 
 `GET https://data.usajobs.gov/api/search?Keyword=..&LocationName=..&RemoteIndicator=True&DatePosted=N
@@ -2099,6 +2224,59 @@ names). Reply: `{data: [...], links: {first, last, prev, next}, meta}`. Per job:
 seconds). No compensation fields. Kestrel keeps the posting's own `url` (the user applies there),
 at most `max_pages` requests a check (default 2), at most 1 a second, and `robots.txt` allows the
 API path (`Disallow:` is empty except `/*?__hstc`).
+
+### 4 Day Week (public API v2; no key)
+
+`GET https://4dayweek.io/api/v2/jobs?page=N&limit=M[&schedule=...][&q=...]` (`limit` default 25, max 100).
+Free, no key, documented at https://4dayweek.io/developers. **Verified live 2026-11-10** (200,
+`application/json`, `Cache-Control: public, max-age=60`; the fixture `tests/fixtures/fourdayweek_page1.json`
+is a trimmed capture with invented employer and role names). The unversioned `/api/jobs` the issue first
+named is NOT used: it carries no description or apply link and robots.txt disallows `/api/`. Reply:
+`{data: [...], page, limit, total, has_more}`. Per job: `id` (UUID), `slug`, `title`, `description`
+(Markdown, full text, so no detail fetch is needed), `url` (the posting page on 4dayweek.io, which is the
+link the user opens), `category`, `role`, `level`, `contract_type`, `schedule_type` (`4_day_week`,
+`9_day_fortnight`, ...), `hours_per_week_min`/`max`, `work_arrangement` (`onsite|hybrid|remote`),
+`locations[]` (`city`, `state`, `country`, `is_primary`), `timezones[]`, `salary_min`/`salary_max`
+(CENTS, in `salary_currency`, per `salary_period`), `skills[]`, `stack[]`, `tools[]`, `posted_at`
+(ISO 8601), `expires_at` (optional), and a trimmed `company` object (`name`, `url`, `website`,
+`work_life_score`). Pay is only present when the employer gave it. A listing newer than 48 hours may not be
+public yet; the list simply omits it. Terms (https://4dayweek.io/terms, section 10, read 2026-11-10):
+automated access is forbidden EXCEPT the documented public API, whose results may be used and displayed
+provided 4dayweek.io is credited with a link to the job page, the published rate limit (60 requests a minute
+per IP across `/api/v1` and `/api/v2`) is kept, and a result is not used to build a competing job board; the
+licence is revocable, and on revocation stored copies are deleted within 30 days. `robots.txt` (read
+2026-11-10) has `Allow: /api/v2` ahead of `Disallow: /api/`, so the v2 path is allowed. Kestrel sends at
+most `max_pages` requests a check (default 2, 100 a page), at most 1 a second, with robots.txt checked, and
+credits the board on every posting (`raw.via`, `raw.via_url`, and the Posting tab). A 429 (with
+`Retry-After`) or 5xx is a `partial` run; a reply without `data` is an `AdapterError`.
+### Hacker News "Who is hiring?" (official HN API; no key)
+
+The monthly "Ask HN: Who is hiring?" thread, read through the official Hacker News API
+(https://github.com/HackerNews/API, owned by the HackerNews organization, published by Y Combinator with
+Firebase). **Verified live 2026-11-10** (200, no key). `GET https://hacker-news.firebaseio.com/v0/user/whoishiring.json`
+returns `{id, karma, created, about, submitted: [item ids, newest first]}`; the account also posts the
+separate "Who wants to be hired?" (job seekers) and "Freelancer?" threads, so the adapter picks the newest
+`submitted` story whose `title` starts with `Ask HN: Who is hiring?` (looking at the first 8 ids at most)
+or uses the source's `thread_id`. `GET .../v0/item/{id}.json` returns an item: a story has `kids` (the
+top-level comment ids, ranked), `title`, `time`; a comment has `id, by, parent, text` (HTML with entities
+such as `&#x27;` and `&#x2F;`), `time`, `type: "comment"`, and optionally `deleted` or `dead` (both skipped);
+a missing item answers `null`. Every id that goes into a URL is checked with `re.fullmatch(r"\d{1,12}", ...)`.
+The fixture `tests/fixtures/hn_hiring.json` is a shaped copy with invented companies, people and ids.
+**Terms and robots (read 2026-11-10).** The HN API README says "There is currently no rate limit" and invites
+use of the data; Y Combinator's site terms (https://www.ycombinator.com/legal/) forbid scraping "except as
+expressly authorized", and the published API is that authorization, so Kestrel reads nothing from
+news.ycombinator.com itself (its robots.txt asks for a 30 second crawl delay) and uses only the API.
+`hacker-news.firebaseio.com/robots.txt` is `Allow: /*.json$`, `Allow: /*.json?*$`, `Disallow: /`; Python's
+robots parser has no wildcard support and would refuse every call, so, like Remotive (D-SRC-15), the adapter
+makes no in-client robots check and instead only ever requests URLs ending in `.json`, which is exactly what
+the file allows (a test pins that). The Algolia HN search API (hn.algolia.com) was not used: it publishes
+no robots.txt or terms to read. Kestrel fetches at most `max_comments` items (default 100, at most 500) plus
+at most 10 discovery requests, at most 4 a second. Each top-level comment is one posting. No language model
+is involved in reading it (see PROMPTS.md, "Hacker News hiring comments"): the first line, which the
+thread's rules ask to read `Company | Role | Location | REMOTE | ...`, gives the organization, title and
+remote flag; the whole comment is the description, and a link in it is the apply link (an email address
+stays in the text, and Kestrel never sends anything). A 429, 403 or 5xx is a `partial` run that keeps what
+was read; a reply that is not the expected JSON is an `AdapterError`.
 
 ### RemoteRocketship (paid API; discovery only)
 

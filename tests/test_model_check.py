@@ -204,19 +204,31 @@ async def test_a_model_that_fails_is_skipped_not_fatal(sm, settings):
 
 
 async def test_an_unexpected_error_retries_then_dead_letters_with_the_reason(sm, settings):
+    from kestrel.db.base import iso, utcnow
+
     await _rate(sm, 5)
     await _queue(sm, steps=["rating"])
 
     async def broken(step, model, s, backend=None):
         raise KeyError("bug")
 
-    assert await check.drain_checks(sm, settings, make_client=None, runner=broken,
-                                    installed=lambda s: []) == 0
+    # Each failed attempt is retryable; it backs off before the next attempt (issue #153),
+    # so the dead letter lands after the wait has passed for the last attempt.
+    for _ in range(3):
+        assert await check.drain_checks(sm, settings, make_client=None, runner=broken,
+                                        installed=lambda s: []) == 0
+        task = await _the_task(sm)
+        if task.status == "dead":
+            break
+        async with sm() as s:
+            t = await s.get(Task, task.id)
+            t.retry_at = iso(utcnow().replace(year=2000))
+            await s.commit()
     task = await _the_task(sm)
     assert task.status == "dead" and "KeyError" in task.last_error
     async with sm() as s:
         st = await check.status(s)
-    assert st["state"] == "failed" and "KeyError" in st["error"]
+    assert st["state"] == "failed" and "KeyError" not in st["error"]
 
 
 async def test_history_keeps_the_latest_checks(sm, settings):
@@ -531,3 +543,28 @@ async def test_a_hosted_pick_with_no_provider_is_refused_not_run_locally(sm, mon
     async with sm() as s:
         args = await bench._form_check_args(s, "tier2", "hosted:some/model", "local")
     assert "Connect an online provider" in args["error"] and "steps" not in args
+
+
+async def test_a_check_held_for_a_changed_destination_stays_held_and_is_not_released_each_pass(
+    sm, settings, monkeypatch
+):
+    """The hold is the approval's, not an out-of-credit one: a credit hold on a task type with no
+    tier is treated as gone whenever no credit is held, which is always, so the task was released,
+    leased and deferred again on every worker cycle (D-QUEUE-3)."""
+    from kestrel.queue.queue import REASON_APPROVAL, TaskQueue, release_holds
+
+    await _rate(sm, 5)
+    await _queue(sm, steps=["rating"], models={"rating": ["cur-rate"]})
+
+    async def held(sm_, task, settings_, run, found, stop):
+        return check.RunOutcome(
+            "held", error="Model or online service changed. Confirm the destination again.")
+
+    monkeypatch.setattr(check, "run_check", held)
+    await check.drain_checks(sm, settings, make_client=None, runner=Scripted(TABLE),
+                             installed=lambda s: [])
+    task = await _the_task(sm)
+    assert task.payload["defer_reason"] == REASON_APPROVAL
+    for _ in range(3):
+        assert await release_holds(sm, settings) == 0  # nothing changed: it stays held
+        assert await TaskQueue(sm).lease("pipeline-model-check", types=["bench"]) is None

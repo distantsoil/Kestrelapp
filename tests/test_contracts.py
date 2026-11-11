@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import re
+import sys
 import types
 from pathlib import Path
 
@@ -637,8 +639,10 @@ def _hidden_fields(html: str) -> dict[str, str]:
     return out
 
 
-@pytest.mark.parametrize("path", sorted(CASES))
-def test_an_unconfirmed_post_is_refused_and_sends_nothing(path, recorder, monkeypatch):
+def _post_unconfirmed(path: str, monkeypatch):
+    """World up, the task count taken, then the case's form posted with every box left unticked.
+    The count must come after the world exists (a fresh test database has no tables yet).
+    Returns (where, r, before)."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "invented-key-not-real")  # a provider is connected
     ids = asyncio.run(_world())
     case = CASES[path]
@@ -658,17 +662,35 @@ def test_an_unconfirmed_post_is_refused_and_sends_nothing(path, recorder, monkey
         else:
             r = client.post(url, data=data, headers=headers)
     where = f"POST {url} {data or case['json']} -> {r.status_code}: {r.text[:300]!r}"
+    return where, r, before
+
+
+@pytest.mark.parametrize("path", sorted(CASES))
+def test_an_unconfirmed_post_reaches_the_consent_check_and_sends_nothing(
+    path, recorder, monkeypatch
+):
+    """Every consent endpoint, whatever it answers: the request reaches the consent check, no
+    model is called, nothing leaves the machine, and no task is queued."""
+    where, r, before = _post_unconfirmed(path, monkeypatch)
     assert r.status_code not in (404, 405, 422) and r.status_code < 500, (
         f"the request did not reach the consent check (fix the case): {where}"
     )
-    import html as _html
-
-    seen = _html.unescape(re.sub(r"<[^>]+>|\s+", " ", r.text)).strip()
-    print(f"\n{path} -> {r.status_code} {seen[:140]!r}")
     after = asyncio.run(_count_tasks())
     _assert_nothing_happened(recorder, before, after, where)
-    # Secondary: the person is told. Wording alone never passes the test; the effects above do.
-    assert case["local_ok"] or _shows_refusal(r), f"an unconfirmed post was not refused: {where}"
+
+
+# The bench/start case is the one exception: its 200 page is a local-only run whose own copy
+# may name the "online model" box the person left unticked, so it is refused nothing. Every
+# other unconfirmed post is refused in words as well as in effects.
+REFUSAL_CASES = [p for p, c in sorted(CASES.items()) if not c["local_ok"]]
+
+
+@pytest.mark.parametrize("path", REFUSAL_CASES)
+def test_an_unconfirmed_post_that_must_be_refused_is_told_so(path, recorder, monkeypatch):
+    where, r, _before = _post_unconfirmed(path, monkeypatch)
+    # Wording alone never passes a consent test; the effects test above does. This pins the
+    # second half: the person is told nothing was sent.
+    assert _shows_refusal(r), f"an unconfirmed post was not refused: {where}"
 
 
 def _assert_nothing_happened(rec: Recorder, before: int, after: int, where: str) -> None:
@@ -740,7 +762,8 @@ def test_the_file_routes_are_discovered(route_table):
     print(f"\nfile routes ({len(found)}): " + ", ".join(sorted(found)))
     assert set(found) == FILE_ROUTES, (
         f"new or removed file routes: {sorted(set(found) ^ FILE_ROUTES)}. Add a case to "
-        "test_a_stored_path_outside_the_documents_folder_is_left_alone and list it in FILE_ROUTES."
+        "test_an_outside_stored_path_is_never_served_by_a_get / "
+        "test_an_outside_stored_path_is_left_alone_by_the_write_routes and list it in FILE_ROUTES."
     )
 
 
@@ -748,8 +771,25 @@ def _stored(where: str, tmp_path: Path, folder: Path) -> Path:
     """A real file the database will name: inside `folder` (the control), or outside it."""
     if where == "inside":
         target = folder / "invented-control.pdf"
-    elif where == "elsewhere":
+    elif where == "elsewhere":  # an absolute path to a file outside the folder
         target = tmp_path / "elsewhere" / "outside.pdf"
+    elif where == "symlink":
+        # The link itself sits inside the folder; what it points at is outside. A check that
+        # resolves its argument refuses it; a check of the stored spelling alone would not.
+        real = tmp_path / "elsewhere" / "outside-via-symlink.pdf"
+        real.parent.mkdir(parents=True, exist_ok=True)
+        real.write_bytes(OUTSIDE_PDF)
+        folder.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            # A file symlink needs privilege on Windows; a junction to the folder that holds
+            # the file does not, and hides the same file behind an inside spelling.
+            import _winapi
+
+            alias = folder / "alias"
+            _winapi.CreateJunction(str(real.parent), str(alias))
+            return alias / real.name
+        os.symlink(real, folder / "link-via-symlink.pdf")
+        return folder / "link-via-symlink.pdf"
     else:  # a traversal that starts inside the folder
         target = folder / ".." / "outside-by-traversal.pdf"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -874,26 +914,83 @@ def test_a_stored_path_inside_the_documents_folder_is_served(route, tmp_path, no
 def test_a_stored_path_inside_the_documents_folder_is_deleted(route, tmp_path, no_browser):
     """The control for the delete routes: the file where it belongs is removed."""
     _method, doc, _prep, r, shown = _drive_file_route(route, "inside", tmp_path)
-    assert r.status_code not in (404, 405, 422), shown
-    assert r.status_code < 500 or r.status_code == 503, shown
+    assert r.status_code == 200, shown
     assert not doc.exists(), f"control file not deleted (the case never got there): {shown}"
 
 
-@pytest.mark.parametrize("where", ["elsewhere", "traversal"])
-@pytest.mark.parametrize("route", sorted(FILE_ROUTES))
-def test_a_stored_path_outside_the_documents_folder_is_left_alone(
-    route, where, tmp_path, no_browser
-):
-    method, doc, prep, r, shown = _drive_file_route(route, where, tmp_path)
+OUTSIDE_WHERE = ["elsewhere", "traversal", "symlink"]
+
+
+@pytest.mark.parametrize("where", OUTSIDE_WHERE)
+@pytest.mark.parametrize("route", sorted(r for r in FILE_ROUTES if r.startswith("GET ")))
+def test_an_outside_stored_path_is_never_served_by_a_get(route, where, tmp_path, no_browser):
+    """Every shape of a path that is not where it belongs: an absolute path to a file outside
+    the folder ("elsewhere"), a `..` climb out of it ("traversal"), and a link that sits inside
+    it and leads out ("symlink"). None is served: a fresh PDF made from the saved text (when a
+    renderer is available), a 404 refusal, or a 503 (no renderer) is every answer the route may
+    give, and none of them is the outside file (issue #150: a restored backup may name any
+    readable file)."""
+    _method, doc, prep, r, shown = _drive_file_route(route, where, tmp_path)
     assert r.status_code not in (405, 422), shown
-    assert method == "GET" or r.status_code != 404, shown
-    assert r.status_code < 500 or r.status_code == 503, shown
+    assert r.status_code in (200, 404, 503), shown
     assert OUTSIDE_PDF not in r.content, f"{route} served a file from outside the folder"
     assert doc.read_bytes() == OUTSIDE_PDF and prep.read_bytes() == OUTSIDE_PDF, (
         f"{route} changed or deleted a file outside the folder: {shown}"
     )
-    # Refusing the stored path is the contract. A route may then make a fresh PDF from the saved
-    # text (renders download does when a renderer is available), which is never the outside file:
-    # OUTSIDE_PDF is checked above. Whether it can render depends on the machine, so 200 (a fresh
-    # PDF), 404 and 503 are all refusals of the stored path for a GET.
-    assert method != "GET" or r.status_code in (200, 404, 503), shown
+
+
+@pytest.mark.parametrize("where", OUTSIDE_WHERE)
+@pytest.mark.parametrize("route", sorted(r for r in FILE_ROUTES if not r.startswith("GET ")))
+def test_an_outside_stored_path_is_left_alone_by_the_write_routes(route, where, tmp_path,
+                                                                  no_browser):
+    """The write routes (delete, save, discard, keep, undo) must not touch a file that lives
+    outside the documents folder: the row operation succeeds (200), the outside file is left
+    exactly as it was (issue #150: a restored backup may name any readable file)."""
+    _method, doc, prep, r, shown = _drive_file_route(route, where, tmp_path)
+    assert r.status_code == 200, shown
+    assert OUTSIDE_PDF not in r.content, f"{route} served a file from outside the folder"
+    assert doc.read_bytes() == OUTSIDE_PDF and prep.read_bytes() == OUTSIDE_PDF, (
+        f"{route} changed or deleted a file outside the folder: {shown}"
+    )
+
+
+# ------------------------------------------------------------------------ 3. modal sends
+# kestrel-ui.js's delegated click handler matches data-k-close before the browser sees a
+# submit: it closes the dialog and cancels the click, so the form never submits and htmx
+# never sends it. #172 shipped that way: the Restore confirm in Settings > Your data closed
+# and restored nothing. Every type="submit" in a dialog must therefore send on its own, and
+# a button that swallows the send on purpose must be listed here.
+SUBMIT_BUTTON = re.compile(r"<button\b[^>]*>")
+
+
+def _submit_close_buttons() -> dict[str, list[int]]:
+    """Template -> the lines of its submit buttons that also carry data-k-close."""
+    out: dict[str, list[int]] = {}
+    for f in sorted(TEMPLATES.rglob("*.html")):
+        text = f.read_text(encoding="utf-8")
+        hits = [
+            text[: m.start()].count("\n") + 1
+            for m in SUBMIT_BUTTON.finditer(text)
+            if re.search(r"type\s*=\s*[\"']submit[\"']", m.group(0))
+            and "data-k-close" in m.group(0)
+        ]
+        if hits:
+            out[str(f.relative_to(TEMPLATES))] = hits
+    return out
+
+
+# A type="submit" button that also carries data-k-close never submits: kestrel-ui.js closes
+# the dialog and cancels the click. List one here only if swallowing the send is the intent;
+# none is today.
+INTENDED_EXCEPTIONS: dict[str, list[int]] = {}
+
+
+def test_no_submit_button_in_a_dialog_is_silenced_by_data_k_close():
+    found = _submit_close_buttons()
+    bad = {n: lines for n, lines in found.items() if lines != INTENDED_EXCEPTIONS.get(n, [])}
+    assert not bad, (
+        f"a type=\"submit\" button also carrying data-k-close never submits (kestrel-ui.js "
+        f"closes the dialog and cancels the click): {bad}. Remove data-k-close from the "
+        "button and close the dialog from the reply, or list the button in "
+        "INTENDED_EXCEPTIONS if swallowing the send is the intent."
+    )

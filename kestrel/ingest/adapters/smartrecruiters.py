@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError, path_segment
 
 _BASE = "https://api.smartrecruiters.com/v1/companies"
 _PAGE = 100  # SmartRecruiters caps the postings page at 100.
@@ -40,6 +40,8 @@ class SmartRecruitersAdapter:
     kind = "smartrecruiters"
 
     def validate_config(self, config: dict) -> None:
+        if config.get("company"):
+            path_segment(config, "company", "smartrecruiters 'company'")
         if not config.get("company"):
             raise SourceConfigError(
                 "smartrecruiters source requires a 'company' (the SmartRecruiters identifier, "

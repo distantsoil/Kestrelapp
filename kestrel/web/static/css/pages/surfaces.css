@@ -34,6 +34,9 @@ dialog.sf-dialog :focus-visible { outline: 2px solid var(--brand); outline-offse
 .sf-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sf-muted { color: var(--muted); }
 .sf-small { font-size: 13px; }
+/* Every correction line an online send carries is listed, never cut (D-SCORE-3): a long list
+   scrolls inside the dialog instead of growing it. */
+.sf-lines { max-height: 14em; overflow-y: auto; overflow-wrap: anywhere; }
 a.sf-a { color: var(--link-ink); font-weight: 700; text-decoration: none; cursor: pointer; }
 a.sf-a:hover { text-decoration: underline; }
 .sf-x { flex: none; }

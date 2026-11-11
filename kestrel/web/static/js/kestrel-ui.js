@@ -1590,6 +1590,12 @@
         target.addEventListener(type, h, o);
         return rec.off;
       },
+      // Rewrite this page's own address without a new history entry (a chosen tab), only while
+      // the page is mounted, so a page that is leaving never writes over the next one's entry.
+      replaceUrl: function (url) {
+        if (!live() || !root.history || !url || url === root.location.href) return;
+        root.history.replaceState(root.history.state, '', url);
+      },
       every: function (ms, fn) {
         if (!live()) return 0;
         var id = root.setInterval(fn, ms);

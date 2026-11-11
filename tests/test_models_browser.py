@@ -233,6 +233,10 @@ def test_models_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live)
             page, "models", "models.js", settle_ms=400, quiet_ms=600)
         assert first["timers"] == 0 and first["observers"] == 0
         more = page.query_selector("[data-mo-more]")
+        # The menu closes on scroll, so bring the row into view first: a click that has to scroll
+        # the page (the On your network card sits above the table) would close it at once.
+        more.scroll_into_view_if_needed()
+        wait_for_layout(page)
         menu = more.evaluate_handle("b => b.parentNode.querySelector('.mo-menu')")
         more.click()
         assert menu.as_element().is_visible()

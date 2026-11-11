@@ -54,6 +54,7 @@ from typing import Any
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel import netloc
 from kestrel.config import Settings
 from kestrel.db.models import Evaluation, Opportunity, Run, Task
 from kestrel.services.hidden_orgs import hidden_opportunity_ids, opp_visible_clause
@@ -109,6 +110,9 @@ def model_label(settings: Settings, backend: str | None, model: str | None) -> s
     b = settings.llm.backends.get(backend or "")
     if b is not None and b.external:
         return f"{model} (free, online)" if is_free_variant(model) else f"{model} (online)"
+    if b is not None and b.location == netloc.LOCAL_NETWORK:
+        host = netloc.host_of(b.base_url) or ""
+        return f"{model}, {netloc.label_for(netloc.LOCAL_NETWORK, host)}"
     return f"{model} (local)"
 
 

@@ -25,6 +25,7 @@ of the board still returns.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -44,6 +45,13 @@ _HEADERS = {
     ),
 }
 _REQUIRED = ("tenant", "dc", "site")
+# tenant and dc become host labels (https://{tenant}.{dc}.myworkdayjobs.com) and site a path
+# segment, so each is checked whole: `x@10.0.0.1/` or `x@127.0.0.1:443/#` would otherwise point the
+# request at another host (D-SEC-10).
+_TENANT = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+_DC = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,14}[A-Za-z0-9])?")
+_SITE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
+_SHAPES = (("tenant", _TENANT), ("dc", _DC), ("site", _SITE))
 
 
 class WorkdayAdapter:
@@ -55,6 +63,13 @@ class WorkdayAdapter:
             raise SourceConfigError(
                 "workday source requires " + ", ".join(f"'{k}'" for k in missing)
             )
+        for key, shape in _SHAPES:
+            value = config.get(key)
+            if not isinstance(value, str) or not shape.fullmatch(value):
+                raise SourceConfigError(
+                    f"workday source '{key}' is not valid: use only letters, digits and hyphens "
+                    "(site may also use dots and underscores), as in the career site's address"
+                )
 
     async def fetch(self, config: dict, client: Any) -> list[RawPosting]:
         self.validate_config(config)

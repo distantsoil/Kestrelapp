@@ -98,6 +98,17 @@ def ml_dir() -> Path:
     return data_dir() / "ml"
 
 
+def secrets_dir() -> Path:
+    """Per-install secrets that must never leave this computer (D-SEC-13). Never backed up and
+    never restored from a backup."""
+    return data_dir() / "secrets"
+
+
+def model_signing_key_path() -> Path:
+    """The 32-byte key that signs the saved reranker files (kestrel/learning/signing.py)."""
+    return secrets_dir() / "model_signing.key"
+
+
 def evals_dir() -> Path:
     """Where the bench-harness gold sets live (SPEC.md 8.6). The shipped placeholder files
     (`evals/goldset.<track>.jsonl`) are checked into the repo root, one level above the `kestrel`

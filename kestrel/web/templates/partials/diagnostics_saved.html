@@ -1,11 +1,12 @@
 {# The desktop app's diagnostics save (D-UI-41): where the zip went, and a button that asks the
    shell to show it in Explorer. Theme tokens only, through the ab- classes in pages/about.css. #}
+{% import "partials/local_only.html" as lo with context %}
 {% if ok %}
 <div class="ab-saved" role="status" aria-live="polite" data-testid="diagnostics-saved">
   <b>Saved to <span class="mono" data-testid="diagnostics-path">{{ path }}</span></b>
   {% if can_reveal %}
   <div class="ab-saved__row">
-    <button class="k-btn k-btn--sm" type="button" data-testid="diagnostics-open-folder"
+    <button{{ lo.dis(request) }} class="k-btn k-btn--sm" type="button" data-testid="diagnostics-open-folder"
             hx-post="/about/diagnostics/reveal" hx-vals='{"name": {{ name | tojson }}}'
             hx-target="#diagnostics-reveal-result" hx-swap="innerHTML">Open folder</button>
     <span id="diagnostics-reveal-result"></span>

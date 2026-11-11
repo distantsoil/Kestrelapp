@@ -28,10 +28,14 @@ from __future__ import annotations
 import hmac
 import secrets
 from collections.abc import Callable
+from typing import Any
 
 import structlog
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from sqlalchemy.exc import SQLAlchemyError
+
+from kestrel.services import viewer
 
 log = structlog.get_logger()
 
@@ -45,10 +49,15 @@ _EXEMPT_PATHS = frozenset({"/health", "/auth"})
 # Loopback is exempt: the operator sitting at the machine is already past every boundary this key
 # could enforce, and requiring a key there would break the desktop shell's own webview, the CLI, and
 # the MCP server for no gain.
+# ONE carve-out (issue #151): a published tunnel (cloudflared, docs/WEBAPP.md) also connects to
+# the app from loopback, but its requests come from the internet and carry the public hostname
+# as Host. For those, is_loopback is False, so the key still gates them.
 # Numeric peers only: request.client.host is always an address, never a hostname. "localhost" is
 # deliberately NOT here, because it would be a trust entry that could silently activate under any
 # server that put a hostname there.
 _LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1"})
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_FORWARD_HEADERS = ("x-forwarded-for", "forwarded", "cf-connecting-ip", "x-real-ip")
 
 
 # The key is stored in the `setting` table, but the middleware runs on every request and cannot
@@ -108,12 +117,48 @@ async def _load_key_once() -> str | None:
         # device, which is a lie and gives the operator nothing to diagnose.
         log.warning("lan_key_load_failed", error=str(exc))
         return None
+    if value is None and public_hostnames():
+        # A tunnel host is never reachable without a key (#151, D-SEC-15): the key is made here
+        # on first need, so a restore or a first request can never leave the host open.
+        value = await ensure_tunnel_key()
     if _cache["generation"] != generation_before:
         # A rotation landed while this read was in flight. Its value is the current one; this read
         # is stale and must not overwrite it, or the revoked key would keep working.
         return cached_key()
     set_cached_key(value)
     return value
+
+
+async def ensure_tunnel_key() -> str | None:
+    """Make the shared key when `server.public_hostnames` is set and none exists (#151, D-SEC-15).
+
+    Returns the key in force, or None when no hostname is set or it cannot be stored (the
+    middleware then refuses, failing closed). An existing key is never replaced.
+    """
+    if not public_hostnames():
+        return None
+    if _cache["loaded"] and cached_key():
+        return cached_key()
+    try:
+        from kestrel.db.engine import get_sessionmaker
+        from kestrel.db.models import Setting
+
+        async with get_sessionmaker()() as session:
+            row = await session.get(Setting, SETTING_KEY)
+            if row is not None and isinstance(row.value, str) and row.value:
+                return row.value
+            token = generate_key()
+            if row is None:
+                session.add(Setting(key=SETTING_KEY, value=token))
+            else:
+                row.value = token
+            await session.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        log.warning("tunnel_key_create_failed", error=str(exc))
+        return None
+    set_cached_key(token)
+    log.info("tunnel_key_created")
+    return token
 
 
 async def current_key() -> str | None:
@@ -127,9 +172,138 @@ def generate_key() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _host_name(host_header: str) -> str:
+    """The hostname from a Host header, lowercased, with any port or IPv6 brackets stripped.
+
+    `Kestrel.Example.com:8443` yields `kestrel.example.com`. server.public_hostnames are exact
+    lowercase names (config load refuses anything else), so a match here is an exact match
+    against an operator-declared name, never a prefix or wildcard."""
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        close = host.find("]")
+        return (host[1:close] if close > 1 else host).rstrip(".")
+    # A bare IPv6 literal has colons but no port; every other host may carry one.
+    if host.count(":") > 1:
+        return host.rstrip(".")
+    return host.rsplit(":", 1)[0].rstrip(".") if ":" in host else host.rstrip(".")
+
+
+def public_hostnames() -> tuple[str, ...]:
+    """The exact public hostnames the operator declared (server.public_hostnames), lowercase, read
+    from the settings in effect NOW. The one source every guard uses (the web app's key guard,
+    its origin and Host checks, and the MCP server's), so a settings change reaches all of them
+    the same way (D-SEC-10)."""
+    from kestrel.config import get_settings
+
+    return tuple(h.strip().lower() for h in get_settings().server.public_hostnames if h)
+
+
 def is_loopback(request: Request) -> bool:
+    """True only for a request from the person at this computer: a loopback peer, a Host of
+    localhost, 127.0.0.1 or ::1, and no proxy header. Everything else is remote (fail closed).
+
+    A tunnel (cloudflared, docs/WEBAPP.md) connects to the app from 127.0.0.1 and forwards the
+    public hostname as Host, so such a request has a loopback peer but comes from the internet.
+    Exempting it by peer address is the authentication bypass of issue #151. With
+    server.public_hostnames set, a request whose Host is one of those names is not loopback and
+    falls through to the key check. A plain local request (Host a loopback address or
+    localhost) is still exempt, which keeps the desktop shell's webview, the CLI and the MCP
+    server working."""
     client = request.client.host if request.client else None
-    return client in _LOOPBACK_CLIENTS
+    return peer_is_loopback(client, request.headers, public_hostnames())
+
+
+def peer_is_loopback(client: str | None, headers: Any, public_hostnames: Any = ()) -> bool:
+    """The one loopback decision, on the parts of a request every server layer has (the web app's
+    Request and the MCP server's ASGI scope both call it, D-SEC-10): the peer address, the
+    headers, and the operator-declared public host names. See `is_loopback` for the rule."""
+    if client not in _LOOPBACK_CLIENTS:
+        return False
+    # Fail closed (#155): a loopback peer is this computer only when the request says so too.
+    # Any proxy header means a proxy or tunnel forwarded it; and the Host must be one of the three
+    # names the desktop shell, the CLI and the MCP server use. An unlisted name (a quick tunnel,
+    # httpHostHeader, ngrok, tailscale serve, a trailing dot) is remote, which is the safe way to
+    # be wrong: the person at the keyboard types localhost or an address.
+    if any(h in headers for h in _FORWARD_HEADERS):
+        return False
+    name = _host_name(headers.get("host", ""))
+    return name in _LOCAL_HOSTS and name not in (public_hostnames or ())
+
+
+# ------------------------------------------------------------------ the local-only guard (#155)
+#
+# The shared key is ONE credential that lets a phone or a tunnel visitor browse and work: read
+# roles, score, apply, keep notes. It is NOT the power to take the data away or to point it
+# somewhere else. Three tiers, one rule each (SPEC-INTERFACES 2.3, D-SEC-9):
+#   * browse and work: open to a key holder.
+#   * restore, wipe, reset, and every download of the person's data: this computer only.
+#   * change a key, a model route or a destination, or test/spend a saved key: this computer only.
+# `require_local` is the ONE dependency that enforces the second and third tiers. A route opts in
+# with `dependencies=[LOCAL_ONLY]` (or LOCAL_DOWNLOAD for a file), and the route-table contract
+# test (tests/test_local_only_routes.py) fails when a guarded prefix gains a route without it.
+LOCAL_ONLY_CHANGE = "Only this computer can change this."
+LOCAL_ONLY_DOWNLOAD = "Only this computer can download this."
+
+
+class LocalOnlyRefused(Exception):
+    """Raised by the guard; answered as a plain-sentence 403 that carries no data."""
+
+    def __init__(self, sentence: str) -> None:
+        super().__init__(sentence)
+        self.sentence = sentence
+
+
+def local_only(sentence: str = LOCAL_ONLY_CHANGE) -> Callable[[Request], None]:
+    """A dependency that lets only this computer through, with `sentence` as the refusal.
+
+    A request counts as local only when is_loopback(request) is True, so a forged Host or
+    forwarding header can only ever make a request look remote, never local. The refusal runs
+    before the handler, so a blocked action changes nothing and reads nothing."""
+
+    def require_local(request: Request) -> None:
+        if not is_loopback(request):
+            raise LocalOnlyRefused(sentence)
+
+    require_local.kestrel_local_only = True  # type: ignore[attr-defined]  # the contract test reads it
+    return require_local
+
+
+require_local = local_only(LOCAL_ONLY_CHANGE)
+require_local_download = local_only(LOCAL_ONLY_DOWNLOAD)
+LOCAL_ONLY = Depends(require_local)
+LOCAL_DOWNLOAD = Depends(require_local_download)
+
+
+async def _local_only_refused(request: Request, exc: Exception) -> Response:
+    sentence = exc.sentence if isinstance(exc, LocalOnlyRefused) else LOCAL_ONLY_CHANGE
+    return PlainTextResponse(sentence, status_code=403, headers={"Cache-Control": "no-store"})
+
+
+def refuse_unless_local(request: Request, sentence: str = LOCAL_ONLY_CHANGE) -> None:
+    """The guard for a decision made inside a handler (for example a model pick that differs from
+    the configured one), where a route-level dependency would also block the ordinary case."""
+    if not is_loopback(request):
+        raise LocalOnlyRefused(sentence)
+
+
+def request_is_local(request: Request) -> bool:
+    """For templates and page renders: show the controls as disabled when this is False. A page
+    rendered with no request at all (outside the web layer) is not a key holder's view."""
+    if not isinstance(request, Request):
+        return True
+    return is_loopback(request)
+
+
+def release_credit_hold(request: Request) -> bool:
+    """The operator asked to score or run now: let sends to an out-of-credit online key resume
+    (D-LLM-8). Only from this computer: a key holder never releases a hold (D-SEC-10), whatever
+    route it posts. True when the hold was released."""
+    if not request_is_local(request):
+        return False
+    from kestrel.llm import credit
+
+    credit.clear()
+    return True
 
 
 def _presented_key(request: Request) -> str | None:
@@ -146,7 +320,8 @@ def key_is_valid(presented: str | None, expected: str | None) -> bool:
 
 
 def install_lan_auth(app: FastAPI) -> None:
-    """Require X-Kestrel-Key (or the cookie) on every non-loopback request.
+    """Require X-Kestrel-Key (or the cookie) on every non-loopback request, which includes every
+    request a published tunnel forwards with a public Host (issue #151).
 
     The key is read from the process cache, refreshed lazily on first need and immediately whenever
     Settings generates or rotates it, so rotation takes effect with no restart.
@@ -156,8 +331,19 @@ def install_lan_auth(app: FastAPI) -> None:
     LAN-exposed app that looks protected.
     """
 
+    app.add_exception_handler(LocalOnlyRefused, _local_only_refused)
+
     @app.middleware("http")
     async def _require_key(request: Request, call_next: Callable) -> Response:
+        # Tell the services whether a key holder is looking, for the balance and provider data a
+        # page view must not show or fetch for one (kestrel.services.viewer, #155).
+        token = viewer.set_remote(not is_loopback(request))
+        try:
+            return await _serve(request, call_next)
+        finally:
+            viewer.reset(token)
+
+    async def _serve(request: Request, call_next: Callable) -> Response:
         if is_loopback(request) or request.url.path in _EXEMPT_PATHS:
             return await call_next(request)
         expected = await _load_key_once()

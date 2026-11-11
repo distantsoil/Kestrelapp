@@ -276,7 +276,14 @@ async def test_a_failed_acquire_is_retried_then_dead_lettered_with_the_reason(sm
     async def acquire(session, org, settings):
         raise OSError("network down")
 
-    assert await osum.drain_org_summaries(sm, _Client(), get_settings(), acquire=acquire) == 0
+    for _ in range(osum.MAX_ATTEMPTS + 2):  # one attempt per drain; the wait passes between them
+        assert await osum.drain_org_summaries(sm, _Client(), get_settings(), acquire=acquire) == 0
+        async with sm() as s:
+            task = (await s.execute(select(Task).where(Task.type == osum.TASK_TYPE))).scalar_one()
+            if task.status != "pending":
+                break
+            task.retry_at = None  # the backoff wait has passed (issue #153)
+            await s.commit()
     async with sm() as s:
         task = (await s.execute(select(Task).where(Task.type == osum.TASK_TYPE))).scalar_one()
     assert task.attempts == osum.MAX_ATTEMPTS and task.status == "dead"
@@ -446,7 +453,14 @@ async def test_a_dead_lettered_task_also_starts_the_cooldown(sm):
     async def acquire(session, org, settings):
         raise OSError("down")
 
-    await osum.drain_org_summaries(sm, _Client(), get_settings(), acquire=acquire)
+    for _ in range(osum.MAX_ATTEMPTS + 2):  # one attempt per drain; the wait passes between them
+        await osum.drain_org_summaries(sm, _Client(), get_settings(), acquire=acquire)
+        async with sm() as s:
+            task = (await s.execute(select(Task).where(Task.type == osum.TASK_TYPE))).scalar_one()
+            if task.status != "pending":
+                break
+            task.retry_at = None  # the backoff wait has passed (issue #153)
+            await s.commit()
     async with sm() as s:
         assert not await osum.needs_summary(s, org_id)
 

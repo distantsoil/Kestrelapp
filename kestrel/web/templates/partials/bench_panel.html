@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 {# Model check card (D-UI-105, D-UI-147): the one button, what it rests on, and, while the queued
    task runs, its live progress and Cancel in place. Polls while a check is waiting or running;
@@ -20,6 +21,7 @@
     <div class="mo-actions"><button type="button" class="k-btn" hx-post="/bench/cancel" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-cancel">Cancel</button></div>
   </div>
   {% else %}
+  {% call lo.fence(request) %}
   <form class="mo-run" hx-post="/bench/start" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-form">
     <input type="hidden" name="online_approval" value='{{ ck_approval }}'>
     {% if st.state == 'failed' %}<p class="mo-msg is-bad" data-testid="ck-failed">The last check stopped before it finished. Press Check my models to try again.</p>
@@ -41,6 +43,7 @@
       <button type="button" class="k-btn k-btn--sm" hx-post="/bench/answer-key" hx-target="#ck-card" hx-swap="outerHTML" data-testid="ck-key-build">{{ 'Update the answer key from my ratings' if ck_key.uses_mine else 'Use my ratings as the answer key' }}</button>
     {% endif %}
   </form>
+  {% endcall %}
   {% endif %}
   </div>
   <div class="mo-counter" data-testid="ck-counter">

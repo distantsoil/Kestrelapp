@@ -333,15 +333,17 @@ def _render_tier1(track: str, description: str = JD_900_WORDS) -> Rendered:
 
 
 def _render_tier2(
-    track: str, *, tier: str = "tier2", k: int = FEW_SHOT_K, description: str = JD_900_WORDS
+    track: str, *, tier: str = "tier2", k: int = FEW_SHOT_K, description: str = JD_900_WORDS,
+    corrections: tuple = (), version: str | None = None,
 ) -> Rendered:
-    version = "evaluate/v2" if track == "employment" else "evaluate_consulting/v2"
-    spec = load_prompt(version)
+    from kestrel.pipeline.tier2 import _VERSION
+
+    spec = load_prompt(version or _VERSION[track])
     opp, org = _opp(track, description), _org()
     few = few_shot_block(_few_shot(track)[:k])
     values = build_tier2_values(
         opp=opp, org=org, profile=load_profile(track), source_name="greenhouse",
-        max_jd_tokens=MAX_JD_TOKENS, few_shot=few,
+        max_jd_tokens=MAX_JD_TOKENS, few_shot=few, corrections=corrections,
         comp_intel="median $232,000 (n=7, TX; range $205,000-$255,000), from the operator's own "
                    "observed corpus",
     )
@@ -471,3 +473,72 @@ def test_no_unresolved_placeholders_in_rendered_prompts():
         for marker in ("{PROFILE", "{FEW_SHOT", "{job.", "{opp.", "{org.", "{description",
                        "{comp_", "{if ", "{for each org"):
             assert marker not in r.user, f"{r.prompt_id}: unresolved {marker}"
+
+
+# ------------------------------------------- the operator's stated facts at their maximum size
+_FACT_WORDS = (
+    "harbor crane ledger tide quill schedule forecast warehouse inventory audit vendor routing "
+    "pallet manifest dispatch reconcile budget payroll ticket backlog the with for and of"
+).split()
+
+
+def _fact_text(seed: int, n: int) -> str:
+    out, i = [], seed
+    while len(" ".join(out)) < n:
+        out.append(_FACT_WORDS[i % len(_FACT_WORDS)])
+        i = i * 7 + 3
+    return " ".join(out)[:n]
+
+
+def _max_corrections(adversarial: bool = False) -> list[SimpleNamespace]:
+    """30 rows with 200-character requirements and notes (more than the block takes); the
+    adversarial set tokenizes as badly as text can, one token per character or worse."""
+    rows = []
+    for i in range(30):
+        req = "Zx9#Qy7%" * 25 if adversarial else _fact_text(i, 200)
+        note = "@~^|" * 50 if adversarial else _fact_text(i + 11, 200)
+        rows.append(SimpleNamespace(scope="posting" if i % 2 else "person",
+                                    requirement_text=req, note=note, operator_state="part"))
+    return rows
+
+
+@pytest.mark.parametrize("adversarial", [False, True], ids=["english", "adversarial"])
+@pytest.mark.parametrize("track", ["employment", "consulting"])
+@pytest.mark.parametrize("tier", ["tier2", "tier3"])
+def test_the_operator_facts_block_at_its_maximum_stays_inside_the_tiers_budget(
+    tier, track, adversarial
+):
+    """SPEC.md 8.2 and PROMPTS.md P2 User: the block (at most 20 lines, 200-character values,
+    1100 tokens) with the over-budget JD and k=3 few-shot still leaves the tier's own output
+    budget and the 25% reserve inside its num_ctx, and preflight's requirement counts it."""
+    from kestrel.config import load_settings
+    from kestrel.doctor import required_num_ctx
+    from kestrel.pipeline.context import (
+        OPERATOR_CORRECTIONS_MAX_TOKENS,
+        operator_corrections_block,
+    )
+
+    rows = _max_corrections(adversarial)
+    block = operator_corrections_block(rows)
+    block_tokens = count_tokens(block)
+    assert block.count("\n- ") >= (1 if adversarial else 10), block  # it really is full
+    assert block_tokens <= OPERATOR_CORRECTIONS_MAX_TOKENS, (
+        f"the facts block is {block_tokens} tokens, over its {OPERATOR_CORRECTIONS_MAX_TOKENS}")
+    long_jd = "\n\n".join([JD_900_WORDS] * 8)
+    r = _render_tier2(track, tier=tier, description=long_jd, corrections=tuple(rows))
+    assert block in r.user
+    settings = load_settings()
+    out = max(load_prompt(_version_for(track)).max_tokens, settings.llm.tiers[tier].max_tokens)
+    assert r.total + out <= r.num_ctx, (
+        f"{r.prompt_id} ({tier}) with the facts block: {r.total} input + {out} "
+        f"output exceeds num_ctx {r.num_ctx}\n{budget_table([r])}")
+    reserve = int(r.num_ctx * HEADROOM)
+    assert r.total + reserve <= r.num_ctx, budget_table([r])
+    # Preflight's per-tier requirement includes the block's allowance and still fits num_ctx.
+    assert required_num_ctx(tier, settings) <= NUM_CTX[tier]
+
+
+def _version_for(track: str) -> str:
+    from kestrel.pipeline.tier2 import _VERSION
+
+    return _VERSION[track]

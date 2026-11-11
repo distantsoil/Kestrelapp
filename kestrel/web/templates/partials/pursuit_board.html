@@ -2,10 +2,12 @@
    run in the page script over the data-* attributes, so a search never asks the server. #}
 {% import "partials/pursuit_icons.html" as ic %}
 {% from "partials/pursuit_card.html" import card, table_row %}
+{% import "partials/pursuit_closed_more_button.html" as more %}
 {% set wide = track == 'consulting' %}
-<div id="apps-board" class="ap-boardwrap" data-testid="board" data-track="{{ track }}" data-view="{{ 'table' if view == 'table' else 'board' }}"{% if oob %} hx-swap-oob="true"{% endif %}>
+{% macro aria(col) %}{{ ('ascending' if sort_dir == 1 else 'descending') if sort_col == col else 'none' }}{% endmacro %}
+<div id="apps-board" class="ap-boardwrap" data-testid="board" data-track="{{ track }}" data-view="{{ 'table' if view == 'table' else 'board' }}" data-paged="{{ 1 if view == 'table' and table_pages > 1 else 0 }}" data-total="{{ total_cards }}" data-page="{{ table_page }}" data-fkey="{{ fkey }}" data-sortcol="{{ sort_col }}" data-sortdir="{{ sort_dir }}" data-chip-totals="{{ chip_totals|tojson|forceescape }}"{% if oob %} hx-swap-oob="true"{% endif %}>
   {% if notice %}<p class="{{ 'k-sr-only' if notice.ok else 'ap-notice' }}" role="status" data-testid="board-notice">{{ notice.text }}</p>{% endif %}
-  {% if not cards %}
+  {% if not total_cards %}
   <div class="ap-empty" data-testid="apps-empty">
     <span class="k-badge k-badge--lg">{{ ic.icon('apps') }}</span>
     <div>
@@ -23,23 +25,30 @@
   <div class="ap-tablewrap">
     <table class="ap-table" data-testid="apps-table">
       <thead><tr>
-        <th scope="col" class="ap-sortable" data-sort="role" aria-sort="none"><button type="button" class="ap-sortbtn">{{ 'Lead' if wide else 'Role' }}</button></th>
-        <th scope="col" class="ap-sortable" data-sort="stage" aria-sort="none"><button type="button" class="ap-sortbtn">Stage</button></th>
+        <th scope="col" class="ap-sortable" data-sort="role" aria-sort="{{ aria('role') }}"><button type="button" class="ap-sortbtn">{{ 'Lead' if wide else 'Role' }}</button></th>
+        <th scope="col" class="ap-sortable" data-sort="stage" aria-sort="{{ aria('stage') }}"><button type="button" class="ap-sortbtn">Stage</button></th>
         <th scope="col">Next step</th>
-        <th scope="col" class="ap-sortable" data-sort="due" aria-sort="none"><button type="button" class="ap-sortbtn">Due</button></th>
-        <th scope="col" class="ap-sortable ap-c-date" data-sort="applied" aria-sort="none"><button type="button" class="ap-sortbtn">Date applied</button></th>
-        <th scope="col" class="ap-sortable" data-sort="fit" aria-sort="none"><button type="button" class="ap-sortbtn">Fit</button></th>
+        <th scope="col" class="ap-sortable" data-sort="due" aria-sort="{{ aria('due') }}"><button type="button" class="ap-sortbtn">Due</button></th>
+        <th scope="col" class="ap-sortable ap-c-date" data-sort="applied" aria-sort="{{ aria('applied') }}"><button type="button" class="ap-sortbtn">Date applied</button></th>
+        <th scope="col" class="ap-sortable" data-sort="fit" aria-sort="{{ aria('fit') }}"><button type="button" class="ap-sortbtn">Fit</button></th>
       </tr></thead>
       <tbody>
-        {% for c in cards %}{{ table_row(c, track, ic, loop.index) }}{% endfor %}
+        {% for c in table_cards %}{{ table_row(c, track, ic, table_from + loop.index) }}{% endfor %}
       </tbody>
     </table>
   </div>
+  {% if table_pages > 1 %}
+  <nav class="ap-pager" aria-label="Table pages" data-testid="table-pager">
+    <button type="button" class="k-btn k-btn--sm" id="ap-table-prev" data-testid="table-prev" {% if table_page <= 1 %}disabled{% else %}hx-get="/pursuits?view=table&track={{ track }}&page={{ table_page - 1 }}"{% endif %}>Previous</button>
+    <span class="k-muted" data-testid="table-page" role="status">{% if filtered %}Showing {{ table_from + 1 }} to {{ table_from + table_cards|length }} of {{ total_cards }} matching · {% endif %}Page {{ table_page }} of {{ table_pages }}{% if not filtered %} · {{ total_cards }} in all{% endif %}</span>
+    <button type="button" class="k-btn k-btn--sm" id="ap-table-next" data-testid="table-next" {% if table_page >= table_pages %}disabled{% else %}hx-get="/pursuits?view=table&track={{ track }}&page={{ table_page + 1 }}"{% endif %}>Next</button>
+  </nav>
+  {% endif %}
   {% else %}
   <div class="ap-board" data-testid="apps-board-grid" style="--n:4">
     {% for column in columns %}
     <section class="ap-col" data-testid="apps-col" data-col="{{ column.col.key }}" data-col-label="{{ column.col.label }}" data-status="{{ column.col.first }}" style="--cc: var(--ap-c{{ loop.index }})" aria-label="{{ column.col.label }}">
-      <div class="ap-colh"><span class="ap-cdot" aria-hidden="true"></span><b>{{ column.col.label }}</b><span class="ap-cn" data-total="{{ column.cards|length }}">{{ column.cards|length }}</span></div>
+      <div class="ap-colh"><span class="ap-cdot" aria-hidden="true"></span><b>{{ column.col.label }}</b><span class="ap-cn" data-total="{{ column.total }}" data-extra="{{ column.folded_more }}">{{ column.total }}</span></div>
       <div class="ap-cap">{{ column.col.caption }}</div>
       <div class="ap-cards">
         {% for c in column.open %}{{ card(c, track, ic) }}{% endfor %}
@@ -47,9 +56,10 @@
         <button type="button" class="k-btn k-btn--sm ap-colmore" data-colmore data-testid="show-all" data-col="{{ column.col.key }}" hidden>Show all {{ column.open|length }}</button>
         {% if column.col.key == 'closed' %}
         <div class="ap-closedg{% if closed_open %} is-open{% endif %}" data-testid="closed-group">
-          <button type="button" class="ap-cgh" data-testid="closed-toggle" aria-expanded="{{ 'true' if closed_open else 'false' }}"><span>Closed · {{ column.folded|length }}</span>{{ ic.icon('down', 'k-ic--sm') }}</button>
+          <button type="button" class="ap-cgh" data-testid="closed-toggle" aria-expanded="{{ 'true' if closed_open else 'false' }}"><span>Closed · {{ column.folded_total }}</span>{{ ic.icon('down', 'k-ic--sm') }}</button>
           <div class="ap-cgx"><div class="ap-cgi">
             {% for c in column.folded %}{{ card(c, track, ic) }}{% endfor %}
+            {{ more.closed_more(column, track) }}
           </div></div>
         </div>
         {% endif %}

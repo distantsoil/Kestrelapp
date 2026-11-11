@@ -53,6 +53,8 @@ EXPECTED_TABLES = {
     "ml_model",
     # intelligence
     "comp_observation",
+    # issue 170
+    "requirement_correction",
 }
 
 

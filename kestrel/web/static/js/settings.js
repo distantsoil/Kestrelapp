@@ -419,7 +419,11 @@
     if (cp) { copy(cp.getAttribute('data-st-copy')); return; }
     if (t.closest('[data-st-backup]')) { backup(t.closest('[data-st-backup]')); return; }
     if (t.closest('#st-restore-pick')) { var f = $('#st-restore-file'); if (f) f.click(); return; }
-    if (t.closest('[data-st-restore-cancel]')) { var rf = $('#st-restore-file'); if (rf) rf.value = ''; return; }
+    if (t.closest('[data-st-restore-cancel]')) {
+      var rf = $('#st-restore-file'); if (rf) rf.value = '';
+      var rp = $('#st-restore-preview'); if (rp) rp.textContent = '';
+      return;
+    }
     if (t.closest('[data-st-pick-contacts]')) {
       var pick = $('#st-ct-pick input[type="file"]');
       if (pick) pick.click();
@@ -427,6 +431,14 @@
     }
     if (t.closest('#st-play')) { playSound(); return; }
     if (t.closest('#st-forget-open')) { fillForget(); return; }
+    if (t.closest('[data-st-rotate]')) {
+      // Make a new key: it signs out every device that used the old one, so it confirms first
+      // and only turns the key after the person says they understand (D-UI-267).
+      var rack = $('#st-rotate-ack'); if (rack) rack.checked = false;
+      var rgo = $('#st-rotate-go'); if (rgo) rgo.disabled = true;
+      if (root.KUI) root.KUI.openModal('#st-rotate-dialog');
+      return;
+    }
     var open = t.closest('[data-st-open]');
     if (open) { mgOpen(open.getAttribute('data-st-open')); return; }
   }
@@ -438,9 +450,11 @@
     if (el.id === 'st-clear-reset') { var g = $('#st-clear-go'); if (g) g.disabled = el.value !== 'RESET'; }
     if (el.id === 'st-forget-reset') { var f = $('#st-forget-go'); if (f) f.disabled = el.value !== 'RESET'; }
     if (el.id === 'st-access-ack') { var a = $('#st-access-go'); if (a) a.disabled = !el.checked; }
+    if (el.id === 'st-rotate-ack') { var r = $('#st-rotate-go'); if (r) r.disabled = !el.checked; }
   }
   function onAccessChange(e) {
     if (e.target && e.target.id === 'st-access-ack') { var a = $('#st-access-go'); if (a) a.disabled = !e.target.checked; }
+    if (e.target && e.target.id === 'st-rotate-ack') { var r = $('#st-rotate-go'); if (r) r.disabled = !e.target.checked; }
     if (e.target && e.target.matches && e.target.matches('[data-st-access]')) {
       var sw = e.target;
       if (sw.checked) {
@@ -614,6 +628,20 @@
     }
     if (el && el.id === 'st-keyform' && e.detail.successful && root.__stKeyOp === 'save') {
       var k = $('#st-key'); if (k && /saved/i.test(($('#st-keyres') || {}).textContent || '')) k.value = '';
+    }
+    // The restore confirm closes the moment its request lands, success or refusal: the answer
+    // renders into the Backups row, and a dialog left open would sit over it. Cancel still
+    // closes without sending (kestrel-ui.js). The chosen file goes with it, so choosing the
+    // same backup again re-opens the confirm.
+    var restoreForm = el && el.closest && el.id !== 'st-restore-preview'
+      ? el.closest('#st-restore-form') : null;
+    if (restoreForm && root.KUI) {
+      var dlg = restoreForm.closest('.k-modal');
+      if (dlg) root.KUI.closeOverlay(dlg);
+      var rf = $('#st-restore-file');
+      if (rf) rf.value = '';
+      var rp = $('#st-restore-preview');
+      if (rp) rp.textContent = '';
     }
   }
   function onPrefsLoad() { initPrefs(); initFlyouts(); }

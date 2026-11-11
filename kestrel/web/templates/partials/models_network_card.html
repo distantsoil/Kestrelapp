@@ -1,0 +1,16 @@
+{% import "ui/macros.html" as ui %}
+{# Models > On your network: model servers on another computer at home or the office. Reads
+   nw_servers. Also sent out of band after the drawer saves. #}
+<section class="k-card mo-card {{ 'mo-edge-info' if nw_servers else '' }}" id="mo-network-card"{% if oob %} hx-swap-oob="outerHTML"{% endif %} data-testid="mo-network-card">
+  <header class="mo-head"><span class="k-badge k-badge--lg {{ '' if nw_servers else 'k-badge--muted' }}">{{ ui.icon('network') }}</span>
+    <div class="k-grow"><h3>On your network <span class="k-muted mo-opt">(optional)</span></h3>
+      <p class="k-muted">A model server on another computer at home or the office, added by its IP address. Private: it never leaves your network, so Kestrel does not ask first.</p></div></header>
+  {% if nw_servers %}
+  <ul class="mo-servers" data-testid="mo-network-list">
+    {% for sv in nw_servers %}<li class="mo-server"><span class="k-grow"><b>{{ sv.host }}</b><span class="k-muted"> · {{ sv.kind_label }} · {{ sv.where_words }}</span>
+      {% if sv.tiers %}<span class="k-muted mo-server__t">Used for {% for t in sv.tiers %}{{ {'tier1': 'Quick screen', 'tier2': 'Fit rating', 'tier3': 'Deeper read'}.get(t, t) }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</span></li>{% endfor %}
+  </ul>
+  {% if nw_ollama_note %}<p class="k-muted mo-line" data-testid="mo-network-load">Load models in {{ nw_ollama_note }} on that computer. Kestrel downloads and builds models only for Ollama.</p>{% endif %}
+  {% endif %}
+  <div class="mo-setup"><button type="button" class="k-btn k-btn--sm {{ '' if nw_servers else 'k-btn--primary' }}" data-k-slideover="#mo-network-so" hx-get="/models/network" hx-target="#mo-network-body" hx-swap="innerHTML" data-testid="mo-network-open">{{ 'Manage servers' if nw_servers else 'Add a server' }}</button></div>
+</section>

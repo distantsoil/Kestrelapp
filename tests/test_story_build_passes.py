@@ -94,6 +94,46 @@ async def test_a_failed_group_is_not_resent_by_the_same_build_only_the_next(sm, 
     assert len(result.created_story_ids) == 1
 
 
+async def test_a_pass_that_fails_a_group_then_raises_does_not_resent_it_on_retry(sm, monkeypatch):
+    # D-STORY-2 known limit, closed: a pass that dies (raises) after failing a group still records
+    # that group in the task's payload, so the retry of the same build does not send it again. The
+    # give_back path (a pass that stops on purpose) already did this; the exception path did not.
+    await _three_events(sm, order=("omega", "sigma"))
+    async with sm() as s:
+        assert await story_task.request_build(s)
+    import kestrel.interview.stories as _stories
+
+    real_merge = _stories._merge_cluster
+
+    async def raise_on_sigma(session, client, spec, sketches, proof_points, resume=None):
+        text = " ".join(sk.text() for sk in sketches).lower()
+        if "sigma" in text:
+            raise RuntimeError("the model call for this group failed hard")
+        return await real_merge(session, client, spec, sketches, proof_points, resume)
+
+    monkeypatch.setattr(_stories, "_merge_cluster", raise_on_sigma)
+    client = _Recording(_db_file(sm), fail_on="omega")
+    # First pass: omega's merge fails (a bad reply), then sigma's call dies the pass. The build is
+    # failed (retryable), and the group that already failed must be recorded for the retry.
+    assert await story_task.drain_story_builds(sm, client, get_settings()) == 0
+    task = await _task(sm)
+    assert task.status == "pending" and task.attempts == 1
+    assert task.payload.get(story_task._SKIP_KEY), "the failed group must be recorded for the retry"
+    assert sum("omega" in m for m in client.sent) >= 1  # omega was sent (and failed)
+    # Rewind the retry backoff (issue #153) so the retry can be leased immediately.
+    async with sm() as s:
+        t = await s.get(Task, task.id)
+        t.retry_at = None
+        await s.commit()
+    # Retry of the same build: omega is not resent, and sigma is retried and succeeds.
+    monkeypatch.setattr(_stories, "_merge_cluster", real_merge)
+    retry = _Recording(_db_file(sm))
+    assert await story_task.drain_story_builds(sm, retry, get_settings()) == 1
+    assert (await _task(sm)).status == "done"
+    assert sum("omega" in m for m in retry.sent) == 0, "the failed group must not be resent"
+    assert sum("sigma" in m for m in retry.sent) >= 1, "the group that raised is retried"
+
+
 async def test_after_a_build_in_passes_a_new_build_sends_nothing(sm, monkeypatch):
     # The last pass moves the watermark over the groups earlier passes wrote, so clearing the
     # consumed list never makes them look new.
@@ -223,3 +263,42 @@ async def test_a_note_edited_after_a_pass_consumed_it_is_read_again(sm, monkeypa
     assert result.sketches == 1
     assert len(result.created_story_ids) + len(result.attached) == 1
     assert all("rewrote the" in m for m in again.sent)
+
+
+async def test_a_pass_quit_cuts_off_keeps_its_failed_groups_for_the_resumed_build(sm, monkeypatch):
+    # D-STORY-4: Quit cancels an online pass after it already failed a group. The cancel must
+    # record that group in the payload before it goes on, so the build resumed at the next start
+    # does not send it again; the quit hands the lease back with the attempt refunded.
+    import asyncio
+
+    import kestrel.interview.stories as _stories
+    from kestrel.queue.queue import TaskQueue
+
+    await _three_events(sm, order=("omega", "sigma"))
+    async with sm() as s:
+        assert await story_task.request_build(s)
+    real_merge = _stories._merge_cluster
+    hanging = asyncio.Event()
+
+    async def hang_on_sigma(session, client, spec, sketches, proof_points, resume=None):
+        text = " ".join(sk.text() for sk in sketches).lower()
+        if "sigma" in text:
+            hanging.set()
+            await asyncio.Event().wait()  # the online call Quit cuts off
+        return await real_merge(session, client, spec, sketches, proof_points, resume)
+
+    monkeypatch.setattr(_stories, "_merge_cluster", hang_on_sigma)
+    client = _Recording(_db_file(sm), fail_on="omega")
+    build = asyncio.create_task(story_task.drain_story_builds(sm, client, get_settings()))
+    await asyncio.wait_for(hanging.wait(), timeout=10)
+    build.cancel()
+    await asyncio.gather(build, return_exceptions=True)
+    assert await TaskQueue(sm).release_all_leased() == 1
+    task = await _task(sm)
+    assert task.status == "pending" and task.attempts == 0
+    assert task.payload.get(story_task._SKIP_KEY), "the failed group must survive the cut-off"
+    monkeypatch.setattr(_stories, "_merge_cluster", real_merge)
+    retry = _Recording(_db_file(sm))
+    assert await story_task.drain_story_builds(sm, retry, get_settings()) == 1
+    assert sum("omega" in m for m in retry.sent) == 0, "the failed group must not be resent"
+    assert sum("sigma" in m for m in retry.sent) >= 1

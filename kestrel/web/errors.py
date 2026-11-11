@@ -25,8 +25,8 @@ GENERIC = "an unexpected problem; the details are in the log"
 
 
 def _generic(exc: BaseException) -> str:
-    """The exception TYPE name (a class name, never its text) plus a pointer to the log."""
-    return f"an unexpected problem ({type(exc).__name__}); the details are in the log"
+    """The safe fallback: Kestrel's own sentence and a pointer to the log, never the type name."""
+    return GENERIC
 
 
 def plain_error(exc: BaseException) -> str:

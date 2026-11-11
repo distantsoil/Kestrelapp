@@ -236,7 +236,7 @@ def test_web_restore_keeps_this_machines_key(tmp_path):
             files={"backup_file": ("b.zip", archive.read_bytes(), "application/zip")},
         )
         assert r.status_code == 200
-        assert "database restored: True" in r.text
+        assert "Database restored: yes." in r.text
         assert asyncio.run(auth.current_key()) == "this-machines-key"
     forget_engine()
     assert _get_key(db) == "this-machines-key"

@@ -280,7 +280,8 @@ def test_hosted_tier1_first_attempt_runs_reasoning_off_on_a_reasoning_model(monk
 
 def test_tier1_reasoning_off_only_where_it_is_safe_and_wanted():
     assert LLMClient(_hosted()).default_reasoning_hint("tier1") == "none"
-    assert LLMClient(_hosted()).default_reasoning_hint("tier2") is None
+    assert LLMClient(_hosted()).default_reasoning_hint("tier2") == "none"  # #92
+    assert LLMClient(_hosted()).default_reasoning_hint("tier3") is None
     # The knob, an operator effort, a mandatory or unknown record, a non-reasoning model.
     assert LLMClient(_hosted(tier1_reasoning_off=False)).default_reasoning_hint("tier1") is None
     assert LLMClient(_hosted(reasoning_effort="low")).default_reasoning_hint("tier1") is None

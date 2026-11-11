@@ -75,7 +75,10 @@ async def record_label(
     dimensions: dict | None = None,
     rationale: str | None = None,
     source: str = "active_learning",
+    commit: bool = True,
 ) -> Label:
+    """Add one label. With commit=False it is only flushed (its id is set), so a caller can
+    commit it together with other writes as one transaction."""
     row = Label(
         opportunity_id=opportunity_id,
         track=track,
@@ -87,6 +90,9 @@ async def record_label(
         created_at=utcnow_iso(),
     )
     session.add(row)
+    if not commit:
+        await session.flush()
+        return row
     await session.commit()
     await session.refresh(row)
     return row

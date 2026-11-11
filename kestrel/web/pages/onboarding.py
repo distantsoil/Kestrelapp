@@ -36,6 +36,7 @@ from kestrel.services import profile_edit as pe
 from kestrel.services import setup_state as ss
 from kestrel.services import tracks as tracks_svc
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.flash import flash_redirect
@@ -956,7 +957,7 @@ def _save_wants(
             pe.save_section(track, "about", {"must_avoid": avoid})
 
 
-@router.post("/onboarding/models/mode", response_class=HTMLResponse)
+@router.post("/onboarding/models/mode", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def onboarding_mode(request: Request):
     form = await request.form()
     choice = str(form.get("mode") or "")
@@ -976,7 +977,7 @@ async def onboarding_mode(request: Request):
     return _render_step(request, await _ctx(request, "models", models_message=msg))
 
 
-@router.post("/onboarding/models/connect", response_class=HTMLResponse)
+@router.post("/onboarding/models/connect", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def onboarding_connect(request: Request):
     from kestrel.services.hosted_connect import connect_provider
     from kestrel.web.pages.settings import _active_profile_name
@@ -1009,7 +1010,8 @@ async def onboarding_connect(request: Request):
     )
 
 
-@router.post("/onboarding/models/action/{name}", response_class=HTMLResponse)
+@router.post("/onboarding/models/action/{name}", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
 async def onboarding_action(request: Request, name: str):
     from kestrel.web.pages.setup import ACTIONS, start_action
 
@@ -1078,7 +1080,7 @@ async def onboarding_start_searching(request: Request):
     return RedirectResponse("/?tour=1", status_code=303)
 
 
-@router.post("/onboarding/restart")
+@router.post("/onboarding/restart", dependencies=[LOCAL_ONLY])
 async def onboarding_restart(request: Request):
     """Restart onboarding from Settings > System (D-UI-31): keep my details, or clear
     everything (typed RESET, a backup first, keys kept unless unticked)."""

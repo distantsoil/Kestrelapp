@@ -1,0 +1,79 @@
+{# One correction (D-UI-291). Context: `c`, the view profile.py builds. The panel is in the card,
+   closed by a 0fr grid row; its fields are hidden from keyboard and readers while closed.
+   With `oob_offer`, the rescore offer strip rides along out of band. #}
+<article class="pf-cr{% if c.match is defined and not c.match %} is-filtered{% endif %}" id="pf-cr-{{ c.id }}" data-testid="pf-cr" data-cr-id="{{ c.id }}"
+         data-updated="{{ c.updated }}" data-hay="{{ c.hay }}">
+  <div class="pf-cr__top">
+    <div class="pf-cr__t">
+      <b class="pf-cr__req">{{ c.text }}</b>
+      <div class="pf-cr__chg">
+        {% if c.show_track %}<span class="k-tag">{{ c.track | capitalize }}</span>{% endif %}
+        <s class="pf-cr__k">Kestrel: {{ c.kestrel }}</s>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        <span class="pf-cr__y" data-testid="pf-cr-you">You: {{ c.you }}</span>
+        {% if c.agrees %}<span class="pf-cr__ag" data-testid="pf-cr-agrees">Kestrel agrees now</span>{% endif %}
+      </div>
+    </div>
+    <button type="button" class="pf-cr__pen" data-pf-cr-edit data-testid="pf-cr-edit"
+            aria-label="Change: {{ c.text }}" title="Change this" aria-expanded="false"
+            aria-controls="pf-cr-panel-{{ c.id }}">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
+    </button>
+  </div>
+  {% set w = c.why %}
+  <div class="pf-cr__why" data-testid="pf-cr-why">
+    {%- if w.kind == 'deleted' -%}
+      The story behind this was deleted.{% if w.stops %} It no longer counts, so Kestrel's own read applies again. <a class="pf-cr__link" href="/profile?tab=stories">Add a story</a>{% endif %}
+    {%- elif w.kind == 'story' -%}
+      Shown by your story “{{ w.title }}”.
+    {%- elif w.kind == 'source' -%}
+      Kestrel read this from your story “{{ w.title }}”. It is your own text, so Kestrel will not change it. <a class="pf-cr__link" href="/stories#story-{{ w.story_id }}">Open the story</a>
+    {%- elif w.kind == 'drafted' -%}
+      {{ 'Shown by' if w.credits else 'Kestrel read this from' }} your story “{{ w.title }}”. <span class="pf-cr__drafted">Kestrel drafted that story and you have not edited it.</span> <a class="pf-cr__link" href="/stories#story-{{ w.story_id }}">Fix the story</a>
+    {%- elif w.kind == 'answered' -%}
+      You answered “{{ w.answer }}”. Nothing you have written covers it yet. <a class="pf-cr__link" href="/profile?tab=stories">Add a story</a>
+    {%- elif w.kind == 'agree' -%}
+      You agreed with Kestrel's read: it is a fair gap.
+    {%- elif w.kind == 'inferred' -%}
+      Kestrel had inferred it. No line in your resume or stories says it.
+    {%- elif w.kind == 'quoted' -%}
+      Kestrel read it from a line in your resume or stories.
+    {%- else -%}
+      Kestrel had nothing in your resume or stories to go on.
+    {%- endif -%}
+  </div>
+  {% if c.note %}<div class="pf-cr__note" data-testid="pf-cr-note">“{{ c.note }}”</div>{% endif %}
+  <div class="pf-cr__meta" data-testid="pf-cr-meta">
+    {%- if c.role_id -%}Added from <a class="pf-cr__link" href="/opportunities/{{ c.role_id }}" data-testid="pf-cr-role">{{ c.role or 'a role' }}</a>
+    {%- else -%}Added from a role you removed{%- endif %} · {{ c.added }} · Counts on {{ c.counts_on }} role{{ '' if c.counts_on == 1 else 's' }}
+  </div>
+  <div class="pf-cr__panel" id="pf-cr-panel-{{ c.id }}" data-pf-cr-panel>
+    <div>
+      <form class="pf-cr__form" hx-post="/profile/corrections/{{ c.id }}" hx-target="#pf-cr-{{ c.id }}"
+            hx-swap="outerHTML" data-pf-cr-form>
+        <fieldset class="pf-cr__set">
+          <legend class="pf-cr__lbl">What's true now?</legend>
+          <div class="pf-cr__chips">
+            {% for key, label in (('met', 'Met'), ('part', 'Partly met'), ('gap', 'Not met')) %}
+            <label class="pf-cr__chip"><input type="radio" name="operator_state" value="{{ key }}"{% if c.state == key %} checked{% endif %}><span>{{ label }}</span></label>
+            {% endfor %}
+          </div>
+        </fieldset>
+        <textarea class="k-input pf-cr__notein" name="note" rows="2" maxlength="1000"
+                  placeholder="Anything to add? (optional)" aria-label="Note"{% if c.note_locked %} readonly aria-describedby="pf-cr-lock-{{ c.id }}" data-testid="pf-cr-note-locked"{% endif %}>{{ c.note or '' }}</textarea>
+        {% if c.note_locked %}<p class="pf-cr__fx" id="pf-cr-lock-{{ c.id }}">This note names your current employer, so it stays as it is while Confidential mode is on. Turn it off in About you to edit the note.</p>{% endif %}
+        <div class="pf-cr__fx"><b>Changes it on every role.</b>
+          {% if c.counts_on %} {{ c.counts_on }} role{{ '' if c.counts_on == 1 else 's' }} use{{ 's' if c.counts_on == 1 else '' }} it. After you save, Kestrel offers to rescore {{ 'it' if c.counts_on == 1 else 'them' }}.{% else %} No open role uses it right now.{% endif %}</div>
+        <div class="pf-cr__ft">
+          <button type="button" class="pf-cr__rm" data-pf-cr-remove data-testid="pf-cr-remove"
+                  hx-post="/profile/corrections/{{ c.id }}/remove" hx-target="#pf-cr-{{ c.id }}"
+                  hx-swap="outerHTML" hx-trigger="pf-go">Remove correction</button>
+          <span class="k-grow"></span>
+          <button type="button" class="k-btn k-btn--sm" data-pf-cr-cancel data-testid="pf-cr-cancel">Cancel</button>
+          <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="pf-cr-save">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</article>
+{% if oob_offer is defined and oob_offer %}{% with oob = True %}{% include "partials/profile_corrections_offer.html" %}{% endwith %}{% endif %}

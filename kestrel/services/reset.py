@@ -201,12 +201,15 @@ async def reset_in_app(sessionmaker, *, keep_keys: bool = True) -> ResetResult:
     failed: list[str] = []
     # A counted hold, not "remember whether it was paused and put that back": an overlapping
     # restore, or a tray Resume, used to unpause the worker while the tables were being emptied.
-    async with lock, app_mod.worker_held():
+    # D-SEC-20: the worker and the online lane are STOPPED (the quit's bounded grace, a cancel,
+    # the lease hand-back), not only paused: a story build or a letter in flight would otherwise
+    # write drafts made from the deleted data into the emptied tables. Started again afterwards.
+    async with lock, app_mod.worker_held(), app_mod.work_loops_stopped() as stopped:
         try:
             # A cycle that started before the pause keeps writing until it ends (review finding
             # 7). Wait for it; if it is still running after a minute and a half, refuse with
             # nothing deleted rather than empty the tables under it.
-            if not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
+            if not stopped or not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
                 raise ResetBusy(
                     "Kestrel is in the middle of a run. Nothing was deleted. Try again in a minute."
                 )

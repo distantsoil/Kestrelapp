@@ -829,8 +829,9 @@ def test_add_is_one_transaction_and_says_where_the_role_sits(monkeypatch):
     monkeypatch.setattr(oa, "record_override", boom)
     with _client() as c:
         r = c.post(f"/opportunities/{ids['d']}/add")
-    # The failure is named by type only; its text stays in the log (D-SEC-1).
-    assert "Could not add it to your shortlist: an unexpected problem (RuntimeError)" in r.text
+    # The failure is Kestrel's own sentence; the class name and its text stay in the log (D-SEC-4).
+    assert "Could not add it to your shortlist: an unexpected problem" in r.text
+    assert "RuntimeError" not in r.text
     assert "disk full" not in r.text
 
     async def pursuits(s):

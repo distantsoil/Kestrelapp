@@ -77,4 +77,6 @@ def test_a_reply_cut_off_at_the_token_cap_without_the_code_is_a_warning_not_a_co
     needles, _ = _run(lambda _p: "Let me think about that. " * 80)  # about the whole budget
     for r in needles:
         assert r.status == doctor.WARN and not r.blocking
-        assert "cut off" in r.detail and "num_ctx" not in r.remediation
+        assert "answered at length" in r.detail and "context not verified" in r.detail
+        assert "num_ctx" not in r.remediation
+        assert "not ready" not in r.remediation and "instruct" in r.remediation

@@ -1,3 +1,4 @@
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 {% from "partials/online_ask.html" import consent_check %}
 {# The Change model drawer body (D-UI-105): an On this computer or Online switch, local models
@@ -12,6 +13,7 @@
     <button type="button" aria-pressed="{{ 'true' if ch_where == 'online' else 'false' }}" hx-get="/models/change/{{ ch_tier }}?where=online{{ '&free=1' if ch_free else '' }}" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-where-online">Online</button>
   </div>
 
+  {% call lo.fence(request) %}
   <form hx-post="/models/change/{{ ch_tier }}" hx-target="#mo-change-body" hx-swap="innerHTML" autocomplete="off">
     <input type="hidden" name="where" value="{{ ch_where }}">
     {% if ch_where == 'local' %}
@@ -50,4 +52,5 @@
       {% if ch_override %}<button class="k-btn k-btn--quiet" type="button" hx-post="/models/change/{{ ch_tier }}/reset" hx-target="#mo-change-body" hx-swap="innerHTML" data-testid="mo-change-reset">Reset to default</button>{% endif %}
     </div>
   </form>
+  {% endcall %}
 </div>

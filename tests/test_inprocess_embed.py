@@ -664,7 +664,8 @@ async def test_a_sweep_done_before_the_first_search_still_heals_dead_embeds_late
     """D-EMBED-9: on a first run the sweep finds nothing and records done before the first search
     stores a role. When that role's embed task then dies (the model files were missing), a later
     check finds it and sweeps again, at most once per RESWEEP_S; a dead task whose role already
-    has a current vector does not."""
+    has a current vector does not. D-PERF-3: the check no longer needs the dead task itself (see
+    the test below, where retention has removed it)."""
     from kestrel.pipeline import embed as embed_mod
 
     settings = _inprocess_settings()
@@ -708,3 +709,31 @@ async def test_a_dead_embed_task_whose_role_has_a_current_vector_triggers_nothin
         swept = await s.get(Setting, EMBED_SWEPT_MODEL_KEY)
     assert swept.value == MODEL
     assert swept.updated_at > "2020-01-01T00:00:00"  # the recheck ran (and found nothing)
+
+
+async def test_a_stale_role_with_no_task_rows_at_all_is_queued_after_the_interval(sm, monkeypatch):
+    """D-PERF-3: retention deletes dead embed tasks after 30 days, so the re-sweep looks for a role
+    with no current vector and no live embed task, not for a dead task."""
+    from kestrel.pipeline import embed as embed_mod
+
+    settings = _inprocess_settings()
+    assert await enqueue_stale_embeddings(sm, settings) == 0
+    async with sm() as s:
+        src = Source(track="employment", kind="greenhouse", name="emp", enabled=True)
+        s.add(src)
+        await s.flush()
+        opp = Opportunity(track="employment", opp_type="job_posting", source_id=src.id,
+                          title="CTO", stage="new")
+        s.add(opp)
+        await s.commit()
+    assert await enqueue_stale_embeddings(sm, settings) == 0  # inside RESWEEP_S: quiet
+    now = embed_mod._clock()
+    monkeypatch.setattr(embed_mod, "_clock", lambda: now + embed_mod.RESWEEP_S + 1)
+    assert await enqueue_stale_embeddings(sm, settings) == 1
+    async with sm() as s:
+        live = (await s.execute(select(Task).where(
+            Task.type == "embed", Task.status == "pending"))).scalars().all()
+    assert [t.payload["opportunity_id"] for t in live] == [opp.id]
+    # With that task now live the role is covered: a later check finds nothing to add.
+    monkeypatch.setattr(embed_mod, "_clock", lambda: now + 3 * embed_mod.RESWEEP_S)
+    assert await enqueue_stale_embeddings(sm, settings) == 0

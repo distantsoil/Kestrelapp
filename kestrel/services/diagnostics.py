@@ -494,7 +494,8 @@ def table_counts(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-_TASK_FLAGS = ("rescore", "requested", "score_stub", "tier0_override", "changed", "lane")
+_TASK_FLAGS = ("rescore", "requested", "score_stub", "tier0_override", "changed", "lane",
+               "deferred")
 
 
 def task_rows(
@@ -521,6 +522,10 @@ def task_rows(
     for r in by:
         if r["status"] in ("pending", "leased"):
             live[r["type"]] = live.get(r["type"], 0) + int(r["n"])
+    deferred = int(conn.execute(  # held by the queue's own mark (#154): waiting, not retrying
+        "SELECT COUNT(*) FROM task WHERE status = 'pending' "
+        "AND json_extract(payload, '$.deferred') = 1"
+    ).fetchone()[0])
     recent = []
     for r in rows:
         payload = _loads(r["payload"])
@@ -542,6 +547,7 @@ def task_rows(
     return {
         "by_type_and_status": {f"{r['type']}/{r['status']}": int(r["n"]) for r in by},
         "live_by_type": live,
+        "deferred": deferred,
         "recent_note": f"newest {TASK_ROWS} tasks; role ids only, no posting text",
         "recent": recent,
     }

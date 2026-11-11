@@ -76,12 +76,15 @@ def test_the_evaluation_tab_shows_every_part_of_the_mockup(ids):
     assert "Lead with" in html and "22% before-and-after" in html
     # Match wheel: 2 met, 1 partly, 2 not met, "2 of 5", clickable chips, a story link per gap
     assert 'data-testid="wheel-center">2 of 5<' in html and "2 not met" in html
-    assert html.count("+ I have a story for this") == 3  # the partly met one and both gaps
+    assert html.count('data-testid="match-done"') == 3  # the partly met one and both gaps
+    assert html.count("I've done this") >= 3 and "+ I have a story for this" not in html
     assert "In your favor" in html and "Gaps" in html and "Lead with your Lean results" in html
-    # Evidence: the quote, the proof, a link to the exact story, "Source not recorded" otherwise
+    # Evidence (collapsed, counted): the quote, a link to the exact story, Inferred otherwise
+    assert 'data-testid="evidence-toggle"' in html and 'aria-expanded="false"' in html
+    assert "1 from your resume and stories · 2 inferred" in html
     assert "/stories#story-" in html and "Story · Demand forecast rebuild" in html
-    assert "Source not recorded" in html
-    assert "+ I have a story that shows something else they ask for" in html
+    assert "Source not recorded" not in html and "Inferred · no line in your resume" in html
+    assert "+ Add a story for something else they ask for" in html
     # What the role is, labeled; tags from facts on file
     assert "Summarized by Kestrel's AI" in html and "Transportation and logistics" in html
     # Your view and the company card

@@ -391,7 +391,9 @@ def pct(v: float) -> int:
 NOTIFY_KINDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     # Renamed from "New strong matches" (#111): the alert covers Your call and better. The group
     # key and both kinds are unchanged, so every saved choice still applies.
-    "matches": ("New roles worth a look", "New roles rated Your call or better.",
+    "matches": ("New roles worth a look",
+                "New roles rated Your call or better, by your Score cutoffs in "
+                "Which roles you see.",
                 ("new_strong_match", "high_score")),
     "followups": ("Follow-ups due", "Applications waiting on your next step.",
                   ("next_action_due", "ghosting")),

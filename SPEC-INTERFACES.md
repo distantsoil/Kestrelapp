@@ -38,9 +38,10 @@ configure structlog to files
 run Alembic (SYNC engine, sqlite://)
                                      ├─ thread: uvicorn.Server.run()
                                      │    install_signal_handlers=False
-                                     │    worker + scheduler started from
-                                     │    FastAPI lifespan, on uvicorn's loop
-wait for /health 200 (30s)
+                                     │    worker + scheduler start from the
+                                     │    lifespan after the first /health answer
+wait for /health 200 (30s; 90s in total if the thread is still alive, with
+   "Still starting (N s)" and a Cancel)
                                      └─ thread: pystray icon.run()
 run preflight
 webview.create_window(...)
@@ -157,7 +158,8 @@ Multi-hour runs are the normal case, so the window is not the process.
   folder, Open logs, Quit. The labels read in plain words ("Run a search now", "Pause searching",
   "Resume searching"); the set of items is unchanged.
 - Quit stops the scheduler and the worker, stops in-flight tasks and exits within one to two
-  seconds (D-UI-90, which revises D-UI-17). It never waits on a running model call. A stopped
+  seconds (D-UI-90, which revises D-UI-17). A running model call gets `server.quit_grace_s`
+  (5 s default, 0 to 30) before it is cut off; idle work stops at once (D-QUEUE-5). A stopped
   task keeps its row and its lease expires, so it resumes at the next launch (hard rule 5);
   nothing durable is lost.
 - Icon state: idle, working, attention needed.
@@ -351,6 +353,16 @@ design; frameless is no longer a later trial behind a setting.
   Try again, Open logs folder and Quit, and a Show details block with the startup step and the
   cause (ports tried, log file name). Never a stack trace. The reassurance line says the operator's
   roles and settings are safe on this computer.
+- **A slow start is waited for** (#148, D-DESK-2): if the server thread is still alive when the
+  first 30 s pass, the wait extends to 90 s in total, and the loading page says "Still starting
+  (N s)" every few seconds with a Cancel button. Cancel is neither a quit nor a counted failure:
+  the window stays, and its card "The start was cancelled." offers Try again and Quit. A start
+  that never answers saves a thread dump (every thread's stack, the waiting tasks by type and
+  status, the last errors) to a file in the logs folder, and the card names the file.
+- **Try again** (#148): a new start stops a server a previous attempt left running first (a
+  graceful shutdown, up to 35 s) and only then starts. If the old server is still alive when the
+  stop times out, the start is refused with a plain "wait a moment" message. A second server never
+  starts beside a live one: one database, one event loop, one process.
 - **Safe mode** (#130, D-UI-252): each start attempt is counted in `startup.json` in the data folder
   (`paths.startup_health_json`) and the count is cleared when the app is up. After two failed starts in
   a row the next start does not try again by itself: the same window says "Kestrel could not start
@@ -374,7 +386,8 @@ design; frameless is no longer a later trial behind a setting.
   Quit dialog as the palette's Quit entry.
 - **Quit** (D-UI-90): a short closing screen ("Closing Kestrel. Your work is saved and picks up
   where it left off next time."), in-flight tasks are stopped (their rows resume at the next
-  launch), and the process exits in one to two seconds. Quit never waits up to 30 seconds.
+  launch, and the quit gives back each one's in-flight attempt, SPEC.md §4.6), and the process
+  exits in one to two seconds. Quit never waits up to 30 seconds.
 - **Measure.** Launch and quit times are measured before and after on real Windows and macOS
   machines; this cannot be verified in a cloud session.
 
@@ -516,6 +529,16 @@ to bottom:
   not read its own answer. They are kept in Pipeline." with Review, which opens Needs another try
   (§2.1 `/quarantine`). It is not shown on the first-run Today that carries the walkthrough
   (D-UI-116), and it never shows a past run's problems.
+- **The quick-round strip** (issue 171, D-UI-272), below the retry note and above Top matches, in the
+  retry note's strip family with the info tint. It offers "N roles to sort, yes or no. About a
+  minute." (the real N, up to 10) and shows after the first finished run, then after every 3rd
+  finished run (a run that finished normally, status done; D-LEARN-8), only with at least 5 roles
+  Calibrate can ask about and never while a run is active. It names the next unlock with the real counts ("6 of 15 answers. At 15, Kestrel ranks new roles
+  using your examples.", then 30, then 200). "Start sorting" opens the round; "Not now" offers "Ask
+  after the next 3 runs" and "Stop asking", each closing the strip with a toast that has Undo, which
+  restores the strip exactly. State lives in settings rows, never browser storage. The same
+  offer can be turned off or changed in Calibrate ("Offer a quick round after runs"; "How often":
+  after the first run then every 3 runs, after every run, or once a week).
 - **New signals** (Consulting only, above Top matches): public trigger events with their fit,
   and Research, Add to leads and Not relevant. Trigger events appear only here.
 - **Top matches today**: the best of today's newly found roles, ranked by fit, whatever the score
@@ -653,7 +676,8 @@ right-aligned.
   score, and how long ago the role was found ("Found 3h ago", in the brand color under six hours;
   hover shows found and posted age, from `first_seen_at` and `date_posted`). One warning icon
   with a tooltip appears only when something is wrong (ghost score, legitimacy, needs-review
-  divergence, liveness, prompt staleness); a healthy row carries no badges.
+  divergence, liveness, an older score as SPEC-MODULES 5.7 defines it, D-SCORE-4); a healthy row
+  carries no badges. The panel and the role page's score card say the same older-score line.
 - **The detail panel slides over the list** from the right (§2.4), top-aligned with the list and
   as tall as its content. It does not push or narrow the list. Switching roles slides the old
   content out and the new in. It holds the score ring, the five dimension bars (§2.1 detail), the
@@ -791,12 +815,39 @@ The Evaluation tab never shows less than the side panel does:
   met, with "3 of 6" at the center; segments and legend chips are clickable to focus the
   matching rows below and dim the rest, and a click elsewhere clears it. Beside it, **In your
   favor** (green) and **Gaps** (amber), each gap with how to handle it (`b_fit.gaps`) and a plain
-  link "I have a story for this". Only a `strong` match is Met. A match the profile neither
+  link "I've done this" (D-UI-290). Only a `strong` match is Met. A match the profile neither
   shows nor rules out (`strength` `unverified`, PROMPTS.md P2) is Partly met and listed under
   Gaps with "Your profile does not show this yet, so Kestrel can't tell"; it never counts in
   the role's favor and never reaches Evidence (hard rule 4, O20).
-- **Evidence**: a posting quote, the operator's matching proof, and a link to the exact resume
-  bullet or story, with "+ I have a story that shows something else they ask for".
+- **Basis and corrections on each row** (D-UI-290). A Met or Partly met row that has model
+  evidence but no matching stored resume bullet or story carries one small "Inferred" tag (the
+  matcher compares normalized text against every story and every active resume bullet on the
+  track, not only canonical stories; an `unverified` row is never Inferred, it keeps "Your profile
+  does not show this yet"); clicking it shows Kestrel's reasoning. Rows that rest on the operator's own words
+  carry no tag. A Met row has a pencil at its right edge, always visible and muted until hover or
+  focus, with the tooltip "Correct this" and the accessible name "Correct: <requirement>". It opens
+  in the row: It's overstated, Not true of me, They mean something else. A Partly met or Not met
+  row has "I've done this": I have all of it, Some of it, None of it (It's a fair gap on a Not met
+  row), They mean something else; all of it and some of it ask for a story (pick one, or write one
+  in the Add a story sheet), with "Kestrel can only credit what you've written down." Unverified
+  rows answer in one click instead: I've done this (asks for a story), Some of it, Not yet. One line under
+  the choices states the effect before Save ("Moves to Not met on this role. The score changes only
+  when you score again."). Not true of me offers the fix that matches the source: Fix the story for
+  a story Kestrel drafted that the operator never edited, Open the story for one they wrote, Open
+  the line in Documents for a resume bullet, nothing for an inferred row. A saved row moves to its
+  new list, is tinted, shows "You: <state>" with Kestrel's state struck through, and has Undo (also
+  in the toast). A correction made on another role that applies here shows the same way, marked "From your
+  corrections", with the pencil leading to Profile › Corrections instead of Undo. Your view then
+  shows how many corrections apply, "Score again with my changes" and "See all in Profile"; the score never changes until the operator scores again, and an online model goes
+  through the confirm dialog (D-SEC-7). After a story is added or a correction saved, Kestrel
+  offers to rescore the other roles that ask for something similar, listing them first. A
+  correction never archives or rejects a role (hard rule 4).
+- **Evidence**: collapsed by default, its header counting the sources ("Evidence · 4 from your
+  resume and stories · 2 inferred"). Open, one line per Met or Partly met item that has model
+  evidence (unverified rows never reach Evidence, as above): the requirement,
+  the operator's matching line quoted exactly with its source link, or Kestrel's reasoning marked
+  Inferred. Read only; corrections happen on the row. "+ Add a story for something else they ask
+  for" sits at the foot of the Gaps card.
 - **What the role is**: the model-written summary, labeled as AI-written, with tags and a "Read
   the full posting" link to the Posting tab.
 - **Your view** (bottom): "Kestrel says 4.6, strong fit. Agree?" with Yes or Adjust. Adjust opens
@@ -804,7 +855,7 @@ The Evaluation tab never shows less than the side panel does:
   optional note, and saves a label (`label.source` `manual`). A compact company card sits
   beside it. This replaces the old always-visible override control; the primary label-capture
   surfaces are now Calibrate and this card.
-- **Add a story** sheet (from a gap or from Evidence): it flies up from the bottom without
+- **Add a story** sheet (from "I've done this" or the foot of Gaps): it flies up from the bottom without
   leaving the page, with a one-line reason, the "For" chip, and three labeled boxes (What was the
   situation? What did you do? What changed?) because the story model stores situation, action and
   result separately. Copy: "Kestrel only knows what you write down." Buttons: Save, and Save and
@@ -847,7 +898,14 @@ nothing) so a later Tier 0 pass keeps the role, and the role says "You asked to 
 your rule on seniority". The operator's rules never change. Unticked, the submit is refused with
 the same sentence and link (D-UI-74).
 
-**`/calibrate` Calibrate** (D-UI-99; the active learning queue)
+**`/calibrate` Calibrate** (D-UI-99; the active learning queue). Two tabs, **Quick** (the default) and
+**Detailed** (issue 171, D-UI-272). Quick explains the round, has the "Start sorting" button, the
+progress meter toward the next unlock (the same words as the Today strip), a note pointing to
+Detailed, and the offer settings. The round (`/calibrate/quick`) is one card at a time: Left Not for
+me, Right Yes, Up Top pick, Down Not sure, or drag the card; Ctrl or Cmd+Z undoes the last saved
+answer; Finish early keeps what is saved; the done screen counts the answers and shows the unlocks
+and "Keep going: 10 more". Detailed is the page described next, unchanged, and its history labels
+Quick answers "Quick".
 Ten highest-information unlabeled items, one at a time, keyboard-driven. The page asks "Good
 match?" and the operator answers first: five text-only choices of equal width, **Poor, Weak,
 Maybe, Good, Great** (keys 1 to 5, scores 1 to 5). **Kestrel's score is hidden until the operator
@@ -875,9 +933,19 @@ with a link to the full Help article. Both tracks (the Consulting dimensions app
 
 **`/profile` Profile** (D-UI-21, D-UI-119; `/documents` opens its Documents tab)
 Who the operator is, what they want, and the documents that say it, as tabs in this order: About
-you, Documents, Employment, Consulting (only while that track is on), Location, Stories. **Stories**
+you, Documents, Employment, Consulting (only while that track is on), Location, Stories, Corrections. **Stories**
 is the same story bank as `/stories` and the Story bank tab of Interview prep, shown in both
-places. **Documents**:
+places. **Corrections** (D-UI-291): every requirement correction about the operator, wherever it
+was made, under "Where you changed what Kestrel concluded about you. Each one counts for every
+role." Each item shows the requirement, Kestrel's state struck through, the operator's state, why
+Kestrel thought so (with Fix the story or Add a story where it applies), the note, and "Added from
+<role> · date · Counts on N roles"; the role link opens the role even when archived. "Kestrel
+agrees now" marks one a later rescore agrees with. The pencil opens What's true now? (Met, Partly
+met, Not met), the note, one effect line and Remove correction; Save and Remove have Undo, and Save
+offers to rescore the roles that use it. A search box covers requirement, reason, note and role.
+Notes about one posting (They mean something else) stay on that role. Fix the story opens the
+story in the story editor; Kestrel changes nothing itself, and saving marks the story
+`operator_edited`. **Documents**:
 per track and doc kind, section and slot tree, inline variant editing, tag editor, add and
 remove variants and slots, add and remove roles and bullets in the operator's own words (slot and
 variant keys are tooltips, never visible text; D-UI-29), a Look card, the default for every render of the document (layout, font from the fixed
@@ -1001,9 +1069,13 @@ a first press sorts the most useful end first, a second reverses, a third return
 order; Stage sorts in pipeline order, and rows with no value (no due step, not yet applied, not
 scored) stay last in both directions. Date applied shows in the person's Region date format and its
 column hides when the table is too narrow to show it without overlap. The Board or Table choice
-and the sort are remembered together and restored on a revisit (an explicit `?view=` wins); filters
-are not. "Import past applications" links to Settings > Your data (§2.6) and appears in
+and the sort are remembered together and restored on a revisit (an explicit `?view=` wins), each
+in a cookie the server reads so the first paint is already in order; filters are not. The sort runs
+on the server over every row before the table is paged (D-UI-280), so page 2 continues page 1's
+order, and the rows glide to their new places (none under reduced motion). "Import past applications" links to Settings > Your data (§2.6) and appears in
 the empty state. Interview debrief capture stays on the role page.
+An "Export work search log" button (employment track) opens a sheet with a date range and the count
+the file will hold; "Save CSV" downloads it locally (SPEC-MODULES §5 Work search log, D-EXPORT-1).
 
 *The right rail* has two cards. **Upcoming interviews** (calls, in Consulting) with Prepare,
 which opens Interview prep for that role. **Follow-ups** is a checklist of what is due now
@@ -1330,6 +1402,17 @@ Which model does each step, where it runs, and whether it is working. Layout:
   steps and the matching model only. *Where the
   AI runs*: On this computer, Online model, Both (the saved choice and OpenRouter credit; the
   mode is changed in Settings, one place).
+- *On your network* (D-LLM-15): a card for model servers on another computer at home or the
+  office. **Add a server** opens a drawer: the server's IP address (a host name counts as online), the server type (Ollama, oMLX, vLLM,
+  llama.cpp or other, which sets the JSON and thinking presets), an optional key (stored only on
+  this computer, never in backups), **Test connection** (asks the server for its model list and
+  sends nothing about the person) and **Save server**; then a model picker for Quick screen and
+  Fit rating on that server, Use the default again, and Remove. An address on the internet is
+  refused there and points to Online model. A step on such a server reads "on another computer on
+  your network (<host>)" in the steps table, the status rail, Today and the ask-first panels, and
+  needs no consent dialog or Hosted mode. Download and Tune are Ollama-only: for another server
+  type the Models on this computer card says "Load models in <server type> on that computer".
+  Every change is this computer only.
 - *Scoring steps*: a color-coded table of Rules (no AI model), Quick screen, Scoring (Rating),
   Resume picking, Deep read, with plain names leading and tier codes as small captions. Each row
   shows what the step does, the model, where it runs (Default or Override), **Can read** in
@@ -1468,6 +1551,49 @@ secret exists and the user ticks the acknowledgement of the warning; only a requ
 (loopback) may change it, even one carrying the shared key; turning it off writes the file too and
 needs no tick. The control shows the file's value, what the running process started with, and, when
 `KESTREL_SERVER__BIND_ALL` is set, that the environment variable wins. `POST /settings/lan/bind`.
+
+**Three tiers of access (#155, D-SEC-9).** The shared key is one credential and it does not open
+everything. A request is this computer only when its peer is loopback, its Host is `localhost`,
+`127.0.0.1` or `::1`, and no proxy header is present; any other Host (a tunnel, a quick tunnel, a
+trailing dot) or any forwarding header makes it remote. A forged header can only make a request
+look remote, never local. A key holder browses and does ordinary work with the configured setup.
+
+| Tier | Who | What |
+|---|---|---|
+| Browse and work | Anyone with the key, and this computer | Read roles, documents and your profile; score, apply, track and keep notes; Score again, Run now and Scan now with the configured models; per-role document downloads (resume, cover letter, prep pack PDF); Your data list edits; turning confidential mode on. |
+| Take the data away or wipe it | **This computer only** | Restore a backup, Clear everything and Restart setup, reset learning, forget ratings, import a profile, and every download of your data: the backup, the profile export, the diagnostics file, the ratings and decisions exports, and the Analytics exports. |
+| Change keys, routes and the host | **This computer only** | Paste, replace, remove, Test or check the balance of an online model key; connect, switch run mode, assign tiers and models; source keys; Check my models apply, undo and promote; a model or mode other than the configured one for one run; the LAN switch, shared key and MCP; Quit; setup, model download, health fix, open folder and diagnostics save; turning confidential mode off; the settings Undo for any of these keys. |
+
+A restored backup is hostile input (D-SEC-10). Restore keeps this computer's own value for every
+setting only this computer may change (`settings_io.needs_local`: the model route and keys, hosted,
+MCP, server, updates, keep awake, autostart; confidential mode may be turned on by a backup, never
+off), both in the database and in `settings.yml`, restores the rest, and says how many were kept
+as a count. Restore is an import (D-SEC-20): the backup's database is only read, a new database
+is built from Kestrel's own migrations and the rows of Kestrel's own tables are copied into it, so
+the backup's views, triggers, unknown tables and queued work (the task queue, one-run model and
+rebuild markers, Undo tokens) never come back; the result says how many items were left out. The
+worker and the online lane are stopped first and started again after. Config files are restored
+only under the names Kestrel uses (settings.yml in any spelling through the local-only merge). It
+writes only generated PDFs into the documents and prep packs folders, never the models, and a
+model backend whose address is on the internet always shows the ask-first dialog (an address on
+this computer or the local network does not, D-LLM-15). On the confirmation the person may tick
+**Also restore this backup's AI and connection settings** (unticked by default, D-SEC-11): the
+dialog first lists the values the backup would set (each model server's address and whether it is
+this computer, the local network or the internet, which model each step uses, notice, search and
+update destinations, MCP, autostart), read without applying or sending anything. Ticked, those
+settings come from the backup too; Hosted mode and its accepted disclosure and the server switches
+stay as they are here, and no queued task is restored.
+
+One dependency, `require_local` (`kestrel/web/auth.py`), enforces the second and third tiers, and
+`settings_io.needs_local` is the one table the generic writers (Undo, the settings form) consult.
+A refusal is a 403 with one plain sentence ("Only this computer can change this." or, for a file,
+"Only this computer can download this."); the handler never runs, so a refused request changes
+nothing, reads nothing and opens no connection. Pages stay visible to a key holder: a key screen
+shows "Key saved" and the provider and model names, and the controls are drawn disabled with the
+same sentence (`partials/local_only.html`). A key holder's page views show no balance or spend
+line, no provider model list fetched with the saved key, no folder path and no terminal command.
+The route table is walked by `tests/test_local_only_routes.py`, with a runtime check that no
+unguarded GET route hands a key holder a file.
 
 ### 2.4 Shared interface rules
 
@@ -1684,8 +1810,10 @@ below the list becomes a top bar so the help cards stay on the right. Each secti
 5. **Your data**. *Backups*: where the data lives (the folder path, its size, Open folder),
    **Download a backup** (a timestamped zip through the Save dialog, with progress; "Last backup:
    ..."), **Restore from a file** (a confirm sheet that says Kestrel first saves a backup of
-   what is there and replaces everything now in Kestrel; afterwards "Restored from ...; earlier
-   data saved as ..."), and the Included (profile, roles and scores, applications, documents,
+   what is there and replaces everything now in Kestrel except the settings only this computer
+   may change (unless the person ticks the box that also restores the backup's AI and connection
+   settings, after the sheet lists their values, D-SEC-11); afterwards "Restored from ...; earlier data saved as ..." with a count of any
+   settings kept, files skipped or confirmations removed), and the Included (profile, roles and scores, applications, documents,
    settings) and Never included (online model keys, logs) lists. *Import past applications*
    (SPEC.md §5.6): choose a CSV, spreadsheet or Markdown file; columns named Company, Role, Date
    and Status match by themselves and others can be matched by hand; a review table with
@@ -1764,8 +1892,9 @@ Review and Done, and works in two phases:
 
 ## 3. REST API
 
-Everything the UI does is available under `/api`. JSON in, JSON out, FastAPI OpenAPI docs at
-`/docs`. The UI is a consumer of this API, not a privileged path, so the CLI, MCP server, and
+Everything the UI does is available under `/api`. JSON in, JSON out. The generated API pages
+(`/docs`, `/redoc`, `/openapi.json`) are not served (D-SEC-10). The UI is a consumer of this API,
+not a privileged path, so the CLI, MCP server, and
 extension all have full capability.
 
 Two endpoints that are easy to miss because they serve other components rather than the UI:
@@ -1783,6 +1912,20 @@ Resource groups: `/api/opportunities`, `/api/evaluations`, `/api/pursuits`, `/ap
 that is UI-only: the contacts import and its diff, the model check task, the near-floor margin,
 the scene and touch settings, and the diagnostics download are all reachable here as well
 (D-UI-129).
+
+**`GET /api/pursuits`** (D-IMPORT-10) lists the person's applications, read only, so a script
+can bring an outside tracker (a spreadsheet, an Obsidian table) up to date by ID. Each row:
+`id` (the Kestrel ID of `SPEC.md` 5.6, the same value the applications export carries), `track`,
+`role`, `company`, `source` (the board an applied-history import recorded, else the source name),
+`applied_at` (a date), `status` and `last_change` (the latest of the last activity, the applied
+date and the newest status event). Query parameters: `track`, `status`, `since` (an ISO date or
+time, kept when the last change is at or after it; anything else is a 400 naming the parameter),
+`limit` (default 100, at most 500) and `cursor` (the previous page's `next_cursor`, null on the
+last page). The shared key is required off this computer, as for every `/api` route.
+Confidential mode redacts the current employer as `/api/opportunities` does, and an application on
+a source whose terms forbid passing postings on is read from the same role's copy on another board
+or left out, as in the applications export. It sends nothing anywhere and has no write method; the
+only write a first call can make is the install's ID salt.
 
 Conventions: cursor pagination on collections; filters as query parameters mirroring the UI;
 `POST /api/opportunities/ingest` accepting either a URL or raw text plus metadata; long

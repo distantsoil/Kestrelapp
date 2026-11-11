@@ -157,6 +157,8 @@ async def test_a_leased_row_left_by_a_dead_process_resumes_at_start(sm):
 
 
 async def test_a_stream_cut_off_mid_download_is_retried_and_continues(sm):
+    from kestrel.db.base import iso, utcnow
+
     async with sm() as s:
         await mt.queue_pulls(s, ["qwen3:14b"])
     cut = _lines(
@@ -170,9 +172,14 @@ async def test_a_stream_cut_off_mid_download_is_retried_and_continues(sm):
         assert await mt.drain_once(sm, URL)
         (t,) = await _tasks(sm)
         assert t.status == "pending" and "before it finished" in (t.last_error or "")
+        assert t.retry_at is not None  # the retry waits first (issue #153)
         async with sm() as s:
             snap = await mt.snapshot(s)
         assert snap["live"] and snap["items"][0]["step"] == "Trying again shortly"
+        async with sm() as s:
+            t2 = await s.get(Task, t.id)
+            t2.retry_at = iso(utcnow().replace(year=2000))  # the wait has passed
+            await s.commit()
         assert await mt.drain_once(sm, URL)
     (t,) = await _tasks(sm)
     assert t.status == "done" and t.attempts == 2
@@ -184,8 +191,16 @@ async def test_ollama_down_fails_after_the_attempts_with_a_plain_reason(sm, monk
         await mt.queue_pulls(s, ["qwen3:14b"])
     with respx.mock as mock:
         mock.post(f"{URL}/api/pull").mock(side_effect=httpx.ConnectError("refused"))
-        while await mt.drain_once(sm, URL):
-            pass
+        for _ in range(4):  # one attempt per drain; the wait passes between them (issue #153)
+            if not await mt.drain_once(sm, URL):
+                break
+            (t,) = await _tasks(sm)
+            if t.status != "pending":
+                break
+            async with sm() as s:
+                row = (await s.execute(select(Task).order_by(Task.id))).scalar_one()
+                row.retry_at = None  # the backoff wait has passed (issue #153)
+                await s.commit()
     (t,) = await _tasks(sm)
     assert t.status == "dead" and "Ollama is not answering" in t.last_error
     async with sm() as s:
@@ -239,7 +254,7 @@ async def test_cancel_all_marks_rows_and_the_snapshot(sm):
         assert await mt.cancel_all(s) == 1
         assert await mt.cancel_all(s) == 0
         snap = await mt.snapshot(s)
-    assert not snap["live"] and snap["items"][0]["step"] == "Cancelled"
+    assert not snap["live"] and snap["items"][0]["step"] == "Canceled"
     assert not await mt.drain_once(sm, URL)
 
 

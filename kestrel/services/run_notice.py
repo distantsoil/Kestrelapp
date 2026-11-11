@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from kestrel import netloc
 from kestrel.config import Settings
 
 STOP_URL = "/runs/stop"
@@ -57,8 +58,11 @@ def changed(run: Settings, stored: Settings) -> list[str]:
 
 def describe_run(run: Settings) -> str:
     """"qwen3:14b on this computer" or "some/model online": the run's full-review model."""
+    from kestrel.services import lan_servers
+
     model, online = _tier(run, "tier2")
-    where = "online" if online else "on this computer"
+    loc, host = lan_servers.tier_where(run, "tier2")
+    where = "online" if online else netloc.label_for(loc, host)
     return f"{model} {where}" if model else f"the model you confirmed {where}"
 
 

@@ -44,7 +44,7 @@ class RecruiteeAdapter:
 
     def validate_config(self, config: dict) -> None:
         slug = config.get("slug")
-        if not isinstance(slug, str) or not _SLUG.match(slug):
+        if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
             raise SourceConfigError(
                 "recruitee source requires a 'slug' (the name in {slug}.recruitee.com: letters, "
                 "digits and '-')"

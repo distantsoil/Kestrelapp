@@ -2,6 +2,7 @@
    columns, review every row, then Add. Nothing is added until Add is pressed, and Undo removes
    just the rows Add created. Steps: 0 choose, 1 match columns, 2 review, 3 done. #}
 {% import "partials/st_macros.html" as st with context %}
+{% import "partials/local_only.html" as lo with context %}
 <section class="k-card st-card" id="st-imp" data-testid="st-imp" data-step="{{ step }}">
   {{ st.head('Import past applications', 'sheet') }}
   <ol class="k-steps st-steps" style="--k-steps: 4">
@@ -34,29 +35,74 @@
     <div class="st-foot"><button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/applied" hx-target="#st-imp" hx-swap="outerHTML">Back</button><span class="st-sp"></span><button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-imp-next">Next</button></div>
   </form>
   {% elif step == 2 %}
+  {% set rows = review.rows %}
+  {% set pill_cls = {'rejected': '', 'withdrawn': '', 'ghosted': '', 'interviewing': ' k-pill--info', 'screening': ' k-pill--info', 'final': ' k-pill--info', 'offer': ' k-pill--info'} %}
+  {% macro stage(status) %}{% if status %}<span class="k-pill{{ pill_cls.get(status, ' k-pill--warn') }}">{{ status|replace('_', ' ')|capitalize }}</span>{% endif %}{% endmacro %}
+  {% macro tick(r) %}<td><input type="checkbox" name="include_{{ r.index }}" value="on" class="st-check" aria-label="Add {{ r.company }}"{% if r.default_include %} checked{% endif %}{% if not r.importable %} disabled{% endif %}></td>{% endmacro %}
+  {% macro picker(r) %}<span class="k-select"><select name="status_{{ r.index }}" aria-label="Stage for {{ r.company }}"><option value="">Choose a stage</option>{% for o in status_options %}<option value="{{ o }}">{{ o|replace('_', ' ')|capitalize }}</option>{% endfor %}</select></span>{% endmacro %}
+  {% set in_sync = rows|selectattr('bucket', 'equalto', 'in_sync')|list %}
+  {% set repeats = rows|selectattr('bucket', 'equalto', 'repeat')|list %}
+  {% set differs = rows|selectattr('bucket', 'equalto', 'differs')|list %}
+  {% set asks = rows|selectattr('bucket', 'equalto', 'ask')|list %}
+  {% set reapplies = rows|selectattr('bucket', 'equalto', 'reapply')|list %}
+  {% set news = rows|selectattr('bucket', 'equalto', 'new')|list %}
+  {% set acts = rows|selectattr('bucket', 'equalto', 'activity')|list %}
   <form class="st-imprev" hx-post="/settings/data/applied/add" hx-target="#st-imp" hx-swap="outerHTML">
-    <input type="hidden" name="text" value="{{ text }}"><input type="hidden" name="file_name" value="{{ file_name }}">
-    <p class="st-dsm">{{ file_name }}: {{ n_rows }} row{{ '' if n_rows == 1 else 's' }}. Untick any you do not want.</p>
-    <div class="k-table-wrap"><table class="k-table st-nw" data-testid="st-imp-table">
-      <thead><tr><th>Add</th><th>Company</th><th>Role</th><th>Applied</th><th>Stage</th><th>Note</th></tr></thead>
-      <tbody>
-      {% for r in review.rows %}
-        <tr{% if r.problems %} class="is-bad"{% endif %}>
-          <td><input type="checkbox" name="include_{{ r.index }}" value="on" class="st-check" aria-label="Add {{ r.company }}"{% if r.default_include %} checked{% endif %}{% if not r.importable %} disabled{% endif %}></td>
-          <td><b>{{ r.company }}</b></td><td>{{ r.title }}</td><td>{{ date_display(r.date) or r.date_raw }}</td>
-          <td>{% if r.status %}<span class="k-pill{% if r.status == 'rejected' %}{% elif r.status in ('interviewing', 'screening', 'final', 'offer') %} k-pill--info{% else %} k-pill--warn{% endif %}">{{ r.status|replace('_', ' ')|capitalize }}</span>
-            {% else %}<span class="k-select"><select name="status_{{ r.index }}" aria-label="Stage for {{ r.company }}"><option value="">Choose a stage</option>{% for o in status_options %}<option value="{{ o }}">{{ o|replace('_', ' ')|capitalize }}</option>{% endfor %}</select></span>{% endif %}</td>
-          <td>{% if r.problems %}<span class="k-pill k-pill--bad">{{ r.problems[0] }}</span>{% elif r.existing_pursuit_id or r.possible_duplicate_id %}<span class="k-pill k-pill--warn">Possible duplicate</span>{% elif r.activity %}<span class="k-pill">Looks like an activity</span>{% endif %}</td>
-        </tr>
-      {% endfor %}
-      </tbody></table></div>
+    <input type="hidden" name="text" value="{{ text }}"><input type="hidden" name="orig" value="{{ orig }}"><input type="hidden" name="file_name" value="{{ file_name }}">
+    <p class="st-dsm" data-testid="st-imp-summary">{{ file_name }}: {{ n_rows }} row{{ '' if n_rows == 1 else 's' }} read. Only the rows that need a decision are listed.</p>
+    {% if in_sync %}<p class="st-note" data-testid="st-imp-insync">{{ in_sync|length }} row{{ '' if in_sync|length == 1 else 's' }} already match what Kestrel has. Nothing to do for {{ 'it' if in_sync|length == 1 else 'them' }}.</p>{% endif %}
+    {% if repeats %}<p class="st-note" data-testid="st-imp-repeats">{{ repeats|length }} repeated row{{ '' if repeats|length == 1 else 's' }} in your file (same company, role, date and source) {{ 'was' if repeats|length == 1 else 'were' }} counted once.</p>{% endif %}
+    {% for key, title, hint, group in [
+      ('differs', 'Same application, differs', 'Kestrel already has these. Ticking one fills in what is missing and never moves it backwards.', differs),
+      ('ask', 'Needs your call', 'Close to an application you already have, but the dates leave it open. Ticking one adds a new application.', asks),
+      ('reapply', 'Looks like a re-application', 'Same role as one you already have, applied for again later. Ticked to add as a new application.', reapplies),
+      ('new', 'Not found in Kestrel', 'New to Kestrel. Ticked to add.', news),
+      ('activity', 'Not an application', 'Activities such as a resume update or a networking call. Skipped unless you tick one.', acts)] %}
+    {% if group %}
+    <section class="st-impsec" data-testid="st-imp-sec-{{ key }}" data-bucket="{{ key }}">
+      <h4 class="st-impsec__t">{{ title }} <span class="k-pill">{{ group|length }}</span></h4>
+      <p class="st-dsm">{{ hint }}</p>
+      <div class="k-table-wrap"><table class="k-table st-nw" data-testid="st-imp-table-{{ key }}">
+        {% if key == 'differs' %}
+        <thead><tr><th>Add</th><th>Role</th><th>In Kestrel</th><th>In your file</th><th>What happens</th></tr></thead>
+        {% else %}
+        <thead><tr><th>Add</th><th>Role</th><th>Applied</th><th>Stage</th><th>Note</th></tr></thead>
+        {% endif %}
+        <tbody>
+        {% for r in group %}
+          <tr{% if r.problems %} class="is-bad"{% endif %}>
+            {{ tick(r) }}
+            <td><b>{{ r.company }}</b><small>{{ r.title }}</small></td>
+            {% if key == 'differs' %}
+            <td>{{ stage(r.existing_status) }}<small>{{ date_display(r.existing_applied) or '' }}</small></td>
+            <td>{{ stage(r.status) }}<small>{{ date_display(r.date) or r.date_raw }}{% if r.date_approx %} (approximate){% endif %}</small></td>
+            <td>{% if r.kid_state == 'matched' %}<span class="k-pill">Matched by Kestrel ID</span> {% endif %}{% if r.status_change %}<span class="k-pill k-pill--info">Moves to {{ r.status_change|replace('_', ' ')|capitalize }}</span>{% elif r.status and r.status != r.existing_status %}<span class="k-pill">Kestrel is ahead, stage kept</span>{% endif %}{% if r.notes_new %} <span class="k-pill">New notes added</span>{% endif %}</td>
+            {% else %}
+            <td>{{ date_display(r.date) or r.date_raw }}{% if r.date_approx %}<small>approximate</small>{% endif %}</td>
+            <td>{% if r.status %}{{ stage(r.status) }}{% else %}{{ picker(r) }}{% endif %}</td>
+            <td>{% if r.problems %}<span class="k-pill k-pill--bad">{{ r.problems[0] }}</span>{% elif r.kid_state == 'repeat' %}<span class="k-pill k-pill--bad">Repeated Kestrel ID</span><small>{{ r.warning }}</small>{% elif r.kid_state == 'unknown' %}<span class="k-pill k-pill--warn">Unknown Kestrel ID</span><small>{{ r.warning }}</small>{% elif r.possible_duplicate_id %}<span class="k-pill k-pill--warn">Possible duplicate</span><small>{{ r.possible_duplicate_label }}</small>{% elif r.reapplication_of %}<span class="k-pill k-pill--info">Applied again</span>{% elif r.same_slot_other_source %}<span class="k-pill">Second source, same day</span>{% elif r.activity %}<span class="k-pill">Looks like an activity</span>{% endif %}</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody></table></div>
+    </section>
+    {% endif %}
+    {% endfor %}
+    {% if differs %}
+    <label class="st-row st-row--first st-filewins"><input type="checkbox" name="file_wins" value="on" class="st-check" data-testid="st-imp-filewins">
+      <span class="st-row__t"><b>Let the file win</b><span class="st-dsm">Use the file's stage even where Kestrel is further along or the application is closed. Leave this off to keep your newer progress.</span></span></label>
+    {% endif %}
     <div class="st-foot"><button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/applied" hx-target="#st-imp" hx-swap="outerHTML">Back</button>
-      <span class="st-dsm">Nothing is added until you press Add.</span><span class="st-sp"></span>
-      <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-imp-add" id="st-imp-add">Add {{ review.rows|selectattr('default_include')|list|length }} application{{ '' if review.rows|selectattr('default_include')|list|length == 1 else 's' }}</button></div>
+      <span class="st-dsm">Nothing is added until you press Add. Undo puts every change back.</span><span class="st-sp"></span>
+      <button type="submit" class="k-btn k-btn--sm k-btn--primary" data-testid="st-imp-add" id="st-imp-add">Add {{ rows|selectattr('default_include')|list|length }} application{{ '' if rows|selectattr('default_include')|list|length == 1 else 's' }}</button></div>
   </form>
   {% else %}
-  <div class="st-row st-row--first"><div class="st-row__t"><b data-testid="st-imp-done">{{ n_rows }} application{{ '' if n_rows == 1 else 's' }} added</b><span class="st-dsm">Find them in <a class="k-link" href="/pursuits">Applications</a>.{% if result and result.skipped %} {{ result.skipped }} skipped.{% endif %}</span></div>
+  <div class="st-row st-row--first"><div class="st-row__t"><b data-testid="st-imp-done">{{ n_rows }} application{{ '' if n_rows == 1 else 's' }} added</b><span class="st-dsm">Find them in <a class="k-link" href="/pursuits">Applications</a>.{% if result and result.skipped %} {{ result.skipped }} skipped.{% endif %}{% if result and result.kept_newer %} {{ result.kept_newer }} kept at a further stage than your file.{% endif %}</span></div>
+  </div>
+  <div class="st-foot">
+    {% if copy_token %}{{ lo.download(request, '/settings/data/applied/copy/' ~ copy_token, 'Download a copy of your file with IDs filled in', 'k-btn k-btn--sm k-btn--primary', 'st-imp-copy') }}{% endif %}
     <button type="button" class="k-btn k-btn--sm" hx-get="/settings/data/applied" hx-target="#st-imp" hx-swap="outerHTML">Import another</button></div>
+  {% if copy_token %}<p class="st-dsm" data-testid="st-imp-copy-note">Your original file was not changed. Keep the copy as your tracker and the next import will match by ID.</p>{% endif %}
   {% endif %}
   <p class="st-dsm st-sample">Not sure what a file should look like? <a class="k-link" href="/settings/data/applied/sample" download>Download a sample</a>.</p>
 </section>

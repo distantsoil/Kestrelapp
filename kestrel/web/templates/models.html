@@ -56,6 +56,8 @@
         {% include "partials/models_online_card.html" %}
       </div>
 
+      {% include "partials/models_network_card.html" %}
+
       {% include "partials/models_steps.html" %}
 
       <div class="mo-two">
@@ -80,6 +82,7 @@
   {# The Change model drawer and the online setup both load their body in place. #}
   {% call ui.slide_over('mo-change', 'Change model') %}<div id="mo-change-body" class="mo-drawer-body"></div>{% endcall %}
   {% call ui.slide_over('mo-online-so', 'Online model') %}<div id="mo-online-body" class="mo-drawer-body">{% include "partials/models_online.html" %}</div>{% endcall %}
+  {% call ui.slide_over('mo-network-so', 'Servers on your network') %}<div id="mo-network-body" class="mo-drawer-body">{% include "partials/models_network.html" %}</div>{% endcall %}
   {% call ui.slide_over('mo-overrides-so', 'Model overrides') %}<div id="mo-overrides-body" class="mo-drawer-body"></div>{% endcall %}
 
   {% call ui.flyout('mo-how-fly', 'How Models works', help_href='/help') %}

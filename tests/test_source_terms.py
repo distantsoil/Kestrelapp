@@ -219,6 +219,7 @@ CREDIT_CASES = [
     ("remotive", "Remotive", "https://remotive.com/remote-jobs/x/credit-1"),
     ("arbeitnow", "Arbeitnow", "https://www.arbeitnow.com/jobs/credit-2"),
     ("jobicy", "Jobicy", "https://jobicy.com/jobs/credit-3"),
+    ("fourdayweek", "4 Day Week", "https://4dayweek.io/job/credit-4"),
 ]
 
 

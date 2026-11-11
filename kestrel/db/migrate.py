@@ -25,12 +25,27 @@ def _config(script_location: str, db_path: str | Path) -> Config:
     return cfg
 
 
+def optimize_db(target: Path) -> None:
+    """PRAGMA optimize once after the upgrade, so the planner has fresh statistics for the
+    indexes the migrations just added (D-PERF). Runs on the caller's thread (startup, never the
+    event loop); a locked or unreadable file is skipped, since this is only a hint."""
+    try:
+        conn = sqlite3.connect(target.as_posix(), timeout=5)
+        try:
+            conn.execute("PRAGMA optimize")
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        log.warning("db_optimize_skipped", error_type=type(exc).__name__)
+
+
 def run_migrations(db_path: str | Path | None = None) -> None:
     """Upgrade the database at db_path (default: the app DB) to head."""
     paths.ensure_dirs()
     target = Path(db_path) if db_path else paths.db_path()
     with paths.resource_path(paths.packaged_migrations()) as mig_dir:
         command.upgrade(_config(str(mig_dir), target), "head")
+    optimize_db(target)
     if db_path is None:
         stamp_saved_by(target)
 

@@ -877,3 +877,169 @@ def test_deleting_a_capability_statement_with_no_resume_keeps_pre_link_rows(web)
             return {t.title: (t.status, t.why) for t in await _rows(s)}
 
     assert _db(left) == {"Plant Advisor": ("dismissed", "older row")}
+
+
+# ------------------------------------------------------- what the card says about the last pass
+async def _set_last_run(sm, **value) -> None:
+    async with sm() as s:
+        row = await s.get(Setting, ts.LAST_RUN_KEY)
+        value = {"at": "2026-11-02T21:28:00+00:00", "applied_count": 0, "added": 0, **value}
+        if row is None:
+            s.add(Setting(key=ts.LAST_RUN_KEY, value=value))
+        else:
+            row.value = value
+        await s.commit()
+
+
+async def test_a_pass_that_adds_nothing_records_how_many_titles_were_already_seen(sm):
+    await _seed_master(sm)
+    await _run(sm)
+    await _run(sm)  # the scripted model proposes the same two titles again
+    async with sm() as s:
+        last = (await s.get(Setting, ts.LAST_RUN_KEY)).value
+    assert (last["status"], last["added"], last["seen"], last["expired"]) == ("ok", 0, 2, 0)
+    note = ts.describe_last(last)
+    assert note is not None and note.startswith("Nothing new. 2 titles proposed were already seen")
+
+
+def test_describe_last_has_its_own_line_for_each_way_a_pass_can_end():
+    assert ts.describe_last(None) is None
+    lines = {
+        s: ts.describe_last({"status": s, "added": 0})
+        for s in ("no_resume", "quarantined", "skipped_online", "error")
+    }
+    assert len(set(lines.values())) == 4
+    assert "no resume" in lines["no_resume"]
+    assert "could not be read" in lines["quarantined"]
+    assert "online model" in lines["skipped_online"]
+    assert ts.describe_last({"status": "ok", "added": 3, "seen": 1}) == "3 new, 1 already seen."
+    assert ts.describe_last({"status": "ok", "added": 0, "seen": 0}) == "Nothing new found."
+    assert "—" not in "".join(lines.values())
+
+
+def test_the_card_says_what_the_last_pass_did_whatever_the_list_holds(web):
+    async def seed(sm):
+        await _seed_master(sm)
+        await _run(sm)
+
+    _db(seed)
+    page = web.get("/profile/title-suggestions").text
+    assert 'data-testid="title-suggestions-last"' in page  # a pass that added items says so
+    assert "2 new, 0 already seen." in page and "Last checked 2026-" in page
+
+    async def again(sm):
+        await _run(sm)  # same titles again: 0 new
+
+    _db(again)
+    page = web.get("/profile/title-suggestions").text
+    assert "Operations Analyst" in page  # the list still holds its titles
+    assert "Nothing new. 2 titles proposed were already seen" in page
+
+    for status, text in (
+        ("quarantined", "could not be read"),
+        ("skipped_online", "Waiting for your OK to send your resume to the online model"),
+        ("error", "could not finish"),
+    ):
+        async def set_status(sm, status=status):
+            await _set_last_run(sm, status=status)
+
+        _db(set_status)
+        assert text in web.get("/profile/title-suggestions").text, status
+
+
+def test_no_resume_pass_says_so_only_while_there_is_no_resume(web):
+    async def seed(sm):
+        await _set_last_run(sm, status="no_resume")
+
+    _db(seed)
+    page = web.get("/profile/title-suggestions").text
+    assert "Import a resume first." in page
+    assert 'data-testid="title-suggestions-last"' not in page
+
+
+def test_a_pending_pass_shows_the_reading_state_with_suggestions_on_screen(web):
+    async def seed(sm):
+        await _seed_master(sm)
+        await _run(sm)
+        async with sm() as s:
+            await ts.request_title_suggestions(s, "manual")
+            await s.commit()
+
+    _db(seed)
+    page = web.get("/profile/title-suggestions").text
+    assert 'data-testid="title-suggestions-pending"' in page and "Reading your resume." in page
+    assert "Operations Analyst" in page  # the existing list is still there
+    assert 'data-testid="title-suggestions-last"' not in page  # the last result waits
+    assert re.search(r'data-testid="title-suggest-again"[^>]*disabled', page)
+
+
+# --------------------------------------------------------------------------------- expiry
+def _age(days: float) -> str:
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+
+async def _add_row(sm, title, *, master_id, status="suggested", days=0.0) -> None:
+    async with sm() as s:
+        s.add(TitleSuggestion(
+            title=title, why="w", evidence=[], status=status, prompt_version="title_suggest/v1",
+            doc_master_id=master_id, created_at=_age(days),
+        ))
+        await s.commit()
+
+
+async def test_waiting_suggestions_from_an_archived_resume_are_retired_by_the_next_pass(sm):
+    old_master = await _seed_master(sm)
+    await _add_row(sm, "Warehouse Lead", master_id=old_master)
+    await _add_row(sm, "Declined Title", master_id=old_master, status="dismissed")
+    async with sm() as s:
+        (await s.get(DocMaster, old_master)).is_active = False
+        await s.commit()
+    new_master = await _seed_master(sm)
+    await _run(sm)
+    async with sm() as s:
+        rows = {r.title: r for r in await _rows(s)}
+        last = (await s.get(Setting, ts.LAST_RUN_KEY)).value
+    assert "Warehouse Lead" not in rows  # retired: it came from the older resume
+    assert rows["Declined Title"].status == "dismissed"  # a decision is never undone
+    assert rows["Operations Analyst"].doc_master_id == new_master
+    assert last["expired"] == 1
+    assert "1 old suggestion retired." in ts.describe_last(last)
+
+
+async def test_a_waiting_suggestion_the_model_stops_proposing_expires_after_sixty_days(sm):
+    master = await _seed_master(sm)
+    await _add_row(sm, "Stale Title", master_id=master, days=ts.EXPIRE_DAYS + 5)
+    await _add_row(sm, "Fresh Title", master_id=master, days=ts.EXPIRE_DAYS - 5)
+    await _add_row(sm, "Operations Analyst", master_id=master, days=ts.EXPIRE_DAYS + 5)
+    await _run(sm)  # proposes Operations Analyst and Process Improvement Lead
+    async with sm() as s:
+        rows = {r.title: r for r in await _rows(s)}
+    assert "Stale Title" not in rows and "Fresh Title" in rows
+    # proposed again, so it is confirmed and kept with a fresh date, and counted as already seen
+    kept = rows["Operations Analyst"]
+    oldest_kept = datetime.now(UTC) - timedelta(days=ts.EXPIRE_DAYS)
+    assert datetime.fromisoformat(kept.created_at) > oldest_kept
+    assert "Process Improvement Lead" in rows
+    async with sm() as s:
+        last = (await s.get(Setting, ts.LAST_RUN_KEY)).value
+    assert (last["added"], last["seen"], last["expired"]) == (1, 1, 1)
+
+
+async def test_a_retired_title_can_be_proposed_again_later(sm):
+    master = await _seed_master(sm)
+    await _add_row(sm, "Process Improvement Lead", master_id=master, days=ts.EXPIRE_DAYS + 30)
+    client = _Client([json.dumps(_reply(("Process Improvement Lead", ["r1b2"])))])
+    await _run(sm, client)
+    async with sm() as s:
+        rows = await _rows(s)
+    assert [r.title for r in rows] == ["Process Improvement Lead"]
+    oldest_kept = datetime.now(UTC) - timedelta(days=ts.EXPIRE_DAYS)
+    assert datetime.fromisoformat(rows[0].created_at) > oldest_kept
+
+
+async def test_a_pass_that_fails_retires_nothing(sm):
+    master = await _seed_master(sm)
+    await _add_row(sm, "Stale Title", master_id=master, days=ts.EXPIRE_DAYS + 5)
+    bad = json.dumps(_reply(("Operations Analyst", ["no_such_slot"])))
+    await _run(sm, _Client([bad, bad]))
+    assert await _count(sm, TitleSuggestion, TitleSuggestion.title == "Stale Title") == 1

@@ -810,7 +810,9 @@ html.k-scroll-held { overflow: hidden; }
 .k-toasts {
   position: fixed; left: calc(50% + var(--side-w-now) / 2); bottom: 22px; transform: translateX(-50%);
   z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--sp-2);
-  align-items: center; pointer-events: none; width: max-content; max-width: calc(100vw - 32px);
+  align-items: center; pointer-events: none; width: max-content;
+  /* Centered over the page column, so a long toast fits that column, not the whole window. */
+  max-width: calc(100vw - var(--side-w-now) - 32px);
 }
 .k-toast {
   display: flex; align-items: center; gap: 10px; pointer-events: auto;
@@ -828,7 +830,8 @@ html.k-scroll-held { overflow: hidden; }
 .k-toast__undo:hover { text-decoration: underline; }
 /* The stack follows the sidebar as it glides (the class is on <html> for a press only). */
 html.k-side-glide .k-toasts { transition: left var(--dur-2) var(--ease); }
-@media (max-width: 700px) { .k-toasts { left: 50%; bottom: calc(72px + env(safe-area-inset-bottom)); } }
+@media (max-width: 700px) { .k-toasts { left: 50%; bottom: calc(72px + env(safe-area-inset-bottom));
+  max-width: calc(100vw - 32px); } }
 
 /* ------------------------------------------------------------------------ form controls */
 .k-switch { position: relative; display: inline-flex; align-items: center; gap: 10px;
@@ -1235,3 +1238,10 @@ html[data-reduce-motion="1"] .oa-edit[open] > .oa-form { animation: none; }
 }
 html[data-reduce-motion="1"] .k-consent__hint { transition: none; }
 html[data-reduce-motion="1"] .k-consent__hint.is-on { animation: none; opacity: 1; }
+
+/* Read-only for a key holder (#155). Only this computer may restore, wipe, download the data or
+   change a key, a model or a destination, so those controls are drawn disabled with one sentence.
+   The fieldset is a layout no-op; it exists only to disable everything inside it. Theme tokens. */
+.k-localonly { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.k-localonly :is(button, input, select, textarea, a.k-btn, a.btn) { cursor: not-allowed; }
+.k-localonly__note { margin: var(--sp-2) 0 0; color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
