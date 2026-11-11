@@ -549,14 +549,14 @@ def test_a_key_holder_sees_the_pages_read_only_with_nothing_leaked(monkeypatch):
     destructive and download buttons, are disabled with the one sentence; no key value, no path,
     and no working link to a download."""
     auth.set_cached_key(KEY)
-    secret = "sk-test-0000-never-shown-1234"
-    (paths.data_home() / ".env").write_text(f"OPENROUTER_API_KEY={secret}\n", encoding="utf-8")
+    planted = "sk-test-0000-never-shown-1234"  # invented; must never reach a page
+    (paths.data_home() / ".env").write_text(f"OPENROUTER_API_KEY={planted}\n", encoding="utf-8")
     h = {"X-Kestrel-Key": KEY}
     with _client(_app(monkeypatch, tunnel=True), LAN_PEER) as c:
         pages = {p: c.get(p, headers=h) for p in PAGES}
     for path, r in pages.items():
         assert r.status_code == 200, path
-        assert secret not in r.text, f"{path} leaked the saved key"
+        assert planted not in r.text, f"{path} leaked the saved key"
         assert KEY not in r.text, f"{path} leaked the shared key"
         assert str(paths.data_home()) not in r.text, f"{path} leaked the data folder"
         for d in DOWNLOAD_PATHS:

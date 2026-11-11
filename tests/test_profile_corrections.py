@@ -297,6 +297,29 @@ def test_save_rejects_a_state_that_is_not_one_of_the_three_and_a_missing_row(cli
     assert _change(client, 99999, "met").status_code == 404
 
 
+def test_a_refused_change_says_the_listed_sentence_and_never_the_exceptions_text(
+        client, world, monkeypatch):
+    """A refusal shows the one sentence a person can act on, or the fixed fallback; any other
+    text the error carries stays in the log (D-SEC-41)."""
+    from kestrel.learning import corrections as corr
+    from kestrel.web.pages.profile import CORR_NOT_SAVED
+
+    cid = _cid(world, seed_mod.REQ_CARRIER)
+    before = _row(cid)
+    said: list[str] = [corr.NOTE_NEEDED, "no such state C:/Users/someone/private-folder/x"]
+
+    async def refuse(*_args, **_kwargs):
+        raise corr.CorrectionError(said.pop(0))
+
+    monkeypatch.setattr(corr, "change_correction", refuse)
+    listed = _change(client, cid, "part", "a note")
+    other = _change(client, cid, "part", "a note")
+    assert listed.status_code == 400 and listed.text == corr.NOTE_NEEDED
+    assert other.status_code == 400 and other.text == CORR_NOT_SAVED
+    assert "private-folder" not in other.text and "Users" not in other.text
+    assert _row(cid) == before
+
+
 def test_a_very_long_note_is_cut_not_refused(client, world):
     cid = _cid(world, seed_mod.REQ_CARRIER)
     assert _change(client, cid, "met", "x" * 5000).status_code == 200

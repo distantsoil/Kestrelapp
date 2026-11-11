@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -122,7 +123,9 @@ async def test_only_json_urls_are_requested_which_is_all_robots_txt_allows():
         await HnHiringAdapter().fetch({}, http)
     urls = [str(c.request.url) for c in respx.calls]
     assert urls and all(u.startswith(BASE + "/") and u.endswith(".json") for u in urls)
-    assert not any("robots.txt" in u or "ycombinator.com" in u for u in urls)
+    hosts = {urlsplit(u).hostname for u in urls}
+    assert not any(h == "ycombinator.com" or h.endswith(".ycombinator.com") for h in hosts)
+    assert not any("robots.txt" in u for u in urls)
 
 
 @respx.mock

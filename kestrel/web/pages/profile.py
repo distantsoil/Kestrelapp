@@ -18,7 +18,7 @@ from kestrel.rules.margin import MARGIN_STOPS, normalize_margin
 from kestrel.services import profile_edit as pe
 from kestrel.services import profile_photo
 from kestrel.web.deps import templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.pages.documents import documents_context
 
 log = structlog.get_logger()
@@ -540,6 +540,7 @@ async def story_delete(request: Request, story_id: int):
 # otherwise take /profile/corrections/{id}.
 CORR_STATES = {"met": "Met", "part": "Partly met", "gap": "Not met"}
 _CORR_NOTE_MAX = 1000
+CORR_NOT_SAVED = "That could not be saved."  # a refused change whose reason is not on the list
 STALE_UNDO = "Undo is no longer available. The correction changed since."
 REASON_ANSWERS = {"all": "I have all of it", "some": "Some of it"}
 
@@ -703,7 +704,10 @@ async def correction_change(request: Request, cid: int):
     try:
         out = await write_with_retry(_go, path=f"/profile/corrections/{cid}")
     except corr.CorrectionError as exc:
-        return HTMLResponse(plain_error(exc), status_code=400)
+        log.info("correction_change_refused", cid=cid, error_type=type(exc).__name__,
+                 error=str(exc))
+        return HTMLResponse(authored_error(exc, (corr.NOTE_NEEDED,), CORR_NOT_SAVED),
+                            status_code=400)
     if out is None:
         return HTMLResponse("That correction is already gone.", status_code=404)
     row, undo = out

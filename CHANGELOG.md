@@ -75,6 +75,9 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ### Fixed
 
+- **Errors from the applications API no longer include internal error text.** A refused query shows one of Kestrel's own sentences; the details go to the log (D-SEC-40).
+- **Errors from Profile > Corrections no longer include internal error text.** A change that cannot be saved says so in Kestrel's own words; the details go to the log (D-SEC-41).
+- **Saved learning model files are always named for one of the two tracks** (D-SEC-42).
 - **A role whose posting cannot fit your local model now says so.** Needs another try reads "Too long for your local model" and the Pipeline row "too long for your local model", instead of the generic "Scoring did not finish" (D-SCORE-21).
 - **Score again clears the older-score mark on a role that had a deeper read.** The deeper read stays the role's score, but the mark now measures against the newest score, so a Score again that sends your corrections clears "Scored with older scoring instructions" on the role page, its strip, the Pipeline row and the panel alike.
 - **The role page's "You changed N things" strip opens whenever a score from older instructions has corrections to send,** so it agrees with the older-score line.

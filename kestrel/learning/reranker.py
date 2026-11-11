@@ -374,6 +374,9 @@ def _refusal_reasons(criteria: dict, metrics: dict, settings: Settings) -> list[
     return reasons
 
 
+_FILE_TRACKS = {"employment": "employment", "consulting": "consulting"}
+
+
 async def _save_model(
     session: AsyncSession,
     *,
@@ -385,10 +388,15 @@ async def _save_model(
     promoted: bool,
     promoted_by: str,
 ) -> int:
+    # The file name takes the track from this fixed table, never the value that came in (a
+    # request's ?track= or a task payload), so no name can leave the ml folder (D-SEC-42).
+    file_track = _FILE_TRACKS.get(track)
+    if file_track is None:
+        raise ValueError("unknown track for a reranker file")
     paths.ml_dir().mkdir(parents=True, exist_ok=True)
     version = utcnow_iso().replace(":", "").replace(".", "")
-    model_path = paths.ml_dir() / f"reranker_{track}_{version}.pkl"
-    feat_path = paths.ml_dir() / f"features_{track}_{version}.pkl"
+    model_path = paths.ml_dir() / f"reranker_{file_track}_{version}.pkl"
+    feat_path = paths.ml_dir() / f"features_{file_track}_{version}.pkl"
     with open(model_path, "wb") as fh:
         pickle.dump(model, fh)
     with open(feat_path, "wb") as fh:

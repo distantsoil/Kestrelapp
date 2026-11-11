@@ -271,3 +271,16 @@ async def test_two_companies_given_only_by_company_id_are_not_one_organization()
         a = await JobviteAdapter().fetch({"company_eid": "AAAA1111"}, client)
         b = await JobviteAdapter().fetch({"company_eid": "BBBB2222"}, client)
     assert a[0].org_name and b[0].org_name and a[0].org_name != b[0].org_name
+
+
+def test_the_character_filter_removes_exactly_what_xml_forbids_at_both_edges():
+    """Each edge of each removed run, and its neighbor that XML allows (D-SEC-43)."""
+    from kestrel.ingest.adapters.jobvite import _strip_bad_chars
+
+    removed = ["\x00", "\x08", "\x0b", "\x0c", "\x0e", "\x1f", "￾", "￿"]
+    kept = ["\x09", "\x0a", "\x0d", "\x20", "A", "\x7f", "�", "\U00010000"]
+    for ch in removed:
+        assert _strip_bad_chars(f"a{ch}b") == "ab", repr(ch)
+    for ch in kept:
+        assert _strip_bad_chars(f"a{ch}b") == f"a{ch}b", repr(ch)
+    assert _strip_bad_chars("".join(chr(c) for c in range(0x20))) == "\t\n\r"

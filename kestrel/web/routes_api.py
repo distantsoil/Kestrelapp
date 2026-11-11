@@ -16,6 +16,7 @@ from kestrel.db.models import Opportunity
 from kestrel.services.export_terms import RESTRICTED_SENTENCE
 from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import authored_error
 from kestrel.web.fit import fit_word_for_verdict, verdict_for_fit
 from kestrel.web.queries import (
     OppFilters,
@@ -279,7 +280,9 @@ async def api_pursuits(request: Request):
                 since=q.get("since"), cursor=q.get("cursor"), limit=limit,
             )
         except pursuit_api.BadQuery as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+            _log.info("pursuits_query_refused", error_type=type(exc).__name__, error=str(exc))
+            said = authored_error(exc, pursuit_api.QUERY_REFUSALS, pursuit_api.QUERY_FALLBACK)
+            return JSONResponse({"error": said}, status_code=400)
     return {"rows": page.rows, "next_cursor": page.next_cursor}
 
 

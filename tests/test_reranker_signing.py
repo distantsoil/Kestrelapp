@@ -331,3 +331,65 @@ async def test_a_refused_model_skips_the_wait_once_ever_not_after_every_ordinary
         count = (await s.execute(select(Task).where(Task.type == training.TASK_TYPE))
                  ).scalars().all()
         assert len(count) == 2
+
+
+class _Fitted:
+    """A picklable stand-in for FittedFeatures: _save_model reads only feature_names()."""
+
+    def feature_names(self) -> list[str]:
+        return ["f0"]
+
+
+def _data_files() -> list[Path]:
+    return sorted(p for p in paths.data_dir().rglob("*") if p.is_file())
+
+
+def _escaped() -> list[Path]:
+    return list(paths.data_dir().rglob("escape*"))
+
+
+def _make_ml_subfolders(*names: str) -> None:
+    for name in names:
+        (paths.ml_dir() / name).mkdir(parents=True)
+
+
+def _in_ml_folder(name: str) -> Path:
+    p = Path(name).resolve()
+    assert p.parent == paths.ml_dir().resolve()
+    return p
+
+
+async def test_a_track_that_is_not_one_of_the_two_never_names_a_file(sm):
+    """The reranker file name takes its track from a fixed table (D-SEC-42): a traversal value
+    is refused before anything is written, inside the ml folder or outside it."""
+    from kestrel.db.enums import TRACKS
+
+    assert set(rr._FILE_TRACKS) == set(TRACKS)
+    assert all(rr._FILE_TRACKS[t] == t for t in TRACKS)
+    # Without the table these folders would let the name climb out of the ml folder.
+    _make_ml_subfolders("reranker_x", "features_x")
+    before = _data_files()
+    async with sm() as s:
+        with pytest.raises(ValueError):
+            await rr._save_model(
+                s, track="x/../../escape", model={"m": 1}, fitted=_Fitted(), n_labeled=0,
+                metrics={}, promoted=False, promoted_by="auto",
+            )
+        rows = (await s.execute(select(MlModel))).scalars().all()
+    assert _data_files() == before
+    assert not _escaped()
+    assert rows == []
+
+
+async def test_both_tracks_still_name_their_files_inside_the_ml_folder(sm):
+    for track in ("employment", "consulting"):
+        async with sm() as s:
+            ml_id = await rr._save_model(
+                s, track=track, model={"m": 1}, fitted=_Fitted(), n_labeled=0,
+                metrics={}, promoted=False, promoted_by="auto",
+            )
+            await s.commit()
+            row = await s.get(MlModel, ml_id)
+        for name in (row.artifact_path, row.pca_artifact_path):
+            p = _in_ml_folder(name)
+            assert p.name.startswith(("reranker_" + track, "features_" + track))

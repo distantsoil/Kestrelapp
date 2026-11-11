@@ -162,6 +162,38 @@ def test_status_and_track_filters_and_cursor_pages():
     assert consulting == [] and badcur.status_code == 400 and badlimit.status_code == 400
 
 
+def test_a_refused_query_answers_with_kestrels_own_sentence():
+    """The 400 body is one of the listed sentences, word for word (D-SEC-40)."""
+    from kestrel.services import pursuit_api
+
+    asyncio.run(_seed())
+    with _client() as c:
+        bad_since = c.get("/api/pursuits", params={"since": "last tuesday"})
+        bad_cursor = c.get("/api/pursuits", params={"cursor": "x; drop"})
+    assert bad_since.status_code == 400
+    assert bad_since.json() == {"error": pursuit_api.SINCE_INVALID}
+    assert bad_cursor.status_code == 400
+    assert bad_cursor.json() == {"error": pursuit_api.CURSOR_INVALID}
+
+
+def test_a_refused_query_never_carries_the_exceptions_own_text(monkeypatch):
+    """Whatever text a refusal carries stays in the log: the body is the fallback sentence."""
+    from kestrel.services import pursuit_api
+
+    planted = "could not parse C:/Users/someone/notes/private-folder/value.txt"
+
+    async def refuse(*_args, **_kwargs):
+        raise pursuit_api.BadQuery(planted)
+
+    asyncio.run(_seed())
+    monkeypatch.setattr(pursuit_api, "list_applications", refuse)
+    with _client() as c:
+        r = c.get("/api/pursuits")
+    assert r.status_code == 400
+    assert r.json() == {"error": pursuit_api.QUERY_FALLBACK}
+    assert "private-folder" not in r.text and "Users" not in r.text
+
+
 def test_confidential_mode_redacts_the_current_employer_as_the_opportunities_api_does():
     asyncio.run(_seed(confidential=True))
     with _client() as c:

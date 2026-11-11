@@ -41,7 +41,10 @@ _RATE = 1.0
 _SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}")
 _EID = re.compile(r"[A-Za-z0-9]{4,32}")
 _EID_IN_PAGE = re.compile(r"companyEId:\s*'([A-Za-z0-9]+)'")
-_BAD_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
+# The characters XML 1.0 never allows: C0 controls other than tab, line feed and carriage return,
+# and U+FFFE and U+FFFF. A table of code points, not a regular expression range (D-SEC-43).
+_BAD_CHARS: dict[int, None] = dict.fromkeys(
+    [*range(0x00, 0x09), 0x0B, 0x0C, *range(0x0E, 0x20), 0xFFFE, 0xFFFF])
 _BAD_REFS = re.compile(
     r"&#(?:x0*(?:[0-8bcef]|1[0-9a-f])|0*(?:[0-8]|11|12|1[4-9]|2[0-9]|30|31));", re.IGNORECASE)
 
@@ -128,11 +131,16 @@ class JobviteAdapter:
         return r.text
 
 
+def _strip_bad_chars(text: str) -> str:
+    """The text without the characters XML 1.0 forbids (tab, line feed and return stay)."""
+    return text.translate(_BAD_CHARS)
+
+
 def _parse(text: str, label: Any) -> ElementTree.Element:
     # Clean first, then let the parser itself say whether a DOCTYPE or ENTITY is declared: a text
     # search on the raw reply is bypassed by a control character inside the keyword and refuses a
     # description that merely mentions "<!DOCTYPE html>" inside CDATA.
-    cleaned = _BAD_REFS.sub("", _BAD_CHARS.sub("", text))
+    cleaned = _BAD_REFS.sub("", _strip_bad_chars(text))
     guard = expat.ParserCreate()
     guard.StartDoctypeDeclHandler = _refuse_declaration
     guard.EntityDeclHandler = _refuse_declaration

@@ -27,6 +27,14 @@ class BadQuery(ValueError):
     """A parameter the caller sent cannot be read; the message says which and how."""
 
 
+# The whole list of BadQuery messages. The API answers with one of these, picked by
+# kestrel.web.errors.authored_error, never with the exception's own text (D-SEC-40).
+SINCE_INVALID = "since must be an ISO date or time, such as 2026-10-01"
+CURSOR_INVALID = "cursor is the next_cursor of an earlier page"
+QUERY_REFUSALS = (SINCE_INVALID, CURSOR_INVALID)
+QUERY_FALLBACK = "a query parameter could not be read"
+
+
 def parse_when(raw: str | None, name: str) -> datetime | None:
     """An ISO date or timestamp (UTC when it has no offset), or None when absent."""
     s = (raw or "").strip()
@@ -60,7 +68,7 @@ def _cursor(raw: str | None) -> int:
     if not s:
         return 0
     if not re.fullmatch(r"\d{1,12}", s):
-        raise BadQuery("cursor is the next_cursor of an earlier page")
+        raise BadQuery(CURSOR_INVALID)
     return int(s)
 
 

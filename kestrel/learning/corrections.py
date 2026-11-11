@@ -60,6 +60,11 @@ class CorrectionError(ValueError):
     """A correction that cannot be saved as asked (bad reason or state, missing note or role)."""
 
 
+# The one CorrectionError message a person can act on from the Profile page; it is shown as
+# written, every other one shows a fixed fallback (kestrel.web.errors.authored_error, D-SEC-41).
+NOTE_NEEDED = "They mean something else needs a note"
+
+
 @dataclass(frozen=True)
 class Undo:
     """What one write changed: `written` ids are removed on undo, then every `before` snapshot is
@@ -363,7 +368,7 @@ async def save_correction(
         raise CorrectionError(f"unknown basis {basis!r}")
     note = (note or "").strip() or None
     if reason == "misread" and not note:
-        raise CorrectionError("They mean something else needs a note")
+        raise CorrectionError(NOTE_NEEDED)
     text = " ".join((requirement_text or "").split())
     if not text or not requirement_norm(text):  # nothing a hash could tell apart (D-LEARN-11)
         raise CorrectionError("the requirement is empty")
@@ -449,7 +454,7 @@ async def change_correction(
         return None
     note = (note or "").strip() or None
     if row.reason == "misread" and not note:
-        raise CorrectionError("They mean something else needs a note")
+        raise CorrectionError(NOTE_NEEDED)
     undo = Undo(written=(row.id,), before=(snapshot(row),))
     row.operator_state = operator_state
     row.note = note
