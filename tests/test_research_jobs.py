@@ -204,6 +204,11 @@ async def test_shutdown_returns_task_for_restart(sm, monkeypatch):
     await asyncio.wait_for(worker, 5)
     task = (await rows(sm, Task))[0]
     assert task.status == "pending" and task.attempts == 0
+    # The restart is the worker loop coming back, and it releases the stop mark before it
+    # leases (D-QUEUE-3): mirror the loop's release-then-drain order.
+    from kestrel.queue.queue import release_holds
+
+    await release_holds(sm, get_settings())
     fake_sources(monkeypatch)
     await jobs.drain(sm)
     assert (await rows(sm, Task))[0].status == "done"
@@ -216,7 +221,15 @@ async def test_backend_failure_retries_then_reports_failure_without_partial_writ
         raise RuntimeError("sensitive provider reply")
 
     monkeypatch.setattr(jobs, "acquire_excerpts", broken)
-    await jobs.drain(sm)
+    for _ in range(5):  # one attempt per drain; the backoff wait passes between them
+        await jobs.drain(sm)
+        task = (await rows(sm, Task))[0]
+        if task.status != "pending":
+            break
+        async with sm() as s:
+            t = await s.get(Task, task.id)
+            t.retry_at = None  # the backoff wait has passed (issue #153)
+            await s.commit()
     task = (await rows(sm, Task))[0]
     assert task.status == "dead" and task.attempts == 3
     assert "sensitive" not in task.last_error
@@ -344,11 +357,21 @@ async def test_model_transport_failure_uses_the_retry_budget_and_is_reported(
     """A connection error reaches the queue's failure handling (D-UI-167): the task is retried
     until its attempts are spent, then dead with a plain message. It is never marked done, never
     quarantined, and no empty result is saved as if the work had finished."""
+    from kestrel.db.base import iso, utcnow
+
     await seed(sm, kind)
     _sources(monkeypatch)
     monkeypatch.setattr(jobs, "LLMClient", lambda *args, **kwargs: _DownClient(""))
-    await jobs.drain(sm)
-    task = (await rows(sm, Task))[0]
+    for _ in range(5):
+        await jobs.drain(sm)
+        task = (await rows(sm, Task))[0]
+        if task.status != "pending":
+            break
+        # the wait before the next attempt has passed (issue #153)
+        async with sm() as s:
+            t = await s.get(Task, task.id)
+            t.retry_at = iso(utcnow().replace(year=2000))
+            await s.commit()
     assert task.status == "dead" and task.attempts == task.max_attempts > 1
     assert "could not be reached" in task.last_error
     assert not await rows(sm, Quarantine)
@@ -359,11 +382,21 @@ async def test_model_transport_failure_uses_the_retry_budget_and_is_reported(
 async def test_model_transport_failure_then_recovery_completes_on_the_retry(
     sm, monkeypatch, kind
 ):
+    from kestrel.db.base import iso, utcnow
+
     await seed(sm, kind)
     _sources(monkeypatch)
     _FlakyClient.calls = 0
     payload = json.dumps(_PAYLOAD) if kind == "contacts" else json.dumps(_payload())
     monkeypatch.setattr(jobs, "LLMClient", lambda *args, **kwargs: _FlakyClient(payload))
-    await jobs.drain(sm)
-    task = (await rows(sm, Task))[0]
+    for _ in range(5):
+        await jobs.drain(sm)
+        task = (await rows(sm, Task))[0]
+        if task.status != "pending":
+            break
+        # the wait before the retry has passed (issue #153)
+        async with sm() as s:
+            t = await s.get(Task, task.id)
+            t.retry_at = iso(utcnow().replace(year=2000))
+            await s.commit()
     assert task.status == "done" and task.attempts == 2

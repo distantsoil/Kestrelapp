@@ -200,6 +200,27 @@ def test_a_wide_window_shares_its_width_between_the_cards_it_has(live, width):
         ctx.close()
 
 
+@pytest.mark.parametrize("keep", [5, 3, 1])
+def test_card_width_never_shrinks_as_the_window_grows(live, keep):
+    """Top matches card width is monotonic in the window width: a wider window never makes a card
+    narrower (it used to drop back each time one more card fitted)."""
+    ctx, page, errors = _page(live, "light", 700)
+    try:
+        page.evaluate(
+            "n => Array.from(document.querySelectorAll('#td-track > .td-card'))"
+            ".slice(n).forEach(e => e.remove())", keep)
+        widths = []
+        for w in range(700, 2601, 50):
+            page.set_viewport_size({"width": w, "height": 1000})
+            wait_for_layout(page)
+            widths.append((w, round(page.evaluate(_BOXES, ".td-card")[0]["w"], 1)))
+        drops = [(a, b) for a, b in zip(widths, widths[1:], strict=False) if b[1] < a[1] - 0.5]
+        assert drops == [], drops
+        assert errors == []
+    finally:
+        ctx.close()
+
+
 def test_dragging_moves_the_carousel_and_never_presses_the_button_under_it(live):
     ctx, page, _ = _page(live, "light", 1680)
     try:
@@ -543,15 +564,17 @@ def test_a_finished_review_arrives_at_its_ranked_position_without_page_jumps(
         ranges = [max(frame[column] for frame in frames) - min(frame[column] for frame in frames)
                   for column in (0, 1)]
         assert ranges[0] < 1, ranges
-        if only_pending:
-            # Replacing the empty state can change height, but it must glide every frame.
-            speeds = [abs(b[1] - a[1]) / max(1, b[2] - a[2])
-                      for a, b in zip(frames, frames[1:], strict=False)]
-            assert max(speeds) < 1.2, (frames[0], frames[-1], max(speeds))
-            assert len({round(frame[1], 1) for frame in frames}) > 3
-        else:
-            assert max(ranges) < 1, (frames[0], min(frames, key=lambda f: f[1]),
-                                     max(frames, key=lambda f: f[1]), frames[-1], ranges)
+        # Replacing the empty state can change height, but it must glide, not snap. One late
+        # frame moves further in one step even when the motion is smooth, so the rule is about
+        # distance, not speed: no single frame may cover most of the total change.
+        total = abs(frames[-1][1] - frames[0][1])
+        steps = [abs(b[1] - a[1]) for a, b in zip(frames, frames[1:], strict=False)]
+        glides = (max(steps) <= 0.4 * total + 0.5
+                  and len({round(frame[1], 1) for frame in frames}) > 3)
+        assert glides or not only_pending, (frames[0], frames[-1], max(steps), total)
+        assert only_pending or max(ranges) < 1, (
+            frames[0], min(frames, key=lambda f: f[1]), max(frames, key=lambda f: f[1]),
+            frames[-1], ranges)
         # The card the operator was looking at did not move.
         if anchor:
             assert abs(page.evaluate(

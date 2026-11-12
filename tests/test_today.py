@@ -338,19 +338,13 @@ def test_system_asks_contents_and_order(monkeypatch):
     asyncio.run(_with_session(_confirm))
     asks = asyncio.run(_with_session(lambda s: system_asks(s, _settings(hosted=True), None)))
     keys = [a["key"] for a in asks]
-    # No profile.yml in a fresh home (the example is fiction), hosted on with no key, one
-    # quarantine row, and labels short of the floor on both tracks. Confidential mode is on
-    # WITH a redaction map here, so there is no redaction ask.
-    assert keys == ["profile", "hosted_key", "quarantine", "labels:employment",
-                    "labels:consulting"]
+    # No profile.yml in a fresh home (the example is fiction), hosted on with no key and one
+    # quarantine row. Confidential mode is on WITH a redaction map here, so there is no
+    # redaction ask. There is no rating ask: the quick-round strip owns that (issue 171).
+    assert keys == ["profile", "hosted_key", "quarantine"]
     assert [a["priority"] for a in asks] == sorted(a["priority"] for a in asks)
     hosted = next(a for a in asks if a["key"] == "hosted_key")
     assert "OPENROUTER_API_KEY" in hosted["line"] and hosted["href"] == "/settings"
-    labels = next(a for a in asks if a["key"] == "labels:employment")
-    assert labels["title"] == "12 more ratings" and "(3 of 15)" in labels["line"]
-    assert labels["href"] == "/calibrate?track=employment"
-    consulting = next(a for a in asks if a["key"] == "labels:consulting")
-    assert "(0 of 15)" in consulting["line"]
     quarantine = next(a for a in asks if a["key"] == "quarantine")
     assert quarantine["title"] == "1 posting needs another try"
     assert "Retry them, or pick another model on Models" in quarantine["line"]
@@ -371,34 +365,10 @@ def test_system_asks_redaction_map_and_track_scope(tmp_path, monkeypatch):
     asks = asyncio.run(_with_session(lambda s: system_asks(s, _settings(), "employment")))
     keys = [a["key"] for a in asks]
     assert "redaction" in keys and "hosted_key" not in keys
-    assert "labels:consulting" not in keys and "labels:employment" in keys
+    assert not [k for k in keys if k.startswith("labels:") or k == "taste"]
     redaction = next(a for a in asks if a["key"] == "redaction")
     # D-PRIV-1: straight to a role's "This is my current employer" box.
     assert redaction["priority"] == 2 and redaction["href"].startswith("/documents")
-
-
-def test_system_asks_reranker_floor_once_few_shot_is_met():
-    asyncio.run(_seed())
-
-    async def _more_labels(s):
-        from sqlalchemy import select
-
-        opps = (await s.execute(select(Opportunity))).scalars().all()
-        for o in opps:  # ten opportunities in the seed; three already carry a label
-            s.add(Label(opportunity_id=o.id, track="employment", verdict="apply", score=4.0))
-        for i in range(10):
-            o = Opportunity(track="employment", opp_type="job_posting", title=f"L{i}",
-                            url=f"https://x/l{i}", stage="t2_done")
-            s.add(o)
-            await s.flush()
-            s.add(Label(opportunity_id=o.id, track="employment", verdict="pass", score=2.0))
-        await s.commit()
-
-    asyncio.run(_with_session(_more_labels))
-    asks = asyncio.run(_with_session(lambda s: system_asks(s, _settings(), "employment")))
-    labels = next(a for a in asks if a["key"] == "labels:employment")
-    assert "learn your ranking" in labels["line"] and "(20 of 200)" in labels["line"]
-    assert labels["priority"] == 5
 
 
 # --------------------------------------------------------------------------------- redaction
@@ -591,7 +561,7 @@ def test_the_asks_are_off_the_page_but_the_failed_role_note_stays_in_the_retry_n
     assert any(a["key"] == "quarantine" and a["title"] == "1 posting needs another try"
                for a in asks)
     retry = body.split('data-testid="td-retry"')[1].split("</div>")[0]
-    assert "1 role needs another try." in retry and 'href="/quarantine"' in retry
+    assert "1 item needs another try." in retry and 'href="/quarantine"' in retry
 
 
 # ------------------------------------------------------------------- scoring progress panel
@@ -670,10 +640,10 @@ def test_open_failures_show_on_today_and_the_rail_whatever_the_last_run_said(mon
         rail = c.get("/status/rail").text
     # Today says it in the retry note; the run-panel partial and the rail keep their wording.
     note = body.split('data-testid="td-retry"')[1].split("</div>")[0]
-    assert 'href="/quarantine"' in note and "8 roles need another try." in note
+    assert 'href="/quarantine"' in note and "8 items need another try." in note
     line = panel.split('data-testid="open-failed"')[1].split("</p>")[0]
-    assert 'href="/quarantine"' in line and "8 roles need another try" in line
-    assert 'data-rail="failed"' in rail and "8 roles need another try" in rail
+    assert 'href="/quarantine"' in line and "8 items need another try" in line
+    assert 'data-rail="failed"' in rail and "8 items need another try" in rail
     assert 'href="/quarantine"' in rail
     assert "—" not in body
 
@@ -710,37 +680,15 @@ def _asks():
     return asyncio.run(_with_session(lambda s: system_asks(s, _settings(), "employment")))
 
 
-def test_the_calibrate_ask_shows_once_after_a_finished_run_and_can_be_dismissed():
-    """The ask is still computed (the notification and the nav badge read the same count); Today
-    no longer prints it (D-UI-92), so the dismiss route and the ask text are checked directly."""
+def test_the_rating_asks_and_their_dismiss_route_are_gone():
+    """The "Teach Kestrel your taste" and "N more ratings" asks were computed but never printed
+    (D-UI-92); the quick-round strip replaced them (issue 171, D-UI-277)."""
     asyncio.run(_seed())
-    assert "taste" not in [a["key"] for a in _asks()]  # 4 scored roles: too few to rate
-    _scored_roles(12)
-    asks = _asks()
-    taste = next(a for a in asks if a["key"] == "taste")
-    assert taste["title"] == "Teach Kestrel your taste."
-    assert taste["line"] == ("Rate 15 scored roles and it starts ranking the way you would. "
-                             "Takes about five minutes.")
-    assert taste["href"] == "/calibrate?track=employment"
-    # It stands in for the bare label-count ask while it shows.
-    assert "labels:employment" not in [a["key"] for a in asks]
+    _scored_roles(20)
+    keys = [a["key"] for a in _asks()]
+    assert "taste" not in keys and not [k for k in keys if k.startswith("labels:")]
     with _client() as c:
-        assert c.post("/today/asks/nope/dismiss").status_code == 404
-        assert c.post("/today/asks/taste/dismiss").status_code == 200
-    after = _asks()
-    assert "taste" not in [a["key"] for a in after]
-    assert next(a for a in after if a["key"] == "labels:employment")["title"] == "12 more ratings"
-
-    async def _row(s):
-        return (await s.get(Setting, "ui.asks_dismissed")).value
-
-    assert asyncio.run(_with_session(_row)) == ["taste"]
-
-
-def test_the_calibrate_ask_waits_for_a_finished_run():
-    asyncio.run(_seed(with_run=False))
-    _scored_roles(15)
-    assert "taste" not in [a["key"] for a in _asks()]
+        assert c.post("/today/asks/taste/dismiss").status_code in (404, 405)
 
 
 def test_worth_a_look_counts_tier3_and_your_call_and_the_nav_badge_shares_it():

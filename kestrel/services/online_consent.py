@@ -18,11 +18,37 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel import netloc
 from kestrel.config import Settings
 
 CONSENT_KEY = "consented_model"
 CONSENT_DEST_KEY = "consented_destination"
 APPROVAL_KEY = "online_approval"
+# The research and summary tasks name theirs differently; same meaning.
+CONFIRMED_ONLINE_KEY = "confirmed_online"
+CONFIRMED_MODEL_KEY = "confirmed_model"
+CONFIRMED_DEST_KEY = "confirmed_dest"
+# The digest of the correction lines a Score again confirmation showed for the role
+# (kestrel.learning.correction_lines, D-SCORE-3): Tier 2 holds the task when they changed.
+CORRECTIONS_KEY = "consented_corrections"
+# EVERY task payload key that records an online confirmation, in one place (D-SEC-10). A task
+# writer records a confirmation only under one of these, and a restore removes all of them: a
+# confirmation is a click on THIS computer, so a restored task must be held for a fresh one.
+CONSENT_PAYLOAD_KEYS = (
+    CONSENT_KEY, CONSENT_DEST_KEY, APPROVAL_KEY,
+    CONFIRMED_ONLINE_KEY, CONFIRMED_MODEL_KEY, CONFIRMED_DEST_KEY, CORRECTIONS_KEY,
+)
+# Every task type, sorted by whether it can send anything to an online model. A new type must be
+# added to one of the two (tests/test_online_task_types.py fails until it is), and a type in the
+# first needs a test that a restored one is held.
+ONLINE_TASK_TYPES = frozenset({
+    "t1", "t2", "letter_draft", "build_stories", "interview_questions", "title_suggestions",
+    "org_summary", "org_research", "org_contacts", "follow_up", "bench",
+})
+LOCAL_TASK_TYPES = frozenset({
+    "embed", "scrape", "t0_recheck", "suggestion_check", "train_reranker", "ollama_pull",
+    "ollama_create",
+})
 SCORING_TIERS = ("tier1", "tier2")
 RUN_TIERS = ("tier1", "tier2", "trigger")
 APPROVAL_HOLD = "held: online destination changed or was not confirmed"
@@ -52,7 +78,19 @@ def tier_goes_online(settings: Settings, tier: str) -> bool:
         return True
     tcfg = llm.tiers.get(tier)
     backend = llm.backends.get(tcfg.backend) if tcfg is not None else None
-    return bool(backend is not None and backend.external)
+    return backend_is_off_machine(backend)
+
+
+def backend_is_off_machine(backend: Any) -> bool:
+    """True when a call to BACKEND could leave the person's own network (D-SEC-10, D-LLM-15): the
+    `external` flag is set, or its base URL ADDRESS is on the internet. This computer and a
+    server on the person's local network (home or office) are not off-machine: no consent dialog
+    and no Hosted mode, for any server type. No name is looked up (no DNS, D-LLM-15 amendment):
+    only a literal loopback or private address is local, and every host name counts as the
+    internet. The in-process engine never leaves."""
+    if backend is None:
+        return False
+    return bool(backend.external)
 
 
 def configured_model(settings: Settings, tier: str) -> str:
@@ -141,14 +179,39 @@ def held_for_approval(
     """Hold queued work an operator confirmed for named destinations when its actual client's
     destinations are no longer among them, or Hosted mode is off. Unstamped work is the
     scheduled pipeline: the accepted Hosted mode disclosure is its standing consent (SPEC 6.4)
-    and the client enforces it per call, so it is not held here."""
+    and the client enforces it per call, so it is not held here, with one exception: a task
+    that names its own model (`model_override`) on an online destination is never the scheduled
+    pipeline, so without a stamp it is held, whoever queued it (D-SEC-22)."""
     stamped = (payload or {}).get(APPROVAL_KEY)
     if stamped is None:
-        return False
+        return _unstamped_override_online(settings, tiers, payload)
     expected = approval_for(settings, tiers)
     return bool(expected) and (
         not settings.llm.hosted_mode.active or not approval_covers(expected, stamped)
     )
+
+
+def _unstamped_override_online(
+    settings: Settings, tiers: Iterable[str], payload: Mapping[str, Any] | None,
+) -> bool:
+    """True when the payload's `model_override` would send a `tiers` call online. An override
+    that cannot run falls back to the configured model (the worker's rule), which the standing
+    disclosure covers, so it is not counted."""
+    override = (payload or {}).get("model_override")
+    if not isinstance(override, dict) or not override.get("model"):
+        return False
+    from kestrel.pipeline._shared import ModelOverrideError, settings_with_override
+
+    for tier in tiers:
+        if tier not in settings.llm.tiers:
+            continue
+        try:
+            effective = settings_with_override(settings, tier, override)
+        except ModelOverrideError:
+            continue
+        if tier_goes_online(effective, tier):
+            return True
+    return False
 
 
 def confirmation_matches(
@@ -190,17 +253,27 @@ def _provider_label(settings: Settings, tier: str) -> str:
 
 async def online_route(
     session: AsyncSession, settings: Settings, tier: str, *, this_send: str = "",
-    reask: bool = False,
+    reask: bool = False, sends: str = "",
 ) -> dict[str, Any]:
     """Where a `tier` call goes. {"online": False} when it stays on this computer. Otherwise the
     provider, the configured model, `sends` (the tier's line of the Hosted mode disclosure, the
     text the operator acknowledged), `this_send` (what this action adds) and the employer state.
     The server re-checks the same facts when the action is asked for. `reask=True` marks an
     action whose reply goes through the plain-writing check, which can send one more request to
-    the same model; the panel then says so (disclosure only, it changes nothing that is sent)."""
+    the same model; the panel then says so (disclosure only, it changes nothing that is sent).
+    `sends` replaces the tier's general line with exactly what this action sends, for an action
+    that sends less than the tier's whole line (a story build, D-STORY-3); it must never name
+    less than the action actually sends."""
     if not tier_goes_online(settings, tier):
+        from kestrel.services import lan_servers
+
+        loc, host = lan_servers.tier_where(settings, tier)
+        # `where` names a model on another computer on the person's network (D-LLM-15); empty
+        # when it is on this computer.
+        if loc == netloc.LOCAL_NETWORK:
+            return {"online": False, "where": netloc.label_for(loc, host)}
         return {"online": False}
-    sends = settings.llm.hosted_mode.disclosure_terms()["sends"][tier]
+    sends = sends or settings.llm.hosted_mode.disclosure_terms()["sends"][tier]
     return {
         "online": True,
         "hosted_active": settings.llm.hosted_mode.active,

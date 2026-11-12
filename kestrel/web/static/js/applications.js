@@ -30,7 +30,9 @@
   }
   function board() { return $('#apps-board'); }
   function reduced() {
-    return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    // The OS setting or the app's own Reduce motion switch (as role.js and profile.js read it).
+    return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches) ||
+      document.documentElement.getAttribute('data-reduce-motion') === '1';
   }
   function fold(t) {
     return String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -95,6 +97,46 @@
               st.added || st.due || st.range !== '0');
   }
 
+  /* Search and the More filters run on the server over every application (D-PERF-3): the board
+     is drawn from the matches, so a closed card not loaded yet and a row on another table page
+     are found. The page still filters what it holds at once, for no wait; the server's answer
+     replaces it. `fkey` is the board's own record of what it was drawn for. */
+  var FILTER_KEYS = ['q', 'fit', 'pri', 'work', 'company', 'added', 'due', 'range'];
+  function filterKey() {
+    // Every typed value is stripped like the server's board_filter does, so a trailing space in
+    // Company cannot make the page's key differ from the one the board was drawn for.
+    return JSON.stringify([st.q.trim(), st.fit, st.pri, st.work, st.company.trim(), st.added,
+                           st.due, st.range]);
+  }
+  function filterParams() {
+    var out = {};
+    FILTER_KEYS.forEach(function (k) {
+      var v = (k === 'q' || k === 'company') ? st[k].trim() : st[k];
+      if (v) out[k] = v;
+    });
+    out.range = st.range;
+    return out;
+  }
+  var fetchTimer = 0;
+  function queueServer() {
+    var b = board();
+    if (!b || !root.htmx || filterKey() === b.getAttribute('data-fkey')) return;
+    root.clearTimeout(fetchTimer);
+    fetchTimer = root.setTimeout(function () {
+      var b2 = board();
+      if (!b2 || filterKey() === b2.getAttribute('data-fkey')) return;
+      var key = filterKey();
+      var q = new root.URLSearchParams({
+        track: b2.getAttribute('data-track') || 'employment',
+        view: b2.getAttribute('data-view') === 'table' ? 'table' : 'kanban'
+      });
+      // A new search or filter opens on the first page of its matches, not the page that was open.
+      if (b2.getAttribute('data-paged') === '1') q.set('page', '1');
+      root.htmx.ajax('GET', '/pursuits?' + q.toString(), { target: '#apps-board', swap: 'outerHTML' })
+        .then(function () { if (key !== filterKey()) queueServer(); });
+    }, 280);
+  }
+
   function apply() {
     var b = board(), p = page();
     if (!b || !p) return;
@@ -118,6 +160,27 @@
         if (el.dataset.folded === '1') colFolded[col] = (colFolded[col] || 0) + 1;
       }
     });
+    // Closed cards the page has not loaded yet (Show more) count while nothing narrows the list;
+    // a search or filter can only speak for the cards that are here.
+    var served = b.getAttribute('data-fkey') === filterKey();
+    var narrowed = !served && !!(st.q.trim() || st.fit || st.pri || st.work || st.company ||
+                                 st.added || st.due || st.range !== '0');
+    var extraAll = 0;
+    if (!narrowed) {
+      $$('[data-closed-more]', b).forEach(function (btn) {
+        var n = Number(btn.getAttribute('data-extra')) || 0;
+        var col = btn.getAttribute('data-col');
+        if (!n || !col) return;
+        perChip.all += n;
+        perChip[col] = (perChip[col] || 0) + n;
+        if (st.chip === 'all' || st.chip === col) {
+          ok += n;
+          extraAll += n;
+          colOk[col] = (colOk[col] || 0) + n;
+          colFolded[col] = (colFolded[col] || 0) + n;
+        }
+      });
+    }
     // Per-column cap on the open cards; the folded group is not capped.
     var cap = Number(st.cap) || 0;
     var capped = {};
@@ -158,15 +221,19 @@
     shown = ok;
     Object.keys(capped).forEach(function (k) { shown -= capped[k]; });
     if (!foldedOpen && b.getAttribute('data-view') !== 'table') Object.keys(colFolded).forEach(function (k) { shown -= colFolded[k]; });
-    var total = items.length;
+    // Drawn for this very filter: the totals are the server's, over every match, not the rows held.
+    var useServer = served || (b.getAttribute('data-paged') === '1' && !narrowed);
+    var totals = {};
+    try { totals = JSON.parse(b.getAttribute('data-chip-totals') || '{}'); } catch (err) { totals = {}; }
+    var total = useServer ? (Number(b.getAttribute('data-total')) || 0) : items.length + extraAll;
     var count = $('[data-testid="filter-count"]');
     if (count) count.textContent = 'Showing ' + Math.max(shown, 0) + ' of ' + total;
     var nomatch = $('#apps-nomatch');
-    if (nomatch) nomatch.hidden = !(total > 0 && ok === 0);
+    if (nomatch) nomatch.hidden = !((total > 0 || active()) && ok === 0);
     $$('#ap-chips [data-chip]').forEach(function (chip) {
       var k = chip.getAttribute('data-chip');
       var n = $('.k-chip__n', chip);
-      if (n) n.textContent = perChip[k] || 0;
+      if (n) n.textContent = useServer && totals[k] !== undefined ? totals[k] : (perChip[k] || 0);
       var on = k === st.chip;
       chip.classList.toggle('is-on', on);
       chip.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -220,6 +287,7 @@
     });
     savePref('range', '0');
     apply();
+    queueServer();
   }
 
   // A saved choice outlives the page on purpose: it is not tied to the page's signal, so leaving
@@ -397,7 +465,6 @@
         $$('.ap-closedg').forEach(function (g) { g.classList.remove('is-still'); });
       });
       markSelected();
-      applySort(false);  // a swapped table keeps its sort; drawn in place, never moved
       flip();
       var body = $('#ap-panel .k-flyout__body');
       if (body && panelScroll) { body.scrollTop = panelScroll; }
@@ -495,7 +562,7 @@
       e.stopPropagation(); closeMenus(); return;
     }
     if (e.key === 'Escape' && t && t.id === 'ap-q') {
-      e.preventDefault(); t.value = ''; st.q = ''; apply(); return;
+      e.preventDefault(); t.value = ''; st.q = ''; apply(); queueServer(); return;
     }
     if (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
       var box = $('#ap-q');
@@ -518,12 +585,13 @@
   function onInput(e) {
     var t = e.target;
     if (!page()) return;
-    if (t.id === 'ap-q') { st.q = t.value; apply(); return; }
+    if (t.id === 'ap-q') { st.q = t.value; apply(); queueServer(); return; }
     var f = t.getAttribute && t.getAttribute('data-f');
     if (!f) return;
     st[f] = t.value;
     if (f === 'range' || f === 'cap') savePref(f, t.value);
     apply();
+    queueServer();
   }
 
   /* ----------------------------------------------------------------------- drag and drop */
@@ -622,10 +690,25 @@
     }
   }
   function onConfigRequest(e) {
-    if (st.panel === null || !e.detail) return;
+    if (!e.detail || !page()) return;
     var path = String(e.detail.path || '');
     if (path.indexOf('/pursuits') !== 0 || /\/panel(\?|$)/.test(path)) return;
-    e.detail.parameters.panel = st.panel;
+    if (/^\/pursuits\/(prefs|add)/.test(path)) return;
+    var fp = filterParams();
+    Object.keys(fp).forEach(function (k) { e.detail.parameters[k] = fp[k]; });
+    // A card changed on table page 3 redraws page 3, not page 1 (a pager link names its own page).
+    var b = board();
+    if (b && !/[?&]view=/.test(path)) {
+      e.detail.parameters.view = b.getAttribute('data-view') === 'table' ? 'table' : 'kanban';
+    }
+    if (b && b.getAttribute('data-paged') === '1' && !/[?&]page=/.test(path)) {
+      e.detail.parameters.page = b.getAttribute('data-page') || '1';
+    }
+    // The table's sort rides along, so a page, a card action or a filter keeps the order. An
+    // empty sort says "none", so a saved cookie does not bring one back after a third press.
+    e.detail.parameters.sort = sortState.col;
+    e.detail.parameters.dir = String(sortState.dir);
+    if (st.panel !== null) e.detail.parameters.panel = st.panel;
   }
   function onPanelClosed(e) {
     if (e.target && e.target.id === 'ap-panel') { st.panel = null; markSelected(); }
@@ -687,22 +770,53 @@
     writeViewCookie(view);
   }
 
-  /* Sorting: the header cell holds a real button (Enter and Space work), aria-sort says which
-     column is sorted and which way, and the choice survives every swap of the board. */
+  /* Sorting (#137): the header cell holds a real button (Enter and Space work), aria-sort says
+     which column is sorted and which way. The server sorts every application, then cuts the page,
+     so page 2 continues page 1's order; a press asks for the table again and the rows glide from
+     their old places to the new ones. The choice is kept in a cookie the server reads (and a
+     local copy), so the first paint is already in order, and the board says what it drew. */
+  var SORT_COOKIE = 'kestrel_pursuits_sort';
+  var SORT_KEY = 'kestrel_pursuits_sort';
   var sortState = { col: '', dir: 1 };  // dir: 1 ascending, -1 descending
   var SORT_FIRST = { role: 1, stage: 1, due: -1, applied: -1, fit: -1 };  // first press: most useful end
+  var flipFrom = null;   // row tops by id, taken before the table is asked for again
+  var refocus = '';      // the header whose button had focus, to focus again after the swap
+  var flipBoard = null;  // the board drawn when the press was made (its replacement is the answer)
+
+  /* The sort the server drew is the truth: read it back from the board after every swap. */
   function loadSort() {
-    sortState = { col: '', dir: 1 };
+    var b = board();
+    var col = b ? b.getAttribute('data-sortcol') : '';
+    var dir = b ? Number(b.getAttribute('data-sortdir')) : 1;
+    sortState = SORT_FIRST[col] !== undefined && (dir === 1 || dir === -1) ? { col: col, dir: dir } : { col: '', dir: 1 };
+  }
+  function writeSortCookie() {
+    try {
+      var v = sortState.col ? sortState.col + '_' + (sortState.dir === 1 ? 'asc' : 'desc') : '';
+      doc.cookie = SORT_COOKIE + '=' + v + '; path=/; max-age=' + (v ? 31536000 : 0) + '; SameSite=Lax';
+    } catch (e) { /* cookies blocked: ignore */ }
+  }
+  function saveSort() {
+    writeStore(SORT_KEY, JSON.stringify(sortState));
+    writeSortCookie();
+  }
+  /* An install that has the sort only in local storage (the first cut of this feature) gets the
+     cookie from it for the next visit. This visit stays as it was drawn. */
+  function migrateSort() {
+    try {
+      if (doc.cookie.split(';').some(function (c) { return c.trim().indexOf(SORT_COOKIE + '=') === 0; })) return;
+    } catch (e) { return; }
     var raw = readStore(SORT_KEY);
     if (!raw) return;
     try {
       var o = JSON.parse(raw);
       if (o && SORT_FIRST[o.col] !== undefined && (o.dir === 1 || o.dir === -1)) {
         sortState = { col: o.col, dir: o.dir };
+        writeSortCookie();
+        loadSort();
       }
     } catch (e) { /* unreadable: no sort */ }
   }
-  function saveSort() { writeStore(SORT_KEY, JSON.stringify(sortState)); }
 
   function markSort() {
     $$('th[data-sort]').forEach(function (th) {
@@ -711,15 +825,24 @@
     });
   }
 
-  function rowSnap(rows) {
-    var map = new root.Map();
-    rows.forEach(function (r) { map.set(r, r.getBoundingClientRect().top); });
+  function rowSnap() {
+    var map = {};
+    $$('.ap-table tbody tr').forEach(function (r) { map[r.getAttribute('data-id')] = r.getBoundingClientRect().top; });
     return map;
   }
-  function rowFlip(rows, before) {
+  /* After the swap: a row that was on screen glides from where it was; rows new to the page
+     (another page of the sort) just appear. Reduced motion: nothing moves. */
+  function rowFlip() {
+    var before = flipFrom;
+    flipFrom = null;
+    if (refocus) {
+      var btn = $('th[data-sort="' + refocus + '"] button');
+      refocus = '';
+      if (btn) btn.focus({ preventScroll: true });
+    }
     if (!before || reduced()) return;
-    rows.forEach(function (r) {
-      var from = before.get(r);
+    $$('.ap-table tbody tr').forEach(function (r) {
+      var from = before[r.getAttribute('data-id')];
       if (from === undefined || !r.animate) return;
       var dy = from - r.getBoundingClientRect().top;
       if (Math.abs(dy) > 2) {
@@ -729,62 +852,35 @@
     });
   }
 
-  /* Put the rows in the chosen order. animate=false on a restore after a swap: the rows are drawn
-     in their place the first time, never moved after paint. */
-  function applySort(animate) {
+  /* Runs after every swap: read the sort back, mark the headers, glide the rows. */
+  function afterSortSwap() {
+    // An out of band piece of the reply (the rail) is swapped before the board is: wait for the
+    // new board, or the glide and the focus would be spent on the old one.
+    var waiting = flipBoard !== null && board() === flipBoard;
+    loadSort();
     markSort();
-    if (!sortState.col) return;
-    var tbody = $('.ap-table tbody');
-    if (!tbody) return;
-    var rows = $$('tr', tbody);
-    var before = animate ? rowSnap(rows) : null;
-    var dir = sortState.dir, col = sortState.col;
-    rows.sort(function (a, b) {
-      var av = sortVal(a, col), bv = sortVal(b, col);
-      // A row with no value for this column is last in both directions.
-      if (av === null && bv === null) return ordOf(a) - ordOf(b);
-      if (av === null) return 1;
-      if (bv === null) return -1;
-      var c = typeof av === 'string' ? av.localeCompare(bv, undefined, { sensitivity: 'base' }) : av - bv;
-      return c !== 0 ? c * dir : ordOf(a) - ordOf(b);
-    });
-    var same = rows.every(function (r, i) { return tbody.children[i] === r; });
-    if (same) return;
-    rows.forEach(function (r) { tbody.appendChild(r); });
-    rowFlip(rows, before);
+    if (waiting) return;
+    flipBoard = null;
+    rowFlip();
   }
-  function ordOf(row) { return Number(row.dataset.ord) || 0; }
 
   function onSortClick(e) {
     var th = e.target.closest('th[data-sort]');
     if (!th || !th.closest('.ap-table')) return;
     var col = th.getAttribute('data-sort');
-    if (sortState.col === col) sortState.dir = -sortState.dir;
-    else sortState = { col: col, dir: SORT_FIRST[col] || 1 };
+    // First press: the most useful end. Second: reverse. Third: back to the default order.
+    if (sortState.col === col) {
+      if (sortState.dir === (SORT_FIRST[col] || 1)) sortState.dir = -sortState.dir;
+      else sortState = { col: '', dir: 1 };
+    } else sortState = { col: col, dir: SORT_FIRST[col] || 1 };
     saveSort();
-    applySort(true);
-  }
-
-  var STAGE_ORD = { to_apply: 0, to_contact: 0, applied: 1, conversation: 1, interviewing: 2, proposal: 2, closed: 3 };
-  /* The value a row sorts on, or null when it has none. The role column sorts on the title the
-     row shows, not on the search text (which starts with other words). */
-  function sortVal(row, col) {
-    var ds = row.dataset;
-    switch (col) {
-      case 'role': {
-        var b = row.querySelector('.ap-tt b');
-        return b ? b.textContent.trim().toLowerCase() : null;
-      }
-      case 'stage': {
-        var o = STAGE_ORD[ds.col];
-        return o === undefined ? 99 : o;
-      }
-      // Closed rows have no due date. A row that is overdue outranks one that is not.
-      case 'due': return ds.folded === '1' ? null : (ds.quiet === '1' ? 1000 + (Number(ds.quiet_days) || 0) : 0);
-      case 'applied': return ds.applied ? ds.applied : null;
-      case 'fit': return ds.fit === '' || ds.fit === undefined || isNaN(Number(ds.fit)) ? null : Number(ds.fit);
-      default: return null;
-    }
+    markSort();  // the header answers at once; the rows follow when the server replies
+    flipFrom = rowSnap();
+    flipBoard = board();
+    refocus = col;
+    // A new order starts at page 1; the filters and the sort ride along (onConfigRequest).
+    root.htmx.ajax('GET', '/pursuits?view=table&track=' + track() + '&page=1',
+      { target: '#apps-board', swap: 'outerHTML' });
   }
 
   root.KUI.page.define('applications', {
@@ -799,11 +895,12 @@
       apply();
       migrateView();  // the saved Board / Table choice is rendered by the server (#121)
       loadSort();
-      applySort(false);
+      migrateSort();
+      markSort();
       ctx.on(doc, 'htmx:afterSwap', onViewSwap);
-      // Before the swapped table is painted, not a frame after: no flash of the unsorted order.
-      ctx.on(doc, 'htmx:afterSwap', function () { applySort(false); });
-      ctx.on(doc, 'htmx:oobAfterSwap', function () { applySort(false); });
+      // The server draws the table in order; read it back and glide the rows (no flash).
+      ctx.on(doc, 'htmx:afterSwap', afterSortSwap);
+      ctx.on(doc, 'htmx:oobAfterSwap', afterSortSwap);
       ctx.on(doc, 'click', onFollowUpClick);
       ctx.on(doc, 'input', onDraftInput);
       var autoDraft = $('[data-auto-draft]');

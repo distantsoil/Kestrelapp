@@ -424,8 +424,18 @@ def test_first_sentence_keeps_abbreviations_and_clips_long_prose():
 
 
 # ------------------------------------------------------------------------------------ chips
+async def _b_seen_earlier(ids: dict[str, int]) -> None:
+    """Today's new roles wait in Top matches, not in Your call (D-UI-249): age role b."""
+    async def go(s):
+        (await s.get(Opportunity, ids["b"])).first_seen_at = iso(_now() - timedelta(days=2))
+        await s.commit()
+
+    await _with_session(go)
+
+
 def test_each_chip_maps_to_its_query_parameter():
     ids = asyncio.run(_seed())
+    asyncio.run(_b_seen_earlier(ids))
     with _client() as c:
         base = _get(c, "/opportunities")
         for name in ("all", "shortlisted", "needs_review", "evaluated", "new_today", "saved",
@@ -442,7 +452,8 @@ def test_each_chip_maps_to_its_query_parameter():
         assert re.search(r'data-chip="all">All<span class="k-chip__n">4</span>', base)
         assert re.search(r'data-chip="shortlisted">My shortlist<span class="k-chip__n">1</span>',
                          base)
-        assert re.search(r'data-chip="needs_review">Your call<span class="k-chip__n">1</span>',
+        # D-UI-249: b (undecided, seen before today) and a (shortlisted, not applied) need a call.
+        assert re.search(r'data-chip="needs_review">Your call<span class="k-chip__n">2</span>',
                          base)
 
         shortlisted = _get(c, "/opportunities?shortlisted=1")
@@ -450,12 +461,12 @@ def test_each_chip_maps_to_its_query_parameter():
         assert re.search(r'class="k-chip is-on"[^>]*data-chip="shortlisted"', shortlisted)
         assert 'data-chip="clear"' in shortlisted
 
-        assert _row_ids(_get(c, "/opportunities?needs_review=1")) == [ids["b"]]
+        assert sorted(_row_ids(_get(c, "/opportunities?needs_review=1"))) == [ids["a"], ids["b"]]
         assert _row_ids(_get(c, "/opportunities?stage=t2_done")) == [
             ids["a"], ids["b"], ids["k"]
         ]
-        assert _row_ids(_get(c, "/opportunities?new_today=1")) == [
-            ids["a"], ids["b"], ids["e"], ids["k"]
+        assert _row_ids(_get(c, "/opportunities?new_today=1")) == [  # b was aged above
+            ids["a"], ids["e"], ids["k"]
         ]
         assert _row_ids(_get(c, "/opportunities?stage=quarantined")) == [ids["e"]]
         hidden = _get(c, "/opportunities?hidden=1")
@@ -466,8 +477,8 @@ def test_each_chip_maps_to_its_query_parameter():
         assert _row_ids(_get(c, "/opportunities?track=consulting")) == [ids["c"]]
         assert _row_ids(_get(c, "/opportunities?q=ridgeline&track=consulting")) == [ids["c"]]
         assert _row_ids(_get(c, "/opportunities?q=senior")) == [ids["k"]]
-        # Chips combine: shortlisted AND needs review is empty, with the empty state.
-        both = _get(c, "/opportunities?shortlisted=1&needs_review=1")
+        # Chips combine: saved AND needs review is empty (D-UI-249), with the empty state.
+        both = _get(c, "/opportunities?saved=1&needs_review=1")
         assert _row_ids(both) == [] and "Nothing matches these filters" in both
         assert 'data-testid="clear-filters"' in both and "j</kbd>" in both
         # Sort: newest and ghost are accepted; an HTMX request gets only the list block.
@@ -818,8 +829,9 @@ def test_add_is_one_transaction_and_says_where_the_role_sits(monkeypatch):
     monkeypatch.setattr(oa, "record_override", boom)
     with _client() as c:
         r = c.post(f"/opportunities/{ids['d']}/add")
-    # The failure is named by type only; its text stays in the log (D-SEC-1).
-    assert "Could not add it to your shortlist: an unexpected problem (RuntimeError)" in r.text
+    # The failure is Kestrel's own sentence; the class name and its text stay in the log (D-SEC-4).
+    assert "Could not add it to your shortlist: an unexpected problem" in r.text
+    assert "RuntimeError" not in r.text
     assert "disk full" not in r.text
 
     async def pursuits(s):
@@ -1074,6 +1086,7 @@ def test_nav_counts_agree_with_the_chips():
     superseded evaluation's flag and a hidden opportunity's flag are out, exactly as the chip.
     The calibrate count leaves hidden rows out too."""
     ids = asyncio.run(_seed())
+    asyncio.run(_b_seen_earlier(ids))
 
     async def flag_more(s):
         a = await s.get(Opportunity, ids["a"])
@@ -1097,8 +1110,10 @@ def test_nav_counts_agree_with_the_chips():
         chip_rows = _row_ids(_get(c, "/opportunities?needs_review=1"))
         counts = c.get("/status/counts").text
         status = c.get("/api/status").json()["counts"]
-    assert chip_rows == [ids["b"]]
-    assert len(chip_rows) == 1
+    # D-UI-249: a (shortlisted, not applied) and b (undecided, seen before today) wait; the
+    # hidden h and the role first seen today (z) do not.
+    assert sorted(chip_rows) == [ids["a"], ids["b"]]
+    assert len(chip_rows) == 2
     # Finding 12: no nav badge shows Your call, so no out-of-band span (it had no target).
     assert "needs_review" not in status
     assert 'id="nav-count-needs_review"' not in counts
@@ -1425,9 +1440,9 @@ def test_applied_roles_leave_worth_a_look_for_their_own_group_with_a_status_pill
         sec + 'new') < html.index(sec + 'failed')
     row = _row(html, new["ap"])
     assert 'data-group="applied"' in row
-    assert 'data-testid="pursuit-status">applied</span>' in row
+    assert 'data-testid="pursuit-status">Applied</span>' in row
     assert 'data-testid="on-shortlist"' not in row
-    assert 'data-testid="pursuit-status">interviewing</span>' in _row(html, new["iv"])
+    assert 'data-testid="pursuit-status">Interviewing</span>' in _row(html, new["iv"])
     # A shortlisted role still shows the shortlist pill, not a status.
     assert 'data-testid="on-shortlist">On my shortlist</span>' in _row(html, ids["a"])
     # A closed pursuit is off the shortlist: the model's own group (Maybe), no status pill.

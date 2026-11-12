@@ -28,6 +28,7 @@ from PyInstaller.utils.hooks import (
     collect_data_files,
     collect_dynamic_libs,
     collect_submodules,
+    copy_metadata,
 )
 
 ROOT = Path(SPECPATH).parent  # packaging/ -> repo root
@@ -74,6 +75,18 @@ for pkg in collect_all_pkgs:
     binaries += b
     hiddenimports += h
 
+# Distribution metadata (the *.dist-info folders) is not shipped by collect_all for a sibling
+# distribution. fastmcp reads its own version when it is imported, from "fastmcp-slim" and then
+# "fastmcp", and reads "mcp" and "pydocket" (optional) by name; with no metadata every one of those
+# lookups raises PackageNotFoundError and the MCP server cannot start in the packaged app (#130).
+# Guarded like clr_loader: a name that is not installed here is skipped, never a build abort.
+# tests/test_packaging.py keeps this line honest.
+for _dist in ("fastmcp", "fastmcp-slim", "mcp", "pydocket"):
+    try:
+        datas += copy_metadata(_dist, recursive=True)
+    except Exception as _exc:  # noqa: BLE001 - PackageNotFoundError for a name not installed
+        print(f"kestrel.spec: no metadata for {_dist}: {type(_exc).__name__}")
+
 # JobSpy 1.3.0 talks to the boards through curl_cffi (libcurl-impersonate), which replaced the
 # tls_client Go library of 1.1.x (D-PKG-4, amended). curl_cffi is a cffi extension (_wrapper) plus
 # a delvewheel-repaired sibling folder `curl_cffi.libs` holding libcurl-impersonate; its __init__
@@ -95,6 +108,10 @@ if importlib.util.find_spec("curl_cffi") is not None:
 # python_multipart but still installs the legacy `multipart` alias, and which one Starlette reaches
 # for depends on its version.
 hiddenimports += ["python_multipart", "multipart"]
+
+# psutil lists Ollama's network connections for the Local AI check (#144). It is a C extension the
+# static graph may miss on a platform build, so it is named here.
+hiddenimports += ["psutil"]
 
 # tiktoken resolves cl100k_base through a namespace-package plugin the static graph misses (F2).
 hiddenimports += ["tiktoken_ext", "tiktoken_ext.openai_public"]

@@ -394,3 +394,42 @@
 /* Now strip: spacing for the polled block and its quarantine line. */
 #today-now { margin: 0 0 10px; }
 #today-now .td-now-quarantine { font-size: 12px; margin-top: 2px; }
+
+/* The quick-round strip (issue 171, D-UI-272): the retry note's strip family in the info tint,
+   below the retry note and above Top matches. Hidden while empty so the page gap stays one. */
+.td-quick[data-empty="1"] { display: none; }
+.td-qr { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  border: 1px solid var(--tint-info-line); background: var(--tint-info); border-radius: 12px;
+  font-size: 13.5px; animation: td-in-up .45s ease backwards;
+  transition: opacity .3s, transform .35s cubic-bezier(.2, .8, .2, 1); }
+.td-qr.is-leaving { opacity: 0; transform: translateY(-6px); }
+.td-qr .k-badge { width: 28px; height: 28px; flex: none; }
+.td-qr .k-badge .k-ic { width: 15px; height: 15px; }
+.td-qr__body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.td-qr__body b { color: var(--ink); }
+.td-qr__line { color: var(--muted); }
+.td-qr .qr-meter { margin-top: 4px; }
+.td-qr__acts { display: flex; align-items: center; gap: 8px; flex: none; }
+.td-qr__later { position: relative; }
+.td-qr__menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; min-width: 250px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow-pop); padding: 6px; display: grid; gap: 2px;
+  animation: td-in-up .2s ease backwards; }
+.td-qr__menu[hidden] { display: none; }
+.td-qr__menu button { display: grid; gap: 2px; text-align: left; border: 0; background: none;
+  padding: 8px 10px; border-radius: 8px; font: inherit; font-weight: 600; color: var(--ink);
+  cursor: pointer; }
+.td-qr__menu button:hover, .td-qr__menu button:focus-visible { background: var(--soft); }
+.td-qr__menu small { font-weight: 400; color: var(--muted); font-size: 12.5px; }
+@media (max-width: 1100px) {
+  .td-qr { flex-wrap: wrap; }
+  .td-qr__acts { width: 100%; padding-left: 40px; }
+  /* The buttons sit at the left here: open the menu under Not now, toward the strip's right. */
+  .td-qr__menu { right: auto; left: 0; }
+}
+@container kwin (max-width: 1100px) {
+  .td-qr { flex-wrap: wrap; }
+  .td-qr__acts { width: 100%; padding-left: 40px; }
+  /* The buttons sit at the left here: open the menu under Not now, toward the strip's right. */
+  .td-qr__menu { right: auto; left: 0; }
+}

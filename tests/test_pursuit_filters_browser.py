@@ -89,7 +89,8 @@ def test_applications_live_search_in_a_browser():
         search.fill("northwind")
         expect(cards).to_have_count(1)
         expect(cards).to_contain_text("Northwind Freight")
-        expect(count).to_have_text("Showing 1 of 5")
+        # the server answers for this search over every application (D-PERF-3): "of" is the matches
+        expect(count).to_have_text("Showing 1 of 1")
 
         # Escape clears the box and everything returns
         search.press("Escape")
@@ -101,7 +102,7 @@ def test_applications_live_search_in_a_browser():
         search.fill("zzqxnothing")
         empty = page.get_by_test_id("filter-empty")
         expect(empty).to_be_visible()
-        expect(count).to_have_text("Showing 0 of 5")
+        expect(count).to_have_text("Showing 0 of 0")
         page.get_by_test_id("clear-filters").click()
         expect(empty).to_be_hidden()
         expect(search).to_have_value("")
@@ -111,7 +112,7 @@ def test_applications_live_search_in_a_browser():
         search.fill("hooli")
         expect(page.locator(".ap-closedg")).to_have_class(re.compile("is-open"))
         expect(cards).to_have_count(1)
-        expect(count).to_have_text("Showing 1 of 5")
+        expect(count).to_have_text("Showing 1 of 1")
         search.fill("")
         expect(page.locator(".ap-closedg")).not_to_have_class(re.compile("is-open"))
 
@@ -213,7 +214,7 @@ def test_date_range_and_column_cap_limit_a_long_board_and_the_choice_persists():
         with page.expect_response(lambda r: "/pursuits/prefs" in r.url and r.ok):
             page.get_by_test_id("range-select").select_option("30")
         expect(cards).to_have_count(6)
-        expect(count).to_have_text("Showing 6 of 8")
+        expect(count).to_have_text("Showing 6 of 6")
         assert "range=30" in page.url
         # Wait for the choice to be saved before leaving (the slower Windows runner, #14 CI).
         with page.expect_response(

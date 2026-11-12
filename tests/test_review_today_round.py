@@ -24,6 +24,24 @@ HX = {"HX-Request": "true"}
 
 
 @pytest.fixture(autouse=True)
+def _mcp_runtime_state_is_fresh():
+    """The MCP runtime keeps its state in one module-level dict (live flag, server task, stop
+    event, port, stored failure reason and detail). A test that leaves a stored failure behind
+    would leak it into the next test in the same worker, so the whole dict is put back to its
+    defaults before and after every test."""
+    from kestrel.mcp import runtime as _rt
+
+    def _reset() -> None:
+        _rt._state.clear()
+        _rt._state.update(live=False, task=None, stop=None, port=None, bind_all=False,
+                          reason=None, recorded=None, detail=None)
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _no_ollama(monkeypatch):
     from kestrel.web import routes_control
 
@@ -285,15 +303,21 @@ def test_lifespan_runs_the_worker_shutdown_even_when_mcp_stop_fails(monkeypatch)
     async def bad_stop():
         raise RuntimeError("stop exploded")
 
-    async def graceful(task, stop):
+    async def graceful(task, stop, grace_s=None, *, also=()):
         calls.append("graceful")
-        task.cancel()
+        for t in (task, *also):  # the worker and, since D-QUEUE-6, the online lane
+            if t is not None:
+                t.cancel()
 
     async def rebuild():
         calls.append("rebuild")
 
+    # #148: the loops start a beat after health, so zero the delay here; this test wants the
+    # worker already running so it can be the one gracefully shut down.
+    monkeypatch.setattr(app_mod, "WORKER_DELAY_S", 0.0)
     for name in ("_worker_loop", "_delivery_loop", "_stall_monitor", "_setup_models_loop"):
         monkeypatch.setattr(app_mod, name, idle)
+    monkeypatch.setattr(app_mod, "_online_lane", idle)  # not on the old allowlist; keep it out
     for name in ("_seed_shipped_sources", "_seed_shipped_layouts", "_apply_keep_awake",
                  "_start_mcp_if_enabled"):
         monkeypatch.setattr(app_mod, name, noop)
@@ -322,9 +346,11 @@ def test_mcp_switch_failure_is_a_plain_error_not_a_500(monkeypatch):
     with _client() as c:
         r = c.post("/settings/mcp", data={"enabled": "1"}, headers=HX)
     assert r.status_code == 200
-    # The exception text is logged, never shown (D-SEC-2): the type and a pointer to the log.
-    assert "The MCP server could not be started: an unexpected problem (RuntimeError)" in r.text
-    assert "no loop for you" not in r.text
+    # The exception text is logged, never shown (D-SEC-2), and neither is its class name
+    # (D-UI-242): plain words and a pointer to the log.
+    assert ("The MCP server could not be started: an unexpected problem; "
+            "the details are in the log") in r.text
+    assert "no loop for you" not in r.text and "RuntimeError" not in r.text
 
 
 # ------------------------------------------------------------- finding 5: open run is active

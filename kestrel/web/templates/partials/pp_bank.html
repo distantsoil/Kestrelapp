@@ -4,12 +4,12 @@
 {% import "ui/macros.html" as ui %}
 {% import "partials/pp_icons.html" as i %}
 {% import "partials/online_ask.html" as online_ask %}
-<div class="pp-bankgrid" id="pp-bank"{% if oob %} hx-swap-oob="true"{% endif %}{% if building %} hx-get="{{ base }}?tab=bank" hx-trigger="every 5s" hx-target="#pp-body" hx-swap="innerHTML"{% endif %} data-testid="pp-bank">
+<div class="pp-bankgrid" id="pp-bank"{% if oob %} hx-swap-oob="true"{% endif %}{% if building %} hx-get="{{ base }}?tab=bank&version={{ bank_version or '' }}" hx-trigger="every 5s" hx-target="#pp-tabbody" hx-swap="innerHTML"{% endif %} data-testid="pp-bank">
   <section class="k-card" data-testid="story-tools">
     <div class="pp-tools">
       <button type="button" class="k-btn k-btn--primary k-btn--sm" hx-get="/stories/sheet?from=bank{% if opp_id %}&opp={{ opp_id }}{% endif %}" hx-target="#pp-dialog" hx-swap="innerHTML" data-testid="add-story">+ Add a story</button>
       <form hx-post="/stories/build" hx-swap="none">
-      {{ online_ask.ask(build_route, 'build', 'build drafts') }}
+      {{ online_ask.ask(build_route, 'build', 'build drafts', online_ask.STORY_LOCAL) }}
       <button type="submit" class="k-btn k-btn--sm" data-consent-send {% if building %}disabled{% endif %} data-testid="build-stories"><b>Build stories</b></button>
       <span class="pp-btnsub" data-testid="build-reads">Builds drafts from your notes on {{ notes_count }} {{ 'role' if notes_count == 1 else 'roles' }} and the interview questions Kestrel drafted when it scored each role.</span>
       </form>

@@ -164,7 +164,9 @@ def repair_request(violations: list[Violation], extra: list[dict[str, str]]) -> 
     for v in violations:
         lines.append(f"- {v.field}: \"{v.phrase}\" ({RULE_LABELS.get(v.rule, v.rule)})")
     for f in extra:
-        lines.append(f"- {f.get('field', '')}: {describe(f)}. Remove it or say what is known.")
+        # A check that needs its own wording (a letter over its length, D-LETTER-3) says it.
+        ask = f.get("request") or f"{describe(f)}. Remove it or say what is known."
+        lines.append(f"- {f.get('field', '')}: {ask}")
     lines += ["", "Return the same JSON object, complete, with the same fields."]
     return "\n".join(lines)
 
@@ -211,9 +213,10 @@ async def enforce(
 
     violations, extra = look(value)
     blocking = [v for v in violations if v.blocking]
-    # A named-detail flag (#113) is a mark only, never a re-ask: a false one would make the model
-    # delete a real fact. Number grounding keeps its re-ask.
-    reask_extra = [f for f in extra if f.get("detail") != "name"]
+    # A named-detail flag (#113), a letter's length of time or a promise (D-LETTER-9) is a mark
+    # only, never a re-ask: a false one would make the model delete a real fact. Number grounding
+    # keeps its re-ask.
+    reask_extra = [f for f in extra if f.get("detail") not in ("name", "time", "promise")]
     if not blocking and not reask_extra:
         return PlainResult(value, _flags(violations, extra))
 

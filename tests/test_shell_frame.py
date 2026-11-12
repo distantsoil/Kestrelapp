@@ -60,8 +60,10 @@ def test_window_api_close_intent_is_tray_or_quit_and_never_raises():
 def test_window_api_exposes_only_its_own_methods_to_the_page():
     api, _ = _api(_Win())
     public = sorted(n for n in dir(api) if not n.startswith("_"))
-    assert public == ["splash_download", "splash_open_logs", "splash_quit", "splash_retry",
-                      "window_close", "window_close_intent", "window_info", "window_minimize",
+    assert public == ["splash_cancel", "splash_download", "splash_open_logs", "splash_quit",
+                      "splash_retry", "splash_safe_start", "window_close", "window_close_intent",
+                      "window_info",
+                      "window_minimize",
                       "window_set_frame_color", "window_set_theme", "window_start_drag",
                       "window_start_resize", "window_toggle_maximize"]
 

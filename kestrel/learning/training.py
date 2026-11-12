@@ -13,7 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from kestrel.db.models import MlModel, Task
 from kestrel.errors import failure_record, shown_failure
-from kestrel.learning import reranker
+from kestrel.learning import reranker, signing
 from kestrel.learning.capture import labeled_examples
 from kestrel.queue.queue import TaskQueue
 from kestrel.services.setting_overrides import load_settings_with_db
@@ -46,6 +46,12 @@ async def state(session: AsyncSession, track: str) -> dict:
     ), "detail": result.get("reason")}
 
 
+def _verifies(ml: MlModel) -> bool:
+    """True when the loader would accept this model's files (both signatures valid)."""
+    return (signing.read_verified(ml.artifact_path, ml.artifact_signature) is not None
+            and signing.read_verified(ml.pca_artifact_path, ml.pca_artifact_signature) is not None)
+
+
 async def request_training(session: AsyncSession, track: str, *, automatic: bool = False) -> str:
     settings = await load_settings_with_db(session)
     if not settings.learning.build_model:
@@ -58,12 +64,23 @@ async def request_training(session: AsyncSession, track: str, *, automatic: bool
                                     .order_by(Task.id.desc()).limit(1))).scalar_one_or_none()
     if latest is not None and latest.status in ("pending", "leased"):
         return "Training is already queued or running."
+    replaces = None
     if automatic:
-        active = (await session.execute(select(MlModel.id).where(
+        active = (await session.execute(select(MlModel).where(
             MlModel.track == track, MlModel.kind == "reranker", MlModel.is_active.is_(True),
         ).limit(1))).scalar_one_or_none()
-        if active is not None:
+        if active is not None and await asyncio.to_thread(_verifies, active):
             return "Your sorting model is already in use."
+        # An active model the loader refuses (D-SEC-13: saved before signing, or its file fails
+        # its signature) is not in use. Its first retrain skips the wait, once per refused row
+        # ever (any task, not only the latest, D-LEARN-8): later retrains wait like any other,
+        # so a refused model that stays active never gets a duplicate retrain.
+        if active is not None and (await session.execute(select(Task.id).where(
+                *_for_track(track),
+                func.json_extract(Task.payload, "$.replaces_refused") == active.id,
+        ).limit(1))).scalar_one_or_none() is None:
+            replaces = active.id
+    if automatic and replaces is None:
         previous = (await session.execute(select(MlModel.n_samples).where(
             MlModel.track == track, MlModel.kind == "reranker",
         ).order_by(MlModel.id.desc()).limit(1))).scalar_one_or_none()
@@ -73,6 +90,8 @@ async def request_training(session: AsyncSession, track: str, *, automatic: bool
     # One INSERT statement guards concurrent clicks/scheduler requests without a new table.
     exists = select(Task.id).where(*_for_track(track), Task.status.in_(("pending", "leased")))
     payload = {"track": track, "ratings": n, "automatic": automatic}
+    if replaces is not None:
+        payload["replaces_refused"] = replaces
     result = await session.execute(insert(Task).from_select(
         ["type", "payload"],
         select(literal(TASK_TYPE), literal(payload, type_=JSON)).where(~exists.exists()),

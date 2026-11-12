@@ -1,0 +1,20 @@
+{# The rescore offer (D-UI-290): after a story is added or a correction about the person is saved,
+   the other open roles that ask for the same thing (the exact requirement hash), listed first.
+   Rescore N roles opens the Score again dialog (GET /rescore/choose), which lists the corrections
+   and asks first for an online model; Not now closes this. Nothing is queued or sent from here. #}
+<div class="rl-xp rl-offer" data-rl-offer><div><div class="rl-offerin k-card rl-card" data-testid="rescore-offer">
+  <div class="rl-offerhead"><b>{{ n }} other {{ w.role if n == 1 else w.roles }} ask{{ 's' if n == 1 else '' }} for the same thing.</b> Rescore {{ 'it' if n == 1 else 'them' }}?</div>
+  <ul class="rl-offerlist">
+    {% for r in roles %}<li><a href="/opportunities/{{ r.id }}">{{ r.title }}{% if r.org %} · {{ r.org }}{% endif %}</a></li>{% endfor %}
+    {% if more %}<li class="rl-quiet">and {{ more }} more</li>{% endif %}
+  </ul>
+  <div class="rl-offerfoot">
+    <span class="score-again">
+      <button type="button" class="k-btn k-btn--sm k-btn--primary" data-score-again="{{ ids }}"
+              hx-get="/rescore/choose" hx-vals='{"opp_ids": "{{ ids }}"}' hx-target="next .score-again-slot" hx-swap="innerHTML"
+              aria-haspopup="dialog" data-testid="rescore-others">Rescore {{ n }} {{ w.role if n == 1 else w.roles }}</button>
+      <span class="score-again-slot"></span><span class="score-again-status" aria-live="polite"></span>
+    </span>
+    <button type="button" class="k-btn k-btn--sm" data-rl-offer-close data-testid="rescore-not-now">Not now</button>
+  </div>
+</div></div></div>

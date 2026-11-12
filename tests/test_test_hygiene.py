@@ -100,6 +100,10 @@ SMALL_DELTA_ALLOWLIST: list[tuple[str, str, str]] = [
      "liveness recheck cadence in hours; no day count"),
     ("test_needs_try.py", "created_at=iso(datetime.now(UTC) + timedelta(minutes=",
      "evaluation or failure made newer than a quarantine row (future); no day count reads it"),
+    ("test_queue_held_tasks.py", "updated_at=iso(datetime.now(UTC) - timedelta(seconds=seconds))",
+     "ages a row past SWEEP_SECONDS (60 s); an absolute interval, no day count reads it"),
+    ("test_queue_held_tasks.py", "t.retry_at = iso(datetime.now(UTC) + timedelta(minutes=10))",
+     "sets a future retry backoff (10 min ahead); read only as 'after now', no day or month count"),
     ("test_run_model_choice.py", "timedelta(minutes=5)", "run drawer span; no day count reads it"),
     ("test_runs_browser.py", "timedelta(seconds=30)", "scrape duration of 30 s; no day count"),
     ("test_scan_activity.py", "timedelta(", "lease and hold windows around now; no day count"),
@@ -107,6 +111,9 @@ SMALL_DELTA_ALLOWLIST: list[tuple[str, str, str]] = [
     ("test_surfaces.py", "timedelta(**k)", "relative_time check against a fixed 2026-10-24 now"),
     ("test_surfaces.py", "timedelta(days=1)", "next action dated yesterday: overdue at any hour"),
     ("test_updater.py", "timedelta(hours=", "update reminder in the future; no day count"),
+    ("test_score_again.py", "seeded_at - timedelta(",
+     "Tier 2 completions a minute apart from one read, for the pace; no day count reads them, "
+     "and clamping packs the spacing just after midnight"),
     ("test_stage_priority.py", "datetime.now(UTC) + timedelta(hours=1)",
      "lease_until one hour ahead (future); in-flight check only, no day or month count"),
 ]

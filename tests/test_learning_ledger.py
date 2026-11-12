@@ -35,7 +35,7 @@ from kestrel.db.models import (
     Source,
     VerdictOverride,
 )
-from kestrel.learning import ledger
+from kestrel.learning import ledger, signing
 from kestrel.services.setting_overrides import load_settings_with_db
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
@@ -115,6 +115,10 @@ async def _seed(s, *, confidential: bool = False, n_overrides: int = 2) -> dict:
         n_samples=200, metrics={}, artifact_path=str(ml / "reranker_employment_v1.pkl"),
         pca_artifact_path=str(ml / "features_employment_v1.pkl"),
         sklearn_version=sklearn.__version__, is_active=True, promoted_at=_T.format(i=2),
+        # Signed as a model saved by this install is (D-SEC-13): an unsigned one is refused
+        # by the loader and so is not in use on Settings either (D-LEARN-10).
+        artifact_signature=signing.sign_file(ml / "reranker_employment_v1.pkl"),
+        pca_artifact_signature=signing.sign_file(ml / "features_employment_v1.pkl"),
     ))
     master = DocMaster(track="employment", name="Resume", doc_kind="resume")
     s.add(master)

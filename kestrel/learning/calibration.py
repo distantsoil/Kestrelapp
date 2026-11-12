@@ -8,8 +8,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.optimize import minimize
-from sklearn.model_selection import KFold
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,6 +67,8 @@ def _matrix(examples: list[LabeledExample], keys: list[str]) -> tuple[np.ndarray
 
 def fit_weights(x: np.ndarray, y: np.ndarray, *, alpha: float = _RIDGE_ALPHA) -> np.ndarray:
     """Non-negative, sum-to-one ridge weights minimizing mean((Xw - y)^2) + alpha*||w||^2."""
+    from scipy.optimize import minimize  # lazy: keeps scipy out of app startup (D-PERF)
+
     d = x.shape[1]
 
     def obj(w):
@@ -101,6 +101,8 @@ def _cv_mae(x: np.ndarray, y: np.ndarray, current: np.ndarray) -> tuple[float, f
     if splits < 2:
         w = fit_weights(x, y)
         return _mae(x, y, current), _mae(x, y, w)
+    from sklearn.model_selection import KFold  # lazy: keeps sklearn out of app startup
+
     kf = KFold(n_splits=splits, shuffle=True, random_state=0)
     prev, prop = [], []
     for train_idx, test_idx in kf.split(x):

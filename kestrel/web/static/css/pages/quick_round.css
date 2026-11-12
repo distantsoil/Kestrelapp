@@ -1,0 +1,170 @@
+/* The quick round (issue 171, D-UI-272). Page styles for /calibrate/quick, built on tokens.css
+   and components.css: token colors only (tests/test_ui_tokens.py), every class prefixed qr-. The
+   look follows the locked design mockup (kept privately); the mockup is a starting
+   point, not the master (D-UI-238). Every motion is off under prefers-reduced-motion. */
+
+.qr-wrap { min-width: 0; }
+.qr-page { display: flex; flex-direction: column; gap: var(--sp-3); padding: 12px 8px 26px;
+  min-width: 0; }
+.qr-page, .qr-page * { box-sizing: border-box; }
+.qr-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.qr-page h1, .qr-page h2 { text-transform: none; letter-spacing: normal; }
+.qr-top h1 { margin: 0; font-size: 18px; font-weight: 700; }
+.qr-saves { margin-left: auto; font-size: 14px; text-align: right; }
+.qr-back-ic { transform: rotate(180deg); }
+.qr-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+  margin: 0; }
+.qr-muted { color: var(--muted); }
+.qr-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------------------- the round */
+.qr-round { display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0;
+  animation: qr-in .38s cubic-bezier(.2, .8, .2, 1); }
+.qr-round[hidden], .qr-done[hidden] { display: none; }
+.qr-rhead { width: min(560px, 100%); display: flex; align-items: center; gap: 12px; }
+.qr-q { font-size: 15px; font-weight: 600; min-width: 0; }
+.qr-count { margin-left: auto; color: var(--muted); font-size: 13.5px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.qr-pips { width: min(560px, 100%); display: grid; grid-template-columns: repeat(var(--n, 10), 1fr);
+  gap: 3px; }
+.qr-pips i { height: 4px; border-radius: 2px; background: var(--soft); transition: background .3s; }
+.qr-pips i.is-yes { background: var(--good); }
+.qr-pips i.is-top { background: var(--warn); }
+.qr-pips i.is-no { background: var(--bad); }
+.qr-pips i.is-unsure { background: var(--muted); opacity: .4; }
+.qr-pips i.is-cur { background: var(--brand); }
+
+.qr-stage { position: relative; width: min(440px, 100%); height: 390px; max-height: 60vh;
+  min-height: 300px; margin-bottom: 34px; }
+.qr-card { position: absolute; inset: 0; display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 20px;
+  box-shadow: var(--shadow); padding: 26px 26px 22px; touch-action: none; user-select: none;
+  will-change: transform; visibility: hidden; opacity: 0; overflow: hidden;
+  transition: transform .42s cubic-bezier(.2, .8, .2, 1), opacity .3s, box-shadow .2s; }
+.qr-card.is-front { z-index: 3; visibility: visible; opacity: 1; cursor: grab; box-shadow: var(--shadow-pop); }
+.qr-card.is-front:active { cursor: grabbing; }
+.qr-card.is-front:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.qr-card.is-drag { transition: none; }
+.qr-card.is-n1 { z-index: 2; visibility: visible; opacity: 1; transform: translateY(12px) scale(.96); }
+.qr-card.is-n2 { z-index: 1; visibility: visible; opacity: .6; transform: translateY(24px) scale(.92); }
+/* The next card shows its role, so a drag reveals what comes next (as in the mockup); the one
+   after it stays a blank edge. */
+.qr-card > :not(.qr-stamp) { transition: opacity .3s; }
+.qr-card.is-n2 > * { opacity: 0; }
+.qr-card.is-gone { visibility: hidden; }
+.qr-org { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px;
+  font-weight: 600; min-width: 0; }
+.qr-org__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qr-org .cal-mono { width: 40px; height: 40px; border-radius: 10px; font-size: 14px; }
+.qr-title { margin: 20px 0 0; font-size: 26px; line-height: 1.2; font-weight: 700;
+  letter-spacing: -.015em; text-wrap: balance; overflow-wrap: anywhere;
+  /* The card has a fixed height: a long title ends in an ellipsis (the full text is the card's
+     label and tooltip) instead of running over the facts and the answer buttons. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3;
+  overflow: hidden; flex: none; }
+.qr-facts { list-style: none; padding: 0; margin: auto 0 0; display: grid; gap: 10px;
+  font-size: 15px; }
+.qr-facts li { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.qr-facts .k-ic { width: 17px; height: 17px; color: var(--muted); flex: none; fill: none;
+  stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.qr-facts span { min-width: 0; overflow-wrap: anywhere; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+@media (max-height: 600px) { .qr-title { -webkit-line-clamp: 2; line-clamp: 2; } }
+@media (max-height: 540px) { .qr-title { -webkit-line-clamp: 1; line-clamp: 1; } }
+.qr-open { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+  font-size: 13.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.qr-open a { font-weight: 600; white-space: nowrap; }
+.qr-stamp { position: absolute; top: 22px; padding: 5px 12px; border-radius: 8px; font-weight: 800;
+  font-size: 15px; letter-spacing: .04em; opacity: 0; border: 2px solid; pointer-events: none; }
+.qr-stamp--y { right: 22px; color: var(--good-ink); border-color: var(--good);
+  background: var(--good-bg); transform: rotate(8deg); }
+.qr-stamp--n { left: 22px; color: var(--bad-ink); border-color: var(--bad);
+  background: var(--bad-bg); transform: rotate(-8deg); }
+.qr-stamp--t { left: 50%; top: auto; bottom: 70px; color: var(--warn-ink);
+  border-color: var(--warn); background: var(--warn-bg); transform: translateX(-50%); }
+
+.qr-acts { display: flex; align-items: flex-start; gap: 18px; justify-content: center;
+  flex-wrap: wrap; }
+.qr-actl { display: grid; justify-items: center; gap: 6px; font-size: 12.5px; color: var(--muted);
+  font-weight: 600; }
+.qr-actl kbd { font: 11px var(--font); border: 1px solid var(--line); border-radius: 5px;
+  padding: 1px 6px; background: var(--bg); }
+/* Every answer button is a circle with its icon centered (D-UI-273). The Top pick button's
+   modifier is qr-act--pick: the mockup's `top` collided with the page header's rule and drew the
+   button 58 by 46 with the star off center. */
+.qr-act { width: 62px; height: 62px; padding: 0; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--paper); display: grid; place-items: center; box-shadow: var(--shadow);
+  cursor: pointer; transition: transform .14s cubic-bezier(.2, .8, .2, 1), background .15s; }
+.qr-act .k-ic { width: 26px; height: 26px; margin: 0; }
+.qr-act:hover { transform: translateY(-2px); }
+.qr-act:active { transform: scale(.92); }
+.qr-act:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.qr-act--no { color: var(--bad); }
+.qr-act--no:hover { background: var(--bad-bg); }
+.qr-act--yes { color: var(--good); }
+.qr-act--yes:hover { background: var(--good-bg); }
+.qr-act--pick, .qr-act--unsure { width: 46px; height: 46px; }
+.qr-act--pick .k-ic, .qr-act--unsure .k-ic { width: 20px; height: 20px; }
+.qr-act--pick { color: var(--warn-ink); }
+.qr-act--pick:hover { background: var(--warn-bg); }
+.qr-act--unsure { color: var(--muted); }
+.qr-act:disabled { opacity: .5; cursor: default; transform: none; }
+.qr-foot { display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.qr-foot kbd { font: 11px var(--font); border: 1px solid var(--line); border-radius: 5px;
+  padding: 1px 6px; background: var(--bg); margin-left: 4px; }
+
+.qr-empty { max-width: 640px; padding: var(--sp-5); display: grid; gap: 10px; justify-items: start; }
+.qr-empty h2 { margin: 0; }
+.qr-empty p { margin: 0; }
+
+/* --------------------------------------------------------------------------------- the done */
+.qr-done { animation: qr-in .38s cubic-bezier(.2, .8, .2, 1); }
+.qr-donebox { max-width: 640px; margin: 0 auto; padding-top: 16px; min-width: 0; }
+.qr-donebox h2 { font-size: 28px; margin: 0 0 6px; letter-spacing: -.015em; text-wrap: balance;
+  overflow-wrap: anywhere; }
+.qr-lead { color: var(--muted); font-size: 15.5px; line-height: 1.55; margin: 0 0 22px; }
+.qr-split { display: flex; gap: 8px 18px; font-size: 14.5px; margin: 0 0 24px; flex-wrap: wrap; }
+.qr-split span { display: flex; align-items: center; gap: 7px; }
+.qr-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.qr-dot--yes { background: var(--good); }
+.qr-dot--no { background: var(--bad); }
+.qr-dot--unsure { background: var(--muted); opacity: .5; }
+.qr-steps { list-style: none; margin: 0 0 26px; padding: 0; border-top: 1px solid var(--line); }
+.qr-steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 12px;
+  align-items: center; padding: 14px 2px; border-bottom: 1px solid var(--line); font-size: 14.5px; }
+.qr-ic { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  border: 1.5px solid var(--line); color: var(--muted); }
+.qr-ic .k-ic { width: 14px; height: 14px; }
+.qr-ic__dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.qr-steps li.hit .qr-ic { background: var(--good); border-color: var(--good);
+  color: var(--paper); animation: qr-pop .5s cubic-bezier(.2, 1.6, .4, 1) .3s both; }
+.qr-steps li.next .qr-ic { border-color: var(--brand); color: var(--brand); }
+.qr-d { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.qr-k { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ------------------------------------------------------------ the meter (Today and Calibrate) */
+.qr-meter { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--muted);
+  margin-top: 6px; min-width: 0; }
+.qr-meter__bar { flex: 0 1 220px; min-width: 60px; height: 6px; border-radius: 3px;
+  background: var(--soft); position: relative; overflow: hidden; }
+.qr-meter__bar b { position: absolute; inset: 0 auto 0 0; background: var(--brand);
+  border-radius: 3px; transition: width .6s cubic-bezier(.2, .8, .2, 1); }
+.qr-meter__text b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+@keyframes qr-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes qr-pop { from { transform: scale(.4); } to { transform: none; } }
+
+@container kwin (max-width: 700px) {
+  .qr-kbd, .qr-actl kbd, .qr-foot kbd { display: none; }
+  .qr-title { font-size: 22px; }
+  .qr-card { padding: 20px 20px 18px; }
+}
+@media (max-width: 700px) {
+  .qr-actl kbd, .qr-foot kbd { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-round, .qr-done, .qr-steps li.hit .qr-ic { animation: none; }
+  .qr-card, .qr-card > *, .qr-act, .qr-pips i, .qr-meter__bar b { transition: none; }
+  .qr-act:hover, .qr-act:active { transform: none; }
+}

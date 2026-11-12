@@ -12,6 +12,7 @@ never leaks an unresolved brace to the model.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from statistics import median
 from types import SimpleNamespace
 from typing import Any
@@ -200,6 +201,88 @@ def few_shot_block(examples: list[FewShotExample]) -> str:
         if why and why not in summary and summary not in why:
             out.append(f"  Why: {why}")
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------- the operator's stated facts
+# PROMPTS.md P2 User, `OPERATOR_CORRECTIONS` (D-LEARN-3, D-SCORE-1). The rows come from
+# kestrel.learning.corrections.scoring_corrections, which picks them (at most 20, newest first).
+OPERATOR_CORRECTIONS_HEADER = (
+    "FACTS THE OPERATOR HAS STATED (treat as true about the operator; they override your own "
+    "reading\nof the profile for these requirements only)"
+)
+OPERATOR_CORRECTIONS_MAX_LINES = 20
+OPERATOR_FACT_CHARS = 200  # notes and requirement texts are cut to this many characters
+# The block's own token allowance, counted in kestrel.doctor.input_budget for tier2 and tier3
+# (SPEC.md 8.2). Lines past it are left out, oldest first, so text that tokenizes badly can never
+# push the prompt past the tier's num_ctx (D-SCORE-1).
+OPERATOR_CORRECTIONS_MAX_TOKENS = 1100
+_STATE_FACT_WORDS = {"met": "has this", "part": "has some of this", "gap": "does not have this"}
+_ANY_WS_RE = re.compile(r"\s+")
+
+
+def _fact_text(value: object, limit: int = OPERATOR_FACT_CHARS) -> str:
+    """One operator-written value as text that stays inside its quotes on one line: control
+    characters dropped, every run of whitespace (line breaks included) one space, a double quote
+    a single quote, braces parentheses (so it can never name a template placeholder), then cut
+    to `limit` characters. The operator's words are otherwise kept as written."""
+    text = "".join(ch if ch.isprintable() else " " for ch in str(value or ""))
+    text = _ANY_WS_RE.sub(" ", text).strip()
+    text = text.replace('"', "'").replace("{", "(").replace("}", ")")
+    return text[:limit].rstrip()
+
+
+def stated_corrections(corrections: Iterable[object]) -> list[tuple[object, str]]:
+    """(row, line) for each correction the block states, in the order given (newest first), at
+    most 20 and at most OPERATOR_CORRECTIONS_MAX_TOKENS with the header (PROMPTS.md P2 User): a
+    `person` row states what the operator has, a `posting` row what the operator says the posting
+    means. A row with no requirement text, an unknown state, or a posting row with no note is
+    left out."""
+    out: list[tuple[object, str]] = []
+    for c in corrections:
+        req = _fact_text(_get(c, "requirement_text"))
+        note = _fact_text(_get(c, "note"))
+        if not req:
+            continue
+        if _get(c, "scope") == "posting":
+            if not note:
+                continue
+            line = f'- (posting) "{req}": the operator says this posting means: "{note}"'
+        else:
+            words = _STATE_FACT_WORDS.get(str(_get(c, "operator_state") or ""))
+            if words is None:
+                continue
+            line = f'- "{req}": {words}' + (f'. Note: "{note}"' if note else "")
+        if count_tokens("\n".join([OPERATOR_CORRECTIONS_HEADER, *(x for _r, x in out), line])) > (
+            OPERATOR_CORRECTIONS_MAX_TOKENS
+        ):
+            break
+        out.append((c, line))
+        if len(out) == OPERATOR_CORRECTIONS_MAX_LINES:
+            break
+    return out
+
+
+def operator_correction_lines(corrections: Iterable[object]) -> list[str]:
+    """The lines `stated_corrections` keeps. The consent dialog for an online send lists exactly
+    these lines."""
+    return [line for _row, line in stated_corrections(corrections)]
+
+
+def stated_correction_ids(corrections: Iterable[object]) -> list[int]:
+    """The ids of the rows the block states, stored on the read (D-SCORE-4)."""
+    return [int(i) for row, _line in stated_corrections(corrections)
+            if (i := _get(row, "id")) is not None]
+
+
+def operator_corrections_block(corrections: Iterable[object]) -> str:
+    """The OPERATOR_CORRECTIONS block, or "" when there is nothing to state, so a v3 prompt with
+    no corrections differs from v2 only by blank lines."""
+    lines = operator_correction_lines(corrections)
+    if not lines:
+        return ""
+    # Leading blank line: the template places the block right after {PROFILE_FULL}, so an empty
+    # block renders byte for byte as evaluate v2 did (no stray blank lines with no corrections).
+    return "\n\n" + "\n".join([OPERATOR_CORRECTIONS_HEADER, *lines])
 
 
 # ---------------------------------------------------------------------- description preprocessing
@@ -451,11 +534,15 @@ def build_tier2_values(
     max_jd_tokens: int,
     few_shot: str,
     comp_intel: str | None,
+    corrections: Iterable[object] = (),
 ) -> dict[str, str]:
-    """Placeholder map for P2 (employment) and P2C (consulting) USER templates."""
+    """Placeholder map for P2 (employment) and P2C (consulting) USER templates. `corrections` are
+    the rows `kestrel.learning.corrections.scoring_corrections` picked for this role; a v2
+    template has no `{OPERATOR_CORRECTIONS}` and ignores them."""
     desc = truncate_middle(normalize_description(opp.description_md), max_jd_tokens)
     values: dict[str, str] = {
         "PROFILE_FULL": profile_full(profile),
+        "OPERATOR_CORRECTIONS": operator_corrections_block(corrections),
         "FEW_SHOT_EXAMPLES": few_shot,
         "opp.seen_count": str(opp.seen_count),
         # Dates only: the time of day carries nothing the ghost/repost read needs.

@@ -29,6 +29,8 @@ status rail. Sibling of kestrel.analytics.progress, whose `scoring_progress` sha
       "groups": {"strong", "good", "maybe", "not_fit", "your_call": int},  # over `rated`
       "groups_by_track": {track: {...same keys...}},
       "worth_new": int,           # of `rated`, Worth a look roles first seen in this window
+      "worth_new_strong": int,    # of those, rated Strong
+      "worth_new_first": {"id", "title", "org"} | None,  # the first of them, for a lone role
       "last_activity_at": str | None,  # newest touch by the run on ANY track (stall check)
       "recent_events": [{"at", "text", "tone"}],  # newest first, at most 10
     }
@@ -93,6 +95,10 @@ RESUMED_KEY = "worker.resumed_at"
 STOP_KEY = "worker.stop_request"
 _RUN_TASKS = ("scrape", "t1", "t2")
 _WORK_TASKS = ("scrape", "embed", "t1", "t2")
+# Work the person asked for that the worker runs between search steps (D-WORKER-1), and how the
+# status names it while a search waits behind it.
+_OWN_WORK = ("build_stories", "letter_draft")
+_OWN_WORDS = {"build_stories": "Building your stories", "letter_draft": "Drafting your letter"}
 EVENTS_SHOWN = 10
 # A run that is open with no new row for this long reads as stalled on the Runs page.
 STALL_MINUTES = 10
@@ -120,10 +126,13 @@ _KIND_WORDS = {
     "smartrecruiters": "SmartRecruiters", "rippling": "Rippling", "adp": "ADP Workforce Now",
     "paylocity": "Paylocity",
     "workable": "Workable", "recruitee": "Recruitee", "teamtailor": "Teamtailor",
-    "personio": "Personio", "breezy": "Breezy HR", "careers_page": "a careers page",
+    "personio": "Personio", "breezy": "Breezy HR", "jobvite": "Jobvite",
+    "careers_page": "a careers page",
     "remoterocketship": "RemoteRocketship",
     "usajobs": "USAJobs", "adzuna": "Adzuna", "arbeitnow": "Arbeitnow", "himalayas": "Himalayas",
     "weworkremotely": "We Work Remotely", "jobicy": "Jobicy",
+    "fourdayweek": "4 Day Week",
+    "hn_hiring": "Hacker News",
     "remotive": "Remotive", "sec_edgar": "SEC filings", "sam_gov": "SAM.gov",
     "rss": "a feed", "pe_portfolio": "PE portfolio pages", "manual": "a pasted posting",
 }
@@ -132,13 +141,14 @@ _KIND_WORDS = {
 def _empty() -> dict[str, Any]:
     return {
         "has_run": False, "active": False, "paused": False, "run_id": None, "started_at": None,
-        "ended_at": None, "status": None, "stage": "idle",
+        "ended_at": None, "status": None, "stage": "idle", "own_work": None,
         "searches_total": 0, "searches_done": 0, "searches_failed": 0, "searches_partial": 0,
         "searches_cut_off": 0, "current_search": None, "problems": [],
         "found_new": 0, "set_aside": 0, "set_aside_rules": [],
         "quick_screen_done": 0, "quick_screen_total": 0, "quick_screen_kept": 0,
         "rated": 0, "to_rate": 0, "failed": 0, "rating_now": 0, "waiting": 0,
         "groups": dict.fromkeys(GROUP_KEYS, 0), "groups_by_track": {}, "worth_new": 0,
+        "worth_new_strong": 0, "worth_new_first": None,
         "last_activity_at": None, "recent_events": [], "finishing": 0, "retrying": 0, "stopping": 0,
     }
 
@@ -484,7 +494,7 @@ async def run_summary(
         select(Evaluation.opportunity_id, Evaluation.created_at, Evaluation.tier,
                Evaluation.verdict, Evaluation.score, Evaluation.weighted_score,
                Evaluation.needs_review, Opportunity.title, Opportunity.stage, Opportunity.track,
-               Opportunity.first_seen_at)
+               Opportunity.first_seen_at, Opportunity.org_name)
         .join(Opportunity, Opportunity.id == Evaluation.opportunity_id)
         .where(Evaluation.tier == 2, _in_window(Evaluation.created_at, start, end))
         .order_by(Evaluation.created_at, Evaluation.id)
@@ -538,6 +548,11 @@ async def run_summary(
             out["groups"][key] += 1
             if key in WORTH_KEYS and (row.first_seen_at or "") >= start:
                 out["worth_new"] += 1
+                if key == "strong":
+                    out["worth_new_strong"] += 1
+                if out["worth_new_first"] is None:
+                    out["worth_new_first"] = {"id": row.opportunity_id, "title": row.title,
+                                              "org": row.org_name}
             tg = by_track.setdefault(row.track or "employment", dict.fromkeys(GROUP_KEYS, 0))
             tg[key] += 1
         word = fit.word if key else "scored"
@@ -549,6 +564,17 @@ async def run_summary(
     out["rating_now"] = t2_leased
     out["to_rate"] = max(out["quick_screen_kept"], out["rated"] + out["failed"] + n_t2)
     out["waiting"] = max(0, out["to_rate"] - out["rated"] - out["failed"] - t2_leased)
+
+    # What the worker is doing for the person between search steps (D-WORKER-1): a story build
+    # or a letter draft under a live lease. Only the words change; the stage is the run's own.
+    out["own_work"] = None
+    if active:
+        own = (await session.execute(
+            select(Task.type).where(
+                Task.type.in_(_OWN_WORK), Task.status == "leased",
+                or_(Task.lease_until.is_(None), Task.lease_until >= _now_iso()))
+            .limit(1))).scalar_one_or_none()
+        out["own_work"] = own
 
     # ------------------------------------------------------------------ stage and activity
     if out["paused"]:
@@ -622,10 +648,16 @@ def step_words(summary: dict[str, Any]) -> str:
     if not s.get("active"):
         return "Idle"
     stage = s.get("stage")
+    own = _OWN_WORDS.get(s.get("own_work") or "")
     if stage == "searching":
         total = max(int(s["searches_total"]), 1)
         at = min(int(s["searches_done"]) + 1, total)
+        if own and not s.get("current_search"):
+            # The search is queued behind the person's own request, not running (D-WORKER-1).
+            return f"{own}, then search {at} of {total}"
         return f"Searching {at} of {total} {_plural(total, 'search', 'searches')}"
+    if own and stage == "finishing":
+        return own
     if stage == "quick_screen":
         return f"Quick screen {s['quick_screen_done']} of {s['quick_screen_total']}"
     if stage == "full_review":

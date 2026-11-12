@@ -1133,9 +1133,28 @@ def tier_credit_hold(settings: Settings, tier: str) -> str | None:
 
 
 class LLMClient:
-    def __init__(self, settings: Settings, http: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self, settings: Settings, http: httpx.AsyncClient | None = None,
+        http_local: httpx.AsyncClient | None = None,
+    ) -> None:
         self.settings = settings
         self._http = http
+        # For a backend that is not external (this computer, the local network): a client that
+        # never reads a system proxy, so a proxy setting cannot carry local traffic (D-LLM-15).
+        self._http_local = http_local
+
+    def _shared(self, backend: BackendConfig) -> httpx.AsyncClient | None:
+        """The pooled client for a call to BACKEND, or None for a client of this call's own. A
+        backend that is not external never uses `http`, which may read a system proxy: it uses
+        `http_local` when one was given, else a fresh trust_env=False client (D-LLM-15), so a
+        page or CLI path that passes only `http` cannot send this-computer or local-network
+        traffic through a proxy either."""
+        if not backend.external:
+            return self._http_local
+        return self._http
+
+    def _new_client(self, backend: BackendConfig) -> httpx.AsyncClient:
+        return httpx.AsyncClient(trust_env=bool(backend.external))
 
     def _backend_and_tier(self, tier: str) -> tuple[BackendConfig, Any]:
         tcfg = self.settings.llm.tiers[tier]
@@ -1194,24 +1213,37 @@ class LLMClient:
             backend.hosted.reasoning_effort is None
         )
 
-    def default_reasoning_hint(self, tier: str) -> str | None:
+    def default_reasoning_hint(self, tier: str, prompt: str | None = None) -> str | None:
         """The reasoning hint a first attempt on `tier` gets when neither the prompt nor the
         operator set one (D-LLM-5). Tier 1 triage is a short classification, so on Hosted mode,
         with `hosted.tier1_reasoning_off` on (the default), an OpenRouter model whose record says
         it takes reasoning and that reasoning is optional is asked for none: the request then
         carries `reasoning: {effort: "none"}` (the SDK-verified shape, REFERENCES.md). A model
         whose record is missing or marks reasoning mandatory gets nothing, so the switch can
-        never turn every triage call into a 400."""
-        if tier != "tier1":
+        never turn every triage call into a 400.
+
+        Tier 2 on an online model gets the same default (#92): the live tuning run showed the
+        full review twice as fast with reasoning off (median 23 s against 44 s a role) with the
+        same verdicts, so unless the person set an effort (which always wins) the first attempt
+        asks for none, on the same verified OpenRouter shape and the same safety checks. Other
+        providers are sent nothing: their reasoning-off parameter is not verified here, and a
+        parameter a backend ignores silently only hides the cost.
+
+        `prompt` is the call's schema name (guard passes it). The Tier 2 default covers only the
+        full review (`evaluate*`), the one prompt the run measured (D-LLM-62): story builds, mock
+        interview critiques and the analytics summary on the same tier keep the model's own
+        reasoning until they are measured too."""
+        if tier not in ("tier1", "tier2"):
+            return None
+        if tier == "tier2" and prompt is not None and not prompt.startswith("evaluate"):
             return None
         backend, tcfg = self._backend_and_tier(tier)
         h = backend.hosted
-        if (
-            backend.provider != "openrouter"
-            or not self._hosted_tier(tier, backend)
-            or h.reasoning_effort is not None
-            or not h.tier1_reasoning_off
-        ):
+        if tier == "tier1":
+            wanted = self._hosted_tier(tier, backend) and h.tier1_reasoning_off
+        else:
+            wanted = backend.external
+        if backend.provider != "openrouter" or not wanted or h.reasoning_effort is not None:
             return None
         # Only the verified shape: a record listing `include_reasoning` alone would make the
         # body builder fall back to `enabled: false`, which is not verified to stop thinking.
@@ -1366,7 +1398,8 @@ class LLMClient:
             # it, and choose no other provider in its place (D-LLM-8).
             raise OutOfCredit(backend.provider, sent=False)
         t0 = time.perf_counter()
-        client = self._http or httpx.AsyncClient()
+        shared = self._shared(backend)
+        client = shared or self._new_client(backend)
         enter_flight(tcfg.model)
 
         def _credit_check(exc: ProviderError) -> None:
@@ -1421,7 +1454,7 @@ class LLMClient:
             data = r.json()
         finally:
             leave_flight(tcfg.model)
-            if self._http is None:
+            if shared is None:
                 await client.aclose()
         if isinstance(data, dict) and data.get("error"):
             # OpenRouter (and others) can answer 200 with only an error object for an upstream
@@ -1542,13 +1575,14 @@ class LLMClient:
         headers = {"Authorization": f"Bearer {_resolve_api_key(backend)}"}
         url = f"{backend.base_url.rstrip('/')}/embeddings"
         body = {"model": tcfg.model, "input": texts}
-        client = self._http or httpx.AsyncClient()
+        shared = self._shared(backend)
+        client = shared or self._new_client(backend)
         try:
             r = await client.post(url, json=body, headers=headers, timeout=timeout)
             r.raise_for_status()
             data = r.json()
         finally:
-            if self._http is None:
+            if shared is None:
                 await client.aclose()
         return [item["embedding"] for item in data["data"]]
 

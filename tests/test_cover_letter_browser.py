@@ -257,3 +257,103 @@ def test_preview_keeps_the_action_bar_in_view_and_the_text_off_the_page_edge(
     assert inset["left"] > 0 and inset["right"] > 0
     assert inset["closing"].startswith("Sincerely,")
     ctx.close()
+
+
+SHOTS = os.environ.get("KESTREL_SHOTS_DIR", "")
+
+
+def _shot(page, name: str) -> None:
+    """Screenshots for the report, only when a folder is named (never written into the repo)."""
+    if SHOTS:
+        os.makedirs(SHOTS, exist_ok=True)
+        page.screenshot(path=os.path.join(SHOTS, f"{name}.png"))
+
+
+@pytest.mark.parametrize(
+    ("scheme", "width", "height"), [("light", 1440, 900), ("dark", 1440, 900), ("light", 390, 844)]
+)
+def test_draft_again_waits_to_be_kept_undo_brings_it_back_and_the_editor_caps_saving(
+    live, monkeypatch, scheme, width, height
+):
+    """D-LETTER-3 and D-LETTER-4 in a real browser: the plain-writing marks show on the drafted
+    letter (#107), Draft again shows the new draft beside the old one with Keep new / Keep
+    previous, Keep new offers Undo, Undo brings the first draft back, the word count turns to a
+    hard stop above 600 words and Save then posts nothing, and nothing overlaps."""
+    from kestrel.docs import render as docrender
+
+    async def fake_pdf(html: str):
+        return docrender.RenderedPdf(pdf=b"%PDF-1.4\n%%EOF\n", page_count=1)
+
+    monkeypatch.setattr(docrender, "render_pdf", fake_pdf)
+    base, browser, ids, sent = live
+    tag = f"{scheme}-{width}"
+    ctx = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme)
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/opportunities/{ids['strong']}/documents")
+    page.locator('[data-testid="new-cover-letter"]').click()
+    page.wait_for_selector('[data-testid="cover-letter-ask"]')
+    assert page.locator('[data-testid="cl-reask-length"]').is_visible()
+    page.locator("[data-cl-ack]").check()
+    page.locator('[data-testid="rl-send"]').click()
+    page.wait_for_selector('[data-testid="cover-letter-draft"]')
+    first = page.locator("#cl-draft").get_attribute("data-render")
+    wait_for_layout(page)
+    assert page.evaluate(OVERLAP) == {"bad": [], "sideways": False}
+    _shot(page, f"letter-check-marks-{tag}")
+    # Preview asks for the one-page check, which answers in the pane.
+    page.locator('[data-cl-tab="preview"]').click()
+    page.wait_for_selector('[data-testid="cover-letter-fit-ok"]')
+    wait_for_layout(page)
+    assert page.evaluate(OVERLAP) == {"bad": [], "sideways": False}
+    _shot(page, f"letter-preview-fit-{tag}")
+    # Draft again: the new draft waits with Keep new / Keep previous.
+    page.locator('[data-testid="cover-letter-redraft"]').click()
+    page.locator('[data-testid="cover-letter-redraft-yes"]').click()
+    page.wait_for_selector('[data-testid="cover-letter-ask"]')
+    page.locator("[data-cl-ack]").check()
+    page.locator('[data-testid="rl-send"]').click()
+    page.wait_for_selector('[data-testid="cover-letter-proposal"]')
+    assert page.locator('[data-testid="cover-letter-keep-previous"]').is_visible()
+    assert not page.locator('[data-testid="cover-letter-discard"]').count()
+    wait_for_layout(page)
+    assert page.evaluate(OVERLAP) == {"bad": [], "sideways": False}
+    _shot(page, f"letter-proposal-{tag}")
+    page.locator('[data-testid="cover-letter-keep-new"]').click()
+    page.wait_for_selector('[data-testid="cover-letter-undo-bar"]')
+    assert page.locator("#cl-draft").get_attribute("data-render") != first
+    wait_for_layout(page)
+    assert page.evaluate(OVERLAP) == {"bad": [], "sideways": False}
+    _shot(page, f"letter-kept-undo-{tag}")
+    page.locator('[data-testid="cover-letter-undo"]').click()
+    # Undo asks first (D-LETTER-7): the draft is still there until the answer.
+    page.wait_for_selector('[data-cl-confirm="undo"].is-on')
+    assert page.locator("#cl-draft").get_attribute("data-render") != first
+    wait_for_layout(page)
+    assert page.evaluate(OVERLAP) == {"bad": [], "sideways": False}
+    _shot(page, f"letter-undo-confirm-{tag}")
+    # Toasts stay until dismissed in test mode; at 390 one sits over the bar, so clear them.
+    page.evaluate("() => window.KUI.dismissToasts()")
+    page.wait_for_selector("#k-toasts .k-toast", state="detached")
+    page.locator('[data-testid="cover-letter-undo-yes"]').click()
+    page.wait_for_selector(f'#cl-draft[data-render="{first}"]')
+    assert not page.locator('[data-testid="cover-letter-undo-bar"]').count()
+    # The editor: over 600 words is a hard stop, and Save posts nothing.
+    page.locator('[data-cl-tab="edit"]').click()
+    page.locator("[data-cl-text]").fill("Dear Hiring Team,\n\n" + " ".join(["word"] * 620))
+    page.wait_for_selector('[data-cl-count][data-state="stop"]')
+    assert page.locator(".cl-limit__stop").is_visible()
+    posts: list[str] = []
+    page.on("request", lambda rq: posts.append(rq.url) if rq.method == "POST" else None)
+    page.locator('[data-testid="cover-letter-save"]').click()
+    page.wait_for_selector("[data-cl-limit].is-on")
+    assert not [u for u in posts if u.endswith("/save")]
+    wait_for_layout(page)
+    assert page.evaluate(OVERLAP) == {"bad": [], "sideways": False}
+    _shot(page, f"letter-edit-cap-{tag}")
+    page.locator("[data-cl-text]").fill("Dear Hiring Team,\n\n" + " ".join(["word"] * 400))
+    page.wait_for_selector('[data-cl-count][data-state="over"]')
+    assert page.locator(".cl-limit__over").is_visible()
+    assert not errors
+    ctx.close()

@@ -19,6 +19,20 @@
     {% include "partials/calibrate_count.html" %}
     <button type="button" class="k-btn k-btn--sm" data-k-flyout="#cal-how-fly" aria-controls="cal-how-fly" aria-expanded="false" data-testid="cal-how">{{ ui.icon('help', 'k-ic--sm') }}How it works</button>
   {% endcall %}
+  {# Quick (the default) and Detailed (issue 171, D-UI-272). Detailed is the page as it was,
+     unchanged; both panels are in the page and calibrate.js swaps them. #}
+  {% set on_quick = tab != 'detailed' %}
+  <div class="cal-tabs" role="tablist" aria-label="Calibrate" data-testid="cal-tabs">
+    <span class="cal-tabs__thumb" aria-hidden="true"></span>
+    <button type="button" role="tab" id="cal-tab-quick" aria-controls="cal-panel-quick" aria-selected="{{ 'true' if on_quick else 'false' }}" tabindex="{{ '0' if on_quick else '-1' }}" data-cal-tab="quick" data-testid="cal-tab-quick">Quick</button>
+    <button type="button" role="tab" id="cal-tab-detailed" aria-controls="cal-panel-detailed" aria-selected="{{ 'false' if on_quick else 'true' }}" tabindex="{{ '-1' if on_quick else '0' }}" data-cal-tab="detailed" data-testid="cal-tab-detailed">Detailed</button>
+  </div>
+
+  <div class="cal-panel" id="cal-panel-quick" role="tabpanel" aria-labelledby="cal-tab-quick" data-testid="cal-panel-quick"{% if not on_quick %} hidden{% endif %}>
+    {% include "partials/calibrate_quick.html" %}
+  </div>
+
+  <div class="cal-panel" id="cal-panel-detailed" role="tabpanel" aria-labelledby="cal-tab-detailed" data-testid="cal-panel-detailed"{% if on_quick %} hidden{% endif %}>
   {% include "partials/calibrate_top.html" %}
 
   <div class="k-layout">
@@ -41,6 +55,8 @@
   </div>
 
   {% include "partials/calibrate_history.html" %}
+
+  </div>
 
   {% call ui.flyout('cal-how-fly', 'How Calibrate works', help_href='/help') %}
     <p class="cal-purpose" data-testid="page-purpose">Rate roles the way you would judge them, so scoring learns your taste. It does not review your resume; that lives on <a href="/profile?tab=documents">Profile &gt; Documents</a>.</p>

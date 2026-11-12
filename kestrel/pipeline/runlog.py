@@ -19,6 +19,8 @@ from kestrel.db.models import Opportunity, Run, ScrapeRun, Task
 from kestrel.queue.queue import claimable
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from kestrel.pipeline.worker import RunStats, TierStats
 
 log = structlog.get_logger()
@@ -242,17 +244,27 @@ class CycleRun:
         self.started_at = utcnow_iso()
         self.run_id: int | None = None
         self.counts: dict[str, Any] = {}
+        self.rated_roles: set[int] = set()
         self.did_work = False
+        # Called once, when the row opens: the desktop loop holds the cycle's settings then, so
+        # the run in flight is described by what it really uses (#103).
+        self.on_open: Callable[[], Any] | None = None
 
     async def ensure_open(self) -> int:
         if self.run_id is None:
             self.run_id = await open_run(
                 self._sm, name=APP_RUN_NAME, mode=self.mode, started_at=self.started_at
             )
+            if self.on_open is not None:
+                self.on_open()
         return self.run_id
 
-    async def record(self, key: str, value: dict[str, Any], *, did_work: bool) -> None:
+    async def record(
+        self, key: str, value: dict[str, Any], *, did_work: bool, roles: set[int] | None = None
+    ) -> None:
         self.counts[key] = value
+        if roles:
+            self.rated_roles |= roles
         if did_work:
             self.did_work = True
             await self.ensure_open()
@@ -290,3 +302,22 @@ class CycleRun:
             notes = notes or f"Search done; {n} had a problem. See Sources."
         await finish_run(self._sm, self.run_id, status=status, counts=dict(self.counts),
                          notes=notes)
+        if status == "done":
+            await self._notify_finished()
+
+    async def _notify_finished(self) -> None:
+        """The run's notifications (#110, #111), from the desktop loop's own run: before this,
+        only the command line's `run` raised them, so the app never told anyone. A failure is
+        logged and never undoes the finished run."""
+        from kestrel.services.run_notify import notify_run_finished
+
+        # Each role once, even when both tiers rated it. A caller that records no roles falls
+        # back to the larger tier count, never the sum (D-RUN-2).
+        rated = len(self.rated_roles) or max(
+            (int((self.counts.get(k) or {}).get("completed", 0) or 0) for k in ("tier1", "tier2")),
+            default=0)
+        try:
+            await notify_run_finished(self._sm, run_id=self.run_id, rated=rated)
+        except Exception as exc:  # noqa: BLE001 - a notification never fails a finished run
+            log.warning("run_finished_notification_failed", run_id=self.run_id,
+                        error=type(exc).__name__, detail=str(exc)[:200], exc_info=True)

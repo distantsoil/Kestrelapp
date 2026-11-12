@@ -23,6 +23,7 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Setting
 from kestrel.services import updater
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 
 log = structlog.get_logger()
@@ -258,7 +259,8 @@ async def disclosure_ok():
     return HTMLResponse("")
 
 
-@router.post("/updates/disclosure/off", response_class=HTMLResponse)
+# Turning the update check off writes updates.enabled, a local-only key (D-SEC-10).
+@router.post("/updates/disclosure/off", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def disclosure_off():
     await _ack_disclosure(turn_off=True)
     return HTMLResponse("")

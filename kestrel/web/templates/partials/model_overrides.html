@@ -3,6 +3,7 @@
    picker per step from the provider's list, a Free only filter, an inline Save box per picked row,
    and Save all. Unpicked rows are not sent as changes. Only shared k- classes and theme variables,
    because Settings > Models loads this partial too. #}
+{% import "partials/local_only.html" as lo with context %}
 {% from "partials/model_picker.html" import model_select with context %}
 <div id="hosted-overrides" data-testid="hosted-overrides">
   <h3>Hosted models per step</h3>
@@ -16,6 +17,7 @@
       <button class="k-btn k-btn--sm" type="button" hx-get="/models/hosted/overrides?open=1&refresh=1" hx-target="#hosted-overrides" hx-swap="outerHTML" data-busy-text="Fetching the model list again.">Try again</button></div>
   {% endif %}
   {% if ov_open and ov_models %}
+  {% call lo.fence(request) %}
   <form hx-post="/models/hosted/overrides" hx-target="#hosted-overrides" hx-swap="outerHTML"
         hx-disabled-elt="find button[type=submit]" data-busy-text="Saving your overrides."
         x-data="{ freeOnly: {{ 'true' if ov_free_default else 'false' }} }" autocomplete="off">
@@ -41,6 +43,7 @@
       <button class="k-btn k-btn--quiet" type="button" hx-get="/models/hosted/overrides" hx-target="#hosted-overrides" hx-swap="outerHTML">Cancel</button>
     </div>
   </form>
+  {% endcall %}
   {% else %}
   <div class="k-table-wrap"><table class="k-table override-table">
     <thead><tr><th>Step</th><th>Model on a hosted run</th><th>Choice</th><th></th></tr></thead>
@@ -50,12 +53,13 @@
         <td>{{ r.tier }}</td>
         <td>{% if r.assigned %}<span>{{ r.model }}</span>{% else %}<span class="k-muted">stays local</span>{% endif %}</td>
         <td><span class="k-pill{{ ' k-pill--info' if r.override }}" data-testid="label-{{ r.tier }}">{{ r.label }}</span>{% if r.override and r.default_model %} <span class="k-muted">default {{ r.default_model }}</span>{% endif %}</td>
-        <td>{% if r.override %}<button class="k-btn k-btn--sm k-btn--quiet" type="button" hx-post="/models/hosted/reset" hx-vals='{"tier": "{{ r.tier }}"}' hx-target="#hosted-overrides" hx-swap="outerHTML" data-testid="reset-{{ r.tier }}" data-busy-text="Restoring the default.">Reset to default</button>{% endif %}</td>
+        <td>{% if r.override %}<button class="k-btn k-btn--sm k-btn--quiet" type="button"{{ lo.dis(request) }} hx-post="/models/hosted/reset" hx-vals='{"tier": "{{ r.tier }}"}' hx-target="#hosted-overrides" hx-swap="outerHTML" data-testid="reset-{{ r.tier }}" data-busy-text="Restoring the default.">Reset to default</button>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <button class="k-btn k-btn--primary" type="button" data-testid="override-open"
+  {{ lo.note(request) }}
+  <button class="k-btn k-btn--primary" type="button" data-testid="override-open"{{ lo.dis(request) }}
           hx-get="/models/hosted/overrides?open=1" hx-target="#hosted-overrides" hx-swap="outerHTML"
           hx-disabled-elt="this" data-busy-text="Fetching the model list from {{ ov_label }}.">Override models</button>
   {% endif %}

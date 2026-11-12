@@ -20,14 +20,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import config as config_mod
-from kestrel import paths
+from kestrel import paths, startup_health
 from kestrel.config import HOSTED_TIER_SENDS, UI_SCHEMES, Settings
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Calibration, Opportunity, Org, Setting, Source
 from kestrel.learning.calibration import accept_calibration, reject_calibration
 from kestrel.pipeline.profile import load_profile
 from kestrel.rules import helpers
-from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.services.setting_overrides import MCP_TURNED_OFF_KEY, load_settings_with_db
+from kestrel.web.auth import LOCAL_DOWNLOAD, LOCAL_ONLY
 from kestrel.web.auth import SETTING_KEY as SHARED_SECRET_KEY
 from kestrel.web.deps import sessionmaker, set_ui_scheme_cache, templates
 from kestrel.web.errors import authored_error, fixed_reason, plain_error
@@ -293,7 +294,14 @@ async def save_settings(request: Request):
         # An unchecked checkbox is not submitted, so a bare `"confidential_mode" in form` could only
         # ever turn the mode ON. The template posts a hidden "off" companion; "on" present means
         # checked, so unchecking + Save correctly writes False and the mode can be turned off.
-        await _set(s, "confidential_mode", "on" in form.getlist("confidential_mode"))
+        conf_on = "on" in form.getlist("confidential_mode")
+        # The EFFECTIVE value decides (settings.yml with the setting rows on top): a mode turned
+        # on in settings.yml with no row is still on, and only this computer may turn it off.
+        if not conf_on and (await load_settings_with_db(s)).confidential_mode is True:
+            from kestrel.web.settings_io import refuse_remote
+
+            refuse_remote(request, "confidential_mode", False)  # OFF is this computer only
+        await _set(s, "confidential_mode", conf_on)
         for key in ("concurrency.tier1", "concurrency.tier2"):
             v = form.get(key)
             if v:
@@ -326,7 +334,7 @@ def _appearance_ctx(settings: Settings) -> dict:
     }
 
 
-@router.post("/settings/desktop", response_class=HTMLResponse)
+@router.post("/settings/desktop", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def save_desktop(request: Request):
     """Store `ui.close_to_tray` (D-UI-8). The desktop shell reads the row on every window close,
     so the change applies to the next close with no restart."""
@@ -344,7 +352,7 @@ async def save_desktop(request: Request):
     )
 
 
-@router.post("/settings/updates", response_class=HTMLResponse)
+@router.post("/settings/updates", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def save_updates(request: Request):
     """Store `updates.enabled`. The update loop re-reads it every pass, so no restart is needed."""
     form = await request.form()
@@ -392,7 +400,7 @@ async def decide_calibration(calibration_id: int, action: str):
     return HTMLResponse(msg)
 
 
-@router.post("/settings/restore", response_class=HTMLResponse)
+@router.post("/settings/restore", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def restore_from_upload(request: Request):
     """The 'restore from the setup window' the spec asks for: accept an uploaded backup zip and
     restore it via the same kestrel.services.backup logic the CLI uses. A bad upload never 500s --
@@ -404,20 +412,21 @@ async def restore_from_upload(request: Request):
     import zipfile
     from pathlib import Path
 
-    from kestrel.db import migrate
+    from kestrel.services import backup as backup_mod
     from kestrel.services.backup import (
         BACKUP_REFUSALS,
         RESTORE_FALLBACK,
         InvalidBackupError,
-        restore_backup,
     )
-    from kestrel.services.reset import IDLE_WAIT_S, _forget_caches
+    from kestrel.services.reset import IDLE_WAIT_S
     from kestrel.web import app as app_mod
 
     form = await request.form()
     upload = form.get("backup_file")
     if upload is None or not getattr(upload, "filename", ""):
         return HTMLResponse('<div class="warnbox">Choose a backup .zip file first.</div>')
+    # D-SEC-11: the opt-in, unticked by default. Only this computer can restore at all (LOCAL_ONLY).
+    restore_local = str(form.get("restore_local") or "") == "1"
 
     try:
         # `closing_upload` because the upload owns a spooled temp file that holds an OS handle
@@ -448,57 +457,63 @@ async def restore_from_upload(request: Request):
             '<div class="warnbox">A restore or reset is already running, so nothing was restored. '
             "Try again when it finishes.</div>"
         )
-    from alembic.util.exc import CommandError
-    from sqlalchemy.exc import SQLAlchemyError
 
-    async with lock, app_mod.worker_held():
-        if not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
-            return HTMLResponse(
-                '<div class="warnbox">Kestrel is in the middle of a run, so nothing was restored. '
-                "Try again in a minute.</div>"
-            )
-        try:
-            with tempfile.TemporaryDirectory(prefix="kestrel-upload-") as tmp:
-                tmp_zip = Path(tmp) / "uploaded-backup.zip"
-                tmp_zip.write_bytes(data)
-                # Extraction, validation and the database write are blocking I/O on a path shared
-                # with every request on uvicorn's one loop, so they run in a thread.
-                result = await asyncio.to_thread(restore_backup, tmp_zip)
-        except InvalidBackupError as exc:
+    def refused(exc: Exception) -> HTMLResponse:
+        if isinstance(exc, InvalidBackupError):
             log.info("restore_refused_upload", error=str(exc))
             said = authored_error(exc, BACKUP_REFUSALS, RESTORE_FALLBACK)
             return HTMLResponse(f'<div class="warnbox">{html.escape(said)}</div>')
-        except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
-            log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
-            return HTMLResponse(
-                f'<div class="warnbox">Restore failed: '
-                f"{html.escape(fixed_reason(exc))}</div>"
-            )
-        try:
-            # A backup from an older Kestrel is on an older schema. Startup migrates; a restore in
-            # a running app has to as well. A NEWER backup was refused in staging, so a failure
-            # here is a lock or a broken migration; the previous data is in the snapshot.
-            await asyncio.to_thread(migrate.run_migrations)
-        except (CommandError, SQLAlchemyError, OSError) as exc:
-            log.warning("restore_migration_failed", error_type=type(exc).__name__, error=str(exc))
-            saved = html.escape(str(result.pre_restore_backup or "the Kestrel-backups folder"))
-            return HTMLResponse(
-                '<div class="warnbox">The backup was restored, but bringing it up to date with '
-                f"this version failed ({html.escape(fixed_reason(exc))}). Restart Kestrel to "
-                f"retry. Your previous database is saved at {saved}.</div>"
-            )
-        # Process caches that would otherwise answer from the data just replaced (the restored
-        # database carries its own tracks, UI scheme and status counts; restore_backup put this
-        # machine's own LAN key back, but the auth cache is reset all the same), and the shipped
-        # sources and layouts a backup from an older Kestrel does not have yet. The same
-        # put-back the in-app reset does.
-        from kestrel.web.auth import reset_cache
+        log.warning("restore_failed", error_type=type(exc).__name__, error=str(exc))
+        return HTMLResponse(
+            f'<div class="warnbox">Restore failed: {html.escape(fixed_reason(exc))}</div>'
+        )
 
-        reset_cache()
-        _forget_caches()
-        await app_mod._seed_shipped_sources()
-        await app_mod._seed_shipped_layouts()
-        await app_mod._load_enabled_tracks()
+    with tempfile.TemporaryDirectory(prefix="kestrel-upload-") as tmp:
+        tmp_zip = Path(tmp) / "uploaded-backup.zip"
+        # D-QUEUE-10: the upload is checked BEFORE any loop is stopped. Stopping hands back the
+        # leases of the work in flight, so a refusal found only after the stop cost that work
+        # for nothing. The checks are blocking I/O, so they run in a thread.
+        try:
+            await asyncio.to_thread(tmp_zip.write_bytes, data)
+            await asyncio.to_thread(backup_mod.check_backup, tmp_zip)
+        except (InvalidBackupError, OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
+            return refused(exc)
+        # D-SEC-20: the worker AND the online lane are stopped (the quit's bounded grace, then a
+        # cancel and the hand-back of their own leases), not only paused, so nothing that read
+        # the old data can write into the restored data; they start again when the restore is
+        # done.
+        async with lock, app_mod.worker_held(), app_mod.work_loops_stopped() as stopped:
+            if not stopped or not await app_mod.wait_for_idle_cycle(IDLE_WAIT_S):
+                return HTMLResponse(
+                    '<div class="warnbox">Kestrel is in the middle of a run, so nothing was '
+                    "restored. Try again in a minute.</div>"
+                )
+            try:
+                # Extraction, validation and the database write are blocking I/O on a path
+                # shared with every request on uvicorn's one loop, so they run in a thread.
+                if restore_local:  # D-SEC-11: only the ticked box passes the opt-in
+                    result = await asyncio.to_thread(
+                        backup_mod.restore_backup, tmp_zip, restore_local_settings=True)
+                else:
+                    result = await asyncio.to_thread(backup_mod.restore_backup, tmp_zip)
+            except (InvalidBackupError, OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
+                return refused(exc)
+            # Process caches that would otherwise answer from the data just replaced (the
+            # restored database carries its own tracks, UI scheme and status counts;
+            # restore_backup put this machine's own LAN key back, but the auth cache is reset all
+            # the same), and the shipped sources and layouts a backup from an older Kestrel does
+            # not have yet. The same put-back the in-app reset does. A restore that wrote the
+            # database returns a result even when a later part failed (D-SEC-23), so this runs
+            # whenever the database was replaced.
+            from kestrel.services import reset as reset_mod
+            from kestrel.web.auth import ensure_tunnel_key, reset_cache
+
+            reset_cache()
+            await ensure_tunnel_key()  # a restored database may hold no key (#151)
+            reset_mod._forget_caches()
+            await app_mod._seed_shipped_sources()
+            await app_mod._seed_shipped_layouts()
+            await app_mod._load_enabled_tracks()
 
     # Escaped: the restored config and document file names come from the archive, which the
     # uploader controls (the same reason no refusal above quotes an entry name).
@@ -511,17 +526,85 @@ async def restore_from_upload(request: Request):
             Path(str(result.pre_restore_backup)).name if result.pre_restore_backup
             else "the Kestrel-backups folder"
         )
-        text = f"Restored from {name}. Earlier data saved as {before}."
+        # A crafted or cross-machine backup can name files outside the data folder (issue #150)
+        # or a model file the uploader wants Kestrel to load (issue #173), and carries tables,
+        # views and queued work that are never imported (D-SEC-20); the restore neutralized each,
+        # and this page says so: a count, never a path or a value.
+        notes = result.notes()
+        # D-SEC-23: a part that failed after the database write is said in plain words, and the
+        # line leads with what was restored, not "Restored from" (the result's own first note
+        # says the same for the CLI, so it is not repeated here).
+        if result.parts_failed:
+            parts = " and ".join(f"the {p}" for p in result.parts_failed)
+            lead = (f"Restored the database from {name}, but {parts} could not be restored. "
+                    "Restore the same backup again to try them once more.")
+            notes = notes[1:]
+        else:
+            lead = f"Restored from {name}."
+        note = (" " + " ".join(notes)) if notes else ""
+        tone = "st-note--bad" if result.parts_failed else "st-note--good"
+        text = f"{lead}{note} Earlier data saved as {before}."
+        toast: dict[str, object] = {"message": html.unescape(text), "timeout": 9000}
+        if result.parts_failed:
+            toast["tone"] = "warn"
         return HTMLResponse(
-            f'<p class="st-note st-note--good" role="status" data-testid="st-restored">{text}</p>',
-            headers={"HX-Trigger": _json.dumps({"k-toast": {"message": html.unescape(text),
-                                                            "timeout": 9000}})},
+            f'<p class="st-note {tone}" role="status" data-testid="st-restored">{text}</p>',
+            headers={"HX-Trigger": _json.dumps({"k-toast": toast})},
         )
     lines = "<br>".join(html.escape(line) for line in result.summary_lines())
-    return HTMLResponse(
-        f'<div class="muted">Restore complete. Kestrel is using the restored data now.<br>{lines}'
-        "</div>"
+    head = ("Restore partly complete. Kestrel is using the restored database now."
+            if result.parts_failed else
+            "Restore complete. Kestrel is using the restored data now.")
+    return HTMLResponse(f'<div class="muted">{head}<br>{lines}</div>')
+
+
+@router.post("/settings/restore/preview", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def restore_preview(request: Request):
+    """Step one of the restore opt-in (D-SEC-11): read the uploaded backup and list the AI and
+    connection settings it would set, without applying anything and without sending anything.
+    The confirmation shows this list beside the unticked box."""
+    import html
+    import sqlite3
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    from starlette.datastructures import UploadFile
+
+    from kestrel.services.backup import (
+        BACKUP_REFUSALS,
+        RESTORE_FALLBACK,
+        InvalidBackupError,
     )
+    from kestrel.services.backup_preview import preview_backup
+
+    form = await request.form()
+    upload = form.get("backup_file")
+    if not isinstance(upload, UploadFile) or not upload.filename:
+        return HTMLResponse("")
+    try:
+        async with closing_upload(upload):
+            data = await upload.read()
+    except OSError as exc:
+        log.warning("restore_preview_read_failed", error_type=type(exc).__name__)
+        return HTMLResponse(
+            f'<p class="st-dsm">Could not read the upload: {html.escape(fixed_reason(exc))}</p>')
+    try:
+        with tempfile.TemporaryDirectory(prefix="kestrel-preview-up-") as tmp:
+            tmp_zip = Path(tmp) / "uploaded-backup.zip"
+            tmp_zip.write_bytes(data)
+            preview = await asyncio.to_thread(preview_backup, tmp_zip)
+    except InvalidBackupError as exc:
+        said = authored_error(exc, BACKUP_REFUSALS, RESTORE_FALLBACK)
+        return HTMLResponse(f'<p class="st-dsm" data-testid="st-restore-preview-bad">'
+                            f"{html.escape(said)}</p>")
+    except (OSError, zipfile.BadZipFile, sqlite3.Error) as exc:
+        log.warning("restore_preview_failed", error_type=type(exc).__name__)
+        return HTMLResponse(
+            f'<p class="st-dsm">The settings could not be read: {html.escape(fixed_reason(exc))}'
+            "</p>")
+    return templates().TemplateResponse(
+        request, "partials/st_restore_preview.html", {"pv": preview})
 
 
 def _copy_row(value: str, *, code_testid: str, button_testid: str, label: str) -> str:
@@ -544,7 +627,7 @@ def _lan_partial(request: Request, lan, note: str | None = None, *, ok: bool = T
     )
 
 
-@router.post("/settings/lan/bind", response_class=HTMLResponse)
+@router.post("/settings/lan/bind", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def lan_bind(request: Request):
     """Turn LAN access on or off (#27, D-SEC-3) by writing server.bind_all to the user's
     settings.yml, where the bind address and both browser guards read it. It takes effect after a
@@ -552,10 +635,7 @@ async def lan_bind(request: Request):
     enabling needs an existing shared secret and the acknowledgement; every refusal is a line on the
     panel and changes nothing."""
     from kestrel.services import lan_access
-    from kestrel.web.auth import is_loopback
 
-    if not is_loopback(request):
-        return HTMLResponse("LAN access can only be changed from this computer.", status_code=403)
     form = await request.form()
     want_on = str(form.get("bind_all") or "") == "on"
     async with sessionmaker()() as s:
@@ -591,7 +671,7 @@ async def lan_bind(request: Request):
     return _lan_partial(request, after, note)
 
 
-@router.post("/settings/lan/secret", response_class=HTMLResponse)
+@router.post("/settings/lan/secret", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def generate_secret(request: Request):
     """Generate (or rotate) the LAN shared secret and show the QR a phone can scan to join.
 
@@ -817,7 +897,7 @@ async def hosted_status(request: Request):
     return _hosted_partial(request, ctx)
 
 
-@router.post("/settings/hosted/key", response_class=HTMLResponse)
+@router.post("/settings/hosted/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_save_key(request: Request):
     """Store (or clear, when blank) one provider's key in the data-home .env. The value is never
     echoed back and never logged; the partial shows only that a key is present."""
@@ -858,7 +938,7 @@ def _backend_label(name: str) -> str:
     return next((p["label"] for p in prov.PRESETS.values() if p["backend"] == name), name)
 
 
-@router.post("/settings/hosted/keybox", response_class=HTMLResponse)
+@router.post("/settings/hosted/keybox", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_keybox(request: Request):
     """Your keys (release round R1): Test a pasted key (or the saved one when the box is blank)
     with one cheap authenticated call, Save it, or Remove it. The key value is never echoed,
@@ -933,7 +1013,7 @@ def _scrub(text: str, value: str) -> str:
     return text[:300]
 
 
-@router.post("/settings/hosted/test", response_class=HTMLResponse)
+@router.post("/settings/hosted/test", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_test(request: Request):
     """Verify the key with the provider and fetch the models that can honor a JSON schema. This is
     the only network call on the page, it sends no operator data, and it is operator-triggered."""
@@ -979,7 +1059,7 @@ async def hosted_test(request: Request):
     return _hosted_partial(request, ctx)
 
 
-@router.post("/settings/hosted/connect", response_class=HTMLResponse)
+@router.post("/settings/hosted/connect", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_connect(request: Request):
     """The one-form path (D-UI-7): kestrel.services.hosted_connect.connect_provider verifies the
     key, picks a model per tier and writes the rows; the onboarding model step calls the same
@@ -1020,7 +1100,7 @@ async def hosted_connect(request: Request):
     return _hosted_partial(request, ctx)
 
 
-@router.post("/settings/hosted/balance", response_class=HTMLResponse)
+@router.post("/settings/hosted/balance", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_balance_toggle(request: Request):
     """Always show my OpenRouter balance (#29, D-BYOK-12): a stored choice that lets the sidebar
     ask OpenRouter for the key's remaining credit even when free models only is on. Off by
@@ -1050,7 +1130,7 @@ async def hosted_balance_toggle(request: Request):
     return _hosted_partial(request, ctx)
 
 
-@router.post("/settings/hosted/mode", response_class=HTMLResponse)
+@router.post("/settings/hosted/mode", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_mode_toggle(request: Request):
     """Turn Hosted mode on (only with the disclosure acknowledged; writes enabled AND
     acknowledged_at) or off (clears enabled; the acknowledgement stays as a record). No other
@@ -1096,7 +1176,7 @@ async def hosted_mode_toggle(request: Request):
     return _hosted_partial(request, ctx)
 
 
-@router.post("/settings/hosted/switch", response_class=HTMLResponse)
+@router.post("/settings/hosted/switch", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_switch(request: Request):
     """The Local / Hosted switch: write `llm.mode`. "hosted" is refused, with what is missing,
     until the disclosure is acknowledged and tier1 and tier2 have hosted assignments
@@ -1171,7 +1251,7 @@ async def _unroute_legacy_external_tiers(s: AsyncSession) -> tuple[list[str], li
     return moved, sorted(still)
 
 
-@router.post("/settings/hosted/tiers", response_class=HTMLResponse)
+@router.post("/settings/hosted/tiers", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_save_tiers(request: Request):
     """Write each tier's HOSTED assignment (`llm.hosted_tiers.<tier>.backend` and `.model`,
     setting-table rows, no restart). A tier set to "stay local" loses its assignment rows and
@@ -1362,7 +1442,7 @@ async def learning_delete_label(label_id: int, request: Request):
     return _ledger_partial(request, {"only_table": True, "message": msg, "ok": removed, **ctx})
 
 
-@router.get("/settings/learning/export")
+@router.get("/settings/learning/export", dependencies=[LOCAL_DOWNLOAD])
 async def learning_export():
     """Every decision as a JSON download. Redacted when Confidential mode is on."""
     import json
@@ -1393,7 +1473,7 @@ async def learning_export():
     )
 
 
-@router.post("/settings/learning/reset", response_class=HTMLResponse)
+@router.post("/settings/learning/reset", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def learning_reset(request: Request):
     """Reset the chosen parts. Refused unless the confirmation field holds exactly RESET and at
     least one part is ticked; the refusal re-renders the tab with the reason and deletes nothing."""
@@ -1445,7 +1525,7 @@ def _reset_message(result: dict) -> str:
     )
 
 
-@router.post("/settings/hosted/model", response_class=HTMLResponse)
+@router.post("/settings/hosted/model", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def hosted_save_model(request: Request):
     """Point the frontier tier at one external backend and model, and store that backend's privacy
     options. Only the frontier tier is written here; the other tiers are the per-tier table."""
@@ -1520,12 +1600,17 @@ async def _mcp_ctx(s: AsyncSession, *, message: str | None = None, ok: bool = Tr
     settings = await load_settings_with_db(s)
     bind_all = config_mod.get_settings().server.bind_all
     secret_row = await s.get(Setting, SHARED_SECRET_KEY)
+    off_row = await s.get(Setting, MCP_TURNED_OFF_KEY)
     return {
+        "mcp_turned_off_note": (off_row.value if off_row and isinstance(off_row.value, str)
+                                and not settings.mcp.enabled else None),
+        "mcp_safe_mode": startup_health.safe_mode(),
         "mcp_enabled": settings.mcp.enabled,
         "mcp_port": settings.mcp.port,
         "mcp_address": mcp_runtime.address(settings.mcp.port, bind_all),
         "mcp_running": mcp_runtime.running(),
         "mcp_stopped_reason": mcp_runtime.stopped_reason(),
+        "mcp_stopped_detail": mcp_runtime.stopped_detail(),
         "mcp_live": mcp_runtime.is_live(),
         "mcp_bind_all": bind_all,
         "mcp_has_secret": bool(secret_row and isinstance(secret_row.value, str)
@@ -1542,7 +1627,7 @@ async def mcp_panel(request: Request):
     return templates().TemplateResponse(request, "partials/st_mcp.html", await mcp_ctx())
 
 
-@router.post("/settings/mcp", response_class=HTMLResponse)
+@router.post("/settings/mcp", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def mcp_switch(request: Request):
     """Turn the MCP server on or off. Saved as a setting row; in the running app it starts or
     stops at once (kestrel.mcp.runtime), with the same Host/Origin pinning and shared-secret
@@ -1554,6 +1639,8 @@ async def mcp_switch(request: Request):
     on = str(form.get("enabled") or "") in ("1", "on", "true")
     async with sessionmaker()() as s:
         await _set(s, MCP_ENABLED_KEY, on)
+        if on:
+            await _unset(s, MCP_TURNED_OFF_KEY)  # the person chose again: the old reason is stale
         await s.commit()
         settings = await load_settings_with_db(s)
         message, ok = None, True
@@ -1574,7 +1661,8 @@ async def mcp_switch(request: Request):
         except Exception as exc:
             log.warning("mcp_switch_failed", on=on, error=f"{type(exc).__name__}: {exc}")
             message, ok = ("The MCP server could not be "
-                           f"{'started' if on else 'stopped'}: {plain_error(exc)}"), False
+                           f"{'started' if on else 'stopped'}: "
+                           f"{mcp_runtime.plain_start_reason(exc)}"), False
     from kestrel.web.pages.settings_privacy import mcp_ctx
 
     return templates().TemplateResponse(

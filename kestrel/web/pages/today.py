@@ -21,7 +21,6 @@ from kestrel.analytics.progress import scoring_progress
 from kestrel.analytics.run_summary import run_summary
 from kestrel.analytics.run_summary import view as run_view
 from kestrel.analytics.today import (
-    dismiss_ask,
     happening_now,
     progress_view,
     switched_off_work,
@@ -31,6 +30,7 @@ from kestrel.services import setting_overrides
 from kestrel.web import today_view as tv
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.routes_control import scan_outcome_text, scan_state
+from kestrel.web.routes_quick import offer_context as quick_offer
 from kestrel.web.score_again_ask import ask_context
 
 router = APIRouter()
@@ -102,6 +102,9 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
         "tour": _tour_wanted(request),
         "strip": await strip_context(s, track, settings, panel, first_run=first_run),
         "retry": retry_note(panel, first_run=first_run),
+        "quick": await quick_offer(
+            s, track, settings, busy=bool(panel["run"]["active"] or panel["run"]["paused"]),
+            tour=_tour_wanted(request)),
         "matches": matches,
         "found_line": found_line(matches, consulting, panel),
         "signals": await tv.new_signals(s) if consulting else None,
@@ -119,8 +122,8 @@ async def page_context(s, request: Request, track: str, settings) -> dict:
 
 
 def retry_note(panel: dict, *, first_run: bool) -> dict | None:
-    """"N roles need another try ..." shown only when something needs it: never on the first-run
-    Today, and never for a past run's problems (it counts the roles still waiting now)."""
+    """"N items need another try ..." shown only when something needs it: never on the first-run
+    Today, and never for a past run's problems (it counts the items still waiting now)."""
     n = int(panel.get("open_failed") or 0)
     if first_run or n < 1:
         return None
@@ -144,14 +147,16 @@ async def strip_context(s, track: str, settings, panel: dict | None = None, *,
                         first_run: bool = False) -> dict:
     """The three segments of the status strip (D-UI-92). The run is global, one figure for every
     track. Last run cross-fades to Next run and holds on Last run while a problem exists."""
-    from kestrel.web.app import current_run_mode
+    from kestrel.web.app import confirmed_run_settings, current_run_mode
     from kestrel.web.pages.runs_page import _model_card
 
     panel = panel or await run_panel(s, track, settings)
     run = panel["run"]
     sched = await schedule_card(s, settings)
     mode = current_run_mode() or settings.llm.mode
-    card = await _model_card(s, settings, None, mode in ("hosted", "both"))
+    # The run card shows what the run in flight is really using until it ends (#103).
+    card = await _model_card(s, confirmed_run_settings() or settings, None,
+                             mode in ("hosted", "both"))
     problem = bool(not first_run and (run["problem_count"] or run["failed"]))
     n_problems = int(run["problem_count"]) + (1 if run["failed"] else 0)
     state = ("paused" if run["paused"] else "active" if run["active"]
@@ -224,8 +229,9 @@ async def schedule_card(s, settings) -> dict:
     one went. The status bar's tooltip is the run panel's step words (run_summary.step_words)."""
     from kestrel.analytics.run_summary import local_when
     from kestrel.services import run_schedule as rs
-    from kestrel.web.app import current_run_mode
+    from kestrel.web.app import confirmed_run_settings, current_run_mode
 
+    settings = confirmed_run_settings() or settings  # the run in flight, until it ends (#103)
     sched, last = await rs.load(s)
     now_local = rs.local_now()
     nxt = rs.next_fire(sched, now_local, last)
@@ -283,15 +289,6 @@ async def today_run(request: Request):
     async with sessionmaker()() as s:
         ctx = {**(await run_panel(s, track)), "track": track, "oob": True}
     return templates().TemplateResponse(request, "partials/today_run.html", ctx)
-
-
-@router.post("/today/asks/{key}/dismiss")
-async def dismiss(key: str):
-    """Wave away a dismissable ask for good (the calibrate ask). A settings row, not browser
-    storage, like the guide strips."""
-    async with sessionmaker()() as s:
-        ok = await dismiss_ask(s, key)
-    return Response(status_code=200 if ok else 404)
 
 
 # ------------------------------------------------------------------ in-place section refreshes

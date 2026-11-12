@@ -40,6 +40,7 @@ from kestrel.pipeline._shared import (
     prompt_spec,
     record_refusal,
     rescore_failure_prefix,
+    tier_is_hosted,
 )
 from kestrel.pipeline.context import (
     build_tier2_values,
@@ -80,7 +81,9 @@ def is_stub_posting(opp, source=None) -> bool:
         return len(flat) < MIN_DESCRIPTION_CHARS
     return len(text.split()) < MIN_DESCRIPTION_WORDS
 
-_VERSION = {"employment": "evaluate/v2", "consulting": "evaluate_consulting/v2"}
+# v3 adds the operator's stated facts (OPERATOR_CORRECTIONS, D-LEARN-3, D-SCORE-1). Every score
+# stored under v2 then shows "Scored with older scoring instructions" (pipeline_view.warning_text).
+_VERSION = {"employment": "evaluate/v3", "consulting": "evaluate_consulting/v3"}
 
 
 async def _gather_few_shot(
@@ -96,26 +99,37 @@ async def _gather_few_shot(
         return [], []
     rows = (
         await session.execute(
-            select(Label, OpportunityEmbedding)
+            select(Label, OpportunityEmbedding, Opportunity.title, Opportunity.org_name)
             .join(OpportunityEmbedding, OpportunityEmbedding.opportunity_id == Label.opportunity_id)
+            .join(Opportunity, Opportunity.id == Label.opportunity_id)
             .where(
                 Label.track == opp.track,
                 Label.opportunity_id != opp.id,
                 OpportunityEmbedding.model == model,
             )
+            .order_by(Label.id.desc())
         )
     ).all()
-    examples = [
-        FewShotExample(
+    examples: list[FewShotExample] = []
+    seen: set[int] = set()
+    for label, emb, title, org_name in rows:
+        # The operator's newest answer per role only: a Quick answer later changed under
+        # Detailed must not be shown beside its correction (`labeled_examples` does the same).
+        if label.opportunity_id in seen:
+            continue
+        seen.add(label.opportunity_id)
+        # PROMPTS.md FEW_SHOT_EXAMPLES: a one-line summary OF THAT OPPORTUNITY, so an example
+        # without reasons (every Quick answer) still says what was rated, never only a score.
+        what = " at ".join(x for x in (" ".join((title or "").split()),
+                                        " ".join((org_name or "").split())) if x)
+        examples.append(FewShotExample(
             id=label.opportunity_id,
             embedding=from_bytes(emb.vector),
             verdict=label.verdict or "unknown",
             holistic=label.score if label.score is not None else 0.0,
-            summary=(label.rationale or "")[:400],
+            summary=(what or label.rationale or "")[:400],
             rationale=(label.rationale or "")[:200],
-        )
-        for label, emb in rows
-    ]
+        ))
     chosen = select_few_shot(
         from_bytes(query.vector),
         examples,
@@ -165,6 +179,48 @@ def _writeback_org_signals(org: Org | None, value, opp: Opportunity) -> None:
         org.signals = existing + new
 
 
+# The share of a local tier's window kept free for the gap between cl100k (what every allowance
+# is counted in) and the local model's own tokenizer (D-LLM-63).
+TOKENIZER_MARGIN = 0.03
+
+
+# D-SCORE-20: why a role was not scored when its prompt cannot fit the local model's window.
+PROMPT_OVER_BUDGET = (
+    "Not scored: your profile and notes leave no room for this posting in the local model's "
+    "context window. Shorten your profile, or choose a model with a larger window, then retry."
+)
+
+
+def _local_overflow(settings: Settings, tier: str, messages: list[dict]) -> int:
+    """How many cl100k tokens the prompt is over what the local window holds with the tokenizer
+    margin kept free: the window preflight requires for the tier (`doctor.required_num_ctx`),
+    less the reply budget, the template overhead and TOKENIZER_MARGIN of it. 0 when it fits."""
+    from kestrel.doctor import required_num_ctx
+    from kestrel.ingest.tokens import count_tokens
+
+    window = required_num_ctx(tier, settings)
+    reply = settings.llm.tiers[tier].max_tokens or 512
+    room = window - reply - 200 - int(window * TOKENIZER_MARGIN)
+    used = sum(count_tokens(m["content"]) for m in messages)
+    return max(0, used - room)
+
+
+def _corrections_changed(
+    settings: Settings, client: LLMClient, tier: str, corrections: list, confirmed: str
+) -> bool:
+    """True when this call goes online (under the task's settings or the client's) and the lines
+    it would send differ from the confirmed ones (D-SCORE-3)."""
+    from kestrel.learning.correction_lines import lines_digest
+    from kestrel.pipeline.context import operator_correction_lines
+    from kestrel.services.online_consent import tier_goes_online
+
+    client_settings = getattr(client, "settings", settings)
+    online = tier_goes_online(settings, tier) or (
+        isinstance(client_settings, Settings) and tier_goes_online(client_settings, tier)
+    )
+    return online and lines_digest(operator_correction_lines(corrections)) != confirmed
+
+
 async def handle_t2(
     sessionmaker: async_sessionmaker[AsyncSession],
     client: LLMClient,
@@ -178,8 +234,13 @@ async def handle_t2(
     task_id: int | None = None,
     score_stub: bool = False,
     requested: bool = False,
+    corrections_digest: str | None = None,
 ) -> HandlerOutcome:
-    """`requested` marks a task the operator asked for: when it ends without a score because
+    """`corrections_digest` is the digest of the correction lines the operator confirmed for an
+    online send (D-SCORE-3). When the call goes online and the lines it would carry now differ,
+    nothing is sent: the outcome is "held" and the worker holds the task for a new confirmation.
+
+    `requested` marks a task the operator asked for: when it ends without a score because
     the posting is empty, a note says so (kestrel.services.score_again_notice), never silence.
 
     `score_stub` is the operator's explicit Score again: a posting with next to no
@@ -262,32 +323,72 @@ async def handle_t2(
         profile = profiles.get(opp.track)
         spec = prompt_spec(_VERSION[opp.track])
 
+        from kestrel.learning.corrections import scoring_corrections
+        from kestrel.pipeline.context import few_shot_block, stated_correction_ids
+
+        corrections = await scoring_corrections(session, opp)
+        if corrections_digest is not None and _corrections_changed(
+            settings, client, spec.tier, corrections, corrections_digest
+        ):
+            from kestrel.services.online_consent import APPROVAL_HOLD
+
+            log.info("t2_held_corrections_changed", opportunity_id=opp.id)
+            return HandlerOutcome("held", 2, error=APPROVAL_HOLD)
+
         few_shot_examples, few_shot_ids = await _gather_few_shot(session, opp, settings)
-        from kestrel.pipeline.context import few_shot_block
 
         # Hosted mode (SPEC.md 6.4): smaller slice when metered, redact before send, refuse when
         # confidential mode has nothing to redact with.
         plan = await plan_hosted_send(session, settings, spec.tier)
         comp_intel = await comp_intel_summary(session, opp)
-        values = build_tier2_values(
-            opp=opp,
-            org=org,
-            profile=profile,
-            source_name=source.name if source else "",
-            max_jd_tokens=jd_budget(settings, spec.tier, settings.pipeline.max_jd_tokens),
-            few_shot=few_shot_block(few_shot_examples),
-            comp_intel=comp_intel,
-        )
         trigger_event = bool(opp.trigger_data or opp.event_date)
         posted = bool(opp.description_md)
-        user = render_user(
-            spec.user,
-            values,
-            trigger_event=trigger_event,
-            posted=posted or not trigger_event,
-            org_signals=org_signals_lines(org),
-        )
-        messages = [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
+
+        def _messages(max_jd: int) -> list[dict]:
+            values = build_tier2_values(
+                opp=opp,
+                org=org,
+                profile=profile,
+                source_name=source.name if source else "",
+                max_jd_tokens=max_jd,
+                few_shot=few_shot_block(few_shot_examples),
+                comp_intel=comp_intel,
+                # The operator's stated facts (D-LEARN-3). Redacted with the rest of the message
+                # by encode_send below when the call goes online.
+                corrections=corrections,
+            )
+            user = render_user(
+                spec.user,
+                values,
+                trigger_event=trigger_event,
+                posted=posted or not trigger_event,
+                org_signals=org_signals_lines(org),
+            )
+            return [{"role": "system", "content": spec.system}, {"role": "user", "content": user}]
+
+        max_jd = jd_budget(settings, spec.tier, settings.pipeline.max_jd_tokens)
+        messages = _messages(max_jd)
+        over = 0
+        if not tier_is_hosted(settings, spec.tier):
+            over = _local_overflow(settings, spec.tier, messages)
+            if over > 0:
+                # A prompt at every allowance's cap leaves little room in the local window, and
+                # the local model's tokenizer is not cl100k: the description gives way so the
+                # whole prompt keeps a tokenizer margin, never cut silently by Ollama (D-LLM-63).
+                # The cut comes off what the description actually holds, not its cap: one
+                # already under the cap would otherwise not be cut at all (Fable final review).
+                # A marker and token boundaries can add a few tokens, so measure again.
+                from kestrel.ingest.tokens import count_tokens
+                from kestrel.pipeline.context import normalize_description
+
+                log.info("t2_description_trimmed_to_fit", opportunity_id=opp.id, tokens=over)
+                cap = min(max_jd, count_tokens(normalize_description(opp.description_md)))
+                for _attempt in range(4):
+                    cap = max(1, cap - over)
+                    messages = _messages(cap)
+                    over = _local_overflow(settings, spec.tier, messages)
+                    if over <= 0 or cap <= 1:
+                        break
 
         keeps_stage = rescore and already_scored
         mark = rescore_failure_prefix(task_id) if keeps_stage else ""
@@ -303,6 +404,22 @@ async def handle_t2(
                 opp.stage_reason = f"t2 {plan.refuse}"[:500]
             await session.commit()
             return HandlerOutcome("quarantined", 2, quarantined=True, error=plan.refuse)
+        if over > 0:
+            # D-SCORE-20: a local prompt still over the tier's window with the description cut as
+            # far as it goes is never sent: Ollama would cut it silently and the read would be
+            # quietly wrong. Hard rule 4: kept for the person, never dropped. The role sits in
+            # quarantine with the reason, as a refused send does (attempts 0: nothing was sent),
+            # and Retry scores it once the profile is shorter or the model's window is larger.
+            log.warning("t2_prompt_over_budget", opportunity_id=opp.id, tokens=over)
+            record_refusal(
+                session, tier=2, opportunity_id=opp.id, model=settings.llm.tiers[spec.tier].model,
+                reason=PROMPT_OVER_BUDGET, messages=messages, error_prefix=mark,
+            )
+            if not keeps_stage:
+                opp.stage = "quarantined"
+                opp.stage_reason = f"t2 {PROMPT_OVER_BUDGET}"[:500]
+            await session.commit()
+            return HandlerOutcome("quarantined", 2, quarantined=True, error=PROMPT_OVER_BUDGET)
         messages, book = encode_send(messages, plan.mapping)
 
         hook = make_quarantine_hook(session, tier=2, opportunity_id=opp.id, error_prefix=mark)
@@ -376,6 +493,7 @@ async def handle_t2(
                 blockers=post.blockers,
                 legitimacy=value.legitimacy.model_dump(),
                 few_shot_ids=few_shot_ids,
+                correction_ids=stated_correction_ids(corrections),
                 raw_response=result.raw,
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
@@ -390,6 +508,9 @@ async def handle_t2(
         opp.stage_reason = (
             f"t2 {post.verdict} (score {post.displayed_score:.2f}, model {post.verdict_model})"
         )
+        from kestrel.learning.corrections import after_evaluation
+
+        await after_evaluation(session, opp.id)  # agrees_now, archive a gone posting note
         await session.commit()
         return HandlerOutcome(
             "t2_done",

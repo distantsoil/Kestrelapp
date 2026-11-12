@@ -37,6 +37,7 @@ from kestrel.services import model_tasks as mt
 from kestrel.services import onboarding as ob
 from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.flash import flash_redirect, flash_text
@@ -138,7 +139,7 @@ async def setup_steps(request: Request):
     return await _steps_partial(request, await setup_state())
 
 
-@router.post("/setup/mode")
+@router.post("/setup/mode", dependencies=[LOCAL_ONLY])
 async def setup_mode(request: Request):
     form = await request.form()
     choice = str(form.get("mode") or "")
@@ -154,7 +155,7 @@ async def setup_mode(request: Request):
     return _back_to_system(code)
 
 
-@router.post("/setup/profile")
+@router.post("/setup/profile", dependencies=[LOCAL_ONLY])
 async def setup_profile(request: Request):
     form = await request.form()
     name = str(form.get("profile") or "").strip()
@@ -249,7 +250,7 @@ async def start_action(name: str) -> tuple[ss.SetupState, str | None, str | None
     return state, None, None
 
 
-@router.post("/setup/action/{name}", response_class=HTMLResponse)
+@router.post("/setup/action/{name}", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def setup_action(request: Request, name: str):
     """Run one Setup button and return the steps partial, which polls while work runs.
     A second request while one runs answers 200 with the message and data-setup-status="busy":

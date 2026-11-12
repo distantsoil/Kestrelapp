@@ -259,12 +259,22 @@ def test_a_deferred_task_is_stalled_but_a_failed_one_that_will_retry_is_not(ids)
     assert 'data-stalled="0"' in html
 
 
-def test_leasing_a_deferred_task_again_clears_the_stall(ids):
-    from kestrel.queue.queue import DEFERRED_KEY
+def test_a_deferred_task_stays_stalled_until_the_hold_ends(ids):
+    # #154: a held task is never leased again while its mark is set, so the stall survives
+    # drain attempts instead of being cleared by a re-lease; only the hold ending releases it.
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel.queue.queue import DEFERRED_KEY, TaskQueue
 
     task = rh.queue(ids["strong"])
     rh.give_back(task, "defer", "held")
-    rh.give_back(task, "defer", "held")  # leases it again, then defers again
+
+    async def lease(s):
+        q = TaskQueue(async_sessionmaker(s.bind, expire_on_commit=False))
+        return await q.lease("drain-test", types=["t1", "t2"])
+
+    assert rh.run(lease) is None  # the next drain cannot lease it
+
     with _client() as c:
         assert c.get(f"/opportunities/{ids['strong']}/role/rescoring").json()["stalled"] is True
 

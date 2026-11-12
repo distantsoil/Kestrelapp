@@ -5,6 +5,9 @@ correctly in both a passing and a failing case."""
 
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
+
 import numpy as np
 from sqlalchemy import select
 
@@ -140,3 +143,43 @@ async def seed_high_quality_labels_with_low_scores(
             label.created_at = created_at
         session.add(label)
     await session.commit()
+
+
+# ---------------------------------------------------------------------------------- issue #173
+# A crafted model pickle whose LOAD has a visible side effect (it writes a sentinel file): the
+# classic "a restored backup can make Kestrel unpickle a file it names" exposure. Dumping does not
+# fire it; only unpickling does.
+_RERANKER_SENTINEL: Path | None = None  # set by the test; written by _reranker_evil_effect on load
+
+
+def _reranker_evil_effect() -> int:
+    """Runs when the crafted model pickle is unpickled: the side effect the issue describes
+    (a foreign file's code executes). A restored backup must make this never fire."""
+    if _RERANKER_SENTINEL is not None:
+        _RERANKER_SENTINEL.write_bytes(b"SENTINEL WRITTEN BY RERANKER UNPICKLE")
+    return 42
+
+
+class _RerankerEvil:
+    def __reduce__(self):
+        # pickle stores a reference to the module-level _reranker_evil_effect (module
+        # tests.learning_fakes) and calls it on load; a module-level function is picklable by
+        # reference, a local one is not.
+        return (_reranker_evil_effect, ())
+
+
+def craft_reranker_evil_model(path, sentinel) -> None:
+    """Write a pickle at `path` whose LOAD runs a side effect (writes `sentinel`). `sentinel` is
+    held in a module global so the load-time effect knows where to write, without pickling the
+    path itself (the path is never part of the pickle)."""
+    global _RERANKER_SENTINEL
+    _RERANKER_SENTINEL = sentinel
+    with open(path, "wb") as fh:
+        pickle.dump(_RerankerEvil(), fh)
+
+
+def craft_reranker_inert_artifact(path) -> None:
+    """Write a valid, side-effect-free pickle (a plain dict) so a loader that DOES reach the file
+    finds something loadable -- this isolates the refusal to the path, not a corrupt pickle."""
+    with open(path, "wb") as fh:
+        pickle.dump({"inert": True}, fh)

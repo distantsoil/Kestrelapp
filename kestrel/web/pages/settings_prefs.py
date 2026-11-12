@@ -150,6 +150,7 @@ async def save_ui_key(request: Request) -> Response:
         log.info("settings_ui_refused", key=key, error=str(exc))
         return io.refuse(_refusal(key, exc))
     quiet = bool(body.get("quiet"))
+    io.refuse_remote(request, key, clean)
     async with sessionmaker()() as s:
         prev = await io.read(s, key)
         if prev == clean:
@@ -310,8 +311,8 @@ async def save_notify(request: Request) -> Response:
             await io.write(s, f"notify.events.{k}", io.ABSENT if on else False)
         await s.commit()
     words = {
-        "matches": ("You will hear about new strong matches.",
-                    "No more alerts for new strong matches."),
+        "matches": ("You will hear about new roles worth a look.",
+                    "No more alerts for new roles worth a look."),
         "followups": ("You will hear about follow-ups due.", "No more alerts for follow-ups."),
         "runs": ("You will hear when a run finishes.", "No more alerts when a run finishes."),
         "attention": ("You will hear when something needs attention.",
@@ -367,6 +368,7 @@ async def undo_setting(request: Request) -> Response:
         return io.refuse(io.NO_UNDO)
     if not io.plausible(key, prev):
         return io.refuse(io.NO_UNDO)
+    io.refuse_remote(request, key, prev)  # Undo must not reach a key its own route guards
     async with sessionmaker()() as s:
         if await io.read(s, key) != now:
             return io.refuse(io.NO_UNDO)

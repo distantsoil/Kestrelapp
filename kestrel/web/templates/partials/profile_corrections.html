@@ -1,0 +1,23 @@
+{# Corrections tab (D-UI-291, the locked design mockup (kept privately)):
+   every requirement correction about the person, from any role, newest first. The cards are
+   server-rendered; profile.js filters them as you type, opens the pencil panel and shows the
+   toast with Undo. Nothing here sends anything: after a change Kestrel only offers the rescore
+   dialog (/rescore/choose), which asks before any online send. #}
+<div id="pf-corrections" class="pf-corr" data-testid="pf-corrections" data-pf-cr-total="{{ corr_total }}">
+  <div class="pf-corr__head">
+    <p class="pf-lede k-grow">Where you changed what Kestrel concluded about you. Each one counts for every role.</p>
+    <form class="pf-corr__search" action="/profile" method="get" role="search" data-pf-cr-searchform>
+      <input type="hidden" name="tab" value="corrections">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+      <input id="pf-crq" class="k-input" type="search" name="q" value="{{ corr_query }}" placeholder="Search corrections"
+             aria-label="Search corrections" autocomplete="off" data-pf-cr-search data-testid="pf-cr-search">
+    </form>
+  </div>
+  {% include "partials/profile_corrections_offer.html" %}
+  <div id="pf-cr-list" class="pf-corr__list" data-testid="pf-cr-list">
+    {% for c in corr_items %}{% include "partials/profile_corrections_card.html" %}{% endfor %}
+  </div>
+  <div class="pf-corr__empty" id="pf-cr-none" data-testid="pf-cr-none"{% if corr_total %} hidden{% endif %}>No corrections yet. When you correct what Kestrel concluded about you on a role, it appears here.</div>
+  <div class="pf-corr__empty" id="pf-cr-nomatch" data-testid="pf-cr-nomatch"{% if not (corr_total and not corr_shown) %} hidden{% endif %}>No corrections match “<span data-pf-cr-q>{{ corr_query }}</span>”.</div>
+  <p class="pf-hint pf-corr__foot">Notes about a single posting stay on that role.</p>
+</div>

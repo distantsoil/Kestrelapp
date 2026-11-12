@@ -60,27 +60,51 @@ def _pending_key(opportunity_id: int) -> str:
     return f"{PENDING_PREFIX}{int(opportunity_id)}"
 
 
-async def attach(session: AsyncSession, opportunity_id: int, override: dict | None) -> None:
+# The run's confirmed online destinations ride on the marker beside the pick (D-SEC-22), so the
+# Tier 2 task the pick reaches carries the same stamp a changed posting's task gets directly.
+_APPROVAL = "online_approval"
+
+
+async def attach(
+    session: AsyncSession, opportunity_id: int, override: dict | None,
+    online_approval: object = None,
+) -> None:
     """Mark a role the CURRENT run just stored (stage `new`) for this run's pick, in the
-    caller's session (committed with the posting). No override, no marker."""
+    caller's session (committed with the posting). No override, no marker. `online_approval`
+    is the run's confirmation, kept with the pick."""
     if not override or not override.get("model"):
         return
+    value = dict(override)
+    if online_approval is not None:
+        from kestrel.services.online_consent import read_approval
+
+        value[_APPROVAL] = read_approval(online_approval)
     row = await session.get(Setting, _pending_key(opportunity_id))
     if row is None:
-        session.add(Setting(key=_pending_key(opportunity_id), value=dict(override)))
+        session.add(Setting(key=_pending_key(opportunity_id), value=value))
     else:
-        row.value = dict(override)
+        row.value = value
 
 
 async def take(session: AsyncSession, opportunity_id: int) -> dict | None:
     """Consume a role's marker (Tier 0, in the commit that sets its stage): the pick, or None.
-    A second pass over the role finds nothing."""
+    A second pass over the role finds nothing. The run's confirmation is not part of the pick:
+    `approval_of` reads it from the same value."""
     row = await session.get(Setting, _pending_key(opportunity_id))
     if row is None:
         return None
     value = row.value
     await session.delete(row)
     return dict(value) if isinstance(value, dict) and value.get("model") else None
+
+
+def split(taken: dict | None) -> tuple[dict | None, dict | None]:
+    """(the pick, the run's confirmation or None) from what `take` returned."""
+    if not taken:
+        return None, None
+    pick = {k: v for k, v in taken.items() if k != _APPROVAL}
+    approval = taken.get(_APPROVAL)
+    return pick, (dict(approval) if isinstance(approval, dict) else None)
 
 
 async def discard(session: AsyncSession, opportunity_id: int) -> None:

@@ -24,6 +24,7 @@ from kestrel.llm.service_name import service_name
 from kestrel.pipeline._shared import run_prompt_hosted
 from kestrel.queue.queue import TaskQueue
 from kestrel.services import pursuit_board
+from kestrel.services.online_consent import CONSENT_KEY, consent_payload
 from kestrel.services.setting_overrides import load_settings_with_db
 
 TASK_TYPE = "follow_up"
@@ -136,7 +137,8 @@ async def request_draft(
     session.add(Task(type=TASK_TYPE, payload={
         "pursuit_id": pursuit.id, "opportunity_id": pursuit.opportunity_id,
         "requested": True, "facts": facts, "route": route,
-        "confirmed": form.confirmed == "1", "model": form.model,
+        # The confirmation, under the shared consent keys (a restore removes exactly those).
+        **(consent_payload(route) if route["online"] and form.confirmed == "1" else {}),
         "prompt_version": PROMPT,
     }))
     await session.flush()
@@ -157,7 +159,7 @@ async def _write(session: AsyncSession, client: Any, task: Task) -> dict[str, An
     if route != payload["route"] or await facts_for(session, pursuit) != payload["facts"]:
         return {"error": "The facts or model changed. Reopen the draft and confirm again."}
     if route["online"]:
-        if not payload.get("confirmed") or payload.get("model") != route["model"]:
+        if payload.get(CONSENT_KEY) != route["model"]:
             return {"error": "Confirm the online draft again. Nothing was sent."}
         if problem := await send_problem(session, settings):
             return {"error": problem}

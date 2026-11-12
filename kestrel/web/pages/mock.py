@@ -33,6 +33,7 @@ from kestrel.pipeline._shared import settings_with_override, tier_is_hosted
 from kestrel.services.online_consent import confirmation_matches
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import prep_view as pv
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.pages.prep import events, page_response, toast
@@ -260,7 +261,7 @@ async def online_dialog(request: Request, opportunity_id: int):
     return templates().TemplateResponse(request, "partials/pp_online.html", ctx)
 
 
-@router.post("/mock/{opportunity_id}/route", response_class=HTMLResponse)
+@router.post("/mock/{opportunity_id}/route", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def set_route(request: Request, opportunity_id: int):
     """Use an online model for this practice session (or confirm the one already configured).
     Nothing is stored: the confirmation rides on the page and the answer route checks it again."""

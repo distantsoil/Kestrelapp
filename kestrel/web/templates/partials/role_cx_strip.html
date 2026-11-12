@@ -1,0 +1,16 @@
+{# The corrections strip at the foot of Your view (D-UI-290): "You changed 2 things Kestrel
+   concluded. Its 4.6 is from before those changes." with Score again with my changes and See all
+   in Profile. Open only while a correction on this role moved a row. Score again is the existing
+   dialog (GET /rescore/choose, which lists these corrections and asks first for an online
+   model): this strip sends nothing itself. `oob` makes it an out-of-band swap of #rl-cx. #}
+{% set _base = '/opportunities/' ~ opp.id %}
+<div class="rl-xp rl-cx{{ ' on' if changed_n else '' }}" id="rl-cx" data-changed="{{ changed_n }}"{% if oob %} hx-swap-oob="outerHTML"{% endif %}><div><div class="rl-cxin" data-testid="corrections-strip">
+  <span class="rl-cxt">{{ strip_text }}</span>
+  <span class="score-again">
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" data-score-again="{{ opp.id }}"
+            hx-get="/rescore/choose" hx-vals='{"opp_ids": "{{ opp.id }}"}' hx-target="next .score-again-slot" hx-swap="innerHTML"
+            aria-haspopup="dialog" data-testid="score-again-mine">Score again with my changes</button>
+    <span class="score-again-slot"></span><span class="score-again-status" aria-live="polite"></span>
+  </span>
+  <a class="k-btn k-btn--sm" href="/profile?tab=corrections" data-testid="see-all-corrections">See all in Profile</a>
+</div></div></div>

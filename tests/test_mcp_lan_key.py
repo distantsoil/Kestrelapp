@@ -88,23 +88,33 @@ def test_loopback_peer_needs_no_key():
 def test_rebound_host_is_refused_under_bind_all():
     # A DNS-rebound request arrives on loopback, where the key is exempt, so the Host pin is the
     # control that has to hold. allowed_hosts=["*"] switched it off.
+    # D-SEC-10: a foreign Host from a loopback peer is remote, so it needs the key (401 without);
+    # with the key the Host guard still refuses it (421).
+    auth.set_cached_key("mcp-secret")
     with _client(sse_app(bind_all=True), "127.0.0.1") as c:
         r = c.post(
             "/messages/?session_id=abc",
             json={"jsonrpc": "2.0", "method": "ping"},
             headers={"Host": "evil.example"},
         )
-    assert r.status_code == 421
+        keyed = c.post(
+            "/messages/?session_id=abc",
+            json={"jsonrpc": "2.0", "method": "ping"},
+            headers={"Host": "evil.example", "X-Kestrel-Key": "mcp-secret"},
+        )
+    assert r.status_code == 401
+    assert keyed.status_code == 421
 
 
 def test_rebound_host_is_refused_on_the_loopback_bind_too():
     # fastmcp 4.x's SSE transport ignores http_app's allowed_hosts/host_origin_protection, so the
     # loopback-only port had no Host guard at all until the guard was installed explicitly.
+    auth.set_cached_key("mcp-secret")
     with _client(sse_app(), "127.0.0.1") as c:
         r = c.post(
             "/messages/?session_id=abc",
             json={"jsonrpc": "2.0", "method": "ping"},
-            headers={"Host": "evil.example"},
+            headers={"Host": "evil.example", "X-Kestrel-Key": "mcp-secret"},
         )
     assert r.status_code == 421
 
@@ -130,3 +140,60 @@ def test_own_address_and_own_origin_are_accepted_under_bind_all():
                 headers={"Host": host, "Origin": f"http://{host}"},
             )
             assert r.status_code not in (403, 421), f"own address {host} was refused"
+
+
+# ---- D-SEC-10: the MCP loopback exemption is the web app's decision, not a copy of it
+@pytest.mark.parametrize("header", [
+    {"X-Forwarded-For": "203.0.113.9"}, {"Forwarded": "for=203.0.113.9"},
+    {"Cf-Connecting-Ip": "203.0.113.9"}, {"X-Real-Ip": "203.0.113.9"},
+])
+def test_a_loopback_peer_with_a_proxy_header_is_a_remote_visitor_and_needs_the_key(header):
+    """A tunnel or reverse proxy on this machine connects from 127.0.0.1 and forwards the real
+    client in a header. It is remote, so the key is required, like on the web app."""
+    auth.set_cached_key("mcp-secret")
+    with _client(sse_app(bind_all=True), "127.0.0.1") as c:
+        r = c.post("/messages/?session_id=abc", json={"jsonrpc": "2.0", "method": "ping"},
+                   headers=header)
+        ok = c.post("/messages/?session_id=abc", json={"jsonrpc": "2.0", "method": "ping"},
+                    headers={**header, "X-Kestrel-Key": "mcp-secret"})
+    assert r.status_code == 401
+    assert ok.status_code != 401
+
+
+def test_the_mcp_server_and_the_web_app_share_one_loopback_decision():
+    assert auth.peer_is_loopback("127.0.0.1", {"host": "localhost:9110"}) is True
+    assert auth.peer_is_loopback("127.0.0.1", {"host": "tunnel.invalid.example"}) is False
+    proxied = {"host": "127.0.0.1", "x-real-ip": "1.2.3.4"}
+    assert auth.peer_is_loopback("127.0.0.1", proxied) is False
+    assert auth.peer_is_loopback("192.168.1.9", {"host": "127.0.0.1"}) is False
+    assert auth.peer_is_loopback("127.0.0.1", {"host": "localhost"}, ("localhost",)) is False
+
+
+def test_the_mcp_guard_and_the_web_guard_read_one_hostname_source_live(monkeypatch):
+    """A settings change reaches both guards the same way, with no restart: the web app used to
+    keep a copy taken when it was built, the MCP server read the settings on every request."""
+    from starlette.requests import Request
+
+    def web_says_local(host: str) -> bool:
+        scope = {"type": "http", "method": "GET", "path": "/", "query_string": b"",
+                 "headers": [(b"host", host.encode())], "client": ("127.0.0.1", 5), "server": None,
+                 "scheme": "http"}
+        return auth.is_loopback(Request(scope))
+
+    def mcp_says_local(host: str) -> bool:
+        auth.set_cached_key("mcp-secret")
+        with _client(sse_app(bind_all=True), "127.0.0.1") as c:
+            r = c.post("/messages/?session_id=abc", json={"jsonrpc": "2.0", "method": "ping"},
+                       headers={"Host": host})
+        return r.status_code != 401
+
+    # A declared public name is never this computer, even when it is a name this computer answers
+    # to (a tunnel that forwards "localhost" is the case the list exists for).
+    assert auth.public_hostnames() == ()
+    assert web_says_local("localhost") and mcp_says_local("localhost")
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["Localhost"]')
+    assert auth.public_hostnames() == ("localhost",)
+    assert not web_says_local("localhost") and not mcp_says_local("localhost")
+    # The list changes: both follow it at once, with no restart.
+    monkeypatch.setenv("KESTREL_SERVER__PUBLIC_HOSTNAMES", '["tunnel-b.example.com"]')
+    assert web_says_local("localhost") and mcp_says_local("localhost")

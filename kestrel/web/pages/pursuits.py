@@ -10,6 +10,7 @@ import html
 import json
 import re
 from datetime import date, timedelta
+from typing import Any, NamedTuple
 
 import structlog
 from fastapi import APIRouter, Request
@@ -18,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from kestrel.date_display import format_display
 from kestrel.db.base import utcnow_iso
@@ -173,30 +175,291 @@ def _next_line(p: Pursuit, on: date) -> dict:
         when = f"{board_svc.short_date(p.next_action_at)}{', ' + clock if clock else ''}"
         return {"text": p.next_action, "icon": "cal", "when": when}
     if due < on:
-        when = f"was due {board_svc.short_date(p.next_action_at)}"
+        when = f"{board_svc.FOLLOW_UP_OVERDUE}, was due {board_svc.short_date(p.next_action_at)}"
         return {"text": p.next_action, "icon": "clock", "when": when}
     return {"text": p.next_action, "icon": "clock", "when": board_svc.due_label(due, on)}
 
 
+# Closed cards a column draws before "Show more" (owner, D-PERF-3): active cards are never held
+# back, only the ones folded into the Closed group, and the table draws one page of rows at a time.
+FOLD_CAP = 100
+TABLE_PAGE_SIZE = 100
+# The columns of a posting the board never reads. Deferred, so a long board does not pull every
+# description and raw payload into memory for the few cards it draws.
+_BULKY = (
+    Opportunity.description_md, Opportunity.previous_description_md, Opportunity.raw,
+)
+
+
+class BoardFilter(NamedTuple):
+    """The search box and the More filters, as the page sends them (the same keys the page script
+    keeps in the URL). They run here, over every pursuit, so a closed card that is not drawn yet
+    and a row on another table page are found like any other (D-PERF-3)."""
+    q: str = ""
+    fit: str = ""
+    pri: str = ""
+    work: str = ""
+    company: str = ""
+    added: str = ""
+    due: str = ""
+    range: str = "0"
+
+    @property
+    def active(self) -> bool:
+        return bool(self.q.strip() or self.fit or self.pri or self.work or self.company
+                    or self.added or self.due or self.range != "0")
+
+    @property
+    def key(self) -> str:
+        """What the page script compares with its own state: equal means the board reflects it."""
+        return json.dumps([self.q.strip(), self.fit, self.pri, self.work, self.company,
+                           self.added, self.due, self.range], ensure_ascii=False,
+                          separators=(",", ":"))
+
+
+def board_filter(params, stored_range: str | None = None) -> BoardFilter:
+    """Read a filter from query or form values. A range the page did not send is the saved one."""
+    def get(k: str) -> str:
+        return str(params.get(k) or "").strip() if k != "q" else str(params.get(k) or "")
+
+    rng = get("range")
+    if rng not in RANGE_CHOICES:
+        rng = stored_range if stored_range in RANGE_CHOICES else "0"
+    return BoardFilter(q=get("q"), fit=get("fit"), pri=get("pri"), work=get("work"),
+                       company=get("company"), added=get("added"), due=get("due"), range=rng)
+
+
+# The table's sort (#137): which column, which way. Remembered once per viewer in a cookie the
+# server reads (beside the Board or Table choice), so the first paint is already in order and the
+# sort runs over every application, not the page of rows the table happens to draw.
+SORT_COOKIE = "kestrel_pursuits_sort"
+# The direction a first press picks: the end most worth seeing.
+SORT_FIRST: dict[str, int] = {"role": 1, "stage": 1, "due": -1, "applied": -1, "fit": -1}
+
+
+def board_sort(params, cookies) -> tuple[str, int]:
+    """The sort as ("", 1) for none, else (column, 1 or -1). A `sort` the page sent wins, even an
+    empty one (the third press, back to the default order); else the saved cookie; a value that is
+    not a known column and direction means no sort, never an error."""
+    if "sort" in params:
+        col, direction = str(params.get("sort") or ""), str(params.get("dir") or "")
+    else:
+        col, _, word = str(cookies.get(SORT_COOKIE) or "").partition("_")
+        direction = {"asc": "1", "desc": "-1"}.get(word, "")
+    if col not in SORT_FIRST or direction not in ("1", "-1"):
+        return "", 1
+    return col, int(direction)
+
+
+def _sorted_flat(flat: list, col: str, direction: int, *, keys: dict[int, Any]) -> list:
+    """The rows in the chosen order. A row with no value for the column is last whichever way it
+    runs, and rows that tie keep the board's own order (a stable sort)."""
+    if not col:
+        return flat
+    have = [t for t in flat if keys.get(t[0].id) is not None]
+    missing = [t for t in flat if keys.get(t[0].id) is None]
+    have.sort(key=lambda t: keys[t[0].id], reverse=direction < 0)
+    return have + missing
+
+
+def _days_between(on: date, day: str) -> int | None:
+    try:
+        return (on - date.fromisoformat(day)).days
+    except ValueError:
+        return None
+
+
+async def _matching_ids(
+    session: AsyncSession, flt: BoardFilter, flat: list, on: date, conf: bool, mapping: Any,
+) -> set[int]:
+    """The pursuits the filter keeps. Each test is the page script's own (applications.js
+    `matches`), so what a filter keeps does not change with where it runs: an unscored card is
+    kept by the fit filter, a card with no date is never hidden by a date filter."""
+    words = _search_text(flt.q).split()
+    try:
+        fit_min = float(flt.fit) if flt.fit else None
+    except ValueError:
+        fit_min = None
+    fits = await _fit_labels(session, [t[1] for t in flat]) if fit_min is not None else {}
+    added: dict[int, str] = {}
+    if flt.added and flat:
+        added = {
+            pid: (first or "")[:10]
+            for pid, first in (
+                await session.execute(
+                    select(StatusEvent.pursuit_id, func.min(StatusEvent.occurred_at))
+                    .where(StatusEvent.pursuit_id.in_([t[0].id for t in flat]))
+                    .group_by(StatusEvent.pursuit_id)
+                )
+            ).all()
+        }
+    limit = int(flt.range) if flt.range.isdigit() else 0
+    added_limit = int(flt.added) if flt.added.isdigit() else 0
+    company = _search_text(flt.company)
+    company_raw = flt.company.lower()
+    keep: set[int] = set()
+    for pursuit, opp, org in flat:
+        shown_org = redact_name(org.name if org else opp.org_name, mapping, enabled=conf)
+        if words:
+            text = _search_text(
+                shown_org,
+                *(redact_text(t, mapping, enabled=conf)
+                  for t in (opp.title, opp.location_raw, pursuit.notes_md, pursuit.next_action)),
+            )
+            if not all(w in text for w in words):
+                continue
+        if fit_min is not None:
+            value = (fits.get(opp.id) or {}).get("value")
+            if value is not None and not value >= fit_min:
+                continue
+        if flt.pri and not pursuit.priority:
+            continue
+        if flt.work and (opp.remote_type or "unknown") != flt.work:
+            continue
+        if flt.company:
+            lowered = (shown_org or "").lower()
+            if company not in lowered and company_raw not in lowered:
+                continue
+        if added_limit:
+            age = _days_between(on, added.get(pursuit.id, ""))
+            if age is not None and age > added_limit:
+                continue
+        if flt.due and not (
+            board_svc.quiet_days(pursuit, on) is not None
+            or board_svc.interview_passed(pursuit, on) is not None
+        ):
+            continue
+        if limit:
+            age = _days_between(on, _day(pursuit.last_activity_at) or _day(pursuit.applied_at))
+            if age is not None and age > limit:
+                continue
+        keep.add(pursuit.id)
+    return keep
+
+
+def _cursor(p: Pursuit) -> tuple[str, int]:
+    """Where a card sits among the closed ones: the board's own order is newest activity first,
+    then the higher id."""
+    return (p.last_activity_at or "", p.id)
+
+
+def _cursor_text(p: Pursuit) -> str:
+    stamp, pid = _cursor(p)
+    return f"{stamp}|{pid}"
+
+
+def _read_cursor(raw: str) -> tuple[str, int] | None:
+    stamp, _, pid = raw.rpartition("|")
+    return (stamp, int(pid)) if pid.isdigit() else None
+
+
 async def _board(
-    session: AsyncSession, track: str, *, notice: dict | None = None, new_id: int | None = None
+    session: AsyncSession, track: str, *, notice: dict | None = None, new_id: int | None = None,
+    page: int = 1, closed_col: str | None = None,
+    closed_after: tuple[str, int] | None = None,
+    flt: BoardFilter | None = None, sort: tuple[str, int] = ("", 1),
 ) -> dict:
+    """The board's context. Every open card is drawn; the cards folded into Closed are drawn
+    FOLD_CAP per column (`closed_col` and `closed_after`, the cursor of the last card shown, ask
+    for the rest of one column, for Show more); the table draws `page` of TABLE_PAGE_SIZE
+    rows. `counts` and each column's `total` cover every pursuit, or with a filter every pursuit
+    it matches (the cut is applied before anything is drawn, so Show more and the pages are of
+    the matches)."""
+    flt = flt or BoardFilter()
     rows = (
         await session.execute(
             select(Pursuit, Opportunity, Org)
             .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
             .join(Org, Org.id == Opportunity.org_id, isouter=True)
+            .options(*(defer(c) for c in _BULKY))
             .where(Pursuit.track == track)
         )
     ).all()
     on = date.today()
     conf, mapping = await confidential(session)
-    opps = [opp for _p, opp, _o in rows]
+    ghost_days = (await load_settings_with_db(session)).pursuits.ghosting_days
+    by_status: dict[str, list] = {}
+    for pursuit, opp, org in rows:
+        by_status.setdefault(pursuit.status, []).append((pursuit, opp, org))
+    folded_statuses = board_svc.FOLDED_STATUSES[track]
+    # Which pursuits are drawn, decided before any card is built (a card is the costly part).
+    plan: list[dict] = []
+    for col in board_svc.columns_for(track):
+        members = [t for st in col.statuses for t in by_status.get(st, [])]
+        ordered = board_svc.order_cards([t[0] for t in members], on)
+        lookup = {t[0].id: t for t in members}
+        ordered_t = [lookup[p.id] for p in ordered]
+        open_t = [t for t in ordered_t if t[0].status not in folded_statuses]
+        fold_t = [t for t in ordered_t if t[0].status in folded_statuses]
+        plan.append({"col": col, "all": ordered_t, "open": open_t, "fold": fold_t})
+    if flt.active:
+        keep = await _matching_ids(
+            session, flt, [t for pl in plan for t in pl["all"]], on, conf, mapping
+        )
+        for pl in plan:
+            for part in ("all", "open", "fold"):
+                pl[part] = [t for t in pl[part] if t[0].id in keep]
+    flat = [t for pl in plan for t in pl["all"]]
+    sort_col, sort_dir = sort if closed_col is None else ("", 1)
+    if sort_col:
+        # Over every row, before the page is cut, so page 2 continues page 1's order. Each key is
+        # the value the table shows in that column (role: the title as shown, so confidential
+        # mode never orders by a hidden name); None is "no value" and goes last.
+        stage_rank = {st: i for i, st in enumerate(
+            st for c in board_svc.columns_for(track) for st in c.statuses)}
+        fit_of = (
+            await _fit_labels(session, [t[1] for t in flat]) if sort_col == "fit" else {}
+        )
+        keys: dict[int, Any] = {}
+        for pursuit, opp, _org in flat:
+            if sort_col == "role":
+                shown = redact_text(opp.title or "", mapping, enabled=conf) or ""
+                keys[pursuit.id] = shown.strip().casefold() or "untitled"
+            elif sort_col == "stage":
+                keys[pursuit.id] = stage_rank.get(pursuit.status, len(stage_rank))
+            elif sort_col == "due":
+                quiet_for_due = board_svc.quiet_days(pursuit, on)
+                overdue = (quiet_for_due is not None
+                           or board_svc.interview_passed(pursuit, on) is not None)
+                folded_row = pursuit.status in folded_statuses
+                keys[pursuit.id] = (
+                    None if folded_row else (1000 + (quiet_for_due or 0) if overdue else 0)
+                )
+            elif sort_col == "applied":
+                keys[pursuit.id] = _day(pursuit.applied_at) or None
+            elif sort_col == "fit":
+                keys[pursuit.id] = (fit_of.get(opp.id) or {}).get("value")
+        flat = _sorted_flat(flat, sort_col, sort_dir, keys=keys)
+    page = max(1, page)
+    pages = max(1, -(-len(flat) // TABLE_PAGE_SIZE))
+    page = min(page, pages)
+    table_ids = set()
+    if closed_col is None:
+        table_ids = {t[0].id for t in flat[(page - 1) * TABLE_PAGE_SIZE: page * TABLE_PAGE_SIZE]}
+    want: set[int] = set()
+    for pl in plan:
+        if closed_col is not None:  # Show more: only the rest of that column's Closed group
+            if pl["col"].key == closed_col:
+                # A keyset, not an offset: the cards after the last one shown in the board's own
+                # order (newest activity, then id), so a status change between the first draw and
+                # the click can neither skip a card nor repeat one.
+                # One page per click, the same FOLD_CAP as the first draw (D-PERF-4): the
+                # button that comes back carries the cursor of the last card of this page.
+                rest = [t for t in pl["fold"]
+                        if closed_after is None or _cursor(t[0]) < closed_after]
+                pl["page"] = rest[:FOLD_CAP]
+                pl["page_more"] = len(rest) - len(pl["page"])
+                want.update(t[0].id for t in pl["page"])
+            continue
+        want.update(t[0].id for t in pl["open"])
+        want.update(t[0].id for t in pl["fold"][:FOLD_CAP])
+    want |= table_ids
+    chosen = [t for t in flat if t[0].id in want]
+    opps = [opp for _p, opp, _o in chosen]
     resumes = await _resume_options(session, [o.id for o in opps])
     fits = await _fit_labels(session, opps)
     master = await _tailor_master(session, track)
-    ghost_days = (await load_settings_with_db(session)).pursuits.ghosting_days
-    pids = [p.id for p, _o, _g in rows]
+    pids = [p.id for p, _o, _g in chosen]
     added: dict[int, str] = {}
     offers_for: set[int] = set()
     if pids:
@@ -215,19 +478,15 @@ async def _board(
                 (await session.execute(select(model.pursuit_id).where(model.pursuit_id.in_(pids))))
                 .scalars()
             )
-    by_status: dict[str, list] = {}
-    for pursuit, opp, org in rows:
-        by_status.setdefault(pursuit.status, []).append((pursuit, opp, org))
-    folded_statuses = board_svc.FOLDED_STATUSES[track]
     columns = []
     cards_flat: list[dict] = []
-    for col in board_svc.columns_for(track):
-        members = [t for st in col.statuses for t in by_status.get(st, [])]
-        ordered = board_svc.order_cards([t[0] for t in members], on)
-        lookup = {t[0].id: t for t in members}
+    built: dict[int, dict] = {}
+    for pl in plan:
+        col = pl["col"]
         cards = []
-        for pursuit in ordered:
-            _p, opp, org = lookup[pursuit.id]
+        for pursuit, opp, org in pl["all"]:
+            if pursuit.id not in want:
+                continue
             quiet = board_svc.quiet_days(pursuit, on)
             interview_was = board_svc.interview_passed(pursuit, on)
             docs = resumes.get(opp.id, [])
@@ -297,18 +556,41 @@ async def _board(
                 "is_new": pursuit.id == new_id,
                 "has_offers": pursuit.id in offers_for,
             }
+            built[pursuit.id] = card
             cards.append(card)
             cards_flat.append(card)
         columns.append({
             "col": col,
             "cards": cards,
+            "total": len(pl["all"]),
             "open": [c for c in cards if not c["folded"]],
             "folded": [c for c in cards if c["folded"]],
+            "folded_total": len(pl["fold"]),
+            "folded_more": (
+                pl["page_more"] if "page" in pl else max(0, len(pl["fold"]) - FOLD_CAP)
+            ),
+            "folded_cursor": (
+                (_cursor_text(pl["page"][-1][0]) if pl["page"] else "") if "page" in pl
+                else _cursor_text(pl["fold"][min(FOLD_CAP, len(pl["fold"])) - 1][0])
+                if pl["fold"] else ""
+            ),
         })
     open_cards = [c for c in cards_flat if not c["folded"]]
+    n_open = sum(len(pl["open"]) for pl in plan)
     return {
         "columns": columns,
         "cards": cards_flat,
+        "table_cards": [built[t[0].id] for t in flat if t[0].id in table_ids],
+        "table_page": page,
+        "table_pages": pages,
+        "table_from": (page - 1) * TABLE_PAGE_SIZE,
+        "sort_col": sort_col,
+        "sort_dir": sort_dir,
+        "total_cards": len(flat),
+        "fold_cap": FOLD_CAP,
+        "fkey": flt.key,
+        "chip_totals": {"all": len(flat), **{pl["col"].key: len(pl["all"]) for pl in plan}},
+        "filtered": flt.active,
         "statuses": PURSUIT_STATUS[track],
         "stage_groups": [
             {"label": c.label, "stages": [(st, board_svc.stage_label(st)) for st in c.statuses]}
@@ -323,8 +605,8 @@ async def _board(
         "outcome_choices": board_svc.OUTCOME_CHOICES[track],
         "page_label": "Leads" if track == "consulting" else "Applications",
         "counts": {
-            "open": len(open_cards),
-            "closed": len(cards_flat) - len(open_cards),
+            "open": n_open,
+            "closed": len(flat) - n_open,
             "quiet": sum(1 for c in open_cards if c["quiet_days"]),
         },
         "rail": _rail(cards_flat, on),
@@ -466,13 +748,23 @@ async def _render_board(
     if not raw and request.method == "POST":
         raw = str((await request.form()).get("panel") or "")
     panel_id = int(raw) if raw.isdigit() else None
+    values = dict(request.query_params)
+    if request.method == "POST":  # the page script sends its filters and page with every action
+        values = {**{k: v for k, v in (await request.form()).items() if isinstance(v, str)},
+                  **values}
+    page_raw = str(values.get("page") or "")
     async with sessionmaker()() as s:
-        board = await _board(s, track, notice=notice, new_id=new_id)
+        board = await _board(
+            s, track, notice=notice, new_id=new_id, page=int(page_raw) if page_raw.isdigit() else 1,
+            flt=board_filter(values, await _stored_choice(s, RANGE_KEY, RANGE_CHOICES)),
+            sort=board_sort(values, request.cookies),
+        )
         panel_ctx = None
         if panel_id is not None and not close_panel and not keep_panel:
             panel_ctx = await _panel_ctx(s, panel_id, request.query_params.get("form"))
     ctx = {
-        "query": {}, "view": request.query_params.get("view") or "kanban", **board, "oob": True,
+        "query": {}, "view": "table" if values.get("view") == "table" else "kanban", **board,
+        "oob": True,
         "panel": panel_ctx, "closed_open": False,
     }
     resp = templates().TemplateResponse(request, "partials/pursuit_update.html", ctx)
@@ -490,6 +782,26 @@ async def _missing(request: Request) -> HTMLResponse:
         request, active_track(request),
         notice={"ok": False, "text": "That card is no longer on the board."},
     )
+
+
+@router.get("/pursuits/closed", response_class=HTMLResponse)
+async def closed_more(request: Request):
+    """Show more: the Closed cards of one column past the first FOLD_CAP, as bare cards the
+    button swaps itself for. It is the rest of what the page held back, nothing new."""
+    track = active_track(request)
+    key = request.query_params.get("col") or ""
+    after = _read_cursor(request.query_params.get("after") or "")
+    if board_svc.column_by_key(track, key) is None or after is None:
+        return HTMLResponse("not found", status_code=404)
+    async with sessionmaker()() as s:
+        saved = await _stored_choice(s, RANGE_KEY, RANGE_CHOICES)
+        board = await _board(
+            s, track, closed_col=key, closed_after=after,
+            flt=board_filter(request.query_params, saved),
+        )
+    column = next(c for c in board["columns"] if c["col"].key == key)
+    ctx = {"cards": column["cards"], "track": track, "column": column}
+    return templates().TemplateResponse(request, "partials/pursuit_closed_more.html", ctx)
 
 
 @router.get("/pursuits", response_class=HTMLResponse)
@@ -510,14 +822,18 @@ async def pursuits(request: Request):
             ))).scalar_one_or_none()
             if candidate is not None and drafts.eligible(candidate):
                 auto_draft, track = candidate.id, candidate.track
-        board = await _board(s, track)
+        page_raw = request.query_params.get("page") or ""
+        # The URL wins, then the choice saved last time, then nothing hidden (#30).
+        stored_range = await _stored_choice(s, RANGE_KEY, RANGE_CHOICES)
+        flt = board_filter(request.query_params, stored_range)
+        board_range = flt.range
+        board = await _board(
+            s, track, page=int(page_raw) if page_raw.isdigit() else 1, flt=flt,
+            sort=board_sort(request.query_params, request.cookies),
+        )
         # R2: a switched-off track's open pursuits are never hidden; a line names the track
         # and links to its board (an explicit ?track= opens it, D-UI-57).
         off = [o for o in await switched_off_work(s) if o["track"] != track]
-        # The URL wins, then the choice saved last time, then nothing hidden (#30).
-        board_range = request.query_params.get("range")
-        if board_range not in RANGE_CHOICES:
-            board_range = await _stored_choice(s, RANGE_KEY, RANGE_CHOICES) or "0"
         board_cap = request.query_params.get("cap")
         if board_cap not in CAP_CHOICES:
             board_cap = await _stored_choice(s, CAP_KEY, CAP_CHOICES) or "0"
@@ -877,7 +1193,8 @@ async def set_allow_reposts(request: Request, pursuit_id: int):
             return HTMLResponse("not found", status_code=404)
         p.allow_reposts = allow
         await s.commit()
-    return HTMLResponse("", status_code=204)
+    said = "New listings of this role will show." if allow else "Re-posts of this role stay hidden."
+    return HTMLResponse("", status_code=204, headers={"HX-Trigger": _trigger(said)})
 
 
 @router.post("/pursuits/{pursuit_id}/next-action", response_class=HTMLResponse)

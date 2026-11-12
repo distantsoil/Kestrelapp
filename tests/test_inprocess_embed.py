@@ -641,3 +641,99 @@ def test_file_mode_installs_only_when_every_file_matches(tmp_path):
         mod.install_files(tmp_path / "bad", bad)
     assert not (tmp_path / "bad" / "model.onnx").exists()  # nothing installed on a mismatch
     assert not list((tmp_path / "bad").glob(".*.part"))
+
+
+def test_a_missing_model_reads_as_kestrels_own_sentence_on_a_page(tmp_path, monkeypatch):
+    """The story run and every other embed caller show this as written: no folder path and no
+    exception class name, and it says why an online model still needs it."""
+    from kestrel.errors import task_failure_text
+    from kestrel.web.errors import plain_error
+
+    where = tmp_path / "private-folder-xyz"
+    monkeypatch.setattr(ipe, "model_dir", lambda: where)
+    monkeypatch.setattr(ipe, "_cache", {})
+    with pytest.raises(ipe.EmbedModelMissing) as caught:
+        ipe.embed_sync(["anything"], model=MODEL)
+    for shown in (task_failure_text(caught.value), plain_error(caught.value)):
+        assert "private-folder-xyz" not in shown and "EmbedModelMissing" not in shown
+        assert "reinstall Kestrel" in shown and "even with an online model" in shown
+
+
+async def test_a_sweep_done_before_the_first_search_still_heals_dead_embeds_later(sm,
+                                                                               monkeypatch):
+    """D-EMBED-9: on a first run the sweep finds nothing and records done before the first search
+    stores a role. When that role's embed task then dies (the model files were missing), a later
+    check finds it and sweeps again, at most once per RESWEEP_S; a dead task whose role already
+    has a current vector does not. D-PERF-3: the check no longer needs the dead task itself (see
+    the test below, where retention has removed it)."""
+    from kestrel.pipeline import embed as embed_mod
+
+    settings = _inprocess_settings()
+    assert await enqueue_stale_embeddings(sm, settings) == 0
+    async with sm() as s:
+        assert (await s.get(Setting, EMBED_SWEPT_MODEL_KEY)).value == MODEL  # done, empty corpus
+        src = Source(track="employment", kind="greenhouse", name="emp", enabled=True)
+        s.add(src)
+        await s.flush()
+        opp = Opportunity(track="employment", opp_type="job_posting", source_id=src.id,
+                          title="CTO", stage="new")
+        s.add(opp)
+        await s.flush()
+        s.add(Task(type="embed", status="dead", payload={"opportunity_id": opp.id}))
+        await s.commit()
+    assert await enqueue_stale_embeddings(sm, settings) == 0  # inside RESWEEP_S: quiet
+    now = embed_mod._clock()
+    monkeypatch.setattr(embed_mod, "_clock", lambda: now + embed_mod.RESWEEP_S + 1)
+    assert await enqueue_stale_embeddings(sm, settings) == 1  # the dead role is queued again
+    async with sm() as s:
+        live = (await s.execute(select(Task).where(
+            Task.type == "embed", Task.status == "pending"))).scalars().all()
+    assert [t.payload["opportunity_id"] for t in live] == [opp.id]
+
+
+async def test_a_dead_embed_task_whose_role_has_a_current_vector_triggers_nothing(sm,
+                                                                                monkeypatch):
+    from kestrel.pipeline import embed as embed_mod
+
+    ids = await _seed(sm, 1, model=MODEL)
+    settings = _inprocess_settings()
+    async with sm() as s:
+        s.add(Setting(key=EMBED_SWEPT_MODEL_KEY, value=MODEL, updated_at="2020-01-01T00:00:00"))
+        s.add(Task(type="embed", status="dead", payload={"opportunity_id": ids[0]}))
+        s.add(Task(type="embed", status="dead", payload={"opportunity_id": 99999}))  # deleted
+        await s.commit()
+    now = embed_mod._clock()
+    monkeypatch.setattr(embed_mod, "_clock", lambda: now + embed_mod.RESWEEP_S + 1)
+    assert await enqueue_stale_embeddings(sm, settings) == 0
+    async with sm() as s:
+        swept = await s.get(Setting, EMBED_SWEPT_MODEL_KEY)
+    assert swept.value == MODEL
+    assert swept.updated_at > "2020-01-01T00:00:00"  # the recheck ran (and found nothing)
+
+
+async def test_a_stale_role_with_no_task_rows_at_all_is_queued_after_the_interval(sm, monkeypatch):
+    """D-PERF-3: retention deletes dead embed tasks after 30 days, so the re-sweep looks for a role
+    with no current vector and no live embed task, not for a dead task."""
+    from kestrel.pipeline import embed as embed_mod
+
+    settings = _inprocess_settings()
+    assert await enqueue_stale_embeddings(sm, settings) == 0
+    async with sm() as s:
+        src = Source(track="employment", kind="greenhouse", name="emp", enabled=True)
+        s.add(src)
+        await s.flush()
+        opp = Opportunity(track="employment", opp_type="job_posting", source_id=src.id,
+                          title="CTO", stage="new")
+        s.add(opp)
+        await s.commit()
+    assert await enqueue_stale_embeddings(sm, settings) == 0  # inside RESWEEP_S: quiet
+    now = embed_mod._clock()
+    monkeypatch.setattr(embed_mod, "_clock", lambda: now + embed_mod.RESWEEP_S + 1)
+    assert await enqueue_stale_embeddings(sm, settings) == 1
+    async with sm() as s:
+        live = (await s.execute(select(Task).where(
+            Task.type == "embed", Task.status == "pending"))).scalars().all()
+    assert [t.payload["opportunity_id"] for t in live] == [opp.id]
+    # With that task now live the role is covered: a later check finds nothing to add.
+    monkeypatch.setattr(embed_mod, "_clock", lambda: now + 3 * embed_mod.RESWEEP_S)
+    assert await enqueue_stale_embeddings(sm, settings) == 0

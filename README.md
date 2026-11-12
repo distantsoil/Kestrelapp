@@ -6,7 +6,7 @@
 
 Kestrel is a free, local-first desktop app for any job seeker. It finds openings, explains why they fit, and helps you prepare your resume. You choose where to apply. It runs on Windows, macOS or Linux, with no account to create and no command line needed.
 
-[Download](https://kestrelapp.co/download) · [Guides](https://kestrelapp.co/guides) · [Go Deeper](https://kestrelapp.co/docs) · [Privacy policy](https://kestrelapp.co/privacy) · [Report a problem](https://github.com/distantsoil/Kestrelapp/issues/new/choose)
+[Download](https://kestrelapp.co/download) · [Guides](https://kestrelapp.co/guides) · [Go Deeper](https://kestrelapp.co/docs) · [Roadmap](https://kestrelapp.co/roadmap) · [Privacy policy](https://kestrelapp.co/privacy) · [Report a problem](https://github.com/distantsoil/Kestrelapp/issues/new/choose)
 
 <a href="https://ko-fi.com/distantsoil"><img src="https://storage.ko-fi.com/cdn/kofi2.png?v=6" height="36" alt="Support Kestrel on Ko-fi"></a>
 
@@ -16,6 +16,8 @@ Kestrel is free. If it helps you, donations keep it going.
 ![Pipeline](docs/images/walk/pipeline-main-dark.png)
 ![Role evaluation](docs/images/walk/role-evaluation-light.png)
 ![Applications](docs/images/walk/applications-main-light.png)
+![Quick round](docs/images/walk/calibrate-quick-light.png)
+![Correcting a match](docs/images/walk/role-corrections-light.png)
 
 Screenshots use invented data. [See the full screenshot index](docs/images/walk/INDEX.md).
 
@@ -38,18 +40,15 @@ From the first search to the final offer, Kestrel helps you:
 
 - **Review the roles you find.** Pipeline groups them for review.
 - **Keep track of applications.** The Applications board records where each one stands and its next action. It never submits an application.
+- **Correct what it got wrong.** Mark a requirement the score misread, and your correction goes with that role's next score. Online models ask first and list the exact lines.
+- **Sort quickly.** Quick round shows roles Kestrel is unsure about as yes or no cards, and your answers teach it your taste.
 - **Keep your own resume wording.** You save versions of your text, and Kestrel selects from them when it tailors a resume. Your saved wording is the source.
 - **See what is working.** Analytics shows outcomes and the number of results behind each rate, and says when it is too early to compare.
 - **Prepare.** Company research, stories, prep packs, mock interviews, offer comparison and negotiation planning. An optional consulting and contract track is off until you turn it on.
 
 ## Private by default
 
-- Your working data is stored on your computer. Choose local AI to keep model work there too.
-- If you connect an online service, review its data disclosure first. Some actions ask for their own confirmation.
-- Confidential mode can hide your marked current employer in what Kestrel shows or creates. Your source text and backups keep the original names.
-- To find openings, Kestrel reads public job boards and company career pages. It never signs in to a site and does not search LinkedIn.
-
-Read the [privacy policy](https://kestrelapp.co/privacy), see [every call Kestrel makes](https://kestrelapp.co/docs/every-call-kestrel-makes), or read [how we tested privacy](https://kestrelapp.co/docs/how-we-tested-privacy).
+Your working data stays on your computer, and local AI keeps model work there too. Kestrel reads only public job boards and career pages, never signs in to a site, and does not search LinkedIn. Read the [privacy policy](https://kestrelapp.co/privacy) or see [every call Kestrel makes](https://kestrelapp.co/docs/every-call-kestrel-makes).
 
 ## Run it on your computer, online, or both
 
@@ -61,14 +60,9 @@ Read the [privacy policy](https://kestrelapp.co/privacy), see [every call Kestre
 
 Download the installer for your computer from the [download page](https://kestrelapp.co/download) or [Releases](https://github.com/distantsoil/Kestrelapp/releases): `Kestrel-Setup-x.y.z.exe` for Windows 11, `Kestrel-x.y.z.dmg` for Apple silicon Macs (macOS 13 or later), or `Kestrel-x.y.z-x86_64.AppImage` for 64-bit Linux. Open it, then follow the six setup steps. Linux details are in [docs/LINUX.md](docs/LINUX.md).
 
-1. **Welcome.** What Kestrel does and what it will not do.
-2. **Thinking.** Choose **On this computer**, **Online model**, or **Both**.
-3. **You.** Your first name, and whether you want jobs, consulting and contract work, or both.
-4. **Resume.** Add your resume text, or skip it and add it later.
-5. **Wants.** The titles, pay and work styles you want.
-6. **Searches.** Review the searches. They begin only when you press **Start searching**.
+Setup takes six short steps and starts no search until you press **Start searching**. The [first-launch steps](https://kestrelapp.co/download#first-launch) have pictures.
 
-Kestrel was tested on Windows 11 with an NVIDIA graphics card. Mac and Linux builds have had less testing. To run the AI on your computer, setup helps you install Ollama, a free app. A smaller computer can use a free online model instead; see [computer requirements](https://kestrelapp.co/docs/requirements).
+Kestrel is tested on Windows 11 with an NVIDIA graphics card and on Macs with Apple silicon. The Linux build has had less testing. To run the AI on your computer, setup helps you install Ollama, a free app. A smaller computer can use a free online model instead; see [computer requirements](https://kestrelapp.co/docs/requirements).
 
 ### Unsigned Release Candidate
 
@@ -77,7 +71,7 @@ The Release Candidate installers are not signed yet; signing comes later. Your c
 - **Windows:** when SmartScreen warns, choose **More info**, then **Run anyway**.
 - **macOS:** right-click Kestrel in Applications, choose **Open**, then choose **Open** again. If macOS only offers Done or Move to Trash, choose Done, open System Settings, then Privacy & Security, and click **Open Anyway** next to the message about Kestrel.
 
-The [first-launch steps](https://kestrelapp.co/download#first-launch) have pictures. This is a release candidate, so expect a few rough edges and keep your own copy of your resume.
+This is a release candidate, so expect a few rough edges and keep your own copy of your resume.
 
 ## Good to know
 
@@ -87,15 +81,16 @@ The [first-launch steps](https://kestrelapp.co/download#first-launch) have pictu
 
 ## Learn more
 
-- [Guides](https://kestrelapp.co/guides): step-by-step help for everyday tasks.
-- [Go Deeper](https://kestrelapp.co/docs): the full documentation.
-- [User guide](docs/GUIDE.md): every page, including online consent, confidential mode, Undo, exports, and backups.
-- [What's new](docs/WHATS-NEW.md): the current release.
-- [Privacy policy](https://kestrelapp.co/privacy) and [every call Kestrel makes](https://kestrelapp.co/docs/every-call-kestrel-makes).
-- [Terms and disclaimers](https://kestrelapp.co/docs/terms-and-disclaimers).
-- [For job boards and sites](https://kestrelapp.co/docs/open-call-to-job-boards) (open call), and how to [ask Kestrel to stop reading your site](https://kestrelapp.co/docs/ask-kestrel-to-stop-reading-your-site).
-- [Report a problem or suggest an idea](https://github.com/distantsoil/Kestrelapp/issues/new/choose). A screenshot helps most. GitHub is public, so crop or cover your name, company names and job titles first. The [reporting guide](https://kestrelapp.co/docs/report-a-problem) walks through it.
-- Developers: [docs/DEVELOPERS.md](docs/DEVELOPERS.md).
+<p>
+<a href="https://kestrelapp.co/guides"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/links/guides-dark.svg"><img src="docs/images/links/guides-light.svg" width="320" height="96" alt=""></picture></a>
+<a href="https://kestrelapp.co/docs"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/links/go-deeper-dark.svg"><img src="docs/images/links/go-deeper-light.svg" width="320" height="96" alt=""></picture></a>
+<a href="https://kestrelapp.co/roadmap"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/links/roadmap-dark.svg"><img src="docs/images/links/roadmap-light.svg" width="320" height="96" alt=""></picture></a>
+<a href="https://github.com/distantsoil/Kestrelapp/wiki"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/links/wiki-dark.svg"><img src="docs/images/links/wiki-light.svg" width="320" height="96" alt=""></picture></a>
+</p>
+
+[User guide](docs/GUIDE.md) · [What's new](docs/WHATS-NEW.md) · [Terms](https://kestrelapp.co/docs/terms-and-disclaimers) · [For job boards and sites](https://kestrelapp.co/docs/open-call-to-job-boards) · [Developers](docs/DEVELOPERS.md)
+
+[Report a problem or suggest an idea](https://github.com/distantsoil/Kestrelapp/issues/new/choose). GitHub is public, so crop or cover your name, company names and job titles in any screenshot first.
 
 ## Why I built this
 

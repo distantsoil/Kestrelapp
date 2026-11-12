@@ -21,7 +21,6 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import sklearn
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +39,7 @@ from kestrel.db.models import (
     Setting,
     VerdictOverride,
 )
-from kestrel.learning.capture import labeled_examples
+from kestrel.learning.capture import labeled_examples, not_bulk
 from kestrel.web.redact import confidential, redact_name, redact_text
 
 TRACKS: tuple[str, ...] = ("employment", "consulting")
@@ -220,14 +219,18 @@ async def _rows(
     """The merged ledger, newest first, plus the total across both tables for the filter. Each
     table contributes at most offset+limit rows so a long history never loads whole for one page."""
     lbl_stmt = select(Label, Opportunity).join(Opportunity, Opportunity.id == Label.opportunity_id)
-    ov_stmt = select(VerdictOverride, Opportunity).join(
-        Opportunity, Opportunity.id == VerdictOverride.opportunity_id
+    # A bulk decision teaches nothing (D-PIPE-116), so the ledger of what teaches leaves it out.
+    ov_stmt = (
+        select(VerdictOverride, Opportunity)
+        .join(Opportunity, Opportunity.id == VerdictOverride.opportunity_id)
+        .where(not_bulk())
     )
     lbl_count = select(func.count()).select_from(Label)
     ov_count = (
         select(func.count())
         .select_from(VerdictOverride)
         .join(Opportunity, Opportunity.id == VerdictOverride.opportunity_id)
+        .where(not_bulk())
     )
     if track:
         lbl_stmt = lbl_stmt.where(Label.track == track)
@@ -313,6 +316,22 @@ async def export_labels(session: AsyncSession, *, redact: bool = False) -> list[
     click. Settings > Scoring and learning passes `redact=True`, so with Confidential mode on the
     current employer is replaced exactly as in every other output (SPEC-INTERFACES 2.6)."""
     rows, _ = await _rows(session, track=None, limit=None, offset=0)
+    # Remotive's terms (D-SRC-19): a rating of a Remotive posting is exported with the same
+    # role's other-board copy, or not at all.
+    from dataclasses import replace as _replace
+
+    from kestrel.services.export_terms import export_copies
+
+    copies = await export_copies(session, [r.opportunity_id for r in rows])
+    kept = []
+    for r in rows:
+        c = copies.get(r.opportunity_id)
+        if c is None:
+            continue
+        if c.id != r.opportunity_id:
+            r = _replace(r, title=c.title, org=c.org_name)
+        kept.append(r)
+    rows = kept
     if redact:
         enabled, mapping = await confidential(session)
         rows = [_redact_row(r, mapping, enabled=enabled) for r in rows]
@@ -335,11 +354,21 @@ def _default_weights(track: str) -> dict[str, float]:
     return model.model_dump()
 
 
+def _sklearn_version() -> str:
+    """scikit-learn's version, imported on first use: the import costs most of a second, and
+    only training, loading or the Learning page need it (D-PERF). Recorded beside every
+    artifact because pickles are version-locked."""
+    import sklearn
+
+    return sklearn.__version__
+
+
 def _artifact_loadable(ml: MlModel) -> bool:
-    """Mirrors reranker.load_active_reranker's two refusal conditions, read-only."""
-    if ml.sklearn_version != sklearn.__version__:
-        return False
-    return all(p and Path(p).exists() for p in (ml.artifact_path, ml.pca_artifact_path))
+    """Mirrors reranker.load_active_reranker's refusal conditions, read-only: the same check the
+    Calibrate panel uses, signatures included (D-SEC-13), so two pages never disagree."""
+    from kestrel.learning.reranker import _artifact_is_loadable
+
+    return _artifact_is_loadable(ml)
 
 
 async def _reranker_state(
@@ -517,7 +546,7 @@ async def summary(session: AsyncSession, settings: Settings) -> LedgerSummary:
     return LedgerSummary(
         db_path=str(paths.db_path()),
         ml_dir=str(paths.ml_dir()),
-        sklearn_version=sklearn.__version__,
+        sklearn_version=_sklearn_version(),
         tracks=tracks,
         files=await _ml_files(session),
         confidential=settings.confidential_mode,
@@ -587,7 +616,10 @@ async def reset_learning(
 
     if labels:
         for model in (Label, VerdictOverride):
-            rows = list((await session.execute(select(model))).scalars())
+            stmt = select(model)
+            if model is VerdictOverride:
+                stmt = stmt.where(not_bulk())  # a bulk decision is not learning, so it stays
+            rows = list((await session.execute(stmt)).scalars())
             for row in rows:
                 await session.delete(row)
             if model is Label:

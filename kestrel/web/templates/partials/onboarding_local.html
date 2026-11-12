@@ -3,6 +3,7 @@
    the terminal commands are under Show details. While work runs this box polls itself; the poll
    that finds it finished answers with HX-Trigger ob-refresh, which reloads the whole step so its
    status and the progress row move too. Models keep downloading if the operator moves on. #}
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 <div id="ob-local" class="ob-localbox" data-testid="ob-local"
      {% if running %}hx-get="/onboarding/models/local?poll=1" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
@@ -29,7 +30,7 @@
       <pre class="ob-log" data-action="{{ action.name }}" data-action-status="{{ action.status }}">{% for line in action.lines %}{{ line }}
 {% endfor %}</pre>
       {% endif %}
-      {% if s.commands %}
+      {% if s.commands and is_local(request) %}
       <details class="ob-details" data-testid="setup-details-{{ s.key }}">
         <summary>Show details</summary>
         <p class="ob-dsm">The same step from a terminal, if you prefer one:</p>
@@ -44,12 +45,12 @@
         {% if models and models.stopping and models.kind == s.action %}
           <span class="k-pill k-pill--warn" data-testid="setup-stopping-{{ s.action }}">Stopping…</span>
         {% elif models and models.live and models.kind == s.action %}
-          <button class="k-btn k-btn--sm" type="button" hx-post="/onboarding/models/action/cancel" hx-target="#ob-local" hx-swap="outerHTML" data-testid="setup-cancel-{{ s.action }}">Cancel</button>
+          <button{{ lo.dis(request) }} class="k-btn k-btn--sm" type="button" hx-post="/onboarding/models/action/cancel" hx-target="#ob-local" hx-swap="outerHTML" data-testid="setup-cancel-{{ s.action }}">Cancel</button>
         {% elif running and s.action != 'check' %}
           {% if action and action.name == s.action and action.status == 'running' %}<span class="k-pill k-pill--warn">running</span>
           {% else %}<button class="k-btn k-btn--sm" type="button" disabled>{{ s.action_label }}</button>{% endif %}
         {% else %}
-          <button class="k-btn k-btn--sm{% if s.status == 'now' %} k-btn--primary{% endif %}" type="button"
+          <button{{ lo.dis(request) }} class="k-btn k-btn--sm{% if s.status == 'now' %} k-btn--primary{% endif %}" type="button"
                   hx-post="/onboarding/models/action/{{ s.action }}" hx-target="#ob-local" hx-swap="outerHTML"
                   data-testid="setup-action-{{ s.action }}"{% if not s.action_enabled %} disabled{% endif %}>{% if models and models.failed and models.kind == s.action and s.action_enabled %}Try again{% else %}{{ s.action_label }}{% endif %}</button>
         {% endif %}

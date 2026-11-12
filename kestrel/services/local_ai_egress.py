@@ -1,11 +1,13 @@
 """Issue #166 M1: Connection spot check.
 
-Looks at the network connections of Ollama processes for a few seconds and classifies each
-remote address. Read-only: nothing is sent, nothing is changed. The doctor runs it when no model
-request is in flight, so it is a check at rest: it does not watch an inference.
+Looks at the network connections of Ollama processes and classifies each remote address.
+Read-only: nothing is sent, nothing is changed. The doctor starts a ConnectionWatcher before its
+model probes and stops it a few seconds after they end, so the sampling covers the probe's
+duration (SPEC-INTERFACES 1.2). Where there are no probes (a quick check) it samples at rest for a
+few seconds.
 
 Honest limits (stated in the UI):
-- It checks at rest, so traffic that only happens while a model runs is not seen.
+- Only the time the watcher ran is covered; a model run outside the probe is not seen.
 - When the operating system will not let Kestrel list the connections, the result is
   "unverified", never clean.
 - Sampling can miss very short connections.
@@ -18,13 +20,18 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from functools import lru_cache
 
+import structlog
+
 from kestrel.web.errors import fixed_reason
+
+log = structlog.get_logger()
 
 
 @dataclass
@@ -92,7 +99,11 @@ def _ollama_service_ips() -> frozenset[str]:
             try:
                 for info in socket.getaddrinfo(host, None):
                     ips.add(str(info[4][0]))
-            except OSError:
+            except Exception as exc:  # noqa: BLE001 - a failed lookup degrades to "no service IPs"
+                # (OSError on the network, or the test guard's RuntimeError); never a raised thread.
+                log.warning(
+                    "ollama_service_lookup_failed", host=host,
+                    error_type=type(exc).__name__, error=str(exc))
                 continue
         return ips
 
@@ -125,26 +136,51 @@ def _classify_address(
     return "public"
 
 
+# The desktop tray app checks for Ollama updates on its own; the owner chose to leave it out of
+# the spot check (#166, 2026-11-11) so its update check is not reported as a model connection.
+# Windows names it "ollama app.exe" and macOS "Ollama" (capital O; the server is "ollama").
+# Unverified on a live macOS install: the server process name is from Ollama's packaging.
+_TRAY_NAMES = frozenset({"ollama app.exe", "ollama app"})
+
+
+def _is_tray_app(name: str) -> bool:
+    return name.lower() in _TRAY_NAMES or name == "Ollama"
+
+
 def _find_ollama_pids() -> list[tuple[int, str]]:
-    """Find PIDs of Ollama processes (server, model runners, tray app)."""
+    """Find PIDs of Ollama's server and model runners. The tray app is left out (#166)."""
     import psutil
 
     pids: list[tuple[int, str]] = []
     for proc in psutil.process_iter(["pid", "name"]):
         try:
-            name = (proc.info.get("name") or "").lower()
-            if "ollama" in name:
+            raw = proc.info.get("name") or ""
+            name = raw.lower()
+            if "ollama" in name and not _is_tray_app(raw):
                 pids.append((proc.info["pid"], proc.info.get("name") or "ollama"))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
     return pids
 
 
-def sample_connections(duration_s: float = 3.0, interval_s: float = 0.1) -> EgressResult:
-    """Sample network connections of Ollama processes for the given duration.
+# How often the watcher looks for Ollama processes that started after it did (a model runner
+# starts when the first probe loads a model), in sampling rounds.
+_RESCAN_EVERY = 10
 
-    If no Ollama process is found the result carries an error. If any process's connections
-    cannot be listed, the result is marked unverified and is never clean.
+
+def sample_connections(
+    duration_s: float = 3.0,
+    interval_s: float = 0.1,
+    *,
+    until: threading.Event | None = None,
+    tail_s: float = 3.0,
+) -> EgressResult:
+    """Sample network connections of Ollama processes, about every `interval_s`.
+
+    Without `until` it samples for `duration_s`. With `until` (a ConnectionWatcher) it samples
+    until the event is set and then for `tail_s` more. Ollama processes that start while it
+    watches are picked up. If no Ollama process is found the result carries an error. If any
+    process's connections cannot be listed, the result is marked unverified and is never clean.
     """
     import psutil
 
@@ -165,9 +201,18 @@ def sample_connections(duration_s: float = 3.0, interval_s: float = 0.1) -> Egre
     found: list[tuple[int, str, str, int]] = []
     denied: set[int] = set()
     listed = 0
-    stop = time.monotonic() + duration_s
+    started = time.monotonic()
+    stop = None if until is not None else started + duration_s
+    rounds = 0
 
     while True:
+        rounds += 1
+        if rounds % _RESCAN_EVERY == 0:
+            try:
+                known = {p for p, _ in pids}
+                pids.extend(x for x in _find_ollama_pids() if x[0] not in known)
+            except (psutil.Error, OSError):
+                pass  # keep watching the processes already known
         for pid, proc_name in pids:
             try:
                 proc = psutil.Process(pid)
@@ -189,9 +234,12 @@ def sample_connections(duration_s: float = 3.0, interval_s: float = 0.1) -> Egre
                     continue
                 seen.add(key)
                 found.append((pid, proc_name, addr, port))
-        if time.monotonic() >= stop:
+        if until is not None and stop is None and until.is_set():
+            stop = time.monotonic() + tail_s
+        if stop is not None and time.monotonic() >= stop:
             break
         time.sleep(interval_s)
+    duration_s = time.monotonic() - started
 
     service_ips = frozenset[str]()
     if any(_classify_address(a, p) == "public" for _, _, a, p in found):
@@ -214,6 +262,49 @@ def sample_connections(duration_s: float = 3.0, interval_s: float = 0.1) -> Egre
     return EgressResult(samples=samples, duration_s=duration_s, unverified=unverified)
 
 
+class ConnectionWatcher:
+    """Samples Ollama's connections on a thread from start() until finish(), plus a short tail.
+
+    Start it before the model probes and call finish() after them: the connections seen are the
+    ones made while the probes ran. Read-only. finish() always returns an EgressResult; a thread
+    that failed gives an unverified one, never a clean one."""
+
+    def __init__(self, interval_s: float = 0.1, tail_s: float = 3.0) -> None:
+        self._interval_s = interval_s
+        self._tail_s = tail_s
+        self._done = threading.Event()
+        self._result: EgressResult | None = None
+        self._thread = threading.Thread(target=self._run, name="local-ai-egress", daemon=True)
+
+    def _run(self) -> None:
+        try:
+            self._result = sample_connections(
+                interval_s=self._interval_s, until=self._done, tail_s=self._tail_s)
+        # Contract: a failed thread gives an unverified result, never a raised thread.
+        except Exception as exc:  # noqa: BLE001 - the row degrades to unverified, cause in the log
+            log.warning(
+                "egress_check_failed", error_type=type(exc).__name__, error=str(exc))
+            self._result = EgressResult(
+                unverified=f"the connection check failed ({fixed_reason(exc)})")
+
+    def start(self) -> ConnectionWatcher:
+        self._thread.start()
+        return self
+
+    def finish(self) -> EgressResult:
+        self._done.set()
+        self._thread.join(timeout=self._tail_s + 30.0)
+        return self._result or EgressResult(unverified="the connection check did not finish")
+
+
+def _host_port(sample: ConnectionSample) -> str:
+    """`addr:port`, with an IPv6 address in brackets (`[2001:db8::9]:443`) so the port can never
+    read as one more group of the address."""
+    if ":" in sample.remote_addr:
+        return f"[{sample.remote_addr}]:{sample.remote_port}"
+    return f"{sample.remote_addr}:{sample.remote_port}"
+
+
 def format_egress_result(result: EgressResult) -> str:
     """Format the egress result for display in the health check UI."""
     if result.error:
@@ -221,9 +312,9 @@ def format_egress_result(result: EgressResult) -> str:
 
     if result.clean:
         return (
-            "No outbound connections seen from Ollama when checked at rest. "
-            "This is a spot check. It does not watch a model run, it can miss very short "
-            "connections and it cannot see name lookups."
+            "No outbound connections seen from Ollama during the test. "
+            "This is a spot check. It can miss very short connections and it cannot see "
+            "name lookups."
         )
 
     parts: list[str] = []
@@ -231,24 +322,24 @@ def format_egress_result(result: EgressResult) -> str:
         parts.append(f"Unverified: {result.unverified}.")
     if result.ollama_service_connections:
         hosts = ", ".join(
-            f"{s.remote_addr}:{s.remote_port}" for s in result.ollama_service_connections
+            _host_port(s) for s in result.ollama_service_connections
         )
         parts.append(f"Ollama's own services: {hosts}")
     if result.private_connections:
         hosts = ", ".join(
-            f"{s.remote_addr}:{s.remote_port} ({s.proc_name})"
+            f"{_host_port(s)} ({s.proc_name})"
             for s in result.private_connections
         )
         parts.append(f"Ollama connected to another computer on your network: {hosts}")
     if result.public_connections:
         hosts = ", ".join(
-            f"{s.remote_addr}:{s.remote_port} ({s.proc_name})"
+            f"{_host_port(s)} ({s.proc_name})"
             for s in result.public_connections
         )
         parts.append(f"Ollama connected to a public address: {hosts}")
 
     parts.append(
-        "This is a spot check made at rest. It does not watch a model run, it can miss very "
-        "short connections and it cannot see name lookups."
+        "This is a spot check. It can miss very short connections and it cannot see "
+        "name lookups."
     )
     return " ".join(parts)

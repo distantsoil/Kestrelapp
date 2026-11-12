@@ -1,0 +1,4 @@
+{# The answer of a Scoring steps "Fix it", swapped beside the click; the Health check card follows
+   out of band (D-114). #}
+<span class="mo-fixres {{ 'is-good' if fx_ok else 'is-bad' }}" role="status" data-testid="mo-fixres-{{ fx_step }}">{{ fx_message }}</span>
+{% include "partials/models_health.html" %}

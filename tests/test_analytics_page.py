@@ -486,7 +486,10 @@ def test_the_numbers_csv_carries_every_figure_with_its_base(web):
 def test_the_applications_csv_lists_every_application_with_its_history(web):
     r = web.get("/analytics/export/applications.csv")
     rows = list(csv.reader(io.StringIO(r.text.lstrip("﻿"))))
-    assert rows[0] == ["Role", "Company", "Status", "Sent", "Outcome", "Closed", "History"]
+    assert rows[0] == [
+        "Role", "Company", "Status", "Sent", "Outcome", "Closed", "History", "Kestrel ID"
+    ]
+    assert all(re.fullmatch(r"K-[A-Z2-7]{5}-[A-Z2-7]{5}", r[7]) for r in rows[1:])
     assert len(rows) == 8 and rows[1][1] == "Larkspur Logistics"
     assert "kestrel-applications-" in r.headers["content-disposition"]
 

@@ -3,6 +3,9 @@ seeded copy (D-CONFIG-LAYER). Every provider call is mocked with respx."""
 
 from __future__ import annotations
 
+import os
+
+import pytest
 import respx
 from httpx import Response
 
@@ -187,6 +190,16 @@ def test_connect_without_switch_keeps_local_active(monkeypatch):
 
 
 # ------------------------------------------------------------- D-BYOK-11: keys from .env only
+@pytest.fixture(autouse=True)
+def _restore_process_environment():
+    """Loading a .env applies its non-secret lines (KESTREL_LOG_LEVEL) to os.environ directly;
+    put the environment back so the value cannot leak into whatever test runs next."""
+    saved = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(saved)
+
+
 def _write_env(text: str) -> None:
     paths.dotenv_path().parent.mkdir(parents=True, exist_ok=True)
     paths.dotenv_path().write_text(text, encoding="utf-8")

@@ -13,7 +13,10 @@ from pydantic import BaseModel, Field
 from kestrel import __version__
 from kestrel.db.enums import VERDICTS
 from kestrel.db.models import Opportunity
+from kestrel.services.export_terms import RESTRICTED_SENTENCE
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
+from kestrel.web.errors import authored_error
 from kestrel.web.fit import fit_word_for_verdict, verdict_for_fit
 from kestrel.web.queries import (
     OppFilters,
@@ -154,7 +157,7 @@ async def diag_page(change: PageChange) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@router.post("/api/quit")
+@router.post("/api/quit", dependencies=[LOCAL_ONLY])
 async def quit_app():
     """The in-app "Quit Kestrel" button: the same real quit as the tray's Quit (D-UI-27), never
     the close-to-tray hide. Headless serve has no shell to quit and says so."""
@@ -210,6 +213,7 @@ async def opportunities_ingest(request: Request):
 @router.get("/api/opportunities")
 async def api_opportunities(request: Request):
     f = filters_from_query(request.query_params)
+    f.shareable = True  # a source whose terms forbid passing postings on stays out (D-SRC-19)
     async with sessionmaker()() as s:
         page = await list_opportunities(s, f)
         conf, mapping = await confidential(s)
@@ -228,6 +232,11 @@ async def api_opportunity(opp_id: int):
         detail = await get_detail(s, opp_id)
         if detail is None:
             return JSONResponse({"error": "not found"}, status_code=404)
+        from kestrel.services.export_terms import restricted_ids
+
+        if await restricted_ids(s, [opp_id]):
+            return JSONResponse({"error": RESTRICTED_SENTENCE}, status_code=403)
+        hidden = await restricted_ids(s, [m.id for m in detail["dedup_members"]])
         conf, mapping = await confidential(s)
     o, e = detail["opp"], detail["ev"]
     org = detail["org"].name if detail.get("org") else o.org_name
@@ -246,9 +255,35 @@ async def api_opportunity(opp_id: int):
         "dimensions": detail["ev_json"]["dimensions"],
         "blockers": detail["ev_json"]["blockers"],
         "legitimacy": detail["ev_json"]["legitimacy"],
-        "dedup_members": [m.id for m in detail["dedup_members"]],
+        "dedup_members": [m.id for m in detail["dedup_members"] if m.id not in hidden],
         "override": _override_json(detail["override"]),
     }
+
+
+@router.get("/api/pursuits")
+async def api_pursuits(request: Request):
+    """The person's applications, read only (D-IMPORT-10): `id` is the Kestrel ID, the same one
+    the applications export carries. Filters: `track`, `status`, `since` (an ISO date or time, on
+    the last change). Pages: `limit` (up to 500) and `cursor` (the previous `next_cursor`).
+    The shared key and Confidential mode apply as they do to /api/opportunities."""
+    from kestrel.services import pursuit_api
+
+    q = request.query_params
+    try:
+        limit = int(q.get("limit") or pursuit_api.DEFAULT_LIMIT)
+    except ValueError:
+        return JSONResponse({"error": "limit must be a whole number"}, status_code=400)
+    async with sessionmaker()() as s:
+        try:
+            page = await pursuit_api.list_applications(
+                s, track=q.get("track") or None, status=q.get("status") or None,
+                since=q.get("since"), cursor=q.get("cursor"), limit=limit,
+            )
+        except pursuit_api.BadQuery as exc:
+            _log.info("pursuits_query_refused", error_type=type(exc).__name__, error=str(exc))
+            said = authored_error(exc, pursuit_api.QUERY_REFUSALS, pursuit_api.QUERY_FALLBACK)
+            return JSONResponse({"error": said}, status_code=400)
+    return {"rows": page.rows, "next_cursor": page.next_cursor}
 
 
 async def oob_nav_counts(session) -> str:

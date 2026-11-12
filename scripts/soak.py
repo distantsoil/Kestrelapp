@@ -53,7 +53,7 @@ def stream(cmd: list[str], env_extra: dict[str, str] | None = None) -> tuple[int
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
+        text=True, encoding="utf-8",
         errors="replace",
     )
     lines: list[str] = []

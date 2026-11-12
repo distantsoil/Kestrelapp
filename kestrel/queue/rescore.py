@@ -148,11 +148,13 @@ async def enqueue_rescore(
         approval = read_approval(online_approval)
         if approval:
             extra["online_approval"] = approval
+    base_extra = extra
     for oid in ids:
         opp = rows.get(oid)
         if opp is None:
             result.missing.append(oid)
             continue
+        extra = await _bind_corrections(session, opp, base_extra)
         if opp.stage == "t0_reject" and tier0_anyway:
             # Only the intent rides on the task; Tier 1 records the override when it runs
             # (D-UI-74 amended), so a task that dies leaves no "You asked to score this".
@@ -205,6 +207,19 @@ async def enqueue_rescore(
     return result
 
 
+async def _bind_corrections(session: AsyncSession, opp: Opportunity, extra: dict) -> dict:
+    """`extra` for one role. A confirmed online send also carries the digest of the correction
+    lines this role's score states now (D-SCORE-3), so Tier 2 holds it, and sends nothing, when a
+    correction is added, changed or removed after the confirmation, on a retry or a give-back
+    too. A request with no online approval binds nothing."""
+    if "online_approval" not in extra:
+        return extra
+    from kestrel.learning.correction_lines import role_digest
+    from kestrel.services.online_consent import CORRECTIONS_KEY
+
+    return {**extra, CORRECTIONS_KEY: await role_digest(session, opp)}
+
+
 async def _reconfirm_held(
     session: AsyncSession, task_type: str, opportunity_id: int, extra: dict,
 ) -> bool:
@@ -222,7 +237,10 @@ async def _reconfirm_held(
     if task is None:
         return False
     payload = dict(task.payload or {})
-    for key in ("online_approval", "model_override", T2_ONLY_KEY, "lane", "lane_priority"):
+    from kestrel.services.online_consent import CORRECTIONS_KEY
+
+    for key in ("online_approval", "model_override", T2_ONLY_KEY, "lane", "lane_priority",
+                CORRECTIONS_KEY):
         payload.pop(key, None)
     payload.update(extra)
     changed = await session.execute(update(Task).where(
@@ -298,12 +316,15 @@ async def _upgrade_waiting(
             payload.pop("model_override", None)
         lease = Task.lease_until.is_(None) if task.lease_until is None else (
             Task.lease_until == task.lease_until)
-        done = await session.execute(update(Task).where(
+        upd = update(Task).where(
             Task.id == task.id, Task.status == task.status, lease,
             # Minified on both sides: the stored text may come from json_set (compact).
             func.json(Task.payload) == func.json(json.dumps(old_payload)),
         ).values(payload=payload, priority=max(priority, RESCORE_PRIORITY),
-                 updated_at=utcnow_iso()).execution_options(synchronize_session=False))
+                 # A Try again clears the backoff wait, so the operator's fresh request runs now
+                 # (issue #153, D-QUEUE-3).
+                 retry_at=None, updated_at=utcnow_iso())
+        done = await session.execute(upd.execution_options(synchronize_session=False))
         if cast(CursorResult, done).rowcount == 1:
             session.expire(task)
             return "again" if was_again else "upgraded"
@@ -336,6 +357,9 @@ async def _upgrade_waiting_t1(session: AsyncSession, opportunity_id: int, extra:
             payload.pop("model_override", None)
         task.payload = payload
         task.priority = max(task.priority or 0, RESCORE_PRIORITY)
+        # A Try again clears the backoff wait, so the operator's fresh request runs now
+        # (issue #153, D-QUEUE-3), the same way the Score again path does.
+        task.retry_at = None
         task.updated_at = utcnow_iso()
         return True
     return False

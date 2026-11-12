@@ -226,3 +226,5 @@ All roles, employers, and people are invented.
 - [pipeline-confidential-on-light.png](pipeline-confidential-on-light.png): Pipeline with confidential mode enabled.
 - [role-refused-online-light.png](role-refused-online-light.png): Deeper read is preview only without an online key.
 - [error-missing-render-light.png](error-missing-render-light.png): User-facing response to a stale render link.
+- [calibrate-quick-light.png](calibrate-quick-light.png): Quick round: a yes or no card on Calibrate.
+- [role-corrections-light.png](role-corrections-light.png): Correcting a match on the role page, with the changes strip.

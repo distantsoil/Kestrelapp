@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests import profile_seed
+from tests import corrections_seed
 from tests.browser import (
     G4_LISTENER_PROBE_JS,
     LINES_JS,
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.skipif(
     reason="launches a real browser; set KESTREL_LIVE_BROWSER=1",
 )
 
-TABS = ("about", "documents", "employment", "consulting", "location", "stories")
+TABS = ("about", "documents", "employment", "consulting", "location", "stories", "corrections")
 
 # One line of text: every client rect of the element's text sits at the same height.
 _LINES = LINES_JS
@@ -53,7 +53,9 @@ def live(monkeypatch):
 
     from kestrel.web.serve import running_server
 
-    master_id = profile_seed.seed()
+    # The saved profile plus four corrections on three roles and two stories (the Corrections tab).
+    ids = corrections_seed.seed()
+    master_id = ids["master"]
     with running_server(worker=False) as base, sync_playwright() as p:
         browser = launch_sync(p)
         yield base, browser, master_id
@@ -432,6 +434,74 @@ def test_background_title_suggestions_appear_without_reloading_edits(live):
         expect(page.locator('[data-testid="title-suggestion"]')
                .get_by_text("Background title", exact=True)).to_be_visible(timeout=12000)
         expect(page.locator("#pe-ctarget")).to_have_value("175000")
+        assert not errors
+    finally:
+        ctx.close()
+
+
+def _seed_pass_state(*, last: dict | None = None, queue: bool = False) -> None:
+    """Record how the last title pass ended and/or queue a pass, straight in the database."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from kestrel import paths
+    from kestrel.db.engine import make_async_engine
+    from kestrel.db.models import Setting, Task
+    from kestrel.services import title_suggest as ts
+
+    async def seed():
+        engine = make_async_engine(paths.db_path())
+        async with async_sessionmaker(engine)() as s:
+            if last is not None:
+                row = await s.get(Setting, ts.LAST_RUN_KEY)
+                if row is None:
+                    s.add(Setting(key=ts.LAST_RUN_KEY, value=last))
+                else:
+                    row.value = last
+            if queue:
+                s.add(Task(type=ts.TASK_TYPE, payload={"reason": "manual"}, max_attempts=3))
+            await s.commit()
+        await engine.dispose()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(lambda: asyncio.run(seed())).result()
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1280), ("dark", 1280), ("light", 390)])
+def test_title_card_says_what_the_last_pass_did_and_when_it_is_reading(live, theme, width):
+    """#135: with suggestions on screen the card still states the last result, and a queued pass
+    shows "Reading your resume." beside the list. No overlap, no clipped text, no sideways
+    scroll."""
+    from playwright.sync_api import expect
+
+    _seed_title_suggestion("Operations Analyst")
+    _seed_pass_state(last={
+        "at": "2026-11-02T21:28:00+00:00", "applied_count": 0, "added": 0, "status": "ok",
+        "seen": 3, "expired": 1})
+    ctx, page, errors = _open(live, "employment", theme, width)
+    try:
+        # A waiting suggestion opens the box on its own (D-UI-199).
+        last = page.locator('[data-testid="title-suggestions-last"]')
+        expect(last).to_be_visible()
+        expect(last).to_contain_text("Nothing new. 3 titles proposed were already seen")
+        expect(page.locator('[data-testid="title-suggestion"]')).to_have_count(1)
+        wait_for_layout(page)
+        _shot(page, f"title-last-{theme}-{width}")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        box = page.locator("#title-suggestions").bounding_box()
+        text = last.bounding_box()
+        assert text["x"] >= box["x"] - 1
+        assert text["x"] + text["width"] <= box["x"] + box["width"] + 1
+        _seed_pass_state(queue=True)
+        reading = page.locator('[data-testid="title-suggestions-pending"]')
+        expect(reading).to_be_visible(timeout=12000)  # the poll shows it, list still on screen
+        expect(page.locator('[data-testid="title-suggestion"]')).to_have_count(1)
+        expect(last).to_have_count(0)
+        wait_for_layout(page)
+        _shot(page, f"title-reading-{theme}-{width}")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert not errors
     finally:
         ctx.close()
@@ -1014,5 +1084,171 @@ def test_the_scroll_cue_does_not_rescan_while_the_page_is_idle(live):
                         document.querySelector('.k-main').appendChild(p); }""")
         page.wait_for_timeout(800)
         assert page.evaluate("window.__cueScans") > after_scroll, "no look after a content change"
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------- Profile > Corrections (D-UI-291)
+def _card(page, requirement: str):
+    return page.locator(".pf-cr", has=page.locator(".pf-cr__req", has_text=requirement))
+
+
+def _shown(page) -> list[str]:
+    return page.evaluate("""() => Array.from(document.querySelectorAll('.pf-cr'))
+      .filter(c => !c.classList.contains('is-filtered'))
+      .map(c => c.querySelector('.pf-cr__req').textContent)""")
+
+
+def test_corrections_search_filters_as_you_type_and_says_when_nothing_matches(live):
+    ctx, page, errors = _open(live, "corrections", "light", 1280)
+    try:
+        assert len(_shown(page)) == 4
+        page.fill("#pf-crq", "carrier")
+        page.wait_for_function("() => document.querySelectorAll('.pf-cr.is-filtered').length === 3")
+        assert _shown(page) == [corrections_seed.REQ_CARRIER]
+        page.fill("#pf-crq", "zzzz")
+        page.wait_for_selector("#pf-cr-nomatch:not([hidden])")
+        assert page.inner_text("#pf-cr-nomatch") == "No corrections match “zzzz”."
+        page.fill("#pf-crq", "")
+        page.wait_for_function("() => document.querySelectorAll('.pf-cr.is-filtered').length === 0")
+        assert len(_shown(page)) == 4
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_a_correction_save_gives_the_keyboard_back_to_its_pencil(live):
+    """Fable C4: the Save replaces the card; focus must not fall to the page."""
+    ctx, page, errors = _open(live, "corrections", "light", 1280)
+    try:
+        card = _card(page, corrections_seed.REQ_CARRIER)
+        card.locator("[data-pf-cr-edit]").click()
+        page.wait_for_selector(".pf-cr.is-open .pf-cr__chip")
+        card.get_by_text("Met", exact=True).click()
+        card.locator('[data-testid="pf-cr-save"]').focus()
+        page.keyboard.press("Enter")
+        page.wait_for_selector('.k-toast[data-testid="pf-cr-toast"]')
+        page.wait_for_timeout(300)
+        assert page.evaluate("document.activeElement.hasAttribute('data-pf-cr-edit')") is True
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_pencil_saves_a_change_with_undo_and_offers_the_rescore_dialog(live):
+    ctx, page, errors = _open(live, "corrections", "light", 1280)
+    try:
+        card = _card(page, corrections_seed.REQ_CARRIER)
+        card.locator("[data-pf-cr-edit]").click()
+        page.wait_for_selector(".pf-cr.is-open .pf-cr__chip")
+        card.get_by_text("Met", exact=True).click()
+        card.locator("textarea").fill("Ran two reviews.")
+        card.locator('[data-testid="pf-cr-save"]').click()
+        page.wait_for_selector('.k-toast[data-testid="pf-cr-toast"]')
+        card = _card(page, corrections_seed.REQ_CARRIER)
+        assert card.locator(".pf-cr__y").inner_text() == "You: Met"
+        assert "Ran two reviews." in card.locator(".pf-cr__note").inner_text()
+        assert not card.evaluate("c => c.classList.contains('is-open')")
+        offer = page.locator('[data-testid="pf-cr-offer"]')
+        offer.wait_for()
+        assert offer.locator("a").get_attribute("href").startswith("/rescore/choose?")
+        page.locator(".k-toast__undo").click()
+        page.wait_for_function(
+            "() => document.querySelector('.pf-cr .pf-cr__y').textContent === 'You: Not met'")
+        assert page.locator('[data-testid="pf-cr-offer"]').count() == 0
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_remove_folds_the_card_away_and_undo_puts_it_back_in_place(live):
+    ctx, page, errors = _open(live, "corrections", "dark", 1280)
+    try:
+        order = _shown(page)
+        victim = corrections_seed.REQ_LEAN
+        card = _card(page, victim)
+        card.locator("[data-pf-cr-edit]").click()
+        card.locator('[data-testid="pf-cr-remove"]').click()
+        page.wait_for_function("() => document.querySelectorAll('.pf-cr').length === 3")
+        assert page.inner_text('.pf-tabs a[data-tab="corrections"] .pf-tabs__n') == "3"
+        page.locator(".k-toast__undo").click()
+        page.wait_for_function("() => document.querySelectorAll('.pf-cr').length === 4")
+        assert _shown(page) == order
+        assert page.inner_text('.pf-tabs a[data-tab="corrections"] .pf-tabs__n') == "4"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_corrections_work_from_the_keyboard(live):
+    ctx, page, errors = _open(live, "corrections", "light", 1280)
+    try:
+        pen = _card(page, corrections_seed.REQ_CARRIER).locator("[data-pf-cr-edit]")
+        pen.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => document.activeElement.matches('.pf-cr__chip input')")
+        page.keyboard.press("ArrowLeft")  # Not met to Partly met, as a radio group does
+        assert page.evaluate("document.activeElement.value") == "part"
+        page.keyboard.press("Escape")
+        page.wait_for_function(
+            "() => document.activeElement.matches('[data-pf-cr-edit]')")
+        assert pen.get_attribute("aria-expanded") == "false"
+        # Escape dropped the edit: reopened, the saved state is chosen again.
+        page.keyboard.press("Enter")
+        assert page.evaluate("document.activeElement.value") == "gap"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_corrections_motion_is_off_under_reduced_motion(live):
+    base, browser, master_id = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 1300}, reduced_motion="reduce")
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/profile?tab=corrections")
+        page.wait_for_selector(".pf-cr")
+        for sel in (".pf-cr", ".pf-cr__panel", ".pf-cr__chip span", ".pf-cr__pen"):
+            assert page.eval_on_selector(
+                sel, "e => getComputedStyle(e).transitionDuration") in ("0s", "0s, 0s"), sel
+        card = _card(page, corrections_seed.REQ_PLAN)
+        card.locator("[data-pf-cr-edit]").click()
+        assert card.evaluate("c => c.classList.contains('is-open')")
+        page.fill("#pf-crq", "carrier")
+        assert len(_shown(page)) == 1  # at once, with no fold
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 1024])
+def test_corrections_panel_open_no_overlap_and_screenshots(live, theme, width):
+    ctx, page, errors = _open(live, "corrections", theme, width)
+    try:
+        suffix = f"{theme}" if width == 1280 else f"narrow-{theme}"
+        _shot(page, f"profile-corrections-{suffix}")
+        card = _card(page, corrections_seed.REQ_TEAMS)
+        card.locator("[data-pf-cr-edit]").click()
+        wait_for_layout(page)
+        page.wait_for_timeout(450)
+        _shot(page, f"profile-corrections-{suffix}-editing")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        boxes = page.evaluate(_BOXES, ".pf-cr")
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                assert not _overlaps(a, b), (a, b)
+        for sel in (".pf-cr__y", ".pf-cr__k", ".pf-cr__ag", ".pf-cr__chip span",
+                    ".pf-cr__ft .k-btn", ".pf-cr__rm"):
+            for el in [e for e in page.query_selector_all(sel) if e.is_visible()]:
+                assert page.evaluate(_LINES, el) <= 1, (sel, el.inner_text())
+        card.locator('[data-testid="pf-cr-save"]').click()
+        page.wait_for_selector('[data-testid="pf-cr-offer"]')
+        wait_for_layout(page)
+        _shot(page, f"profile-corrections-{suffix}-offer")
+        page.fill("#pf-crq", "zzzz")
+        page.wait_for_selector("#pf-cr-nomatch:not([hidden])")
+        page.wait_for_timeout(450)
+        _shot(page, f"profile-corrections-{suffix}-nomatch")
+        assert not errors, errors
     finally:
         ctx.close()

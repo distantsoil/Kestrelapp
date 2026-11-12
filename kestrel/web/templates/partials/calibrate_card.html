@@ -75,7 +75,7 @@
     {% endif %}
     <p class="cal-dsm">{% if queue.more_unsure %}Kestrel has more roles it is unsure about.{% else %}Kestrel is not unsure about anything right now. It finds more after the next run.{% endif %}</p>
     <div class="cal-btns cal-btns--center">
-      {% if queue.more_unsure %}<a class="k-btn k-btn--primary k-btn--sm" href="/calibrate?track={{ track }}" data-testid="cal-keep-going">Keep going</a>{% endif %}
+      {% if queue.more_unsure %}<a class="k-btn k-btn--primary k-btn--sm" href="/calibrate?track={{ track }}&amp;tab=detailed" data-testid="cal-keep-going">Keep going</a>{% endif %}
       {% if history.total %}<button type="button" class="k-btn k-btn--sm" data-cal-scroll="#cal-history">Change an earlier rating</button>{% endif %}
       <a class="k-btn k-btn--sm" href="/opportunities">Back to Pipeline</a>
     </div>

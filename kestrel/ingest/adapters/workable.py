@@ -47,7 +47,7 @@ class WorkableAdapter:
 
     def validate_config(self, config: dict) -> None:
         slug = config.get("slug")
-        if not isinstance(slug, str) or not _SLUG.match(slug):
+        if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
             raise SourceConfigError(
                 "workable source requires a 'slug' (the board name in "
                 "apply.workable.com/{slug}/: letters, digits, '-', '_' or '.')"
@@ -149,7 +149,7 @@ def _wanted(row: Any) -> bool:
     return (
         isinstance(row, dict)
         and isinstance(row.get("shortcode"), str)
-        and bool(_SHORTCODE.match(row["shortcode"]))
+        and bool(_SHORTCODE.fullmatch(row["shortcode"]))
         and row.get("isInternal") is not True
         and row.get("state") == "published"
     )

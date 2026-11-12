@@ -137,6 +137,52 @@ def test_the_role_page_shows_the_wait_then_the_new_score_in_place(role_live):
         ctx.close()
 
 
+SHOTS_FIXD = "/tmp/claude-0/-home-user/b7db7f2a-4231-54ed-b731-e6f6c37a62fa/scratchpad/shots-fixD"
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1280), ("dark", 1280), ("light", 1024)])
+def test_a_score_landing_does_not_discard_an_open_correction_and_its_note(
+    role_live, theme, width
+):
+    base, browser, ids = role_live
+    oid = ids["strong"]
+    task = rh.queue(oid)
+    ctx = browser.new_context(viewport={"width": width, "height": 1000}, color_scheme=theme)
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/opportunities/{oid}")
+        page.wait_for_selector("#rl-body")
+        wait_for_layout(page)
+        row = page.locator(".rl-mrow", has_text="Process improvement across distribution").first
+        row.scroll_into_view_if_needed()
+        row.get_by_test_id("match-pencil").click()
+        row.get_by_test_id("pick-not_me").click()
+        row.locator("[data-rl-note]").fill("I never ran carriers, only the depot.")
+        rh.lease(task)
+        rh.land(oid, task, score=4.9)
+        # the poll sees the task gone: it says so and waits instead of swapping the pane
+        page.wait_for_function(
+            "document.querySelector('[data-testid=rescoring-hint]')?.textContent"
+            ".includes('close or save')", timeout=12000)
+        page.wait_for_timeout(600)
+        assert "is-open" in row.get_attribute("class")
+        assert row.locator("[data-rl-note]").input_value() == (
+            "I never ran carriers, only the depot.")
+        page.screenshot(path=f"{SHOTS_FIXD}/rescore-landed-panel-open-{theme}-{width}.png")
+        # closing the panel lets the new score in
+        row.locator("[data-rl-mcancel]").click()
+        page.wait_for_function(
+            "document.querySelector('[data-testid=score-holistic]')?.textContent.trim() === '4.9'",
+            timeout=9000)
+        assert page.get_by_test_id("rescoring").count() == 0
+        page.screenshot(path=f"{SHOTS_FIXD}/rescore-landed-after-close-{theme}-{width}.png")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
 def test_leaving_the_role_page_stops_the_poll(role_live):
     base, browser, ids = role_live
     rh.queue(ids["strong"])

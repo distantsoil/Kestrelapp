@@ -40,6 +40,7 @@ from kestrel.db.models import (
     Contact,
     ContactImport,
     Opportunity,
+    OpportunityEmbedding,
     Org,
     Pursuit,
     Setting,
@@ -48,10 +49,12 @@ from kestrel.db.models import (
 from kestrel.research import connections as cx
 from kestrel.services import applied_import as svc
 from kestrel.services import backup as backup_service
-from kestrel.services import pursuit_undo, xlsx_text
+from kestrel.services import kestrel_ids, pursuit_undo, xlsx_text
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import desktop_bridge
 from kestrel.web import settings_io as io
+from kestrel.web.attachment import attachment_disposition
+from kestrel.web.auth import LOCAL_DOWNLOAD
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages.settings_roles import trigger
@@ -63,6 +66,7 @@ router = APIRouter()
 LAST_BACKUP_KEY = "backup.last_at"
 MAX_FILE = 25 * 1024 * 1024  # a LinkedIn export of 100,000 people is a few megabytes
 UNDO_APPLIED = "undo.applied."
+COPY_APPLIED = "applied.copy."  # the file with Kestrel IDs filled in, kept a day for download
 UNDO_KEEP_S = 24 * 3600
 
 # ------------------------------------------------------------------------------ backups
@@ -131,7 +135,7 @@ async def backup_ctx() -> dict:
     }
 
 
-@router.get("/settings/data/backup")
+@router.get("/settings/data/backup", dependencies=[LOCAL_DOWNLOAD])
 async def backup_download():
     """A fresh backup zip, named with the time. The data and settings go in; online model keys and
     logs never do (kestrel.services.backup). The stamp is recorded for "Last backup"."""
@@ -163,7 +167,7 @@ _SAMPLE_APPLIED = (
 APPLIED_LABELS = {
     "company": "Company", "title": "Role", "date": "Date applied", "status": "Stage",
     "source": "Where you found it", "url": "Link", "location": "Place", "notes": "Notes",
-    "track": "Track",
+    "track": "Track", "kid": "Kestrel ID",
 }
 
 
@@ -179,8 +183,9 @@ def _imp_card(request: Request, ctx: dict, headers: dict | None = None) -> HTMLR
 
 
 def _imp_base(**extra: Any) -> dict:
-    return {"step": 0, "file_name": "", "text": "", "error": "", "cols": [], "n_rows": 0,
-            "review": None, "result": None, "labels": APPLIED_LABELS, **extra}
+    return {"step": 0, "file_name": "", "text": "", "orig": "", "error": "", "cols": [],
+            "n_rows": 0, "copy_token": "", "review": None, "result": None,
+            "labels": APPLIED_LABELS, **extra}
 
 
 async def _file_text(request: Request) -> tuple[str, str, str]:
@@ -239,9 +244,11 @@ def _normalized(text: str, mapping: dict[int, str]) -> str:
     order = list(used.items())
     out = _io.StringIO()
     w = csv.writer(out)
-    w.writerow([svc.COLUMN_ALIASES[c][0] for c, _i in order])
-    for r in rows:
-        w.writerow([r[i] if i < len(r) else "" for _c, i in order])
+    w.writerow([svc.COLUMN_ALIASES[c][0] for c, _i in order] + [svc.SOURCE_ROW_HEADER])
+    for n, r in enumerate(rows, start=1):
+        cells = [r[i] if i < len(r) else "" for _c, i in order]
+        if any(c.strip() for c in cells):  # parse_table drops a row blank in every mapped column
+            w.writerow(cells + [str(n)])
     return out.getvalue()
 
 
@@ -278,7 +285,7 @@ async def applied_review(request: Request):
                    + ", ".join(APPLIED_LABELS[c] for c in rev.missing) + ".")
         return _imp_card(request, _imp_base(step=1, text=text, file_name=name, cols=cols,
                                             n_rows=len(rows), error=msg))
-    return _imp_card(request, _imp_base(step=2, text=norm, file_name=name, review=rev,
+    return _imp_card(request, _imp_base(step=2, text=norm, orig=text, file_name=name, review=rev,
                                         n_rows=len(rev.rows),
                                         status_options=svc.status_options("employment")))
 
@@ -301,6 +308,7 @@ async def applied_add(request: Request):
     removes only those."""
     form = await large_form(request, max(svc.MAX_ROWS, cx.MAX_ROWS))
     text = str(form.get("text") or "")
+    orig = str(form.get("orig") or "") or text  # the file as chosen, for the copy with IDs
     name = str(form.get("file_name") or "")
     if not text.strip():
         return _imp_card(request, _imp_base(error="Nothing to add: choose a file first."))
@@ -327,7 +335,10 @@ async def applied_add(request: Request):
                         {"pursuit_id": p.id, "fields": snap["fields"], "last_event": last or 0}
                     )
         try:
-            result = await svc.commit(s, rev, choices, commit_transaction=False)
+            result = await svc.commit(
+                s, rev, choices, commit_transaction=False,
+                file_wins="on" in form.getlist("file_wins"),
+            )
         except (SQLAlchemyError, ValueError) as exc:
             await s.rollback()
             log.warning("applied_import_failed", error_type=type(exc).__name__)
@@ -336,11 +347,12 @@ async def applied_add(request: Request):
                 _imp_base(
                     step=2,
                     text=text,
+                    orig=orig,
                     file_name=name,
                     review=rev,
                     n_rows=len(rev.rows),
                     status_options=svc.status_options("employment"),
-                    error=f"Nothing was added: the write failed ({type(exc).__name__}). "
+                    error="Nothing was added: the write failed. "
                     "Your review is still here.",
                 ),
             )
@@ -361,10 +373,12 @@ async def applied_add(request: Request):
                 }
             )
         token = secrets.token_urlsafe(9)
+        copy_token = await _save_copy(s, rev, result, orig, name)
         await _save_undo(
             s,
             token,
             {
+                "copy": copy_token,
                 "created_pursuits": result.created_pursuit_ids,
                 "created_opps": [
                     pursuit_undo.row_dict(await s.get(Opportunity, oid))
@@ -377,14 +391,70 @@ async def applied_add(request: Request):
         await s.commit()
     n = result.imported + result.updated
     msg = f"{n} application{'' if n == 1 else 's'} added."
+    if result.kept_newer:
+        msg += f" {result.kept_newer} kept at a further stage than your file."
     return _imp_card(
         request,
-        _imp_base(step=3, result=result, n_rows=n, file_name=name),
+        _imp_base(step=3, result=result, n_rows=n, file_name=name, copy_token=copy_token),
         trigger(
             msg,
             undo=f"/settings/data/applied/undo/{token}",
             refresh={"refresh": "/settings/data/applied", "target": "#st-imp"},
         ),
+    )
+
+
+async def _save_copy(
+    session: Any, rev: svc.ImportReview, result: svc.ImportResult, orig: str, name: str
+) -> str:
+    """Keep the person's file with a Kestrel ID column filled in, for a day, so Step 4 can offer
+    it (D-IMPORT-9). It is a new copy: the file they chose is never changed. "" when the file
+    could not be read again or no row is an application."""
+    cutoff = datetime.fromtimestamp(time.time() - UNDO_KEEP_S, UTC).isoformat()
+    await session.execute(
+        delete(Setting).where(Setting.key.like(COPY_APPLIED + "%"), Setting.updated_at < cutoff)
+    )
+    wanted: dict[int, int] = dict(result.row_pursuits)
+    for r in rev.rows:  # a row that matched an application but was left unticked still names it
+        if r.existing_pursuit_id is not None:
+            wanted.setdefault(r.index, r.existing_pursuit_id)
+    if not wanted:
+        return ""
+    ids = await kestrel_ids.ids_by_pursuit(session, create=True)
+    # the copy numbers rows from the person's file; the review may have dropped blank ones
+    src = {r.index: (r.src_row or r.index) for r in rev.rows}
+    row_ids = {src.get(i, i): ids[pid] for i, pid in wanted.items() if pid in ids}
+    try:
+        body = await asyncio.to_thread(svc.copy_with_ids, orig, row_ids)
+    except ValueError:
+        return ""
+    token = secrets.token_urlsafe(9)
+    stem = (name.rsplit(".", 1)[0] if "." in name else name).strip() or "applications"
+    session.add(Setting(key=COPY_APPLIED + token, updated_at=utcnow_iso(),
+                        value={"name": f"{stem[:80]}-with-ids.csv", "csv": body}))
+    return token
+
+
+@router.get("/settings/data/applied/copy/{token}", dependencies=[LOCAL_DOWNLOAD])
+async def applied_copy(token: str):
+    """Download the file with Kestrel IDs filled in. The original is never changed."""
+    async with sessionmaker()() as s:
+        row = await s.get(Setting, COPY_APPLIED + token)
+        value = dict(row.value) if row is not None and isinstance(row.value, dict) else None
+        if row is not None and str(row.updated_at or "") < datetime.fromtimestamp(
+            time.time() - UNDO_KEEP_S, UTC
+        ).isoformat():  # kept a day, as the card says: an older copy is removed, not served
+            await s.delete(row)
+            await s.commit()
+            value = None
+    if not value or "csv" not in value:
+        return Response("That copy is no longer kept. Import the file again to get one.",
+                        status_code=404, media_type="text/plain")
+    name = str(value.get("name") or "applications-with-ids.csv")
+    return Response(
+        "\ufeff" + str(value["csv"]), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": attachment_disposition(name, "applications-with-ids.csv"),
+                 "Cache-Control": "no-store"},
     )
 
 
@@ -405,6 +475,16 @@ async def _import_events(session: Any, pid: int) -> list[dict]:
     return [pursuit_undo.row_dict(e) for e in rows]
 
 
+# Columns the app's own background passes write on a role (liveness check, re-seen stamp, ghost
+# score), so a role is still "as the import left it" whatever they did since.
+_UPKEEP_COLUMNS = ("liveness", "liveness_checked_at", "liveness_strikes", "last_seen_at",
+                   "ghost_score")
+
+
+def _without_upkeep(row: dict) -> dict:
+    return {k: v for k, v in row.items() if k not in _UPKEEP_COLUMNS}
+
+
 @router.post("/settings/data/applied/undo/{token}")
 async def applied_undo(token: str):
     """Remove just the rows that Add created, and put back the cards it changed. Used up on the
@@ -415,6 +495,10 @@ async def applied_undo(token: str):
             return io.refuse(io.NO_UNDO)
         data = dict(row.value)
         await s.delete(row)
+        if data.get("copy"):  # the copy's IDs name applications this Undo is about to remove
+            gone = await s.get(Setting, COPY_APPLIED + str(data["copy"]))
+            if gone is not None:
+                await s.delete(gone)
         cutoff = datetime.fromtimestamp(time.time() - UNDO_KEEP_S, UTC).isoformat()
         if row.updated_at < cutoff or "created" not in data:
             await s.commit()
@@ -441,7 +525,7 @@ async def applied_undo(token: str):
                 return io.refuse(io.NO_UNDO)
         for saved in data.get("created_opps", []):
             opp = await s.get(Opportunity, saved["id"])
-            if opp is None or pursuit_undo.row_dict(opp) != saved:
+            if opp is None or _without_upkeep(pursuit_undo.row_dict(opp)) != _without_upkeep(saved):
                 await s.commit()
                 return io.refuse(io.NO_UNDO)
         removed = 0
@@ -465,6 +549,9 @@ async def applied_undo(token: str):
             if not has:
                 try:
                     async with s.begin_nested():
+                        # the vector is derived by the embed pass, never the person's work
+                        await s.execute(delete(OpportunityEmbedding).where(
+                            OpportunityEmbedding.opportunity_id == opp.id))
                         await s.delete(opp)
                 except SQLAlchemyError:
                     pass  # it is referenced elsewhere: it stays hidden, which is harmless

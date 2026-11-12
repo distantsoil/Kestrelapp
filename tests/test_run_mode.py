@@ -214,6 +214,8 @@ async def test_worker_run_hosted_uses_the_hosted_models_and_records_the_mode(sm)
     worker = Worker(sm, fake, settings)
     stats = await worker.run(mode="hosted")
     assert stats.tier1.completed == 3 and stats.tier2.completed == 3
+    # The same three roles went through both tiers: three roles rated, not six.
+    assert len(stats.tier1.roles | stats.tier2.roles) == 3
     # the client was updated too, not only the worker's copy
     assert fake.settings is worker._settings and fake.settings.llm.mode == "hosted"
     models = await _models_by_tier(sm)

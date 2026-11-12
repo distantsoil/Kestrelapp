@@ -291,7 +291,8 @@ def test_config_validation():
     a = UsaJobsAdapter()
     a.validate_config({})
     a.validate_config({**CFG, "location": "Remote", "remote_only": True, "max_pages": 4,
-                       "results_per_page": 500, "date_posted_days": 60, "api_key_env": "MY_KEY"})
+                       "results_per_page": 500, "date_posted_days": 60,
+                       "api_key_env": "USAJOBS_K2"})
     for bad in (
         {"api_key": "x"}, {"api_key_env": "not a name"}, {"contact_email": "nope"},
         {"keyword": 5}, {"remote_only": "yes"}, {"max_pages": 0}, {"max_pages": 11},

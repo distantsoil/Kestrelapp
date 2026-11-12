@@ -20,8 +20,8 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Calibration, Evaluation, Opportunity
 from kestrel.learning import calibration as calib
 from kestrel.learning import outcomes as outcomes_mod
+from kestrel.learning import quick, training
 from kestrel.learning import reranker as reranker_mod
-from kestrel.learning import training
 from kestrel.learning.active import UncertainItem, rank_uncertain
 from kestrel.learning.capture import labeled_examples, record_label
 from kestrel.learning.ledger import delete_label
@@ -144,7 +144,23 @@ async def _page_ctx(
         ctx["card"] = await _card_ctx(s, track, item, revisit=ctx["revisit"])
     elif queue.done:
         ctx["done_line"] = await cv.session_line(s, track, since)
+    if full:
+        ctx["quick"] = await _quick_tab_ctx(s, track, settings, strips.n)
     return ctx
+
+
+async def _quick_tab_ctx(s: AsyncSession, track: str, settings: Settings, n: int) -> dict:
+    """The Quick tab (issue 171): the meter with the real count, how many roles wait, and the
+    offer settings. Reads only; the settings form posts to /calibrate/quick/settings."""
+    state = await quick.read_state(s, track)
+    waiting = await quick.round_items(s, track, settings, seen=[])
+    return {
+        "meter": quick.meter_for(n, settings, await quick.examples_count(s, track, settings)),
+        "waiting": len(waiting),
+        "enabled": state.enabled,
+        "cadence": await quick.cadence(s),
+        "cadences": quick.CADENCES,
+    }
 
 
 async def _revisit_item(s: AsyncSession, track: str, opp_id: int):
@@ -201,6 +217,8 @@ async def _swap_response(
 async def calibrate_page(request: Request):
     async with sessionmaker()() as s:
         ctx = await _page_ctx(request, s, since=utcnow_iso(), skip="", full=True)
+    # Quick is the default tab (issue 171); `?tab=detailed` opens the rating page.
+    ctx["tab"] = "detailed" if request.query_params.get("tab") == "detailed" else "quick"
     return templates().TemplateResponse(request, "calibrate.html", ctx)
 
 

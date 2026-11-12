@@ -1,0 +1,61 @@
+{% import "partials/local_only.html" as lo with context %}
+{% import "ui/macros.html" as ui %}
+{# The "On your network" drawer body: add a server, Test connection, then give a step a model on it.
+   Everything is autoescaped. The key is never echoed. #}
+<div id="mo-network-form" data-testid="mo-network-form">
+  {% if nw_message %}<p class="mo-msg {{ 'is-good' if nw_ok else 'is-bad' }}" role="status" data-testid="mo-network-message">{{ nw_message }}</p>{% endif %}
+  {% call lo.fence(request) %}
+  <form hx-post="/models/network/test" hx-target="#mo-network-body" hx-swap="innerHTML" autocomplete="off" class="mo-nwform">
+    <div class="k-field"><label for="mo-nw-address">Address</label>
+      <input id="mo-nw-address" class="k-input" type="text" name="address" value="{{ nw_form.address or '' }}" placeholder="http://192.168.1.20:8000" autocomplete="off" spellcheck="false" data-testid="mo-nw-address">
+      <span class="k-muted mo-hint">The computer's IP address on your network, with the port, for example 192.168.2.25:8000. A host name counts as online, so use the IP address. Kestrel adds /v1 when it is missing.</span></div>
+    <div class="k-field"><label for="mo-nw-kind">Server type</label>
+      <div class="k-select"><select id="mo-nw-kind" name="kind" data-testid="mo-nw-kind">
+        {% for k, label in nw_kinds %}<option value="{{ k }}"{% if (nw_form.kind or 'ollama') == k %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></div></div>
+    <div class="k-field"><label for="mo-nw-key">Key <span class="k-muted">(optional)</span></label>
+      <input id="mo-nw-key" class="k-input mo-keyinput" type="password" name="api_key" placeholder="Only if the server asks for one" autocomplete="off" spellcheck="false" data-testid="mo-nw-key"></div>
+    <div class="mo-actions">
+      <button class="k-btn" type="submit" data-testid="mo-nw-test">Test connection</button>
+      <button class="k-btn k-btn--primary" type="submit" hx-post="/models/network/save" data-testid="mo-nw-save">Save server</button>
+    </div>
+  </form>
+  {% endcall %}
+  <p class="k-muted mo-note">The address stays on this computer, and a key is stored only here, never in backups. Test connection asks the server for its model list and sends nothing about you.</p>
+  {% if nw_found %}
+  <section class="mo-nwfound" data-testid="mo-nw-found">
+    <h4>Models on {{ nw_found.host }}</h4>
+    {% if nw_found.models and not nw_found.saved %}
+    <p class="k-muted" data-testid="mo-nw-found-list">{{ nw_found.models|join(', ') }}</p>
+    <p class="k-muted mo-note" data-testid="mo-nw-save-first">Save the server to give a step one of these models.</p>
+    {% elif nw_found.models %}
+    {% call lo.fence(request) %}
+    {% for tier, step in nw_tiers %}
+    <form hx-post="/models/network/assign" hx-target="#mo-network-body" hx-swap="innerHTML" class="mo-nwassign">
+      <input type="hidden" name="server" value="{{ nw_found.name }}"><input type="hidden" name="tier" value="{{ tier }}">
+      <div class="k-field"><label for="mo-nw-model-{{ tier }}">{{ step }}</label>
+        <div class="k-select"><select id="mo-nw-model-{{ tier }}" name="model" data-testid="mo-nw-model-{{ tier }}">{% for m in nw_found.models %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div></div>
+      <button class="k-btn k-btn--sm" type="submit" data-testid="mo-nw-use-{{ tier }}">Use for {{ step|lower }}</button>
+    </form>
+    {% endfor %}
+    {% endcall %}
+    <p class="k-muted mo-note">Load models in {{ nw_ollama_note or 'that server' }} on that computer when you need others.{% if nw_found.kind == 'ollama' %} For Ollama, a model needs a large enough context window; see the health check.{% endif %}</p>
+    {% else %}<p class="k-muted">No models are loaded there yet.</p>{% endif %}
+  </section>
+  {% endif %}
+  {% if nw_servers %}
+  <h4>Your servers</h4>
+  <ul class="mo-servers">
+    {% for sv in nw_servers %}<li class="mo-server"><span class="k-grow"><b>{{ sv.host }}</b><span class="k-muted"> · {{ sv.kind_label }} · {{ sv.where_words }}{% if sv.has_key %} · key saved{% endif %}</span></span>
+      {% call lo.fence(request) %}
+      <form hx-post="/models/network/test" hx-target="#mo-network-body" hx-swap="innerHTML" class="mo-nwrow"><input type="hidden" name="server" value="{{ sv.name }}"><input type="hidden" name="kind" value="{{ sv.kind }}">
+        <button class="k-btn k-btn--sm" type="submit" data-testid="mo-nw-choose-{{ sv.name }}">Choose models</button>
+        {% if sv.name.startswith('lan_') %}<button class="k-btn k-btn--sm k-btn--quiet" type="submit" hx-post="/models/network/remove" data-testid="mo-nw-remove-{{ sv.name }}">Remove</button>{% endif %}</form>
+      {% endcall %}</li>{% endfor %}
+  </ul>
+  {% for t in ('tier1', 'tier2') %}{% if t in nw_servers|map(attribute='tiers')|sum(start=[]) %}
+  {% call lo.fence(request) %}<form hx-post="/models/network/reset" hx-target="#mo-network-body" hx-swap="innerHTML"><input type="hidden" name="tier" value="{{ t }}"><button class="k-btn k-btn--sm k-btn--quiet" type="submit" data-testid="mo-nw-reset-{{ t }}">Use the default model for {{ {'tier1': 'quick screen', 'tier2': 'fit rating'}[t] }} again</button></form>{% endcall %}
+  {% endif %}{% endfor %}
+  {% endif %}
+</div>
+{% if oob %}{% include "partials/models_network_card.html" %}{% endif %}

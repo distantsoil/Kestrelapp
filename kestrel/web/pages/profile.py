@@ -18,7 +18,7 @@ from kestrel.rules.margin import MARGIN_STOPS, normalize_margin
 from kestrel.services import profile_edit as pe
 from kestrel.services import profile_photo
 from kestrel.web.deps import templates
-from kestrel.web.errors import plain_error
+from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.pages.documents import documents_context
 
 log = structlog.get_logger()
@@ -32,6 +32,7 @@ TABS = (
     ("consulting", "Consulting"),
     ("location", "Location"),
     ("stories", "Stories"),
+    ("corrections", "Corrections"),
 )
 _TAB_KEYS = {k for k, _ in TABS}
 
@@ -123,6 +124,25 @@ async def _story_count() -> int:
         return 0
 
 
+async def _correction_count() -> int:
+    """How many corrections about the person Profile lists, for the Corrections tab's badge."""
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from kestrel.db.models import RequirementCorrection
+    from kestrel.web.deps import sessionmaker
+
+    try:
+        async with sessionmaker()() as s:
+            return int((await s.execute(
+                select(func.count()).select_from(RequirementCorrection).where(
+                    RequirementCorrection.scope == "person")
+            )).scalar_one())
+    except SQLAlchemyError as exc:
+        log.warning("correction_count_failed", error_type=type(exc).__name__)
+        return 0
+
+
 async def _confidential_ctx(note: str | None = None, problem: str | None = None) -> dict:
     """The About you privacy card: the existing confidential-mode setting and the current
     employer with its "Show it as" text (the marks the Documents role editor writes)."""
@@ -183,7 +203,10 @@ async def profile(request: Request):
         ctx.update(await _confidential_ctx())
     if tab == "stories":
         ctx.update(await _stories_ctx())
+    if tab == "corrections":
+        ctx.update(await _corrections_ctx(request.query_params.get("q") or ""))
     ctx["story_count"] = await _story_count()
+    ctx["correction_count"] = await _correction_count()
     ctx.update(await readiness_ctx(request, ctx["track"]))
     return templates().TemplateResponse(request, "profile.html", ctx)
 
@@ -381,9 +404,11 @@ async def confidential_save(request: Request):
     employer and its "Show it as" label are the same marks the Documents role editor writes
     (kestrel.docs.current_employer), so the two places can never disagree."""
     from kestrel.docs.current_employer import clean_placeholder
+    from kestrel.web.settings_io import refuse_remote
 
     form = await request.form()
     on = "on" in form.getlist("conf_mode")
+    refuse_remote(request, "confidential_mode", on)  # turning it OFF is this computer only
     employer = " ".join(str(form.get("conf_employer") or "").split())[:200]
     shown = clean_placeholder(form.get("conf_shown"))
     note, problem = await apply_confidential(on, employer, shown)
@@ -505,6 +530,270 @@ async def story_delete(request: Request, story_id: int):
     return _stories_response(request, await _stories_ctx(
         notice="Removed." if done else None,
         error=None if done else "That story is already gone."))
+
+
+# ------------------------------------------------------------------------------ corrections
+# Profile > Corrections (D-UI-291): what the operator told Kestrel is true about them, from any
+# role. A correction is never a label, never reaches a resume, and nothing here sends anything:
+# after a change Kestrel only offers the rescore dialog (/rescore/choose), which asks before any
+# online send. These routes are registered ahead of /profile/{track}/{section}, which would
+# otherwise take /profile/corrections/{id}.
+CORR_STATES = {"met": "Met", "part": "Partly met", "gap": "Not met"}
+_CORR_NOTE_MAX = 1000
+CORR_NOT_SAVED = "That could not be saved."  # a refused change whose reason is not on the list
+STALE_UNDO = "Undo is no longer available. The correction changed since."
+REASON_ANSWERS = {"all": "I have all of it", "some": "Some of it"}
+
+
+def _day(iso_text: str | None) -> str:
+    """"Nov 11", with the year when it is not this year."""
+    from datetime import datetime
+
+    from kestrel.db.base import utcnow_iso
+
+    try:
+        d = datetime.fromisoformat(str(iso_text))
+        now = datetime.fromisoformat(utcnow_iso())
+    except ValueError:
+        return ""
+    text = f"{d.strftime('%b')} {d.day}"
+    return text if d.year == now.year else f"{text}, {d.year}"
+
+
+def _why(item, c, title: str | None) -> dict:
+    """Why Kestrel thought so, as parts the template prints: a `kind`, the story title and a
+    link (Fix the story, Open the story or Add a story) where one applies."""
+    credits = c.reason in ("all", "some")
+    if item.story_deleted:
+        return {"kind": "deleted", "stops": credits, "link": "add" if credits else ""}
+    if c.story_id and title:
+        edited = bool(item.story_operator_edited)
+        if credits:
+            return ({"kind": "story", "title": title} if edited else
+                    {"kind": "drafted", "title": title, "story_id": c.story_id, "credits": True})
+        return {"kind": "source" if edited else "drafted", "title": title,
+                "story_id": c.story_id}
+    if credits:
+        return {"kind": "answered", "answer": REASON_ANSWERS[c.reason], "link": "add"}
+    if c.reason == "agree":
+        return {"kind": "agree"}
+    return {"kind": c.basis if c.basis in ("quoted", "inferred") else "none"}
+
+
+async def _corrections_ctx(query: str = "") -> dict:
+    """The Corrections tab: every person correction, newest first, redacted in confidential mode
+    (the company, and any employer name in the text the operator or the posting wrote)."""
+    from kestrel.learning import corrections as corr
+    from kestrel.learning.corrections import REASON_WORDS
+    from kestrel.services.tracks import consulting_enabled
+    from kestrel.web.deps import sessionmaker
+    from kestrel.web.redact import confidential, redact_name, redact_text
+
+    async with sessionmaker()() as s:
+        items = await corr.list_for_profile(s)
+        on, mapping = await confidential(s)
+    show_track = consulting_enabled()
+    q = query.strip()[:200]
+    words = q.lower().split()
+    views = []
+    for it in items:
+        c = it.correction
+        story = redact_text(it.story_title, mapping, enabled=on)
+        role_title = redact_text(it.role_title, mapping, enabled=on)
+        company = redact_name(it.role_org, mapping, enabled=on)
+        view = {
+            "id": c.id, "track": c.track, "show_track": show_track,
+            "text": redact_text(c.requirement_text, mapping, enabled=on),
+            "note": redact_text(c.note, mapping, enabled=on),
+            # The note names the current employer: shown redacted and read only (D-UI-320).
+            "note_locked": bool(on and c.note and redact_text(c.note, mapping, enabled=on)
+                                != c.note),
+            "kestrel": CORR_STATES.get(c.kestrel_state, c.kestrel_state),
+            "state": c.operator_state, "you": CORR_STATES.get(c.operator_state, ""),
+            "agrees": bool(c.agrees_now), "why": _why(it, c, story),
+            "role_id": c.opportunity_id if it.role_title is not None else None,
+            "role": ", ".join(x for x in (role_title, company) if x),
+            "added": _day(c.created_at), "updated": c.updated_at,
+            "counts_on": it.counts_on, "roles": it.roles,
+        }
+        # The same fields the data layer's search reads, from what the page shows (redacted).
+        view["hay"] = " ".join(x for x in (
+            view["text"], c.reason, REASON_WORDS.get(c.reason, ""), view["note"] or "",
+            role_title or "") if x).lower()
+        view["match"] = all(w in view["hay"] for w in words)
+        views.append(view)
+    return {"corr_items": views, "corr_total": len(views), "corr_query": q,
+            "corr_shown": sum(1 for v in views if v["match"])}
+
+
+async def _corr_view(cid: int) -> dict | None:
+    """One correction's card context, as the tab lists it. None when it does not exist."""
+    ctx = await _corrections_ctx("")
+    return next((v for v in ctx["corr_items"] if v["id"] == cid), None)
+
+
+def _card_response(request: Request, view: dict, *, offer: dict | None = None,
+                   events: dict | None = None):
+    """One card (the htmx swap target), with the rescore offer strip out of band."""
+    ctx = {"c": view, "offer": offer, "oob_offer": True}
+    resp = templates().TemplateResponse(request, "partials/profile_corrections_card.html", ctx)
+    if events:
+        resp.headers["HX-Trigger-After-Swap"] = json.dumps(events)
+    return resp
+
+
+def _rescore_href(roles: list[int]) -> str:
+    """The rescore dialog for these roles, back to this tab: the only road to a model."""
+    ids = ",".join(str(int(i)) for i in roles)
+    return "/rescore/choose?" + urlencode(
+        {"opp_ids": ids, "page": "1", "next": "/profile?tab=corrections"})
+
+
+def _offer(roles: list[int]) -> dict | None:
+    return {"n": len(roles), "href": _rescore_href(roles)} if roles else None
+
+
+def _undo_event(message: str, token: str, *, stamp: str | None, cid: int, **extra) -> dict:
+    """The toast's Undo: a one-use token for the Undo the server holds (kestrel.web.
+    correction_undo), never the rows. `stamp` is shown for the card only; the server checks the
+    stamp it recorded."""
+    return {"pf-corr-saved": {
+        "message": message, "undoUrl": f"/profile/corrections/{cid}/restore",
+        "undo": token, "stamp": stamp or "", "id": cid, **extra}}
+
+
+async def _hold_undo(undo) -> str:
+    from kestrel.web import correction_undo
+    from kestrel.web.deps import sessionmaker
+
+    async with sessionmaker()() as s:
+        return await correction_undo.hold(s, undo, profile=True)
+
+
+@router.post("/profile/corrections/{cid}", response_class=HTMLResponse)
+async def correction_change(request: Request, cid: int):
+    """What's true now?: the state and the note of one correction. The reason and the story stay.
+    Saving changes no role's score; it offers the rescore dialog for the roles that use it."""
+    from kestrel.learning import corrections as corr
+    from kestrel.web.db_retry import write_with_retry
+
+    form = await request.form()
+    state = str(form.get("operator_state") or "")
+    note = str(form.get("note") or "")[:_CORR_NOTE_MAX]
+    if state not in CORR_STATES:
+        return HTMLResponse("Pick Met, Partly met or Not met.", status_code=400)
+
+    async def _go(s):
+        from kestrel.db.models import RequirementCorrection
+
+        current = await s.get(RequirementCorrection, cid)
+        if current is None or current.scope != "person":  # a posting note is changed on its role
+            return None
+        kept = note
+        if current.note:
+            from kestrel.web.redact import confidential, redact_text
+
+            on, mapping = await confidential(s)
+            shown = redact_text(current.note, mapping, enabled=on)
+            if on and shown != current.note and note.strip() == (shown or "").strip():
+                # Confidential mode showed the note redacted (and read only): what came back is
+                # the redacted text, never a new note, so the stored one stays (D-UI-320).
+                kept = current.note
+        return await corr.change_correction(s, cid, operator_state=state, note=kept)
+
+    try:
+        out = await write_with_retry(_go, path=f"/profile/corrections/{cid}")
+    except corr.CorrectionError as exc:
+        log.info("correction_change_refused", cid=cid, error_type=type(exc).__name__,
+                 error=str(exc))
+        return HTMLResponse(authored_error(exc, (corr.NOTE_NEEDED,), CORR_NOT_SAVED),
+                            status_code=400)
+    if out is None:
+        return HTMLResponse("That correction is already gone.", status_code=404)
+    row, undo = out
+    token = await _hold_undo(undo)
+    view = await _corr_view(cid)
+    if view is None:  # a person row always lists; guard a race with a removal
+        return HTMLResponse("That correction is already gone.", status_code=404)
+    n = view["counts_on"]
+    message = ("Saved. Kestrel can rescore the "
+               f"{n} role{'' if n == 1 else 's'} that use{'s' if n == 1 else ''} it."
+               if n else "Saved.")
+    return _card_response(request, view, offer=_offer(view["roles"]), events=_undo_event(
+        message, token, stamp=row.updated_at, cid=cid, kind="change"))
+
+
+@router.post("/profile/corrections/{cid}/remove", response_class=HTMLResponse)
+async def correction_remove(request: Request, cid: int):
+    """Remove a correction: Kestrel goes back to its own read. The row is deleted and Undo puts
+    it back, field for field. Offers the rescore dialog for the roles that used it."""
+    from kestrel.learning import corrections as corr
+    from kestrel.web.db_retry import write_with_retry
+
+    async def _go(s):
+        from sqlalchemy import select
+
+        from kestrel.db.models import RequirementCorrection
+
+        row = (await s.execute(select(RequirementCorrection).where(
+            RequirementCorrection.id == cid))).scalar_one_or_none()
+        roles: list[int] = []
+        if row is None or row.scope != "person":  # Profile lists person rows only
+            return None, roles
+        roles = (await corr.roles_using(s, row.track, [row.requirement_hash])).get(
+            row.requirement_hash, [])
+        return await corr.remove_correction(s, cid), roles
+
+    undo, roles = await write_with_retry(_go, path=f"/profile/corrections/{cid}/remove")
+    if undo is None:
+        return HTMLResponse("That correction is already gone.", status_code=404)
+    token = await _hold_undo(undo)
+    resp = templates().TemplateResponse(
+        request, "partials/profile_corrections_offer.html", {"offer": _offer(roles), "oob": True})
+    resp.headers["HX-Trigger-After-Swap"] = json.dumps(_undo_event(
+        "Correction removed. Kestrel goes back to its own read.", token, stamp=None, cid=cid,
+        kind="remove"))
+    return resp
+
+
+@router.post("/profile/corrections/{cid}/restore", response_class=HTMLResponse)
+async def correction_restore(request: Request, cid: int):
+    """Undo for Save and for Remove: put back the exact row the server held when it wrote. The
+    form carries only the one-use token (`undo`); the rows come from the server, never the
+    browser. Refused, changing nothing, when the token is unknown or used, or the row changed
+    since (its stamp differs), or a newer correction for the same requirement now exists."""
+    from sqlalchemy.exc import IntegrityError
+
+    from kestrel.learning import corrections as corr
+    from kestrel.web import correction_undo
+    from kestrel.web.db_retry import write_with_retry
+
+    form = await request.form()
+    token = str(form.get("undo") or "")
+
+    async def _go(s):
+        held = await correction_undo.find(s, token)
+        if (held is None or not held.profile or held.ids != {cid}
+                or len(held.undo.before) != 1
+                or held.undo.before[0].get("scope") != "person"):
+            return False
+        if not await correction_undo.still_as_left(s, held):
+            return False
+        await corr.restore_correction(s, held.undo)
+        await s.delete(held.row)
+        await s.commit()
+        return True
+
+    try:
+        ok = await write_with_retry(_go, path=f"/profile/corrections/{cid}/restore")
+    except IntegrityError:
+        ok = False
+    if not ok:
+        return HTMLResponse(STALE_UNDO, status_code=409)
+    view = await _corr_view(cid)
+    if view is None:
+        return HTMLResponse(STALE_UNDO, status_code=409)
+    return _card_response(request, view, events={"pf-corr-restored": {"id": cid}})
 
 
 def _saved_message(searches_updated: bool, rechecking: int) -> str:

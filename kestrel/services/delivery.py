@@ -53,11 +53,19 @@ class DeliveryResult:
     channels: list[str] = field(default_factory=list)
 
 
+# Kinds added to a Settings group after it shipped, mapped to a kind that was already in it (#110).
+_JOINED_GROUP = {"roles_need_retry": "model_problem"}
+
+
 def kind_enabled(settings: Settings, kind: str) -> bool:
     """Whether the operator has this kind of alert turned on (a kind not listed is on)."""
     n = settings.notify
     if kind == PER_ITEM_KIND:
         return n.per_item_scored
+    if kind not in n.events and kind in _JOINED_GROUP:
+        # A kind added to a group after the person saved their choices follows that group's
+        # earlier kind, so a switch they turned off stays off for it.
+        return n.events.get(_JOINED_GROUP[kind], True)
     return n.events.get(kind, True)
 
 

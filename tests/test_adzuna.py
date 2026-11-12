@@ -327,7 +327,7 @@ def test_config_validation():
     a = AdzunaAdapter()
     a.validate_config({})
     a.validate_config({**CFG, "location": "Remote", "max_pages": 5, "results_per_page": 50,
-                       "date_posted_days": 60, "app_id_env": "MY_ID_KEY"})
+                       "date_posted_days": 60, "app_id_env": "ADZUNA_SECOND_ID"})
     for bad in (
         {"app_key": "x"}, {"app_id": "x"}, {"app_key_env": "not a name"}, {"keyword": 5},
         {"max_pages": 0}, {"max_pages": 6}, {"results_per_page": 51}, {"date_posted_days": 0},

@@ -172,9 +172,9 @@ async def test_tier_timeout_reaches_the_transport():
         seen.append(request.extensions.get("timeout", {}).get("read"))
         return Response(200, json={"choices": [{"message": {"content": "{}"}}]})
 
-    respx.post("http://x/v1/chat/completions").mock(side_effect=_capture)
+    respx.post("http://localhost:11434/v1/chat/completions").mock(side_effect=_capture)
     s = get_settings()
-    s.llm.backends["local"].base_url = "http://x/v1"
+    s.llm.backends["local"].base_url = "http://localhost:11434/v1"
     s.llm.tiers["tier2"].timeout_s = 321.0
     async with httpx.AsyncClient() as http:
         client = LLMClient(s, http=http)

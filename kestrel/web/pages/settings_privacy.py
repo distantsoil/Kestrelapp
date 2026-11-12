@@ -32,14 +32,15 @@ from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import auth as _auth
 from kestrel.web import settings_io as io
 from kestrel.web import settings_view as sv
-from kestrel.web.auth import SETTING_KEY as SECRET_KEY
 from kestrel.web.auth import (
+    LOCAL_ONLY,
     generate_key,
     is_loopback,
     join_url,
     qr_svg,
     set_cached_key,
 )
+from kestrel.web.auth import SETTING_KEY as SECRET_KEY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import authored_error, plain_error
 from kestrel.web.pages.profile import apply_confidential
@@ -85,6 +86,7 @@ async def confidential_save(request: Request):
     async with sessionmaker()() as s:
         prev = await io.read(s, "confidential_mode")
     on = "on" in form.getlist("conf_mode") or str(form.get("conf_mode") or "") in ("1", "true")
+    io.refuse_remote(request, "confidential_mode", on)  # turning it OFF is this computer only
     employer = " ".join(str(form.get("conf_employer") or "").split())[:200]
     shown = clean_placeholder(form.get("conf_shown"))
     note, problem = await apply_confidential(on, employer, shown)
@@ -110,7 +112,8 @@ async def access_ctx(request: Request, *, note: str | None = None, ok: bool = Tr
                            has_secret=bool(secret))
     host = port = url = svg = None
     address = ""
-    if secret and lan.file_on:
+    # The join link carries the key, so it is built only for the person at this computer (#155).
+    if secret and lan.file_on and is_loopback(request):
         try:
             host = _auth.lan_host_ip()
             port = request.url.port or 8765
@@ -137,12 +140,10 @@ async def access_card(request: Request):
     return _acc_card(request, await access_ctx(request))
 
 
-@router.post("/settings/privacy/access", response_class=HTMLResponse)
+@router.post("/settings/privacy/access", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def access_save(request: Request):
     """Turn Access from other devices on or off. Only this computer may change it, even with the
     key. Turning it on needs the confirm (`ack=on`) and makes a key when there is none."""
-    if not is_loopback(request):
-        return HTMLResponse("Access can only be changed from this computer.", status_code=403)
     form = await request.form()
     want_on = str(form.get("on") or "") in ("1", "true", "on")
     if want_on and str(form.get("ack") or "") != "on":
@@ -163,12 +164,12 @@ async def access_save(request: Request):
     except lan_access.LanAccessError as exc:
         return _acc_card(request, await access_ctx(request, note=plain_error(exc), ok=False))
     ctx = await access_ctx(request)
-    note = "Takes effect after Kestrel restarts."
+    # "Takes effect after Kestrel restarts." is the status line's own sentence (lan.restart_needed,
+    # st_access.html); the note adds only what the status line does not say (#133: it was twice).
     after = ctx["lan"]
     if after.env_name and after.effective_on != want_on:
-        note += (f" The environment variable {after.env_name} is set to {after.env_value} and "
-                 "wins over this switch until you remove it.")
-    ctx["lan_note"] = note
+        ctx["lan_note"] = (f"The environment variable {after.env_name} is set to "
+                           f"{after.env_value} and wins over this switch until you remove it.")
     msg = ("Other devices on your network can open Kestrel." if want_on
            else "Other devices can no longer open Kestrel.")
     return _acc_card(request, ctx, trigger(
@@ -176,10 +177,8 @@ async def access_save(request: Request):
                   f"&now={'1' if want_on else '0'}"))
 
 
-@router.post("/settings/privacy/access/undo")
+@router.post("/settings/privacy/access/undo", dependencies=[LOCAL_ONLY])
 async def access_undo(request: Request) -> Response:
-    if not is_loopback(request):
-        return io.refuse("Access can only be changed from this computer.")
     q = request.query_params
     was, now = q.get("was") == "1", q.get("now") == "1"
     if lan_access.file_value() != now:
@@ -192,12 +191,16 @@ async def access_undo(request: Request) -> Response:
     return io.reply("Put back.")
 
 
-@router.post("/settings/privacy/access/rotate", response_class=HTMLResponse)
+@router.post("/settings/privacy/access/rotate", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
 async def access_rotate(request: Request):
     """A new key. It takes effect at once and signs out every device holding the old one, which
-    is the only way to take access away from one of them."""
-    if not is_loopback(request):
-        return HTMLResponse("Access can only be changed from this computer.", status_code=403)
+    is the only way to take access away from one of them. Like turning it on, it needs the
+    confirm (ack=on): the dialog states what the new key signs out before it is made."""
+    form = await request.form()
+    if str(form.get("ack") or "") != "on":
+        return _acc_card(request, await access_ctx(
+            request, note="Confirm that you understand first.", ok=False))
     token = generate_key()
     from kestrel.web.pages.settings import _set
 
@@ -230,7 +233,7 @@ async def mcp_card(request: Request):
     return _mcp_card(request, await mcp_ctx())
 
 
-@router.post("/settings/privacy/mcp/port", response_class=HTMLResponse)
+@router.post("/settings/privacy/mcp/port", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def mcp_port(request: Request):
     """Change the port the assistant connects to: 1024 to 65535. A running server moves to it at
     once; one that is not running picks it up the next time it starts."""

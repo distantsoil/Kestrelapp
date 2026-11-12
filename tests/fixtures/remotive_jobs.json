@@ -1,0 +1,61 @@
+{
+  "00-warning": "Remotive main domain moved to remotive.com ! Please make your API calls on remotive.com/api/remote-jobs instead of remotive.io now ;) Legacy endpoint remotive.io/api/remote-jobs will be terminated in June 2022. Thank you!",
+  "0-legal-notice": "Legal warning - Hey, thanks for using Remotive's API, we appreciate it! Please note that API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites, including but not limited to: Jooble, Neuvoo, Google Jobs, LinkedIn Jobs. Please link back to the URL found on Remotive AND mention Remotive as a source in order to Remotive to get traffic from your listing. If you don't do that, we'll terminate your API access, sorry! Jobs displayed are delayed by 24 hours, the goal being that jobs are attributed to Remotive on various platforms. Displaying our jobs in order to collect signups/email addresses to show a listing constitutes a breach of our terms of services. We offer a private, paid-for API, please email us at hello(at)remotive(dot)io for more information (starting budget is $5k/mo). Please find out terms of services on https://remotive.com/api-documentation. Please note that there is absolutely no need to request Remotive Job data too frequently. Typically, you only need to GET Remotive job data through this API a couple of times a day (we advise max. 4 times a day). Our data is not changing much faster than that anyway. Note that excessive requests will be blocked. Many thanks (the Remotive team)",
+  "job-count": 3,
+  "total-job-count": 3,
+  "jobs": [
+    {
+      "id": 900001,
+      "url": "https://remotive.com/remote-jobs/software-development/platform-engineer-900001",
+      "title": "Platform Engineer",
+      "company_name": "Sample Harbor Co",
+      "company_logo": "https://remotive.com/job/900001/logo",
+      "category": "Software Development",
+      "tags": [
+        "api",
+        "docker",
+        "python",
+        "postgresql"
+      ],
+      "job_type": "full_time",
+      "publication_date": "2026-11-01T09:30:00",
+      "candidate_required_location": "USA Only",
+      "salary": "$170k - $200k",
+      "description": "<p>Run the sample platform.</p><ul><li>Invented duty</li></ul>",
+      "company_logo_url": "https://remotive.com/job/900001/logo"
+    },
+    {
+      "id": 900002,
+      "url": "https://remotive.com/remote-jobs/writing/freelance-copywriter-900002",
+      "title": "Freelance Copywriter",
+      "company_name": "Sample Meadow Ltd",
+      "company_logo": "https://remotive.com/job/900002/logo",
+      "category": "Writing",
+      "tags": [
+        "research",
+        "seo",
+        "editing"
+      ],
+      "job_type": "freelance",
+      "publication_date": "2026-11-02T14:00:00",
+      "candidate_required_location": "Worldwide",
+      "salary": "$50-$75 /hour",
+      "description": "<p class=\"h1\" dir=\"ltr\" style=\"line-height: 1.38; margin-top: 24pt;\"><span style=\"font-weight: 700;\">About the invented role</span></p><p>Write sample pages for an invented shop. <a href=\"https://example.invalid/apply?utm_source=remotive&amp;utm_medium=job_ad\" rel=\"nofollow\" target=\"_blank\">Read more</a></p>"
+    },
+    {
+      "id": 900003,
+      "url": "https://remotive.com/remote-jobs/customer-support/support-lead-900003",
+      "title": "Support Lead",
+      "company_name": "Sample Orchard Inc",
+      "company_logo": "https://remotive.com/job/900003/logo",
+      "category": "Customer Service",
+      "tags": [],
+      "job_type": "contract",
+      "publication_date": "2026-11-03T08:15:00",
+      "candidate_required_location": "Europe, USA, Canada",
+      "salary": "",
+      "description": "",
+      "company_logo_url": "https://remotive.com/job/900003/logo"
+    }
+  ]
+}

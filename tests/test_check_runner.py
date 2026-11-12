@@ -301,3 +301,63 @@ def test_the_static_gate_prints_every_problem_with_its_rule(runner, monkeypatch,
     out = capsys.readouterr().out
     assert "RULE type check" in out and "RULE assertion floor" in out
     assert "WARNING assert with or" in out and "2 static check problem(s)" in out
+
+
+def _stub_plumbing(runner, monkeypatch, flag):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", *([flag] if flag else [])])
+    monkeypatch.setattr(runner, "_run", lambda *args: True)
+    monkeypatch.setattr(runner, "_run_pytest", lambda cmd, **_kw: (True, []))
+    monkeypatch.setattr(runner.subprocess, "run",
+                        lambda *args, **kwargs: argparse.Namespace(stdout="", returncode=0))
+
+
+@pytest.mark.parametrize("flag", ["--quick", "--fast", None])
+def test_a_stage_that_prints_not_ready_but_reports_success_cannot_exit_zero(
+    runner, monkeypatch, capsys, flag
+):
+    """A real stage (the static checks) prints "Not ready to push" yet returns success, the shape
+    of the 0.7.5 push-on-failure. The gate must exit non-zero and end on a "Not ready" line."""
+    _stub_plumbing(runner, monkeypatch, flag)
+
+    def lying_static_gates() -> bool:
+        print("Not ready to push: 1 static check problem(s) above.")
+        return True
+
+    monkeypatch.setattr(runner, "_static_gates", lying_static_gates)
+    rc = runner.main()
+    out = capsys.readouterr().out.strip().splitlines()
+    assert rc == 1
+    assert out[-1].startswith("Not ready to push")
+
+
+@pytest.mark.parametrize("flag", ["--quick", "--fast", None])
+def test_a_failing_static_stage_exits_nonzero_with_its_words_last(
+    runner, monkeypatch, capsys, flag
+):
+    _stub_plumbing(runner, monkeypatch, flag)
+
+    def failing_static_gates() -> bool:
+        print("Not ready to push: 1 static check problem(s) above.")
+        return False
+
+    monkeypatch.setattr(runner, "_static_gates", failing_static_gates)
+    assert runner.main() == 1
+    assert capsys.readouterr().out.strip().splitlines()[-1].startswith("Not ready to push")
+
+
+@pytest.mark.parametrize("abbrev", ["--qu", "--fa"])
+def test_an_abbreviated_tier_flag_is_refused_not_guessed(runner, monkeypatch, abbrev):
+    """argparse would accept --qu as --quick; the tier would then be misjudged."""
+    _stub_plumbing(runner, monkeypatch, abbrev)
+    with pytest.raises(SystemExit) as exc:
+        runner.main()
+    assert exc.value.code == 2
+
+
+def test_real_pass_still_exits_zero(runner, monkeypatch, capsys):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", "--quick"])
+    monkeypatch.setattr(runner, "_run", lambda *args: True)
+    monkeypatch.setattr(runner, "_run_pytest", lambda cmd, **_kw: (True, []))
+    assert runner.main() == 0
+    assert capsys.readouterr().out.strip().splitlines()[-1] == (
+        "Quick checks passed; run the full check before pushing.")

@@ -84,11 +84,8 @@
    the column is the whole page. Here the form ends above the page's later cards, so a bar sticky
    to the form parked mid-page over them (owner report 2026-10-26). At phone width the bottom
    bar owns the window's foot, so the bar stays sticky to the form there. */
-.pf-savebar { position: fixed; left: var(--side-w); right: 0; margin: 0 auto; width: max-content;
-  max-width: calc(100% - var(--side-w) - 32px); }
-@media (max-width: 1100px) {
-  .pf-savebar { left: var(--side-w-narrow); max-width: calc(100% - var(--side-w-narrow) - 32px); }
-}
+.pf-savebar { position: fixed; left: var(--side-w-now); right: 0; margin: 0 auto; width: max-content;
+  max-width: calc(100% - var(--side-w-now) - 32px); }
 @media (max-width: 700px) {
   .pf-savebar { position: sticky; left: auto; right: auto; margin: 0; width: auto; max-width: none; }
 }
@@ -96,10 +93,11 @@
   align-items: center; gap: 10px; padding: 9px 10px 9px 16px; background: var(--ink);
   color: var(--paper); border-radius: 14px; box-shadow: var(--shadow);
   transform: translateY(140%); opacity: 0; visibility: hidden; pointer-events: none;
-  transition: transform .35s cubic-bezier(.22, .8, .3, 1), opacity .25s, visibility 0s .35s; }
+  transition: transform .35s cubic-bezier(.22, .8, .3, 1), opacity .25s, visibility 0s .35s,
+    left var(--dur-2) var(--ease), max-width var(--dur-2) var(--ease); }
 .pf-form[data-dirty] .pf-savebar, .pf-savebar[data-shown] { transform: none; opacity: 1;
   visibility: visible; pointer-events: auto; transition: transform .35s cubic-bezier(.22, .8, .3, 1),
-  opacity .25s, visibility 0s; }
+  opacity .25s, visibility 0s, left var(--dur-2) var(--ease), max-width var(--dur-2) var(--ease); }
 .pf-savebar__msg { flex: 1; min-width: 0; font-weight: 700; padding-right: 8px; }
 .pf-savebar .k-btn { background: transparent; color: var(--paper); border-color: var(--line); }
 .pf-savebar .k-btn:hover { background: transparent; border-color: var(--paper); }
@@ -210,6 +208,10 @@
 .pf-sugg__box .k-badge { display: none; }
 .pf-sugg__box .k-sec-head h3 { font-size: 15px; }
 .pf-sugg__box .k-card { background: var(--paper); box-shadow: none; }
+/* The reading line and the last-pass line ease in when a pass starts or ends (the global
+   reduced-motion rule turns it off). Long words wrap, never clip (#135). */
+.pf-sugg__reading, .pf-sugg__last { animation: k-fold-in .28s var(--ease) backwards;
+  overflow-wrap: anywhere; }
 .pf-var { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pf-var .pf-chips { display: contents; }
 .pf-var__lead { margin: 0; }
@@ -224,7 +226,12 @@ html[data-reduce-motion="1"] .pf-sugg__panel { transition: none; }
   border-radius: 999px; font-weight: 700; font-size: var(--fs-sm); }
 .pf-chip form { margin: 0; display: inline-flex; }
 .pf-chip.is-off { background: transparent; border-color: var(--line); color: var(--muted); }
-.pf-chip.is-off span { text-decoration: line-through; }
+.pf-chip.is-off .pf-chip__v { text-decoration: line-through; }
+.pf-chip__t { display: inline-flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.pf-chip__src { font-weight: 500; font-size: var(--fs-xs); color: var(--muted); }
+.pf-chip.is-left { padding-right: 12px; background: transparent; border-color: var(--line);
+  color: var(--muted); }
+.pf-chips--left { margin-top: 6px; }
 .pf-chip__x { display: inline-flex; align-items: center; justify-content: center; width: 24px;
   height: 24px; padding: 0; border: 0; border-radius: 999px; background: transparent;
   color: inherit; cursor: pointer; }
@@ -502,3 +509,115 @@ body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .
   body:has([data-pf-savebar]):has(.pf-form[data-dirty], .pf-savebar[data-shown]) .k-toasts {
     bottom: calc(72px + var(--pf-savebar-h, 52px) + var(--sp-2) + env(safe-area-inset-bottom)); }
 }
+
+/* The title of the variants card wraps instead of running past the card on a narrow window. */
+#title-variants .k-sec-head .k-grow { min-width: 0; }
+#title-variants .k-sec-head h3 { overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------------ corrections (D-UI-291)
+   One card per correction. The pencil opens What's true now? in the card (grid 0fr to 1fr); a
+   removed or filtered card folds its height away; a restored one unfolds. Every transition is
+   off under reduced motion. Colors are tokens only. */
+.pf-corr { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.pf-corr__head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.pf-corr__head .pf-lede { flex: 1 1 320px; min-width: 0; }
+.pf-corr__search { position: relative; flex: 0 1 280px; min-width: 0; }
+.pf-corr__search .k-input { padding-left: 32px; }
+.pf-corr__search svg { position: absolute; left: 10px; top: 50%; width: 15px; height: 15px;
+  transform: translateY(-50%); stroke: var(--muted); fill: none; stroke-width: 2;
+  pointer-events: none; }
+.pf-corr__list { display: flex; flex-direction: column; min-width: 0; }
+.pf-corr__empty { padding: 22px; text-align: center; color: var(--muted); font-size: var(--fs-sm);
+  overflow-wrap: anywhere; }
+.pf-corr__empty[hidden] { display: none; }
+.pf-corr__foot { margin: 4px 0 0; }
+
+.pf-cr { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin-bottom: 10px;
+  padding: 14px 16px; background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  transition: border-color var(--dur-2), background var(--dur-2), opacity var(--dur-2),
+    max-height .4s var(--ease), margin-bottom .4s var(--ease), padding .4s var(--ease); }
+.pf-cr.is-open { border-color: var(--brand); }
+.pf-cr.is-folding { overflow: hidden; }
+/* Folded away: removed (then swapped out), filtered out by the search, or about to unfold. */
+.pf-cr.is-out, .pf-cr.is-filtered, .pf-cr.is-in { max-height: 0 !important; margin-bottom: 0;
+  padding-top: 0; padding-bottom: 0; border-width: 0; opacity: 0; overflow: hidden;
+  pointer-events: none; }
+.pf-cr.is-filtered { visibility: hidden; transition: border-color var(--dur-2),
+  opacity var(--dur-2), max-height .4s var(--ease), margin-bottom .4s var(--ease),
+  padding .4s var(--ease), visibility 0s .4s; }
+.pf-cr__top { display: flex; gap: 10px; align-items: flex-start; }
+.pf-cr__t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.pf-cr__req { font-size: 15px; overflow-wrap: anywhere; }
+.pf-cr__chg { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+.pf-cr__chg svg { width: 13px; height: 13px; flex: none; stroke: var(--muted); fill: none;
+  stroke-width: 2.2; }
+.pf-cr__k { color: var(--muted); text-decoration: line-through; }
+.pf-cr__y { font-weight: 800; background: var(--brand); color: var(--brand-ink);
+  border-radius: 999px; padding: 1px 9px; }
+.pf-cr__ag { font-weight: 700; color: var(--good-ink); background: var(--good-bg);
+  border-radius: 999px; padding: 1px 9px; }
+.pf-cr__pen { flex: none; width: 30px; height: 30px; border: 0; background: none;
+  border-radius: 8px; display: grid; place-items: center; color: var(--muted); cursor: pointer;
+  transition: color var(--dur-1), background var(--dur-1), transform .12s; }
+.pf-cr__pen svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9;
+  stroke-linejoin: round; stroke-linecap: round; }
+.pf-cr:hover .pf-cr__pen, .pf-cr__pen:focus-visible, .pf-cr__pen[aria-expanded="true"] {
+  color: var(--brand); background: var(--soft); }
+.pf-cr__pen:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.pf-cr__pen:active { transform: scale(.92); }
+.pf-cr__why { font-size: 13.5px; overflow-wrap: anywhere; }
+.pf-cr__drafted { color: var(--warn-ink); font-weight: 700; }
+.pf-cr__note { font-size: 13px; color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+.pf-cr__meta { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.pf-cr__link { font-weight: 700; color: var(--brand); text-decoration: none; }
+.pf-cr__link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pf-cr__link:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px;
+  border-radius: 3px; }
+
+/* What's true now? Collapsed rows reset align-items, so hidden content never keeps its height. */
+.pf-cr__panel { display: grid; grid-template-rows: 0fr; align-items: stretch;
+  transition: grid-template-rows .32s var(--ease); }
+.pf-cr__panel > div { overflow: hidden; min-height: 0; visibility: hidden;
+  transition: visibility 0s .32s; }
+.pf-cr.is-open .pf-cr__panel { grid-template-rows: 1fr; }
+.pf-cr.is-open .pf-cr__panel > div { visibility: visible; transition-delay: 0s; }
+.pf-cr__form { display: flex; flex-direction: column; align-items: stretch; gap: 9px;
+  margin-top: 6px; padding: 10px 3px 3px; border-top: 1px solid var(--line); }
+.pf-cr__set { border: 0; margin: 0; padding: 0; min-width: 0; }
+.pf-cr__lbl { padding: 0; margin-bottom: 6px; font-size: 12px; font-weight: 800;
+  color: var(--muted); }
+.pf-cr__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-cr__chip { position: relative; display: inline-flex; cursor: pointer; }
+.pf-cr__chip input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.pf-cr__chip span { border: 1px solid var(--line); background: var(--paper); border-radius: 999px;
+  padding: 4px 12px; font-size: 13px; font-weight: 700; color: var(--ink);
+  transition: border-color var(--dur-1), background var(--dur-1), transform .12s; }
+.pf-cr__chip:hover span { border-color: var(--brand); }
+.pf-cr__chip:active span { transform: scale(.96); }
+.pf-cr__chip:has(input:checked) span { border-color: var(--brand); background: var(--soft); }
+.pf-cr__chip:has(input:focus-visible) span { outline: 2px solid var(--brand); outline-offset: 2px; }
+.pf-cr__notein { min-height: 42px; resize: vertical; font-size: 13px; }
+.pf-cr__fx { font-size: 13px; color: var(--muted); }
+.pf-cr__fx b { color: var(--ink); }
+.pf-cr__ft { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pf-cr__rm { border: 0; background: none; padding: 4px 0; font: inherit; font-size: 13px;
+  font-weight: 700; color: var(--bad-ink); cursor: pointer; }
+.pf-cr__rm:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pf-cr__rm:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px;
+  border-radius: 3px; }
+
+/* The rescore offer after a change. It fades in as htmx adds it and folds away on Not now. */
+.pf-cr-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  transition: opacity var(--dur-2), transform var(--dur-2); }
+.pf-cr-offer.htmx-added { opacity: 0; transform: translateY(-6px); }
+.pf-cr-offer.is-leaving { opacity: 0; transform: translateY(-6px); }
+.pf-cr-offer__t { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; font-weight: 700; }
+.pf-cr-offerslot:empty { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-cr, .pf-cr.is-filtered, .pf-cr__panel, .pf-cr__panel > div, .pf-cr__pen, .pf-cr__chip span,
+  .pf-cr-offer { transition: none; }
+}
+html[data-reduce-motion="1"] :is(.pf-cr, .pf-cr__panel, .pf-cr__panel > div, .pf-cr__pen,
+  .pf-cr__chip span, .pf-cr-offer) { transition: none; }

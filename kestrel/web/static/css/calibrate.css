@@ -241,3 +241,39 @@
 }
 
 /* "More about this" has a chevron, as the mockup's link buttons do. */
+
+/* ------------------------------------------------------------------ Quick and Detailed tabs (issue 171) */
+.cal-tabs { display: inline-flex; align-self: flex-start; position: relative; background: var(--soft);
+  border-radius: 10px; padding: 3px; gap: 2px; }
+.cal-tabs button { border: 0; background: none; padding: 7px 16px; border-radius: 8px; font: inherit;
+  font-weight: 600; font-size: 14px; color: var(--muted); position: relative; z-index: 1;
+  cursor: pointer; transition: color .2s; }
+.cal-tabs button[aria-selected="true"] { color: var(--ink); }
+.cal-tabs button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.cal-tabs__thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; border-radius: 8px;
+  background: var(--paper); box-shadow: var(--shadow-soft); width: 0;
+  transition: transform .3s cubic-bezier(.2, .8, .2, 1), width .3s; }
+.cal-tabs:not(.is-placed) .cal-tabs__thumb { transition: none; }
+.cal-panel { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.cal-panel[hidden] { display: none; }
+.cal-panel.is-in { animation: cal-tab-in .32s cubic-bezier(.2, .8, .2, 1); }
+.cal-panel.is-out { opacity: 0; transform: translateY(-4px); transition: opacity .14s, transform .14s; }
+@keyframes cal-tab-in { from { opacity: 0; transform: translateY(8px); } }
+
+.cal-quick { max-width: 860px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 28px; align-items: start; margin-top: var(--sp-2); }
+.cal-quick__main h2 { text-transform: none; font-size: 22px; margin: 0 0 8px; letter-spacing: -.01em; }
+.cal-quick__main p { color: var(--muted); line-height: 1.6; margin: 0 0 16px; font-size: 14.5px; }
+.cal-quick__main .cal-sm { margin: 10px 0 0; }
+.cal-quick__note { display: grid; gap: 6px; padding: 14px 16px; justify-items: start; }
+.cal-quick__note .k-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; cursor: pointer; }
+.cal-quick .qr-meter { margin-top: 16px; }
+.cal-set { max-width: 860px; padding-top: 16px; border-top: 1px solid var(--line); display: flex;
+  gap: 16px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.cal-set__often { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+@container kwin (max-width: 700px) { .cal-quick { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) { .cal-quick { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .cal-tabs__thumb, .cal-tabs button, .cal-panel.is-out { transition: none; }
+  .cal-panel.is-in { animation: none; }
+}

@@ -112,8 +112,13 @@ async def _finished_task(sm, oid: int, *, task_type: str = "t2", status: str = "
 
 
 async def test_progress_mid_run_with_an_estimate(sm):
+    # One clock read for the batch and every completion. The completions are not routed through
+    # clock_seed.ago: no day count reads them, and its clamp just after midnight packs the
+    # one-minute spacing into a tenth of a second (Windows CI at 00:00:39 UTC: an estimate of 1).
+    seeded_at = datetime.now(UTC)
     async with sm() as s:
-        s.add(Run(name="desktop", status="running", started_at=_ago(hours=1), counts={}))
+        s.add(Run(name="desktop", status="running", started_at=iso(seeded_at - timedelta(hours=1)),
+                  counts={}))
         await s.commit()
     done = [await _opp(sm, stage="t2_done") for _ in range(6)]
     parked = await _opp(sm, stage="quarantined")
@@ -122,8 +127,9 @@ async def test_progress_mid_run_with_an_estimate(sm):
     running = await _opp(sm, stage="t1_pass")
     old = await _opp(sm, stage="t2_done")  # scored before this batch began: not in it
     for i, oid in enumerate(done):  # one Tier 2 completion a minute
-        await _eval(sm, oid, model="m", score=4.0, created=_ago(minutes=10 - i))
-        await _finished_task(sm, oid)
+        created = iso(seeded_at - timedelta(minutes=10 - i))
+        await _eval(sm, oid, model="m", score=4.0, created=created)
+        await _finished_task(sm, oid, updated=created)
     await _finished_task(sm, parked, status="dead")
     await _finished_task(sm, aside, task_type="t1")
     await _finished_task(sm, old, updated=_ago(days=3))

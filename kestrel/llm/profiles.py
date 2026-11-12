@@ -324,11 +324,13 @@ def _ram_gb(os_name: str) -> float | None:
                 out = digits[0] if digits else None
         if out and out.strip().isdigit():
             bytes_total = float(out.strip())
-    if bytes_total is None and hasattr(os, "sysconf"):
-        try:
-            bytes_total = float(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
-        except (ValueError, OSError, AttributeError):
-            bytes_total = None
+    if bytes_total is None:
+        sysconf = getattr(os, "sysconf", None)  # not on Windows
+        if sysconf is not None:
+            try:
+                bytes_total = float(sysconf("SC_PAGE_SIZE") * sysconf("SC_PHYS_PAGES"))
+            except (ValueError, OSError, AttributeError):
+                bytes_total = None
     if not bytes_total:
         return None
     return round(bytes_total / 1024**3, 1)
@@ -436,6 +438,7 @@ def ollama_needed(settings: Any) -> bool:
             return True
         b = backends.get(t.backend)
         if (b is not None and not b.external and getattr(b, "engine", "http") == "http"
+                and getattr(b, "server_kind", None) in (None, "ollama")
                 and (b.base_url or "").lower().startswith("http")):
             return True
     return False

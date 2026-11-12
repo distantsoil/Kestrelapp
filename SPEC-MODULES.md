@@ -232,7 +232,14 @@ Generated prose is permitted here, under constraint.
 the prompt supplies only those and forbids asserting anything else. 250-350 words, markdown, in
 an editor, operator edits before rendering. A `claims_used` array is returned and every entry
 must resolve to a real key; any that does not flags the draft "unverified claims present". A
-banned-phrase check runs on the body.
+banned-phrase check runs on the body. A number or name in the body that the person's own text
+does not support is marked unverified. A length of time ("three years") is supported only by the
+same value and unit in their text, never by a bare number elsewhere ("3 warehouses"), and a
+promise about when they can start, relocating, travel, sponsorship or pay is supported only when
+their own text makes it (D-LETTER-9). "The person's own text" is everything of theirs the prompt
+carried: proof points, resume lines, headline and narrative. The employer's name is not an
+unverified claim unless the sentence places the person there in the past. The promise check matches known wordings, so its silence is not a guarantee that
+no promise was made (D-LETTER-10).
 
 **Engagement outline** (consulting): situation, proposed scope, phases with durations, named
 deliverables, commercial model (day rate × days, or fixed fee, or retainer), assumptions, and
@@ -251,17 +258,67 @@ person (I, my, me, we, our); one found in neither the person's text nor the post
 flagged; the posting is never a grounding source. The engagement outline (`engagement_outline/v3`)
 is written as the consultant ("I" or "we") to the organization ("you").
 
-**The saved draft (D-UI-239).** A draft is a `doc_render` row (`template` is `cover_letter` or
-`engagement_outline`; its text, `claims_used` and marks live in `config`), so it survives a reload
-and the Documents tab offers "Open draft". The prompt carries only the person's proof points and
-the resume lines chosen for the role, each with the key a claim must cite. On this computer the
+**The saved draft (D-UI-239, D-LETTER-1).** A draft is a `letter` row with its PDF render
+attached, so it survives a reload and the Documents tab offers "Open draft":
+
+**`letter`** — `id`, `render_id` (fk `doc_render`, unique, deleted with it: the render record the
+PDF, its file name and page count are attached to, and the id the role page's links carry),
+`opportunity_id`, `pursuit_id` nullable (the application), `kind` (`cover_letter` or
+`engagement_outline`), `status` (`current`, `proposed`, `previous` or `older`; at most one
+`current` per role and kind, held by a partial unique index), `body_md`, `generated_md`
+(the text as drafted), `claims_used` json, `flags` json (the plain-writing marks), `prompt_version`,
+`word_count`, `edited`, `extras` json (the document pick it was drafted from; an outline's
+assumptions, exclusions and commercial shape), `created_at`, `updated_at`. A letter saved by an
+earlier version as a render record (its text in `doc_render.config`) is moved into this table by
+migration 0028 and opens as before; the render keeps its PDF and `pdf_digest`. A role with several
+such letters gets the one its application points at (else the newest) as `current`; the rest become
+`older`, which nothing shows or undoes (0.7.5 showed only the newest). The move is safe to run again
+and a value it cannot read is stored empty, never stopping the rest (D-LETTER-5).
+
+The prompt carries only the person's proof points, the resume lines chosen for the role and, for a
+cover letter, accepted stories, each with the key a claim must cite.
+
+**Stories as a source (cover letter, D-LETTER-2).** The story bank is a second allowed source.
+Only an accepted story (one the person wrote or edited: canonical and `operator_edited`) is ever
+supplied; a proposed story is never in the prompt, so a claim naming it does not resolve. A story
+has its own claim key (`story-<id>`), its source shows on a click like any other, and the prompt
+gets at most the title, the first action sentence and the result of each story, never the whole
+story; the ask-first panel names those parts. A claim resolves only to a key the prompt actually
+carried (`extras.sent_keys`): the key of a real story or proof point that was not sent is
+"unverified claims present" (hard rule 2). While a role's current letter uses a story, the role
+holds one `story_usage` row for it (question "Cover letter") and the story's `use_count` counts it
+once; when the letter stops using it (a new draft, an edit that removes the sentence that traced to
+it, a discard, or the resume it came from being deleted), the row goes.
+
+**Length guards (cover letter, D-LETTER-3).** (1) Input: at most 3 proof points or resume lines in
+total and 2 stories per letter, chosen by how many words they share with the posting and the
+title; the rest are not sent. (2) The output cap stays the prompt's `max_tokens`. (3) A body over
+350 words or four paragraphs (the greeting line is not a paragraph) triggers one request to
+shorten it, which is the same single re-ask the plain-writing check uses (the ask-first panel names
+it). (4) A draft still too long is kept and marked "Over length (N words, limit 350)" (or "Too many
+paragraphs (N, limit 4)"); Kestrel never cuts it and never rejects it. (5) The editor shows a live
+word count with the limit, a soft warning above 350, and refuses to save above 600 words, and the
+server refuses the same (the typed text stays in the editor). (6) The PDF must fit one page: the
+Preview makes the PDF and says so when it runs past one page, before it is saved; the font is never
+shrunk. (7) Draft again does not feed the old draft to the model.
+
+**Draft again (D-LETTER-4).** Draft again asks first, then goes the same way as a first draft (an
+online model shows the ask-first panel again). The new draft is saved as `proposed` beside the
+current one, which stays as it is, in Documents and attached to the application, until the person
+chooses "Keep new draft" (the old one becomes `previous`) or "Keep previous draft" (the new one is
+deleted). After keeping the new one, Undo brings the previous draft back exactly as it was and
+deletes the newer one; it asks first, like Discard, saying that the current draft and any edits to
+it are deleted, and it acts only on the draft named on screen. While a draft for the role is being
+written, Undo and Keep previous wait. A draft that finishes when the role already has a current one
+waits as `proposed`; it never replaces the current one by itself (D-LETTER-5, D-LETTER-7). Discard
+still asks first and removes the draft and any previous one. On this computer the
 draft starts with no consent step; an online model first shows the ask-first panel (what is sent,
 what is not, the model and service, the plain-writing re-ask sentence) and nothing is sent until the
 confirmed form is posted, checked again on the server for every call including the re-ask. The
 draft has a check view (dotted underline: a claim traced to the person's own text, with its source
 on a click; solid underline: unverified, "remove it or add it as a proof point"; stock phrasing
 highlighted), an Edit text tab (markdown, word count against 250 to 350, or 600 to 900 for an
-outline; Save confirms; Discard asks first), and a Preview that is one true-size page scaled, with
+outline; Save confirms; Discard asks first; a cover letter over 600 words is not saved), and a Preview that is one true-size page scaled, with
 Download PDF and a warning while an unverified claim remains. A failure shows one fixed sentence;
 a reply that fails its schema twice is quarantined with the raw reply kept.
 
@@ -469,6 +526,12 @@ are disposable. Consolidated they become the operator's actual interview prepara
    constraint, difficult stakeholder, technical judgment, team building) have a strong story and
    which have a gap.
 
+**A build runs in short passes (D-STORY-2).** Each cluster is saved in its own commit as soon as
+its model call returns, so drafts appear while the build runs and a build cut short keeps what it
+wrote. After about two minutes a pass stops between clusters and gives the worker back, so a
+search or a letter the person is waiting for runs before the next pass carries on. A cluster
+whose merge failed is not sent again by the same build, only by the next one.
+
 **Gap analysis is the point.** Knowing you have no good failure story is more useful than
 having forty mediocre ones.
 
@@ -624,7 +687,41 @@ render-dependent parts of a detached row and keep the learning signal.
 
 **`label`** — an explicit gold judgment, usually from the active-learning queue.
 `id`, `opportunity_id`, `track`, `score`, `verdict`, `dimensions` json nullable, `rationale`,
-`source` (`active_learning` | `manual` | `derived_from_outcome`), `created_at`.
+`source` (`active_learning` | `manual` | `quick` | `derived_from_outcome`), `created_at`.
+A `quick` label is one answer from a Quick round (§5.5, D-LEARN-2): Top pick stores score 5, Yes
+score 4, Not for me score 2, and the verdict is derived from that score exactly as for a Detailed
+rating. "Not sure" stores nothing. Quick labels count fully toward the 15, 30 and 200 thresholds and
+the sidebar count; the separate source exists so they can be weighted or filtered later without a
+migration. Undo deletes the row.
+
+**`requirement_correction`** — the operator corrects one thing a posting asks for (D-LEARN-3,
+D-UI-290). `id`, `track`, `opportunity_id`, `evaluation_id`, `requirement_text`, `requirement_hash`
+(normalized text, so a rescore that reorders rows still finds it: lowercase, letters and digits of
+any script plus `+` and `#` kept, everything else one space, so C++, C# and C stay apart, D-LEARN-11), `kestrel_state` and
+`operator_state` (`met` | `part` | `gap`), `reason` (`overstated` | `not_me` | `misread` | `all` |
+`some` | `none` | `agree`; the one-click answers map to `all`, `some`, `none`; `agree` is "It's a
+fair gap", confirming Kestrel's state), `scope` (`person` for every reason but `misread`, which is `posting`),
+`note` nullable, `story_id` nullable (FK ON DELETE SET NULL), `basis` (`quoted` | `inferred` |
+`none`), `agrees_now` bool, `archived_at` nullable, `story_deleted_at` nullable (set when the
+linked story is deleted, D-LEARN-5), `created_at`, `updated_at`. A `person` row
+applies to every role on its track whose requirement has the same `requirement_hash` (exact
+normalized match; the rescore offer uses the same match, listing the roles first) and is listed in
+Profile › Corrections; at most one `person` row per (`track`, `requirement_hash`), and a newer
+answer replaces the older. A `posting` row applies to its role only and is archived, never deleted,
+when the requirement leaves that posting; a `person` row is never archived by one posting. "Counts on
+N roles" is computed live: open (not archived) opportunities on the track whose latest evaluation
+has that hash. Rows persist across rescores: when the new read agrees, `agrees_now` is set; when it
+disagrees, the operator's state wins. If the linked story is deleted, a Met from `all` or `some`
+stops applying (the row falls back to Kestrel's state) and Profile › Corrections shows "The story
+behind this was deleted". Removing a row deletes it, with Undo. Corrections are not `label` rows:
+they do not count toward the 15, 30 or 200 thresholds or the Calibrate learning history, and they
+never change a Tier 0 or Tier 1 keep or kill (hard rule 4). A role's scoring prompt states only its
+own `posting` rows and the `person` rows whose hash is among its latest read's requirements (before
+its first read, whose requirement text appears on whole words in its description, D-SCORE-7), never
+every `person` row on the track (PROMPTS.md P2, D-SCORE-1), and the read records which corrections
+it stated (`evaluation.correction_ids`), so its score reads as older exactly when that set changed
+(D-SCORE-4). When a correction or its note is part of what an online model receives, the consent
+dialog lists it, every line, never cut.
 
 **`outcome`** — what actually happened. `id`, `pursuit_id`, `opportunity_id`, `final_status`,
 `furthest_stage`, `days_to_first_response` nullable, `rejection_reason`, `operator_retrospective`,
@@ -639,9 +736,27 @@ the rating is given. The optional "Tell Kestrel why" stores reason chips and per
 as `label.rationale` and `label.dimensions`, and a verdict derived from the score with the
 operator's cutoffs (SPEC.md §7.3). The role page's "Your view" card (Yes or Adjust) and the four
 "Not for me because..." reasons in Pipeline write the same records; shortlisting a low score and
-hiding a high score for a fit reason are read implicitly as "too low" and "too high". Skipping a
+hiding a high score for a fit reason are read implicitly as "too low" and "too high". **Bulk decisions are
+excluded (D-PIPE-116).** A Pipeline bulk action (Shortlist, Not for me or Mark reviewed on a
+selection of roles, including a whole group) applies to every selected role, but it is not the
+operator's considered word on any one of them, so it never teaches. A bulk Not for me writes no
+`verdict_override` row. A bulk Shortlist or Mark reviewed writes the row that records the state
+(the role is decided, so Today stops asking) with `dimension_corrections` = `{"bulk": true}`, and
+`labeled_examples`, and so calibration, the reranker and drift, skip every row carrying that
+mark. Few-shot reads `label` rows only, which bulk never writes. A single decision on a role
+later still teaches, even when a bulk row came first. Skipping a
 queue item writes nothing and can be undone. Ratings can be changed later, and a changed rating
 replaces the label and is shown as Changed in the history.
+
+**One judgment per duplicate group (D-LRN-1).** Ingest groups copies of one posting
+(`opportunity.dedup_group_id`) and keeps every row; a role with no group is its own group. A group
+counts as labeled once any copy is rated or overridden, so Calibrate never asks about a second copy
+of a rated role and the sidebar badge counts the groups Calibrate can ask about. Training and
+calibration read one judgment per group (`capture.labeled_examples`: the most recent across the
+copies, an earlier label or override on another copy is superseded, as a later correction replaces
+an earlier label on one role), the reranker's rows are one per group, and every sample size shown or
+used for a floor or promotion criterion counts distinct groups, not label rows (hard rule 6).
+Stored rows are never merged or deleted.
 
 ### 5.2 Weight recalibration
 
@@ -758,6 +873,14 @@ only after the operator has rated, so the rating is not anchored on the model's 
 an optional "Tell Kestrel why" captures reasons and per-dimension nudges, and Skip is available.
 Target under 30 seconds per item. Ten minutes a week meaningfully improves everything downstream.
 
+**Quick round (issue 171, D-UI-272, D-LEARN-2).** The same ranking also feeds an optional round of
+up to ten roles, one card at a time, answered yes or no from the title, organization, place, work
+style, pay and age alone (Top pick, Yes, Not for me, Not sure). Kestrel's score is neither shown nor
+computed for the round, nothing is sent anywhere and no model is called. Each answer is saved at
+once as a `quick` label (§5.1); Not sure saves nothing, so the role stays in the queue. A finished
+round offers "Keep going: 10 more", so a round can continue past ten. The ranking, the thresholds and
+the Detailed rating card are unchanged.
+
 The gold set used by `bench` is **regenerated from these labels** once there are enough, so
 model comparison is measured against the operator's real judgment rather than synthetic
 placeholders.
@@ -788,7 +911,13 @@ point of collecting it.
 Every prompt is a versioned file. `evaluation.prompt_version` records what produced each result.
 `bench` accepts a prompt version so two versions can be compared on the same gold set with the
 same model, **changing exactly one variable**. Results from a superseded version carry a subtle
-marker in the UI so stale scores are visible.
+marker in the UI so stale scores are visible. One exception (D-SCORE-4): an `evaluate/v2` or
+`evaluate_consulting/v2` result is current under v3 unless a correction bears on its role (a
+`posting` row on it, or a `person` row about a requirement it asks for, within the set the scoring
+prompt would state), since v3 differs from v2 only by that block. A current-version result is
+marked when a correction bearing on its role was added or changed after it was scored. The
+Pipeline row, its panel, the role page and the rescore offers all use the one rule
+(`kestrel/learning/score_age.py`).
 
 ---
 
@@ -893,6 +1022,24 @@ source, and current pipeline age with stale items flagged.
 **Exports (D-UI-101).** An Export menu offers the summary and charts as a PDF, all numbers as a
 CSV, and every application with its history as a CSV. Files are written locally through the Save
 dialog; nothing is sent. This is new scope recorded in the private decision log.
+
+**Work search log (D-EXPORT-1).** Applications (employment track) has an "Export work search log"
+button that opens a sheet: a date range (quick picks This week, Last week and This month, each
+Monday to Sunday, or a custom From and To) and a live line "12 applications, May 4 to May 10"
+that counts what the file will hold. The CSV is served at `/analytics/export/work-search-log.csv`
+(`from`, `to` as YYYY-MM-DD) and is local only (D-SEC-9). Columns: Role, Company, Applied. A row is a
+pursuit whose status is in `APPLIED_OR_LATER` and whose `applied_at` falls in the range (a date
+given when the application was logged after the fact counts, as it is the stored date); the
+current status never filters, so rejected, withdrawn, ghosted, accepted and closed-posting roles
+all stay. The title and company are read from the stored role, never a live page. One row per
+application. A shortlisted or researching role is not an application and never appears. A pursuit
+in an applied-or-later status with no applied date, other than one closed straight from
+shortlisted, is listed after a "Date unknown" line instead of being dropped; the sheet counts it
+separately. The Remotive rule (D-SRC-19) applies as for the other exports. Confidential mode
+redacts the current employer; with no employer set the export is not held (unlike the other
+exports), and the sheet shows a warning so the person chooses. The file count always equals the
+count shown. No rates are computed. Address, link, method and result columns, and a PDF, are
+deferred (owner decision on issue 136).
 
 **The honest summary.** Titled "Summary" on the page, with a Rewrite summary button and an
 "Updated" time. A short generated narrative at the top: what is working, what is not,

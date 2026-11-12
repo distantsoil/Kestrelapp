@@ -389,7 +389,11 @@ def pct(v: float) -> int:
 # What each "Tell me about" switch turns on or off: the notification kinds Kestrel raises
 # (kestrel.services.delivery reads `notify.events.<kind>`, a kind not listed is on).
 NOTIFY_KINDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
-    "matches": ("New strong matches", "Roles that score high for you.",
+    # Renamed from "New strong matches" (#111): the alert covers Your call and better. The group
+    # key and both kinds are unchanged, so every saved choice still applies.
+    "matches": ("New roles worth a look",
+                "New roles rated Your call or better, by your Score cutoffs in "
+                "Which roles you see.",
                 ("new_strong_match", "high_score")),
     "followups": ("Follow-ups due", "Applications waiting on your next step.",
                   ("next_action_due", "ghosting")),
@@ -398,7 +402,7 @@ NOTIFY_KINDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "runs": ("Run finished", "When a search run is done.", ("run_finished",)),
     "attention": ("Something needs attention", "A source, model or backup problem.",
                   ("source_disabled", "liveness_closed", "update", "model_problem",
-                   "backup_problem")),
+                   "backup_problem", "roles_need_retry")),
 }
 
 

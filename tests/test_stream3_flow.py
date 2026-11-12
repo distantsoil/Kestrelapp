@@ -434,7 +434,7 @@ def test_build_stories_enqueues_one_task_and_the_worker_runs_it_with_the_notes(m
 
     seen = {}
 
-    async def fake(session, client, settings):
+    async def fake(session, client, settings, **_kw):
         seen["sketches"] = len(await stories_mod.collect_note_sketches(session))
         return ConsolidationResult(sketches=1, clusters=1, created_story_ids=[7])
 
@@ -500,7 +500,7 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
 
     calls = {"n": 0}
 
-    async def boom(session, client, settings):
+    async def boom(session, client, settings, **_kw):
         calls["n"] += 1
         raise RuntimeError("model unreachable")
 
@@ -515,7 +515,18 @@ def test_a_build_killed_mid_run_is_retried_and_a_dead_one_says_why(monkeypatch):
         finally:
             await engine.dispose()
 
-    assert asyncio.run(_drain()) == 0
+    for _ in range(MAX_ATTEMPTS + 1):  # one attempt per drain; the wait passes between them
+        assert asyncio.run(_drain()) == 0
+        (t,) = _read(_tasks)
+        if t.status != "pending":
+            break
+
+        async def _rewind(s, tid=t.id):
+            row = await s.get(Task, tid)
+            row.retry_at = None  # the backoff wait has passed (issue #153)
+            await s.commit()
+
+        _read(_rewind)
     assert calls["n"] == MAX_ATTEMPTS - 1  # one attempt was used by the killed run
     (dead,) = _read(_tasks)
     assert dead.status == "dead" and "model unreachable" in (dead.last_error or "")

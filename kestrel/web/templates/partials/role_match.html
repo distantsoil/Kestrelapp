@@ -1,0 +1,139 @@
+{# The match area of the Evaluation tab (D-UI-290, issue 170): In your favor, Gaps and the match
+   map, then the Evidence card. The swap target of a correction (#rl-match), so a Save, an Undo and
+   an Undo from the toast replace exactly this and the rows slide to their new places (role.js).
+   Every row is the model's read with the operator's corrections laid over it
+   (kestrel.learning.corrections); a source shows only when a stored line matched, otherwise the
+   row says Inferred. Nothing here sends anything: Score again is a link to /rescore/choose.
+   Context: reqs (rows), wheel, evidence, evidence_n, story_chips, swap (a response to a
+   correction: the wheel does not draw itself again), flash (the row to ring once). #}
+{% from "partials/role_icons.html" import ric %}
+{% set base = '/opportunities/' ~ opp.id %}
+{% set scored = ev is not none and fit.score is not none %}
+
+{% macro row(r) %}
+{% set c = r.correction %}
+{% set pill = r.pill %}
+{% set tone = 'g' if r.state == 'met' else ('b' if r.state == 'part' else 'a') %}
+<div class="rl-fl rl-mrow{{ ' is-yours' if pill else '' }}{{ ' is-flash' if flash and flash == r.h[:12] else '' }}" data-k="{{ r.k }}" data-c="{{ r.state }}" data-id="{{ r.h[:12] }}" data-h="{{ r.h }}" data-kind="{{ r.kind }}" data-testid="match-row">
+  <span class="rl-m rl-m--{{ tone }}{{ ' rl-m--ask' if r.quick else '' }}">{{ '?' if r.quick else r.mark }}</span>
+  <div class="rl-mbody">
+    <span class="rl-mt">{{ r.text }}</span>{% if r.fatal %} <span class="k-pill k-pill--bad">Could rule it out</span>{% endif %}
+    {% if r.state == 'met' and r.evidence %}<span class="rl-dsm">{{ r.evidence }}</span>
+    {% elif r.state != 'met' and r.how and not (pill and r.unverified) %}<span class="rl-dsm">{{ r.how }}</span>
+    {% elif r.state != 'met' and r.evidence %}<span class="rl-dsm">{{ r.evidence }}</span>{% endif %}
+    {% if c and c.note %}<span class="rl-dsm rl-mnote-shown" data-testid="match-note">“{{ c.note }}”</span>{% endif %}
+    {% if c and not c.applies and c.reason != 'misread' %}<span class="rl-dsm" data-testid="match-stale">The story behind your answer was deleted, so Kestrel's read stands.</span>{% endif %}
+    {% set show_tag = r.inferred and not (c and c.applies and c.story_id) %}
+    {% if show_tag or pill or (r.state != 'met' and not r.quick and not pill) %}
+    <div class="rl-mmeta">
+      {% if show_tag %}<button type="button" class="rl-btag rl-btag--i" data-rl-tag aria-expanded="false" aria-controls="rl-mx-{{ r.h[:12] }}" data-testid="inferred-tag"><span>Inferred</span>{{ ric('chev') }}</button>{% endif %}
+      {% if pill %}
+        <span class="rl-ypill" data-testid="match-pill">{{ pill.text }}</span>{% if pill.was %}<span class="rl-ywas">{{ pill.was }}</span>{% endif %}
+        {% if c.from_elsewhere %}<span class="rl-mfrom" data-testid="match-from">From your corrections</span>
+        {% else %}<button type="button" class="rl-mact rl-mact--quiet" hx-post="{{ base }}/role/correction/{{ c.id }}/undo" hx-target="#rl-match" hx-swap="outerHTML" data-testid="match-undo">Undo</button>{% endif %}
+      {% elif r.state != 'met' and not r.quick %}
+        <button type="button" class="rl-mact" data-rl-fix aria-expanded="false" aria-controls="rl-mp-{{ r.h[:12] }}" data-testid="match-done">I've done this</button>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if show_tag %}
+    <div class="rl-xp rl-mx" id="rl-mx-{{ r.h[:12] }}"><div><div class="rl-mxin">No line in your resume or stories says this. Kestrel's reasoning: {{ r.evidence }}</div></div></div>
+    {% endif %}
+    {% if r.quick %}
+    <div class="rl-mquick" data-testid="match-quick">
+      <button type="button" class="rl-mchip" data-rl-fix aria-expanded="false" aria-controls="rl-mp-{{ r.h[:12] }}" data-rl-quick="all">I've done this</button>
+      {% for reason, label in (('some', 'Some of it'), ('none', 'Not yet')) %}
+      <form class="rl-qf" hx-post="{{ base }}/role/correction" hx-target="#rl-match" hx-swap="outerHTML">
+        <input type="hidden" name="h" value="{{ r.h }}"><input type="hidden" name="reason" value="{{ reason }}"><input type="hidden" name="quick" value="1">
+        <button type="submit" class="rl-mchip" data-testid="quick-{{ reason }}">{{ label }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if not pill %}
+    <div class="rl-xp rl-mpn" id="rl-mp-{{ r.h[:12] }}"><div>
+      <form class="rl-mpnin" hx-post="{{ base }}/role/correction" hx-target="#rl-match" hx-swap="outerHTML" data-rl-mform data-testid="match-panel" role="group" aria-label="Correct: {{ r.text }}" autocomplete="off">
+        <input type="hidden" name="h" value="{{ r.h }}">
+        <input type="hidden" name="reason" value="" data-rl-reason>
+        <input type="hidden" name="story_id" value="" data-rl-storyid>
+        <div class="rl-mchips">
+          {% for ch in r.chips %}<button type="button" class="rl-mchip" data-rl-pick="{{ ch.reason }}" data-story="{{ '1' if ch.story else '0' }}" data-note="{{ ch.note }}" data-eh="{{ ch.head }}" data-et="{{ ch.tail }}" aria-pressed="false" data-testid="pick-{{ ch.reason }}">{{ ch.label }}</button>{% endfor %}
+        </div>
+        <div class="rl-xp rl-mstep" data-rl-step="story"><div>
+          <p class="rl-mlead">{{ story_prompt }}</p>
+          <div class="rl-mchips" data-rl-storychips role="group" aria-label="Your stories"></div>
+        </div></div>
+        <div class="rl-xp rl-mstep" data-rl-step="route"><div>
+          {% if r.kind == 'story_ai' %}<p class="rl-mlead" data-testid="route-fix">This line rests on a story Kestrel drafted. <a class="rl-mlink" href="{{ r.src.href }}">Fix the story</a> Kestrel changes nothing itself.</p>
+          {% elif r.kind == 'story_own' %}<p class="rl-mlead" data-testid="route-open">This line rests on a story you wrote. <a class="rl-mlink" href="{{ r.src.href }}">Open the story</a> It is your text, and Kestrel will not change it.</p>
+          {% elif r.kind == 'resume' %}<p class="rl-mlead" data-testid="route-doc">This line rests on your resume. <a class="rl-mlink" href="{{ r.src.href }}">Open the line in Documents</a> It feeds every tailored resume, so it is not edited here.</p>{% endif %}
+        </div></div>
+        <div class="rl-xp rl-mstep" data-rl-step="note"><div>
+          <textarea class="rl-mnote" name="note" maxlength="500" rows="2" placeholder="Anything to add? (optional)" aria-label="Your note" data-rl-note></textarea>
+        </div></div>
+        <p class="rl-mcq" data-rl-effect aria-live="polite"></p>
+        <div class="rl-mft"><button type="button" class="k-btn k-btn--sm" data-rl-mcancel>Cancel</button><button type="submit" class="k-btn k-btn--sm k-btn--primary" data-rl-msave disabled data-testid="match-save">Save</button></div>
+      </form>
+    </div></div>
+    {% endif %}
+  </div>
+  {% if not pill %}
+    {% if r.state == 'met' %}<button type="button" class="rl-pen" data-rl-fix aria-expanded="false" aria-controls="rl-mp-{{ r.h[:12] }}" aria-label="Correct: {{ r.text }}" title="Correct this" data-testid="match-pencil">{{ ric('pen') }}</button>{% endif %}
+  {% elif c.from_elsewhere %}
+    <a class="rl-pen" href="/profile?tab=corrections" aria-label="Correct: {{ r.text }}" title="Correct this" data-testid="match-pencil-profile">{{ ric('pen') }}</a>
+  {% endif %}
+</div>
+{% endmacro %}
+
+<div id="rl-match" class="rl-match{{ ' is-swap' if swap else '' }}" data-changed="{{ changed_n }}">
+ {% if wheel.n %}
+ <div class="rl-wheelrow" id="rl-wheelrow" data-testid="match-map">
+  <section class="k-card rl-card rl-card--good">
+    <header class="k-sec-head"><span class="k-badge k-badge--good">{{ ric('check') }}</span><div class="k-grow"><h3>In your favor</h3></div></header>
+    <div class="rl-kr">
+      {% for r in reqs if r.state == 'met' %}{{ row(r) }}
+      {% else %}<p class="rl-quiet">Nothing the posting asks for is fully covered yet.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="k-card rl-card rl-card--warn">
+    <header class="k-sec-head"><span class="k-badge k-badge--warn">{{ ric('alert') }}</span><div class="k-grow"><h3>Gaps</h3></div></header>
+    <div class="rl-kr">
+      {% for r in reqs if r.state != 'met' %}{{ row(r) }}
+      {% else %}<p class="rl-quiet">No gaps found in what the posting asks for.</p>{% endfor %}
+    </div>
+    <a class="rl-storyln rl-storyln--block rl-storyln--quiet" href="#" data-rl-story="" data-testid="story-else">+ Add a story for something else they ask for</a>
+  </section>
+  <section class="k-card rl-card rl-wheelc" id="rl-wheelc">
+    <header class="k-sec-head"><span class="k-badge">{{ ric('target') }}</span><div class="k-grow"><h3>Match map</h3></div></header>
+    <svg viewBox="0 0 140 140" class="rl-wheel" role="img" aria-label="{{ wheel.center }} of the things they ask for are met">
+      <g transform="rotate(-90 70 70)"><circle r="{{ wheel.r }}" cx="70" cy="70" fill="none" class="rl-wtrack" stroke-width="16"/>
+        {% for a in wheel.arcs %}<circle class="rl-wseg rl-wseg--{{ a.state }}" data-k="{{ a.k }}" data-c="{{ a.state }}" r="{{ wheel.r }}" cx="70" cy="70" fill="none" stroke-width="16" style="--d: {{ a.dash }}; stroke-dashoffset: {{ a.offset }}; animation-delay: {{ a.k * 90 }}ms"><title>{{ a.text }}: {{ a.word|lower }}</title></circle>{% endfor %}
+      </g><text x="70" y="78" text-anchor="middle" class="rl-wn" data-testid="wheel-center">{{ wheel.center }}</text></svg>
+    <div class="rl-wleg">
+      <button type="button" class="rl-wchip" data-f="met"><i class="rl-wdot rl-wdot--met"></i>{{ wheel.met }} met</button>
+      <button type="button" class="rl-wchip" data-f="part"><i class="rl-wdot rl-wdot--part"></i>{{ wheel.part }} partly met</button>
+      <button type="button" class="rl-wchip" data-f="gap"><i class="rl-wdot rl-wdot--gap"></i>{{ wheel.gap }} not met</button>
+    </div>
+    <div class="rl-dsm rl-wsub">{{ wheel.n }} thing{{ '' if wheel.n == 1 else 's' }} they ask for · click to focus</div>
+    {% if changed_n %}<div class="rl-dsm rl-wchg" data-testid="wheel-changed">{{ changed_n }} changed by you</div>{% endif %}
+    <div class="rl-wfocus" id="rl-wfocus" aria-live="polite"></div>
+  </section>
+ </div>
+ <template id="rl-story-tpl">{% for st in story_chips %}<button type="button" class="rl-mchip" data-rl-story-pick="{{ st.id }}" aria-pressed="false">{{ st.title }}</button>{% endfor %}<button type="button" class="rl-mchip rl-mchip--new" data-rl-story-new>{{ new_story }}</button></template>
+ {% endif %}
+
+ {% if scored %}
+ <section class="k-card rl-card rl-card--map rl-evx" data-testid="evidence">
+   <button type="button" class="rl-evh" aria-expanded="false" aria-controls="rl-evbody" data-rl-evtoggle data-testid="evidence-toggle">
+     <span class="rl-hb rl-hb--i">{{ ric('doc') }}</span><b>Evidence</b>
+     <span class="rl-evn" data-testid="evidence-count">{{ evidence_n.stored }} from your resume and stories · {{ evidence_n.inferred }} inferred</span>{{ ric('chev') }}
+   </button>
+   <div class="rl-xp rl-evb" id="rl-evbody"><div><div class="rl-evl">
+     {% for e in evidence %}<div class="rl-evr rl-evi" data-k="{{ e.k }}" data-testid="evidence-row"><div class="rl-evq">{{ e.quote }}</div>
+       <div class="rl-eva">{% if e.line %}“{{ e.line }}”{% else %}Kestrel's reasoning: {{ e.proof }}{% endif %}</div>
+       <div class="rl-evs">{% if e.source %}{{ e.source.label }} · <a class="rl-mlink" href="{{ e.source.href }}">Open</a>{% else %}<span class="rl-evinf">Inferred · no line in your resume or stories</span>{% endif %}</div></div>
+     {% else %}<p class="rl-quiet">Kestrel did not match any of your own proof to what the posting asks for.</p>{% endfor %}
+   </div></div></div>
+ </section>
+ {% endif %}
+</div>

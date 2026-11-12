@@ -35,6 +35,7 @@ from kestrel.ingest.runner import DROPPED_SAMPLE_KEY
 from kestrel.pipeline.runlog import INTERRUPTED
 from kestrel.services import hosted_balance, run_model
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import refuse_unless_local, release_credit_hold, request_is_local
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.pages.needs_try import _role_views
 from kestrel.web.pages.runs_detail import _open_total, _quarantine_rows, _retry_quarantine
@@ -735,7 +736,7 @@ async def stop():
     Run now or Resume picks up where it left off; nothing is lost."""
     from kestrel.ingest.scheduler import cancel_pending_scrapes
     from kestrel.pipeline import runlog
-    from kestrel.web.app import set_paused
+    from kestrel.web.app import release_confirmed_run, set_paused
     from kestrel.web.db_retry import write_with_retry
 
     global _stop_in_flight
@@ -750,6 +751,7 @@ async def stop():
         # The in-memory flag first: nothing new starts even if the database writes below have to
         # wait out another writer (D-DB-1).
         set_paused(True)
+        release_confirmed_run()  # a stopped run no longer holds its settings (#103)
         step = (summary.get("headline") or "").replace("Paused", "").strip(": ")
         run_id = summary.get("run_id")
         note = f"Stopped by you{' at ' + step if step else ''}."
@@ -835,7 +837,6 @@ async def start(request: Request):
     the ask-first sheet sends; hosted mode must also be usable, or nothing is queued."""
     from kestrel.config import RUN_CHOICES, HostedModeError, hosted_mode_problem
     from kestrel.ingest.scheduler import enqueue_all_scrapes
-    from kestrel.llm import credit
     from kestrel.queue.queue import TaskQueue
     from kestrel.services.setting_overrides import HOSTED_CHANGED, queue_run_mode
 
@@ -844,6 +845,10 @@ async def start(request: Request):
     sm = sessionmaker()
     if mode and mode not in RUN_CHOICES:
         return _note("Not started: that choice is not available.", status=400)
+    if mode and not request_is_local(request):
+        async with sm() as s0:
+            if mode != (await load_settings_with_db(s0)).llm.mode:
+                refuse_unless_local(request)  # a one-time route other than the configured one
     async with sm() as s:
         enabled = int(
             (
@@ -886,7 +891,7 @@ async def start(request: Request):
         # The sheet offers several modes, but only the selected mode was approved. Local
         # explicitly approves no online destination, even when the hidden field names them.
         selected_approval = approval_for(effective, RUN_TIERS) if online_choice else {}
-        credit.clear()  # the operator asked for a run: let sends to an online key resume (D-LLM-8)
+        release_credit_hold(request)  # the operator asked for a run (D-LLM-8, D-SEC-10)
         if hosted_problem is not None:  # it cannot run: say so now, not in the worker
             return _note(f"Not started: {hosted_problem}.", status=409)
         if mode or online_choice:

@@ -11,11 +11,21 @@ below is therefore the setting-table layer and must exclude bootstrap keys when 
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -95,6 +105,9 @@ INPROCESS_ENGINE = "inprocess"
 
 
 class BackendConfig(BaseModel):
+    # `external` is read as a property (below): the declared flag OR an address on the internet.
+    model_config = ConfigDict(populate_by_name=True)
+
     # Empty for the in-process engine, which has no endpoint.
     base_url: str = ""
     # "http" is every backend that answers over HTTP (Ollama, OpenRouter, the direct APIs).
@@ -116,7 +129,7 @@ class BackendConfig(BaseModel):
     # (hard rule 1). Reachable through operator-confirmed Tier 3 escalation, or by any tier once
     # the operator has turned on Hosted mode (LLMSettings.hosted_mode, SPEC.md 6.4). Several
     # backends may be external (OpenRouter, OpenModel, Anthropic, OpenAI); a tier names at most one.
-    external: bool = False
+    external_flag: bool = Field(False, alias="external")
     # Wire protocol. "chat_completions" is /v1/chat/completions (Ollama, OpenRouter, any
     # OpenAI-compatible server). "responses" is the OpenAI Responses protocol (/v1/responses),
     # which is the only one openmodel.ai serves; its chat-completions endpoint was removed.
@@ -131,6 +144,62 @@ class BackendConfig(BaseModel):
     # max_completion_tokens and a strict json_schema response_format).
     provider: Literal["generic", "openrouter", "openmodel", "anthropic", "openai"] = "generic"
     hosted: HostedOptions = HostedOptions()
+    # The kind of model server at a home-network address the person added on the Models page
+    # (kestrel.services.lan_servers): it sets the JSON and thinking presets above and decides
+    # whether Kestrel may download or build models there (Ollama only). None for the shipped
+    # backends.
+    server_kind: Literal["ollama", "omlx", "vllm", "llamacpp", "other"] | None = None
+
+    @property
+    def external(self) -> bool:
+        """True when a call here can leave the local network: the declared flag, or a base URL
+        whose ADDRESS is on the internet (kestrel.netloc). The flag can no longer make an internet
+        address look local (D-LLM-15); a loopback or home-network server is not external."""
+        if self.external_flag:
+            return True
+        if self.engine != "http" or not (self.base_url or "").strip():
+            return False
+        from kestrel import netloc
+
+        return netloc.classify_url(self.base_url) == netloc.INTERNET
+
+    @external.setter
+    def external(self, value: bool) -> None:
+        self.external_flag = bool(value)
+
+    @model_validator(mode="after")
+    def _no_online_key_on_a_local_backend(self) -> BackendConfig:
+        """A backend on this computer or the local network never carries an online provider's
+        key (D-SEC-11): a settings file or restored backup that pointed such a backend's
+        `api_key_env` at OPENROUTER_API_KEY and its address at a home IP would send the real key
+        there without consent. The reference is dropped and logged."""
+        if not self.api_key_env or self.external:
+            return self
+        from kestrel.llm.providers import online_key_env_names
+
+        if self.api_key_env in online_key_env_names():
+            import structlog
+
+            structlog.get_logger().warning("local_backend_online_key_dropped",
+                                           env=self.api_key_env)
+            self.api_key_env = None
+        return self
+
+    def model_copy(self, *, update: Any = None, deep: bool = False) -> BackendConfig:
+        """`update={"external": True}` sets the declared flag (the field's alias)."""
+        if update and "external" in update:
+            update = {("external_flag" if k == "external" else k): v for k, v in update.items()}
+        return super().model_copy(update=update, deep=deep)
+
+    @property
+    def location(self) -> str:
+        """netloc.THIS_COMPUTER, LOCAL_NETWORK or INTERNET for this backend's address."""
+        from kestrel import netloc
+
+        if self.engine != "http":
+            return netloc.THIS_COMPUTER
+        loc = netloc.classify_url(self.base_url)
+        return netloc.INTERNET if self.external_flag else loc
 
 
 class TierConfig(BaseModel):
@@ -153,8 +222,9 @@ HOSTED_TIER_SENDS: dict[str, str] = {
     "tier1": "title, organization, location, and the first {t1} tokens of the description",
     "tier2": (
         "the description slice (up to {t2} tokens in hosted mode), the organization context "
-        "Kestrel has gathered, your confirmed labels used as examples, and your full profile; "
-        "and, only when you click Assess on Profile > Documents or Suggest again on Profile, "
+        "Kestrel has gathered, your confirmed labels used as examples, your full profile, and "
+        "the corrections you made to how Kestrel read a requirement, with their notes; and, "
+        "only when you click Assess on Profile > Documents or Suggest again on Profile, "
         "your resume text"
     ),
     "tier3": (
@@ -264,6 +334,10 @@ class Concurrency(BaseModel):
     # models for VRAM the way tier1/tier2 do, so it can run wider without causing swap thrash.
     # The in-process engine serializes its own runs, so a wider setting only queues there.
     embed: int = Field(default=4, ge=1, le=16, strict=True)
+    # Whether the person chose tier2 themselves (a saved setting, an environment variable, or a
+    # value other than the shipped 2). Set by load_settings; a Concurrency built any other way
+    # counts as chosen, so nothing is changed for it. Not a setting and never saved.
+    _tier2_chosen: bool = PrivateAttr(default=True)
 
     @field_validator("tier1", "tier2", "embed", mode="before")
     @classmethod
@@ -274,6 +348,24 @@ class Concurrency(BaseModel):
         if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
             return int(value.strip())
         return value
+
+
+# Tier 2 on an ONLINE model runs this many requests at once unless the person chose a number
+# (#92): hosted calls do not share this computer's memory, so the local default of 2 (which
+# protects a 16 GB card from model swap thrash) only slows them. Local defaults never change.
+ONLINE_TIER2_CONCURRENCY = 4
+
+
+def _tier2_chosen(parsed: Settings, db_overrides: dict | None) -> bool:
+    """Whether the person set the Tier 2 parallel count: a saved setting, an environment variable
+    (KESTREL_CONCURRENCY__TIER2, or the whole KESTREL_CONCURRENCY), or any value other than the
+    shipped default. The shipped file itself says 2, so that value alone is not a choice."""
+    saved = (db_overrides or {}).get("concurrency")
+    if isinstance(saved, dict) and "tier2" in saved:
+        return True
+    if any(k.upper() in ("KESTREL_CONCURRENCY__TIER2", "KESTREL_CONCURRENCY") for k in os.environ):
+        return True
+    return parsed.concurrency.tier2 != Concurrency.model_fields["tier2"].default
 
 
 class Pipeline(BaseModel):
@@ -407,6 +499,14 @@ class Server(BaseModel):
     # carries the public hostname as Host and as Origin on HTMX POSTs, so both guards need to
     # know it. Exact hostnames only, never wildcards; https origins only.
     public_hostnames: list[str] = []
+    # #153: how long Quit lets a model call that is already running finish before it is cut off
+    # and its task handed back (refunded, not failed). Idle work stops at once either way.
+    quit_grace_s: float = 5.0
+
+    @field_validator("quit_grace_s")
+    @classmethod
+    def _grace_bounds(cls, v: float) -> float:
+        return min(max(float(v), 0.0), 30.0)  # clamp, never reject; 30 s is the quit ceiling
 
     @field_validator("public_hostnames")
     @classmethod
@@ -786,19 +886,69 @@ def apply_mode(settings: Settings, mode: str | None = None) -> Settings:
                 else hosted.model_copy(update=overlay)
             )
     settings.llm.mode = requested  # type: ignore[assignment]
+    t2 = settings.llm.tiers.get("tier2")
+    t2_backend = settings.llm.backends.get(t2.backend) if t2 is not None else None
+    if t2_backend is not None and t2_backend.external and not settings.concurrency._tier2_chosen:
+        settings.concurrency.tier2 = ONLINE_TIER2_CONCURRENCY  # #92: only when nothing was chosen
     return settings
 
 
+# The parsed Settings, before the run mode is resolved, kept while nothing that feeds it has
+# changed (D-PERF-2). Every input is in the key: both YAML files (path, mtime_ns, size, inode, so
+# an atomic replace shows, and a digest of the bytes), the KESTREL_* environment, the private URL
+# secret other_service reads, and the setting-table overrides themselves (their content, so a write
+# from any path, in this process or another, is seen on the next load: SPEC 4.6). Callers get a
+# deep copy, so nothing they change reaches the cache.
+_parsed: dict[str, Any] = {"entry": None}  # (key, Settings), swapped in whole
+
+
+def _file_sig(path: Path | str | None) -> tuple[object, ...]:
+    """What identifies a file's current content: mtime_ns, size and inode (an atomic replace
+    shows), plus a digest of the bytes of a config file (a few KB), so an edit that keeps size and
+    timestamp, or a copy that preserves the old mtime (a restore), is still seen."""
+    if not path:
+        return ()
+    try:
+        st = os.stat(path)
+        digest = hashlib.blake2b(Path(path).read_bytes(), digest_size=8).hexdigest()
+    except OSError:
+        return ("missing", str(path))
+    return (str(path), st.st_mtime_ns, st.st_size, st.st_ino, digest)
+
+
+def _parse_key(path: Path | None, db_overrides: dict | None) -> str:
+    import json
+
+    from kestrel.services.other_service import URL_ENV
+
+    packaged = paths.packaged_config() / "settings.yml"
+    env = tuple(sorted((k, v) for k, v in os.environ.items() if k.startswith("KESTREL_")))
+    secret = _dotenv_state["secrets"].get(URL_ENV)  # type: ignore[union-attr]
+    return json.dumps(
+        [_file_sig(path), _file_sig(str(packaged)), env, secret, db_overrides or {}],
+        sort_keys=True, default=repr,
+    )
+
+
 def load_settings(*, db_overrides: dict | None = None, mode: str | None = None) -> Settings:
-    """Build a fresh Settings, applying the full precedence chain, then resolve the run mode
+    """Build Settings, applying the full precedence chain, then resolve the run mode
     (apply_mode). db_overrides is the setting-table layer (highest); never carries bootstrap
-    keys. `mode` overrides the stored `llm.mode` for this Settings object only."""
+    keys. `mode` overrides the stored `llm.mode` for this Settings object only. The parse (YAML,
+    environment, validation) is reused while its inputs are unchanged (D-PERF-2); the object
+    returned is always the caller's own copy."""
     load_dotenv_into_environ()
     path = paths.config_file("settings.yml")
     _yaml_path["path"] = str(path) if path else None
     from kestrel.services.other_service import apply as apply_other_service
 
-    return apply_mode(apply_other_service(Settings(**(db_overrides or {}))), mode)
+    key = _parse_key(path, db_overrides)
+    entry = _parsed["entry"]
+    if entry is not None and entry[0] == key:
+        return apply_mode(entry[1].model_copy(deep=True), mode)
+    parsed = apply_other_service(Settings(**(db_overrides or {})))
+    parsed.concurrency._tier2_chosen = _tier2_chosen(parsed, db_overrides)
+    _parsed["entry"] = (key, parsed.model_copy(deep=True))
+    return apply_mode(parsed, mode)
 
 
 def get_settings() -> Settings:

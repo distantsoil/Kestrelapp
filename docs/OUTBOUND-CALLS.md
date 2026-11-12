@@ -18,7 +18,7 @@ only to Kestrel's own server on this computer.
 |---|---|---|
 | Indeed and Glassdoor searches (through the JobSpy library) | `apis.indeed.com`, `www.glassdoor.com` | Search words, place and filters from the person's profile |
 | ZipRecruiter and Google Jobs (only if the person ticks them) | `www.ziprecruiter.com`, `www.google.com` | The same |
-| Company job boards: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP, Paylocity, Workable, Recruitee, Teamtailor, Personio, Breezy HR | Each system's public job board for that company | The board's name only |
+| Company job boards: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP, Paylocity, Workable, Recruitee, Teamtailor, Personio, Breezy HR, Jobvite | Each system's public job board for that company | The board's name only |
 | Find a board from a company name (on a click) | The board hosts above, up to 12 guesses | A name derived from what the person typed |
 | Follow a Greenhouse short link found in a posting | `grnh.se`, one request, redirects off | Nothing but the request (at most 20 a run) |
 | A careers page, job feed or portfolio page the person pastes | That site | Nothing but the request (private network addresses are refused) |
@@ -29,6 +29,8 @@ only to Kestrel's own server on this computer.
 | We Work Remotely | `weworkremotely.com` | Nothing (a public feed) |
 | Arbeitnow | `www.arbeitnow.com` | The page number |
 | Jobicy | `jobicy.com` | The count and cursor (a public feed) |
+| 4 Day Week (`fourdayweek`) | `4dayweek.io` | The page number and any filter or search word the person set (a public API) |
+| Hacker News, Who is hiring? (`hn_hiring`) | `hacker-news.firebaseio.com` | Item numbers (a public API) |
 | Remotive | `remotive.com` | The job count limit (a public feed); at most 4 fetches a local day, counted in the database |
 | SAM.gov and SEC EDGAR (consulting track) | `api.sam.gov`, `efts.sec.gov`, `www.sec.gov` | Codes or search phrases; SEC requires a contact email in the request |
 
@@ -36,8 +38,8 @@ Every request Kestrel sends itself carries Kestrel's own User-Agent and is rate-
 robots.txt, stated plainly (owner, 2026-10-30: "We just need to be transparent"; corrected from a
 code audit the same day, which found more than the two exceptions first written here):
 
-- **Checked before reading:** Workable, Recruitee, Teamtailor, Personio, Breezy HR, Himalayas, We
-  Work Remotely, Arbeitnow, Jobicy, USAJobs, a careers page or job feed the person pastes, a role
+- **Checked before reading:** Workable, Recruitee, Teamtailor, Personio, Breezy HR, Jobvite, Himalayas, We
+  Work Remotely, Arbeitnow, Jobicy, 4 Day Week, USAJobs, a careers page or job feed the person pastes, a role
   added by its address, the "is it still open" re-check of saved roles, a company's own site read
   for research, and portfolio pages. A disallow stops the read.
 - **Not checked:** the public job-board APIs of Greenhouse, Lever, Ashby, Workday, SmartRecruiters,
@@ -48,7 +50,9 @@ code audit the same day, which found more than the two exceptions first written 
   D-SRC-14), Remotive (its robots.txt disallows `/api/*` as a crawler rule, but Remotive publishes
   its API for scripts and its legal notice sets the terms, so this one documented API is read
   without a robots check and held to the 4-fetches-a-day it advises, counted in the database;
-  never its pages; a named exception, D-SRC-15) and SAM.gov; SEC EDGAR (its own fair-access rules: a contact in the
+  never its pages; a named exception, D-SRC-15), the official Hacker News API (its robots.txt allows
+  only `.json` addresses through a wildcard the in-client check cannot read, so Kestrel requests only
+  `.json` addresses and never a news.ycombinator.com page) and SAM.gov; SEC EDGAR (its own fair-access rules: a contact in the
   User-Agent and at most 10 requests a second); RSS or Atom feeds the person adds; and a
   Greenhouse short link (`grnh.se`), followed one hop to learn which board it points at.
 - **Indeed and Glassdoor** go through the JobSpy library, which sends its own headers (it presents
@@ -85,9 +89,21 @@ Embeddings never go online; they run inside Kestrel.
 
 - The local AI: Ollama at `127.0.0.1:11434` (the address can be changed; then it is wherever the
   person points it).
+- A model server on the person's own network (Models > On your network): Kestrel sends it the
+  same prompts it would send the local AI, and Test connection asks it for its model list. The
+  address is classified by where it points; an address on the internet is an online service and
+  is refused there (D-LLM-15).
 - Kestrel's own server on `127.0.0.1`, which the window, the browser extension and the page-timing
   record talk to.
 - The MCP server and LAN access are off by default and accept connections; they never call out.
+
+## Local AI and Ollama
+
+**What Kestrel does.** Kestrel runs the local AI through Ollama on this computer. It sends the model a prompt and reads text back. It gives the model no tools, no web access and no files. Every answer is checked against a fixed format.
+
+**What Kestrel cannot control.** Ollama is a separate program. Its own settings decide whether it checks for updates, uses its cloud models, or listens beyond this computer. If you point Kestrel at an Ollama on another machine, or use a custom or cloud-hosted model, your text goes there. Models are files made by other people: Kestrel tests that they run and answer in the right format, but it cannot inspect how they were trained.
+
+**How to keep it local.** Keep Ollama on this computer. Turn off Ollama's cloud models in its settings. For certainty, block Ollama's internet access in your firewall once your models are downloaded. Kestrel keeps working, because it talks to Ollama on this computer.
 
 ## Links that open only when clicked
 
@@ -119,6 +135,7 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 
 - `127.0.0.1`: local. Kestrel's own server.
 - `127.0.0.1:11434`: local. Ollama, the local AI.
+- `192.168.1.20:8000`: reference. An example address shown in the Models > On your network form.
 - `aka.ms`: reference. A license notice.
 - `alpinejs.dev`: reference. Text inside the bundled Alpine library.
 - `api.adzuna.com`: call. Adzuna search, the person's own key.
@@ -166,6 +183,11 @@ installer). `{*}` stands for a part that comes from the person, a posting or a s
 - `www.apple.com`: reference. A macOS settings-file format name.
 - `www.arbeitnow.com`: call. The Arbeitnow job board.
 - `jobicy.com`: call. The Jobicy remote jobs feed.
+- `4dayweek.io`: call. The 4 Day Week public jobs API.
+- `hacker-news.firebaseio.com`: call. The official Hacker News API, for the monthly Who is hiring? thread.
+- `news.ycombinator.com`: link. The thread comment's own page, shown as the role's link (never requested by Kestrel).
+- `app.jobvite.com`: call. Jobvite company job feeds (XML).
+- `jobs.jobvite.com`: call. Jobvite company board pages, read once for the feed's company id.
 - `remotive.com`: call. The Remotive remote jobs API (a named robots.txt exception, 4 fetches a day).
 - `www.linkedin.com`: reference. A code comment (LinkedIn is never searched).
 - `www.openmodel.ai`: link. OpenModel's privacy policy.

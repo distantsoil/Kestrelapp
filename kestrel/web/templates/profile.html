@@ -26,10 +26,10 @@
       {# Employment and Consulting ARE the track switch here (D-UI-66): each link names its track
          and remembers it exactly as the nav switch does (setTrack: localStorage and the
          kestrel-track cookie), so the nav and this page can never disagree. #}
-      <a role="tab" href="{% if key == 'documents' %}/documents{% elif key in ('employment', 'consulting') %}/profile?tab={{ key }}&track={{ key }}{% elif key == 'stories' %}/profile?tab=stories{% else %}/profile?tab={{ key }}&track={{ track }}{% endif %}"
+      <a role="tab" href="{% if key == 'documents' %}/documents{% elif key in ('employment', 'consulting') %}/profile?tab={{ key }}&track={{ key }}{% elif key in ('stories', 'corrections') %}/profile?tab={{ key }}{% else %}/profile?tab={{ key }}&track={{ track }}{% endif %}"
          {% if key in ('employment', 'consulting') %}@click="setTrack('{{ key }}')" data-tab-track="{{ key }}"{% endif %}
          class="{% if tab == key %}active{% endif %}" data-tab="{{ key }}"
-         {% if tab == key %}aria-current="page" aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ label }}{% if key == 'stories' and story_count %}<b class="pf-tabs__n">{{ story_count }}</b>{% endif %}</a>
+         {% if tab == key %}aria-current="page" aria-selected="true"{% else %}aria-selected="false"{% endif %}>{{ label }}{% if key == 'stories' and story_count %}<b class="pf-tabs__n">{{ story_count }}</b>{% elif key == 'corrections' and correction_count %}<b class="pf-tabs__n" data-testid="pf-corr-n">{{ correction_count }}</b>{% endif %}</a>
     {% endfor %}
   </div>
 
@@ -39,7 +39,7 @@
   </div>
   {% endif %}
 
-  {% if track in about_missing and not profile_problem and tab not in ('stories',) %}
+  {% if track in about_missing and not profile_problem and tab not in ('stories', 'corrections') %}
   <div class="pf-note pf-note--warn" data-testid="about-missing">
     <b>About you ({{ track }}) has no name yet{% if tab == 'about' %}.{% else %}:{% endif %}</b>
     {% if tab != 'about' %}fill in at least your name on the
@@ -54,6 +54,8 @@
         {% include "partials/profile_documents.html" %}
       {% elif tab == 'stories' %}
         {% include "partials/profile_stories.html" %}
+      {% elif tab == 'corrections' %}
+        {% include "partials/profile_corrections.html" %}
       {% else %}
         {% if tab in ('about', 'location') and consulting_enabled() %}
         <div class="pf-track" role="tablist" aria-label="Track" data-testid="profile-track-switch">

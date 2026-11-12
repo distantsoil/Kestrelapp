@@ -50,7 +50,10 @@
     if (!vp) return;
     var vpw = vp.clientWidth;
     S.perView = Math.max(1, Math.floor((vpw - 2 * PEEK - GAP) / (CARD + GAP)));
-    S.cw = Math.min(MAX_CARD, (vpw - 2 * PEEK - GAP * (S.perView + 1)) / S.perView);
+    // Cards that do not all fit keep one steady width (narrower only where the window itself is),
+    // so a wider window adds cards and never shrinks the ones on screen. Width only grows, in the
+    // branch below, once every card fits.
+    S.cw = Math.min(CARD, vpw - 2 * PEEK - 2 * GAP);
     var n = count();
     if (n > 0 && n <= S.perView) {
       // Every card fits, so nothing peeks and the peek margins are not needed: share the whole
@@ -256,6 +259,7 @@
       doc.body.dispatchEvent(new CustomEvent('run-refresh'));
     }
     if (!d.successful || warned(d.xhr)) return;
+    if (el.hasAttribute('data-td-qr-close')) { closeQuick(); return; }
     if (el.matches('.td-sl')) { shortlisted(el.closest('.td-card')); return; }
     if (el.matches('.td-save')) {
       el.classList.add('is-on'); el.title = 'Saved for later';
@@ -273,6 +277,52 @@
     if (el.hasAttribute('data-td-gone')) {
       var row = el.closest('.td-item');
       if (row) { row.classList.add('is-gone'); later(function () { row.remove(); refreshPanels(); }, 380); }
+    }
+  }
+  /* The quick-round strip (issue 171): Not now opens a small menu; either choice closes the strip
+     with a short fade and then asks the server for the strip again, which is now empty. An Undo
+     refreshes the same way and the strip returns exactly as it was. */
+  var qOpen = false, qAt = 0;  // the menu is open, and which item has the focus
+  function quickMenu(open) {
+    var b = $('#td-qr-later'), m = $('#td-qr-menu');
+    if (!b || !m) return;
+    qOpen = !!open;
+    m.hidden = !open;
+    b.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) { var first = $('button', m); qAt = 0; if (first) first.focus(); }
+  }
+  /* The strip is morphed in place by its poll or a run event, and the server always draws the
+     menu closed. An open menu is put back, with the focus on the item it was on. */
+  function keepQuickMenu() {
+    var b = $('#td-qr-later'), m = $('#td-qr-menu');
+    if (!qOpen || !b || !m) return;
+    m.hidden = false;
+    b.setAttribute('aria-expanded', 'true');
+    var items = $$('button', m);
+    if (items[qAt]) items[qAt].focus();
+  }
+  function closeQuick() {
+    quickMenu(false);
+    var strip = $('.td-qr');
+    if (strip) strip.classList.add('is-leaving');
+    later(refreshPanels, 360);
+  }
+  function onQuickClick(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('[data-td-qr-menu]')) { var m = $('#td-qr-menu'); quickMenu(!!(m && m.hidden)); return; }
+    if (!t.closest('.td-qr__menu')) quickMenu(false);
+  }
+  function onQuickKey(e) {
+    var m = $('#td-qr-menu');
+    if (!m || m.hidden) return;
+    if (e.key === 'Escape') { quickMenu(false); var b = $('#td-qr-later'); if (b) b.focus(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      var items = $$('button', m), at = items.indexOf(doc.activeElement);
+      e.preventDefault();
+      var next = e.key === 'ArrowDown' ? (at + 1) % items.length : (at <= 0 ? items.length - 1 : at - 1);
+      qAt = next;
+      items[next].focus();
     }
   }
   // An Undo (any toast, kestrel:undone): the sections that show the change are asked again.
@@ -624,6 +674,8 @@
   // Updated in place (kestrel-ui.js data-k-morph): the face that was showing stays.
   function onMorphed(e) {
     if (e.target && e.target.id === 'td-top') { keepFace(); stripFace = null; }
+    // The quick-round strip comes back by morph (an Undo): its new buttons need htmx again.
+    if (e.target && e.target.id === 'td-quick' && root.htmx) { root.htmx.process(e.target); keepQuickMenu(); }
   }
 
   /* ---------------------------------------------------------------------------------- init */
@@ -661,6 +713,8 @@
       ctx.on(doc, 'pointercancel', endDrag);
       ctx.on(doc, 'keydown', onKeyDown);
       ctx.on(doc, 'click', onClick);
+      ctx.on(doc, 'click', onQuickClick);
+      ctx.on(doc, 'keydown', onQuickKey);
       ctx.on(doc, 'keydown', onDotKey);
       ctx.on(root, 'resize', onResize);
       ctx.on(doc, 'htmx:afterSwap', onAfterSwap);

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 
 # ------------------------------------------------------------------------------------ validators
@@ -64,6 +64,20 @@ def _dedupe_cap(n: int | None = None) -> AfterValidator:
         return out[:n] if n is not None else out
 
     return AfterValidator(v)
+
+
+def _drop_unknown(allowed: frozenset[str]) -> BeforeValidator:
+    """A tag list is advisory (hard rule 4): a value outside `allowed` is dropped, never a
+    validation failure (D-LLM-14). Runs before the Literal check, then before _dedupe_cap's
+    dedupe and cap, so ["scaling", "conflict"] parses as ["conflict"] and ["scaling"] as [].
+    The model still sees the `allowed` enum in the schema; the drop is leniency on the parse."""
+
+    def v(x):
+        if isinstance(x, list):
+            return [t for t in x if t in allowed]
+        return x
+
+    return BeforeValidator(v)
 
 
 def _max_items(n: int) -> Any:
@@ -609,6 +623,12 @@ class P7VariantSuggest(_Base):
 
 
 # ===== P8 — story consolidation
+# The 8 behavioral themes the story picker and the interview-prep coverage gap
+# (SPEC-MODULES §5) track. Narrowed from 15: the extras (crisis, change_management,
+# cost_reduction, security_compliance, m_and_a, vendor_management, scaling) are not in the
+# coverage set and never appeared in coverage.py or prep_view.THEME_WORDS, so a reply that
+# tags one of them has it dropped, not accepted into a list the UI cannot
+# meaningfully render or match.
 P8Theme = Literal[
     "conflict",
     "failure",
@@ -618,13 +638,6 @@ P8Theme = Literal[
     "difficult_stakeholder",
     "technical_judgment",
     "team_building",
-    "crisis",
-    "change_management",
-    "cost_reduction",
-    "security_compliance",
-    "m_and_a",
-    "vendor_management",
-    "scaling",
 ]
 
 
@@ -635,7 +648,9 @@ class P8Story(_Base):
     action: str
     result: str
     reflection: str
-    themes: list[P8Theme]
+    themes: Annotated[
+        list[P8Theme], _drop_unknown(frozenset(P8Theme.__args__)), _dedupe_cap(3), _max_items(3)
+    ]
     uncertain_details: list[str]
     spoken_seconds_estimate: int
     source_sketch_ids: list[int]
@@ -850,10 +865,15 @@ SCHEMA_BY_VERSION: dict[str, type[BaseModel]] = {
     "triage_consulting/v2": P1CTriage,
     "evaluate/v2": P2Eval,
     "evaluate_consulting/v2": P2CEval,
+    # v3 adds OPERATOR_CORRECTIONS to the USER template only; the schema is v2's (D-SCORE-1).
+    "evaluate/v3": P2Eval,
+    "evaluate_consulting/v3": P2CEval,
+    "cover/v4": P4Cover,  # adds accepted stories as a source (D-LETTER-2)
     "cover/v3": P4Cover,
     "engagement_outline/v3": P4CEngagement,
     "cover/v2": P4Cover,
     "engagement_outline/v2": P4CEngagement,
+    "story_consolidate/v3": P8Story,
     "story_consolidate/v2": P8Story,
     "mock_critique/v2": P9Mock,
     "negotiate/v2": P11Negotiate,

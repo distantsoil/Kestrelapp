@@ -215,7 +215,8 @@ def run_tests(checkout: Path, tests: list[Path], timeout: float) -> tuple[str, s
     ]
     try:
         proc = subprocess.run(
-            cmd, cwd=checkout, env=env, capture_output=True, text=True, timeout=timeout, check=False
+            cmd, cwd=checkout, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired:
         return "timeout", f"no answer after {timeout:.0f} seconds"

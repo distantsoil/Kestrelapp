@@ -1,8 +1,9 @@
 {# The Try with a different model menu: this computer first (free), then online (asks first). #}
+{% import "partials/local_only.html" as lo with context %}
 <div class="rt-menu" role="menu" data-testid="rt-menu">
   <div class="rt-kind">On this computer, free</div>
   {% for o in local_options %}
-  <button type="button" role="menuitem" name="model" value="{{ o.tag }}" data-testid="rt-local"
+  <button{{ lo.dis(request) }} type="button" role="menuitem" name="model" value="{{ o.tag }}" data-testid="rt-local"
           hx-post="/quarantine/{{ quarantine_id }}/model" hx-target="#{{ dom_id }}" hx-swap="outerHTML">{{ o.name }}<span>{{ o.note }}</span></button>
   {% else %}
   <p class="rt-menu-note">{{ local_note or 'No other model on this computer can score a role right now.' }}</p>

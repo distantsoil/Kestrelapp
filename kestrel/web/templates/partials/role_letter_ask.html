@@ -18,6 +18,8 @@
         {% else %}<li data-testid="rl-sends">{{ route.sends }}.</li>{% endif %}
       </ul>
       {{ reask_note(route.reask, 'cl') }}
+      {# D-LETTER-3: the shorten request is that same one extra request, never a third. #}
+      {% if route.reask and kind == 'cover_letter' %}<p data-testid="cl-reask-length">If the letter comes back too long, that same one extra request asks it to shorten the letter.</p>{% endif %}
       {% if route.employer == 'hidden' %}<p data-testid="rl-employer">Confidential mode is on: your current employer is hidden before anything is sent.</p>
       {% elif route.employer == 'held' %}<p data-testid="rl-employer-held"><b>This send will be held.</b> Confidential mode is on and no current employer is chosen, so Kestrel will not send it. <a class="k-link" href="/settings">Choose your employer in Settings</a>, then try again.</p>
       {% else %}<p data-testid="rl-employer">Confidential mode is off, so the employer's name is not hidden.</p>{% endif %}

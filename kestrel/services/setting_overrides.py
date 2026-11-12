@@ -34,8 +34,10 @@ HOSTED_MODEL_DEFAULTS_KEY = "hosted_model_defaults"
 HOSTED_MODEL_OVERRIDES_KEY = "hosted_model_overrides"
 # The update checker's state (etag, last answer, skipped version; services/updater.py STATE_KEY).
 # State, not configuration: it must never be read back as a Settings override.
+# Why MCP was switched off after a start that failed (#130, D-MCP-4); shown on the Settings card.
+MCP_TURNED_OFF_KEY = "mcp_turned_off_notice"
 TRANSIENT_KEYS = frozenset({
-    PENDING_RUN_MODE_KEY, EMBED_SWEPT_MODEL_KEY, HOSTED_MODEL_DEFAULTS_KEY,
+    MCP_TURNED_OFF_KEY, PENDING_RUN_MODE_KEY, EMBED_SWEPT_MODEL_KEY, HOSTED_MODEL_DEFAULTS_KEY,
     HOSTED_MODEL_OVERRIDES_KEY, UPDATE_STATE_KEY,
 })
 
@@ -48,12 +50,14 @@ TRANSIENT_KEYS = frozenset({
 # `run_model.pending.` a run's one-run model waiting for Tier 0 (kestrel.services.run_model,
 # D-UI-72), `retry_removed.` a role taken off Needs another try (kestrel.services.retry_removal,
 # D-UI-104), `saved_role.` a role kept with Save for later (kestrel.services.saved_roles, D-UI-96),
-# `undo.pursuit.` an Applications Undo snapshot (kestrel.services.pursuit_undo), and
+# `undo.pursuit.` an Applications Undo snapshot (kestrel.services.pursuit_undo),
+# `undo.correction.` a role page correction's Undo (kestrel.web.pages.role_corrections), and
 # `sources.title_variants_removed` the search variants taken out (D-TTL-2).
 NON_CONFIG_PREFIXES: tuple[str, ...] = (
     "prep_notes.", "tier0_override.", "run_model.pending.", "tier0_recheck.", "retry_removed.",
     "saved_role.",
-    "undo.pursuit.", "undo.applied.",
+    "undo.pursuit.", "undo.applied.", "undo.correction.",
+    "applied.copy.",  # the import's copy with Kestrel IDs: the person's whole file, kept a day
 )
 STATE_KEYS = frozenset({
     "stories.last_build", "ui.asks_dismissed",

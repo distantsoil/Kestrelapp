@@ -8,6 +8,7 @@ non-discrimination when the score does not predict response."""
 from __future__ import annotations
 
 import numpy as np
+import sklearn
 from sqlalchemy import func, select
 
 from kestrel.config import get_settings
@@ -118,6 +119,43 @@ async def test_version_mismatched_artifact_is_refused(sm):
             )
         ).scalar_one()
     assert n_notes == 1
+
+
+async def test_artifact_path_outside_the_data_folder_is_refused(sm, tmp_path):
+    """Issue #173, second line of defense: an active reranker whose model file lives OUTSIDE
+    Kestrel's data folder is refused and never unpickled, with a notification; scoring then falls
+    back to the LLM tier (try_reranker_tier1 returns None -> LLM Tier 1, so nothing is dropped --
+    hard rule 4). The two files exist and are valid pickles, so on the current code the loader
+    would unpickle them and return a model; this test must fail on the current code."""
+    from tests import learning_fakes
+
+    outside = tmp_path / "elsewhere"
+    outside.mkdir(parents=True, exist_ok=True)
+    model_pickle = outside / "evil_model.pkl"
+    feature_pickle = outside / "evil_features.pkl"
+    learning_fakes.craft_reranker_inert_artifact(model_pickle)
+    learning_fakes.craft_reranker_inert_artifact(feature_pickle)
+
+    async with sm() as s:
+        s.add(MlModel(
+            kind="reranker", track="employment", version="v1", n_samples=100,
+            metrics={"embed_model": "nomic-embed-text"},
+            artifact_path=str(model_pickle), pca_artifact_path=str(feature_pickle),
+            sklearn_version=sklearn.__version__, feature_names=[], is_active=True,
+        ))
+        await s.commit()
+        loaded = await rr.load_active_reranker(s, "employment")
+        assert loaded is None  # refused: the model file is outside the data folder
+        n_notes = (
+            await s.execute(
+                select(func.count()).select_from(Notification).where(
+                    Notification.kind == "reranker_refused"
+                )
+            )
+        ).scalar_one()
+    assert n_notes == 1
+    # The foreign files were never read, moved or deleted.
+    assert model_pickle.exists() and feature_pickle.exists()
 
 
 async def test_active_learning_ranks_the_uncertain_item_first(sm):

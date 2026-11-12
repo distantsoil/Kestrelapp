@@ -32,13 +32,13 @@ Rules that bind this module:
 from __future__ import annotations
 
 import html
-import re
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 import structlog
 
+from kestrel.ingest import source_secrets
 from kestrel.ingest.base import AdapterError, PostingBatch, RawPosting, SourceConfigError
 from kestrel.pipeline.profile import load_profile
 
@@ -57,7 +57,14 @@ MAX_DAYS = 60
 MAX_TITLES = 5
 MAX_REQUESTS = 8  # across all search terms in one run (the free tier is about 250 calls a day)
 _RATE = 1.0
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+def _key_names(config: dict) -> tuple[str, str]:
+    """The saved app id and key this source sends: ADZUNA_ names only (D-SEC-21)."""
+    return (
+        source_secrets.secret_name("adzuna", config, "app_id_env", ID_ENV),
+        source_secrets.secret_name("adzuna", config, "app_key_env", KEY_ENV),
+    )
 
 NEEDS_KEY = (
     "Adzuna needs your app ID and app key. Add them on the Sources page under Sources that "
@@ -203,10 +210,7 @@ class AdzunaAdapter:
                     "Never put a key in the source. Save them on the Sources page under Sources "
                     "that need your own key"
                 )
-        for name in ("app_id_env", "app_key_env"):
-            env = config.get(name)
-            if env is not None and (not isinstance(env, str) or not _ENV_NAME.match(env)):
-                raise SourceConfigError(f"'{name}' must be an environment variable name")
+        _key_names(config)  # D-SEC-21: only ADZUNA_ keys may be named
         for name in ("keyword", "location"):
             if config.get(name) is not None and not isinstance(config[name], str):
                 raise SourceConfigError(f"'{name}' must be text")
@@ -237,8 +241,9 @@ class AdzunaAdapter:
         from kestrel.config import get_secret
 
         batch = PostingBatch()
-        app_id = get_secret(config.get("app_id_env") or ID_ENV)
-        app_key = get_secret(config.get("app_key_env") or KEY_ENV)
+        id_name, key_name = _key_names(config)
+        app_id = get_secret(id_name)
+        app_key = get_secret(key_name)
         if not app_id or not app_key:
             batch.partial_error = NEEDS_KEY
             log.info("adzuna_needs_key", id_saved=bool(app_id), key_saved=bool(app_key))

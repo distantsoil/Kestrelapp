@@ -34,11 +34,11 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse
 
 from kestrel.db.models import Opportunity, Quarantine
-from kestrel.llm import credit
 from kestrel.llm.providers import is_free_variant
 from kestrel.queue.rescore import enqueue_rescore
 from kestrel.services import hosted_balance, retry_removal
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import LOCAL_ONLY, release_credit_hold
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import plain_error
 from kestrel.web.pages.rescore import (
@@ -278,7 +278,7 @@ async def row(request: Request, quarantine_id: int):
 async def retry(request: Request, quarantine_id: int):
     """Try again, same model: the D-UI-70 re-queue (`_retry_quarantine`), which only writes a
     stage change and a task row. A script request swaps the row; a plain post gets the card."""
-    credit.clear()
+    release_credit_hold(request)
     error: str | None = None
     async with sessionmaker()() as s:
         try:
@@ -421,7 +421,8 @@ async def online_dialog(request: Request, quarantine_id: int):
     return templates().TemplateResponse(request, "partials/retry_online.html", ctx)
 
 
-@router.post("/quarantine/{quarantine_id}/model", response_class=HTMLResponse)
+@router.post("/quarantine/{quarantine_id}/model", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
 async def try_model(request: Request, quarantine_id: int):
     """Try with a different model, this run only (settings never change). A local pick queues
     at once. An online pick needs `confirmed=1`, which only the ask-first dialog sends, and is
@@ -477,7 +478,7 @@ async def _queue(
 ) -> Response:
     """Queue the role behind `quarantine_id` for scoring through `enqueue_rescore`, counting the
     attempt on its quarantine row. `pick` is "same", a local model or `hosted:<id>`."""
-    credit.clear()
+    release_credit_hold(request)
     note: str | None = None
     try:
         async with sessionmaker()() as s:
@@ -595,7 +596,7 @@ async def bulk(request: Request):
     form = await request.form()
     ids = {int(v) for v in form.getlist("ids") if str(v).isdigit()}
     step = _step(str(form.get("step") or "all"))
-    credit.clear()
+    release_credit_hold(request)
     async with sessionmaker()() as s:
         rows = await _quarantine_rows(s, resolved_cap=0)
     views = _role_views([r for r in rows if not r["resolved"]])

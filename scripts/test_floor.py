@@ -1,11 +1,12 @@
 """Anti-gaming checks for the test suite (D-TEST-8), run by scripts/check.py.
 
-Four checks, each failing with a plain message that names the rule, the file (and line) and the fix:
+Five checks, each failing with a plain message that names the rule, the file (and line) and the fix:
 
   floor      a test file may not lose asserts or tests, or gain skips, versus the merge base
   protected  the files that define the gates cannot change without a decision ID in a commit
   quality    lint for tests written to pass rather than to prove (changed lines only)
   red_first  every `fix:` commit's new tests must FAIL on the commit's parent (D-TEST-6)
+  changelog  feat:/fix: commits touching kestrel/ need release notes in CHANGELOG.md
 
 A "decision ID" is D-AREA-N (for example D-TEST-8). It justifies a change when a commit message on
 the branch has a line that contains both the ID and the changed path. Everything here is pure or
@@ -563,6 +564,102 @@ def red_first_problems(
     return problems, warnings
 
 
+# ---- check 5: user-facing commits come with release notes (D-CI-17) ----------------------------
+
+VERSION_LINE = re.compile(r"""^__version__\s*=\s*["']([^"']+)["']""", re.MULTILINE)
+USER_FACING_SUBJECT = re.compile(r"^(feat|fix)(\([^)]*\))?!?:")
+VERSION_FILE = "kestrel/__init__.py"
+CHANGELOG_FILE = "CHANGELOG.md"
+BULLET_LINE = re.compile(r"^\s*[-*]\s+\S")
+
+
+def _version_at(rev: str, repo: Path) -> str | None:
+    proc = _git("show", f"{rev}:{VERSION_FILE}", cwd=repo)
+    match = VERSION_LINE.search(proc.stdout) if proc.returncode == 0 else None
+    return match.group(1) if match else None
+
+
+def _changelog_at(rev: str, repo: Path) -> str:
+    proc = _git("show", f"{rev}:{CHANGELOG_FILE}", cwd=repo)
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _section(text: str, name: str) -> str:
+    """The body of the `## [name]` section (case-insensitive), or ''."""
+    body: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            inside = f"[{name.lower()}]" in line.lower()
+            continue
+        if inside:
+            body.append(line)
+    return "\n".join(body)
+
+
+def _bullets(text: str) -> set[str]:
+    return {ln.strip() for ln in text.splitlines() if BULLET_LINE.match(ln)}
+
+
+def changelog_problems(base: str, *, repo: Path | None = None) -> list[str]:
+    """Every feat:/fix: commit on base..HEAD that changes kestrel/ needs release notes.
+
+    On a branch that bumps `__version__`: the new version's CHANGELOG section must gain a bullet
+    somewhere in base..HEAD, and no such commit may come after the last CHANGELOG.md change (a
+    commit that edits CHANGELOG.md itself counts as its own follow-up). Without a bump: the
+    `## [Unreleased]` section must gain a bullet (INSTRUCTIONS.md section 9 step 9). 0.7.5 shipped
+    without the notes for the Score again work. Skipped on the public export, which carries no
+    branch history."""
+    repo = repo or ROOT
+    if public_export_note(repo):
+        return []
+    revs = _git("rev-list", "--no-merges", "--reverse", f"{base}..HEAD", cwd=repo).stdout.split()
+
+    def files_of(sha: str) -> list[str]:
+        out = _git("diff-tree", "--no-commit-id", "--name-only", "-r", sha, cwd=repo).stdout
+        return [_norm(f) for f in out.splitlines()]
+
+    touched = [files_of(sha) for sha in revs]
+    user_facing: list[int] = []
+    for i, sha in enumerate(revs):
+        subject = _git("show", "-s", "--format=%s", sha, cwd=repo).stdout.strip()
+        if USER_FACING_SUBJECT.match(subject) and any(
+            f.startswith("kestrel/") and f != VERSION_FILE for f in touched[i]
+        ):
+            user_facing.append(i)
+    if not user_facing:
+        return []
+    def label(i: int) -> str:
+        subject = _git("show", "-s", "--format=%s", revs[i], cwd=repo).stdout.strip()
+        return f"{revs[i][:7]} {subject}"
+
+    names = "; ".join(label(i) for i in user_facing)
+    head_version = _version_at("HEAD", repo)
+    bumped = head_version is not None and head_version != _version_at(base, repo)
+    section = head_version if bumped else "Unreleased"
+    old_text, new_text = _changelog_at(base, repo), _changelog_at("HEAD", repo)
+    added = _bullets(_section(new_text, section or "")) - _bullets(old_text)
+    problems: list[str] = []
+    if not added:
+        problems.append(
+            f"RULE changelog: {len(user_facing)} feat:/fix: commit(s) change kestrel/ but "
+            f"CHANGELOG.md gained no bullet in its [{section}] section on this branch: {names}. "
+            f"Fix: add their user-facing notes to the [{section}] section of CHANGELOG.md."
+        )
+    if bumped:
+        last_changelog = max((i for i, f in enumerate(touched) if CHANGELOG_FILE in f), default=-1)
+        late = [i for i in user_facing if i > last_changelog]
+        if late:
+            late_names = "; ".join(label(i) for i in late)
+            problems.append(
+                f"RULE changelog: version {head_version} was bumped, but feat:/fix: commit(s) "
+                f"came after the last CHANGELOG.md edit: {late_names}. Fix: add their "
+                f"user-facing notes to the [{head_version}] section of CHANGELOG.md in a later "
+                "commit."
+            )
+    return problems
+
+
 # ---- git plumbing for the other three checks ---------------------------------------------------
 
 
@@ -657,6 +754,7 @@ def run_static(
         messages,
     )
 
+    problems += changelog_problems(base)
     _quality_lint(changed_lines, problems, warnings, base=base)
     return problems, warnings
 

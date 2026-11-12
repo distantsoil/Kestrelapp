@@ -35,6 +35,9 @@ def context_action(
     """One action by kind: {"label", "href", "external"} or None. A due follow-up opens
     Applications with its draft dialog when the opportunity still has a due follow-up."""
     role = f"/opportunities/{opportunity_id}" if opportunity_id else "/opportunities"
+    # Several new roles worth a look: the Pipeline's New today filter (a lone one opens the role).
+    worth = (("Go to job detail", role, False) if opportunity_id
+             else ("See the new roles", "/opportunities?new_today=1", False))
     table: dict[str, tuple[str, str, bool]] = {
         "next_action_due": (
             "Draft follow-up", f"/pursuits?follow_up={opportunity_id}", False,
@@ -42,16 +45,17 @@ def context_action(
         "ghosting": ("Open in Applications", "/pursuits", False),
         "source_disabled": ("Open Sources", "/sources", False),
         "liveness_closed": ("Go to job detail", role, False),
-        "high_score": ("Go to job detail", role, False),
+        "high_score": worth,
+        "roles_need_retry": ("Open Needs another try", "/quarantine", False),
         "strong_match": ("Go to job detail", role, False),
         "run_finished": ("View run details", "/runs", False),
         "run_done": ("View run details", "/runs", False),
         "scan_done": ("Go to results", "/opportunities?new_today=1", False),
         "quarantine": ("Open Needs another try", "/quarantine", False),
-        "reranker_ready": ("Open Calibrate", "/calibrate", False),
-        "reranker_refused": ("Open Calibrate", "/calibrate", False),
-        "reranker_drift": ("Open Calibrate", "/calibrate", False),
-        "calibration_ready": ("Open Calibrate", "/calibrate", False),
+        "reranker_ready": ("Open Calibrate", "/calibrate?tab=detailed", False),
+        "reranker_refused": ("Open Calibrate", "/calibrate?tab=detailed", False),
+        "reranker_drift": ("Open Calibrate", "/calibrate?tab=detailed", False),
+        "calibration_ready": ("Open Calibrate", "/calibrate?tab=detailed", False),
         "credit_low": ("Open Models", "/models", False),
         "model_check": ("Open Models", "/models", False),
         "stories_built": ("Review drafts", "/stories", False),

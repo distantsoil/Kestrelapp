@@ -233,6 +233,10 @@ def test_models_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(live)
             page, "models", "models.js", settle_ms=400, quiet_ms=600)
         assert first["timers"] == 0 and first["observers"] == 0
         more = page.query_selector("[data-mo-more]")
+        # The menu closes on scroll, so bring the row into view first: a click that has to scroll
+        # the page (the On your network card sits above the table) would close it at once.
+        more.scroll_into_view_if_needed()
+        wait_for_layout(page)
         menu = more.evaluate_handle("b => b.parentNode.querySelector('.mo-menu')")
         more.click()
         assert menu.as_element().is_visible()
@@ -340,5 +344,133 @@ def test_text_meets_contrast_in_both_themes(live, path, theme):
             ".mo-msg", ".k-hcard li", ".k-btn--primary", ".mo-strip dd", ".mo-head h3",
         ])
         assert not bad, (path, theme, bad)
+    finally:
+        ctx.close()
+
+
+# ----------------------------------------------------------- online cards and Local AI rows
+def _seed_stale_report_and_choice(choice: str) -> None:
+    import asyncio
+
+    from kestrel import doctor
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+    from kestrel.services import setup_state as ss
+
+    rep = doctor.DoctorReport()
+    rep.add("Ollama reachable", "FAIL", "not reachable", "Open Ollama, then press Check again.")
+    rep.add("num_ctx tier2", "FAIL", "kestrel-tier2: num_ctx 8192 < required 16384")
+    rep.add("Local AI: backend address", "WARN", "http://192.168.1.9:11434",
+            "Your text goes to another address, not this computer. Set the local backend address "
+            "to http://127.0.0.1:11434 for local inference.")
+    rep.add("Local AI: Ollama bind", "PASS", "OLLAMA_HOST unset (defaults to loopback)")
+    rep.add("Local AI: cloud features", "INFO", "not seen turned off. Ollama's cloud models and "
+            "web search stay available if you sign in to Ollama.")
+    rep.add("Local AI: egress", "WARN", "Unverified: the operating system did not let Kestrel "
+            "list the connections of 1 of 2 Ollama process(es). This is a spot check.")
+    rep.add("Local AI: model digests", "INFO", "unverified: the digests Kestrel tested are not "
+            "recorded yet, so installed models could not be compared")
+    ss.save_report(rep)
+
+    async def go():
+        async with get_sessionmaker()() as s:
+            row = await s.get(Setting, ss.CHOICE_KEY)
+            if row is None:
+                s.add(Setting(key=ss.CHOICE_KEY, value=choice))
+            else:
+                row.value = choice
+            await s.commit()
+
+    # The browser fixture owns this thread's event loop, so the write runs on a thread of its own.
+    import threading
+
+    worker = threading.Thread(target=lambda: asyncio.run(go()))
+    worker.start()
+    worker.join()
+
+
+@pytest.mark.parametrize("choice", ["hosted", "local"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1440, 390])
+def test_health_and_download_cards_do_not_overlap_online_or_with_local_ai_rows(
+        live, choice, theme, width):
+    _seed_stale_report_and_choice(choice)
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/models")
+        page.wait_for_selector("#mo-health")
+        wait_for_layout(page)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        for sel in ("#mo-health", "#mo-downloads"):
+            card = page.query_selector(sel)
+            assert page.evaluate(
+                "el => el.scrollWidth <= el.clientWidth + 1", card) is True, (sel, choice, width)
+            kids = page.evaluate(_KIDS, page.query_selector(f"{sel} .mo-checks")) \
+                if page.query_selector(f"{sel} .mo-checks li") else []
+            for i, a in enumerate(kids):
+                for b in kids[i + 1:]:
+                    assert not _overlaps(a, b), (sel, a, b)
+        for li in page.query_selector_all("#mo-health .mo-checks li"):
+            kids = page.evaluate(_KIDS, li)
+            for i, a in enumerate(kids):
+                for b in kids[i + 1:]:
+                    assert not _overlaps(a, b), (a, b, theme, width)
+        online_line = "Not needed while Kestrel runs online." in page.inner_text("#mo-health")
+        has_rows = page.query_selector("#mo-health .mo-checks li") is not None
+        has_fix = page.query_selector("#mo-health [data-testid^=mo-hc-fix]") is not None
+        unverified = page.query_selector("[data-testid=mo-la-egress].is-unverified") is not None
+        # Online: the one line and nothing else. Local: the rows, with the unverified row marked.
+        assert (online_line, has_rows, has_fix, unverified) == (
+            (True, False, False, False) if choice == "hosted" else (False, True, True, True))
+        shots = os.environ.get("KESTREL_SHOTS")
+        if shots:
+            os.makedirs(shots, exist_ok=True)
+            page.query_selector("#mo-health").scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(shots, f"models-{choice}-{theme}-{width}.png"),
+                            full_page=True)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 1440), ("light", 390)])
+def test_the_private_line_is_qualified_and_its_details_open_without_overlap(live, theme, width):
+    """#143: the On this computer card says "Private when Ollama is set up as shipped" and holds
+    the approved three paragraphs behind Show details. Closed it shows only the summary; open it
+    fits the card with no overlap, clipping or sideways scroll, in light, dark and narrow."""
+    ctx, page, errors = _open(live, "/models", theme, width)
+    try:
+        line = page.get_by_test_id("mo-private-line")
+        assert line.inner_text() == "Private when Ollama is set up as shipped"
+        details = page.get_by_test_id("mo-privacy-details")
+        assert details.get_attribute("open") is None
+        assert page.locator("#mo-computer .mo-privacy p").first.is_hidden()
+        details.locator("summary").click()
+        page.wait_for_function(
+            "() => document.querySelector('#mo-computer .mo-privacy').open")
+        paras = page.locator("#mo-computer .mo-privacy p")
+        assert paras.count() == 3
+        for text in ("What Kestrel does.", "What Kestrel cannot control.", "How to keep it local."):
+            assert text in page.locator("#mo-computer .mo-privacy").inner_text()
+        assert "no tools, no web access and no files" in page.locator("#mo-computer").inner_text()
+        wait_for_layout(page)
+        card = page.locator("#mo-computer").bounding_box()
+        for i in range(3):
+            box = paras.nth(i).bounding_box()
+            right = card["x"] + card["width"] + 1
+            assert box["x"] >= card["x"] - 1 and box["x"] + box["width"] <= right
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert page.locator("#mo-computer").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+        kids = page.evaluate(_KIDS, page.locator("#mo-computer .mo-head").element_handle())
+        for i, a in enumerate(kids):
+            for b in kids[i + 1:]:
+                assert not _overlaps(a, b), (a, b)
+        out = os.environ.get("KESTREL_SHOTS_DIR")
+        if out:
+            os.makedirs(out, exist_ok=True)
+            page.locator("#mo-computer").scroll_into_view_if_needed()
+            page.screenshot(path=os.path.join(out, f"models-card-details-{theme}-{width}.png"))
+        assert not errors, errors
     finally:
         ctx.close()

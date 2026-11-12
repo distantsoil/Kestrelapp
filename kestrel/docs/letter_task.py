@@ -32,7 +32,7 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Task
 from kestrel.errors import shown_failure
 from kestrel.queue.queue import TaskQueue
-from kestrel.services.online_consent import APPROVAL_HOLD
+from kestrel.services.online_consent import APPROVAL_HOLD, CONSENT_PAYLOAD_KEYS
 
 log = structlog.get_logger()
 
@@ -122,11 +122,21 @@ async def enqueue_or_join(
     return task, created
 
 
+async def run_now(s: AsyncSession, task: Task) -> None:
+    """The person asked again for the draft already waiting (same confirmation): if it waits out
+    a retry backoff it runs at the next pass (D-QUEUE-7). Nothing is sent from here. Commits."""
+    from kestrel.queue.queue import run_now as clear_wait
+
+    if await clear_wait(s, Task.id == task.id):
+        await s.commit()
+        await s.refresh(task)
+
+
 async def reconfirm(s: AsyncSession, task: Task, consent: dict[str, Any]) -> bool:
     """Replace a held task's confirmation with the person's new one and let it run. Only an
     unstarted hold is touched (never a lease). True when it was released. Commits."""
     payload = {k: v for k, v in (task.payload or {}).items()
-               if k not in ("consented_model", "consented_destination", "deferred")}
+               if k not in (*CONSENT_PAYLOAD_KEYS, "deferred")}
     payload.update(consent)
     res = await s.execute(
         update(Task).where(
@@ -153,7 +163,9 @@ async def release_holds(
                 res = await s.execute(update(Task).where(
                     Task.id == task.id, Task.status == "pending",
                     Task.last_error == APPROVAL_HOLD,
-                ).values(last_error=None, updated_at=utcnow_iso()))
+                ).values(last_error=None,
+                         payload=func.json_remove(Task.payload, "$.deferred"),
+                         updated_at=utcnow_iso()))
                 freed += res.rowcount or 0
         await s.commit()
     return freed

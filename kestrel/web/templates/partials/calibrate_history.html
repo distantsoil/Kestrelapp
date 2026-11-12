@@ -18,7 +18,7 @@
       <tr data-testid="hist-{{ h.opp_id }}">
         <td class="cal-dsm">{{ h.when }}</td>
         <td><b>{{ h.title }}</b>{% if h.org %} <span class="cal-dsm">· {{ h.org }}</span>{% endif %}</td>
-        <td>{{ h.said_word }}</td>
+        <td>{{ h.said_word }}{% if h.quick %} <span class="k-pill" data-testid="hist-quick-{{ h.opp_id }}">Quick</span>{% endif %}</td>
         <td class="cal-kcell">{% if h.kestrel is not none %}<span class="cal-kb"><u style="width: {{ h.kestrel * 20 }}%"></u></span><b>{{ '%.1f'|format(h.kestrel) }}</b>{% else %}<span class="cal-dsm">None</span>{% endif %}</td>
         <td><span class="k-pill {{ 'k-pill--info' if h.changed else ('k-pill--good' if h.result == 'Close' else 'k-pill--warn') }}">{{ h.result }}</span></td>
         <td class="cal-r"><button type="button" class="k-link" data-testid="change-{{ h.opp_id }}" hx-get="/calibrate/card" hx-vals='{{ {"since": since, "skip": skip, "change": h.opp_id}|tojson }}' hx-target="#cal-card" hx-swap="outerHTML">Change</button></td>

@@ -59,6 +59,7 @@ icon = None
 server = None
 server_thread: threading.Thread | None = None
 _quitting = False  # F1: window.destroy() re-fires `closing`; the handler allows it when quitting
+_cancelling = False  # #148: a Cancel on the loading page abandons the attempt but keeps the window
 _toast_shown = False
 _port = 0
 _last_status: dict[str, Any] = {}  # the poller's last /api/status, for the macOS menu (no HTTP)
@@ -143,6 +144,7 @@ def _acquire_lock_file() -> bool:
     """macOS/Linux: an exclusive, non-blocking flock. flock is per open file description, so even
     a second open() in the same process is refused, and the kernel drops it when the process dies
     (no stale-pid problem, no cleanup needed on a crash)."""
+    assert sys.platform != "win32"
     import fcntl
 
     global _lock_file
@@ -193,6 +195,7 @@ def release_single_instance() -> None:
             log.warning("mutex_release_failed", error=str(exc))
         _mutex_handle = None
     if _lock_file is not None:
+        assert sys.platform != "win32"  # the lock file is Unix-only; Windows uses the mutex above
         try:
             import fcntl
 
@@ -209,6 +212,17 @@ def start_server() -> int:
     from kestrel.web.serve import _make_server, bind_free_port
 
     global server, server_thread, _port
+    # #148 invariant: "Try again" never starts a second server beside a running one. A server a
+    # previous attempt left running is stopped first (gracefully); if it is still alive it is
+    # kept, and this start refuses to open a second handle on the same database.
+    if not _stop_previous_server():
+        raise StartupError(
+            "server_still_closing",
+            "Kestrel's local server from the last attempt is still closing. Wait a moment, then "
+            "try again.",
+            f"Startup step: start the local server\nThe previous server did not stop within "
+            f"{int(_STOP_TIMEOUT_S)} seconds.\nLog file: kestrel.log (in the logs folder)",
+        )
     sock, port = bind_free_port()
     _port = port
     # worker AND scheduler from the lifespan, on uvicorn's single loop (never a second loop).
@@ -347,6 +361,14 @@ def _begin_quit() -> None:
                 icon.stop()
         except Exception as exc:
             log.debug("tray_stop_failed", error=str(exc))
+
+
+def _cancel_start() -> None:
+    """The loading page's Cancel button (#148): abandon this attempt. A quit stays a quit; a
+    Cancel leaves the window on its problem card, where Try again and Quit already live."""
+    global _cancelling
+    _cancelling = True
+    log.info("startup_cancel_requested")
 
 
 def do_quit() -> None:
@@ -978,14 +1000,9 @@ def abort_start(reason: str) -> int:
 
     Stops the server thread (which also runs the lifespan shutdown and releases leases), waits for
     it, and releases the single-instance mutex so the next launch is not turned away as a
-    duplicate. Returning without doing this left a headless, windowless process holding the lock."""
+    Returning without doing this left a headless, windowless process holding the lock."""
     log.error("desktop_start_aborted", reason=reason)
-    if server is not None:
-        server.should_exit = True
-    if server_thread is not None:
-        server_thread.join(timeout=35.0)
-        if server_thread.is_alive():
-            log.warning("server_thread_still_alive_after_abort")
+    _stop_previous_server()
     release_single_instance()
     with __import__("contextlib").suppress(OSError):
         paths.runtime_json().unlink()
@@ -1086,6 +1103,11 @@ class _Splash:
     def ready(self) -> None:
         self._js("ready")
 
+    def cancel(self, show: bool) -> None:
+        """Show or hide the loading page's Cancel button (#148): present while the health wait
+        runs, gone on success, failure and the problem card (whose own Quit is a real quit)."""
+        self._js("cancelBtn", show)
+
 
 def splash_html(theme: str = "auto") -> str:
     """The loading page, self-contained: tokens.css and the mark are inlined, since no server
@@ -1117,6 +1139,14 @@ def _updating() -> bool:
         return False
 
 
+# The problem card after Cancel on the loading window (#148). American English (CLAUDE.md).
+START_CANCELED = "The start was canceled."
+START_CANCELED_DETAILS = (
+    "Startup step: start the local server\nYou canceled the start.\n"
+    "Log file: kestrel.log (in the logs folder)"
+)
+
+
 class _Cancelled(Exception):
     """A quit arrived while the start was still running: stop where it stands."""
 
@@ -1131,10 +1161,20 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
     loading window. Raises StartupError with a plain reason when a step cannot finish, and
     _Cancelled as soon as `stop()` turns true (a quit during loading): no server is started after
     a quit, and one already started is stopped by the caller."""
+    from kestrel import startup_health
     from kestrel.db import migrate
-    from kestrel.web.serve import wait_for_health, write_runtime
+    from kestrel.web.serve import record_stuck_startup, wait_for_health, write_runtime
 
     _check(stop)
+    if startup_health.take_offer(startup_health.failed_starts()):
+        raise StartupError(
+            startup_health.OFFER_CODE,
+            startup_health.OFFER_REASON,
+            "Startup step: before starting\nThe last two starts did not finish.\n"
+            "Log file: kestrel.log (in the logs folder)",
+        )
+    startup_health.begin_start()  # counted as failed until the app is up (cleared below)
+    stderr_mark = startup_health.stderr_log_size()  # the cause is read from what this start adds
     if _updating():
         splash.say(UPDATING, None, UPDATING_NOTE, 3500)
     else:
@@ -1148,13 +1188,19 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
         # destroy data).
         msg = str(exc)
         if "Can't locate revision" in msg or "newer" in msg.lower():
+            # The release is named only when the database itself recorded one that is newer than
+            # this build; otherwise "a newer Kestrel", never an invented number (#105).
+            newer = migrate.newer_than_this_build()
+            who = f"a newer Kestrel ({newer})" if newer else "a newer Kestrel"
+            startup_health.start_failed("newer_database")  # safe mode cannot help: not counted
             raise StartupError(
                 "newer_database",
-                "This data was saved by a newer Kestrel. Install the latest version to open it.",
+                f"This data was saved by {who}. Install the latest version to open it.",
                 f"Startup step: open your data\nCause: {type(exc).__name__}: {msg}\n"
                 "This version of Kestrel is older than the one that last saved your data.\n"
                 "Download the latest version from kestrelapp.co to open your data.",
             ) from exc
+        startup_health.start_failed("migrations_failed")  # safe mode cannot help: not counted
         raise StartupError(
             "migrations_failed",
             "Kestrel could not open your data on this computer.",
@@ -1175,21 +1221,64 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
             "could not assign another.\nLog file: kestrel.log (in the logs folder)",
         ) from exc
     _check(stop)
-    # Polled a second at a time so a quit during the wait is noticed at once.
-    deadline = time.monotonic() + HEALTH_WAIT_S
+    # Polled a second at a time so a quit or a Cancel during the wait is noticed at once.
+    # Alive at the first deadline means slow, not dead (#148): extend the wait and say
+    # "Still starting" every few seconds, instead of aborting a server that was still working.
+    start = time.monotonic()
+    extended = False
+    extended_deadline = start + HEALTH_EXTENDED_S
+    last_tell = -10**9
     healthy = False
-    while not healthy and time.monotonic() < deadline:
+    splash.cancel(True)
+
+    def _still(waited_s: int) -> None:
+        nonlocal last_tell
+        last_tell = waited_s
+        splash.say(f"Still starting ({waited_s} s)", None,
+                   "Kestrel is still working. You can cancel and try again.", 0)
+
+    while not healthy:
         _check(stop)
+        now = time.monotonic()
+        if not extended and now >= start + HEALTH_WAIT_S:
+            if server_thread is not None and server_thread.is_alive():
+                extended = True
+                _still(max(1, int(now - start) + 1))
+            else:
+                break  # it is gone; waiting more cannot help
+        if extended and now >= extended_deadline:
+            break
         healthy = wait_for_health(port, timeout=1.0)
+        if not healthy and extended:
+            waited_s = int(now - start)
+            if waited_s - last_tell >= STILL_STARTING_EVERY_S:
+                _still(waited_s)
+    splash.cancel(False)
     if not healthy:
-        raise StartupError(
-            "health_never_up",
-            "Kestrel's local server did not answer in time. Trying again usually fixes it.",
+        waited = time.monotonic() - start
+        dump = record_stuck_startup(port, waited)
+        details = (
             f"Startup step: start the local server\nThe server on port {port} did not answer "
-            f"within {int(HEALTH_WAIT_S)} seconds.\nLog file: kestrel.log (in the logs folder)",
+            f"within {int(waited)} seconds."
         )
+        if dump is not None:
+            details += f"\nA thread dump was saved to {dump.name} (in the logs folder)."
+        details += "\nLog file: kestrel.log (in the logs folder)"
+        reason = "Kestrel's local server did not answer in time. Trying again usually fixes it."
+        cause = startup_health.startup_cause(stderr_mark)
+        if cause:  # #148: the server crashed while starting; say why instead of "timed out"
+            # The main text stays plain; the exception line is under Show details.
+            reason = ("Kestrel's local server stopped while starting. Show details says why. "
+                      "Trying again will not help until that is fixed.")
+            details = details.replace(
+                "Startup step: start the local server\n",
+                "Startup step: start the local server\n" + "\n".join(cause) + "\n", 1,
+            ).replace("Log file: kestrel.log", "Log file: stderr.log")
+        raise StartupError("health_never_up", reason, details)
+    log.info("health_up", port=port, waited_s=round(time.monotonic() - start, 1))
     _check(stop)
     write_runtime(port, os.getpid())
+    startup_health.mark_started()
     splash.say(CHECKING, 85)
     run_preflight()
     _check(stop)
@@ -1197,6 +1286,11 @@ def _start_backend(splash: _Splash, stop: Callable[[], bool] = lambda: False) ->
 
 
 HEALTH_WAIT_S = 30.0
+# #148: alive at the first deadline means slow, not dead. Wait this long in total, saying
+# "Still starting" every so often meanwhile, before a start that never answered fails.
+HEALTH_EXTENDED_S = 90.0
+# How often the "Still starting" line refreshes during the extended wait.
+STILL_STARTING_EVERY_S = 5.0
 
 
 # ------------------------------------------------- runtime.json as the lock owner's marker
@@ -1314,16 +1408,32 @@ def _server_answers(port: Any) -> bool:
         return False
 
 
-def _stop_server() -> None:
-    """Stop a server a failed start left running (it also runs the lifespan shutdown)."""
+_STOP_TIMEOUT_S = 35.0
+
+
+def _stop_previous_server(timeout: float = _STOP_TIMEOUT_S) -> bool:
+    """Stop the server a previous attempt left running and wait for it to die. Graceful:
+    `should_exit` runs uvicorn's lifespan shutdown (the worker drains, its leases are released,
+    hard rule 5). True when nothing is left alive. False when it is still running after
+    `timeout`: the server and thread globals are kept, so a start that follows sees it and
+    refuses to run beside it instead of opening a second handle on the same database (#148)."""
     global server, server_thread
+    if server is None and server_thread is None:
+        return True
     if server is not None:
         server.should_exit = True
     if server_thread is not None:
-        server_thread.join(timeout=35.0)
-        if server_thread.is_alive():
-            log.warning("server_thread_still_alive_after_abort")
+        server_thread.join(timeout=timeout)
+    if server_thread is not None and server_thread.is_alive():
+        log.warning("server_thread_still_alive_after_abort")
+        return False
     server, server_thread = None, None
+    return True
+
+
+def _stop_server() -> None:
+    """Stop a server a failed start left running (it also runs the lifespan shutdown)."""
+    _stop_previous_server()
     with __import__("contextlib").suppress(OSError):
         paths.runtime_json().unlink()
 
@@ -1474,6 +1584,17 @@ def _retry_start() -> bool:
     return True
 
 
+def _safe_start() -> bool:
+    """Start with optional features off (#130): this run only. The flag is the process
+    environment, read by the app's lifespan, so the next normal launch has everything back."""
+    from kestrel import startup_health
+
+    if _started or _quitting:
+        return False
+    startup_health.enter_safe_mode()
+    return _retry_start()
+
+
 def _resize_to(win: Any, width: int, height: int) -> None:
     try:
         win.resize(width, height)
@@ -1532,7 +1653,8 @@ def _show_problem(splash: _Splash, reason: str, details: str, code: str = "") ->
 
 
 def _boot_steps(busy: bool) -> None:
-    global _started, _boot_failed
+    global _started, _boot_failed, _cancelling
+    _cancelling = False  # a previous attempt's Cancel (or Try again) does not outlive this one
     splash = _Splash(window)
     _boot_failed = False
     if _quitting:
@@ -1551,10 +1673,19 @@ def _boot_steps(busy: bool) -> None:
             return
         _write_marker(starting=True)
     try:
-        port = _start_backend(splash, stop=lambda: _quitting)
+        port = _start_backend(splash, stop=lambda: _quitting or _cancelling)
     except _Cancelled:
-        log.info("startup_cancelled_by_quit")
+        from kestrel import startup_health
+
+        startup_health.abandon_start()
         _stop_server()
+        if _quitting:
+            log.info("startup_cancelled_by_quit")
+            return
+        # A Cancel, not a quit: the window stays and the card offers the next step (#148).
+        log.info("startup_cancelled_by_operator")
+        _write_marker(failed=True)  # the lock owner shows its problem card: a relaunch defers
+        _show_problem(splash, START_CANCELED, START_CANCELED_DETAILS)
         return
     except StartupError as exc:
         log.error("desktop_start_aborted", reason=exc.code)
@@ -1606,8 +1737,10 @@ def _run_window(webview: Any, *, busy: bool) -> int:
         close_intent=_close_intent,
         close=_close_from_page,
         retry=_retry_start,
+        safe_start=_safe_start,
         open_logs=lambda: _open_folder(paths.logs_dir()),
         quit_app=do_quit,
+        cancel_start=_cancel_start,
         download=lambda: webbrowser.open("https://kestrelapp.co/download"),
         remember_theme=_remember_theme,
     )
@@ -1694,8 +1827,11 @@ def _run_window(webview: Any, *, busy: bool) -> int:
 
 
 # The hard ceiling on a quit: open requests (serve.GRACEFUL_REQUEST_S), the worker's stop
-# (app.WORKER_STOP_S) and lease release normally take one to two seconds (D-UI-90).
-QUIT_JOIN_S = 30.0
+# (server.quit_grace_s, 5 s by default, only when a model call is running) and lease release
+# normally take under two seconds idle, and at most 1 + the grace + 2 + 3 (D-QUEUE-5). The grace
+# may be set up to 30 s, so the ceiling sits above 36 s with room for the other loops' stop: a
+# 30 s ceiling killed the process before the cancel and the lease hand-back (fable review).
+QUIT_JOIN_S = 45.0
 
 
 def _finish_quit() -> int:

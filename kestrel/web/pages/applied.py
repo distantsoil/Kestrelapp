@@ -19,7 +19,10 @@ from kestrel.web.uploads import large_form
 router = APIRouter()
 log = structlog.get_logger()
 
-MAX_TEXT = 2_000_000  # bytes of pasted or uploaded text; a tracker is kilobytes
+# Bytes of pasted or uploaded text: the importer's own cap. A notes-app table pads every row, so
+# a real tracker can be several MB (a 348-row one was 4.2 MB), and a smaller limit here refused
+# it before the importer ever saw it (#147).
+MAX_TEXT = svc.MAX_TEXT_BYTES
 
 EXAMPLE_MD = (
     "| Company | Role | Date | Source | Status | Notes |\n"
@@ -66,11 +69,11 @@ async def _text_from(request: Request) -> tuple[str, str | None]:
             # fully buffered, and the temp file never outlives the request.
             data = await read_upload(upload, limit=MAX_TEXT, too_large=UploadTooLarge)
         except UploadTooLarge:
-            return "", "That file is larger than 2 MB; a tracker is a few kilobytes."
+            return "", "That file is larger than 25 MB. Split it into smaller files."
         if data:
             text = data.decode("utf-8-sig", errors="replace")
     if len(text.encode("utf-8")) > MAX_TEXT:
-        return "", "That text is larger than 2 MB; a tracker is a few kilobytes."
+        return "", "That text is larger than 25 MB. Split it into smaller files."
     return text, None
 
 
@@ -124,7 +127,7 @@ async def applied_import(request: Request):
                 _ctx(
                     review=rev,
                     text=text,
-                    error=f"Nothing was imported: the write failed ({type(exc).__name__}). "
+                    error="Nothing was imported: the write failed. "
                     "Your review is still below; fix the row named in the log and import again.",
                 ),
             )

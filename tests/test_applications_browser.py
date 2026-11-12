@@ -320,6 +320,35 @@ def _open_table(live, query: str = "&view=table", **ctx_kw):
     return ctx, page, errors, f"{base}/pursuits?track={track}{query}"
 
 
+_FIRST = {"role": 1, "stage": 1, "due": -1, "applied": -1, "fit": -1}
+_BOARD_SORT = "(() => { const b = document.querySelector('#apps-board');" \
+              " return [b.dataset.sortcol, Number(b.dataset.sortdir)]; })()"
+
+
+def _wait_sort(page, col: str, direction: int) -> None:
+    """Wait for the server's table to be swapped in with this sort (the sort is the server's)."""
+    page.wait_for_function(
+        """([c, d]) => { const b = document.querySelector('#apps-board');
+          return !!b && b.dataset.sortcol === c && Number(b.dataset.sortdir) === d
+            && !document.querySelector('.htmx-request'); }""",
+        arg=[col, direction], timeout=8000)
+    page.wait_for_function("() => document.querySelectorAll('.ap-table tbody tr').length > 0")
+
+
+def _next_sort(page, col: str) -> tuple[str, int]:
+    """What a press on this header asks for: first press, reverse, then back to the default."""
+    cur_col, cur_dir = page.evaluate(_BOARD_SORT)
+    if cur_col == col:
+        return (col, -cur_dir) if cur_dir == _FIRST[col] else ("", 1)
+    return col, _FIRST[col]
+
+
+def _press(page, col: str) -> None:
+    want = _next_sort(page, col)
+    page.click(f"th[data-sort={col}] button")
+    _wait_sort(page, *want)
+
+
 def test_table_headers_are_buttons_that_sort_by_the_visible_title_and_announce_it(live):
     """#137: a sortable header is a real button, aria-sort follows it, and the role column sorts
     on the title shown (not the search text), both ways."""
@@ -332,14 +361,18 @@ def test_table_headers_are_buttons_that_sort_by_the_visible_title_and_announce_i
         assert page.get_attribute("th[data-sort=role]", "aria-sort") == "none"
         page.focus("th[data-sort=role] button")
         page.keyboard.press("Enter")  # keyboard, not a mouse click
+        _wait_sort(page, "role", 1)
         assert page.get_attribute("th[data-sort=role]", "aria-sort") == "ascending"
         titles = page.evaluate(_TITLES)
         assert titles == sorted(titles, key=str.lower), titles
+        # Focus is still on the header button after the table was swapped, so Space works next.
+        assert page.evaluate("document.activeElement.closest('th')?.dataset.sort") == "role"
         page.keyboard.press("Space")
+        _wait_sort(page, "role", -1)
         assert page.get_attribute("th[data-sort=role]", "aria-sort") == "descending"
         assert page.evaluate(_TITLES) == sorted(titles, key=str.lower, reverse=True)
         # Another column takes the mark; the role header goes back to none.
-        page.click("th[data-sort=fit] button")
+        _press(page, "fit")
         assert page.get_attribute("th[data-sort=role]", "aria-sort") == "none"
         assert page.get_attribute("th[data-sort=fit]", "aria-sort") == "descending"
         # The mark is drawn (a direction indicator), not only announced.
@@ -360,13 +393,13 @@ def test_due_sorts_most_overdue_first_and_rows_with_no_due_stay_last_either_way(
         dues = """() => Array.from(document.querySelectorAll('.ap-table tbody tr')).map(r => ({
             folded: r.dataset.folded, quiet: r.dataset.quiet,
             days: Number(r.dataset.quiet_days)}))"""
-        page.click("th[data-sort=due] button")
+        _press(page, "due")
         first = page.evaluate(dues)
         overdue = [r["days"] for r in first if r["folded"] != "1" and r["quiet"] == "1"]
         assert overdue == sorted(overdue, reverse=True) and overdue, first
         assert first[0]["quiet"] == "1"  # the first press shows what needs you most
         assert all(r["folded"] == "1" for r in first[-2:]), first  # closed rows last
-        page.click("th[data-sort=due] button")  # reversed: still closed rows last
+        _press(page, "due")  # reversed: still closed rows last
         second = page.evaluate(dues)
         assert second[-1]["folded"] == "1"
         assert all(r["folded"] == "1" for r in second[-2:]), second
@@ -381,23 +414,108 @@ def test_rows_glide_to_their_new_place_and_reduced_motion_snaps(live):
         page.goto(url)
         page.wait_for_selector(".ap-table tbody tr")
         wait_for_layout(page)
-        n = page.evaluate("""() => {
-            document.querySelector('th[data-sort=role] button').click();
-            return document.querySelectorAll('.ap-table tbody tr')
-              .length && Array.from(document.querySelectorAll('.ap-table tbody tr'))
-              .reduce((k, r) => k + r.getAnimations().length, 0); }""")
-        assert n >= 2, n  # moved rows are animating from their old places
+        page.evaluate("document.querySelector('th[data-sort=role] button').click()")
+        # The server's table is swapped in, then the moved rows animate from their old places.
+        page.wait_for_function("""() => Array.from(document.querySelectorAll('.ap-table tbody tr'))
+            .reduce((k, r) => k + r.getAnimations().length, 0) >= 2""", timeout=8000)
     finally:
         ctx.close()
     ctx, page, errors, url = _open_table(live, reduced_motion="reduce")
     try:
         page.goto(url)
         page.wait_for_selector(".ap-table tbody tr")
-        n = page.evaluate("""() => {
+        seen = page.evaluate("""() => new Promise(res => {
+            let most = 0;
+            const tick = () => { most = Math.max(most, Array.from(
+              document.querySelectorAll('.ap-table tbody tr'))
+              .reduce((k, r) => k + r.getAnimations().length, 0)); };
+            const t = setInterval(tick, 16);
             document.querySelector('th[data-sort=role] button').click();
-            return Array.from(document.querySelectorAll('.ap-table tbody tr'))
-              .reduce((k, r) => k + r.getAnimations().length, 0); }""")
-        assert n == 0, n
+            setTimeout(() => { clearInterval(t); res(most); }, 1500); })""")
+        _wait_sort(page, "role", 1)
+        assert seen == 0, seen
+    finally:
+        ctx.close()
+
+
+def test_the_app_reduce_motion_switch_also_stops_the_row_glide(live):
+    """Fable C2: html[data-reduce-motion="1"] (Settings > Reduce motion) turns the sort glide off
+    like the OS setting does; the CSS rule alone cannot stop Element.animate."""
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        page.evaluate("document.documentElement.setAttribute('data-reduce-motion', '1')")
+        seen = page.evaluate("""() => new Promise(res => {
+            let most = 0;
+            const tick = () => { most = Math.max(most, Array.from(
+              document.querySelectorAll('.ap-table tbody tr'))
+              .reduce((k, r) => k + r.getAnimations().length, 0)); };
+            const t = setInterval(tick, 16);
+            document.querySelector('th[data-sort=role] button').click();
+            setTimeout(() => { clearInterval(t); res(most); }, 1500); })""")
+        _wait_sort(page, "role", 1)
+        assert seen == 0, seen
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def _paged_text(page) -> str:
+    return page.locator('[data-testid="table-page"]').inner_text()
+
+
+def test_a_new_search_opens_on_the_first_page_and_a_trailing_space_keeps_the_totals(
+    live, monkeypatch
+):
+    """Fable C7: (a) typing a search on table page 3 shows the first matches, not page 3 of them;
+    (b) 'e ' in Company counts the same matches as 'e' (the server strips the space)."""
+    monkeypatch.setattr("kestrel.web.pages.pursuits.TABLE_PAGE_SIZE", 3)
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live, "&view=table&page=3")
+    try:
+        page.goto(url)
+        page.wait_for_selector('[data-testid="table-page"]')
+        assert "Page 3 of" in _paged_text(page)
+        page.fill("#ap-q", "a")
+        page.wait_for_function(
+            "() => { const e = document.querySelector('[data-testid=table-page]');"
+            " return !!e && /matching/.test(e.textContent); }", timeout=8000)
+        text = _paged_text(page)
+        assert "Showing 1 to 3 of" in text and "Page 1 of" in text, text
+        page.fill("#ap-q", "")
+        page.wait_for_function(
+            "() => { const e = document.querySelector('[data-testid=table-page]');"
+            " return !!e && !/matching/.test(e.textContent); }", timeout=8000)
+        page.click('[data-testid="more-filters"]')
+        page.fill('[data-f="company"]', "e")
+        page.wait_for_function(
+            "() => { const e = document.querySelector('[data-testid=table-page]');"
+            " return !!e && /matching/.test(e.textContent); }", timeout=8000)
+        exact = _paged_text(page)
+        page.fill('[data-f="company"]', "e ")
+        page.wait_for_timeout(900)
+        assert _paged_text(page) == exact, (exact, _paged_text(page))
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_pager_keeps_the_keyboard_on_the_button_that_was_pressed(live, monkeypatch):
+    """Fable C4: the pager is replaced with the board; Next stays focused while there is a next."""
+    monkeypatch.setattr("kestrel.web.pages.pursuits.TABLE_PAGE_SIZE", 3)
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector('[data-testid="table-next"]')
+        page.focus('[data-testid="table-next"]')
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => /Page 2 of/.test(document.querySelector("
+                               "'[data-testid=table-page]').textContent)", timeout=8000)
+        page.wait_for_timeout(300)
+        assert page.evaluate("document.activeElement.getAttribute('data-testid')") == "table-next"
+        assert not errors, errors
     finally:
         ctx.close()
 
@@ -411,8 +529,8 @@ def test_the_sort_and_the_view_survive_a_swap_without_a_flash(live):
     try:
         page.goto(url)
         page.wait_for_selector(".ap-table tbody tr")
-        page.click("th[data-sort=role] button")
-        page.click("th[data-sort=role] button")  # descending
+        _press(page, "role")
+        _press(page, "role")  # descending
         expect = page.evaluate(_TITLES)
         got = swap_result(
             page, "/pursuits?view=table",
@@ -448,11 +566,283 @@ def test_sorting_and_the_view_work_with_storage_blocked(live):
     try:
         page.goto(url)
         page.wait_for_selector(".ap-table tbody tr")
-        page.click("th[data-sort=role] button")
+        _press(page, "role")
         titles = page.evaluate(_TITLES)
         assert titles == sorted(titles, key=str.lower)
         page.click('[data-testid="view-board"]')
         page.wait_for_selector('[data-testid="apps-board-grid"]')
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+
+_ROWS = """() => Array.from(document.querySelectorAll('.ap-table tbody tr')).map(r => ({
+  title: r.querySelector('.ap-tt b').textContent.trim(), col: r.dataset.col,
+  fit: r.dataset.fit, applied: r.dataset.applied, ord: Number(r.dataset.ord)}))"""
+_PIPELINE = {"to_apply": 0, "to_contact": 0, "applied": 1, "conversation": 1,
+             "interviewing": 2, "proposal": 2, "closed": 3}
+
+
+def _sorted_by(page, col: str) -> list[dict]:
+    _press(page, col)
+    return page.evaluate(_ROWS)
+
+
+def _empties_last(values: list[str]) -> bool:
+    filled = [v != "" for v in values]
+    return filled == sorted(filled, reverse=True)
+
+
+def test_each_header_sorts_reverses_and_the_third_press_returns_the_default_order(live):
+    """#121: Stage, Fit and Applied sort (stage in pipeline order, not by name), a second press
+    reverses, a third restores the server's order, empty values are last both ways, and the row
+    count never changes."""
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        default = page.evaluate(_ROWS)
+        ords = [r["ord"] for r in default]
+        assert len(default) >= 8 and ords == sorted(ords)
+        # Stage: pipeline order (to apply, then applied, interviewing, closed), then reversed.
+        up = _sorted_by(page, "stage")
+        ranks = [_PIPELINE[r["col"]] for r in up]
+        assert ranks == sorted(ranks) and len(set(ranks)) > 2, ranks
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "ascending"
+        down = _sorted_by(page, "stage")
+        ranks = [_PIPELINE[r["col"]] for r in down]
+        assert ranks == sorted(ranks, reverse=True)
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "descending"
+        back = _sorted_by(page, "stage")  # third press: default order, no sort
+        assert back == default
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "none"
+        # Fit: highest first, unscored last in both directions.
+        best = _sorted_by(page, "fit")
+        scores = [r["fit"] for r in best]
+        nums = [float(x) for x in scores if x != ""]
+        assert nums == sorted(nums, reverse=True) and len(nums) >= 5 and _empties_last(scores)
+        worst = _sorted_by(page, "fit")
+        nums = [float(x) for x in (r["fit"] for r in worst) if x != ""]
+        assert nums == sorted(nums) and _empties_last([r["fit"] for r in worst])
+        assert _sorted_by(page, "fit") == default
+        # Applied: most recent first, roles not yet applied for last in both directions.
+        newest = _sorted_by(page, "applied")
+        days = [r["applied"] for r in newest]
+        filled = [d for d in days if d]
+        assert filled == sorted(filled, reverse=True) and len(filled) >= 3 and _empties_last(days)
+        assert any(d == "" for d in days)  # the seed has roles not yet applied for
+        oldest = _sorted_by(page, "applied")
+        days = [r["applied"] for r in oldest]
+        filled = [d for d in days if d]
+        assert filled == sorted(filled) and _empties_last(days)
+        assert _sorted_by(page, "applied") == default
+        for rows in (up, down, best, worst, newest, oldest):
+            assert len(rows) == len(default) and {r["title"] for r in rows} == {
+                r["title"] for r in default}
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_sort_and_the_view_are_remembered_across_a_revisit(live):
+    """#121: sort by Stage, leave through the sidebar and come back through it with no view in
+    the address: the table opens already sorted, from the server's table plus the saved sort."""
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        page.click('[data-testid="view-board"]')
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
+        page.click('[data-testid="view-table"]')  # the person's own choice is what is stored
+        page.wait_for_selector(".ap-table tbody tr")
+        _sorted_by(page, "stage")
+        _sorted_by(page, "stage")  # descending
+        expect = page.evaluate(_ROWS)
+        page.goto(f"{base}/?track={track}")
+        page.wait_for_selector('a[href^="/pursuits"]', state="attached")
+        link = page.locator('a[href^="/pursuits"]:visible').first
+        assert "view=" not in (link.get_attribute("href") or "")  # the sidebar names no view
+        link.click()
+        page.wait_for_selector(".ap-table tbody tr")
+        assert page.get_attribute("th[data-sort=stage]", "aria-sort") == "descending"
+        assert page.evaluate(_ROWS) == expect
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_applied_date_follows_the_date_format_setting(live):
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live)
+    try:
+        for fmt, make in (
+            ("DD/MM/YYYY", lambda d: f"{d[8:10]}/{d[5:7]}/{d[0:4]}"),
+            ("YYYY-MM-DD", lambda d: d),
+            ("MM/DD/YYYY", lambda d: f"{d[5:7]}/{d[8:10]}/{d[0:4]}"),
+        ):
+            r = page.request.post(f"{base}/settings/ui", data={"key": "region.date_format",
+                                                                "value": fmt})
+            assert r.ok, r.text()
+            page.goto(url)
+            page.wait_for_selector(".ap-table tbody tr")
+            cells = page.evaluate("""() =>
+              Array.from(document.querySelectorAll('.ap-table tbody tr'))
+              .map(r => [r.dataset.applied, r.querySelector('[data-testid=applied-cell]')
+                .textContent.trim()])""")
+            applied = [(d, t) for d, t in cells if d]
+            assert applied
+            for day, shown in applied:
+                assert shown == make(day), (fmt, day, shown)
+        assert not errors, errors
+    finally:
+        page.request.post(f"{base}/settings/ui", data={"key": "region.date_format",
+                                                       "value": "MM/DD/YYYY"})
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [390, 700, 860, 1000])
+def test_the_date_column_hides_before_the_table_overlaps(live, width):
+    """#121: the Applied column is shown only when the table has room for it; where it is shown,
+    no cell's text spills into the next one and the table does not scroll sideways."""
+    base, browser, track, _ids = live
+    ctx = browser.new_context(viewport={"width": width, "height": 900})
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/pursuits?track={track}&view=table")
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        got = page.evaluate("""() => {
+          const wrap = document.querySelector('.ap-tablewrap');
+          const head = document.querySelector('th.ap-c-date');
+          const row = '.ap-table tbody tr:first-child td';
+          const cells = Array.from(document.querySelectorAll(row));
+          const boxes = cells.filter(c => c.offsetParent !== null)
+            .map(c => c.getBoundingClientRect());
+          let overlap = false;
+          for (let i = 1; i < boxes.length; i++) {
+            if (boxes[i].left < boxes[i - 1].right - 1) overlap = true;
+          }
+          return {shown: getComputedStyle(head).display !== 'none', overlap,
+                  scrolls: wrap.scrollWidth > wrap.clientWidth + 1,
+                  bodyShown: cells.some(c => c.classList.contains('ap-c-date')
+                    && c.offsetParent !== null),
+                  room: wrap.clientWidth};
+        }""")
+        assert got["shown"] == got["bodyShown"], got  # head and cells leave together
+        assert not got["overlap"], got
+        assert not (got["shown"] and got["scrolls"]), got  # shown only where it fits
+        assert got["shown"] == (width >= 1000), got  # hidden on the narrow windows, shown wide
+    finally:
+        ctx.close()
+
+
+_APPLIED_DAYS = ("() => Array.from(document.querySelectorAll('.ap-table tbody tr'))"
+                 ".map(r => r.dataset.applied)")
+
+
+def test_sort_by_date_then_reload_and_revisit_keep_the_view_with_no_flash(live):
+    """#137: Date applied sorts newest first with undated roles last; a reload and a return with
+    no view in the address draw the table already sorted (the server's first paint, so the rows
+    never move after load); an explicit ?view=kanban still wins."""
+    base, browser, track, _ids = live
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        page.click('[data-testid="view-board"]')
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
+        page.click('[data-testid="view-table"]')  # the person's own choice is what is stored
+        page.wait_for_selector(".ap-table tbody tr")
+        _press(page, "applied")
+        days = page.evaluate(_APPLIED_DAYS)
+        filled = [d for d in days if d]
+        assert filled == sorted(filled, reverse=True) and len(filled) >= 3 and _empties_last(days)
+        sorted_titles = page.evaluate(_TITLES)
+        # The order at DOMContentLoaded (before any script work) is already the sorted one.
+        page.add_init_script("""document.addEventListener('DOMContentLoaded', () => {
+            window.__first = Array.from(document.querySelectorAll('.ap-table tbody tr .ap-tt b'))
+              .map(b => b.textContent.trim());
+            window.__aria = (document.querySelector('th[data-sort=applied]') || {})
+              .getAttribute?.('aria-sort'); });""")
+        page.goto(f"{base}/pursuits?track={track}")  # no view, no sort in the address
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        assert page.evaluate("window.__first") == sorted_titles == page.evaluate(_TITLES)
+        assert page.evaluate("window.__aria") == "descending"
+        assert page.get_attribute("th[data-sort=applied]", "aria-sort") == "descending"
+        # The explicit view in the address wins over the stored Table choice.
+        page.goto(f"{base}/pursuits?track={track}&view=kanban")
+        page.wait_for_selector('[data-testid="apps-board-grid"]')
+        assert page.locator(".ap-table").count() == 0
+        # A third press returns to the default and that is what comes back too.
+        page.goto(f"{base}/pursuits?track={track}&view=table")
+        page.wait_for_selector(".ap-table tbody tr")
+        _press(page, "applied")  # oldest first
+        _press(page, "applied")  # third: default order
+        page.goto(f"{base}/pursuits?track={track}")
+        page.wait_for_selector(".ap-table tbody tr")
+        assert page.get_attribute("th[data-sort=applied]", "aria-sort") == "none"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_sort_is_usable_from_the_keyboard_alone(live):
+    """#137: Tab reaches a header button, Enter and Space press it, and focus is still on that
+    button after the rows move, so the next press needs no mouse."""
+    ctx, page, errors, url = _open_table(live)
+    try:
+        page.goto(url)
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        page.focus("th[data-sort=applied] button")
+        assert page.evaluate("document.activeElement.textContent.trim()") == "Date applied"
+        page.keyboard.press("Enter")
+        _wait_sort(page, "applied", -1)
+        assert page.evaluate("document.activeElement.closest('th').dataset.sort") == "applied"
+        page.keyboard.press("Space")
+        _wait_sort(page, "applied", 1)
+        days = page.evaluate(_APPLIED_DAYS)
+        filled = [d for d in days if d]
+        assert filled == sorted(filled) and _empties_last(days)
+        page.keyboard.press("Enter")  # third press: the default order
+        _wait_sort(page, "", 1)
+        assert page.get_attribute("th[data-sort=applied]", "aria-sort") == "none"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1024, 1440])
+def test_the_sorted_table_has_no_overlap_or_sideways_scroll(live, theme, width):
+    """#137: sorted by Date applied, light and dark, at the narrow 1024 and a wide window: header
+    buttons and their direction mark never overlap, the page never scrolls sideways."""
+    base, browser, track, _ids = live
+    ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=theme)
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/pursuits?track={track}&view=table")
+        page.wait_for_selector(".ap-table tbody tr")
+        wait_for_layout(page)
+        _press(page, "applied")
+        wait_for_layout(page)
+        _shot(page, f"apps-table-sorted-{track}-{theme}-{width}")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+        boxes = page.evaluate(
+            """() => Array.from(document.querySelectorAll('.ap-table th button'))
+              .filter(b => b.offsetParent !== null).map(b => { const r = b.getBoundingClientRect();
+              return {t: b.textContent.trim(), l: r.left, r: r.right, tp: r.top,
+                bt: r.bottom}; })""")
+        assert len(boxes) >= 4
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                assert not _overlaps(a, b), (a, b)
         assert not errors, errors
     finally:
         ctx.close()

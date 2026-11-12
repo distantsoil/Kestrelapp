@@ -1,0 +1,33 @@
+{# Today's quick-round strip (issue 171, D-UI-272, D-UI-273). Below the retry note, above Top
+   matches, in the retry note's strip family with the info tint. It shows after the first finished
+   run, then after every 3rd, with at least 5 roles to sort and never while a run is active; the
+   server decides (routes_quick.offer_context) and this partial prints the answer. The wrapper is
+   always present and re-asks itself (a run ends, an Undo, a poll), morphed in place so nothing
+   unchanged is redrawn. State lives in settings rows. Styles: static/css/pages/today.css. #}
+{% from "ui/macros.html" import icon %}
+{% set tq = '&tour=1' if tour else '' %}{% set w = words(track) %}
+<div id="td-quick" class="td-quick" data-testid="td-quick" data-k-morph data-empty="{{ 0 if quick else 1 }}"
+     hx-get="/today/quick?track={{ track }}{{ tq }}"
+     hx-trigger="every 30s [!document.querySelector('#td-quick dialog:modal')], run-refresh from:body, td-refresh from:body"
+     hx-swap="outerHTML" data-no-busy>
+  {% if quick %}
+  <section class="td-qr" data-testid="td-qr" aria-label="Quick round">
+    <span class="k-badge">{{ icon('calibrate') }}</span>
+    <div class="td-qr__body k-grow">
+      <b data-testid="td-qr-title">{{ quick.n }} {{ w.roles }} to sort, yes or no. About a minute.</b>
+      <span class="td-qr__line">Kestrel picked the ones from this run it was least sure about. Each answer helps it rank your pipeline.</span>
+      {% set meter = quick.meter %}{% include "partials/quick_meter.html" %}
+    </div>
+    <div class="td-qr__acts">
+      <a class="k-btn k-btn--primary k-btn--sm" href="/calibrate/quick?track={{ track }}" data-testid="td-qr-start">Start sorting</a>
+      <div class="td-qr__later">
+        <button type="button" class="k-btn k-btn--sm" id="td-qr-later" data-testid="td-qr-later" aria-haspopup="menu" aria-expanded="false" aria-controls="td-qr-menu" data-td-qr-menu>Not now</button>
+        <div class="td-qr__menu" id="td-qr-menu" role="menu" aria-label="Not now" hidden>
+          <button type="button" role="menuitem" data-testid="td-qr-snooze" data-td-qr-close hx-post="/today/quick/snooze?track={{ track }}" hx-swap="none" data-no-busy>Ask after the next 3 runs<small>The {{ w.roles }} wait in Calibrate.</small></button>
+          <button type="button" role="menuitem" data-testid="td-qr-stop" data-td-qr-close hx-post="/today/quick/stop?track={{ track }}" hx-swap="none" data-no-busy>Stop asking<small>Turn it back on in Calibrate.</small></button>
+        </div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</div>

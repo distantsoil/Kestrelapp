@@ -23,6 +23,7 @@ from kestrel.db.models import (
     Calibration,
     DocRender,
     Label,
+    Letter,
     MockSession,
     Notification,
     Offer,
@@ -77,10 +78,6 @@ def page_view_requests(rec) -> list[str]:
 # Routes the crawler does not call. Every entry carries its reason; a route not listed here is
 # crawled, so a new route is covered the day it is added.
 ALLOWLIST: dict[str, str] = {
-    "GET /docs": "FastAPI's own Swagger page; framework code that loads assets from a CDN",
-    "GET /redoc": "FastAPI's own ReDoc page; framework code that loads assets from a CDN",
-    "GET /openapi.json": "FastAPI's generated schema; framework code, not Kestrel's",
-    "GET /docs/oauth2-redirect": "FastAPI's own OAuth redirect page; framework code",
     "POST /api/quit": "asks the desktop shell to quit the whole app; the one route whose "
     "success ends the process the test runs in",
     "POST /api/focus": "raises the desktop window (a second launch posts it); a no-op headless "
@@ -258,7 +255,7 @@ async def build_world() -> dict[str, int]:
             opportunity_id=ids["strong"],
             doc_master_id=ids["master"],
             template="cover_letter",
-            config={"kind": "cover_letter", "body_md": "Dear Hiring Team,\n\nAn invented draft."},
+            config={"kind": "cover_letter"},
             pdf_path=str(pdf),
             filename="letter.pdf",
             page_count=1,
@@ -315,6 +312,9 @@ async def build_world() -> dict[str, int]:
                 )
             )
         await s.flush()
+        # The letter's text lives in the letter table, attached to its render (D-LETTER-1).
+        s.add(Letter(render_id=letter.id, opportunity_id=ids["strong"], kind="cover_letter",
+                     body_md="Dear Hiring Team,\n\nAn invented draft.", word_count=6))
         src = (await s.execute(select(Source).limit(1))).scalars().first()
         s.add(
             ScrapeRun(source_id=src.id, status="done", counts={"new": 3}, finished_at=ago(hours=1))
@@ -567,7 +567,10 @@ def body_problems(r, data_home: Path, *, shows_path: bool = False) -> list[str]:
                 "never a path on the person's disk (use the Open folder button)"
             )
             break
-    leaked = sorted(set(VISIBLE_ERROR_NAME.findall(visible)))
+    # Exception names are allowed under Show details (owner, 2026-11-05), like the data folder.
+    shown = (BeautifulSoup(outside_details, "html.parser").get_text(" ")
+             if ctype.startswith(HTML_TYPES) else visible)
+    leaked = sorted(set(VISIBLE_ERROR_NAME.findall(shown)))
     if leaked:
         problems.append(
             f"visible text names exception classes {leaked}; say what went wrong in plain words"

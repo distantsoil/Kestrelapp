@@ -496,8 +496,8 @@ def test_the_retry_note_shows_only_when_a_role_needs_another_try():
         body = c.get("/").text
         first = c.get("/?tour=1").text
     note = body.split('data-testid="td-retry"')[1].split("</div>")[0]
-    assert "1 role needs another try." in note
-    assert "The AI could not read its own answer. They are kept in Pipeline." in note
+    assert "1 item needs another try." in note
+    assert "The AI could not read its own answer. See them on Needs another try." in note
     assert 'href="/quarantine"' in note and ">Review<" in note
     # The first-run Today (here, the walkthrough replay) shows no retry note.
     assert 'data-testid="td-retry"' not in first
@@ -514,6 +514,35 @@ def test_the_retry_note_is_hidden_on_the_first_run_whatever_is_parked():
         body = c.get("/").text
     assert 'data-first-run="1"' in body and 'data-testid="td-retry"' not in body
     assert "The AI could not read its own answer" not in body
+
+
+def test_a_story_failure_reads_as_an_item_not_a_role_on_all_three_surfaces():
+    """A failed story merge parks a quarantine row with no role (tier 8, opportunity_id None).
+    All three Today surfaces must call it an item, never a role: the rewording exists for
+    exactly this row, which has no role to point at. A failed role is a different row and the
+    existing tests already cover it; this one is the row that has none."""
+    _seed()
+
+    async def park(s):
+        s.add(Quarantine(opportunity_id=None, tier=8,
+                         error="story merge failed: the invented reason",
+                         raw_response='{"invented": "text"}'))
+
+    _db(park)
+    with _client() as c:
+        page = c.get("/").text
+        prog = c.get("/today/progress").text
+        run = c.get("/today/run").text
+
+    # The strip's retry note, on the Today page.
+    strip = page.split('data-testid="td-retry"')[1].split("</div>")[0]
+    assert "1 item needs another try." in strip
+    assert "role needs" not in strip and "roles need" not in strip
+
+    # The progress panel and the run panel each carry their own open-failed line.
+    for label, text in (("progress", prog), ("run", run)):
+        assert "1 item needs another try" in text, label
+        assert "role needs" not in text and "roles need" not in text, label
 
 
 # ----------------------------------------------------------- the Strong match cutoff
@@ -630,10 +659,62 @@ def test_a_maybe_role_counts_in_decisions_waiting_and_in_the_your_call_chip():
     assert "Director of Enterprise Applications" in rows
     assert rows["Director of Enterprise Applications"]["status"] == "Not decided"
     assert waiting["n"] == 2  # the Maybe role plus the shortlisted one, counted once each
-    assert chips["your_call"] == 1
+    assert chips["your_call"] == waiting["n"] == 2
     with _client() as c:
         html = c.get("/today/decisions").text
     assert 'data-testid="dw-count">2<' in html
+
+
+def test_an_old_undecided_maybe_role_is_in_decisions_waiting_on_today():
+    """#129: a scored Maybe role first seen before today, with no decision, shows in Today's
+    Decisions waiting (the page, not only the query), so the card never reads "nothing is
+    waiting" while Pipeline lists it under Maybe."""
+    ids = _seed()
+
+    async def make_maybe(s):
+        ev = (await s.execute(select(Evaluation).where(
+            Evaluation.opportunity_id == ids["backlog"]))).scalar_one()
+        ev.verdict, ev.verdict_model = "consider", "consider"
+        ev.score = ev.weighted_score = 3.5
+        ev.needs_review = False
+        opp = await s.get(Opportunity, ids["backlog"])
+        opp.first_seen_at = "2020-01-01T00:00:00+00:00"
+
+    _db(make_maybe)
+    with _client() as c:
+        html = c.get("/today/decisions").text
+    assert "Nothing is waiting on you" not in html
+    assert f"/opportunities/{ids['backlog']}" in html
+
+
+def test_an_unflagged_maybe_role_needs_a_decision_on_every_surface():
+    """Issue #113: an undecided Maybe role that was NOT flagged for review is counted the same
+    way by Today's Decisions waiting, the Pipeline Your call chip and the shared count a
+    notification would read (needs_decision_count). One definition, one number."""
+    from kestrel.web.queries import OppFilters, chip_counts, needs_decision_count
+
+    ids = _seed()
+
+    async def make_maybe(s):
+        ev = (await s.execute(select(Evaluation).where(
+            Evaluation.opportunity_id == ids["backlog"]))).scalar_one()
+        ev.verdict, ev.verdict_model = "consider", "consider"
+        ev.score = ev.weighted_score = 3.4
+        ev.needs_review = False
+
+    _db(make_maybe)
+
+    async def read(s):
+        return (await tv.decisions_waiting(s, "employment"),
+                await chip_counts(s, OppFilters(track="employment", grouped=True)),
+                await needs_decision_count(s, "employment"))
+
+    waiting, chips, shared = _db(read)
+    assert "Director of Enterprise Applications" in {r["title"] for r in waiting["rows"]}
+    assert waiting["n"] == chips["your_call"] == shared == 2
+    with _client() as c:
+        page = c.get("/opportunities?needs_review=1").text
+    assert f'/opportunities/{ids["backlog"]}' in page
 
 
 def test_applications_needing_action_use_the_applications_verbs():

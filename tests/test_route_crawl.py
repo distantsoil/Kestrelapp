@@ -255,6 +255,20 @@ def test_crawler_flags_a_leaking_body(text, needle, egress_recorder, monkeypatch
     assert any(needle in p for p in out), out
 
 
+def test_crawler_allows_an_exception_name_under_show_details(
+    egress_recorder, monkeypatch, tmp_path
+):
+    from fastapi.responses import HTMLResponse
+
+    async def detail():
+        return HTMLResponse("<p>The window could not open.</p><details><summary>Show details"
+                            "</summary><p>ModuleNotFoundError: gi</p></details>")
+
+    out = _run_on(_broken_app([("/detail", detail)]), "/detail", egress_recorder, monkeypatch,
+                  tmp_path)
+    assert not any("exception classes" in p for p in out), out
+
+
 def test_crawler_flags_a_get_that_calls_a_model_or_the_network(
     egress_recorder, monkeypatch, tmp_path
 ):

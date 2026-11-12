@@ -10,6 +10,8 @@ often, Remove with Undo, Suggested companies, and the Add a source sheet with it
   POST /sources/check-all               queue a check of every source that is on
   POST /sources/suggestions/add         add a suggested company
   POST /sources/suggestions/dismiss     dismiss one; /undismiss takes it back
+  POST /sources/suggestions/recheck     Check again / Try again: queue one background check
+  GET  /sources/suggestions/row         one suggestion row, polled while its check runs
   GET  /sources/{id}/drawer             the details drawer
   POST /sources/{id}/check              Check now, on the usual models
   POST /sources/{id}/cadence            How often
@@ -40,6 +42,7 @@ from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.adapters.adzuna import KEY_SIGNUP_URL as ADZUNA_SIGNUP_URL
 from kestrel.ingest.adapters.usajobs import KEY_SIGNUP_URL
 from kestrel.ingest.base import AdapterError, SourceConfigError
+from kestrel.ingest.orgs import normalized_name
 from kestrel.services import pursuit_undo, source_suggestions
 from kestrel.web import source_view as sv
 from kestrel.web.deps import sessionmaker, templates
@@ -65,7 +68,7 @@ TYPES = {  # the tile per type, in order: (key, title, plain line)
     ],
 }
 SUPPORTED = ("Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling, ADP, Paylocity, "
-             "Workable, Recruitee, Teamtailor, Personio and Breezy HR")
+             "Workable, Recruitee, Teamtailor, Personio, Breezy HR and Jobvite")
 # Boards the sheet offers: (jobspy site, label, why it is limited or "")
 BOARDS = (
     ("indeed", "Indeed", ""), ("glassdoor", "Glassdoor", ""),
@@ -92,10 +95,12 @@ REMOTE_BOARDS = (
     ("arbeitnow", "Arbeitnow", "Whole feed"),
     ("jobicy", "Jobicy", "Whole feed, with pay when the feed has it"),
     ("remotive", "Remotive", "Whole feed, up to 4 checks a day"),
+    ("fourdayweek", "4 Day Week", "Four-day and reduced-hour employers"),
+    ("hn_hiring", "Hacker News", "This month's Who is hiring? thread"),
 )
 # Every board the sheet adds as its own source, beside the JobSpy ones.
 EXTRA_BOARDS = ("usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow", "jobicy",
-                "remotive")
+                "remotive", "fourdayweek", "hn_hiring")
 EXTRAS_ONLY = "extras"  # a sheet add whose boards all have a source of their own
 DICE = ("Dice", "Dice has no public feed Kestrel can read yet, so it cannot be added.")
 INDEED_FILTERS = ("hours", "type", "remote", "easy", "none")
@@ -324,7 +329,7 @@ async def _existing(session, spec: dict) -> Source | None:
                 return row
         return None
     if spec["kind"] in ("usajobs", "adzuna", "himalayas", "weworkremotely", "arbeitnow",
-                        "jobicy", "remotive"):
+                        "jobicy", "remotive", "fourdayweek", "hn_hiring"):
         cfg = spec["config"]
         want = (str(cfg.get("keyword") or "").lower(), str(cfg.get("location") or "").lower())
         for row in (await session.execute(
@@ -398,9 +403,11 @@ def _extra_spec(name: str, track: str, title: str, place: str, base: dict) -> di
         config["location"] = place
     label = {"usajobs": "USAJobs", "adzuna": "Adzuna", "himalayas": "Himalayas",
              "weworkremotely": "We Work Remotely", "arbeitnow": "Arbeitnow",
-             "jobicy": "Jobicy", "remotive": "Remotive"}[name]
+             "jobicy": "Jobicy", "remotive": "Remotive",
+             "fourdayweek": "4 Day Week", "hn_hiring": "Hacker News"}[name]
     # The whole feed: no search to name.
-    if name in ("weworkremotely", "arbeitnow", "jobicy", "remotive"):
+    if name in ("weworkremotely", "arbeitnow", "jobicy", "remotive", "fourdayweek",
+                "hn_hiring"):
         return {"track": track, "kind": name, "name": label, "config": {}}
     shown = f"{title} on {label}" + (f" in {place}" if place and "location" in config else "")
     return {"track": track, "kind": name, "name": shown[:MAX_FIELD], "config": config}
@@ -888,53 +895,28 @@ async def restore_source(request: Request, source_id: int):
 
 
 # ----------------------------------------------------------------------------- suggestions
-async def _resolve_suggestion_board(request: Request, name: str) -> tuple[dict | None, str | None]:
-    """(spec, text) for a suggested company. Uses the remembered board lookup when present so a
-    repeated Add never repeats the requests (#123 finding 6); a company with no readable board
-    returns (None, None) and the caller hands it over to Add a source (#123 finding 7)."""
-    from kestrel.ingest.board_lookup import find_company_board
-    from kestrel.ingest.orgs import normalized_name
-
+async def _resolve_suggestion_board(
+    request: Request, name: str, track: str = "employment"
+) -> tuple[dict | None, str | None]:
+    """(spec, text) for a suggested company. Uses the remembered board lookup when it is still
+    fresh so a repeated Add never repeats the requests (#123 finding 6); otherwise the same check
+    the background runs happens now. A company with no readable board returns (None, None) and
+    the caller shows the row's new state (#123 finding 7)."""
+    norm = normalized_name(name)
     async with sessionmaker()() as s:
-        norm = normalized_name(name)
         entry = (await source_suggestions.board_cache(s)).get(norm)
-        if entry is not None:
-            if entry.get("found") and entry.get("kind"):
-                m_kind = entry["kind"]
-                m_config = entry.get("config") or {}
-                m_company = entry.get("company") or name
-                m_jobs = int(entry.get("jobs") or 0)
-                jobs = f", {m_jobs} open" if m_jobs else ""
-                text = (f"Added {m_company} ({entry.get('platform') or 'a board'}{jobs}). "
-                        "Check it is the right company.")
-                return {"kind": m_kind, "config": m_config, "name": m_company}, text
-            return None, None
-        # Not remembered: do the lookup (a few polite requests) and keep the outcome.
-        try:
-            async with await pg._http_client() as http:
-                result = await find_company_board(name, http)
-        except (httpx.HTTPError, OSError, RuntimeError, ValueError) as exc:
-            # A dead network is not a 500, and it is not an answer either (#139).
-            log.info("source_suggestion_lookup_failed", error=type(exc).__name__)
-            return None, None
-        m = result.match
-        if m is None:
-            if result.inconclusive:
-                # The lookup could not get a definite answer (network down, timeout, 429, 5xx):
-                # remember nothing, so the next try asks again instead of "not found" forever.
-                log.info("source_suggestion_lookup_inconclusive", tried=len(result.tried))
-                return None, None
-            await source_suggestions.record_board_lookup(s, name, found=False)
-            await s.commit()
-            return None, None
-        await source_suggestions.record_board_lookup(
-            s, name, found=True, platform=m.platform, jobs=m.jobs,
-            kind=m.kind, config=m.config, company=result.company,
-        )
-        await s.commit()
-        jobs = f", {m.jobs} open" if m.jobs else ""
-        text = f"Added {result.company} ({m.platform}{jobs}). Check it is the right company."
-        return {"kind": m.kind, "config": m.config, "name": result.company}, text
+    if not source_suggestions.fresh(entry):
+        await source_suggestions.check_company(name, track)
+        async with sessionmaker()() as s:
+            entry = (await source_suggestions.board_cache(s)).get(norm)
+    if entry is None or not entry.get("found") or not entry.get("kind"):
+        return None, None
+    m_company = entry.get("company") or name
+    m_jobs = int(entry.get("jobs") or 0)
+    jobs = f", {m_jobs} open" if m_jobs else ""
+    text = (f"Added {m_company} ({entry.get('platform') or 'a board'}{jobs}). "
+            "Check it is the right company.")
+    return {"kind": entry["kind"], "config": entry.get("config") or {}, "name": m_company}, text
 
 
 @router.post("/sources/suggestions/add", response_class=HTMLResponse)
@@ -952,15 +934,20 @@ async def suggestion_add(request: Request):
         spec = {"kind": "sec_edgar", "config": {"queries": [f'"{name}"']}, "name": name}
         text = f"Added {name}. Kestrel watches its public filings."
     else:
-        spec, text = await _resolve_suggestion_board(request, name)
+        spec, text = await _resolve_suggestion_board(request, name, track)
         if spec is None:
             # No readable board: a normal "add by hand" state, not an error (#123 finding 7).
-            # The outcome is remembered by _resolve_suggestion_board, so this lookup never
-            # repeats; recompute the panel so the row now offers "Add by hand".
+            # The outcome is remembered, so this lookup never repeats; recompute the panel so
+            # the row shows its new state in this same response: "Add by hand" for a definite
+            # answer, "Could not check. Try again" when the lookup got none (nothing remembered).
             async with sessionmaker()() as s:
                 ctx = await pg._panel_ctx(request, s)
+            failed = any(
+                sg["name"] == name and sg.get("state") == "error" for sg in ctx["suggestions"]
+            )
             return pg.list_response(
                 request, ctx, pg.toast_header(
+                    f"Could not check {name}. Try again in a moment." if failed else
                     f"Kestrel couldn't read a public board for {name}. "
                     "Use 'Add by hand' to paste the link to the careers page."))
     async with sessionmaker()() as s:
@@ -996,6 +983,34 @@ async def suggestion_add(request: Request):
             text, f"/sources/{sid}/remove?token={token}", **{"src-arrived": {"id": sid}}
         ),
     )
+
+
+@router.post("/sources/suggestions/recheck", response_class=HTMLResponse)
+async def suggestion_recheck(request: Request):
+    """Check again (a no-board row) or Try again (a failed check): forget the remembered answer
+    and queue one background check. Only a task row is written here; no request is made."""
+    name = _text(await request.form(), "name")
+    async with sessionmaker()() as s:
+        track = await _track(request, s)
+        if name and track != "consulting":
+            await source_suggestions.enqueue_check(s, name, track, force=True)
+            await s.commit()
+        ctx = await pg._panel_ctx(request, s)
+    return pg.list_response(request, ctx)
+
+
+@router.get("/sources/suggestions/row", response_class=HTMLResponse)
+async def suggestion_row(request: Request):
+    """One suggestion row again, polled while its check runs, so only that row changes."""
+    name = _text(request.query_params, "name")
+    async with sessionmaker()() as s:
+        ctx = await pg._panel_ctx(request, s, queue_checks=True)
+    row = next((sg for sg in ctx["suggestions"] if sg["name"] == name), None)
+    if row is None:
+        return HTMLResponse("", status_code=200)
+    return templates().TemplateResponse(
+        request, "partials/sources_suggestion_row.html",
+        {"sg": row, "track": ctx["track"], "settle": row["state"] != "checking"})
 
 
 @router.post("/sources/suggestions/dismiss", response_class=HTMLResponse)

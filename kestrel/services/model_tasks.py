@@ -44,7 +44,7 @@ from typing import Any
 
 import httpx
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.db.base import utcnow_iso
@@ -220,6 +220,12 @@ async def queue_pulls(session: AsyncSession, tags: list[str]) -> int:
             if t.type == PULL_TYPE}
     batch = uuid.uuid4().hex[:12]
     n = 0
+    joined = [tag for tag in tags if tag in live]
+    if joined:  # asked again: a pull waiting out a retry backoff runs now (D-QUEUE-7)
+        from kestrel.queue.queue import run_now
+
+        await run_now(session, and_(
+            Task.type == PULL_TYPE, func.json_extract(Task.payload, "$.tag").in_(joined)))
     for tag in tags:
         if tag in live:
             continue
@@ -308,6 +314,41 @@ async def finish_owed_rebuild(sm: async_sessionmaker[AsyncSession]) -> bool:
     return True
 
 
+async def finish_owed_recheck(sm: async_sessionmaker[AsyncSession]) -> bool:
+    """Run the Health check owed after the person left the Online choice (#115). Run from the idle
+    loop: one cheap row read when nothing is owed. Nothing runs while the choice is Online (the
+    flag stays until they switch back), nor while a download, a build or another check runs.
+    Returns True when the check was started. The flag lives in the database, so a restart keeps it;
+    it is cleared as the check starts, and the report is only a display."""
+    from kestrel.services import setup_state as ss
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    async with sm() as s:
+        row = await s.get(Setting, ss.RECHECK_OWED_KEY)
+        if row is None or not row.value:
+            return False
+        if await live_tasks(s):
+            return False
+        settings = await load_settings_with_db(s)
+        found = await s.execute(
+            select(Setting.key, Setting.value).where(Setting.key.in_((ss.MODE_KEY, ss.CHOICE_KEY))))
+        if ss.run_choice(settings, {k: v for k, v in found.all()})[0] == "hosted":
+            return False
+    try:
+        await asyncio.to_thread(ss.forget_ollama_probe)
+        ss.verify()
+    except ss.ActionBusy:
+        return False
+    async with sm() as s:
+        row = await s.get(Setting, ss.RECHECK_OWED_KEY)
+        if row is not None:
+            row.value = False
+            row.updated_at = utcnow_iso()
+            await s.commit()
+    log.info("setup_owed_recheck_started")
+    return True
+
+
 async def cancel_all(session: AsyncSession) -> int:
     """Mark every live pull and build cancelled; a running one stops at its next stream line.
     Commits. Returns how many rows were cancelled."""
@@ -371,7 +412,7 @@ def _row_view(t: Task) -> dict[str, Any]:
     elif t.status == "done":
         view["step"], view["percent"] = "Done", 100
     elif t.status == "cancelled":
-        view["step"] = "Stopping…" if t.id in _running else "Cancelled"
+        view["step"] = "Stopping…" if t.id in _running else "Canceled"
     else:  # dead or failed
         view["step"] = "Failed"
         view["error"] = (shown_failure(t.last_error) or "it stopped before it finished")[:300]
@@ -610,5 +651,9 @@ async def run_loop(
                     await finish_owed_rebuild(sm)
                 except Exception as exc:  # noqa: BLE001 - the loop must outlive one bad cycle
                     log.warning("setup_owed_rebuild_failed", error=f"{type(exc).__name__}: {exc}")
+                try:
+                    await finish_owed_recheck(sm)
+                except Exception as exc:  # noqa: BLE001 - the loop must outlive one bad cycle
+                    log.warning("setup_owed_recheck_failed", error=f"{type(exc).__name__}: {exc}")
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=IDLE_POLL_S)

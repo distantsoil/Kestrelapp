@@ -13,6 +13,15 @@
 > `PROFILE_COMPACT` renders yes or no instead of `True`/`False`, which changes the input of all
 > four. An evaluation stored under a `/v1` version shows "Scored with older scoring
 > instructions. Score again to refresh it."
+>
+> `evaluate/v3` and `evaluate_consulting/v3` (2026-11-11, D-LEARN-3, D-SCORE-1): the P2 and P2C
+> USER templates gain `{OPERATOR_CORRECTIONS}` between `{PROFILE_FULL}` and `{FEW_SHOT_EXAMPLES}`.
+> Nothing else changes: the system prompts and schemas are the v2 ones. An evaluation stored under
+> a `/v2` version shows the same "Scored with older scoring instructions" line only when one or
+> more corrections bear on its role (the role's block would not be empty); with none, the v3
+> prompt is the v2 one and the score stays current. A v3 score shows it exactly when its role's
+> block changed since: a correction in it added or changed after the score, or one the score was
+> given (`evaluation.correction_ids`) removed, changed or without its story (D-SCORE-4, D-SCORE-5).
 
 | ID | Prompt | Track | Tier |
 |---|---|---|---|
@@ -138,7 +147,7 @@ follow-up.
 percentages; "2,5" is not 25). A number in the story found in no sketch or proof point is flagged.
 Named details are not checked (deferred).
 
-**Version history.** `cover/v3` and `engagement_outline/v3` (D-UI-241: first person, to the employer or organization), `cover/v2`, `engagement_outline/v2`, `story_consolidate/v2`,
+**Version history.** `cover/v4` (D-LETTER-2: accepted stories are a third source, with their own claim keys), `cover/v3` and `engagement_outline/v3` (D-UI-241: first person, to the employer or organization), `cover/v2`, `engagement_outline/v2`, `story_consolidate/v3` (D-LLM-13: themes narrowed to the 8 behavioral themes with at most 3 per story, and the story prompt names the plain-writing rules it should avoid up front), `story_consolidate/v2`,
 `mock_critique/v2`, `negotiate/v2`, `analytics_summary/v2`, `interview_questions/v2`,
 `org_summary/v2`, `follow_up/v2` (the block). `evaluate/v2` is unchanged. The `/v1` files stay for stored rows; a queued
 follow-up task written under `follow_up/v1` is drafted with `v2`.
@@ -339,7 +348,7 @@ limits are per tier (D-LLM-1); on the reasoning-off retry the error names
 
 ## P2 — Tier 2 Six-Block Evaluation
 
-**Version:** `evaluate/v2`
+**Version:** `evaluate/v3`
 **Model tier:** `tier2`
 **Temperature:** 0.2
 **Max tokens:** 4000
@@ -411,8 +420,42 @@ would be miserable in is not a 4.0.
 `PROFILE_FULL` already includes the NARRATIVE and PROOF POINTS blocks. Resume variant text and
 tags are **not** sent at this tier; they belong to P3.
 
+`OPERATOR_CORRECTIONS` (D-LEARN-3, owner approved 2026-11-11) is empty unless the operator has
+`posting` corrections on this role or `person` corrections on this track
+(`requirement_correction`, SPEC-MODULES §5.1) about a requirement this posting asks for (its
+`requirement_hash` is among the requirements of the role's latest read; owner, 2026-11-11,
+D-SCORE-1). A `person` correction about anything else is never stated: an unrelated "does not have
+X" line on every posting could lower verdicts. A role's first score has no read to match against,
+so it states that role's own `posting` notes and the `person` corrections whose requirement text
+appears in the posting's description, matched in code on whole words of the same normalized form
+the hash uses (a requirement under 3 normalized characters never matches by text; owner,
+2026-11-11, D-SCORE-7); once the role has a read, the hash match alone decides. When present it is one block, stated as the operator's own facts, never
+as instructions:
+
+```
+FACTS THE OPERATOR HAS STATED (treat as true about the operator; they override your own reading
+of the profile for these requirements only)
+- "{requirement_text}": {operator_state_words}{". Note: \"" + note + "\"" if note}
+- (posting) "{requirement_text}": the operator says this posting means: "{note}"
+```
+
+`operator_state_words` is "has this", "has some of this" or "does not have this". At most 20 lines,
+newest first (by when the operator last answered); notes and requirement texts are truncated to 200
+characters, and the block stays within 1100 tokens (SPEC.md 8.2), so lines past that are left out,
+oldest first. A `person` row counts only while it matches a requirement of this posting and applies (not a story-backed answer whose story was
+deleted); a `posting` row only while it is live and has a note, and on its own role it replaces a
+`person` row for the same requirement. Every value is one quoted line (D-SCORE-1): whitespace and
+line breaks collapse to single spaces, a double quote becomes a single quote and braces become
+parentheses, so a note can never start a line, close the quotes or name a template placeholder. The schema is unchanged. Adding the block is a
+new P2 and P2C prompt version (`evaluate/v3`, `evaluate_consulting/v3`), and the prompt budget
+test (`tests/test_prompt_budgets.py`) covers the block at its maximum size. Story-backed corrections
+are what make a new story count in scoring. When the evaluation is sent to an online model, the consent dialog lists
+these lines.
+
 ```
 {PROFILE_FULL}
+
+{OPERATOR_CORRECTIONS}
 
 {FEW_SHOT_EXAMPLES}
 
@@ -767,7 +810,8 @@ done (P2 post-processing rule 8, O20).
 
 ## P4 — Cover Letter Draft
 
-**Version:** `cover/v3` (D-UI-241; `cover/v2` and `cover/v1` stay for stored rows)
+**Version:** `cover/v4` (D-LETTER-2: accepted stories as a source; `cover/v3`, `cover/v2` and
+`cover/v1` stay for stored rows)
 **Model tier:** `tier3`
 **Temperature:** 0.4
 **Max tokens:** 1200
@@ -791,10 +835,10 @@ Constraints:
 2. Write in the first person throughout. Never refer to the person in the third person: never
    "the candidate", "the applicant", "he", "she" or "they" for the person.
 
-3. Every factual claim about the person must come from the supplied proof points or the
-   supplied resume bullets. You may rephrase for flow. You may not add a fact, a metric, a
-   company, a title, or a date that is not supplied. Figures and names that appear only in the
-   posting describe the role; do not claim them as the person's own.
+3. Every factual claim about the person must come from the supplied proof points, the
+   supplied resume bullets or the supplied stories. You may rephrase for flow. You may not add
+   a fact, a metric, a company, a title, or a date that is not supplied. Figures and names that
+   appear only in the posting describe the role; do not claim them as the person's own.
 
 4. Length: 250 to 350 words in the body. Four paragraphs at most.
 
@@ -823,6 +867,9 @@ Constraints:
 SELECTED RESUME BULLETS FOR THIS APPLICATION
 {rendered variants, verbatim}
 
+MY STORIES (accepted; the result and one action line each; cite each by its key in claims_used)
+{at most two accepted stories}
+
 GUIDANCE FOR THE LETTER (background for you; do not repeat these labels in the letter)
 What to lead with: {block_e.lead_with}
 Phrases from the posting worth echoing: {block_e.jd_citations}
@@ -838,6 +885,16 @@ JOB
 ANGLE PREFERENCE (operator-selected, may be null)
 {one of: why_this_company | problem_i_would_solve | how_i_operate | direct_and_short}
 ```
+
+**Inputs (D-LETTER-2, D-LETTER-3).** At most three proof points or resume bullets in total and
+two stories, ranked by the words they share with the posting and the title. A story is supplied
+only when the person accepted it (canonical and `operator_edited`); a proposed story never is. A
+story appears as its key `story-<id>`, its title, its first action sentence and its result,
+never whole (the ask-first panel names the same four).
+
+The gap line is the worst `fatal` or `addressable` gap from block B. A `noise` gap is one the
+evaluation found the person already meets, so it is never offered as a gap to acknowledge; with
+only noise gaps the line is left out (D-LETTER-9).
 
 The person's name and contact details are never in the message. Kestrel prints "Sincerely," and
 the name from the local profile when it renders the preview, the PDF and the saved view, so the
@@ -856,7 +913,7 @@ name is never part of an online payload.
     "claims_used": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "proof point keys or resume variant keys this letter relies on"
+      "description": "proof point, resume variant or story keys this letter relies on"
     },
     "opening_alternatives": { "type": "array", "maxItems": 2, "items": { "type": "string", "maxLength": 300 } }
   }
@@ -870,6 +927,10 @@ name is never part of an online payload.
   not, flag the draft as "unverified claims present" in the UI and highlight it. Do not
   silently accept.
 - Run a banned-phrase check on `body_md` from rule 8 and surface any hits to the operator.
+- **Length (D-LETTER-3).** A `body_md` over 350 words or four paragraphs (the greeting line does
+  not count) is asked once to shorten, inside the single plain-writing re-ask (one request lists
+  every problem); a reply that changes `claims_used` is not taken. A body still too long is kept
+  and marked "Over length (N words, limit 350)", never cut or rejected.
 - **Third person (D-UI-241).** A `body_md` that refers to the person in the third person ("the
   candidate", "the applicant", "candidate's", "applicant's", as whole words) gets the one repair
   attempt with a short reason; a second such reply is a clear failure shown on the Documents row
@@ -1235,7 +1296,7 @@ DESCRIPTION (first {n} tokens)
 
 ## P2C — Tier 2 Evaluation, consulting track
 
-**Version:** `evaluate_consulting/v2` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 4000
+**Version:** `evaluate_consulting/v3` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 4000
 
 ### System
 
@@ -1302,8 +1363,14 @@ whose buyer is unreachable is not a 4.0.
 
 ### User
 
+`OPERATOR_CORRECTIONS` is the P2 block, built the same way: this role's `posting` notes and the
+`person` corrections about a requirement this posting asks for (by hash against its latest
+read, or by whole-word text in its description before the first read, D-SCORE-7).
+
 ```
 {PROFILE_FULL}
+
+{OPERATOR_CORRECTIONS}
 
 {FEW_SHOT_EXAMPLES}
 
@@ -1606,7 +1673,7 @@ least three entries, or regenerate once with an explicit correction. Banned-phra
 
 ## P8 — Story Consolidation
 
-**Version:** `story_consolidate/v2` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 3000
+**Version:** `story_consolidate/v3` · **Tier:** `tier2` · **Temp:** 0.2 · **Max tokens:** 3000
 
 Merges a cluster of STAR+Reflection sketches produced across many evaluations into one canonical
 story for operator review.
@@ -1665,11 +1732,11 @@ Rules:
     "reflection":  { "type": "string" },
     "themes": {
       "type": "array",
+      "maxItems": 3,
       "items": {
         "type": "string",
         "enum": ["conflict", "failure", "influence_without_authority", "turnaround", "prioritization",
-                 "difficult_stakeholder", "technical_judgment", "team_building", "crisis", "change_management",
-                 "cost_reduction", "security_compliance", "m_and_a", "vendor_management", "scaling"]
+                 "difficult_stakeholder", "technical_judgment", "team_building"]
       }
     },
     "uncertain_details":       { "type": "array", "items": { "type": "string" } },
@@ -2314,6 +2381,19 @@ draft survive restart; reclaiming a task with a saved result does not call the m
 The operator reviews and copies the draft. Drafting never marks a reminder done or moves a stage.
 
 ---
+
+## Hacker News hiring comments (no prompt)
+
+The `hn_hiring` source (SPEC.md Appendix A) turns each top-level comment of the monthly "Who is
+hiring?" thread into one posting without a new model call, so there is no new schema or prompt
+version. The thread's own rules ask for a first line of `Company | Role | Location | REMOTE | ...`;
+the adapter splits that line on `|` (organization first, then title, remote flag and employment
+type), keeps the whole comment as the description, and leaves every field it cannot read empty.
+Free text with no `|` in its first line becomes a posting titled with that line. A posting with no
+readable title is kept and goes through Tiers 0 to 3 like any other: uncertainty escalates and
+never rejects (hard rule 4), and the Tier 1 prompt (P1) reads the description, which is the
+comment itself. If a model-based extraction is added later, it needs a P-number, a schema and a
+quarantine path here first (hard rule 3).
 
 ## Prompt maintenance
 

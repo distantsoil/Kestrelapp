@@ -2,7 +2,7 @@
 
 Run:  uv run --extra dev python scripts/soak_prompts.py [--runs 3] [--out DIR] [--only cover]
 
-For every rubric (cover letter P4 cover/v3, engagement outline P4C v3) and every invented posting
+For every rubric (cover letter P4 cover/v4, engagement outline P4C v3) and every invented posting
 in tests/fixtures/soak/, it builds the prompt with the app's own builder, calls the app's own
 generator against the local Ollama named in the app's settings, and applies deterministic
 checks. Each check has a pass-rate floor in tests/fixtures/soak/thresholds.toml (100 percent for
@@ -234,28 +234,28 @@ _PLAIN = Check(
 RUBRICS: dict[str, Rubric] = {
     "cover": Rubric(
         "cover",
-        "cover/v3",
+        "cover/v4",
         generate_cover,
         [
             Check(
                 "first_person",
                 "safety",
                 "the letter is not in the first person",
-                "Tighten the first-person rule in cover/v3 (PROMPTS.md P4).",
+                "Tighten the first-person rule in cover/v4 (PROMPTS.md P4).",
                 _first_person("cover_letter"),
             ),
             Check(
                 "greeting",
                 "safety",
                 'the letter does not open "Dear Hiring Team,"',
-                "Make the greeting rule in cover/v3 stricter and put it first.",
+                "Make the greeting rule in cover/v4 stricter and put it first.",
                 _greeting,
             ),
             Check(
                 "word_count",
                 "style",
                 "the body is outside 250 to 350 words",
-                "Restate the length rule in cover/v3 or lower max_tokens.",
+                "Restate the length rule in cover/v4 or lower max_tokens.",
                 _words("cover_letter"),
             ),
             _CLAIMS,

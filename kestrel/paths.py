@@ -69,6 +69,12 @@ def runtime_json() -> Path:
     return data_home() / "runtime.json"
 
 
+def startup_health_json() -> Path:
+    """How many starts in a row have not finished (kestrel.startup_health, D-UI-252). Next to
+    runtime.json, outside the database, so it can be read when the database is the problem."""
+    return data_home() / "startup.json"
+
+
 def window_state_json() -> Path:
     """The desktop window's own remembered state (its light or dark theme), read before the
     loading page paints so the first frame matches (D-UI-89)."""
@@ -90,6 +96,17 @@ def ml_dir() -> Path:
     """Where the reranker and its fitted PCA are persisted (SPEC-MODULES 5.4). Lives under the
     writable data dir, never beside the read-only packaged app."""
     return data_dir() / "ml"
+
+
+def secrets_dir() -> Path:
+    """Per-install secrets that must never leave this computer (D-SEC-13). Never backed up and
+    never restored from a backup."""
+    return data_dir() / "secrets"
+
+
+def model_signing_key_path() -> Path:
+    """The 32-byte key that signs the saved reranker files (kestrel/learning/signing.py)."""
+    return secrets_dir() / "model_signing.key"
 
 
 def evals_dir() -> Path:

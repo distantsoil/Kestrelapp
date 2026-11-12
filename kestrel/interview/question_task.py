@@ -319,7 +319,7 @@ async def drain_interview_questions(
     reply is kept on the Quarantine page and retrying a model that cannot meet the schema would
     loop). Never raises into the caller's worker cycle."""
     from kestrel.interview.story_task import LEASE_S, _renew
-    from kestrel.queue.queue import TaskQueue
+    from kestrel.queue.queue import REASON_CREDIT, TaskQueue
     from kestrel.services.online_consent import held_at_run_time
 
     queue = TaskQueue(sm)
@@ -359,7 +359,9 @@ async def drain_interview_questions(
         if outcome.status == "error" and outcome.out_of_credit:
             # Not a failure of the task: the key has no credit. It goes back unstarted (hard
             # rule 5) and this drain stops, since leasing it again would only loop.
-            await queue.defer(task.id, outcome.error or "", worker_id=wid)
+            await queue.defer(
+                task.id, outcome.error or "", worker_id=wid, reason=REASON_CREDIT
+            )
             break
         if outcome.status == "error":
             await queue.fail(task.id, outcome.error or "error", worker_id=wid, retry=True)

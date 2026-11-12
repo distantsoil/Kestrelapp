@@ -60,7 +60,7 @@ class TeamtailorAdapter:
 
     def validate_config(self, config: dict) -> None:
         domain = config.get("domain")
-        if not isinstance(domain, str) or not _DOMAIN.match(domain):
+        if not isinstance(domain, str) or not _DOMAIN.fullmatch(domain):
             raise SourceConfigError(
                 "teamtailor source requires a 'domain' (the career site's address without "
                 "https://, such as career.example.org or example.teamtailor.com)"

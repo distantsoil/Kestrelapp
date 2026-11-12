@@ -1,0 +1,37 @@
+{# One suggested company (#123). The state is decided in the background and the row updates by
+   itself: Checking (polled alone, so the other rows never redraw), Found on a platform (Add),
+   No board Kestrel can read (Add by hand, Check again), Could not check (Try again). #}
+{% import "partials/sources_macros.html" as sm %}
+<div class="src-sugc{{ ' is-settling' if settle else '' }}" data-testid="suggestion" data-state="{{ sg.state }}" data-name="{{ sg.name }}"
+  {%- if sg.state == 'checking' %} hx-get="/sources/suggestions/row?name={{ sg.name | urlencode }}" hx-trigger="every 3s [srcPollOk()]" hx-swap="outerHTML"{% endif %}>
+  {{ sm.mono(sg.name) }}
+  <div class="src-rn">
+    <div class="src-nm">{{ sg.name }}</div>
+    <div class="src-ty" data-testid="suggestion-note">
+      {%- if sg.state == 'plain' %}
+        {{ sg.reason }}
+      {%- elif sg.state == 'found' %}
+        Found on {{ sg.board.platform or 'a board' }}{% if sg.board.jobs %}, {{ sg.board.jobs }} open{% endif %}
+      {%- elif sg.state == 'none' %}
+        No board Kestrel can read; add it by hand
+      {%- elif sg.state == 'error' %}
+        Could not check. Try again
+      {%- else %}
+        <span class="src-sugchk" data-testid="suggestion-checking"><span class="spin" aria-hidden="true"></span><span role="status">Checking for a public board</span></span>
+      {%- endif %}
+    </div>
+  </div>
+  {%- if sg.state == 'none' %}
+  <span class="src-sugbtns">
+    <button type="button" class="k-btn k-btn--sm" hx-get="/sources/add/ats?company={{ sg.name | urlencode }}" hx-target="#src-sheet-slot" hx-swap="innerHTML" data-testid="suggestion-add-by-hand">Add by hand</button>
+    <button type="button" class="k-btn k-btn--quiet k-btn--sm" hx-post="/sources/suggestions/recheck" hx-vals='{{ {"name": sg.name} | tojson }}' hx-target="#src-list" hx-swap="outerHTML" data-testid="suggestion-check-again">Check again</button>
+  </span>
+  {%- elif sg.state == 'error' %}
+  <button type="button" class="k-btn k-btn--sm" hx-post="/sources/suggestions/recheck" hx-vals='{{ {"name": sg.name} | tojson }}' hx-target="#src-list" hx-swap="outerHTML" data-testid="suggestion-try-again">Try again</button>
+  {%- elif sg.state == 'checking' %}
+  <span></span>
+  {%- else %}
+  <button type="button" class="k-btn k-btn--primary k-btn--sm" hx-post="/sources/suggestions/add" hx-vals='{{ {"name": sg.name} | tojson }}' hx-target="#src-list" hx-swap="outerHTML" data-busy-text="Looking…" data-testid="suggestion-add">Add</button>
+  {%- endif %}
+  <button type="button" class="k-btn k-btn--sm" hx-post="/sources/suggestions/dismiss" hx-vals='{{ {"name": sg.name} | tojson }}' hx-target="#src-list" hx-swap="outerHTML" data-testid="suggestion-dismiss">Dismiss</button>
+</div>

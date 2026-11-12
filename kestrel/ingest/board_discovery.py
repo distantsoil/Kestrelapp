@@ -46,6 +46,7 @@ PLATFORMS = {
     "teamtailor": "Teamtailor",
     "personio": "Personio",
     "breezy": "Breezy HR",
+    "jobvite": "Jobvite",
 }
 # The config key that names the company, per kind, and whether the platform treats it as case
 # sensitive (the Ashby and SmartRecruiters adapters pass it through unchanged).
@@ -58,11 +59,12 @@ _KEY = {
     "teamtailor": "domain",
     "personio": "slug",
     "breezy": "slug",
+    "jobvite": "slug",
 }
 # Kinds whose source config carries the company's display name (the payload does not name it).
 _NAMED_BY_COMPANY_NAME = {
     "ashby", "rippling", "adp", "paylocity", "workable", "recruitee", "teamtailor",
-    "personio", "breezy",
+    "personio", "breezy", "jobvite",
 }
 _CASE_SENSITIVE = {"ashby", "smartrecruiters"}  # adp cids are UUIDs: compared lowercased
 
@@ -100,6 +102,10 @@ class BoardRef:
             return ("workday", c["tenant"].lower(), c["dc"].lower(), c["site"].lower())
         if self.kind == "personio":  # the .de and .com accounts are separate companies
             return ("personio", self.config["slug"].lower(), self.config.get("tld", "de"))
+        if self.kind == "jobvite":  # a board named by its slug or by its feed's company id
+            if "slug" in self.config:
+                return ("jobvite", self.config["slug"].lower())
+            return ("jobvite", "c:" + self.config["company_eid"])
         value = self.config[_KEY[self.kind]]
         return (self.kind, value if self.kind in _CASE_SENSITIVE else value.lower())
 
@@ -126,6 +132,7 @@ _BREEZY_HOSTS = {
     "www", "app", "api", "support", "help", "docs", "blog", "status", "cdn", "assets", "static",
     "marketing", "partners", "developers", "portal",
 }
+_JOBVITE_EID = re.compile(r"[A-Za-z0-9]{4,32}")
 _PERSONIO_HOST = re.compile(r"^([a-z0-9][a-z0-9-]{0,62})\.jobs\.personio\.(de|com)$")
 _RECRUITEE_MARKER = re.compile(
     r"(?:https?:)?//([a-z0-9][a-z0-9-]{0,62})\.recruitee\.com/(?:api/offers|o/|widget|careers)",
@@ -194,6 +201,12 @@ def board_from_url(url: str | None) -> BoardRef | None:
     if host == "jobs.lever.co":
         company = _slug(first)
         return BoardRef("lever", {"company": company}) if company else None
+    if host == "jobs.jobvite.com":
+        slug = _slug(first)
+        return BoardRef("jobvite", {"slug": slug}) if slug else None
+    if host == "app.jobvite.com" and parts.path.lower() == "/companyjobs/xml.aspx":
+        eid = (parse_qs(parts.query).get("c") or [""])[0]
+        return BoardRef("jobvite", {"company_eid": eid}) if _JOBVITE_EID.fullmatch(eid) else None
     if host == "jobs.ashbyhq.com":
         token = _slug(first)
         return BoardRef("ashby", {"token": token}) if token else None

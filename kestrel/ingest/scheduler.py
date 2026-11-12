@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel.db.base import iso, utcnow
 from kestrel.db.models import Setting, Source, Task
 from kestrel.queue import TaskQueue
-from kestrel.queue.queue import claimable
+from kestrel.queue.queue import DEFER_REASON_KEY, DEFERRED_KEY, claimable
 
 
 def _parse(ts: str | None) -> datetime | None:
@@ -175,21 +175,35 @@ async def enqueue_all_scrapes(
 async def cancel_pending_scrapes(session: AsyncSession, *, now: datetime | None = None) -> int:
     """Cancel the scan in progress: every claimable scrape task (pending, or leased with an
     expired lease and attempts left, which a worker would pick up next), including one held by
-    a switched-off track, becomes `cancelled`. A
+    a switched-off track and one the queue holds under an approval hold (D-QUEUE-3, the
+    operator's deliberate command is not a claim), becomes `cancelled`. A
     scrape under a LIVE lease is left to finish its current source; killing it mid-write would
-    leave a half-recorded scrape run. No source's last_run_at is touched (a cancelled search did
-    not run, and Sources must not say it did); instead a short scan hold stops the scheduler
-    queuing the due ones straight back (SCAN_HOLD). Returns the number of rows actually
-    cancelled. Commits."""
+    leave a half-recorded scrape run. The deferred mark is cleared with the cancellation, so
+    the deferred count stays honest (a cancelled task is no longer held). No source's last_run_at
+    is touched (a cancelled search did not run, and Sources must not say it did); instead a short
+    scan hold stops the scheduler queuing the due ones straight back (SCAN_HOLD). Returns the
+    number of rows actually cancelled. Commits."""
     now_dt = now or utcnow()
     now_s = iso(now_dt)
     res = await session.execute(
         update(Task)
-        # A held scrape (switched-off track, D-UI-68) is cancelled too (review finding 1).
-        .where(Task.type == "scrape", claimable(now_s, include_held=True))
+        # A held scrape (switched-off track, D-UI-68) is cancelled too (review finding 1),
+        # and a queue-held one (approval hold, D-QUEUE-3, #154); and a scrape sleeping in its
+        # retry backoff (issue #153): an operator's stop must not leave one waiting, so every
+        # pending scrape is reachable by the cancel, and its hold marks are cleared below.
+        .where(
+            Task.type == "scrape",
+            or_(
+                claimable(now_s, include_held=True, include_deferred=True),
+                Task.status == "pending",
+            ),
+        )
         .values(
             status="cancelled", last_error="cancelled by the operator", worker_id=None,
             lease_until=None, updated_at=now_s,
+            payload=func.json_remove(
+                func.json_remove(Task.payload, f"$.{DEFERRED_KEY}"), f"$.{DEFER_REASON_KEY}"
+            ),
         )
     )
     cancelled = int(res.rowcount or 0)

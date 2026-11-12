@@ -1,0 +1,114 @@
+{
+ "user": {
+  "about": "This account automatically submits a &#x27;Who is Hiring?&#x27; post at 11 AM Eastern time on the first weekday of every month.",
+  "created": 1287610767,
+  "id": "whoishiring",
+  "karma": 50113,
+  "submitted": [
+   900003,
+   900002,
+   900001
+  ]
+ },
+ "items": {
+  "900003": {
+   "by": "whoishiring",
+   "descendants": 10,
+   "id": 900003,
+   "kids": [
+    900201
+   ],
+   "score": 50,
+   "text": "Share your information if you are looking for work.",
+   "time": 1793635297,
+   "title": "Ask HN: Who wants to be hired? (November 2026)",
+   "type": "story"
+  },
+  "900002": {
+   "by": "whoishiring",
+   "descendants": 6,
+   "id": 900002,
+   "kids": [
+    900101,
+    900102,
+    900103,
+    900104,
+    900105,
+    900106
+   ],
+   "score": 250,
+   "text": "Please state the location and include REMOTE for remote work, REMOTE (US)&#x2F;or similar if the country is restricted, and ONSITE when remote work is not an option.",
+   "time": 1793635297,
+   "title": "Ask HN: Who is hiring? (November 2026)",
+   "type": "story"
+  },
+  "900001": {
+   "by": "whoishiring",
+   "descendants": 5,
+   "id": 900001,
+   "kids": [],
+   "score": 200,
+   "text": "Please state the location.",
+   "time": 1790956897,
+   "title": "Ask HN: Who is hiring? (October 2026)",
+   "type": "story"
+  },
+  "900101": {
+   "by": "user_one",
+   "id": 900101,
+   "parent": 900002,
+   "text": "Northwind Labs | Senior Data Engineer | Remote (US) | Full time | $150k USD<p>We&#x27;re hiring a Senior Data Engineer to help build our analytics platform. You&#x27;ll work in Python and Postgres.<p>Apply here: <a href=\"https:&#x2F;&#x2F;jobs.northwind.example&#x2F;roles&#x2F;data-engineer\" rel=\"nofollow\">https:&#x2F;&#x2F;jobs.northwind.example&#x2F;roles&#x2F;data-engineer</a><p>Questions: jobs@northwind.example",
+   "time": 1793649324,
+   "type": "comment"
+  },
+  "900102": {
+   "by": "user_two",
+   "id": 900102,
+   "parent": 900002,
+   "text": "Contoso Works | Product Designer | London, UK | ONSITE | Full time<p>Design tools for small shops. Send a portfolio to design@contoso.example",
+   "time": 1793649384,
+   "type": "comment"
+  },
+  "900103": {
+   "by": "user_three",
+   "deleted": true,
+   "id": 900103,
+   "parent": 900002,
+   "time": 1793649444,
+   "type": "comment"
+  },
+  "900104": {
+   "by": "user_four",
+   "dead": true,
+   "id": 900104,
+   "parent": 900002,
+   "text": "Spam | Buy | Now",
+   "time": 1793649504,
+   "type": "comment"
+  },
+  "900105": {
+   "by": "user_five",
+   "id": 900105,
+   "parent": 900002,
+   "text": "Fabrikam Plumbing is looking for a Licensed Plumber in Springfield. Hybrid schedule.<p>Call the office or email hr@fabrikam.example",
+   "time": 1793649564,
+   "type": "comment"
+  },
+  "900106": {
+   "by": "user_six",
+   "id": 900106,
+   "parent": 900002,
+   "text": "Tailspin Co | Hybrid | Staff Engineer, Platform &amp; Tools | Contract<p>Hybrid in Toronto, three days a week.",
+   "time": 1793649624,
+   "type": "comment"
+  },
+  "900201": {
+   "by": "user_seven",
+   "id": 900201,
+   "parent": 900003,
+   "text": "Location: Anywhere<p>Seeking work as a designer.",
+   "time": 1793649324,
+   "type": "comment"
+  }
+ }
+}

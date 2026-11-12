@@ -15,7 +15,7 @@ from statistics import median
 from typing import Any
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import Settings
@@ -24,7 +24,7 @@ from kestrel.db.models import Evaluation, Opportunity, Task
 from kestrel.ingest import smart_filter
 from kestrel.ingest.location import parse_location
 from kestrel.pipeline.profile import load_profile
-from kestrel.queue.queue import claimable, requested_by_operator
+from kestrel.queue.queue import backing_off, claimable, requested_by_operator
 from kestrel.rules.helpers import value_in
 
 log = structlog.get_logger()
@@ -37,6 +37,29 @@ _BUSY_TYPES = ("scrape", "embed", "t1", "t2", "t3", "rescore")
 # Seconds per role when no evaluation has been timed yet: a local model reads a posting in
 # about this long. Stated to the operator as a rough figure.
 ROUGH_SECONDS_PER_ROLE = 60.0
+
+
+async def prior_lane(session: AsyncSession, opportunity_id: int) -> bool:
+    """Whether this role ever went through the background lane, which means a local model only
+    (D-SRC-13). Read from the role's own mark, which outlives the tasks (retention deletes
+    finished ones after 30 days, D-PERF-3); the task rows are kept as a second source."""
+    from sqlalchemy import exists, or_
+
+    marked = await session.scalar(
+        select(Opportunity.lane_local_only).where(Opportunity.id == opportunity_id)
+    )
+    if marked:
+        return True
+    return bool(await session.scalar(
+        select(exists().where(
+            Task.type.in_(("t1", "t2")),
+            Task.opportunity_id == opportunity_id,  # indexed copy (0030)
+            or_(
+                func.json_type(Task.payload, "$.lane").is_not(None),
+                func.json_extract(Task.payload, f"$.{LOCAL_ONLY}") == 1,
+            ),
+        ))
+    ))
 
 
 def lane_extra(pre_score: float) -> dict:
@@ -101,12 +124,15 @@ async def released_today(session: AsyncSession, today: str | None = None) -> int
 
 
 async def is_idle(session: AsyncSession) -> bool:
-    """Nothing the worker could claim, and no new role waiting for Tier 0."""
+    """Nothing the worker could claim or is only waiting to retry, and no new role waiting for
+    Tier 0. Normal-tier work waiting out a retry backoff is still the worker's (D-QUEUE-8): the
+    lane does not run ahead of it."""
+    now = utcnow_iso()
     busy = (
         await session.execute(
             select(func.count())
             .select_from(Task)
-            .where(Task.type.in_(_BUSY_TYPES), claimable(utcnow_iso()))
+            .where(Task.type.in_(_BUSY_TYPES), or_(claimable(now), backing_off(now)))
         )
     ).scalar_one()
     if busy:

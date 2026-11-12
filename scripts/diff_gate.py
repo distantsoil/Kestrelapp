@@ -195,7 +195,8 @@ def diff_coverage(
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False)
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False)
 
 
 def _commit_date(ref: str) -> str:

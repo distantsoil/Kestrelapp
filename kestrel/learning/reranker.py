@@ -9,17 +9,16 @@ from __future__ import annotations
 import asyncio
 import pickle
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import numpy as np
-import sklearn
 import structlog
-from sklearn.ensemble import HistGradientBoostingRegressor
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kestrel import paths
 from kestrel.config import Settings
-from kestrel.db.base import utcnow_iso
+from kestrel.db.base import iso, utcnow, utcnow_iso
 from kestrel.db.models import (
     Evaluation,
     MlModel,
@@ -28,10 +27,11 @@ from kestrel.db.models import (
     OpportunityEmbedding,
     Org,
     Source,
-    VerdictOverride,
 )
+from kestrel.learning import signing
 from kestrel.learning.capture import labeled_examples
 from kestrel.learning.features import FittedFeatures, embedding_of, fit_features
+from kestrel.learning.groups import group_key
 from kestrel.llm.embeddings import current_model
 from kestrel.pipeline.scoring import (
     _TOP_VERDICT,  # single source of truth for the per-track verdict
@@ -40,6 +40,15 @@ from kestrel.pipeline.scoring import (
 log = structlog.get_logger()
 LEGACY_EMBED_MODEL = "nomic-embed-text"
 
+
+
+def _sklearn_version() -> str:
+    """scikit-learn's version, imported on first use: the import costs most of a second, and
+    only training, loading or the Learning page need it (D-PERF). Recorded beside every
+    artifact because pickles are version-locked."""
+    import sklearn
+
+    return sklearn.__version__
 
 @dataclass
 class Row:
@@ -99,16 +108,6 @@ async def build_rows(
     emb = await _corpus_embeddings(session, ids, model)
 
     labeled = {ex.opportunity_id: ex for ex in await labeled_examples(session, track)}
-    override_ids = {
-        oid
-        for (oid,) in (
-            await session.execute(
-                select(VerdictOverride.opportunity_id).where(
-                    VerdictOverride.operator_score.is_not(None)
-                )
-            )
-        ).all()
-    }
     # tier-2 holistic and tier-1 verdict maps
     t2, t1 = {}, {}
     for ev in (
@@ -127,19 +126,35 @@ async def build_rows(
     orgs = {o.id: o for o in (await session.execute(select(Org))).scalars().all()}
     src_kind = {s.id: s.kind for s in (await session.execute(select(Source))).scalars().all()}
 
-    rows: list[Row] = []
-    for oid, opp in opp_by_id.items():
-        vec = emb.get(oid)
-        if vec is None:
+    # One row per duplicate group (#122, D-LRN-1): copies of one posting are one role, and one
+    # judgment. A group the operator rated (or overrode with a score) trains on its newest
+    # judgment, already one per group; any other group trains once on the Tier 2 holistic of its
+    # canonical copy, else its lowest id.
+    gkey = {oid: group_key(oid, opp.dedup_group_id) for oid, opp in opp_by_id.items()}
+    rated_groups = {gkey[oid] for oid in labeled if oid in gkey}
+    chosen: dict[str, int] = {}
+    for oid in sorted(opp_by_id):
+        key = gkey[oid]
+        if key in rated_groups:
+            if oid in labeled and emb.get(oid) is not None:
+                chosen[key] = oid
             continue
+        if oid not in t2 or emb.get(oid) is None:
+            continue
+        held = chosen.get(key)
+        if held is None or (opp_by_id[oid].is_canonical and not opp_by_id[held].is_canonical):
+            chosen[key] = oid
+
+    rows: list[Row] = []
+    for oid in sorted(chosen.values()):
+        opp = opp_by_id[oid]
+        vec = emb[oid]
         if oid in labeled:
             target = labeled[oid].operator_score
             is_labeled, op_verdict = True, labeled[oid].verdict
-        elif oid in t2 and oid not in override_ids:
+        else:
             target = t2[oid]
             is_labeled, op_verdict = False, None
-        else:
-            continue
         opp._source_kind = src_kind.get(opp.source_id)
         feats = fitted.transform(opp, orgs.get(opp.org_id), vec)
         rows.append(Row(oid, feats, float(target), is_labeled, op_verdict, t1.get(oid)))
@@ -268,6 +283,8 @@ async def train_reranker(
     train_rows, held = _split_labeled(rows)
     x_train = np.vstack([r.features for r in train_rows])
     y_train = np.asarray([r.target for r in train_rows])
+    from sklearn.ensemble import HistGradientBoostingRegressor  # lazy: see _sklearn_version
+
     model = await asyncio.to_thread(
         HistGradientBoostingRegressor(random_state=0, max_iter=300).fit, x_train, y_train,
     )
@@ -357,6 +374,9 @@ def _refusal_reasons(criteria: dict, metrics: dict, settings: Settings) -> list[
     return reasons
 
 
+_FILE_TRACKS = {"employment": "employment", "consulting": "consulting"}
+
+
 async def _save_model(
     session: AsyncSession,
     *,
@@ -368,14 +388,23 @@ async def _save_model(
     promoted: bool,
     promoted_by: str,
 ) -> int:
+    # The file name takes the track from this fixed table, never the value that came in (a
+    # request's ?track= or a task payload), so no name can leave the ml folder (D-SEC-42).
+    file_track = _FILE_TRACKS.get(track)
+    if file_track is None:
+        raise ValueError("unknown track for a reranker file")
     paths.ml_dir().mkdir(parents=True, exist_ok=True)
     version = utcnow_iso().replace(":", "").replace(".", "")
-    model_path = paths.ml_dir() / f"reranker_{track}_{version}.pkl"
-    feat_path = paths.ml_dir() / f"features_{track}_{version}.pkl"
+    model_path = paths.ml_dir() / f"reranker_{file_track}_{version}.pkl"
+    feat_path = paths.ml_dir() / f"features_{file_track}_{version}.pkl"
     with open(model_path, "wb") as fh:
         pickle.dump(model, fh)
     with open(feat_path, "wb") as fh:
         pickle.dump(fitted, fh)
+    # Signed before the row exists (D-SEC-13): the loader refuses any file without this install's
+    # signature, so a file swapped in later, or copied from another install, never unpickles.
+    model_sig = signing.sign_file(model_path)
+    feat_sig = signing.sign_file(feat_path)
 
     if promoted:  # only one active reranker per track
         for m in (
@@ -402,7 +431,9 @@ async def _save_model(
         metrics=metrics,
         artifact_path=str(model_path),
         pca_artifact_path=str(feat_path),
-        sklearn_version=sklearn.__version__,
+        sklearn_version=_sklearn_version(),
+        artifact_signature=model_sig,
+        pca_artifact_signature=feat_sig,
         feature_names=fitted.feature_names(),
         is_active=promoted,
         promoted_at=utcnow_iso() if promoted else None,
@@ -453,14 +484,22 @@ _HONEST_SAMPLE_FLOOR = 5
 
 def _artifact_is_loadable(ml: MlModel) -> bool:
     """Would load_active_reranker accept this row? Read-only and cheap: no unpickling, no writes,
-    no Notification. Mirrors that function's two refusal conditions so the /calibrate panel cannot
-    claim a reranker is active when loading it would in fact fall back to the LLM."""
+    no Notification. Mirrors that function's refusal conditions (data folder, sklearn version,
+    signatures) so the /calibrate panel and Settings > Scoring and learning cannot claim a
+    reranker is active when loading it would in fact fall back to the LLM."""
     from pathlib import Path
 
-    if ml.sklearn_version != sklearn.__version__:
+    if ml.sklearn_version != _sklearn_version():
         return False
-    for path in (ml.artifact_path, ml.pca_artifact_path):
+    for path, sig in (
+        (ml.artifact_path, ml.artifact_signature),
+        (ml.pca_artifact_path, ml.pca_artifact_signature),
+    ):
         if not path or not Path(path).exists():
+            return False
+        if paths.confined_file(path, paths.data_dir()) is None:  # outside the data folder
+            return False
+        if signing.read_verified(path, sig) is None:  # unsigned, edited or another install's
             return False
     return True
 
@@ -697,9 +736,29 @@ class LoadedReranker:
     fitted: FittedFeatures
 
 
+# The module's own clock alias: tests patch this, never the global clock (D-TEST-2).
+_utcnow = utcnow
+# One notice per reason a day: the loader runs once per Tier 1 task, per drift check and per
+# status read, and a refused row stays active until a retrain replaces it (D-LEARN-10).
+NOTICE_EVERY = timedelta(days=1)
+
+
 async def _notify(
     session: AsyncSession, kind: str, title: str, *, severity: str, body=None
 ) -> None:
+    """Add a notice and commit, unless the same notice (kind and words) was added in the last
+    NOTICE_EVERY: a refusal is told once, not once per load."""
+    since = iso(_utcnow() - NOTICE_EVERY)
+    same = (
+        await session.execute(
+            select(Notification.id)
+            .where(Notification.kind == kind, Notification.title == title,
+                   Notification.created_at >= since)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if same is not None:
+        return
     session.add(
         Notification(kind=kind, title=title, body=body, severity=severity, delivered_channels=[])
     )
@@ -712,7 +771,9 @@ async def load_active_reranker(
     """Load the active reranker, or None (fall back to the LLM Tier 1). A pickle trained under a
     different sklearn version is REFUSED with a notification rather than loaded (version-locked).
     With `embed_model`, a reranker trained on another embedding model is also refused (quietly:
-    it is expected right after an engine switch, until the next retrain)."""
+    it is expected right after an engine switch, until the next retrain). An artifact path outside
+    Kestrel's data folder is REFUSED with a notification (issue #173): a pickle can run code, so a
+    foreign file is never unpickled."""
     ml = (
         await session.execute(
             select(MlModel)
@@ -723,6 +784,23 @@ async def load_active_reranker(
     ).scalar_one_or_none()
     if ml is None:
         return None
+    # A restored or edited database can name ANY file on the computer as a model artifact
+    # (issue #173): loading a pickle can run arbitrary code, so refuse to load a path outside
+    # Kestrel's own data folder rather than unpickle a foreign file. A normal artifact lives in
+    # paths.ml_dir(), inside the data folder, so same-machine models are unaffected. This is the
+    # second line of defense; restore itself deactivates the reranker and clears its paths.
+    for stored in (ml.artifact_path, ml.pca_artifact_path):
+        if stored and paths.confined_file(stored, paths.data_dir()) is None:
+            log.info("reranker_path_outside_data_folder", track=track)
+            await _notify(
+                session,
+                "reranker_refused",
+                f"Reranker for {track} refused: its model file is outside Kestrel's data folder, "
+                "so it was not loaded. Scoring is using the LLM tier until a reranker is "
+                "retrained on this machine.",
+                severity="warning",
+            )
+            return None
     trained_on = (ml.metrics or {}).get("embed_model") if isinstance(ml.metrics, dict) else None
     # A reranker from before embed_model was recorded was trained on the only engine there was,
     # Ollama's nomic-embed-text: treat it as such, so drift never feeds it 384-dim vectors
@@ -732,21 +810,39 @@ async def load_active_reranker(
         log.info("reranker_embed_model_mismatch", track=track, trained_on=trained_on,
                  current=embed_model)
         return None
-    if ml.sklearn_version != sklearn.__version__:
+    if ml.sklearn_version != _sklearn_version():
         await _notify(
             session,
             "reranker_refused",
             f"Reranker for {track} refused: trained under sklearn {ml.sklearn_version}, "
-            f"running {sklearn.__version__}. Falling back to LLM Tier 1.",
+            f"running {_sklearn_version()}. Falling back to LLM Tier 1.",
+            severity="warning",
+        )
+        return None
+    # Signature check BEFORE any unpickling (D-SEC-13). The verified bytes are what get loaded.
+    model_bytes = signing.read_verified(ml.artifact_path, ml.artifact_signature)
+    fitted_bytes = signing.read_verified(ml.pca_artifact_path, ml.pca_artifact_signature)
+    if model_bytes is None or fitted_bytes is None:
+        unsigned = not ml.artifact_signature or not ml.pca_artifact_signature
+        log.info("reranker_signature_refused", track=track, unsigned=unsigned)
+        await _notify(
+            session,
+            "reranker_refused",
+            (
+                f"Reranker for {track} refused: it was saved before model files were signed, "
+                "so it cannot be verified. Scoring is using the LLM tier until it retrains."
+                if unsigned
+                else f"Reranker for {track} refused: its model file failed its signature "
+                "check (changed, or not made on this computer). Scoring is using the LLM tier "
+                "until it retrains."
+            ),
             severity="warning",
         )
         return None
     try:
-        with open(ml.artifact_path, "rb") as fh:
-            model = pickle.load(fh)
-        with open(ml.pca_artifact_path, "rb") as fh:
-            fitted = pickle.load(fh)
-    except (OSError, pickle.UnpicklingError) as exc:
+        model = pickle.loads(model_bytes)
+        fitted = pickle.loads(fitted_bytes)
+    except (pickle.UnpicklingError, EOFError, AttributeError, ImportError) as exc:
         await _notify(
             session,
             "reranker_refused",

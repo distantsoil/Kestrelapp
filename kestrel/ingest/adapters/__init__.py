@@ -8,10 +8,13 @@ from kestrel.ingest.adapters.arbeitnow import ArbeitnowAdapter
 from kestrel.ingest.adapters.ashby import AshbyAdapter
 from kestrel.ingest.adapters.breezy import BreezyAdapter
 from kestrel.ingest.adapters.careers_page import CareersPageAdapter
+from kestrel.ingest.adapters.fourdayweek import FourDayWeekAdapter
 from kestrel.ingest.adapters.greenhouse import GreenhouseAdapter
 from kestrel.ingest.adapters.himalayas import HimalayasAdapter
+from kestrel.ingest.adapters.hn_hiring import HnHiringAdapter
 from kestrel.ingest.adapters.jobicy import JobicyAdapter
 from kestrel.ingest.adapters.jobspy import JobSpyAdapter
+from kestrel.ingest.adapters.jobvite import JobviteAdapter
 from kestrel.ingest.adapters.lever import LeverAdapter
 from kestrel.ingest.adapters.paylocity import PaylocityAdapter
 from kestrel.ingest.adapters.personio import PersonioAdapter
@@ -56,6 +59,7 @@ for _adapter in (
     PersonioAdapter(),
     BreezyAdapter(),
     RecruiteeAdapter(),
+    JobviteAdapter(),
     CareersPageAdapter(),
     RemoteRocketshipAdapter(),
     JobSpyAdapter(),
@@ -65,6 +69,8 @@ for _adapter in (
     HimalayasAdapter(),
     WeWorkRemotelyAdapter(),
     JobicyAdapter(),
+    FourDayWeekAdapter(),
+    HnHiringAdapter(),
     RemotiveAdapter(),
 ):
     register(_adapter)

@@ -104,8 +104,12 @@ def live(monkeypatch, request):
 
     monkeypatch.setattr(routes_control, "_probe_ollama", _down, raising=False)
     _seed()
-    if "while_looking_up" in request.node.name:
+    if any(k in request.node.name for k in ("while_looking_up", "suggested_row", "settling_row")):
         _seed_pursuits()
+    if "action_layout" in request.node.name:
+        _seed_state_rows()
+    if "while_looking_up" in request.node.name:
+        _seed_found_boards()  # the rows already say Found on a board, so Add is on offer
     if "legacy_backlog" in request.node.name:
         from tests.test_sources_lane import _seed as seed_backlog
 
@@ -118,7 +122,8 @@ def live(monkeypatch, request):
             for key, value in _rows(mode="hosted").items():
                 await s.merge(Setting(key=key, value=value))
         _app_db(seed)
-    with running_server(worker=False) as base, sync_playwright() as p:
+    worker = any(k in request.node.name for k in ('suggested_rows_resolve', 'settling_row'))
+    with running_server(worker=worker) as base, sync_playwright() as p:
         browser = launch_sync(p)
         yield base, browser
         browser.close()
@@ -467,6 +472,59 @@ def _seed_pursuits() -> None:
     asyncio.run(go())
 
 
+def _seed_state_rows() -> None:
+    """Four suggested companies, one in each state: found, none, error, checking."""
+    from kestrel.db.models import Opportunity, Org, Pursuit
+    from kestrel.ingest.orgs import normalized_name
+    from kestrel.services import source_suggestions as ss
+
+    names = ["Tidewater Freight Group", "Ironbridge Supply",
+             "Monarca Food Solutions (Evans Food Group / Palmex)",
+             "Mindful Health Solutions (Radial)"]
+
+    async def go() -> None:
+        await reset_engine()
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            for n in names:
+                o = Org(name=n, normalized_name=normalized_name(n))
+                s.add(o)
+                await s.flush()
+                opp = Opportunity(track="employment", opp_type="job", external_id=n,
+                                  title="Role", org_name=n, org_id=o.id)
+                s.add(opp)
+                await s.flush()
+                s.add(Pursuit(opportunity_id=opp.id, track="employment", status="applied"))
+            await ss.record_board_lookup(s, names[0], found=True, platform="Greenhouse",
+                                         jobs=12, kind="greenhouse", config={"token": "t"})
+            await ss.record_board_lookup(s, names[1], found=False)
+            await ss.record_check_error(s, names[2])
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    asyncio.run(go())
+
+
+def _seed_found_boards() -> None:
+    from kestrel.services import source_suggestions as ss
+
+    async def go() -> None:
+        await reset_engine()
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            for name in ("Tidewater Freight Group", "Ironbridge Supply"):
+                await ss.record_board_lookup(s, name, found=True, platform="Greenhouse", jobs=3,
+                                             kind="greenhouse", config={"token": "x"})
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    asyncio.run(go())
+
+
 _SUG_BOXES = """row => { const r = row.getBoundingClientRect();
   const q = s => { const e = row.querySelector(s); if (!e || e.offsetParent === null) return null;
     const b = e.getBoundingClientRect();
@@ -516,6 +574,277 @@ def test_a_suggested_row_keeps_its_layout_while_looking_up(live, theme, width):
         assert during["dismiss"] is not None
         assert abs(during["dismiss"]["l"] - before["dismiss"]["l"]) <= 1, (before, during)
         assert during["dismiss"]["l"] >= during["sub"]["r"] - 1, during
+        assert not errors, errors
+    finally:
+        for route in release:
+            route.abort()
+        ctx.close()
+
+
+def _stub_board_lookup(monkeypatch, outcomes: dict[str, str]) -> list[str]:
+    """Answer every board lookup in the running app without the network. `outcomes` maps a
+    company to "none", "down" (no definite answer) or "found". Returns the names looked up."""
+    from kestrel.ingest import board_lookup
+
+    seen: list[str] = []
+
+    async def fake(name, http):
+        seen.append(name)
+        how = outcomes.get(name, "none")
+        match = (board_lookup.BoardMatch("greenhouse", {"token": "x"}, 12, "Greenhouse")
+                 if how == "found" else None)
+        return board_lookup.LookupResult(
+            company=name, match=match, tried=["greenhouse:x"], inconclusive=how == "down")
+
+    monkeypatch.setattr(board_lookup, "find_company_board", fake)
+    return seen
+
+
+def _db(action):
+    """Run `action(session)` against the test's database. A thread of its own: the browser
+    driver keeps an event loop running in the test thread."""
+    import threading
+
+    async def go() -> None:
+        await reset_engine()
+        engine = make_async_engine(paths.db_path())
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        async with sm() as s:
+            await action(s)
+            await s.commit()
+        await engine.dispose()
+        forget_engine()
+
+    worker = threading.Thread(target=lambda: asyncio.run(go()))
+    worker.start()
+    worker.join()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 390])
+def test_suggested_rows_resolve_by_themselves_in_the_background_check(
+    live, monkeypatch, theme, width
+):
+    """#123 (a): nobody presses anything; each row goes from Checking to its answer."""
+    seen = _stub_board_lookup(monkeypatch, {"Tidewater Freight Group": "none",
+                                            "Ironbridge Supply": "found"})
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        none_row = page.locator('[data-testid="suggestion"][data-name="Tidewater Freight Group"]')
+        found_row = page.locator('[data-testid="suggestion"][data-name="Ironbridge Supply"]')
+        none_row.wait_for()
+        none_row.locator('[data-testid="suggestion-add-by-hand"]').wait_for(timeout=60000)
+        found_row.locator('[data-testid="suggestion-add"]').wait_for(timeout=60000)
+        assert none_row.get_attribute("data-state") == "none"
+        assert "No board Kestrel can read" in none_row.inner_text()
+        assert none_row.locator('[data-testid="suggestion-check-again"]').count() == 1
+        assert "Found on Greenhouse, 12 open" in found_row.inner_text()
+        assert sorted(seen) == ["Ironbridge Supply", "Tidewater Freight Group"]
+        shot = os.environ.get("KESTREL_SHOTS")
+        if shot:
+            os.makedirs(shot, exist_ok=True)
+            page.locator(".src-sugs").screenshot(path=f"{shot}/resolved-{theme}-{width}.png")
+        for row in (none_row, found_row):
+            boxes = page.evaluate(_SUG_BOXES, row.element_handle())
+            kids = boxes["kids"]
+            for i, a in enumerate(kids):
+                assert a["l"] >= boxes["row"]["l"] - 1 and a["r"] <= boxes["row"]["r"] + 1, kids
+                for b in kids[i + 1:]:
+                    assert not _overlaps(a, b), (a, b, theme, width)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def _settle_animation(live, monkeypatch, reduce: str) -> str:
+    """The animation name on a suggestion row that settled through its own poll. The lookup is
+    held until the page shows Checking, so the row really settles by itself."""
+    import threading
+
+    from kestrel.ingest import board_lookup
+
+    gate = threading.Event()
+
+    async def held(name, http):
+        import asyncio as aio
+
+        await aio.to_thread(gate.wait, 60)
+        return board_lookup.LookupResult(company=name, match=None, tried=["g:x"])
+
+    monkeypatch.setattr(board_lookup, "find_company_board", held)
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion=reduce)
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base}/sources")
+        page.wait_for_selector('[data-testid="suggestion"][data-state="checking"]')
+        gate.set()
+        settled = '[data-testid="suggestion"][data-state="none"].is-settling'
+        page.wait_for_selector(settled, timeout=60000)
+        return page.locator(settled).first.locator(".src-rn").evaluate(
+            "e => getComputedStyle(e).animationName")
+    finally:
+        gate.set()
+        ctx.close()
+
+
+def test_a_settling_row_fades_in_to_its_answer(live, monkeypatch):
+    assert _settle_animation(live, monkeypatch, "no-preference") != "none"
+
+
+def test_a_settling_row_does_not_animate_with_reduced_motion(live, monkeypatch):
+    assert _settle_animation(live, monkeypatch, "reduce") == "none"
+
+
+def test_a_suggested_row_updates_on_the_first_press_when_the_lookup_cannot_answer(
+    live, monkeypatch
+):
+    """#123 (b): the page was loaded while the row offered Add; the remembered answer has since
+    gone. The first press must change the row (and nothing is remembered as not found)."""
+    from kestrel.services import source_suggestions as ss
+
+    _stub_board_lookup(monkeypatch, {"Tidewater Freight Group": "down"})
+
+    async def remember(s):
+        await ss.record_board_lookup(s, "Tidewater Freight Group", found=True,
+                                     platform="Greenhouse", jobs=3, kind="greenhouse",
+                                     config={"token": "tidewater"})
+
+    _db(remember)
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        row = page.locator('[data-testid="suggestion"][data-name="Tidewater Freight Group"]')
+        row.locator('[data-testid="suggestion-add"]').wait_for()
+
+        async def forget(s):
+            from kestrel.db.models import Setting
+
+            await s.delete(await s.get(Setting, ss.BOARD_CACHE_KEY))
+
+        _db(forget)
+        row.locator('[data-testid="suggestion-add"]').click()
+        page.wait_for_selector('[data-name="Tidewater Freight Group"][data-state="error"]',
+                               timeout=60000)
+        assert "Could not check. Try again" in row.inner_text()
+        assert row.locator('[data-testid="suggestion-add"]').count() == 0
+        assert row.locator('[data-testid="suggestion-try-again"]').count() == 1
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+
+def test_one_press_on_add_turns_a_suggested_row_with_no_board_into_add_by_hand(live, monkeypatch):
+    """#123 (b), the owner's case: the row offered Add from an old answer, the board has since
+    gone. One press must show "Add by hand" straight away, never a second press."""
+    from kestrel.services import source_suggestions as ss
+
+    outcomes = {"Tidewater Freight Group": "down"}  # the background check cannot answer
+    _stub_board_lookup(monkeypatch, outcomes)
+
+    async def remember(s):
+        await ss.record_board_lookup(s, "Tidewater Freight Group", found=True,
+                                     platform="Greenhouse", jobs=3, kind="greenhouse",
+                                     config={"token": "tidewater"})
+
+    _db(remember)
+    ctx, page, errors = _page(live, "light", 1280)
+    try:
+        row = page.locator('[data-testid="suggestion"][data-name="Tidewater Freight Group"]')
+        row.locator('[data-testid="suggestion-add"]').wait_for()
+
+        async def forget(s):
+            from kestrel.db.models import Setting
+
+            await s.delete(await s.get(Setting, ss.BOARD_CACHE_KEY))
+
+        _db(forget)
+        outcomes["Tidewater Freight Group"] = "none"  # the press finds no board
+        row.locator('[data-testid="suggestion-add"]').click()
+        row.locator('[data-testid="suggestion-add-by-hand"]').wait_for(timeout=60000)
+        assert row.get_attribute("data-state") == "none"
+        assert "No board Kestrel can read" in row.inner_text()
+        assert row.locator('[data-testid="suggestion-add"]').count() == 0
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+_ACTION_BOXES = """row => { const box = e => { const b = e.getBoundingClientRect();
+    return {l: b.left, r: b.right, tp: b.top, bt: b.bottom}; };
+  const vis = e => e.offsetParent !== null;
+  return {row: box(row), badge: box(row.querySelector('.src-mono')),
+    name: box(row.querySelector('.src-rn')),
+    buttons: Array.from(row.querySelectorAll('.k-btn')).filter(vis).map(e =>
+      ({t: e.textContent.trim(), ...box(e)})),
+    dismiss: box(row.querySelector('[data-testid="suggestion-dismiss"]')),
+    state: row.dataset.state}; }"""
+
+
+def _assert_actions_sit_right(b, where):
+    others = [x for x in b["buttons"] if x["t"] != "Dismiss"]
+    d = b["dismiss"]
+    for x in b["buttons"]:
+        assert x["l"] >= b["name"]["l"] - 1, ("a button left of the name", x, where)
+        assert x["r"] <= b["row"]["r"] + 1 and x["l"] >= b["row"]["l"] - 1, (x, where)
+        assert not _overlaps(x, b["badge"]) and not _overlaps(x, b["name"]), (x, where)
+    assert d["r"] >= b["row"]["r"] - 14, ("Dismiss is not on the right", d, b["row"], where)
+    for x in others:  # Dismiss beside the others (to their right) or directly under them
+        beside = d["tp"] < x["bt"] and d["l"] >= x["r"] - 1
+        below = d["tp"] >= x["bt"] - 1
+        assert beside or below, (d, x, where)
+        assert d["r"] >= x["r"] - 1, ("Dismiss is left of the actions", d, x, where)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 390])
+def test_suggestion_action_layout_in_every_state(live, theme, width):
+    """Found, No board, Could not check and Checking: the actions stay grouped on the right, clear
+    of the badge and the text, at a phone width as at a desktop one."""
+    ctx, page, errors = _page(live, theme, width)
+    try:
+        rows = page.locator('[data-testid="suggestion"]')
+        rows.first.wait_for()
+        seen = set()
+        for i in range(rows.count()):
+            row = rows.nth(i)
+            b = page.evaluate(_ACTION_BOXES, row.element_handle())
+            seen.add(b["state"])
+            _assert_actions_sit_right(b, (b["state"], theme, width))
+        assert seen == {"found", "none", "error", "checking"}, seen
+        shot = os.environ.get("KESTREL_SHOTS")
+        if shot:
+            os.makedirs(shot, exist_ok=True)
+            page.locator(".src-sugs").screenshot(path=f"{shot}/actions-{theme}-{width}.png")
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1280, 390])
+def test_suggestion_action_layout_while_the_add_is_in_flight(live, theme, width):
+    ctx, page, errors = _page(live, theme, width)
+    release: list = []
+    try:
+        page.route("**/sources/suggestions/add", lambda route: release.append(route))
+        row = page.locator('[data-testid="suggestion"][data-state="found"]')
+        row.wait_for()
+        before = page.evaluate(_ACTION_BOXES, row.element_handle())
+        row.locator('[data-testid="suggestion-add"]').click()
+        page.wait_for_selector(".busy-status")
+        page.wait_for_timeout(450)
+        during = page.evaluate(_ACTION_BOXES, row.element_handle())
+        # Heights, not positions: the page may scroll on the click.
+        h_before = before["row"]["bt"] - before["row"]["tp"]
+        h_during = during["row"]["bt"] - during["row"]["tp"]
+        assert abs(h_during - h_before) <= 1, (before["row"], during["row"])
+        _assert_actions_sit_right(during, ("in flight", theme, width))
+        status = page.evaluate(
+            """row => { const e = row.querySelector('.busy-status'); const b =
+              e.getBoundingClientRect();
+              return {l: b.left, r: b.right, tp: b.top, bt: b.bottom}; }""",
+            row.element_handle())
+        assert not _overlaps(status, during["badge"]), status
         assert not errors, errors
     finally:
         for route in release:

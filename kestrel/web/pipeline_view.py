@@ -7,7 +7,6 @@ confidential-mode copy (never the raw ORM field) is the only prose a panel can s
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from functools import lru_cache
 from typing import Any
 
 from kestrel.date_display import format_display
@@ -184,23 +183,15 @@ def near_floor(opp) -> bool:
     )
 
 
-@lru_cache(maxsize=1)
-def _current_t2_versions() -> dict[str, str]:
-    """The packaged Tier 2 prompt version per track, for the staleness warning. Empty when the
-    prompts cannot be read: a warning is never worth a failed page."""
-    try:
-        from kestrel.pipeline._shared import prompt_spec
-        from kestrel.pipeline.tier2 import _VERSION
-
-        return {track: prompt_spec(v).version for track, v in _VERSION.items()}
-    except Exception:  # a display hint only
-        return {}
+OLDER_TEXT = "Scored with older scoring instructions. Score again to refresh it."
 
 
-def warning_text(opp, ev) -> str | None:
+def warning_text(opp, ev, older: bool | None = None) -> str | None:
     """The one tooltip behind a row's single warning icon, or None for a healthy row (a healthy
     row carries no badges). Ghost score, legitimacy, a needs-review divergence, liveness and an
-    out-of-date scoring prompt, in that order of how much they change what the operator does."""
+    out-of-date score, in that order of how much they change what the operator does. `older` is
+    `kestrel.learning.score_age`'s answer for the role (issue 179, D-SCORE-4), which reads the
+    corrections; None decides from the prompt version alone, as if no correction bore on it."""
     parts: list[str] = []
     legit = getattr(ev, "legitimacy", None) if ev is not None else None
     status = legit.get("status") if isinstance(legit, dict) else None
@@ -218,10 +209,12 @@ def warning_text(opp, ev) -> str | None:
         parts.append("The model and your past ratings disagree on this one. Worth a second look.")
     if getattr(opp, "liveness", None) == "closed":
         parts.append("This posting looks closed.")
-    if ev is not None and getattr(ev, "tier", 0) and ev.tier >= 2 and ev.prompt_version:
-        current = _current_t2_versions().get(getattr(opp, "track", "") or "")
-        if current and ev.prompt_version != current:
-            parts.append("Scored with older scoring instructions. Score again to refresh it.")
+    if older is None:
+        from kestrel.learning.score_age import is_older
+
+        older = is_older(opp, ev)
+    if older:
+        parts.append(OLDER_TEXT)
     return " ".join(parts) or None
 
 
@@ -458,7 +451,7 @@ def row_view(r) -> dict[str, Any]:
         "estimate": is_estimate(o),
         "place": place_text(o),
         "value": engagement_value(o, r.ev),
-        "warn": warning_text(o, r.ev),
+        "warn": warning_text(o, r.ev, getattr(r, "older", None)),
         "near_floor": near_floor(o),
     }
 

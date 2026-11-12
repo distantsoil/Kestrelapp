@@ -3,7 +3,8 @@ the Change model drawer and the speed setting. Each swaps its own section in pla
 
   GET  /models/health            the Health check card (polled while a check or fix runs)
   POST /models/health/run        Run check: the preflight in a background thread
-  POST /models/health/fix        Fix it: rebuild Kestrel's models, then test again
+  POST /models/health/fix        Fix it: rebuild Kestrel's models, then test again (a Scoring
+                                 steps row passes ?step= and gets its answer beside the click)
   GET  /models/downloads         the Models on this computer card (polled while work runs)
   POST /models/download          Download what is missing, then tune it automatically
   POST /models/download/pause    Pause (a later Resume continues where it stopped)
@@ -31,17 +32,20 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kestrel import netloc
 from kestrel.config import Concurrency, Settings
 from kestrel.date_display import format_display
 from kestrel.db.models import Run, Setting
 from kestrel.llm import profiles
 from kestrel.llm import providers as prov
 from kestrel.services import hosted_models as hm
+from kestrel.services import lan_servers
 from kestrel.services import model_tasks as mt
 from kestrel.services import setup_state as ss
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import bench_view
 from kestrel.web import models_view as mv
+from kestrel.web.auth import LOCAL_ONLY, request_is_local
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 
@@ -52,6 +56,34 @@ UNDO_PREFIX = "models.undo."
 # In-process conveniences only: what to do when the work now running ends. Nothing that matters
 # lives here (hard rule 5): a restart just leaves the buttons for the operator to press again.
 _after: dict[str, bool] = {"retest": False, "tune": False}
+
+
+ONLINE_NOTE = "Not needed while Kestrel runs online."
+ONLINE_REFUSED = "Not needed while Kestrel runs online. Nothing was started."
+
+
+async def _online_only() -> bool:
+    """True under the Online choice. The routes that start a local check, rebuild or download ask
+    this on the server, so a stale page or a hand-made request cannot start local work (D-115)."""
+    from kestrel.web.pages.setup import _rows
+
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        rows = await _rows(s)
+    return ss.run_choice(settings, rows)[0] == "hosted"
+
+
+# Copyable, never run by Kestrel (#144). Blocks Ollama's outbound traffic, so models must be
+# downloaded first. Not verified on a real machine: BLOCKED, requires local (see the report).
+FIREWALL_TIP = (
+    ("Windows (PowerShell as administrator)",
+     'New-NetFirewallRule -DisplayName "Block Ollama outbound" -Direction Outbound '
+     '-Program "$env:LOCALAPPDATA\\Programs\\Ollama\\ollama.exe" -Action Block'),
+    ("Linux (when Ollama runs as the ollama user)",
+     "sudo iptables -A OUTPUT -m owner --uid-owner ollama ! -o lo -j REJECT"),
+    ("macOS", "Use an application firewall such as LuLu or Little Snitch to deny ollama "
+              "outbound connections."),
+)
 
 
 def _tier_key(tier: str) -> str | None:
@@ -84,21 +116,29 @@ async def health_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
             except ss.ActionBusy:
                 pass
     report = ss.load_report()
-    rows = mv.health_rows(report)
+    choice = (await setup_state()).choice
+    online = choice == "hosted"
+    # Under Online the rows of an earlier local check are hidden, not shown as current (D-115).
+    rows = [] if online else mv.health_rows(report)
+    la_rows = [] if online else mv.local_ai_rows(report)
     return {
-        "hc_rows": rows,
+        "hc_rows": rows, "la_rows": la_rows,
+        "hc_online": online, "hc_both": choice == "both",
         "hc_running": ctx["running"],
         "hc_fixing": bool(snap.get("live") and snap.get("kind") == "build"),
         "hc_percent": next(
             (i["percent"] for i in snap.get("items", []) if i.get("percent") is not None), None),
         "hc_when": format_display((report or {}).get("ran_at"), kind="datetime", time_style="24h"),
         "hc_failed": any(r["state"] == "fail" for r in rows),
+        "hc_la_warn": any(r["state"] in ("warn", "fail") for r in la_rows),
         "hc_any_fix": any(r["fixable"] for r in rows),
         "hc_message": message, "hc_ok": ok,
         "hc_log": (ctx["action"] or {}).get("lines", [])[-12:] if ctx["action"] else [],
+        "hc_note": ONLINE_NOTE,
+        "hc_firewall": FIREWALL_TIP,
         # The standalone re-renders (health poll, run/fix swaps) pass only this dict, so the
-        # template's `choice == 'hosted'` grey-out needs `choice` here too (#115).
-        "choice": (await setup_state()).choice,
+        # template's grey-out needs `choice` here too (#115).
+        "choice": choice,
     }
 
 
@@ -109,6 +149,8 @@ async def health(request: Request):
 
 @router.post("/models/health/run", response_class=HTMLResponse)
 async def health_run(request: Request):
+    if await _online_only():  # nothing runs while online, whatever the page showed
+        return _frag(request, "models_health.html", await health_ctx(ONLINE_REFUSED, True))
     try:
         await asyncio.to_thread(ss.forget_ollama_probe)
         ss.verify()
@@ -118,15 +160,27 @@ async def health_run(request: Request):
     return _frag(request, "models_health.html", await health_ctx(msg, ok))
 
 
-@router.post("/models/health/fix", response_class=HTMLResponse)
+@router.post("/models/health/fix", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def health_fix(request: Request):
     from kestrel.web.pages.setup import start_action
 
-    state, message, status = await start_action("build")
-    if status is None:
-        _after["retest"] = True
-        message = "Rebuilding Kestrel's models. Kestrel tests again when it finishes."
-    return _frag(request, "models_health.html", await health_ctx(message or "", status is None))
+    step = request.query_params.get("step", "")
+    step = step if step in mv.CHANGEABLE else ""
+    if await _online_only():
+        message, started = ONLINE_REFUSED, True
+    else:
+        _state_, message, status = await start_action("build")
+        started = status is None
+        if started:
+            _after["retest"] = True
+            message = "Rebuilding Kestrel's models. Kestrel tests again when it finishes."
+    ctx = await health_ctx(message or "", started)
+    if step:
+        # A Scoring steps row asked: the answer goes beside the click, and the Health check card
+        # follows out of band (D-114).
+        ctx.update(fx_step=step, fx_message=message or "", fx_ok=started, hc_oob=True)
+        return _frag(request, "models_fix_result.html", ctx)
+    return _frag(request, "models_health.html", ctx)
 
 
 # ===================================================================================== downloads
@@ -178,11 +232,12 @@ async def downloads_ctx(message: str = "", ok: bool = True) -> dict[str, Any]:
         **speed_view(settings),
         "dl_rows": rows, "dl_missing": len(missing), "dl_gb": total_gb,
         "dl_live": live, "dl_stopping": bool(snap.get("stopping")),
+        "dl_online": state.choice == "hosted", "dl_note_online": ONLINE_NOTE,
         "dl_hosted": prof.hosted, "dl_engine_down": state.ollama_version is None
         and not prof.hosted,
         "dl_tuning": tuning, "dl_tune_missing": bool(state.missing_derived) and not missing,
         "dl_commands": [f"ollama pull {t}" for t in state.missing_tags],
-        "dl_note": SIZES_NOTE,
+        "dl_note": SIZES_NOTE, "dl_no_ollama": lan_servers.only_non_ollama(settings),
         "dl_message": message, "dl_ok": ok,
     }
 
@@ -196,10 +251,12 @@ async def downloads(request: Request):
     return _downloads(request, await downloads_ctx())
 
 
-@router.post("/models/download", response_class=HTMLResponse)
+@router.post("/models/download", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def download(request: Request):
     from kestrel.web.pages.setup import start_action
 
+    if await _online_only():
+        return _downloads(request, await downloads_ctx(ONLINE_REFUSED, True))
     state, message, status = await start_action("pull")
     if status is None:
         _after["tune"] = True
@@ -208,15 +265,17 @@ async def download(request: Request):
     return _downloads(request, await downloads_ctx(message or "", status is None))
 
 
-@router.post("/models/download/tune", response_class=HTMLResponse)
+@router.post("/models/download/tune", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def tune(request: Request):
     from kestrel.web.pages.setup import start_action
 
+    if await _online_only():
+        return _downloads(request, await downloads_ctx(ONLINE_REFUSED, True))
     _s, message, status = await start_action("build")
     return _downloads(request, await downloads_ctx(message or "", status is None))
 
 
-@router.post("/models/download/pause", response_class=HTMLResponse)
+@router.post("/models/download/pause", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def download_pause(request: Request):
     from kestrel.web.pages.setup import start_action
 
@@ -256,7 +315,7 @@ def online_view(settings: Settings, message: str = "", ok: bool = True, open_: b
     }
 
 
-@router.post("/models/online/key", response_class=HTMLResponse)
+@router.post("/models/online/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def online_key(request: Request):
     """Test or Save (or Remove) one provider's key. The value is never echoed or logged; only
     its last four characters can appear (settings._keybox_op)."""
@@ -297,7 +356,7 @@ async def online_key(request: Request):
     return _frag(request, "models_online.html", ctx)
 
 
-@router.post("/models/online/connect", response_class=HTMLResponse)
+@router.post("/models/online/connect", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def online_connect(request: Request) -> HTMLResponse:
     """Connect the saved custom service through the existing hosted acknowledgement gate."""
     from kestrel.services.hosted_connect import connect_provider
@@ -321,6 +380,150 @@ async def online(request: Request):
     ctx = await online_ctx(open_=request.query_params.get("open") == "1")
     ctx["on_selected"] = ""
     return _frag(request, "models_online.html", ctx)
+
+
+# ======================================================================= servers on your network
+async def network_ctx(
+    settings: Settings, message: str = "", ok: bool = True, *, found: dict | None = None,
+    form: dict | None = None,
+) -> dict[str, Any]:
+    from kestrel.services import lan_servers as lan
+
+    return {
+        "nw_servers": lan.list_servers(settings), "nw_message": message, "nw_ok": ok,
+        "nw_found": found, "nw_form": form or {}, "nw_kinds": [
+            (k, lan.KINDS[k]["label"]) for k in lan.KIND_ORDER],
+        "nw_tiers": lan.ASSIGNABLE, "nw_ollama_note": lan.only_non_ollama(settings),
+    }
+
+
+def _net(request: Request, ctx: dict, *, oob: bool = False) -> HTMLResponse:
+    ctx["oob"] = oob
+    return _frag(request, "models_network.html", ctx)
+
+
+@router.get("/models/network", response_class=HTMLResponse)
+async def network(request: Request):
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    return _net(request, await network_ctx(settings))
+
+
+@router.post("/models/network/test", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def network_test(request: Request):
+    """Test connection: one GET of the server's model list. Sends nothing about the person. A
+    blank key with a saved server's name uses that server's saved key."""
+    from kestrel.private_logging import private_values
+    from kestrel.services import lan_servers as lan
+
+    form = await request.form()
+    kind = str(form.get("kind") or "ollama")
+    key = str(form.get("api_key") or "").strip()
+    name = str(form.get("server") or "")
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+    # Any server the list shows (one added here, or one settings.yml defines at a local-network
+    # address) is looked up by name, so its own Choose models button works (fable review).
+    listed = {sv.name for sv in lan.list_servers(settings)}
+    saved = settings.llm.backends.get(name) if name in listed else None
+    typed = str(form.get("address") or (saved.base_url if saved else ""))
+    address, problem = lan.normalize_url(typed)
+    values = {"address": address or typed, "kind": kind}
+    problem = problem or lan.problem_for_location(address) or ""
+    if problem:
+        return _net(request, await network_ctx(settings, problem, False, form=values))
+    # A saved key goes only to that server's own saved address, never to a newly typed one.
+    if not key and saved is not None and address.rstrip("/") == saved.base_url.rstrip("/"):
+        own = (saved.api_key or "").strip()
+        key = prov.secret_value(saved.api_key_env) or (own if own != "ollama" else "")
+    with private_values(key):
+        result = await lan.test_connection(address, key)
+    found = None
+    if result["ok"]:
+        found = {"name": name or lan.backend_name(address), "host": lan.netloc.host_of(address),
+                 "models": result["models"], "address": address, "saved": saved is not None,
+                 "kind": (saved.server_kind if saved else kind) or kind}
+    log.info("models_network_test", ok=result["ok"], models=len(result["models"]))
+    return _net(request, await network_ctx(settings, result["text"], result["ok"], found=found,
+                                           form=values))
+
+
+@router.post("/models/network/save", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def network_save(request: Request):
+    """Save the server: its address, kind and (if given) key. The key goes to the private key
+    store, never the settings table. An internet address is refused here."""
+    from kestrel.private_logging import private_values
+    from kestrel.services import lan_servers as lan
+
+    form = await request.form()
+    kind = str(form.get("kind") or "ollama")
+    key = str(form.get("api_key") or "").strip()
+    typed = str(form.get("address") or "")
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        address, problem = lan.normalize_url(typed)
+        values = {"address": address or typed, "kind": kind}
+        problem = problem or lan.problem_for_location(address) or ""
+        if problem:
+            return _net(request, await network_ctx(settings, problem, False, form=values))
+        name, message, ok = await lan.save_server(s, base_url=address, kind=kind, api_key=key)
+        if not ok:
+            return _net(request, await network_ctx(settings, message, False, form=values))
+        await s.commit()
+        settings = await load_settings_with_db(s)
+    with private_values(key):
+        result = await lan.test_connection(
+            address, key or prov.secret_value(lan.key_env(name)))
+    found = {"name": name, "host": lan.netloc.host_of(address), "models": result["models"],
+             "address": address, "saved": True, "kind": kind} if result["ok"] else None
+    text = message + (" " + result["text"] if result["ok"] else
+                      " It could not be reached yet: " + result["text"])
+    return _net(request, await network_ctx(settings, text, True, found=found), oob=True)
+
+
+@router.post("/models/network/assign", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def network_assign(request: Request):
+    from kestrel.services import lan_servers as lan
+
+    form = await request.form()
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        ok, message = await lan.assign_tier(
+            s, settings, str(form.get("tier") or ""), str(form.get("server") or ""),
+            str(form.get("model") or ""))
+        if ok:
+            await s.commit()
+        settings = await load_settings_with_db(s)
+    return _net(request, await network_ctx(settings, message, ok), oob=ok)
+
+
+@router.post("/models/network/reset", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def network_reset(request: Request):
+    from kestrel.services import lan_servers as lan
+
+    form = await request.form()
+    tier = str(form.get("tier") or "")
+    async with sessionmaker()() as s:
+        if tier in dict(lan.ASSIGNABLE):
+            await lan.reset_tier(s, tier)
+            await s.commit()
+        settings = await load_settings_with_db(s)
+    return _net(request, await network_ctx(
+        settings, "That step uses its default model on this computer again."), oob=True)
+
+
+@router.post("/models/network/remove", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
+async def network_remove(request: Request):
+    from kestrel.services import lan_servers as lan
+
+    form = await request.form()
+    async with sessionmaker()() as s:
+        settings = await load_settings_with_db(s)
+        ok, message = await lan.remove_server(s, settings, str(form.get("server") or ""))
+        if ok:
+            await s.commit()
+        settings = await load_settings_with_db(s)
+    return _net(request, await network_ctx(settings, message, ok), oob=ok)
 
 
 # ============================================================================= change a model
@@ -451,9 +654,12 @@ async def change_form(request: Request, tier: str):
     if _tier_key(tier) is None:
         return HTMLResponse("unknown step", status_code=404)
     q = request.query_params
+    # The online list is fetched from the provider with the saved key, so only this computer
+    # may ask for it; a key holder sees the local choices (#155).
+    local = request_is_local(request)
     ctx = await change_ctx(
-        tier, where="online" if q.get("where") == "online" else "local",
-        free=q.get("free") == "1", refresh=q.get("refresh") == "1")
+        tier, where="online" if local and q.get("where") == "online" else "local",
+        free=q.get("free") == "1", refresh=local and q.get("refresh") == "1")
     return _frag(request, "models_change.html", ctx)
 
 
@@ -461,7 +667,7 @@ def _same(tier: str, where: str, message: str, ok: bool, **kw) -> Any:
     return change_ctx(tier, where=where, message=message, ok=ok, **kw)
 
 
-@router.post("/models/change/{tier}", response_class=HTMLResponse)
+@router.post("/models/change/{tier}", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def change_save(request: Request, tier: str):
     """Save the pick. A local pick is a setting-table override of that step's model (stored apart
     from defaults, D-UI-42); a model not downloaded yet starts its download. An online pick is
@@ -727,7 +933,7 @@ async def _save_online(request, s, settings, tier: str, model: str, form):
     )
 
 
-@router.post("/models/change/{tier}/reset", response_class=HTMLResponse)
+@router.post("/models/change/{tier}/reset", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def change_reset(request: Request, tier: str):
     if _tier_key(tier) is None:
         return HTMLResponse("unknown step", status_code=404)
@@ -791,7 +997,7 @@ async def undo_tier(
     return True
 
 
-@router.post("/models/change/{tier}/undo", response_class=HTMLResponse)
+@router.post("/models/change/{tier}/undo", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def change_undo(request: Request, tier: str):
     if _tier_key(tier) is None:
         return HTMLResponse("unknown step", status_code=404)
@@ -823,7 +1029,15 @@ async def speed(request: Request):
         values = None
     async with sessionmaker()() as s:
         if values is not None:
+            before = await load_settings_with_db(s)
             for key in ("tier1", "tier2"):
+                # The fit rating count shown is the automatic one (4 while Tier 2 is online, the
+                # shipped 2 otherwise) until the person sets it. Saving the form unchanged keeps
+                # it automatic, so a later switch back to local models runs the local default,
+                # not the online 4 (#92, fable review).
+                automatic = key == "tier2" and not before.concurrency._tier2_chosen
+                if automatic and values.tier2 == before.concurrency.tier2:
+                    continue
                 await _set(s, f"concurrency.{key}", getattr(values, key))
             await s.commit()
         settings = await load_settings_with_db(s)
@@ -910,6 +1124,11 @@ async def page_ctx(rows: list, settings: Settings, track: str) -> dict[str, Any]
         if key == "tier3" and online and "frontier" in settings.llm.tiers:
             shown = settings.llm.tiers["frontier"]
         base = prof.models.for_tier(key)
+        loc = backend.location if backend is not None else netloc.THIS_COMPUTER
+        row["where"] = ("Online" if online else "This computer" if loc != netloc.LOCAL_NETWORK
+                        else "On another computer on your network")
+        row["where_host"] = (netloc.host_of(backend.base_url) or "") if (
+            backend is not None and loc == netloc.LOCAL_NETWORK and not online) else ""
         tr = tier_rows.get(key)
         need = hm.context_budget(key)
         small = (not online) and key in too_small
@@ -920,13 +1139,15 @@ async def page_ctx(rows: list, settings: Settings, track: str) -> dict[str, Any]
             online=online,
             override=bool((tr and tr.override) or f"llm.tiers.{key}.model" in locals_),
             changeable=True, base=base,
-            can_read={
-                "label": "Too small: cuts long postings short" if small else mv.READS[key],
-                "tone": "bad" if small else "good",
-                "tip": f"Needs about {mv.pages(need)} pages ({need:,} words-worth of room). "
-                + (f"This model took in about {mv.pages(capacity[key])} pages."
-                   if key in capacity else "Run the health check to test it."),
-            },
+            can_read=(
+                {"label": mv.ONLINE_READS, "tone": "muted", "tip": mv.ONLINE_READS_TIP}
+                if online else {
+                    "label": "Too small: cuts long postings short" if small else mv.READS[key],
+                    "tone": "bad" if small else "good",
+                    "tip": f"Needs about {mv.pages(need)} pages ({need:,} words-worth of room). "
+                    + (f"This model took in about {mv.pages(capacity[key])} pages."
+                       if key in capacity else "Run the health check to test it."),
+                }),
             fit=mv.fit_with_you(rows, st["tier"], shown.model if shown else "",
                                 step_name.get(key) in better),
             can_undo=(UNDO_PREFIX + key) in undo_tiers,
@@ -971,6 +1192,7 @@ async def page_ctx(rows: list, settings: Settings, track: str) -> dict[str, Any]
         "profile_name": state.profile,
         **await health_ctx(), **await downloads_ctx(),
         **online_view(settings), "on_selected": "",
+        **await network_ctx(settings),
     }
     return ctx
 

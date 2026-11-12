@@ -101,19 +101,21 @@ async def funnel(session: AsyncSession, track: str) -> Funnel:
     manually-shortlisted pursuit (one with no tier-2 evaluation) can make shortlisted exceed
     tier2_evaluated, giving a conversion above 1.0. That is real and left visible, not clamped: it
     means items entered a later step without being recorded at the earlier one."""
-    opps = (
-        (await session.execute(select(Opportunity).where(Opportunity.track == track)))
-        .scalars()
-        .all()
-    )
+    # One count per stage in SQL (a handful of rows), ranked here: no opportunity row is loaded.
     counts = [0] * len(STEPS)
-    counts[0] = len(opps)
-    for o in opps:
-        rank = _STAGE_RANK.get(o.stage or "new", 0)
+    for stage, n in (
+        await session.execute(
+            select(Opportunity.stage, func.count())
+            .where(Opportunity.track == track)
+            .group_by(Opportunity.stage)
+        )
+    ).all():
+        rank = _STAGE_RANK.get(stage or "new", 0)
+        counts[0] += n
         if rank >= 1:
-            counts[1] += 1
+            counts[1] += n
         if rank >= 2:
-            counts[2] += 1
+            counts[2] += n
 
     counts[3] = (
         await session.execute(
@@ -124,20 +126,17 @@ async def funnel(session: AsyncSession, track: str) -> Funnel:
     ).scalar_one()
 
     pursuits = (
-        (
-            await session.execute(
-                select(Pursuit, Outcome)
-                .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
-                .outerjoin(Outcome, Outcome.pursuit_id == Pursuit.id)
-                .where(Opportunity.track == track)
-            )
+        await session.execute(
+            select(Pursuit.status, Outcome.furthest_stage, Outcome.days_to_first_response)
+            .join(Opportunity, Opportunity.id == Pursuit.opportunity_id)
+            .outerjoin(Outcome, Outcome.pursuit_id == Pursuit.id)
+            .where(Opportunity.track == track)
         )
-        .all()
-    )
-    for pursuit, outcome in pursuits:
-        responded = outcome is not None and outcome.days_to_first_response is not None
-        furthest_stage = outcome.furthest_stage if outcome is not None else None
-        reached = _furthest_step(pursuit.status, furthest_stage, responded, track)
+    ).all()
+    for status, furthest_stage, days_to_reply in pursuits:
+        # An outer join gives (None, None) for a pursuit with no outcome, and a pursuit with an
+        # outcome that records neither: both read as "no first response, no furthest stage".
+        reached = _furthest_step(status, furthest_stage, days_to_reply is not None, track)
         for step in range(4, reached + 1):
             counts[step] += 1
 

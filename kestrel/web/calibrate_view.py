@@ -19,8 +19,10 @@ from kestrel.config import Settings
 from kestrel.db.models import Calibration, Evaluation, Label, MlModel, Opportunity, Org
 from kestrel.learning import calibration as calib
 from kestrel.learning import reranker as reranker_mod
-from kestrel.learning.active import UncertainItem, rank_uncertain
+from kestrel.learning import uncertain_cache
+from kestrel.learning.active import UncertainItem
 from kestrel.learning.capture import labeled_examples
+from kestrel.learning.groups import group_keys
 
 log = structlog.get_logger()
 
@@ -167,14 +169,20 @@ async def build_queue(
     s: AsyncSession, track: str, settings: Settings, *, since: str, skip: str | None
 ) -> QueueView:
     """The session: ten roles, one at a time. Skipped roles move to the end of the queue."""
-    done = (
-        await s.execute(
-            select(func.count(func.distinct(Label.opportunity_id))).where(
-                Label.track == track, Label.source == "active_learning", Label.created_at >= since
+    rated = [
+        oid
+        for (oid,) in (
+            await s.execute(
+                select(Label.opportunity_id).where(
+                    Label.track == track, Label.source == "active_learning",
+                    Label.created_at >= since,
+                )
             )
-        )
-    ).scalar_one()
-    pool = await rank_uncertain(s, track, settings, limit=SESSION_SIZE + 1)
+        ).all()
+    ]
+    # Roles rated this session, one per duplicate group (#122): the count is judgments, not rows.
+    done = len(set((await group_keys(s, rated)).values()))
+    pool = await uncertain_cache.ranked(s, track, settings, limit=SESSION_SIZE + 1)
     left = pool[: max(0, SESSION_SIZE - done)]
     skipped = [i for i in _ids(skip) if any(u.opportunity.id == i for u in left)]
     ordered = [u for u in left if u.opportunity.id not in skipped] + [
@@ -201,7 +209,9 @@ async def session_line(s: AsyncSession, track: str, since: str) -> str:
             .order_by(Label.id)
         )
     ).all()
-    said = dict(rows)  # the latest rating of each role wins
+    keys = await group_keys(s, [oid for oid, _ in rows])
+    said_by_group = {keys.get(oid, f"__solo_{oid}"): (oid, score) for oid, score in rows}
+    said = dict(said_by_group.values())  # the latest rating of each role, once per group, wins
     if len(said) < FLOOR:
         return f"Not enough ratings in this session to compare yet. {len(said)} so far."
     evs = {
@@ -379,6 +389,7 @@ class HistoryRow:
     kestrel: float | None
     result: str  # "Close" | "Different" | "Changed"
     changed: bool
+    quick: bool = False  # the standing answer came from a Quick round (issue 171)
 
 
 @dataclass
@@ -440,6 +451,17 @@ async def build_history(s: AsyncSession, track: str, *, page: int = 0) -> Histor
             )
         ).all()
     )
+    # The answer that stands for a role is a Quick one when a quick label carries its timestamp.
+    quick_at = {
+        (oid, at)
+        for oid, at in (
+            await s.execute(
+                select(Label.opportunity_id, Label.created_at).where(
+                    Label.opportunity_id.in_(ids), Label.source == "quick"
+                )
+            )
+        ).all()
+    }
     rows: list[HistoryRow] = []
     for e in examples:
         opp = opps.get(e.opportunity_id)
@@ -456,6 +478,7 @@ async def build_history(s: AsyncSession, track: str, *, page: int = 0) -> Histor
                 said_word=word_for(e.operator_score),
                 kestrel=ks,
                 changed=changed,
+                quick=(opp.id, e.created_at) in quick_at,
                 result="Changed"
                 if changed
                 else ("Close" if is_close(ks, e.operator_score) else "Different"),

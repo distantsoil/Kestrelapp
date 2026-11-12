@@ -74,12 +74,17 @@ def _install_write_hold_timer(engine: Engine) -> None:
     event.listen(engine.pool, "checkin", forget)
 
 
+MMAP_SIZE_BYTES = 268435456
+
+
 def _apply_pragmas(dbapi_conn, _record) -> None:
     cur = dbapi_conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL")
     cur.execute("PRAGMA synchronous=NORMAL")
     cur.execute("PRAGMA busy_timeout=5000")
     cur.execute("PRAGMA foreign_keys=ON")
+    # Memory-map up to 256 MiB of the file so read-heavy pages skip a copy per page (D-PERF).
+    cur.execute(f"PRAGMA mmap_size={MMAP_SIZE_BYTES}")
     cur.close()
 
 

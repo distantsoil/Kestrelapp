@@ -1131,7 +1131,10 @@ async def _export(fmt: str, track: str | None, out: str | None) -> None:
     async with sm() as s:
         # An export is a file on disk: exactly the generated output confidential mode covers.
         conf, mapping = await confidential(s)
-        stmt = select(Opportunity).order_by(Opportunity.id)
+        # Remotive's terms: its postings never leave in an export (D-SRC-19).
+        from kestrel.services.export_terms import shareable_clause
+
+        stmt = select(Opportunity).where(shareable_clause()).order_by(Opportunity.id)
         if track:
             stmt = stmt.where(Opportunity.track == track)
         opps = (await s.execute(stmt)).scalars().all()
@@ -1165,7 +1168,9 @@ async def _export(fmt: str, track: str | None, out: str | None) -> None:
         buf = io.StringIO()
         w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()) if rows else ["id"])
         w.writeheader()
-        w.writerows(rows)
+        from kestrel.services.csv_safe import safe_record
+
+        w.writerows(safe_record(r) for r in rows)
         text = buf.getvalue()
     else:
         text = json.dumps(rows, indent=2, default=str)
@@ -1215,6 +1220,9 @@ def restore(path: str) -> None:
     for line in result.summary_lines():
         typer.echo(line)
     migrate.run_migrations()  # a backup from an older Kestrel is brought up to this version
+    if result.parts_failed:  # D-SEC-23: the database was restored; the summary names what was not
+        typer.echo("Restore partly complete.")
+        raise typer.Exit(code=1)
     typer.echo("Restore complete.")
 
 

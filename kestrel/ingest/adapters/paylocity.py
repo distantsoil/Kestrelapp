@@ -50,7 +50,7 @@ class PaylocityAdapter:
 
     def validate_config(self, config: dict) -> None:
         board_id = config.get("board_id")
-        if not isinstance(board_id, str) or not _BOARD_ID.match(board_id):
+        if not isinstance(board_id, str) or not _BOARD_ID.fullmatch(board_id):
             raise SourceConfigError(
                 "paylocity source requires a 'board_id' (the GUID in the careers link: "
                 "recruiting.paylocity.com/recruiting/jobs/All/{board_id})"

@@ -68,7 +68,7 @@ def _page(live, theme: str, width: int):
     page = ctx.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(f"{base}/calibrate")
+    page.goto(f"{base}/calibrate?tab=detailed")
     page.wait_for_selector('[data-testid="cal-card"] .cal-q')
     wait_for_layout(page)
     return ctx, page, errors
@@ -207,7 +207,7 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(liv
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.add_init_script(TIMER_PROBE_JS)
     try:
-        page.goto(f"{base}/calibrate")
+        page.goto(f"{base}/calibrate?tab=detailed")
         page.wait_for_selector('[data-testid="cal-card"] .cal-q')
         wait_for_layout(page)
         first = assert_page_remounts_clean(
@@ -239,6 +239,32 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_listeners(liv
         page.keyboard.press("o")
         page.wait_for_timeout(300)
         assert page.get_attribute("#cal-whybtn", "aria-expanded") == "true"
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_the_app_reduce_motion_switch_swaps_the_calibrate_tabs_at_once(live):
+    """Fable C2: with Settings > Reduce motion on (html[data-reduce-motion="1"]) the tab change
+    shows the other panel in the same task: no 140 ms blank, no fade class."""
+    base, browser = live
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"{base}/calibrate")
+        page.wait_for_selector('[data-testid="cal-tab-detailed"]')
+        wait_for_layout(page)
+        page.evaluate("document.documentElement.setAttribute('data-reduce-motion', '1')")
+        state = page.evaluate("""() => {
+            document.querySelector('[data-testid="cal-tab-detailed"]').click();
+            const q = document.getElementById('cal-panel-quick');
+            const d = document.getElementById('cal-panel-detailed');
+            return {quickHidden: q.hidden, detailedHidden: d.hidden,
+                    fading: q.classList.contains('is-out') || d.classList.contains('is-in')};
+        }""")
+        assert state == {"quickHidden": True, "detailedHidden": False, "fading": False}, state
         assert not errors, errors
     finally:
         ctx.close()

@@ -16,8 +16,10 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    event,
     func,
     text,
+    update,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -150,6 +152,10 @@ class Opportunity(Base):
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     stage: Mapped[str] = mapped_column(String, default="new", index=True)
     stage_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Migration 0030 (D-PERF-3): 1 once any t1 or t2 task of this role carried the background-lane
+    # marker (D-SRC-13), so a local-only role stays local after its tasks are pruned. Set by SQL
+    # triggers on every task write; never cleared.
+    lane_local_only: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pre_score: Mapped[float] = mapped_column(Float, default=0.0)
     # Hides an opportunity from the active pipeline without touching `stage` (which tracks tier
     # progression, not visibility, and has no 'archived' value -- SPEC-INTERFACES 2.1 opportunity
@@ -210,6 +216,10 @@ class Evaluation(Base):
     blockers: Mapped[list | None] = mapped_column(JSON, default=list)
     legitimacy: Mapped[dict | None] = mapped_column(JSON, default=dict)
     few_shot_ids: Mapped[list | None] = mapped_column(JSON, default=list)
+    # The requirement corrections whose lines this read's OPERATOR_CORRECTIONS block stated, so
+    # a removal or change of one marks the score older (D-SCORE-4). NULL for a Tier 1 read and
+    # for reads stored before migration 0033.
+    correction_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -236,6 +246,9 @@ class Quarantine(Base):
 Index("ix_evaluation_created", Evaluation.created_at)
 Index("ix_quarantine_created", Quarantine.created_at)
 Index("ix_scrape_run_started", ScrapeRun.started_at)
+# Migration 0030 (D-PERF-3): the foreign keys a prune and the per-role lookups walk.
+Index("ix_quarantine_opportunity_id", Quarantine.opportunity_id)
+Index("ix_opportunity_scrape_run_id", Opportunity.scrape_run_id)
 
 
 # ============================================================================ 4.5 Tracking
@@ -289,13 +302,43 @@ class Task(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
     lease_until: Mapped[str | None] = mapped_column(String, nullable=True)
+    # issue #153 (D-QUEUE-3): a retryable failure is requeued with this set 30 s / 2 min /
+    # 10 min out (by the attempts already spent); claimable() requires it NULL or in the
+    # past; a clean quit and a "Try again" clear the wait, a permanent failure carries none.
+    retry_at: Mapped[str | None] = mapped_column(String, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
     updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso, onupdate=utcnow_iso)
+    # Migration 0030 (D-PERF-3): the role the task is about, a copy of payload.opportunity_id.
+    # The payload stays the source; set here on the ORM path, and by two SQL triggers on every
+    # other write (INSERT ... SELECT, a Core UPDATE of the payload), so it cannot go stale.
+    opportunity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+def payload_opportunity_id(payload: object) -> int | None:
+    """The role id a task payload names, as an integer, or None (no id, or not a number)."""
+    value = payload.get("opportunity_id") if isinstance(payload, dict) else None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+@event.listens_for(Task, "before_insert")
+@event.listens_for(Task, "before_update")
+def _task_opportunity_from_payload(_mapper, _connection, target: Task) -> None:
+    target.opportunity_id = payload_opportunity_id(target.payload)
+
+
+Index("ix_task_opportunity_id", Task.opportunity_id)
 Index("ix_task_status_priority", Task.status, Task.priority)
+# Migration 0029 (issue #153): a backoff wait the worker, the run log and the Cancel scan
+# all read from the one claimable() predicate.
+Index("ix_task_retry_at", Task.retry_at)
 # Migration 0016 (D-UI-58): the live run summary reads tasks, evaluations, quarantine rows and
 # scrape runs by time on a 5 s poll.
 Index("ix_task_updated", Task.updated_at)
@@ -454,6 +497,50 @@ class DocRender(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     defaults_used: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+
+
+class Letter(Base):
+    """A cover letter or engagement outline (SPEC-MODULES 1.6, D-LETTER-1). Its PDF render is the
+    `doc_render` row it is attached to (`render_id`): that row holds the file, its name and page
+    count, and is the id the role page's links carry. `status` is `current` (the one in Documents
+    and on the application), `proposed` (a Draft again waiting for Keep new draft) or `previous`
+    (the one Undo brings back)."""
+
+    __tablename__ = "letter"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    render_id: Mapped[int] = mapped_column(
+        ForeignKey("doc_render.id", ondelete="CASCADE"), unique=True)
+    opportunity_id: Mapped[int] = mapped_column(
+        ForeignKey("opportunity.id", ondelete="CASCADE"), index=True)
+    pursuit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pursuit.id", ondelete="SET NULL"), nullable=True)
+    kind: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="current")
+    body_md: Mapped[str] = mapped_column(Text, default="")
+    generated_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claims_used: Mapped[list | None] = mapped_column(JSON, default=list)
+    flags: Mapped[list | None] = mapped_column(JSON, default=list)
+    prompt_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    extras: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso, onupdate=utcnow_iso)
+
+
+# At most one current letter per role and kind (D-LETTER-5); SQLite supports the partial index.
+Index("ux_letter_one_current", Letter.opportunity_id, Letter.kind, unique=True,
+      sqlite_where=text("status = 'current'"))
+
+
+@event.listens_for(Pursuit, "after_insert")
+def _link_letters_to_new_pursuit(_mapper, connection, target) -> None:
+    """A letter drafted before the role was shortlisted belongs to the application made later
+    (`letter.pursuit_id`, D-LETTER-5): every ORM insert of a pursuit links its role's letters."""
+    connection.execute(
+        update(Letter).where(Letter.opportunity_id == target.opportunity_id)
+        .values(pursuit_id=target.id)
+    )
 
 
 # ============================================================================ Modules 2: Research
@@ -779,6 +866,61 @@ class Label(Base):
     created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
 
 
+class RequirementCorrection(Base):
+    """The operator corrects one thing a posting asks for (SPEC-MODULES 5.1, D-LEARN-3). Not a
+    `label`: it never counts toward the learning thresholds or Calibrate history, and it never
+    changes a Tier 0 or Tier 1 keep or kill (hard rule 4). `scope` is `person` (one row per
+    track and `requirement_hash`, applying to every role on the track) or `posting` (They mean
+    something else, this role only). `story_deleted_at` records that the linked story was deleted
+    (D-LEARN-5): an `all` or `some` answer then stops applying. The evaluation it was made on is
+    never rewritten (D-LEARN-4)."""
+
+    __tablename__ = "requirement_correction"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    track: Mapped[str] = mapped_column(String)
+    opportunity_id: Mapped[int | None] = mapped_column(
+        ForeignKey("opportunity.id", ondelete="SET NULL"), nullable=True, index=True)
+    evaluation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("evaluation.id", ondelete="SET NULL"), nullable=True)
+    requirement_text: Mapped[str] = mapped_column(Text)
+    requirement_hash: Mapped[str] = mapped_column(String)
+    kestrel_state: Mapped[str] = mapped_column(String)
+    operator_state: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    scope: Mapped[str] = mapped_column(String)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    story_id: Mapped[int | None] = mapped_column(
+        ForeignKey("story.id", ondelete="SET NULL"), nullable=True)
+    basis: Mapped[str] = mapped_column(String, default="none")
+    agrees_now: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    story_deleted_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=utcnow_iso)
+
+
+Index("ix_requirement_correction_track_hash", RequirementCorrection.track,
+      RequirementCorrection.requirement_hash)
+# At most one `person` row per track and requirement (SPEC-MODULES 5.1); SQLite partial index.
+Index("ux_requirement_correction_person", RequirementCorrection.track,
+      RequirementCorrection.requirement_hash, unique=True, sqlite_where=text("scope = 'person'"))
+# At most one `posting` row per role and requirement (D-LEARN-6).
+Index("ux_requirement_correction_posting", RequirementCorrection.opportunity_id,
+      RequirementCorrection.requirement_hash, unique=True, sqlite_where=text("scope = 'posting'"))
+
+
+@event.listens_for(Story, "before_delete")
+def _mark_corrections_story_deleted(_mapper, connection, target) -> None:
+    """A deleted story stops an `all` or `some` correction that rested on it (SPEC-MODULES 5.1):
+    the FK sets `story_id` to NULL, and this records that it was deleted, so Profile can say so
+    and the row falls back to Kestrel's state (D-LEARN-5)."""
+    connection.execute(
+        update(RequirementCorrection)
+        .where(RequirementCorrection.story_id == target.id)
+        .values(story_deleted_at=utcnow_iso())
+    )
+
+
 class Outcome(Base):
     __tablename__ = "outcome"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -818,6 +960,10 @@ class MlModel(Base):
     artifact_path: Mapped[str | None] = mapped_column(String, nullable=True)
     pca_artifact_path: Mapped[str | None] = mapped_column(String, nullable=True)
     sklearn_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # HMAC-SHA256 (hex) of each saved file under this install's key (D-SEC-13). NULL on a row
+    # saved before signing existed: such a row is refused and retrains.
+    artifact_signature: Mapped[str | None] = mapped_column(String, nullable=True)
+    pca_artifact_signature: Mapped[str | None] = mapped_column(String, nullable=True)
     feature_names: Mapped[list | None] = mapped_column(JSON, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     promoted_at: Mapped[str | None] = mapped_column(String, nullable=True)

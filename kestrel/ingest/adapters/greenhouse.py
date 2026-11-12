@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kestrel.ingest.base import RawPosting, SourceConfigError
+from kestrel.ingest.base import RawPosting, SourceConfigError, path_segment
 
 _BASE = "https://boards-api.greenhouse.io/v1/boards"
 
@@ -22,6 +22,8 @@ class GreenhouseAdapter:
     kind = "greenhouse"
 
     def validate_config(self, config: dict) -> None:
+        if config.get("token"):
+            path_segment(config, "token", "greenhouse 'token'")
         if not config.get("token"):
             raise SourceConfigError("greenhouse source requires a 'token' (the board token)")
 

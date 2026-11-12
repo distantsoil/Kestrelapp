@@ -1,19 +1,21 @@
 {# Your data (D-UI-106, D-UI-114, D-UI-115): backups, import past applications, your contacts,
    diagnostics and the danger zone. The id your-data is the anchor the Company page links to. #}
+{% import "partials/local_only.html" as lo with context %}
 {% import "partials/st_macros.html" as st with context %}
 <span id="your-data" class="st-anchor"></span>
 <section class="k-card st-card" id="st-backups" data-testid="st-backups">
   {{ st.head('Backups', 'dl') }}
   <div class="st-row st-row--first">
-    <div class="st-row__t"><b>Where your data lives</b><code class="st-path" data-testid="st-data-path" title="{{ data_dir }}">{{ data_dir }}</code></div>
+    <div class="st-row__t"><b>Where your data lives</b>{% if is_local(request) %}<code class="st-path" data-testid="st-data-path" title="{{ data_dir }}">{{ data_dir }}</code>{% endif %}</div>
     {% if data_size %}<span class="st-use" data-testid="st-data-size">Uses {{ data_size }}</span>{% endif %}
-    {% if can_open_folder %}<button type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "data"}' hx-target="#st-folder-res" hx-swap="innerHTML" data-testid="st-open-folder">{{ st.sic('folder', 'k-ic--sm') }}Open folder</button><span id="st-folder-res" class="st-dsm" role="status"></span>{% endif %}
+    {% if can_open_folder %}<button{{ lo.dis(request) }} type="button" class="k-btn k-btn--sm" hx-post="/about/folder/open" hx-vals='{"which": "data"}' hx-target="#st-folder-res" hx-swap="innerHTML" data-testid="st-open-folder">{{ st.sic('folder', 'k-ic--sm') }}Open folder</button><span id="st-folder-res" class="st-dsm" role="status"></span>{% endif %}
   </div>
   <div class="st-hact st-hact--rule">
-    <button type="button" class="k-btn k-btn--sm k-btn--primary" id="st-backup" data-st-backup data-testid="st-backup">{{ st.sic('dl', 'k-ic--sm') }}Download a backup</button>
-    <button type="button" class="k-btn k-btn--sm" id="st-restore-pick" data-testid="st-restore">{{ st.sic('restore', 'k-ic--sm') }}Restore from a file</button>
+    <button type="button" class="k-btn k-btn--sm k-btn--primary" id="st-backup" data-st-backup data-testid="st-backup"{{ lo.dis(request) }}>{{ st.sic('dl', 'k-ic--sm') }}Download a backup</button>
+    <button type="button" class="k-btn k-btn--sm" id="st-restore-pick" data-testid="st-restore"{{ lo.dis(request) }}>{{ st.sic('restore', 'k-ic--sm') }}Restore from a file</button>
     <span class="st-dsm" id="st-lastbk" data-testid="st-lastbk">Last backup: {{ last_backup }}</span>
   </div>
+  {{ lo.note(request) }}
   <input type="file" id="st-restore-file" name="backup_file" accept=".zip" form="st-restore-form" hidden data-testid="st-restore-file">
   <div id="st-restore-res" class="st-restore-res" role="status" data-testid="st-restore-res"></div>
   <div class="st-p2">
@@ -26,9 +28,11 @@
       <div class="k-modal__body">
         <p class="st-dsm" id="st-restore-name" data-testid="st-restore-name"></p>
         <div class="st-keep st-keep--warn">{{ st.sic('warn') }}<div class="k-grow"><b>This replaces everything in Kestrel now.</b><span class="st-dsm">Kestrel saves a backup of what is here first.</span></div></div>
+        <div id="st-restore-preview" class="st-rp" data-testid="st-restore-preview" aria-live="polite"
+             hx-post="/settings/restore/preview" hx-trigger="change from:#st-restore-file" hx-include="#st-restore-file" hx-encoding="multipart/form-data" hx-target="this" hx-swap="innerHTML"></div>
       </div>
       <div class="k-modal__foot"><button type="button" class="k-btn" data-k-close data-st-restore-cancel>Cancel</button>
-        <button type="submit" class="k-btn k-btn--primary" data-k-close data-testid="st-restore-go">Restore</button></div>
+        <button type="submit" class="k-btn k-btn--primary" data-testid="st-restore-go">Restore</button></div>
     </form>
   </div>
 </section>
@@ -37,8 +41,8 @@
 <section class="k-card st-card" id="st-diag" data-testid="st-diag">
   {{ st.head('Diagnostics', 'diag') }}
   <div class="st-hact st-hact--first">
-    {% if desktop %}<button type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/about/diagnostics/save" hx-target="#st-diag-res" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…" data-testid="st-diag-save">{{ st.sic('dl', 'k-ic--sm') }}Download a diagnostics file</button>
-    {% else %}<a class="k-btn k-btn--sm k-btn--primary" href="/about/diagnostics" download data-testid="st-diag-download">{{ st.sic('dl', 'k-ic--sm') }}Download a diagnostics file</a>{% endif %}
+    {% if desktop %}<button{{ lo.dis(request) }} type="button" class="k-btn k-btn--sm k-btn--primary" hx-post="/about/diagnostics/save" hx-target="#st-diag-res" hx-swap="innerHTML" data-busy-text="Building the diagnostics zip…" data-testid="st-diag-save">{{ st.sic('dl', 'k-ic--sm') }}Download a diagnostics file</button>
+    {% else %}{{ lo.download(request, '/about/diagnostics', 'Download a diagnostics file', 'k-btn k-btn--sm k-btn--primary', 'st-diag-download') }}{% endif %}
     <span class="st-dsm">For troubleshooting. You choose whether to share it.</span></div>
   <div id="st-diag-res" class="st-diag-res" role="status"></div>
   <p class="st-dsm">Made only when you ask. Kestrel never sends it: if you want help, attach it to a message to support.</p>
@@ -51,9 +55,10 @@
   <div class="k-dz__head">{{ st.sic('warn', 'k-ic--lg') }}<span id="st-danger-t">Danger zone</span></div>
   <div class="k-dz__body">
     <div class="k-dz__row"><div class="k-grow"><b>Restart setup</b><span class="st-dsm">Walks you through first-run setup again. Your profile, documents and roles stay.</span></div>
-      <form method="post" action="/onboarding/restart"><input type="hidden" name="choice" value="keep"><button class="k-btn k-btn--sm" type="submit" data-testid="st-restart">Restart setup</button></form></div>
+      <form method="post" action="/onboarding/restart"><input type="hidden" name="choice" value="keep"><button class="k-btn k-btn--sm" type="submit" data-testid="st-restart"{{ lo.dis(request) }}>Restart setup</button></form></div>
     <div class="k-dz__row"><div class="k-grow"><b>Clear everything</b><span class="st-dsm">Deletes all data. Online model keys stay. Kestrel saves a backup first.</span></div>
-      <button class="k-btn k-btn--sm k-btn--danger" type="button" data-k-modal="#st-clear-dialog" data-testid="st-clear">Clear everything</button></div>
+      <button class="k-btn k-btn--sm k-btn--danger" type="button" data-k-modal="#st-clear-dialog" data-testid="st-clear"{{ lo.dis(request) }}>Clear everything</button></div>
+    {{ lo.note(request) }}
   </div>
   <div class="k-modal" id="st-clear-dialog" role="dialog" aria-modal="true" aria-labelledby="st-clear-dialog-t" aria-hidden="true" data-k-static>
     <form method="post" action="/onboarding/restart">

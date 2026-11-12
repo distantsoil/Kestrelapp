@@ -352,7 +352,10 @@ def test_filters_tab_points_at_the_profile_not_the_yaml_and_lan_says_why():
     roles = (_TEMPLATES / "partials" / "st_rules.html").read_text(encoding="utf-8")
     assert "Change in Profile" in roles and "Rules file: filters.yml" in roles  # not a file to edit
     access = (_TEMPLATES / "partials" / "st_access.html").read_text(encoding="utf-8")
-    assert "Only works on your own network" in access and "Only this computer can change" in access
+    local_only = (_TEMPLATES / "partials" / "local_only.html").read_text(encoding="utf-8")
+    # The Access card draws "Only this computer can change this." through the one shared macro.
+    assert "Only works on your own network" in access and "lo.note(request)" in access
+    assert "Only this computer can change this." in local_only
     help_ = (_TEMPLATES / "partials" / "help_ref_lan.html").read_text(encoding="utf-8")
     assert 'id="lan"' in help_ and "same home network" in help_
 

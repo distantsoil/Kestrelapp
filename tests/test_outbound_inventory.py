@@ -22,10 +22,18 @@ def _normalize(host: str) -> str:
     return re.sub(r"\{[^}]*\}", "{*}", host.lower()).rstrip(".")
 
 
-def _hosts_in_code() -> dict[str, list[str]]:
+# Fetched by scripts/fetch_embed_model.py into a source checkout and never committed
+# (.gitignore): third-party model files and their license, not Kestrel's code. Every source
+# checkout that follows docs/DEVELOPERS.md has them, so the scan must not read them.
+_FETCHED = ("kestrel", "resources", "embed_model")
+
+
+def _hosts_in_code(root: Path = ROOT) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
-    for path in sorted((ROOT / "kestrel").rglob("*")):
+    for path in sorted((root / "kestrel").rglob("*")):
         if not path.is_file() or path.suffix.lower() not in SUFFIXES or "__pycache__" in path.parts:
+            continue
+        if path.relative_to(root).parts[:3] == _FETCHED:
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -34,7 +42,7 @@ def _hosts_in_code() -> dict[str, list[str]]:
         for m in _URL.finditer(text):
             host = _normalize(m.group(1))
             if host:  # a bare "https://" prefix in a check has no host
-                found.setdefault(host, []).append(str(path.relative_to(ROOT)))
+                found.setdefault(host, []).append(str(path.relative_to(root)))
     return found
 
 
@@ -70,3 +78,14 @@ def test_the_guard_finds_a_new_address_and_reads_placeholders_as_one_part():
               'y = f"https://{slug}.jobs.personio.{tld or \'de\'}/xml"')
     hosts = {_normalize(m.group(1)) for m in _URL.finditer(sample)}
     assert hosts == {"new.example.org", "{*}.jobs.personio.{*}"}
+
+
+def test_the_fetched_embedding_model_files_are_not_scanned(tmp_path):
+    # A source checkout that ran scripts/fetch_embed_model.py has the model's license beside the
+    # code; its addresses are not Kestrel's outbound calls.
+    model = tmp_path.joinpath(*_FETCHED)
+    model.mkdir(parents=True)
+    (model / "NOTICE.txt").write_text("See https://licenses.example.org/apache\n", encoding="utf-8")
+    code = tmp_path / "kestrel" / "app.py"
+    code.write_text('URL = "https://api.example.net/v1"\n', encoding="utf-8")
+    assert set(_hosts_in_code(tmp_path)) == {"api.example.net"}

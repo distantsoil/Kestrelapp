@@ -35,6 +35,7 @@ from kestrel.db.models import Setting
 from kestrel.errors import UserFacingError
 from kestrel.llm import providers as prov
 from kestrel.llm.service_name import service_name
+from kestrel.services import viewer
 from kestrel.services.setting_overrides import (
     HOSTED_MODEL_DEFAULTS_KEY,
     HOSTED_MODEL_OVERRIDES_KEY,
@@ -198,7 +199,7 @@ def _cache_key(name: str, backend: BackendConfig) -> tuple[str, str, str]:
 
 def cached(name: str, backend: BackendConfig) -> list[prov.ModelInfo] | None:
     hit = _cache.get(_cache_key(name, backend))
-    if hit is None or time.monotonic() - hit[0] > CACHE_TTL_S:
+    if viewer.is_remote() or hit is None or time.monotonic() - hit[0] > CACHE_TTL_S:
         return None
     return list(hit[1])
 
@@ -218,7 +219,11 @@ async def fetch_models(
     """The models Kestrel can ask for JSON (providers.models_fit_for_tier3: on OpenRouter every
     chat model, each with its JSON mode), from the cache when fresh.
     Raises ModelListError with a message fit to show; never logs the key. The key check comes
-    first, so a key removed since the list was cached is reported, not answered from the cache."""
+    first, so a key removed since the list was cached is reported, not answered from the cache.
+    A key holder (a page view from another device) never gets a list: it is provider data fetched
+    with the saved key, so only this computer may ask for or see it (#155)."""
+    if viewer.is_remote():
+        raise ModelListError("Only this computer can list the online models.")
     if not (backend.api_key or prov.secret_present(backend.api_key_env)):
         raise ModelListError(
             f"No key is saved for {name} ({backend.api_key_env}). Connect under Settings > Hosted."

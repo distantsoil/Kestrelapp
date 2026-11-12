@@ -1,0 +1,17 @@
+{# The cards of a quick round (issue 171). Only what the posting says: organization, title,
+   place, work style, pay and age. Kestrel's score is not read for this partial and is not in
+   it, so it cannot anchor the answer. #}
+{% for c in cards %}
+<article class="qr-card" data-opp="{{ c.opp_id }}" data-testid="qr-card" tabindex="-1" aria-label="{{ c.title }}{% if c.org %}, {{ c.org }}{% endif %}">
+  <div class="qr-org"><span class="cal-mono cal-mono--{{ c.mono }}" aria-hidden="true">{{ c.initials }}</span><span class="qr-org__name">{{ c.org or 'Organization not listed' }}</span></div>
+  <h2 class="qr-title" title="{{ c.title }}">{{ c.title }}</h2>
+  <ul class="qr-facts">
+    <li><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></svg><span title="{{ c.where }}">{{ c.where }}</span></li>
+    <li><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 11l9-7 9 7v9H3z"/></svg><span>{{ c.style }}</span></li>
+    <li><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg><span{% if not c.pay_listed %} class="qr-muted"{% endif %}>{{ c.pay }}</span></li>
+    <li><svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="qr-muted">{{ c.posted }}</span></li>
+  </ul>
+  <div class="qr-open"><span>Kestrel's score stays hidden here</span>{% if c.url %}<a class="k-link" href="{{ c.url }}" target="_blank" rel="noopener noreferrer" data-testid="qr-open">Open posting</a>{% endif %}</div>
+  <span class="qr-stamp qr-stamp--y" aria-hidden="true">YES</span><span class="qr-stamp qr-stamp--n" aria-hidden="true">NOT FOR ME</span><span class="qr-stamp qr-stamp--t" aria-hidden="true">TOP PICK</span>
+</article>
+{% endfor %}

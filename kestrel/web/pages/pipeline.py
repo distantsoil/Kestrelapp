@@ -29,6 +29,7 @@ from sqlalchemy import delete, or_, select
 from kestrel.date_display import format_display
 from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Org, Pursuit, Setting, Task, VerdictOverride
+from kestrel.learning.capture import bulk_marks
 from kestrel.services import hidden_orgs, saved_views
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.urls import safe_web_url
@@ -39,15 +40,18 @@ from kestrel.web.fit import (
     EMPTY_POSTING_STAGE_REASON,
     GROUP_FAILED,
     GROUP_NEW,
+    GROUP_NOT_FIT,
     GROUP_UNSCORED,
     NOT_FIT,
     verdict_for_fit,
 )
 from kestrel.web.queries import (
+    GROUP_ORDER,
     OppRow,
     _retry_removed,
     attach_rescoring,
     attach_twins,
+    group_role_ids,
     live_scoring_exists,
     saved_clause,
     scoring_states,
@@ -60,7 +64,7 @@ router = APIRouter()
 
 # The reason text of the agree label Mark reviewed writes; its Undo deletes only rows carrying it.
 REVIEWED_REASON = "Reviewed in Pipeline."
-# The most roles one bulk action touches (the list shows 25 a group; this is generous).
+# The most roles one bulk action touches (the list shows 25 a group; Undo names each one).
 BULK_MAX = 200
 
 
@@ -70,10 +74,15 @@ def _events(events: dict[str, Any] | None) -> dict[str, str]:
     return {"HX-Trigger": json.dumps(events, ensure_ascii=True)} if events else {}
 
 
-def _toast(message: str, undo_url: str | None = None, tone: str | None = None) -> dict:
+def _toast(
+    message: str, undo_url: str | None = None, tone: str | None = None,
+    undo_label: str | None = None,
+) -> dict:
     body: dict[str, Any] = {"message": message}
     if undo_url:
         body["undoUrl"] = undo_url
+        if undo_label:
+            body["undoLabel"] = undo_label
     if tone:
         body["tone"] = tone
     return body
@@ -88,8 +97,9 @@ def _plural(n: int, one: str = "role", many: str = "roles") -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def parse_ids(raw: str | list[str] | None) -> list[int]:
-    """Role ids from "1,2,3" (or repeated values): positive integers, no repeats, capped."""
+def parse_ids(raw: str | list[str] | None, limit: int | None = BULK_MAX) -> list[int]:
+    """Role ids from "1,2,3" (or repeated values): positive integers, no repeats, cut at `limit`
+    (None keeps all, for a caller that refuses an over-long list instead of cutting it)."""
     parts: list[str] = []
     for chunk in raw if isinstance(raw, list) else [raw or ""]:
         parts.extend(str(chunk).split(","))
@@ -98,7 +108,7 @@ def parse_ids(raw: str | list[str] | None) -> list[int]:
         p = p.strip()
         if p.isdigit() and int(p) > 0 and int(p) not in out:
             out.append(int(p))
-    return out[:BULK_MAX]
+    return out if limit is None else out[:limit]
 
 
 # ---------------------------------------------------------------------------------- the panel
@@ -162,6 +172,9 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
     await scoring_states(s, [probe])
     await attach_rescoring(s, [probe])
     await attach_twins(s, [probe])
+    from kestrel.learning.score_age import older_for
+
+    older = await older_for(s, opp0, ev0)  # before the detail context edits ORM fields
     detail = await _detail_context(s, opp_id)
     if detail is None:
         return None
@@ -210,9 +223,11 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
         watch = list(
             detail.get("watch") or watch_lines(ev_json.get("legitimacy"), opp.ghost_score, opp)
         )
-        warn = pv.warning_text(opp, ev)
+        warn = pv.warning_text(opp, ev, older)
         if warn and not watch:
             watch = [warn]
+        elif older and pv.OLDER_TEXT not in watch:  # the row's mark, never hidden by the others
+            watch.append(pv.OLDER_TEXT)
         ctx.update(
             score=fit.score,
             ring_pct=round((fit.score or 0) / 5 * 100),
@@ -227,6 +242,12 @@ async def panel_context(s, opp_id: int) -> dict[str, Any] | None:
             model_word=detail.get("model_word"),
             rules_word=detail.get("rules_word"),
         )
+        if not opp.archived_at:
+            # The same I applied block as the Role page (issue #129, owner 2026-11-03): one
+            # form, one route (/opportunities/{id}/role/applied), the same Undo and Edit date.
+            from kestrel.web.pages.role import applied_view
+
+            ctx.update(pursuit=pursuit, **await applied_view(s, opp_id, pursuit))
     elif kind == "nf":
         ctx.update(
             rule_why=detail.get("rule_why"),
@@ -775,13 +796,77 @@ async def add_lead(request: Request, opp_id: int):
 
 
 # ------------------------------------------------------------------------------------ bulk bar
+# One action changes at most BULK_MAX roles because its Undo link names every role it changed.
+# The bar says so before the action and the toast after it; nothing is ever cut silently (#116).
+_GROUP_KEYS = tuple(k for k in GROUP_ORDER if k != GROUP_NOT_FIT)
+
+
+async def _resolve_group(request: Request, form, group: str):
+    """The roles a whole-group request names, resolved NOW from the group key and the filters the
+    page was drawn with (its effective query, track included), never from a list of ids the page
+    sent. Returns (ids to change, how many the group holds) or a ready answer when the request is
+    refused. A group that holds a different number than the bar showed changes nothing."""
+    from urllib.parse import parse_qsl
+
+    from kestrel.web.routes_pages import _pay_value, page_filters
+
+    if group not in _GROUP_KEYS:
+        return _answer({"k-toast": _toast("That group is not available.", tone="warn")})
+    params = {
+        k: v for k, v in parse_qsl(str(form.get("scope") or ""), keep_blank_values=False)
+        if k not in ("open", "nf_page") and not k.startswith("lim_")
+    }
+    f = page_filters(params, request)
+    if params.get("track") in ("employment", "consulting"):
+        f.track = params["track"]
+    f.pay_min = await _pay_value(f.track, f.pay)
+    f.limits = {}
+    async with sessionmaker()() as s:
+        everyone = await group_role_ids(s, f, group)
+    try:
+        expected = int(str(form.get("expect") or ""))
+    except ValueError:
+        expected = None
+    if expected is not None and expected != len(everyone):
+        return _answer({
+            "pipelineRefresh": True, "pl-clear": True,
+            "k-toast": _toast(
+                f"This group changed since you selected it: {_plural(expected)} before, "
+                f"{_plural(len(everyone))} now. Nothing was changed. Select it again.",
+                tone="warn",
+            ),
+        })
+    return everyone[:BULK_MAX], len(everyone)
+
+
 @router.post("/pipeline/bulk/{action}", response_class=HTMLResponse)
 async def bulk(request: Request, action: str):
-    """The dark bar under the list (D-UI-96). `ids` is a comma list. Shortlist and Not for me
-    carry an Undo; Score again goes through the same model choice every Score again does;
-    Deeper read needs a per-role OK, so it only says so."""
+    """The dark bar under the list (D-UI-96). `ids` is a comma list of the roles ticked, or
+    `group` (with `scope`, the page's filters, and `expect`, the count the bar showed) names a
+    whole fit group that the server resolves now (#116). Shortlist and Not for me carry an Undo;
+    Score again goes through the same model choice every Score again does; Deeper read needs a
+    per-role OK, so it only says so, and never resolves a group. A list longer than the cap is
+    refused whole, never cut."""
     form = await request.form()
-    ids = parse_ids(str(form.get("ids") or ""))
+    group = str(form.get("group") or "").strip()
+    ids: list[int] = []
+    held = 0
+    if not group:
+        ids = parse_ids(str(form.get("ids") or ""), limit=None)
+        if len(ids) > BULK_MAX:
+            return _answer({"k-toast": _toast(
+                f"One action changes at most {BULK_MAX} roles and {len(ids)} were named. "
+                "Nothing was changed. Use Select all on a group, or pick fewer.", tone="warn")})
+        held = len(ids)
+    if action == "deeper-read" and (group or ids):
+        return _answer({"k-toast": _toast(
+            "Deeper read needs your OK for each role: Kestrel shows exactly what it sends first. "
+            "Open a role and choose Deeper read with a stronger model there.")})
+    if group:
+        resolved = await _resolve_group(request, form, group)
+        if isinstance(resolved, Response):
+            return resolved
+        ids, held = resolved
     if not ids:
         return _answer({"k-toast": _toast("Pick one or more roles first.", tone="warn")})
     handler = {
@@ -789,10 +874,6 @@ async def bulk(request: Request, action: str):
         "not-for-me": _bulk_not_for_me,
         "mark-reviewed": _bulk_reviewed,
     }.get(action)
-    if action == "deeper-read":
-        return _answer({"k-toast": _toast(
-            "Deeper read needs your OK for each role: Kestrel shows exactly what it sends first. "
-            "Open a role and choose Deeper read with a stronger model there.")})
     if handler is None:
         return _answer({"k-toast": _toast("That action is not available.", tone="warn")}, "")
     try:
@@ -802,6 +883,10 @@ async def bulk(request: Request, action: str):
     except Exception as exc:  # a write path never turns into a 500 (CLAUDE.md)
         log.warning("pipeline_bulk_failed", action=action, error=str(exc))
         return _answer({"k-toast": _toast(f"Could not finish: {plain_error(exc)}", tone="warn")})
+    if held > len(ids) and isinstance(events.get("k-toast"), dict):
+        events["k-toast"]["message"] += (
+            f" That was the first {len(ids)} of {held} in the group; the rest are unchanged."
+        )
     return _answer(events, oob)
 
 
@@ -819,7 +904,7 @@ async def _bulk_shortlist(s, ids: list[int]) -> dict[str, Any]:
     ):
         if opp.id in have:
             continue
-        pursuit, _text = await add_to_list(s, opp)
+        pursuit, _text = await add_to_list(s, opp, bulk=True)  # teaches nothing (#116)
         if pursuit is not None:
             added.append(opp.id)
     where = "leads" if await _all_consulting(s, ids) else "shortlist"
@@ -832,7 +917,11 @@ async def _bulk_shortlist(s, ids: list[int]) -> dict[str, Any]:
         if added
         else None
     )
-    return {"pipelineRefresh": True, "pl-clear": True, "k-toast": _toast(msg, undo)}
+    label = "Add to leads" if where == "leads" else "Shortlist"
+    return {
+        "pipelineRefresh": True, "pl-clear": True,
+        "k-toast": _toast(msg, undo, undo_label=f"Undo {label}, {_plural(len(added))}"),
+    }
 
 
 async def _all_consulting(s, ids: list[int]) -> bool:
@@ -859,7 +948,10 @@ async def _bulk_not_for_me(s, ids: list[int]) -> dict[str, Any]:
     )
     return {
         "pl-gone": {"ids": hidden}, "pl-clear": True,
-        "k-toast": _toast(f"{_plural(len(hidden))} moved to Hidden.", undo),
+        "k-toast": _toast(
+            f"{_plural(len(hidden))} moved to Hidden.", undo,
+            undo_label=f"Undo Not for me, {_plural(len(hidden))}",
+        ),
     }
 
 
@@ -886,7 +978,8 @@ async def _bulk_reviewed(s, ids: list[int]) -> dict[str, Any]:
         if again is not None:  # the operator already gave a word on this read
             continue
         row = await record_override(
-            s, opp_id=opp_id, mode="agree", reason=REVIEWED_REASON, commit=False
+            s, opp_id=opp_id, mode="agree", reason=REVIEWED_REASON, commit=False,
+            dimension_corrections=bulk_marks(),  # records the state, teaches nothing (#116)
         )
         if row is not None:
             done.append(row.id)
@@ -895,7 +988,10 @@ async def _bulk_reviewed(s, ids: list[int]) -> dict[str, Any]:
     if skipped:
         msg += f" {_plural(skipped)} not scored yet."
     undo = f"/pipeline/bulk-undo/mark-reviewed?labels={','.join(map(str, done))}" if done else None
-    return {"pipelineRefresh": True, "pl-clear": True, "k-toast": _toast(msg, undo)}
+    return {
+        "pipelineRefresh": True, "pl-clear": True,
+        "k-toast": _toast(msg, undo, undo_label=f"Undo Mark reviewed, {_plural(len(done))}"),
+    }
 
 
 @router.post("/pipeline/bulk-undo/{action}", response_class=HTMLResponse)

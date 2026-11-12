@@ -46,9 +46,9 @@ from kestrel.ingest.adapters import get_adapter
 from kestrel.ingest.base import SourceConfigError
 from kestrel.ingest.generated import SEC_TITLES_LABEL, sec_titles_opt_in
 from kestrel.ingest.signal_sources import SIGNAL_SOURCE_KINDS, get_signal_source
-from kestrel.llm import credit
 from kestrel.services import tracks as tracks_svc
 from kestrel.web import source_view as sv
+from kestrel.web.auth import LOCAL_ONLY, refuse_unless_local, release_credit_hold
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 
@@ -91,6 +91,20 @@ def _validate_source_config(kind: str, config: dict) -> str | None:
         except SourceConfigError as exc:
             return plain_error(exc)
     return None
+
+
+def _refuse_remote_secret_name(request: Request, new: dict, old: object = None) -> None:
+    """D-SEC-21: which saved key a source sends is this computer's choice. A key holder may not
+    add or change a field that names a saved secret (`api_key_env` and the like); resending the
+    names the row already has is allowed."""
+    from kestrel.ingest.source_secrets import SECRET_FIELDS
+    from kestrel.web.auth import LOCAL_ONLY_CHANGE, LocalOnlyRefused, request_is_local
+
+    def named(cfg: object) -> dict:
+        return {f: cfg[f] for f in SECRET_FIELDS if f in cfg} if isinstance(cfg, dict) else {}
+
+    if named(new) != named(old) and not request_is_local(request):
+        raise LocalOnlyRefused(LOCAL_ONLY_CHANGE)
 
 
 def _parse_config(raw: str) -> tuple[dict, str | None]:
@@ -472,6 +486,7 @@ async def _panel_ctx(
     create_error: str | None = None,
     create_values: dict | None = None,
     edit_error: dict | None = None,
+    queue_checks: bool = False,
     **extra,
 ) -> dict:
     from kestrel.services import source_suggestions
@@ -511,7 +526,7 @@ async def _panel_ctx(
         "type_options": [("", "All types")] + [(k, t) for k, t, _d in sv.GROUPS[track]],
         "origins": sv.ORIGINS,
         "suggestions": await source_suggestions.suggestions_with_boards(
-            session, track, [s.name for s in in_use]
+            session, track, [s.name for s in in_use], queue_checks=queue_checks
         ),
         "found_boards": sum(1 for s in sources if s.origin == board_discovery.DISCOVERED),
         "found_cap": board_discovery.MAX_DISCOVERED,
@@ -570,7 +585,7 @@ async def page(request: Request):
     elif rid.isdigit() and code in RUN_OUTCOMES:
         message = {"id": int(rid), "text": RUN_OUTCOMES[code][1]}
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(request, s, run_message=message)
+        ctx = await _panel_ctx(request, s, run_message=message, queue_checks=True)
     ctx["title"] = "Sources"
     ctx["query"] = dict(request.query_params)
     tmpl = "partials/sources_panel.html" if request.headers.get("HX-Request") else "sources.html"
@@ -595,6 +610,7 @@ async def create_source(request: Request):
     error = error or parse_error
     if error is None:
         error = _validate_source_config(kind, config)
+        _refuse_remote_secret_name(request, config)
 
     values = {
         "name": name, "track": track, "kind": kind,
@@ -656,7 +672,7 @@ async def score_everything_now(request: Request):
                 "models only. Choose local models for both scoring tiers first."
             )
         return _panel(request, ctx, 400)
-    credit.clear()  # the operator asked to score now: let an online key try again (D-LLM-8)
+    release_credit_hold(request)  # the operator asked to score now (D-LLM-8, D-SEC-10)
     n = await lane.release_all(sessionmaker(), online_approval=form.get("online_approval"))
     async with sessionmaker()() as s:
         msg = (f"Scoring {n} waiting role{'' if n == 1 else 's'} now." if n
@@ -683,19 +699,9 @@ async def save_sec_titles(request: Request):
 
 
 async def _http_client():
-    from kestrel.ingest.http import HttpClient
-    from kestrel.services.setting_overrides import load_settings_with_db
+    from kestrel.services import source_suggestions
 
-    async with sessionmaker()() as s:
-        settings = await load_settings_with_db(s)
-    ing = settings.ingest
-    return HttpClient(
-        user_agent=ing.user_agent,
-        default_rate_per_sec=ing.default_rate_per_sec,
-        timeout=min(ing.request_timeout_s, 20.0),
-        respect_robots=ing.respect_robots,
-        max_attempts=1,  # one request per probe: MAX_PROBES is the request ceiling
-    )
+    return await source_suggestions.http_client()
 
 
 @router.post("/sources/company-board", response_class=HTMLResponse)
@@ -761,7 +767,7 @@ async def watch_company_board(request: Request):
     return _panel(request, ctx)
 
 
-@router.post("/sources/sam-gov/key", response_class=HTMLResponse)
+@router.post("/sources/sam-gov/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def save_sam_key(request: Request):
     """Save the SAM.gov key to the data-home .env (never the database, never YAML) through the
     helper the hosted-model keys use, then enable the SAM.gov source, creating it if needed."""
@@ -803,7 +809,8 @@ async def save_sam_key(request: Request):
     return _panel(request, ctx)
 
 
-@router.post("/sources/remoterocketship/key", response_class=HTMLResponse)
+@router.post("/sources/remoterocketship/key", response_class=HTMLResponse,
+    dependencies=[LOCAL_ONLY])
 async def save_rrs_key(request: Request):
     """Save the user's RemoteRocketship key through the helper the hosted-model and SAM.gov keys
     use (atomic, data-home .env only). The key is never echoed, logged or stored in the source.
@@ -866,7 +873,7 @@ async def toggle_rrs(request: Request):
     return _panel(request, ctx)
 
 
-@router.post("/sources/usajobs/key", response_class=HTMLResponse)
+@router.post("/sources/usajobs/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def save_usajobs_key(request: Request):
     """Save the user's USAJobs key and email from the card. The key is never echoed, logged or
     stored in a source. Always 200 so the panel can show the message in plain words."""
@@ -886,7 +893,7 @@ async def save_usajobs_key(request: Request):
     return _panel(request, ctx)
 
 
-@router.post("/sources/adzuna/key", response_class=HTMLResponse)
+@router.post("/sources/adzuna/key", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def save_adzuna_key(request: Request):
     """Save the user's Adzuna app ID and app key from the card. Neither is echoed, logged or
     stored in a source. Always 200 so the panel can show the message in plain words."""
@@ -974,6 +981,8 @@ async def update_source(request: Request, source_id: int):
         src = await s.get(Source, source_id)
         if src is None:
             return HTMLResponse("source not found", status_code=404)
+        if error is None:
+            _refuse_remote_secret_name(request, config, src.config)
 
         if error is None:
             src.name = name
@@ -1029,7 +1038,7 @@ def list_response(
 async def source_list(request: Request):
     """The groups again, for Undo and for a change made elsewhere."""
     async with sessionmaker()() as s:
-        ctx = await _panel_ctx(request, s)
+        ctx = await _panel_ctx(request, s, queue_checks=True)
     return list_response(request, ctx)
 
 
@@ -1222,6 +1231,8 @@ async def run_now(request: Request, source_id: int):
 
     form = await request.form()
     hx = bool(request.headers.get("HX-Request"))
+    if str(form.get("model_choice") or "usual") == "other":
+        refuse_unless_local(request)  # one model other than the usual: this computer only
     async with sessionmaker()() as s:
         src = await s.get(Source, source_id)
         if src is None:

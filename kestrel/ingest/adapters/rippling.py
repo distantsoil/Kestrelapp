@@ -39,7 +39,7 @@ class RipplingAdapter:
 
     def validate_config(self, config: dict) -> None:
         slug = config.get("slug")
-        if not isinstance(slug, str) or not _SLUG.match(slug):
+        if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
             raise SourceConfigError(
                 "rippling source requires a 'slug' (the board name in "
                 "ats.rippling.com/{slug}/jobs: letters, digits, '-', '_' or '.')"

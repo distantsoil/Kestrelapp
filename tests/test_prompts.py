@@ -13,8 +13,12 @@ def test_prompts_registered():
     # The nine free-prose prompts gained a /v2 with the plain-writing block (issue #93); their
     # /v1 files stay. Plus the /v1 of triage, triage_consulting and
     # evaluate, kept beside their /v2 (D-LLM-12). cover/v3 and engagement_outline/v3 (first
-    # person, D-UI-241) sit beside their /v2.
-    assert len(all_versions()) == 36
+    # person, D-UI-241) sit beside their /v2. cover/v4 (accepted stories as a source, D-LETTER-2)
+    # sits beside cover/v3. story_consolidate/v3 (themes narrowed to the eight behavioral themes
+    # with at most three, and the plain-writing rules named up front, D-LLM-13) sits beside v2.
+    # evaluate/v3 and evaluate_consulting/v3 (the operator's stated facts, D-SCORE-1) sit beside
+    # their /v2.
+    assert len(all_versions()) == 40
 
 
 def test_every_prompt_loads_and_substitutes_global_rules():

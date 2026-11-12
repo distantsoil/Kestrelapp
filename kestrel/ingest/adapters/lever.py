@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError
+from kestrel.ingest.base import AdapterError, RawPosting, SourceConfigError, path_segment
 
 _BASE = "https://api.lever.co/v0/postings"
 
@@ -33,6 +33,8 @@ class LeverAdapter:
     kind = "lever"
 
     def validate_config(self, config: dict) -> None:
+        if config.get("company"):
+            path_segment(config, "company", "lever 'company'")
         if not config.get("company"):
             raise SourceConfigError("lever source requires a 'company' (the Lever slug)")
 

@@ -333,7 +333,7 @@ async def test_5_cancel_closes_a_silent_stream_at_once_and_reads_stopping_until_
     assert closed.is_set() and mt.stopping() is False
     async with sm() as s:
         snap = await mt.snapshot(s)
-    assert snap["items"][0]["step"] == "Cancelled" and snap["stopping"] is False
+    assert snap["items"][0]["step"] == "Canceled" and snap["stopping"] is False
     mt.reset()
 
 
@@ -363,7 +363,9 @@ async def test_6_restarts_do_not_use_up_a_downloads_attempts(sm):
         assert (await s.get(Task, t.id)).attempts == 1
 
 
-async def test_6_a_scoring_task_still_spends_its_attempt_on_a_restart(sm):
+async def test_6_a_scoring_task_gives_its_attempt_back_on_a_clean_quit(sm):
+    # issue #153 (D-QUEUE-3): a clean quit is not a failure, so every type gives its
+    # in-flight attempt back now, not only the refund types.
     from kestrel.queue.queue import TaskQueue
 
     q = TaskQueue(sm)
@@ -372,7 +374,7 @@ async def test_6_a_scoring_task_still_spends_its_attempt_on_a_restart(sm):
     await q.release_all_leased()
     async with sm() as s:
         (t,) = (await s.execute(select(Task))).scalars().all()
-    assert t.attempts == 1
+    assert t.status == "pending" and t.attempts == 0
 
 
 # ============================================ 7. any consulting artifact keeps both tracks

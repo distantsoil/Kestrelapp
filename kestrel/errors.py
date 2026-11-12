@@ -142,7 +142,7 @@ def task_failure_text(exc: BaseException) -> str:
         return str(exc)
     if isinstance(exc, OSError):
         return plain_os_reason(exc)  # a ConnectionError or TimeoutError reads as the network
-    return f"an unexpected problem ({type(exc).__name__}); the details are in the log"
+    return "an unexpected problem; the details are in the log"
 
 
 # ------------------------------------------------------------------ stored failures vs. pages

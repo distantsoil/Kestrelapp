@@ -239,7 +239,7 @@ def test_a_score_from_the_old_prompt_version_says_score_again():
     old = SimpleNamespace(tier=2, prompt_version="evaluate/v1", needs_review=False,
                           legitimacy=None)
     assert "Score again to refresh it." in (pv.warning_text(opp, old) or "")
-    new = SimpleNamespace(tier=2, prompt_version="evaluate/v2", needs_review=False,
+    new = SimpleNamespace(tier=2, prompt_version="evaluate/v3", needs_review=False,
                           legitimacy=None)
     assert pv.warning_text(opp, new) is None
     lead = SimpleNamespace(track="consulting", ghost_score=0.0, liveness=None)

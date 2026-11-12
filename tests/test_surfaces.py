@@ -295,7 +295,8 @@ def test_a_failing_page_shows_the_calm_error_page_with_plain_details(monkeypatch
     assert "Kestrel couldn’t load this page" in r.text
     assert "Your roles and settings are safe on this computer." in r.text
     assert "Try again" in r.text and "Show details" in r.text and "Copy details" in r.text
-    assert "What happened: an unexpected problem (RuntimeError)" in r.text
+    assert "What happened: an unexpected problem" in r.text
+    assert "RuntimeError" not in r.text
     assert "secret" not in r.text and "abc123" not in r.text and "/srv/secret" not in r.text
     assert "Kestrel " in r.text and "—" not in r.text
     # Not a page navigation: Starlette's own answer, so a fragment swap or a client is unchanged.

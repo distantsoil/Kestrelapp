@@ -25,6 +25,7 @@ so `Worker.drain_tier` can drive it unchanged.
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import structlog
 from sqlalchemy import func, select
@@ -32,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import Settings
+from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, OpportunityEmbedding, Task
 from kestrel.ingest.tokens import truncate_head
 from kestrel.llm.client import LLMClient
@@ -176,6 +178,58 @@ async def handle_embed(
 RESWEEP_S = 1800.0  # how often an incomplete sweep re-queues stale vectors
 
 
+def _clock() -> float:
+    """This module's wall clock (D-TEST-2: tests patch this, never the global time)."""
+    return time.time()
+
+
+async def _due_recheck(session: AsyncSession, swept: Any, now: float) -> bool:
+    """Whether a finished sweep may look again for dead, still-stale rows: at most once per
+    RESWEEP_S, stamped on the setting row's updated_at (in the caller's commit)."""
+    from datetime import datetime
+
+    try:
+        last = datetime.fromisoformat(swept.updated_at).timestamp() if swept.updated_at else 0.0
+    except (TypeError, ValueError):
+        last = 0.0
+    if now - last < RESWEEP_S:
+        return False
+    swept.updated_at = utcnow_iso()
+    return True
+
+
+async def _stale_and_unqueued(session: AsyncSession, model: str) -> bool:
+    """A role whose vector is missing or from another model and that no live embed task is
+    working on. This is the state a dead embed task leaves, but it does not ask for the dead task:
+    retention (D-PERF-3) removes finished tasks after 30 days, and a role whose embed died must
+    still be found once the install is fixed (hard rule 5). Read through the indexed
+    task.opportunity_id, at most every RESWEEP_S."""
+    live = (
+        select(Task.id)
+        .where(
+            Task.type == "embed", Task.opportunity_id == Opportunity.id,
+            Task.status.in_(("pending", "leased")),
+        )
+        .correlate(Opportunity)
+        .exists()
+    )
+    row = (
+        await session.execute(
+            select(Opportunity.id)
+            .outerjoin(
+                OpportunityEmbedding, OpportunityEmbedding.opportunity_id == Opportunity.id
+            )
+            .where(
+                (OpportunityEmbedding.opportunity_id.is_(None))
+                | (OpportunityEmbedding.model != model),
+                ~live,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
 async def enqueue_stale_embeddings(
     sessionmaker: async_sessionmaker[AsyncSession], settings: Settings
 ) -> int:
@@ -205,9 +259,20 @@ async def enqueue_stale_embeddings(
     async with sessionmaker() as session:
         swept = await session.get(Setting, EMBED_SWEPT_MODEL_KEY)
         state = str(swept.value) if swept is not None else ""
+        now = _clock()
         if state == model:
-            return 0  # this model's backlog drained; ingestion enqueues new postings itself
-        now = time.time()
+            # This model's backlog drained; ingestion enqueues new postings itself. But a sweep
+            # can finish before the first search stores anything (a first run), and an embed
+            # task can then die for good (the model files missing, D-EMBED-7): nothing would
+            # ever look again. So at most every RESWEEP_S, check for a role whose vector is
+            # missing or stale and that no live embed task covers (a dead task may be long
+            # pruned, D-PERF-3), and sweep again if there is one.
+            if not await _due_recheck(session, swept, now):
+                return 0
+            if not await _stale_and_unqueued(session, model):
+                await session.commit()  # the recheck stamp
+                return 0
+            state = ""
         recent = False
         if state.startswith(model + "|"):
             try:

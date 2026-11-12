@@ -1,0 +1,51 @@
+{# The quick round (issue 171, D-UI-272, the locked mockup the private overhaul notes
+   quick-round-mockup-locked.html). One card at a time: Left Not for me, Right Yes, Up Top pick,
+   Down Not sure, or drag. Each answer saves at once (POST /calibrate/quick/answer, a local label
+   and nothing else). Kestrel's score is never in this page. quick_round.js runs it. #}
+{% extends "base.html" %}
+{% import "ui/macros.html" as ui %}
+{% block title %}Quick round · Kestrel{% endblock %}
+{% block legacy_css %}<link rel="stylesheet" href="{{ static_url('css/shell.css') }}">{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ static_url('css/calibrate.css') }}">
+<link rel="stylesheet" href="{{ static_url('css/pages/quick_round.css') }}">
+{% endblock %}
+{% block page_name %}quick-round{% endblock %}
+{% block page_scripts %}<script src="{{ static_url('js/quick_round.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div class="qr-wrap"><div class="qr-page" id="qr" data-testid="qr-page" data-track="{{ track }}" data-size="{{ size }}">
+  <header class="qr-top">
+    <a class="k-btn k-btn--quiet k-btn--sm" href="/calibrate?track={{ track }}" data-testid="qr-back" aria-label="Leave the round">{{ ui.icon('chev', 'qr-back-ic') }}Back</a>
+    <h1>Quick round</h1>
+    <span class="qr-saves k-muted">Answers save as you go</span>
+  </header>
+
+  <section class="qr-round" id="qr-round" aria-label="Quick round"{% if not cards %} hidden{% endif %}>
+    <div class="qr-rhead"><span class="qr-q">Would you want this one in your pipeline?</span><span class="qr-count" id="qr-count" data-testid="qr-count" aria-live="polite">1 of {{ cards|length }}</span></div>
+    <div class="qr-pips" id="qr-pips" aria-hidden="true"></div>
+    <div class="qr-stage" id="qr-stage" data-testid="qr-stage">{% include "partials/quick_cards.html" %}</div>
+    <div class="qr-acts" role="group" aria-label="Your answer">
+      <div class="qr-actl"><button type="button" class="qr-act qr-act--no" id="qr-no" data-testid="qr-no" aria-label="No, not for me">{{ ui.icon('x') }}</button><span>Not for me <kbd>Left</kbd></span></div>
+      <div class="qr-actl"><button type="button" class="qr-act qr-act--unsure" id="qr-unsure" data-testid="qr-unsure" aria-label="Not sure, skip">{{ ui.icon('chevd') }}</button><span>Not sure <kbd>Down</kbd></span></div>
+      <div class="qr-actl"><button type="button" class="qr-act qr-act--pick" id="qr-top" data-testid="qr-top" aria-label="Top pick, a role you would jump at">{{ ui.icon('star') }}</button><span>Top pick <kbd>Up</kbd></span></div>
+      <div class="qr-actl"><button type="button" class="qr-act qr-act--yes" id="qr-yes" data-testid="qr-yes" aria-label="Yes, show me roles like this">{{ ui.icon('check') }}</button><span>Yes <kbd>Right</kbd></span></div>
+    </div>
+    <div class="qr-foot">
+      <button type="button" class="k-btn k-btn--quiet k-btn--sm" id="qr-undo" data-testid="qr-undo" disabled>{{ ui.icon('undo') }}Undo <kbd>Ctrl Z</kbd></button>
+      <button type="button" class="k-btn k-btn--quiet k-btn--sm" id="qr-finish" data-testid="qr-finish">Finish early</button>
+    </div>
+  </section>
+
+  {% if not cards %}
+  <section class="k-card qr-empty" id="qr-empty" data-testid="qr-empty">
+    <span class="k-badge k-badge--good">{{ ui.icon('check') }}</span>
+    <h2>Nothing to sort right now.</h2>
+    <p class="k-muted">Kestrel is not unsure about any {{ w.role }} at the moment. It finds more after the next run.</p>
+    <div class="qr-btns"><a class="k-btn k-btn--primary k-btn--sm" href="/">Back to Today</a><a class="k-btn k-btn--sm" href="/calibrate?track={{ track }}&amp;tab=detailed">Rate in detail</a></div>
+  </section>
+  {% endif %}
+
+  <section class="qr-done" id="qr-done" data-testid="qr-done-slot" aria-live="polite" hidden></section>
+  <p class="qr-sr" id="qr-live" role="status" aria-live="polite"></p>
+</div></div>
+{% endblock %}

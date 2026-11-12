@@ -1,0 +1,12 @@
+{# The rescore offer under the search box. Context: `offer` ({n, href} or None) and `oob` (swap
+   it in out of band with a card response). The button is a link to /rescore/choose, the one
+   road to a model: it asks before anything goes online. #}
+<div id="pf-cr-offer" class="pf-cr-offerslot"{% if oob is defined and oob %} hx-swap-oob="true"{% endif %}>
+  {% if offer %}
+  <div class="pf-note pf-cr-offer" role="status" data-testid="pf-cr-offer">
+    <span class="pf-cr-offer__t">{{ offer.n }} role{{ '' if offer.n == 1 else 's' }} use{{ 's' if offer.n == 1 else '' }} this correction. Score {{ 'it' if offer.n == 1 else 'them' }} again to apply it.</span>
+    <a class="k-btn k-btn--sm k-btn--primary" href="{{ offer.href }}" data-testid="pf-cr-rescore">Rescore {{ offer.n }} role{{ '' if offer.n == 1 else 's' }}</a>
+    <button type="button" class="k-btn k-btn--sm" data-pf-cr-dismiss data-testid="pf-cr-notnow">Not now</button>
+  </div>
+  {% endif %}
+</div>

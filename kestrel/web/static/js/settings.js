@@ -158,11 +158,24 @@
       back.push(function () { el.style.width = w; });
     });
     if (!back.length) return;
+    unsettled.push(back);
     void scope.offsetWidth;                       // commit the default state
     root.requestAnimationFrame(function () {
-      root.requestAnimationFrame(function () { back.forEach(function (f) { f(); }); });
+      root.requestAnimationFrame(function () { finishSettle(back); });
     });
   }
+  /* The default state is only drawn, never sent: a press, key or submit inside the two frames
+     restores every saved value first, so a fast Add or Save sends what the page shows. Capture
+     on the document runs before htmx and the form read the boxes. */
+  var unsettled = [];
+  function finishSettle(back) {
+    var i = unsettled.indexOf(back);
+    if (i < 0) return;
+    unsettled.splice(i, 1);
+    back.forEach(function (f) { f(); });
+  }
+  function flushSettle() { unsettled.slice().forEach(finishSettle); }
+  var FLUSH_ON = ['pointerdown', 'mousedown', 'click', 'keydown', 'submit'];
   function onSettleLoad(e) {
     var t = e.target;
     if (!t || t === doc.body || t === doc || !t.closest || !t.closest('[data-st-sec]')) return;
@@ -406,7 +419,11 @@
     if (cp) { copy(cp.getAttribute('data-st-copy')); return; }
     if (t.closest('[data-st-backup]')) { backup(t.closest('[data-st-backup]')); return; }
     if (t.closest('#st-restore-pick')) { var f = $('#st-restore-file'); if (f) f.click(); return; }
-    if (t.closest('[data-st-restore-cancel]')) { var rf = $('#st-restore-file'); if (rf) rf.value = ''; return; }
+    if (t.closest('[data-st-restore-cancel]')) {
+      var rf = $('#st-restore-file'); if (rf) rf.value = '';
+      var rp = $('#st-restore-preview'); if (rp) rp.textContent = '';
+      return;
+    }
     if (t.closest('[data-st-pick-contacts]')) {
       var pick = $('#st-ct-pick input[type="file"]');
       if (pick) pick.click();
@@ -414,6 +431,14 @@
     }
     if (t.closest('#st-play')) { playSound(); return; }
     if (t.closest('#st-forget-open')) { fillForget(); return; }
+    if (t.closest('[data-st-rotate]')) {
+      // Make a new key: it signs out every device that used the old one, so it confirms first
+      // and only turns the key after the person says they understand (D-UI-267).
+      var rack = $('#st-rotate-ack'); if (rack) rack.checked = false;
+      var rgo = $('#st-rotate-go'); if (rgo) rgo.disabled = true;
+      if (root.KUI) root.KUI.openModal('#st-rotate-dialog');
+      return;
+    }
     var open = t.closest('[data-st-open]');
     if (open) { mgOpen(open.getAttribute('data-st-open')); return; }
   }
@@ -425,9 +450,11 @@
     if (el.id === 'st-clear-reset') { var g = $('#st-clear-go'); if (g) g.disabled = el.value !== 'RESET'; }
     if (el.id === 'st-forget-reset') { var f = $('#st-forget-go'); if (f) f.disabled = el.value !== 'RESET'; }
     if (el.id === 'st-access-ack') { var a = $('#st-access-go'); if (a) a.disabled = !el.checked; }
+    if (el.id === 'st-rotate-ack') { var r = $('#st-rotate-go'); if (r) r.disabled = !el.checked; }
   }
   function onAccessChange(e) {
     if (e.target && e.target.id === 'st-access-ack') { var a = $('#st-access-go'); if (a) a.disabled = !e.target.checked; }
+    if (e.target && e.target.id === 'st-rotate-ack') { var r = $('#st-rotate-go'); if (r) r.disabled = !e.target.checked; }
     if (e.target && e.target.matches && e.target.matches('[data-st-access]')) {
       var sw = e.target;
       if (sw.checked) {
@@ -601,6 +628,20 @@
     }
     if (el && el.id === 'st-keyform' && e.detail.successful && root.__stKeyOp === 'save') {
       var k = $('#st-key'); if (k && /saved/i.test(($('#st-keyres') || {}).textContent || '')) k.value = '';
+    }
+    // The restore confirm closes the moment its request lands, success or refusal: the answer
+    // renders into the Backups row, and a dialog left open would sit over it. Cancel still
+    // closes without sending (kestrel-ui.js). The chosen file goes with it, so choosing the
+    // same backup again re-opens the confirm.
+    var restoreForm = el && el.closest && el.id !== 'st-restore-preview'
+      ? el.closest('#st-restore-form') : null;
+    if (restoreForm && root.KUI) {
+      var dlg = restoreForm.closest('.k-modal');
+      if (dlg) root.KUI.closeOverlay(dlg);
+      var rf = $('#st-restore-file');
+      if (rf) rf.value = '';
+      var rp = $('#st-restore-preview');
+      if (rp) rp.textContent = '';
     }
   }
   function onPrefsLoad() { initPrefs(); initFlyouts(); }
@@ -913,6 +954,8 @@
       mg = { kind: null, tab: 'nature', sel: null, msg: '', msgT: 0 };
       ctx.on(doc, 'k-toast', onToastUndo, true);
       ctx.on(doc, 'htmx:load', onSettleLoad);
+      unsettled = [];
+      FLUSH_ON.forEach(function (type) { ctx.on(doc, type, flushSettle, true); });
       ctx.on(doc, 'change', onChange);
       ctx.on(doc, 'click', onClick);
       ctx.on(doc, 'input', onInput);

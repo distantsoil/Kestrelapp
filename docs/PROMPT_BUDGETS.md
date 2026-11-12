@@ -45,6 +45,12 @@ tier2 4000, docsel 1500, tier3 6000) and then some.
 | docsel | 8192 | 1500 | 2890 for a 48-variant master | none |
 | tier3 | 20480 | 6000 | same prompt as tier2 (P2/P2C) | same as tier2 |
 
+The tier2 and tier3 prompts (`evaluate/v3`, `evaluate_consulting/v3`) also carry the operator's
+stated facts block (`OPERATOR_CORRECTIONS`, PROMPTS.md P2 User): at most 20 lines and 1100 tokens,
+counted in preflight's per-tier requirement (`kestrel.doctor.input_budget`, SPEC.md 8.2).
+`test_the_operator_facts_block_at_its_maximum_stays_inside_the_tiers_budget` renders it at that
+maximum, with English and with text that tokenizes one token per character, beside the worst-case JD.
+
 ## Before (as found)
 
 Realistic 900-word JD:

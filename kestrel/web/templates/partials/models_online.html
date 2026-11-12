@@ -1,8 +1,10 @@
+{% import "partials/local_only.html" as lo with context %}
 {% import "ui/macros.html" as ui %}
 {# The online setup drawer body: pick a provider, paste a key, Test or Save. The key is never
    echoed; the route shows only its last four characters. #}
 <div id="mo-online-form" data-testid="mo-online-form">
   {% if on_message %}<p class="mo-msg {{ 'is-good' if on_ok else 'is-bad' }}" role="status" data-testid="mo-online-message">{{ on_message }}</p>{% endif %}
+  {% call lo.fence(request) %}
   <form hx-post="/models/online/key" hx-target="#mo-online-body" hx-swap="innerHTML" autocomplete="off">
     <div class="k-field"><label for="mo-provider">Provider</label>
       <div class="k-select"><select id="mo-provider" name="provider" data-testid="mo-provider">
@@ -16,6 +18,7 @@
       <button class="k-btn k-btn--quiet" type="submit" name="op" value="remove" data-testid="mo-key-remove">Remove saved key</button>
     </div>
   </form>
+  {% endcall %}
   <p class="k-muted mo-note">Stored only on this computer. Never in backups. <a class="k-link" href="/settings#computer">Set up another service in Settings</a>.</p>
   {% if on_other %}
   {% from "partials/hosted_disclosure.html" import disclosure_text with context %}

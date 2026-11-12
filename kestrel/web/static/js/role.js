@@ -22,7 +22,11 @@
 
   function $(sel, scope) { return (scope || doc).querySelector(sel); }
   function $$(sel, scope) { return Array.prototype.slice.call((scope || doc).querySelectorAll(sel)); }
-  function reduced() { return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  // The OS setting or the app's own Reduce motion switch (data-reduce-motion="1", as profile.js reads it).
+  function reduced() {
+    return !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches) ||
+      doc.documentElement.getAttribute('data-reduce-motion') === '1';
+  }
   function body() { return $('#rl-body'); }
   function oppId() { var p = $('#role'); return p ? p.getAttribute('data-opp') : ''; }
   function toast(msg, opts) { if (root.KUI) root.KUI.toast(msg, opts || {}); }
@@ -147,7 +151,7 @@
       hits.forEach(function (n) {
         var line = doc.createElement('div');
         var c = n.getAttribute('data-c');
-        line.textContent = n.querySelector('span:last-child').firstChild.textContent.trim() + ' (' + WORDS[c] + ')';
+        line.textContent = (n.querySelector('.rl-mt') || n).textContent.trim() + ' (' + WORDS[c] + ')';
         f.appendChild(line);
       });
       f.classList.toggle('is-on', hits.length > 0);
@@ -162,16 +166,26 @@
   }
 
   /* --------------------------------------------------------------------- Add a story sheet */
+  var pendingRow = '';  // the row (data-id) whose correction waits for the story being written
+  function openStorySheet(req) {
+    var chip = $('#rl-story-for'), hid = $('#rl-story-fortext');
+    if (chip) chip.textContent = req || 'Something else they ask for';
+    if (hid) hid.value = req || '';
+    $$('#rl-story-form textarea').forEach(function (t) { t.value = ''; });
+    // Opened from a requirement's correction panel, the correction is applied right after the
+    // story is saved and the page then offers Score again with my changes, which is where a
+    // re-score is confirmed. A re-score queued here would be stamped before that correction
+    // exists and be held, so the sheet does not offer one in that case.
+    var rs = $('[data-rl-story-save="1"]');
+    if (rs) rs.hidden = !!pendingRow;
+    openModal($('#rl-story'));
+  }
   function onStoryClick(e) {
     var st = e.target.closest && e.target.closest('[data-rl-story]');
     if (st) {
       e.preventDefault();
-      var req = st.getAttribute('data-rl-story') || '';
-      var chip = $('#rl-story-for'), hid = $('#rl-story-fortext');
-      if (chip) chip.textContent = req || 'Something else they ask for';
-      if (hid) hid.value = req;
-      $$('#rl-story-form textarea').forEach(function (t) { t.value = ''; });
-      openModal($('#rl-story'));
+      pendingRow = '';
+      openStorySheet(st.getAttribute('data-rl-story') || '');
       return;
     }
     var save = e.target.closest && e.target.closest('[data-rl-story-save]');
@@ -180,13 +194,261 @@
       if (!form || !root.htmx) return;
       var data = new FormData(form), vals = {};
       data.forEach(function (v, k) { vals[k] = v; });
-      vals.rescore = save.getAttribute('data-rl-story-save');
+      vals.rescore = pendingRow ? '0' : save.getAttribute('data-rl-story-save');
       root.htmx.ajax('POST', '/opportunities/' + oppId() + '/role/story', { values: vals, swap: 'none', source: form });
     }
   }
-  function onStorySaved() {
+  function onStorySaved(e) {
     if (root.KUI) root.KUI.closeModal();
     $$('#rl-story-form textarea').forEach(function (t) { t.value = ''; });
+    var d = (e && e.detail) || {};
+    var id = pendingRow; pendingRow = '';
+    var row = id ? $('.rl-mrow[data-id="' + id + '"]') : null;
+    var form = row ? $('[data-rl-mform]', row) : null;
+    if (!form || !d.id) return;
+    // The story the person just wrote is the proof: put it in the panel as the picked story and
+    // apply the correction with it (the correction is a local row; nothing is sent).
+    var box = $('[data-rl-storychips]', form);
+    if (box) {
+      var chip = doc.createElement('button');
+      chip.type = 'button'; chip.className = 'rl-mchip';
+      chip.setAttribute('data-rl-story-pick', String(d.id));
+      chip.textContent = d.title || 'Your story';
+      box.insertBefore(chip, box.firstChild);
+    }
+    if (!$('[data-rl-reason]', form).value) setPick(row, 'all');
+    pickStory(row, String(d.id));
+    if (!$('[data-rl-msave]', form).disabled && form.requestSubmit) form.requestSubmit();
+  }
+
+
+  /* ----------------------------------------------- the match rows: basis, corrections, Evidence
+     (issue 170, D-UI-290). Everything here is delegated, so it survives each swap of #rl-match.
+     The panel in a row is a form the server owns; this file only opens and closes it, reads the
+     picks into its hidden fields, writes the one effect line and keeps Save honest. Nothing here
+     sends anything: a Save posts a local correction, and Score again is the existing dialog. */
+  var flip = null;      // what #rl-match looked like before a swap: row places, open parts
+  var cxWant = null;    // whether the Your view strip should end up open after its swap
+  function instant(fn) {
+    var m = $('#rl-match'); if (!m) { fn(); return; }
+    m.classList.add('rl-noanim'); fn(); void m.offsetHeight;
+    if (cx) cx.after(30, function () { m.classList.remove('rl-noanim'); }); else m.classList.remove('rl-noanim');
+  }
+  function rowOf(el) { return el.closest && el.closest('.rl-mrow'); }
+  function formOf(row) { return row ? $('[data-rl-mform]', row) : null; }
+  function setStep(form, name, on) {
+    var s = $('[data-rl-step="' + name + '"]', form);
+    if (s) s.classList.toggle('on', !!on);
+  }
+  function syncSave(form) {
+    var reason = $('[data-rl-reason]', form).value;
+    var chip = reason ? $('[data-rl-pick="' + reason + '"]', form) : null;
+    var ok = !!chip;
+    if (ok && chip.getAttribute('data-story') === '1' && !$('[data-rl-storyid]', form).value) ok = false;
+    if (ok && chip.getAttribute('data-note') === 'needed' && !$('[data-rl-note]', form).value.trim()) ok = false;
+    $('[data-rl-msave]', form).disabled = !ok;
+  }
+  function fillStories(form) {
+    var box = $('[data-rl-storychips]', form), tpl = $('#rl-story-tpl');
+    if (!box || !tpl || box.children.length) return;
+    box.appendChild(tpl.content.cloneNode(true));
+  }
+  function pickStory(row, id) {
+    var form = formOf(row); if (!form) return;
+    $('[data-rl-storyid]', form).value = id;
+    $$('[data-rl-story-pick]', form).forEach(function (c) {
+      c.setAttribute('aria-pressed', c.getAttribute('data-rl-story-pick') === id ? 'true' : 'false');
+    });
+    syncSave(form);
+  }
+  function setPick(row, reason) {
+    var form = formOf(row); if (!form) return;
+    var chip = $('[data-rl-pick="' + reason + '"]', form); if (!chip) return;
+    $('[data-rl-reason]', form).value = reason;
+    $$('[data-rl-pick]', form).forEach(function (c) {
+      c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');
+    });
+    var needs = chip.getAttribute('data-story') === '1';
+    if (needs) fillStories(form);
+    else { $('[data-rl-storyid]', form).value = ''; pickStory(row, ''); }
+    setStep(form, 'story', needs);
+    var route = $('[data-rl-step="route"]', form);
+    setStep(form, 'route', reason === 'not_me' && !!route && route.textContent.trim() !== '');
+    setStep(form, 'note', true);
+    var note = $('[data-rl-note]', form);
+    note.setAttribute('placeholder', chip.getAttribute('data-note') === 'needed' ? 'What do they mean? (needed)' : 'Anything to add? (optional)');
+    var eff = $('[data-rl-effect]', form);
+    eff.textContent = '';
+    var b = doc.createElement('b'); b.textContent = chip.getAttribute('data-eh') || '';
+    eff.appendChild(b);
+    eff.appendChild(doc.createTextNode(' ' + (chip.getAttribute('data-et') || '')));
+    syncSave(form);
+  }
+  function setOpenAria(row, on) {
+    $$('[data-rl-fix]', row).forEach(function (b) { b.setAttribute('aria-expanded', on ? 'true' : 'false'); });
+  }
+  function closePanel(row, keepFocus) {
+    var panel = row && $('.rl-mpn', row); if (!panel) return;
+    panel.classList.remove('on');
+    row.classList.remove('is-open');
+    setOpenAria(row, false);
+    var form = formOf(row);
+    // The form is cleared once the panel has closed, so the close itself does not jump.
+    var wipe = function () {
+      if (!form || row.classList.contains('is-open')) return;
+      $('[data-rl-reason]', form).value = ''; $('[data-rl-storyid]', form).value = '';
+      $('[data-rl-note]', form).value = '';
+      $$('[data-rl-pick], [data-rl-story-pick]', form).forEach(function (c) { c.setAttribute('aria-pressed', 'false'); });
+      $$('[data-rl-step]', form).forEach(function (s) { s.classList.remove('on'); });
+      $('[data-rl-effect]', form).textContent = '';
+      syncSave(form);
+    };
+    if (reduced() || !cx) wipe(); else cx.after(340, wipe);
+    if (keepFocus) { var back = $('[data-rl-fix]', row); if (back) back.focus(); }
+    landHeld();
+  }
+  function closeAllPanels(except) {
+    $$('.rl-mrow.is-open').forEach(function (r) { if (r !== except) closePanel(r, false); });
+  }
+  function openPanel(row, preselect) {
+    var panel = $('.rl-mpn', row); if (!panel) return;
+    closeAllPanels(row);
+    row.classList.add('is-open');
+    panel.classList.add('on');
+    setOpenAria(row, true);
+    if (preselect) setPick(row, preselect);
+    var first = $('[data-rl-pick][aria-pressed="true"]', panel) || $('[data-rl-pick]', panel);
+    if (first && first.focus) first.focus({ preventScroll: true });
+  }
+  function toggleTag(btn) {
+    var box = doc.getElementById(btn.getAttribute('aria-controls'));
+    if (!box) return;
+    var on = !box.classList.contains('on');
+    box.classList.toggle('on', on);
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+  function toggleEvidence(btn) {
+    var box = doc.getElementById('rl-evbody'); if (!box) return;
+    var on = !box.classList.contains('on');
+    box.classList.toggle('on', on);
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+  function onMatchClick(e) {
+    var t = e.target; if (!t.closest) return;
+    var b;
+    if ((b = t.closest('[data-rl-evtoggle]'))) { toggleEvidence(b); return; }
+    if ((b = t.closest('[data-rl-tag]'))) { toggleTag(b); return; }
+    if ((b = t.closest('[data-rl-fix]'))) {
+      var row = rowOf(b); if (!row) return;
+      if (row.classList.contains('is-open') && !b.hasAttribute('data-rl-quick')) { closePanel(row, true); return; }
+      openPanel(row, row.getAttribute('data-c') === 'met' ? '' : 'all');
+      return;
+    }
+    if ((b = t.closest('[data-rl-pick]'))) { setPick(rowOf(b), b.getAttribute('data-rl-pick')); return; }
+    if ((b = t.closest('[data-rl-story-pick]'))) { pickStory(rowOf(b), b.getAttribute('data-rl-story-pick')); return; }
+    if ((b = t.closest('[data-rl-story-new]'))) {
+      var r2 = rowOf(b); if (!r2) return;
+      pendingRow = r2.getAttribute('data-id') || '';
+      var tx = $('.rl-mt', r2);
+      openStorySheet(tx ? tx.textContent.trim() : '');
+      return;
+    }
+    if ((b = t.closest('[data-rl-mcancel]'))) { closePanel(rowOf(b), true); return; }
+    if ((b = t.closest('[data-rl-offer-close]'))) { closeOffer(); }
+  }
+  function onMatchInput(e) {
+    var t = e.target;
+    if (t && t.matches && t.matches('[data-rl-note]')) syncSave(t.closest('[data-rl-mform]'));
+  }
+  function onMatchKey(e) {
+    if (e.key !== 'Escape') return;
+    var open = $('.rl-mrow.is-open');
+    if (!open || !open.contains(doc.activeElement)) return;
+    e.stopPropagation();
+    closePanel(open, true);
+  }
+
+  /* The rows slide to their new places (FLIP), the saved one is ringed once (the server marks
+     it), and what was open stays open. Reduced motion: no slide, nothing animated. */
+  function onBeforeSwap(e) {
+    var d = e.detail || {};
+    if (!d.target || d.target.id !== 'rl-match') return;
+    var pos = {};
+    $$('[data-id]', d.target).forEach(function (n) { pos[n.getAttribute('data-id')] = n.getBoundingClientRect(); });
+    // htmx puts focus back only on an element with an id, and the Save and Undo buttons have none
+    // and are replaced: remember which row had the keyboard so the same row can take it back.
+    var had = doc.activeElement, held = had && had.closest ? had.closest('.rl-mrow') : null;
+    flip = {
+      pos: pos,
+      row: held && d.target.contains(held) ? held.getAttribute('data-id') : '',
+      ev: !!$('#rl-evbody.on', d.target),
+      tags: $$('.rl-mx.on', d.target).map(function (n) { return n.id; }),
+    };
+  }
+  function onAfterSwap(e) {
+    var t = e.target;
+    if (t && t.id === 'rl-offer') {
+      var o = $('[data-rl-offer]', t);
+      if (o) { if (reduced()) o.classList.add('on'); else root.requestAnimationFrame(function () { root.requestAnimationFrame(function () { o.classList.add('on'); }); }); }
+      return;
+    }
+    if (t && t.id === 'rl-match') landHeld();
+    if (!t || t.id !== 'rl-match' || !flip) return;
+    var f = flip; flip = null;
+    var m = $('#rl-match'); if (!m) return;
+    instant(function () {
+      if (f.ev) { var eb = $('#rl-evbody', m), eh = $('[data-rl-evtoggle]', m); if (eb) eb.classList.add('on'); if (eh) eh.setAttribute('aria-expanded', 'true'); }
+      f.tags.forEach(function (id) {
+        var box = doc.getElementById(id); if (!box) return;
+        box.classList.add('on');
+        var btn = $('[data-rl-tag][aria-controls="' + id + '"]', m); if (btn) btn.setAttribute('aria-expanded', 'true');
+      });
+    });
+    if (f.row) {
+      var back = $$('.rl-mrow', m).filter(function (n) { return n.getAttribute('data-id') === f.row; })[0];
+      var pen = back && ($('[data-testid="match-undo"]', back) || $('[data-rl-fix], .rl-pen', back));
+      if (pen && pen.focus) pen.focus({ preventScroll: true });
+    }
+    if (!reduced()) {
+      $$('[data-id]', m).forEach(function (n) {
+        var a = f.pos[n.getAttribute('data-id')]; if (!a || !n.animate) return;
+        var b = n.getBoundingClientRect();
+        var dx = a.left - b.left, dy = a.top - b.top;
+        if (Math.abs(dx) + Math.abs(dy) > 2) {
+          n.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.22,.8,.3,1)' });
+        }
+      });
+    }
+    if (cx) cx.after(1200, function () { $$('.rl-mrow.is-flash', m).forEach(function (n) { n.classList.remove('is-flash'); }); });
+  }
+  // The Your view strip is swapped out of band: keep its old state for the first frame, then
+  // move to the new one, so it opens and closes instead of snapping.
+  function onOobBefore(e) {
+    var d = e.detail || {};
+    if (!d.target || d.target.id !== 'rl-cx') return;
+    var frag = d.fragment, nu = frag && (frag.querySelector ? frag.querySelector('#rl-cx') : null);
+    if (!nu) return;
+    cxWant = nu.classList.contains('on');
+    nu.classList.toggle('on', d.target.classList.contains('on'));
+  }
+  function onOobAfter(e) {
+    var t = e.target;
+    if (!t || t.id !== 'rl-cx' || cxWant === null) return;
+    var want = cxWant; cxWant = null;
+    if (reduced()) t.classList.toggle('on', want);
+    else root.requestAnimationFrame(function () { root.requestAnimationFrame(function () { t.classList.toggle('on', want); }); });
+  }
+  function onSimilar(e) {
+    var h = e.detail && e.detail.hash;
+    if (!h || !root.htmx) return;
+    root.htmx.ajax('GET', '/opportunities/' + oppId() + '/role/similar?hash=' + encodeURIComponent(h), { target: '#rl-offer', swap: 'innerHTML' });
+  }
+  function closeOffer() {
+    var host = $('#rl-offer'), o = host && $('[data-rl-offer]', host);
+    if (!o) return;
+    o.classList.remove('on');
+    var clear = function () { if (host) host.innerHTML = ''; };
+    if (reduced() || !cx) clear(); else cx.after(340, clear);
   }
 
   /* ------------------------------------------------------------------------- Your view */
@@ -328,10 +590,19 @@
   }
 
   /* --------------------------------------------------- a reload after an action, and after Undo */
+  /* A toast outlives Previous and Next (toasts sit outside the swapped body), so its refresh
+     may name another role's area: load only what belongs to the role on screen now (D-UI-322). */
+  function forThisRole(url) {
+    var m = /^\/opportunities\/(\d+)\//.exec(String(url));
+    var b = body();  // #rl-body is swapped by Prev and Next, #role is not
+    return !m || m[1] === String(b ? b.getAttribute('data-opp') : oppId());
+  }
   function reload(items) {
     if (!root.htmx) return;
     (items || []).forEach(function (it) {
-      if (it && it.url && it.target) root.htmx.ajax('GET', it.url, { target: it.target, swap: it.swap || 'outerHTML' });
+      if (it && it.url && it.target && forThisRole(it.url)) {
+        root.htmx.ajax('GET', it.url, { target: it.target, swap: it.swap || 'outerHTML' });
+      }
     });
   }
   function onUndone(e) {
@@ -355,6 +626,11 @@
      two minutes of watching it slows from 3 seconds to 15. */
   var RS_FAST = 3000, RS_SLOW = 15000, RS_SLOW_AFTER = 120000;
   var rsTimer = 0, rsBusy = false, rsLanding = false, rsStart = 0, rsSlow = false;
+  var rsHeld = false;  // the new score is ready but an open correction panel is waiting
+  function landHeld() {
+    if (!rsHeld || $('.rl-mrow.is-open')) return;
+    rsHeld = false; rsLanding = true; onRefresh();
+  }
   function rsBanner() { return $('.rl-rescore[data-rescoring]'); }
   function syncRescore() {
     if (!cx) return;
@@ -379,7 +655,21 @@
         rsBusy = false;
         var cur = rsBanner();
         if (!d || signal.aborted || !cur) return;
-        if (d.state === 'none') { rsLanding = true; onRefresh(); return; }
+        if (d.state === 'none') {
+          // A correction panel is open (maybe with a note typed): swapping the pane now would
+          // throw it away. Say it is done and refresh once the person has closed or saved it.
+          if ($('.rl-mrow.is-open')) {
+            rsHeld = true;
+            if (cx && rsTimer) { cx.clear(rsTimer); rsTimer = 0; }
+            cur.setAttribute('data-rescoring', 'none');
+            $$('[data-rs]', cur).forEach(function (n) {
+              n.textContent = n.getAttribute('data-rs') === 'title'
+                ? 'Scored again.' : 'The new score shows when you close or save your change.';
+            });
+            return;
+          }
+          rsLanding = true; onRefresh(); return;
+        }
         cur.setAttribute('data-rescoring', d.state);
         cur.setAttribute('data-stalled', d.stalled ? '1' : '0');
         if (d.stalled && rsTimer) { cx.clear(rsTimer); rsTimer = 0; }
@@ -423,7 +713,12 @@
       if (p) b.classList.toggle('k-btn--primary', p === name);
     });
     var hid = $('input[name="tab"]', box); if (hid) hid.value = name === 'edit' ? 'edit' : 'check';
-    if (name === 'preview') fitPreview(box);
+    if (name === 'preview') {
+      fitPreview(box);
+      // The one-page check makes the PDF, so it is asked for only when the Preview is opened.
+      var fit = $('[data-cl-fit]', box);
+      if (fit && root.htmx) root.htmx.trigger(fit, 'cl-fit');
+    }
   }
   function showSource(box, key) {
     var any = false;
@@ -436,14 +731,30 @@
     });
     var hint = $('[data-cl-hint]', box); if (hint) hint.hidden = any;
   }
+  function wordsIn(area) { return (area.value.trim().match(/\S+/g) || []).length; }
   function countWords(area) {
-    var n = (area.value.trim().match(/\S+/g) || []).length;
+    var n = wordsIn(area);
     var lo = parseInt(area.getAttribute('data-lo'), 10), hi = parseInt(area.getAttribute('data-hi'), 10);
+    var max = parseInt(area.getAttribute('data-max'), 10) || 0;
     var out = $('[data-cl-count]', area.form || doc);
     if (!out) return;
     var first = out.firstChild;
     if (first && first.nodeType === 3) first.nodeValue = n + ' words';
-    out.setAttribute('data-state', n >= lo && n <= hi ? 'ok' : 'off');
+    // Over the limit is a soft warning; over the save cap is a hard stop (the server agrees).
+    out.setAttribute('data-state', max && n > max ? 'stop' : n > hi ? 'over' : n >= lo ? 'ok' : 'off');
+  }
+  function onLetterSubmit(e) {
+    var form = e.target;
+    if (!form || form.id !== 'cl-edit-form') return;
+    var area = $('[data-cl-text]', form);
+    var max = area ? parseInt(area.getAttribute('data-max'), 10) || 0 : 0;
+    if (area && max && wordsIn(area) > max) {
+      // Not posted: the hard cap. The typed text stays as it is; the server refuses it as well.
+      e.preventDefault(); e.stopPropagation();
+      var lim = $('[data-cl-limit]', form);
+      if (lim) { lim.classList.remove('is-on'); void lim.offsetWidth; lim.classList.add('is-on'); }
+      area.focus();
+    }
   }
   function onLetterClick(e) {
     var t = e.target, box = letter();
@@ -519,6 +830,7 @@
     mount: function (main, ctx) {
       cx = ctx;
       pendingDir = 0; pendingKind = ''; focusKey = null; dialogWatch = null;
+      flip = null; cxWant = null; pendingRow = ''; rsHeld = false;
       rsTimer = 0; rsBusy = false; rsLanding = false;
       // The order the file added them in: the capture-phase tab click stays ahead of the rest.
       ctx.on(root, 'resize', onInkResize);
@@ -532,12 +844,21 @@
       ctx.on(doc, 'click', onFocusClick);
       ctx.on(doc, 'click', onStoryClick);
       ctx.on(doc, 'rl-story-saved', onStorySaved);
+      ctx.on(doc, 'click', onMatchClick);
+      ctx.on(doc, 'input', onMatchInput);
+      ctx.on(doc, 'keydown', onMatchKey, true);
+      ctx.on(doc, 'htmx:beforeSwap', onBeforeSwap);
+      ctx.on(doc, 'htmx:afterSwap', onAfterSwap);
+      ctx.on(doc, 'htmx:oobBeforeSwap', onOobBefore);
+      ctx.on(doc, 'htmx:oobAfterSwap', onOobAfter);
+      ctx.on(doc, 'rl-similar', onSimilar);
       ctx.on(doc, 'click', onAdjustClick);
       ctx.on(doc, 'click', onMenuClick);
       ctx.on(doc, 'click', onLetterClick);
       ctx.on(doc, 'keydown', onLetterKey);
       ctx.on(doc, 'change', onLetterChange);
       ctx.on(doc, 'input', onLetterInput);
+      ctx.on(doc, 'submit', onLetterSubmit, true);
       ctx.on(doc, 'rl-letter-close', onLetterClose);
       ctx.on(doc, 'htmx:afterSettle', onLetterSwap);
       ctx.on(doc, 'keydown', onEscape);

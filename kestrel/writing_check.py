@@ -240,6 +240,7 @@ def check(text: str, *, exempt: Iterable[str] = (), field: str = "") -> list[Vio
 # prose. A path walks dicts by key; "[]" means every item of a list. Prompts not listed here are
 # never checked (labels, selection, import, advisory lists). Operator text is never named here.
 PROSE_FIELDS: dict[str, tuple[str, ...]] = {
+    "cover/v4": ("body_md", "opening_alternatives[]"),
     "cover/v3": ("body_md", "opening_alternatives[]"),
     "engagement_outline/v3": (
         "body_md", "assumptions[]", "exclusions[]", "commercial_shape.caveat",
@@ -248,6 +249,7 @@ PROSE_FIELDS: dict[str, tuple[str, ...]] = {
     "engagement_outline/v2": (
         "body_md", "assumptions[]", "exclusions[]", "commercial_shape.caveat",
     ),
+    "story_consolidate/v3": ("situation", "task", "action", "result", "reflection"),
     "story_consolidate/v2": ("situation", "task", "action", "result", "reflection"),
     "mock_critique/v2": (
         "worked_well", "improvements[]", "revised_opening", "next_question_rationale",

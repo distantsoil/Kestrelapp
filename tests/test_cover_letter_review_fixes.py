@@ -26,7 +26,7 @@ from kestrel.db.models import DocRender, DocSection, Opportunity, Setting, Task
 from kestrel.docs import render as docrender
 from kestrel.services.online_consent import APPROVAL_HOLD, CONSENT_DEST_KEY, CONSENT_KEY
 from tests import role_seed
-from tests.letter_helpers import form_fields, generate
+from tests.letter_helpers import form_fields, generate, letter_body
 from tests.test_cover_letter_draft import (
     GEN,
     MODEL,
@@ -118,7 +118,7 @@ def test_a_poisoned_letter_pdf_path_is_neither_served_nor_deleted(ids, monkeypat
     with _client() as c:
         generate(c, GEN.format(ids["strong"]), {})
         row = _letter_row(ids["strong"])[0]
-        body = row.config["body_md"]
+        body = letter_body(row.id)  # the text lives in the letter table (D-LETTER-1)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
 
         async def poison(s):
@@ -721,6 +721,7 @@ def test_the_worker_loop_drains_letters_after_both_tiers(ids, monkeypatch):
 
 
 def test_a_crashed_local_draft_waits_for_the_next_pass_instead_of_spinning(ids, monkeypatch):
+    from kestrel.db.base import iso, utcnow
     from kestrel.web.pages import role as role_page
 
     seen: list[int] = []
@@ -736,7 +737,18 @@ def test_a_crashed_local_draft_waits_for_the_next_pass_instead_of_spinning(ids, 
         assert len(seen) == 1, "one attempt per pass, not three in a row"
         (task,) = _tasks()
         assert task.status == "pending" and task.attempts == 1
-        asyncio.run(role_page.run_letter_drafts())  # the next worker cycle tries again
+        # issue #153: the retryable failure backs off before it is claimable again
+        assert task.retry_at is not None
+        asyncio.run(role_page.run_letter_drafts())  # the wait is holding the retry
+        assert len(seen) == 1, "the 30 s backoff holds the retry"
+
+        async def rewind(s):
+            t = (await s.execute(select(Task).where(Task.type == "letter_draft"))).scalar_one()
+            t.retry_at = iso(utcnow().replace(year=2000))
+            await s.commit()
+
+        _db(rewind)  # the wait has passed
+        asyncio.run(role_page.run_letter_drafts())  # the next pass after the wait tries again
     assert len(seen) == 2
 
 
@@ -972,3 +984,64 @@ def test_a_lost_lease_means_the_online_draft_is_not_sent(ids, monkeypatch):
     done, row = asyncio.run(go())
     assert runs == [] and done == 0, "the draft was sent although the lease was lost"
     assert row.worker_id == "another-worker" and letter_task.SENDING_KEY not in (row.payload or {})
+
+
+def test_an_online_draft_quit_cuts_off_ends_failed_with_a_try_again_that_asks_again(
+    ids, monkeypatch
+):
+    """D-QUEUE-6. INVARIANT: a paid online send is never silently repeated and never silently
+    lost, and nothing goes online without a confirmation that matches the model at send time,
+    including after a restart. Quit gives the lane its grace, cuts the hanging send off, and
+    hands the lease back; the restart fails it with the reason (never sends it again); the sheet
+    shows it with Try again, which asks first again: the old confirmation is never reused."""
+    from kestrel.docs.letter_task import SENDING_KEY, STOPPED_ONLINE
+    from kestrel.web import app as app_mod
+    from kestrel.web.pages import role as role_page
+
+    _go_online()
+    model = Model(monkeypatch, body=CLEAN)
+    real = role_page._make_draft
+    monkeypatch.setattr(app_mod, "CANCEL_WAIT_S", 0.5)
+
+    async def life():
+        async def hang(opp_id):
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(role_page, "_make_draft", hang)
+        import httpx
+
+        transport = httpx.ASGITransport(app=app_mod.build_app(worker=False))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
+            html = (await c.get(f"/opportunities/{ids['strong']}/role/cover-letter")).text
+            await c.post(GEN.format(ids["strong"]), data=form_fields(html))
+        stop = asyncio.Event()
+        lane = asyncio.create_task(role_page.run_letter_drafts(stop=stop))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if any(t.status == "leased" and (t.payload or {}).get(SENDING_KEY)
+                   for t in await _poll()):
+                break
+        await app_mod._graceful_worker_shutdown(None, stop, grace_s=0.2, also=(lane,))
+        assert lane.done()
+
+    asyncio.run(life())
+    (left,) = _tasks()
+    assert left.status == "pending" and left.attempts == 0  # handed back by the quit
+    assert left.payload.get(SENDING_KEY) is True
+
+    monkeypatch.setattr(role_page, "_make_draft", real)
+    assert asyncio.run(role_page.run_letter_drafts()) == 0  # the restart
+    (after,) = _tasks()
+    assert after.status == "dead" and after.last_error == STOPPED_ONLINE and model.calls == 0
+    with _client() as c:
+        sheet = c.get(f"/opportunities/{ids['strong']}/role/cover-letter").text
+        assert 'data-testid="cover-letter-failed"' in sheet and STOPPED_ONLINE in sheet
+        assert 'data-testid="cover-letter-retry"' in sheet
+        again = c.get(f"/opportunities/{ids['strong']}/role/cover-letter/start").text
+        assert 'data-testid="cover-letter-ask"' in again  # asks first again
+        c.post(GEN.format(ids["strong"]), data={})  # no confirmation: nothing is queued
+        assert [t.status for t in _tasks()] == ["dead"]
+        c.post(GEN.format(ids["strong"]), data=form_fields(again))  # confirmed again
+    fresh = [t for t in _tasks() if t.status == "pending"]
+    assert len(fresh) == 1 and fresh[0].payload.get(CONSENT_KEY) == MODEL
+    assert SENDING_KEY not in fresh[0].payload

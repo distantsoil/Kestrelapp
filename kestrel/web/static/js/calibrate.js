@@ -11,7 +11,9 @@
   'use strict';
   if (!window.KUI || !window.KUI.page) return;
   function reduced() {
-    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    // The OS setting or the app's own Reduce motion switch (as role.js and profile.js read it).
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) ||
+      document.documentElement.getAttribute('data-reduce-motion') === '1';
   }
   function smooth() { return reduced() ? 'auto' : 'smooth'; }
   var doc = document;
@@ -106,6 +108,8 @@
 
   function onKeyDown(e) {
     if (e.ctrlKey || e.metaKey || e.altKey || !form()) return;
+    var dp = doc.getElementById('cal-panel-detailed');
+    if (dp && dp.hidden) return;  // the Quick tab is showing: the rating keys belong to Detailed
     var t = e.target, tag = t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     var k = e.key.toLowerCase();
@@ -198,9 +202,79 @@
     });
   }
 
+  /* Quick and Detailed tabs (issue 171). Both panels are in the page; the choice only shows one.
+     The thumb slides under the selected tab, the leaving panel fades and the arriving one rises
+     in (all off under reduced motion). Arrow keys move between the tabs. */
+  function tabs() { return Array.prototype.slice.call(doc.querySelectorAll('.cal-tabs [data-cal-tab]')); }
+  function panel(name) { return doc.getElementById('cal-panel-' + name); }
+  function placeThumb(animate) {
+    var bar = $('.cal-tabs'), sel = $('.cal-tabs [aria-selected="true"]'), th = $('.cal-tabs__thumb');
+    if (!bar || !sel || !th || !sel.offsetWidth) return;
+    if (!animate) bar.classList.remove('is-placed');
+    th.style.width = sel.offsetWidth + 'px';
+    th.style.transform = 'translateX(' + (sel.offsetLeft - 3) + 'px)';
+    if (!animate) requestAnimationFrame(function () { bar.classList.add('is-placed'); });
+  }
+  /* The chosen tab goes in the address (no new history entry, through the page context), so a
+     reload or a copied link opens the same tab. Quick is the default, so it is the bare address. */
+  function keepInUrl(name) {
+    if (!cx || !window.URL) return;
+    var url = new window.URL(window.location.href);
+    if (name === 'detailed') url.searchParams.set('tab', 'detailed');
+    else url.searchParams.delete('tab');
+    cx.replaceUrl(url.href);
+  }
+  function selectTab(name, focus) {
+    var all = tabs();
+    var cur = all.filter(function (b) { return b.getAttribute('aria-selected') === 'true'; })[0];
+    if (!cur || cur.getAttribute('data-cal-tab') === name) { if (focus && cur) cur.focus(); return; }
+    all.forEach(function (b) {
+      var on = b.getAttribute('data-cal-tab') === name;
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.setAttribute('tabindex', on ? '0' : '-1');
+      if (on && focus) b.focus();
+    });
+    placeThumb(true);
+    keepInUrl(name);
+    var from = panel(cur.getAttribute('data-cal-tab')), to = panel(name);
+    if (!from || !to) return;
+    var show = function () {
+      from.hidden = true; from.classList.remove('is-out');
+      to.hidden = false;
+      if (!reduced()) { to.classList.add('is-in'); cx.after(360, function () { to.classList.remove('is-in'); }); }
+    };
+    if (reduced()) { show(); return; }
+    from.classList.add('is-out');
+    cx.after(140, show);
+  }
+  function onTabClick(e) {
+    var t = e.target;
+    var b = t.closest && t.closest('[data-cal-tab]');
+    if (b) { selectTab(b.getAttribute('data-cal-tab'), false); return; }
+    var go = t.closest && t.closest('[data-cal-tab-go]');
+    if (go) selectTab(go.getAttribute('data-cal-tab-go'), true);
+  }
+  function onTabKey(e) {
+    var b = e.target && e.target.closest && e.target.closest('.cal-tabs [data-cal-tab]');
+    if (!b || e.ctrlKey || e.metaKey || e.altKey) return;
+    var all = tabs(), at = all.indexOf(b), next = -1;
+    if (e.key === 'ArrowRight') next = (at + 1) % all.length;
+    else if (e.key === 'ArrowLeft') next = (at + all.length - 1) % all.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = all.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    selectTab(all[next].getAttribute('data-cal-tab'), true);
+  }
+
   window.KUI.page.define('calibrate', {
     mount: function (main, ctx) {
       cx = ctx; returnTo = null; oldStrips = null;
+      ctx.on(doc, 'click', onTabClick);
+      ctx.on(doc, 'keydown', onTabKey);
+      ctx.on(window, 'resize', function () { placeThumb(false); });
+      placeThumb(false);
+      if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(function () { if (!ctx.signal.aborted) placeThumb(false); });
       ctx.on(doc, 'click', onClick);
       ctx.on(doc, 'change', onChange);
       ctx.on(doc, 'keydown', onKeyDown);

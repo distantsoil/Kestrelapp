@@ -40,6 +40,7 @@ from kestrel.llm.prompts import all_versions
 from kestrel.services import hosted_models as hm
 from kestrel.services.setting_overrides import load_settings_with_db
 from kestrel.web import bench_view as bv
+from kestrel.web.auth import LOCAL_ONLY
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages import models_ui
@@ -86,7 +87,7 @@ def _online_gate(
     from kestrel.services.online_consent import approval_covers
 
     if expected and not approval_covers(expected, approval):
-        return "Confirm the model and online service destinations, then try again."
+        return APPROVAL_NEEDED
     return ""
 
 
@@ -388,6 +389,27 @@ async def panel(request: Request):
     return await _panel(request)
 
 
+NO_PROVIDER = ("Connect an online provider first. Online models need a key, and none is "
+               "connected. Set one up under Models.")
+
+
+APPROVAL_NEEDED = "Confirm the model and online service destinations, then try again."
+
+
+def _approves_provider(settings, value: object) -> bool:
+    """True when the posted approval names at least one destination at the connected provider
+    (its backend and address). The card discloses every model it offers there; without such an
+    approval nothing, not even the model list, is requested."""
+    from kestrel.services.online_consent import read_approval
+
+    found = models_ui.connected_backend(settings)
+    if found is None:
+        return False
+    name, backend = found
+    prefix = f"{name}|{getattr(backend, 'base_url', '') or ''}|"
+    return any(d.startswith(prefix) for ds in read_approval(value).values() for d in ds)
+
+
 async def _online_candidates(settings, steps: list[str]) -> tuple[dict, str]:
     """Online models to include, per step: one free and one paid that fit the step. The model
     list request carries only the key. ({}, message) when nothing can be offered."""
@@ -395,8 +417,7 @@ async def _online_candidates(settings, steps: list[str]) -> tuple[dict, str]:
 
     found = models_ui.connected_backend(settings)
     if found is None:
-        return {}, ("Connect an online provider first. Online models need a key, and none is "
-                    "connected. Set one up under Models.")
+        return {}, NO_PROVIDER
     name, backend = found
     try:
         listed = hm.picker_models(await hm.fetch_models(name, backend))
@@ -410,7 +431,7 @@ async def _online_candidates(settings, steps: list[str]) -> tuple[dict, str]:
     return out, ""
 
 
-@router.post("/bench/start", response_class=HTMLResponse)
+@router.post("/bench/start", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def start(request: Request):
     """Check my models from the card: Quick screen and Rating, plus Deeper read when ticked, plus
     online models only when the operator ticked that (the consent to send the rated roles)."""
@@ -423,14 +444,24 @@ async def start(request: Request):
     notice, ok = "", True
     async with sessionmaker()() as s:
         settings = await load_settings_with_db(s)
-        if form.get("online") == "on":
-            online, refusal = await _online_candidates(settings, steps)
+        # The tick posts the provider the card named (`ck_provider_backend`), so a card shown for
+        # one provider never confirms another; `_online_gate` compares it to the connected one.
+        ticked = str(form.get("online") or "")
+        if ticked:
+            # No provider, then the disclosure, then an approval that names the connected provider,
+            # all before anything goes online: without them not even the request that lists the
+            # provider's models is sent (0.7.6 review). The approval names the candidate models,
+            # which are known only after listing, so the full coverage check follows the listing.
+            refusal = ("" if models_ui.connected_backend(settings) is not None
+                       else NO_PROVIDER)
             refusal = refusal or models_ui.online_problem(settings) or ""
+            if not refusal and not _approves_provider(settings, form.get("online_approval")):
+                refusal = APPROVAL_NEEDED
             if not refusal:
-                connected = check.connected_provider(settings)
+                online, refusal = await _online_candidates(settings, steps)
+            if not refusal:
                 refusal = _online_gate(
-                    settings, None, online, connected[0] if connected else "",
-                    form.get("online_approval"), steps,
+                    settings, None, online, ticked, form.get("online_approval"), steps,
                 )
             if refusal:
                 notice, ok = refusal, False
@@ -476,7 +507,7 @@ async def cancel(request: Request):
     )
 
 
-@router.post("/bench/apply", response_class=HTMLResponse)
+@router.post("/bench/apply", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def apply(request: Request):
     """Switch the steps a result recommends. A local switch is an override of that step's model;
     an online one needs the tick (what is sent, what it costs) and a connected provider, and is
@@ -549,7 +580,7 @@ async def apply(request: Request):
     )
 
 
-@router.post("/bench/undo", response_class=HTMLResponse)
+@router.post("/bench/undo", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def undo(request: Request):
     from kestrel.bench import check
 
@@ -604,7 +635,7 @@ async def _form_check_args(session, tier: str, model: str, backend: str) -> dict
     return {"steps": [step], "models": {step: [in_use, picked]}}
 
 
-@router.post("/bench/run", response_class=HTMLResponse)
+@router.post("/bench/run", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def run(request: Request):
     """The Advanced form: check one step against one chosen model. Queues the background task
     (never a model call on the request). A refusal (too few ratings, one already running, an
@@ -648,7 +679,7 @@ async def run(request: Request):
     return await _panel(request, notice=ctx["notice"], ok=ctx["notice"] == QUEUED_NOTICE)
 
 
-@router.post("/bench/check")
+@router.post("/bench/check", dependencies=[LOCAL_ONLY])
 async def check_queue(request: Request):
     """Queue Check my models. Body (all optional JSON): steps, deeper, models, online, confirm.
     Any online candidate needs `"confirm": true` as well as a connected provider and approval."""
@@ -712,7 +743,7 @@ async def check_cancel():
         return JSONResponse({"cancelled": await check.cancel_check(s)})
 
 
-@router.post("/bench/promote", response_class=HTMLResponse)
+@router.post("/bench/promote", response_class=HTMLResponse, dependencies=[LOCAL_ONLY])
 async def promote(request: Request):
     """Use the operator's chosen model for a step, with no restart. A model on this computer goes
     through `models_ui.switch_local` (tuned for the step first, never a raw tag); an online one

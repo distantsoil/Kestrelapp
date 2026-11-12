@@ -68,4 +68,5 @@ def test_a_definite_not_found_is_remembered_and_a_failed_try_after_it_does_not_c
     with respx.mock(assert_all_called=False) as mock:
         _answers(mock, response=httpx.Response(404, json={}))
         got, cached = asyncio.run(_resolve_and_cache("Tidewater Freight"))
-    assert got == (None, None) and cached == {"found": False}
+    # The answer now carries the date it was found (D-SRC-19), for the 30-day expiry.
+    assert got == (None, None) and cached["found"] is False and cached["checked_at"]

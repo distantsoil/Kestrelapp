@@ -18,6 +18,10 @@
       {% endif %}
     </div>
   </header>
+  {# Reading shows whatever the list holds, so a queued pass is never invisible (#135). #}
+  {% if pending %}
+  <p class="pf-hint pf-sugg__reading" role="status" data-testid="title-suggestions-pending">Reading your resume.</p>
+  {% endif %}
   {% if suggestions %}
   <ul class="pf-list">
     {% for s in suggestions %}
@@ -38,11 +42,14 @@
     {% endfor %}
   </ul>
   {% elif pending %}
-  <p class="pf-hint" data-testid="title-suggestions-pending">Reading your resume.</p>
   {% elif not has_resume %}
   <p class="pf-hint" data-testid="title-suggestions-none">Import a resume first.</p>
   {% else %}
   <p class="pf-hint" data-testid="title-suggestions-empty">Nothing new to suggest.</p>
+  {% endif %}
+  {# How the last pass ended, whatever the list holds, so a pass that added nothing is not silent. #}
+  {% if last_note and not pending and has_resume %}
+  <p class="pf-hint pf-sugg__last" data-testid="title-suggestions-last" data-status="{{ last.status }}">Last checked {{ last.at|iso_to_local }}. {{ last_note }}</p>
   {% endif %}
   {% if route and route.online %}
   {# A div, not a form: this sits inside the Employment form (and the onboarding form). The button

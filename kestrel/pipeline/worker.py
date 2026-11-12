@@ -19,13 +19,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, exists, func, not_, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kestrel.config import HostedMode, Settings
 from kestrel.db.base import utcnow_iso
-from kestrel.db.models import Opportunity, Run, ScrapeRun, Setting, Source, Task
+from kestrel.db.models import Opportunity, ScrapeRun, Setting, Source, Task
 from kestrel.errors import failure_record
 from kestrel.llm import credit
 from kestrel.llm.client import LLMClient, tier_credit_hold
@@ -41,7 +41,15 @@ from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tier0 import run_tier0_batch
 from kestrel.pipeline.tier1 import handle_t1
 from kestrel.pipeline.tier2 import handle_t2
-from kestrel.queue.queue import TaskQueue, claimable, in_lane
+from kestrel.queue.queue import (
+    REASON_APPROVAL,
+    REASON_CORRECTIONS,
+    REASON_CREDIT,
+    REASON_LOCAL_ONLY,
+    TaskQueue,
+    claimable,
+    in_lane,
+)
 from kestrel.services.run_model import SWITCHED_TO_COMPUTER_NOTE, T2_ONLY_KEY
 
 log = structlog.get_logger()
@@ -129,7 +137,14 @@ def held_types(settings: Settings, types: tuple[str, ...] = ("t1", "t2")) -> tup
 class TierStats:
     completed: int = 0
     errors: int = 0
+    # Leased then deferred this drain (#154 measurement): a held task going back unstarted.
+    # Zero is the healthy state after the queue-level hold fix; a steady non-zero count means
+    # held tasks are still being leased.
+    held: int = 0
     elapsed_s: float = 0.0
+    # The roles this tier finished, so a run's "N roles rated" counts each role once even when
+    # it went through both tiers (a role rated by t1 and t2 is one role, not two).
+    roles: set[int] = field(default_factory=set)
 
     @property
     def per_minute(self) -> float:
@@ -371,19 +386,7 @@ class Worker:
                         opp and lane.LANE_REASON in (opp.stage_reason or "")
                     )
                     if opp_id:
-                        prior_lane = await session.scalar(
-                            select(exists().where(
-                                Task.type.in_(("t1", "t2")),
-                                func.json_extract(Task.payload, "$.opportunity_id") == opp_id,
-                                or_(
-                                    func.json_type(Task.payload, "$.lane").is_not(None),
-                                    func.json_extract(
-                                        Task.payload, f"$.{lane.LOCAL_ONLY}"
-                                    ) == 1,
-                                ),
-                            ))
-                        )
-                        local_only = local_only or bool(prior_lane)
+                        local_only = local_only or await lane.prior_lane(session, opp_id)
                     if local_only and opp and await lane.reject_mismatch(session, opp):
                         stored = await session.get(Task, task.id)
                         if stored and stored.status == "leased" and stored.worker_id == wid:
@@ -403,8 +406,12 @@ class Worker:
                     if lane.scores_on_hosted(self._settings):
                         held_ids.add(task.id)
                         await self._queue.defer(
-                            task.id, "held: background roles use local models only", worker_id=wid
+                            task.id,
+                            "held: background roles use local models only",
+                            worker_id=wid,
+                            reason=REASON_LOCAL_ONLY,
                         )
+                        stats.held += 1
                         return
             if self._online_approval is not None and "online_approval" not in payload:
                 payload = {**payload, "online_approval": self._online_approval}
@@ -423,8 +430,12 @@ class Worker:
             ):
                 held_ids.add(task.id)
                 await self._queue.defer(
-                    task.id, "held: background roles use local models only", worker_id=wid
+                    task.id,
+                    "held: background roles use local models only",
+                    worker_id=wid,
+                    reason=REASON_LOCAL_ONLY,
                 )
+                stats.held += 1
                 return
             if held_for_approval(settings, (tier,), payload) or held_for_approval(
                 client_settings, (tier,), payload
@@ -434,9 +445,21 @@ class Worker:
                     task.id,
                     "held: online destination changed or was not confirmed",
                     worker_id=wid,
+                    reason=REASON_APPROVAL,
                 )
+                stats.held += 1
                 return
             kwargs: dict = {}
+            from kestrel.services.online_consent import CORRECTIONS_KEY
+
+            if CORRECTIONS_KEY in payload:
+                # The correction lines the operator confirmed (D-SCORE-3): Tier 2 holds the task
+                # when the lines it would send now differ; Tier 1 hands them on unread.
+                bound = str(payload[CORRECTIONS_KEY] or "")
+                if task_type == "t2":
+                    kwargs["corrections_digest"] = bound
+                else:
+                    kwargs["t2_carry"] = {CORRECTIONS_KEY: bound}
             if task_type == "t2":
                 kwargs["changed"] = bool(payload.get("changed"))
                 if payload.get("requested") or payload.get("rescore"):
@@ -489,10 +512,23 @@ class Worker:
                     stats.errors += 1
                 return
 
+            if outcome.action == "held":
+                # Something the operator confirmed changed before the send (D-SCORE-3): nothing
+                # was sent, and the task waits for a new confirmation like any approval hold.
+                held_ids.add(task.id)
+                await self._queue.defer(
+                    task.id, outcome.error or "", worker_id=wid, reason=REASON_CORRECTIONS
+                )
+                stats.held += 1
+                return
+
             if outcome.action == "error" and outcome.out_of_credit:
                 # Not a failure of the role: the key has no credit. The task goes back unstarted
                 # (resumable, hard rule 5); the hold keeps every other send from this backend.
-                await self._queue.defer(task.id, outcome.error or "", worker_id=wid)
+                await self._queue.defer(
+                    task.id, outcome.error or "", worker_id=wid, reason=REASON_CREDIT
+                )
+                stats.held += 1
                 return
 
             if outcome.action == "error":
@@ -513,6 +549,8 @@ class Worker:
                 return
             async with done_lock:
                 stats.completed += 1
+                if opp_id is not None:
+                    stats.roles.add(int(opp_id))
                 window.append(time.perf_counter())
                 self._emit_progress(task_type, stats.completed, total_at_start, window)
 
@@ -825,7 +863,9 @@ class Worker:
                                 task.id,
                                 "held: online destination changed or was not confirmed",
                                 worker_id=wid,
+                                reason=REASON_APPROVAL,
                             )
+                            stats.held += 1
                             continue
                         outcome = await run_signal_source(
                             self._sm, source_id, http=http, client=self._client,
@@ -904,64 +944,16 @@ class Worker:
             raise
 
     async def _notify_run_finished(self, stats: RunStats, run_id: int | None = None) -> None:
-        """Raise ONE "Run finished" notification (its own Settings switch, `run_finished`) that
-        carries the failure count, then, when this run found new roles worth reviewing, ONE
-        consolidated "worth reviewing" alert (the New strong matches switch, `high_score`). Never
-        one per role. A failure here is logged with context and swallowed: the run is done."""
-        from kestrel.analytics.run_summary import run_summary
-        from kestrel.services.notifications import NotificationService
+        """Raise the run's notifications (kestrel.services.run_notify): ONE outcome (the "Run
+        finished" summary, or a warning under Something needs attention when roles need another
+        try) and, when the run found new roles worth a look, ONE consolidated alert. Never one
+        per role. A failure here is logged with context and swallowed: the run is done."""
+        from kestrel.services.run_notify import notify_run_finished
 
         try:
-            notifier = NotificationService(self._sm)
-            rated = stats.tier1.completed + stats.tier2.completed
-            async with self._sm() as s:
-                summary = await run_summary(s, None, paused=False)
-            # Roles, not attempts: a role whose scoring task gave up after three tries is one
-            # role (`stats.*.errors` counts every try). Quarantined roles count once, too.
-            # Tasks carry no run id, so "this run" is the run's own start. With no start that
-            # resolves, count nothing rather than every dead task ever (never `>= ""`).
-            async with self._sm() as s:
-                run_row = await s.get(Run, run_id) if run_id is not None else None
-                window_start = (run_row.started_at if run_row else None) or summary.get(
-                    "started_at"
-                )
-                dead = 0
-                if window_start:
-                    dead = int((await s.execute(
-                        select(func.count()).select_from(Task).where(
-                            Task.type.in_(("t1", "t2")), Task.status == "dead",
-                            Task.updated_at >= window_start,
-                        )
-                    )).scalar_one())
-            failed = max(int(summary.get("failed", 0) or 0), dead)
-            worth_count = int(summary.get("worth_new", 0) or 0)
-
-            rated_word = "role" if rated == 1 else "roles"
-            if failed > 0:
-                fail_word = "role" if failed == 1 else "roles"
-                need_word = "needs" if failed == 1 else "need"
-                await notifier.notify(
-                    "run_finished",
-                    f"Run finished: {failed} {fail_word} {need_word} another try",
-                    body=f"{rated} rated · {failed} {fail_word} failed. Review and try again.",
-                    severity="warning",
-                )
-            else:
-                await notifier.notify(
-                    "run_finished",
-                    "Run finished",
-                    body=f"Your search run is complete. {rated} {rated_word} rated.",
-                    severity="info",
-                )
-            if worth_count > 0:
-                role_word = "role" if worth_count == 1 else "roles"
-                await notifier.notify(
-                    "high_score",
-                    f"{worth_count} new {role_word} worth reviewing",
-                    body=f"Your search found {worth_count} new {role_word} rated Your call or "
-                    "better.",
-                    severity="info",
-                )
+            await notify_run_finished(
+                self._sm, run_id=run_id, rated=len(stats.tier1.roles | stats.tier2.roles)
+            )
         except Exception as exc:  # noqa: BLE001
             # The one sanctioned broad catch: the run is already marked finished, and a notifier,
             # a toast backend or a summary query failing for ANY reason must not turn that into a

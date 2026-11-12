@@ -40,7 +40,9 @@ from kestrel.db.base import utcnow_iso
 from kestrel.db.models import Opportunity, Pursuit, Setting, StatusEvent
 from kestrel.llm import client as llm_client
 from kestrel.pipeline._shared import tier_is_hosted
+from kestrel.services import kestrel_ids
 from kestrel.services.setting_overrides import load_settings_with_db
+from kestrel.web.auth import LOCAL_DOWNLOAD
 from kestrel.web.deps import active_track, sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
 from kestrel.web.pages.needs_try import _employer_state
@@ -236,7 +238,9 @@ async def analytics_online_dialog(request: Request):
 # ------------------------------------------------------------------------------------ exports
 def _csv_response(rows: list[list[Any]], name: str) -> Response:
     buf = io.StringIO()
-    csv.writer(buf).writerows(rows)
+    from kestrel.services.csv_safe import safe_rows
+
+    csv.writer(buf).writerows(safe_rows(rows))
     return Response(
         content="﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
@@ -301,7 +305,7 @@ async def _held_export(s) -> Response | None:
     return None
 
 
-@router.get("/analytics/export/numbers.csv")
+@router.get("/analytics/export/numbers.csv", dependencies=[LOCAL_DOWNLOAD])
 async def export_numbers(request: Request):
     track = _track(request)
     range_key = rpt.normalize_range(request.query_params.get("range"))
@@ -314,7 +318,7 @@ async def export_numbers(request: Request):
     return _csv_response(_number_rows(r), f"kestrel-analytics-{_stamp()}.csv")
 
 
-@router.get("/analytics/export/applications.csv")
+@router.get("/analytics/export/applications.csv", dependencies=[LOCAL_DOWNLOAD])
 async def export_applications(request: Request):
     """Every application on the track with its full status history, oldest first.
     ?range=30|90|all (the page's own range bar) filters by applied_at."""
@@ -340,7 +344,19 @@ async def export_applications(request: Request):
         if start_iso:
             stmt = stmt.where(Pursuit.applied_at >= start_iso)
         found = (await s.execute(stmt)).all()
-    rows: list[list[Any]] = [["Role", "Company", "Status", "Sent", "Outcome", "Closed", "History"]]
+        # Remotive's terms (D-SRC-19): an application on a Remotive posting is exported from the
+        # same role's copy on another board, or left out when there is none.
+        from kestrel.services.export_terms import export_copies
+
+        copies = await export_copies(s, [o.id for _p, o in found])
+        found = [(p, c) for p, o in found if (c := copies.get(o.id)) is not None]
+        # The Kestrel ID (D-IMPORT-9): opaque and stable, so a re-import can match by it. Creating
+        # the install's salt is the only write; the ID itself carries nothing about the role.
+        ids = await kestrel_ids.ids_by_pursuit(s, create=True)
+        await s.commit()
+    rows: list[list[Any]] = [
+        ["Role", "Company", "Status", "Sent", "Outcome", "Closed", "History", "Kestrel ID"]
+    ]
     for p, o in found:
         history = "; ".join(
             f"{(e.occurred_at or '')[:10]} {e.from_status or 'new'} to {e.to_status}"
@@ -349,12 +365,13 @@ async def export_applications(request: Request):
         rows.append([
             redact(o.title or ""), redact(o.org_name or ""), p.status,
             (p.applied_at or "")[:10], p.outcome or "", (p.closed_at or "")[:10], redact(history),
+            ids.get(p.id, ""),
         ])
     stamp = _stamp()
     return _csv_response(rows, f"kestrel-applications-{stamp}.csv")
 
 
-@router.get("/analytics/export/summary.pdf")
+@router.get("/analytics/export/summary.pdf", dependencies=[LOCAL_DOWNLOAD])
 async def export_pdf(request: Request):
     """The summary and charts as a PDF, rendered on this computer from the same numbers. A
     machine with no Edge or Playwright says so instead of failing (CLAUDE.md platform traps)."""
@@ -366,6 +383,14 @@ async def export_pdf(request: Request):
         if (held := await _held_export(s)) is not None:
             return held
         ctx = await _context(request, s, track, range_key, "charts")
+        # Remotive's terms (D-SRC-19): the PDF is a file that leaves the page, so the one line
+        # that names a role does not name a Remotive posting. Counts stay (they name nothing).
+        from kestrel.services.export_terms import restricted_ids
+
+        timing = (ctx.get("report") or {}).get("timing") or {}
+        oldest = timing.get("oldest")
+        if oldest and await restricted_ids(s, [oldest.get("opportunity_id")]):
+            timing["oldest"] = None
     css_dir = Path(paths.web_static_dir()) / "css"
     ctx["css"] = "\n".join(
         (css_dir / name).read_text(encoding="utf-8")

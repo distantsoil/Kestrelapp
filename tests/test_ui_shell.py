@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from kestrel import paths
 from kestrel.db import migrate
 from kestrel.db.engine import forget_engine, make_async_engine, reset_engine
-from kestrel.db.models import Evaluation, Opportunity, Org, Setting, Source
+from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine, Setting, Source
 from kestrel.web import deps
 from kestrel.web.deps import BOTTOM_BAR, NAV_GROUPS, nav_active, nav_title
 
@@ -34,7 +34,10 @@ _COMPONENTS_CSS = Path(paths.web_static_dir()) / "css" / "components.css"
 # only for a test selector, never styling targets in their own right.
 _CSS_SKIP = {"htmx-indicator", "htmx-request", "htmx-added", "htmx-settling", "htmx-swapping",
              # pywebview's own drag hook (D-UI-88) and the nav lists' test selector.
-             "pywebview-drag-region", "mainnav"}
+             "pywebview-drag-region", "mainnav",
+             # The role match panel's script and test hooks (role.js and the browser tests find
+             # these nodes by class); the look comes from the shared .rl-xp and the *in children.
+             "rl-mt", "rl-mx", "rl-mpn", "rl-offer", "rl-cx"}
 
 
 def _fresh_engine():
@@ -221,7 +224,8 @@ def test_readout_problem_links_and_working_pulses():
             "hosted": {}, "mode": "local"}
     failed = readout({**base, "worker": {**base["worker"], "open_failed": 2}})["state"]
     assert failed["word"] == "Problem" and failed["href"] == "/quarantine"
-    assert failed["text"] == "2 roles need another try" and failed["dot"] == "bad"
+    assert failed["text"] == "2 items need another try" and failed["dot"] == "bad"
+    assert failed["title"] == "Something the model could not finish: open Needs another try"
     working = readout({**base, "worker": {"state": "good", "label": "Searching 3 of 5 searches"}})
     assert working["state"]["word"] == "Working" and working["state"]["dot"] == "live"
     nxt = readout({**base, "next_run": "Mon 08:00"})["state"]
@@ -236,6 +240,22 @@ def test_readout_problem_links_and_working_pulses():
                    "hosted": {"key_present": True, "provider": "OpenRouter"},
                    "balance": {"label": "$0.42 left", "state": "warn"}})
     assert low["engine"]["dot"] == "warn"
+
+
+def test_a_story_failure_reads_as_an_item_not_a_role_in_the_readout():
+    """A failed story merge parks a quarantine row with no role (tier 8, opportunity_id None).
+    The sidebar readout must call it an item, never a role: the rewording exists for exactly
+    this row, which has no role to point at. A failed role is a different row and is already
+    covered by the unit test above; this one is the row that has none."""
+    asyncio.run(_seed([Quarantine(opportunity_id=None, tier=8,
+                                  error="story merge failed: the invented reason",
+                                  raw_response='{"invented": "text"}')]))
+    with _client() as c:
+        r = c.get("/status/rail")
+    assert r.status_code == 200
+    assert "1 item needs another try" in r.text
+    assert "1 role needs another try" not in r.text
+    assert "roles need" not in r.text
 
 
 def test_api_status_carries_the_rail_fields_and_counts():

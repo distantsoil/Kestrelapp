@@ -389,6 +389,9 @@ def test_keep_going_shows_while_unrated_roles_remain():
     assert "All 10 rated." in r.text
     assert "Kestrel has more roles it is unsure about." in r.text
     assert 'data-testid="cal-keep-going"' in r.text
+    # Keep going stays on the Detailed tab: Quick is only the default for a bare /calibrate.
+    keep = re.search(r'<a [^>]*data-testid="cal-keep-going"[^>]*>', r.text).group(0)
+    assert 'href="/calibrate?track=employment&amp;tab=detailed"' in keep
 
 
 def test_empty_queue_has_its_own_words():

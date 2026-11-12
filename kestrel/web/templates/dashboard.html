@@ -51,6 +51,9 @@
 
   {% include "partials/td_strip.html" %}
 
+  {# The quick-round strip (issue 171): below the retry note, above Top matches. #}
+  {% include "partials/td_quick.html" %}
+
   {% if first_run %}
   <p class="td-tourask"><button type="button" class="k-link td-linkbtn" data-td-tour-start data-testid="td-tour-start">Take a short tour of Today</button></p>
   {% endif %}

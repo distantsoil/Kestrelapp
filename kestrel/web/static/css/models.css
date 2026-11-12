@@ -71,6 +71,8 @@
 .mo-mono-line { margin: 4px 0; word-break: break-all; }
 .mo-log { background: var(--soft); padding: 8px 10px; border-radius: var(--r-sm); overflow: auto; max-height: 160px; }
 .mo-details summary { cursor: pointer; color: var(--link-ink); font-weight: 600; font-size: 13.5px; }
+.mo-privacy { margin: 0; }
+.mo-privacy .mo-note { margin: 6px 0; max-width: 62ch; }
 .mo-prog { display: block; width: 100%; height: 7px; border: 0; border-radius: 5px; background: var(--soft); overflow: hidden; margin: 6px 0 2px; appearance: none; -webkit-appearance: none; }
 .mo-prog::-webkit-progress-bar { background: var(--soft); border-radius: 5px; }
 .mo-prog::-webkit-progress-value { background: var(--brand); border-radius: 5px; transition: width .25s linear; }
@@ -260,3 +262,49 @@
 .mo-hact { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 4px; }
 .mo-line { margin: 0; }
 .mo-setup { display: flex; }
+
+/* Not needed while Kestrel runs online (D-115): a greyed card with one plain line. Colors come
+   from theme tokens only; the change eases in and reduced motion turns it off. */
+.mo-card { transition: background-color .25s var(--ease), border-color .25s var(--ease); }
+.mo-disabled { background: var(--soft); border-left-color: var(--line); }
+.mo-disabled .mo-head h3, .mo-disabled .mo-name { color: var(--muted); }
+.mo-disabled .k-badge { background: var(--line); color: var(--muted); }
+.mo-offline { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.mo-oldnote, .mo-bothnote { margin: 0; font-size: 13px; }
+
+/* Fix it answers beside the click, in the Scoring steps row. */
+.mo-fixslot:empty { display: none; }
+.mo-fixres { display: block; margin-top: 4px; font-size: 12.5px; animation: k-inUp .18s ease both; }
+.mo-fixres.is-good { color: var(--good-ink); }
+.mo-fixres.is-bad { color: var(--bad-ink); }
+
+/* Local AI check rows on the Health check card (#144). Unverified is its own state: never a pass. */
+.mo-sub-h { margin: 8px 0 0; font-size: 14px; font-weight: 800; }
+.mo-la-intro { margin: 0; font-size: 13px; }
+.is-info > .mo-state, .is-unverified > .mo-state { background: var(--soft); color: var(--muted); }
+.mo-checks .k-pill { margin-left: 6px; }
+.mo-fwlabel { margin: 8px 0 0; font-size: 13px; font-weight: 600; }
+.mo-fwcmd { overflow-wrap: anywhere; user-select: all; background: var(--soft); padding: 8px 10px; border-radius: var(--r-sm); }
+
+/* On your network: servers on another computer, and the drawer that adds one (D-LLM-60). */
+.mo-servers { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mo-server { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); min-width: 0;
+  transition: background-color .15s var(--ease); }
+.mo-server:hover { background: var(--soft); }
+.mo-server .k-grow { min-width: 0; overflow-wrap: anywhere; }
+.mo-server__t { display: block; }
+.mo-nwform { display: grid; gap: 10px; }
+.mo-nwrow { display: flex; gap: 8px; flex-wrap: wrap; }
+.mo-nwfound { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px;
+  background: var(--soft); display: grid; gap: 10px; animation: k-inUp .2s ease both; }
+.mo-nwfound h4 { margin: 0; }
+.mo-nwassign { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.mo-nwassign .k-field { flex: 1 1 200px; min-width: 0; margin: 0; }
+.mo-hint { display: block; font-size: 12.5px; margin-top: 4px; }
+.mo-msg { animation: k-inUp .18s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .mo-card { transition: none; }
+  .mo-fixres, .mo-nwfound, .mo-msg { animation: none; }
+  .mo-server { transition: none; }
+}

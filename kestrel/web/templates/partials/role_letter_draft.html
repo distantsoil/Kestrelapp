@@ -1,12 +1,15 @@
-{# A saved draft (D-UI-239): Check (the text with its marks and where each claim comes from), Edit
+{# A saved draft (D-UI-239, D-LETTER-3, D-LETTER-4): Check (the text with its marks and where each claim comes from), Edit
    text (markdown, Save, Discard asks first) and Preview (one true-size page, scaled). A dotted
    underline is a claim traced to the person's own text (click for the source), a solid underline
    is unverified, highlighted text is stock phrasing. Nothing here is ever sent. #}
 {% from "partials/style_marks.html" import marks, note %}
 {% from "partials/role_icons.html" import ric %}
 {% set base = '/opportunities/' ~ opp_id ~ '/role/cover-letter/' ~ render.id %}
-<div id="cl-draft" class="cl-draft" data-testid="cover-letter-draft" data-tab="{{ tab }}" data-render="{{ render.id }}">
+<div id="cl-draft" class="cl-draft" data-testid="cover-letter-draft" data-tab="{{ tab }}" data-render="{{ render.id }}"{% if proposal %} data-proposal="1"{% endif %}>
   <div class="cl-scroll" data-cl-scroll>
+  {# Draft again (D-LETTER-4): the new draft waits here; the current one is unchanged until kept. #}
+  {% if proposal %}<p class="cl-banner" role="status" data-testid="cover-letter-proposal">{{ ric('info', 'k-ic--sm') }}<span><b>New draft.</b> Your previous draft stays in Documents, unchanged, until you keep this one.</span></p>{% endif %}
+  {% if can_undo %}<div class="cl-banner" data-testid="cover-letter-undo-bar">{{ ric('info', 'k-ic--sm') }}<span>You kept a new draft. Your previous draft is saved until you discard this one.</span><button type="button" class="k-btn k-btn--sm" data-cl-ask="undo" data-testid="cover-letter-undo">Undo: bring back the previous draft</button></div>{% endif %}
   {% if outline %}<p class="cl-note" data-testid="outline-note">An outline for a conversation, not a priced proposal.</p>{% endif %}
   {% if unverified %}
   <div class="cl-alert" role="alert" data-testid="cover-letter-unverified">
@@ -21,6 +24,7 @@
     </div>
   </div>
   {% endif %}
+  {% if over %}<p class="cl-warnline" data-testid="cover-letter-over-length">{{ ric('alert', 'k-ic--sm') }}<span>{% if over.words > over.limit %}Over length ({{ over.words }} words, limit {{ over.limit }}){% else %}Too many paragraphs ({{ over.paragraphs }}, limit {{ over.max_paragraphs }}){% endif %}. Kestrel did not cut it: shorten it in Edit text.</span></p>{% endif %}
   <div class="cl-tabs" role="tablist" aria-label="Draft views">
     {% for key, label in (('check', 'Check'), ('edit', 'Edit text'), ('preview', 'Preview')) %}
     <button type="button" role="tab" class="cl-tab{{ ' is-on' if tab == key else '' }}" data-cl-tab="{{ key }}" aria-selected="{{ 'true' if tab == key else 'false' }}" data-testid="cover-letter-tab-{{ key }}">{{ label }}</button>
@@ -36,7 +40,7 @@
         <section class="cl-card" id="cl-src-card" aria-live="polite" data-testid="cover-letter-source">
           <b>Where it comes from</b>
           <p class="rl-dsm" data-cl-hint>Select a dotted phrase to see your own words behind it.</p>
-          {% for u in used %}<div class="cl-src" data-cl-src="{{ u.key }}"><span class="cl-src__tag">{{ u.label }}</span>{% for part in u.parts %}<p>{{ part }}</p>{% endfor %}</div>{% endfor %}
+          {% for u in used %}<div class="cl-src" data-cl-src="{{ u.key }}"><span class="cl-src__tag">{{ u.label }}</span>{% for part in u.parts %}<p>{{ part }}</p>{% endfor %}{% if u.since == 'changed' %}<p class="cl-src__since" data-testid="cover-letter-source-changed">Changed since this draft. This is the text the draft was written from.</p>{% elif u.since == 'collided' %}<p class="cl-src__since" data-testid="cover-letter-source-collided">Since this draft, another of your sources uses the same key. This is the text the draft was written from.</p>{% elif u.since == 'gone' %}<p class="cl-src__since" data-testid="cover-letter-source-gone">Deleted since this draft. This is the text the draft was written from.</p>{% endif %}</div>{% endfor %}
         </section>
         <section class="cl-card" data-testid="cover-letter-plain">
           <b>Plain writing</b>
@@ -65,12 +69,13 @@
     <form class="cl-edit" id="cl-edit-form" hx-post="{{ base }}/save" hx-target="#cl-main" hx-swap="innerHTML" hx-sync="this:drop" data-testid="cover-letter-form">
       <input type="hidden" name="tab" value="edit">
       <label class="cl-label" for="cl-text">Text (markdown)</label>
-      <textarea id="cl-text" name="body_md" class="cl-textarea" data-cl-text data-lo="{{ lo }}" data-hi="{{ hi }}" spellcheck="true">{{ body_md }}</textarea>
+      <textarea id="cl-text" name="body_md" class="cl-textarea" data-cl-text data-lo="{{ lo }}" data-hi="{{ hi }}" data-max="{{ max_words }}" spellcheck="true">{{ edit_text }}</textarea>
       {% if not outline %}<p class="rl-dsm" data-testid="cover-letter-closing-hint">Write the greeting and the body. Kestrel adds "Sincerely," and your name in the preview and the PDF.</p>{% endif %}
       <div class="cl-editbar">
-        <span class="cl-count" data-cl-count data-state="{{ 'ok' if lo <= n_words <= hi else 'off' }}">{{ n_words }} words<span class="cl-count__aim"> · aim for {{ lo }} to {{ hi }}</span></span>
+        {% set ew = edit_words %}<span class="cl-count" data-cl-count data-state="{{ 'stop' if max_words and ew > max_words else 'over' if ew > hi else 'ok' if lo <= ew else 'off' }}">{{ ew }} words<span class="cl-count__aim"> · aim for {{ lo }} to {{ hi }}{% if max_words %}, at most {{ max_words }} to save{% endif %}</span></span>
         <span class="cl-saved{{ ' is-on' if saved else '' }}" data-cl-saved role="status">{{ ric('check', 'k-ic--sm') }}Saved</span>
       </div>
+      {% if max_words %}<p class="cl-limit" data-cl-limit role="status" data-testid="cover-letter-limit"><span class="cl-limit__over">Over {{ hi }} words. Shorten it before you use it.</span><span class="cl-limit__stop">Over {{ max_words }} words. Kestrel will not save it until you cut it.</span></p>{% endif %}
     </form>
   </section>
 
@@ -79,6 +84,8 @@
     <div class="rl-pvb cl-pvb" data-rl-stage>
       <div class="rl-pvpage" data-rl-page><iframe class="rl-pvframe" title="{{ noun|capitalize }} preview" sandbox="allow-same-origin" srcdoc="{{ preview_html }}"></iframe></div>
     </div>
+    {# The one-page check (D-LETTER-3): role.js asks for it when this tab opens; it makes the PDF. #}
+    {% if not outline %}<div class="cl-fit" data-cl-fit hx-get="{{ base }}/fit" hx-trigger="cl-fit once" hx-swap="innerHTML" data-testid="cover-letter-fit"><p class="rl-dsm">Checking that it fits on one page…</p></div>{% endif %}
     <div class="cl-prevbar">
       <p class="rl-dsm">One page at true size, scaled to fit. Download opens your computer's Save dialog. Kestrel never sends it.</p>
     </div>
@@ -94,16 +101,33 @@
       <button type="submit" form="cl-edit-form" class="k-btn k-btn--primary" data-cl-show="edit" data-cl-primary="edit"{{ '' if tab == 'edit' else ' hidden' }} data-busy-text="Saving…" data-testid="cover-letter-save">Save</button>
       <a class="k-btn{{ ' k-btn--primary' if tab == 'preview' else '' }}" href="{{ base }}/download" download data-cl-show="preview" data-cl-primary="preview"{{ '' if tab == 'preview' else ' hidden' }} data-testid="cover-letter-download">{{ ric('dl', 'k-ic--sm') }}Download PDF</a>
       <button type="button" class="k-btn" data-cl-go="preview" data-cl-show="check edit"{{ ' hidden' if tab == 'preview' else '' }} data-testid="cover-letter-preview-go">Preview and download</button>
+      {% if proposal %}
+      <button type="button" class="k-btn k-btn--primary" hx-post="{{ base }}/keep-new" hx-target="#cl-main" hx-swap="innerHTML" hx-disabled-elt="this" data-busy-text="Keeping…" data-testid="cover-letter-keep-new">Keep new draft</button>
+      <button type="button" class="k-btn" hx-post="{{ base }}/keep-previous" hx-target="#cl-main" hx-swap="innerHTML" hx-disabled-elt="this" data-busy-text="Keeping…" data-testid="cover-letter-keep-previous">Keep previous draft</button>
+      {% else %}
       <button type="button" class="k-btn" data-cl-ask="redraft" data-testid="cover-letter-redraft">Draft again</button>
       <button type="button" class="k-btn" data-cl-ask="discard" data-cl-discard data-testid="cover-letter-discard">Discard</button>
+      {% endif %}
     </div>
     <div class="cl-confirm" data-cl-confirm="redraft" data-testid="cover-letter-redraft-confirm"><div class="cl-confirm__clip">
-      <p><b>Draft again?</b> Your edits to this draft are replaced.</p>
+      <p><b>Draft again?</b> Kestrel writes a new draft from your own lines. This one stays, with your edits, until you keep the new one.</p>
       <div class="rl-btns">
         <button type="button" class="k-btn k-btn--primary" hx-post="{{ base }}/redraft" hx-target="#cl-main" hx-swap="innerHTML" hx-disabled-elt="this" data-busy-text="Opening…" data-testid="cover-letter-redraft-yes">Draft again</button>
         <button type="button" class="k-btn" data-cl-keep>Keep it</button>
       </div>
     </div></div>
+    {% if can_undo %}
+    {# Undo deletes this draft, so it asks first, like Discard (D-LETTER-7). The form names the draft
+       on screen; the server refuses if it is no longer the current one. #}
+    <div class="cl-confirm" data-cl-confirm="undo" data-testid="cover-letter-undo-confirm"><div class="cl-confirm__clip">
+      <p><b>Bring back the previous draft?</b> This draft, with any edits you made to it, is deleted, and your previous draft comes back as it was.</p>
+      <form class="rl-btns" hx-post="{{ base }}/undo" hx-target="#cl-main" hx-swap="innerHTML">
+        <input type="hidden" name="sure" value="1">
+        <button type="submit" class="k-btn k-btn--danger" data-busy-text="Undoing…" data-testid="cover-letter-undo-yes">Delete this draft and undo</button>
+        <button type="button" class="k-btn" data-cl-keep>Keep this draft</button>
+      </form>
+    </div></div>
+    {% endif %}
     <div class="cl-confirm" data-cl-confirm="discard" data-testid="cover-letter-confirm"><div class="cl-confirm__clip">
       <p><b>Discard this draft?</b> It is deleted from Documents and cannot be brought back.</p>
       <div class="rl-btns">

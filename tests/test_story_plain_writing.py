@@ -242,7 +242,7 @@ async def test_only_the_flagged_prose_fields_are_taken_from_the_reask(sm):
     bad = _reply(action="I led a robust delta turnaround.")
     other = _reply(
         action="I led the delta turnaround.", title="A different title",
-        themes=["crisis"], situation="Changed situation.", spoken_seconds_estimate=5,
+        themes=["failure"], situation="Changed situation.", spoken_seconds_estimate=5,
     )
     (story,) = await _build(sm, _Scripted(bad, other))
     assert story.action == "I led the delta turnaround."  # the flagged field, from the re-ask

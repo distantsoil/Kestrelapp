@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from kestrel import paths
@@ -31,6 +33,7 @@ from kestrel.web.auth import (
 from kestrel.web.routes_api import router as api_router
 from kestrel.web.routes_learning import router as learning_router
 from kestrel.web.routes_pages import router as pages_router
+from kestrel.web.routes_quick import router as quick_router
 
 if TYPE_CHECKING:
     from kestrel.pipeline import runlog
@@ -48,8 +51,8 @@ _PAGE_MODULES = (
     "prep", "mock", "offers", "sources_ui", "sources", "settings", "analytics", "bench", "about",
     "escalate", "opportunity_actions", "runs_page", "runs_detail", "needs_try", "models",
     "backup", "applied", "rescore", "updates", "announcements", "pipeline", "role",
-    "settings_prefs", "settings_roles", "settings_learn", "settings_data",
-    "settings_computer", "settings_privacy",
+    "role_corrections", "settings_prefs", "settings_roles", "settings_learn", "settings_data",
+    "settings_computer", "settings_privacy", "work_search_log",
 )
 
 # Worker pause is a process-wide flag the tray toggles via /api/worker/pause|resume. A paused
@@ -217,6 +220,37 @@ async def _maybe_run_liveness(sm, settings, cycle) -> dict | None:
 # status strip and /api/status. None until the first cycle of this process.
 _run_mode: dict[str, str | None] = {"mode": None}
 
+# The settings the cycle in flight was confirmed on (#103), and the last change already announced
+# for it. Empty between runs. A run keeps these until it ends; a change made meanwhile applies to
+# the next run, and the rail and run card keep showing what this run is really using.
+_run_confirmed: dict[str, Any] = {"settings": None, "announced": "", "online_approval": None}
+
+
+def confirmed_run_settings() -> Any:
+    """The Settings the run in flight started with, or None when no run is working."""
+    return _run_confirmed["settings"]
+
+
+def _hold_run(settings: Any, online_approval: Any = None) -> None:
+    _run_confirmed["settings"] = settings
+    _run_confirmed["announced"] = ""
+    _run_confirmed["online_approval"] = online_approval
+
+
+def _hold_if_free(settings: Any, online_approval: Any = None) -> None:
+    """Hold a run's settings unless a run already holds its own (a carried run keeps them)."""
+    if _run_confirmed["settings"] is None:
+        _hold_run(settings, online_approval)
+
+
+def _release_run() -> None:
+    _run_confirmed["settings"] = None
+    _run_confirmed["announced"] = ""
+    _run_confirmed["online_approval"] = None
+
+
+release_confirmed_run = _release_run  # the Stop button ends the run's hold on its settings
+
 
 async def _rebuild_generated_sources() -> None:
     """Bring the profile-generated searches in line at every start (review finding 9): an install
@@ -335,6 +369,40 @@ def current_run_mode() -> str | None:
     return _run_mode["mode"]
 
 
+# Retention (services/prune.py) is asked about at most this often; the pass itself runs at most
+# once a day, by the stamp it keeps in the database.
+_HOUSEKEEPING_ASK_S = 3600.0
+_housekeeping_asked: dict[str, float] = {"at": float("-inf")}
+
+
+async def _housekeeping(sm: Any, stop: asyncio.Event) -> None:
+    """Prune old finished work when a day has passed (D-PERF-3). Off the hot path: only from an
+    idle worker cycle with no run open, in short transactions that yield to the loop, and never
+    able to stop the loop (the next idle cycle asks again after an hour)."""
+    now = time.monotonic()
+    if now - _housekeeping_asked["at"] < _HOUSEKEEPING_ASK_S:
+        return
+    _housekeeping_asked["at"] = now
+    try:
+        from kestrel.services.prune import prune_if_due
+
+        await prune_if_due(sm, stop=stop)
+    except Exception as exc:  # noqa: BLE001 - retention is never worth a crashed loop
+        log.warning("prune_error", error=str(exc))
+
+
+async def _worker_task(stop: asyncio.Event) -> None:
+    """The worker loop as the app runs it: `_worker_loop`, and the hold on a run's confirmed
+    settings released however it ends (D-QUEUE-10). A restore, a reset or a quit cancels a cycle
+    in the middle; the cycle's own release is then skipped, and the online lane's `release_holds`
+    (which reads `confirmed_run_settings()`) used the dead run's settings until the next cycle."""
+    try:
+        await _worker_loop(stop)
+    finally:
+        _held_cycle["cycle"] = None
+        _release_run()
+
+
 async def _worker_loop(stop: asyncio.Event) -> None:
     """Continuously advance the pipeline on uvicorn's loop: sweep new opportunities through Tier 0,
     then drain Tier 1 fully, then Tier 2 fully (never interleaving the two models), then idle until
@@ -359,13 +427,15 @@ async def _worker_loop(stop: asyncio.Event) -> None:
     from kestrel.pipeline.tier1 import handle_t1
     from kestrel.pipeline.tier2 import handle_t2
     from kestrel.pipeline.worker import TierStats, Worker, held_types
+    from kestrel.queue.queue import deferred_count, release_holds
     from kestrel.research.jobs import drain as drain_research
     from kestrel.research.org_summary import drain_org_summaries, request_weekly
+    from kestrel.services.online_consent import tier_goes_online
     from kestrel.services.setting_overrides import load_settings_with_db, take_run_request
     from kestrel.services.title_suggest import drain_title_suggestions, maybe_request
 
     sm = get_sessionmaker()
-    async with httpx.AsyncClient() as http:
+    async with httpx.AsyncClient() as http, httpx.AsyncClient(trust_env=False) as http_local:
         # Setup is retried, not done once. It reads settings and touches the database (reclaim),
         # and a locked file or a bad settings.yml at launch used to raise here, outside any
         # try, which killed the loop silently for the life of the process: the app looked up and
@@ -374,10 +444,11 @@ async def _worker_loop(stop: asyncio.Event) -> None:
         # A cycle a pause cut short keeps its Run row open through the pause and the next cycle
         # carries on in it (review finding 2), so the run's counts never drop on resume.
         carried: runlog.CycleRun | None = None
+        prev_start = 0.0  # for the #154 cycle-interval measurement
         while not stop.is_set():
             if worker is None:
                 try:
-                    client = LLMClient(get_settings(), http=http)
+                    client = LLMClient(get_settings(), http=http, http_local=http_local)
                     candidate = Worker(sm, client, get_settings(), stop=stop, paused=is_paused)
                     await candidate.reclaim()
                     # A run this app left open when it was killed is closed, not left "running"
@@ -400,22 +471,42 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 # one-shot mode is consumed here, by exactly one cycle; one that can no longer
                 # run (the acknowledgement or an assignment went away since it was queued) is
                 # logged and the stored mode is used instead.
-                async with sm() as s:
-                    request = await take_run_request(s)
-                    requested = request.get("mode")
-                    try:
-                        settings = await load_settings_with_db(s, mode=requested)
-                    except HostedModeError as exc:
-                        log.warning("run_mode_unavailable", requested=requested, reason=str(exc))
-                        settings = await load_settings_with_db(s)
-                worker.apply_settings(
-                    settings, online_approval=request.get("online_approval")
-                )
+                # A run a pause carried over keeps the settings it was confirmed on until it
+                # ends, as the change notice says (0.7.6 review): no settings are re-read and no
+                # queued one-shot request is consumed for it (that request waits for the next
+                # run).
+                held = confirmed_run_settings() if carried is not None else None
+                if held is not None:
+                    settings, approval = held, _run_confirmed["online_approval"]
+                else:
+                    async with sm() as s:
+                        request = await take_run_request(s)
+                        requested = request.get("mode")
+                        try:
+                            settings = await load_settings_with_db(s, mode=requested)
+                        except HostedModeError as exc:
+                            log.warning("run_mode_unavailable", requested=requested,
+                                        reason=str(exc))
+                            settings = await load_settings_with_db(s)
+                    approval = request.get("online_approval")
+                worker.apply_settings(settings, online_approval=approval)
                 _run_mode["mode"] = settings.llm.mode
+                # The hold's owner runs once per cycle, before anything leases (D-QUEUE-3):
+                # release the tasks whose hold ended, so a released task is claimed exactly
+                # once. Still-held tasks keep their mark, and the queue no longer leases them
+                # (#154), so they cost nothing for as long as the hold lasts.
+                await release_holds(sm, settings)
                 # A Run row per cycle that has work (D-UI-34), so Today and Runs see what this
                 # loop does; an idle cycle writes nothing.
                 cycle, carried = carried or runlog.CycleRun(sm, mode=settings.llm.mode), None
                 _held_cycle["cycle"] = cycle
+                # The hold covers the whole cycle from its start: the settings are held the
+                # moment its run opens, whether work was waiting at the start or only appears
+                # once this cycle's own scrape ran (0.7.6 review). An idle cycle opens no run
+                # and holds nothing, so no notice is shown when nothing is working.
+                cycle.on_open = functools.partial(_hold_if_free, settings, approval)
+                if cycle.run_id is not None:
+                    _hold_if_free(settings, approval)
                 if await runlog.has_pipeline_work(sm, skip_types=held_types(settings)):
                     await cycle.ensure_open()
                 # Scheduled scrapes first: the scheduler, tray and MCP only enqueue them, and
@@ -433,21 +524,48 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 await worker.drain_embed(emb)
                 await cycle.record("embed", runlog.tier_counts(emb), did_work=emb.completed > 0)
                 await worker.drain_tier("t1", settings.concurrency.tier1, handle_t1, t1)
-                await cycle.record("tier1", runlog.tier_counts(t1), did_work=t1.completed > 0)
+                await cycle.record("tier1", runlog.tier_counts(t1), did_work=t1.completed > 0,
+                                   roles=t1.roles)
                 await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
-                await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0)
+                await cycle.record("tier2", runlog.tier_counts(t2), did_work=t2.completed > 0,
+                                   roles=t2.roles)
+                # What the person asked for comes before background work (D-WORKER-1): stories
+                # they asked to build, then the letters they asked to draft, ahead of the
+                # background lane and the scheduled jobs. A story build runs in short passes
+                # (D-STORY-2), so a long one never holds a search or a letter for more than a
+                # pass. Queued, never run on the request thread.
+                # A pause mid-cycle (finding 2): each drain above finished its leased task and
+                # claimed no more; nothing further starts until the operator resumes.
+                if not is_paused():
+                    # Online tiers run on the online lane, not here (D-WORKER-2); a local tier
+                    # stays in its usual place.
+                    if not tier_goes_online(settings, "tier2"):
+                        await drain_story_builds(sm, client, settings, stop=stop)
+                    # Cover letter and outline drafts (D-UI-239): a draft cut short by a quit or
+                    # a crash is leased again here after the restart. An online one whose
+                    # confirmed model or destination changed is held, not sent. An online draft
+                    # runs on the online lane (D-WORKER-2).
+                    if not tier_goes_online(settings, "tier3"):
+                        from kestrel.web.pages.role import run_letter_drafts
+
+                        try:  # a letter pass must never take the tiers, training or checks with it
+                            await run_letter_drafts(stop=stop)
+                        except Exception as exc:  # noqa: BLE001 - isolated; the next cycle retries
+                            log.warning("letter_drafts_pass_error", error_type=type(exc).__name__)
                 # Idle after every normal tier: free the day's share of roles waiting in the
                 # background lane (found company boards); they then drain tier by tier.
                 lane_n = await worker.release_lane()
                 if lane_n:
                     await worker.drain_tier("t1", settings.concurrency.tier1, handle_t1, t1)
                     await worker.drain_tier("t2", settings.concurrency.tier2, handle_t2, t2)
-                # Stories the operator asked to build from the My stories page (queued, never run
-                # on the request thread).
+                    # The lane's roles are this run's too (D-RUN-2): record the tiers again.
+                    await cycle.record("tier1", runlog.tier_counts(t1),
+                                       did_work=t1.completed > 0, roles=t1.roles)
+                    await cycle.record("tier2", runlog.tier_counts(t2),
+                                       did_work=t2.completed > 0, roles=t2.roles)
                 # A pause mid-cycle (finding 2): each drain above finished its leased task and
                 # claimed no more; nothing further starts until the operator resumes.
                 if not is_paused():
-                    await drain_story_builds(sm, client, settings, stop=stop)
                     # Likely questions for roles marked Applied (P14): the same Tier 2 model as
                     # the story build, so right after it keeps the tier drained (D-INTERVIEW-1).
                     await drain_interview_questions(sm, client, settings, stop=stop)
@@ -459,21 +577,23 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     await request_weekly(sm)
                     await drain_org_summaries(sm, client, settings, stop=stop)
                     await drain_research(sm, stop=stop)
+                    # Suggested companies on Sources (D-SRC-19): a few public board lookups, a
+                    # small number of companies a pass, never beside a model tier. A failure of
+                    # one company is recorded on its row and never stops the cycle.
+                    from kestrel.services.source_suggestions import (
+                        drain_checks as drain_suggestion_checks,
+                    )
+
+                    await drain_suggestion_checks(sm, stop=stop)
                     from kestrel.services.follow_up import drain as drain_follow_ups
 
-                    await drain_follow_ups(sm, lambda cfg: LLMClient(cfg, http=http), stop=stop)
-                    # Cover letter and outline drafts (D-UI-239): a draft cut short by a quit or
-                    # a crash is leased again here after the restart. An online one whose
-                    # confirmed model or destination changed is held, not sent.
-                    from kestrel.web.pages.role import run_letter_drafts
-
-                    try:  # a letter pass must never take the tiers, training or checks with it
-                        await run_letter_drafts(stop=stop)
-                    except Exception as exc:  # noqa: BLE001 - isolated; the next cycle retries
-                        log.warning("letter_drafts_pass_error", error_type=type(exc).__name__)
+                    await drain_follow_ups(
+                        sm, lambda cfg: LLMClient(cfg, http=http, http_local=http_local),
+                        stop=stop)
                     # Model check (D-DRIFT-11): its own drained step, after every tier has
                     # drained and never beside them, so it cannot swap models under the worker.
-                    await drain_checks(sm, settings, make_client=lambda s: LLMClient(s, http=http),
+                    await drain_checks(sm, settings, make_client=lambda s: LLMClient(
+                        s, http=http, http_local=http_local),
                                        stop=stop)
                 # Drift is a rolling window over the last 50 labels; checking it every idle
                 # cycle (5 s) loaded both reranker pickles and every Org and Source row on the
@@ -489,7 +609,22 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                     carried = cycle  # paused mid-run: the run stays open until resumed
                 else:
                     _held_cycle["cycle"] = None
+                    _release_run()
                     await cycle.finish("stopping" if stop.is_set() else "done")
+                # The #154 churn measurement, kept permanent: `held` is what the worker's own
+                # drains (scrapes, Tier 1, Tier 2) leased and then deferred in this cycle (zero
+                # is the healthy state now that held tasks are not leased); `deferred` is every
+                # task still carrying its mark, all types (the other drains' holds show there,
+                # not in `held`); plus how long the last cycle took.
+                log.info(
+                    "worker_cycle",
+                    held=scr.held + t1.held + t2.held,
+                    deferred=await deferred_count(sm),
+                    interval_s=(
+                        round(time.monotonic() - prev_start, 1) if prev_start else None
+                    ),
+                )
+                prev_start = time.monotonic()
                 idle = (
                     counts["pass"] == 0
                     and scr.completed == 0
@@ -501,6 +636,7 @@ async def _worker_loop(stop: asyncio.Event) -> None:
                 log.warning("serve_worker_cycle_error", error=str(exc))
                 idle = True
                 _held_cycle["cycle"] = None
+                _release_run()
                 if cycle is not None:
                     try:
                         from kestrel.errors import task_failure_text
@@ -511,8 +647,11 @@ async def _worker_loop(stop: asyncio.Event) -> None:
             finally:
                 _cycle_idle.set()
             if idle:
+                if carried is None:  # no run is open: the one moment retention may work
+                    await _housekeeping(sm, stop)
                 await _wait(stop, 5.0)
         _held_cycle["cycle"] = None
+        _release_run()
         if carried is not None:  # quit while paused: close the run this loop kept open
             try:
                 await carried.finish("stopping")
@@ -522,33 +661,223 @@ async def _worker_loop(stop: asyncio.Event) -> None:
 
 DB_BUSY_MESSAGE = "Kestrel is busy saving something else. Nothing changed; try again in a moment."
 
-# D-UI-90: Quit stops in-flight tasks and exits in one to two seconds. A stopped task keeps its
-# row; its lease is released below, so it resumes at the next launch (hard rule 5). Quit never
-# waits on a running model call.
-WORKER_STOP_S = 1.0
+
+async def _online_lane(stop: asyncio.Event) -> None:
+    """The online lane (D-WORKER-2): story builds (Tier 2) and cover letter drafts (Tier 3) run
+    here when their model is online, concurrently with the worker loop's board work, on the same
+    loop (never a thread or a second event loop: cross-loop aiosqlite errors look like database
+    corruption). With a local tier it drains nothing, and the worker loop keeps today's order.
+
+    Each pass re-reads settings from the setting-table layer like the worker loop does. Setup
+    (settings and client) is retried, not done once, like the worker loop's. A failure inside a
+    drain is logged (the type, never the text) and the lane continues; the worker loop is never
+    touched, so neither loop can stop the other. The lane honors the pause switch and the stop
+    event the same way the worker loop does, and opens no Run rows."""
+    import httpx
+
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.interview.story_task import drain_story_builds
+    from kestrel.llm.client import LLMClient
+    from kestrel.queue.queue import release_holds
+    from kestrel.services.online_consent import tier_goes_online
+    from kestrel.services.setting_overrides import load_settings_with_db
+
+    sm = get_sessionmaker()
+    async with httpx.AsyncClient() as http, httpx.AsyncClient(trust_env=False) as http_local:
+        while not stop.is_set():
+            if is_paused():  # the tray paused the app, or a restore/reset holds it
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=2.0)
+                continue
+            try:
+                async with sm() as s:
+                    settings = await load_settings_with_db(s)
+                client = LLMClient(settings, http=http, http_local=http_local)
+            except Exception as exc:  # noqa: BLE001 - setup retry; never die at startup
+                log.warning("online_lane_setup_error", error_type=type(exc).__name__)
+                await _wait(stop, _SETUP_RETRY_SECONDS)
+                continue
+            # The hold's owner, as in the worker loop (D-QUEUE-3): a hold that ended while the
+            # lane idled is released here, so a released task is claimed exactly once. Letters
+            # keep their own drain's release; this covers the story tasks.
+            try:  # a failed release must never take the lane down; the next pass retries
+                # The settings the worker defers under (D-QUEUE-6): a run in flight holds the
+                # settings it was confirmed on (a carried run, a one-shot run mode), so the lane
+                # releases by the same ones; the stored settings would release what the worker
+                # then defers again, every pass, for the life of the run.
+                await release_holds(sm, confirmed_run_settings() or settings)
+            except Exception as exc:  # noqa: BLE001 - the worker's own cycle is guarded the same way
+                log.warning("online_lane_release_error", error_type=type(exc).__name__)
+            active = False  # online back-off (D-WORKER-3): 2 s while a tier needs it, 15 s idle
+            try:  # isolated: a failure here never takes the letters, or the worker, with it
+                if tier_goes_online(settings, "tier2"):
+                    active = True
+                    await drain_story_builds(sm, client, settings, stop=stop)
+            except Exception as exc:  # noqa: BLE001 - the next pass retries
+                log.warning("online_lane_stories_error", error_type=type(exc).__name__)
+            try:
+                if tier_goes_online(settings, "tier3"):
+                    from kestrel.web.pages.role import run_letter_drafts
+
+                    active = True
+                    await run_letter_drafts(stop=stop)
+            except Exception as exc:  # noqa: BLE001 - the next pass retries
+                log.warning("online_lane_letters_error", error_type=type(exc).__name__)
+            # With no online tier the lane drains nothing, so it waits ~15 s between settings
+            # reads; the moment either tier is online it returns to 2 s so a queued draft is
+            # picked up quickly.
+            await _wait(stop, 2.0 if active else 15.0)
+
+# D-UI-90, D-QUEUE-5: Quit exits promptly. Idle work stops at once; a model call already running
+# gets server.quit_grace_s (default 5 s) to finish, then is cancelled. A cut-off task keeps its
+# row and its lease is released below with the attempt refunded, so it resumes at the next launch
+# (hard rule 5). Quit never waits longer than the grace plus these two small bounds, whatever the
+# model call does (even one that ignores its cancel).
+WORKER_STOP_S = 5.0  # fallback when settings cannot be read
+CANCEL_WAIT_S = 2.0  # after the cancel, how long a call that ignores it is waited for
+RELEASE_WAIT_S = 3.0  # the lease release write
+# #148 acceptance 5: the server answers before resumed work starts, so the window opens first
+# and the loops that touch the database never sit between the first request and the health
+# answer. Set to 0 in tests that want the loops immediately.
+WORKER_DELAY_S = 3.0
 
 
-async def _graceful_worker_shutdown(task: asyncio.Task, stop: asyncio.Event) -> None:
-    """Stop the worker and RELEASE ITS LEASES (SPEC.md 1.3, FINDINGS F8). Signal the stop event,
-    give the drain loop WORKER_STOP_S to exit on its own, cancel it otherwise, then release any
-    still-leased task back to pending so a restart resumes it immediately rather than waiting
-    for the lease to expire. Runs on uvicorn's loop (where the DB sessions live)."""
+def _quit_grace_s() -> float:
+    """The configured quit grace, or WORKER_STOP_S when it cannot be read. It never raises: a
+    broken settings.yml raises yaml's own error and a bad value pydantic's, and either one here
+    used to skip the worker's cancel and the lease release (D-QUEUE-6)."""
+    try:
+        from kestrel.config import get_settings
+
+        return float(get_settings().server.quit_grace_s)
+    except Exception as exc:  # noqa: BLE001 - an unreadable file must not slow or break Quit
+        log.warning("quit_grace_unreadable", error_type=type(exc).__name__)
+        return WORKER_STOP_S
+
+
+async def _graceful_worker_shutdown(
+    task: asyncio.Task | None, stop: asyncio.Event, grace_s: float | None = None,
+    *, also: tuple[asyncio.Task | None, ...] = (), keep_leases: tuple[str, ...] = (),
+) -> None:
+    """Stop the worker (and `also`, the online lane) and RELEASE THEIR LEASES (SPEC.md 1.3,
+    FINDINGS F8, D-QUEUE-5, D-QUEUE-6). Signal the stop event, give every loop the same quit grace
+    to exit on its own, cancel what is still running, then release any still-leased task back to
+    pending (attempt refunded) so a restart resumes it immediately. Total time is bounded by
+    grace + CANCEL_WAIT_S + RELEASE_WAIT_S whatever the work does, and the release runs even when
+    an earlier step raised. Runs on uvicorn's loop (where the DB sessions live).
+
+    `keep_leases` (D-QUEUE-10): worker ids of loops this call does NOT stop, whose leases are
+    left alone. A quit passes nothing; a restore or a reset keeps the setup loop's."""
     from kestrel.db.engine import get_sessionmaker
     from kestrel.queue.queue import TaskQueue
 
-    stop.set()
-    with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(asyncio.shield(task), timeout=WORKER_STOP_S)
-    if not task.done():
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
     try:
-        released = await TaskQueue(get_sessionmaker()).release_all_leased()
-        if released:
-            log.info("released_leases_on_shutdown", count=released)
-    except Exception as exc:  # shutdown must never raise; a stuck lease self-heals via reclaim
-        log.warning("lease_release_failed", error=str(exc))
+        stop.set()
+        grace = _quit_grace_s() if grace_s is None else grace_s
+        loops = [t for t in (task, *also) if t is not None]
+        running = {t for t in loops if not t.done()}
+        if running:
+            _done, running = await asyncio.wait(running, timeout=grace)
+        if running:
+            for t in running:
+                t.cancel()
+            _done, running = await asyncio.wait(running, timeout=CANCEL_WAIT_S)
+            for t in running:
+                log.warning("worker_ignored_cancel_on_quit", loop=t.get_name(),
+                            waited_s=CANCEL_WAIT_S)
+        for t in loops:  # a loop's own error is logged, never raised into Quit
+            if t.done() and not t.cancelled() and t.exception() is not None:
+                exc = t.exception()
+                log.warning("worker_stop_error", loop=t.get_name(),
+                            error=f"{type(exc).__name__}: {exc}")
+    except Exception as exc:  # noqa: BLE001 - whatever failed, the leases are still handed back
+        log.warning("worker_stop_error", error=f"{type(exc).__name__}: {exc}")
+    finally:
+        try:
+            released = await asyncio.wait_for(
+                asyncio.shield(TaskQueue(get_sessionmaker()).release_all_leased(
+                    keep_worker_ids=keep_leases)),
+                timeout=RELEASE_WAIT_S,
+            )
+            if released:
+                log.info("released_leases_on_shutdown", count=released)
+        # Shutdown must never raise; a stuck lease self-heals via reclaim.
+        except Exception as exc:  # noqa: BLE001 - logged with context; Quit must finish
+            log.warning("lease_release_failed", error=f"{type(exc).__name__}: {exc}")
+
+
+# D-SEC-20: the worker and the online lane, as last started, so a restore or a reset can STOP them
+# (not just pause them) and start them again afterwards. A pause is checked only between passes,
+# so a story build or a cover letter already running in the online lane used to finish after the
+# swap and write results made from the old data into the restored (or emptied) database. Each
+# start gets its own stop event; the app's own shutdown sets it too.
+_work_loops: dict[str, object] = {"stop": None, "worker": None, "lane": None, "app_stop": None}
+
+
+def _spawn_work_loops(app_stop: asyncio.Event) -> tuple[asyncio.Task, asyncio.Task]:
+    """Start the worker loop and the online lane on the running loop, and record them."""
+    own_stop = asyncio.Event()
+    worker = asyncio.create_task(_worker_task(own_stop), name="worker")
+    # The online lane runs beside the worker (D-WORKER-2): online story builds and letter drafts
+    # go there; local work never does.
+    lane = asyncio.create_task(_online_lane(own_stop), name="online-lane")
+    for created in (worker, lane):
+        created.add_done_callback(_log_task_failure)
+    _work_loops.update(stop=own_stop, worker=worker, lane=lane, app_stop=app_stop)
+    return worker, lane
+
+
+def _current_work_loops() -> tuple[asyncio.Event | None, asyncio.Task | None, asyncio.Task | None]:
+    return (_work_loops["stop"], _work_loops["worker"], _work_loops["lane"])  # type: ignore[return-value]
+
+
+@contextlib.asynccontextmanager
+async def work_loops_stopped():
+    """Stop the worker and the online lane for a restore or a reset (D-SEC-20), and start them
+    again afterwards.
+
+    INVARIANT: a restore or a reset never leaves work running against the wrong database. The stop
+    is the quit's own bounded logic (`_graceful_worker_shutdown`): the loops get the quit grace to
+    finish, are then cancelled, and every leased task is handed back with its attempt refunded, in
+    the database being replaced. Yields True when both loops have stopped; False when one ignored
+    its cancel, and then the caller must change nothing. The loops are started again on exit
+    unless the app is shutting down (a loop that ignored its cancel is restarted once it ends).
+    Only the leases of the stopped loops are handed back (D-QUEUE-10), and a caller validates
+    what it was asked to do BEFORE entering, so a refused request stops nothing."""
+    own_stop, worker, lane = _current_work_loops()
+    running = [t for t in (worker, lane) if t is not None and not t.done()]
+    if own_stop is None or not running:
+        yield True
+        return
+    # D-QUEUE-10: only the leases of the two loops stopped here are handed back. The setup loop
+    # (model downloads and builds) keeps running through a restore or a reset, so its lease is
+    # its own: handed back, the build in flight would fail its ownership check when it finished
+    # and be leased and run again.
+    from kestrel.services.model_tasks import WORKER_ID as SETUP_MODELS_WORKER_ID
+
+    await _graceful_worker_shutdown(
+        worker, own_stop, also=(lane,), keep_leases=(SETUP_MODELS_WORKER_ID,)
+    )
+    still = [t for t in running if not t.done()]
+    try:
+        yield not still
+    finally:
+        app_stop = _work_loops["app_stop"]
+
+        def _restart() -> None:
+            if isinstance(app_stop, asyncio.Event) and not app_stop.is_set():
+                _spawn_work_loops(app_stop)
+                log.info("work_loops_restarted")
+
+        if not still:
+            _restart()
+        else:
+            async def _restart_when_done() -> None:
+                await asyncio.gather(*still, return_exceptions=True)
+                _restart()
+
+            restarter = asyncio.create_task(_restart_when_done(), name="work-loops-restart")
+            restarter.add_done_callback(_log_task_failure)
 
 
 _delivery_fallback_logged = False
@@ -817,52 +1146,123 @@ async def _start_mcp_if_enabled() -> None:
         return
     # bind_all is read exactly as the web app's own guard reads it (get_settings at build), so
     # the MCP port is never more exposed than the web port.
-    problem = await mcp_runtime.start(settings.mcp.port, bind_all=get_settings().server.bind_all)
+    bind_all = get_settings().server.bind_all
+    try:
+        problem = await mcp_runtime.start(settings.mcp.port, bind_all=bind_all)
+    except Exception as exc:  # noqa: BLE001 - MCP is optional: Kestrel starts whatever happens
+        problem = mcp_runtime.note_start_failure(exc, port=settings.mcp.port, bind_all=bind_all)
     if problem:
         log.warning("mcp_not_started", reason=problem)
+        await _turn_mcp_off_after_failed_start(problem)
+
+
+def mcp_turned_off_sentence(problem: str) -> str:
+    return (f"MCP was turned off because it could not start: {problem.rstrip('. ')}. "
+            "Turn it on again to retry.")
+
+
+async def _turn_mcp_off_after_failed_start(problem: str) -> None:
+    """Self-heal (#130, D-MCP-4): a saved switch plus a server that cannot start must not repeat
+    on every launch. Turn the switch off and keep the reason for the Settings card. Never raises."""
+    from kestrel.db.base import utcnow_iso
+    from kestrel.db.engine import get_sessionmaker
+    from kestrel.db.models import Setting
+    from kestrel.services.setting_overrides import MCP_TURNED_OFF_KEY
+
+    try:
+        async with get_sessionmaker()() as s:
+            for key, value in (("mcp.enabled", False),
+                               (MCP_TURNED_OFF_KEY, mcp_turned_off_sentence(problem))):
+                row = await s.get(Setting, key)
+                if row is None:
+                    s.add(Setting(key=key, value=value))
+                else:
+                    row.value = value
+                    row.updated_at = utcnow_iso()
+            await s.commit()
+    except Exception as exc:  # noqa: BLE001 - the app starts either way; the log keeps the cause
+        log.warning("mcp_turn_off_failed", error=f"{type(exc).__name__}: {exc}")
 
 
 def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         stop = asyncio.Event()
-        task: asyncio.Task | None = None
-        sched: asyncio.Task | None = None
-        mcp_task: asyncio.Task | None = None
-        deliver: asyncio.Task | None = None
-        stall: asyncio.Task | None = None
-        models: asyncio.Task | None = None
-        updates: asyncio.Task | None = None
+        worker_task: asyncio.Task | None = None
+        lane_task: asyncio.Task | None = None
+        spawned: list[asyncio.Task] = []
         # Every startup, worker or not (finding 7): a CLI or UI-only start must not drop the
         # consulting track an existing install uses.
+        step_start = time.monotonic()
         await _load_enabled_tracks()
+        # A published tunnel never runs without a key (#151, D-SEC-15): make it now so the
+        # operator finds it under Settings > LAN, not only after a first remote request.
+        from kestrel.web.auth import ensure_tunnel_key
+
+        await ensure_tunnel_key()
+        # Safe mode (#130, D-UI-252): the person chose "Start with optional features off" on the
+        # loading window. The database, the web app and the pipeline worker stay; every optional
+        # start below is skipped for this run.
+        from kestrel import startup_health
+
+        safe = startup_health.safe_mode()
+        if safe:
+            log.warning("safe_mode_optional_features_skipped")
         if worker:
             await _seed_shipped_sources()
             await _rebuild_generated_sources()
             await _seed_shipped_layouts()
-            await _apply_keep_awake()
-            task = asyncio.create_task(_worker_loop(stop), name="worker")
-            deliver = asyncio.create_task(_delivery_loop(stop), name="delivery")
-            stall = asyncio.create_task(_stall_monitor(stop), name="stall-monitor")
-            models = asyncio.create_task(_setup_models_loop(stop), name="setup-models")
-            # Gated on `worker` like the delivery loop: tests build the app with worker=False, so
-            # the update check (a network request) never runs there.
+            if not safe:
+                await _apply_keep_awake()
             await _mark_update_seen()
-            updates = asyncio.create_task(_update_loop(stop), name="update-check")
-        if scheduler:
-            sched = asyncio.create_task(_scheduler_loop(stop), name="scheduler")
-        for created in (task, deliver, sched, stall, models, updates):
-            if created is not None:
+        log.info("startup_step", step="data_ready",
+                 elapsed_ms=round((time.monotonic() - step_start) * 1000))
+
+        async def start_background_loops() -> None:
+            """The long-running loops, a beat after the server answers (#148, acceptance 5):
+            the window opens first, and work that touches the database never sits between the
+            first request and the health answer. A shutdown inside the delay cancels the spawn
+            (nothing was made, so nothing is lost); a shutdown after it cancels the loops in
+            `spawned`."""
+            nonlocal worker_task, lane_task
+            await asyncio.sleep(WORKER_DELAY_S)
+            if stop.is_set():
+                return
+            if worker:
+                worker_task, lane_task = _spawn_work_loops(stop)
+                spawned.append(asyncio.create_task(_stall_monitor(stop), name="stall-monitor"))
+                if not safe:
+                    spawned.append(asyncio.create_task(_delivery_loop(stop), name="delivery"))
+                    spawned.append(asyncio.create_task(
+                        _setup_models_loop(stop), name="setup-models"))
+                    # Gated on `worker` like the delivery loop: tests build the app with
+                    # worker=False, so the update check (a network request) never runs there.
+                    spawned.append(asyncio.create_task(_update_loop(stop), name="update-check"))
+            if scheduler and not safe:
+                spawned.append(asyncio.create_task(_scheduler_loop(stop), name="scheduler"))
+            for created in spawned:
                 created.add_done_callback(_log_task_failure)
+            log.info("startup_step", step="background_loops",
+                     elapsed_ms=round((time.monotonic() - step_start) * 1000))
+
+        spawner: asyncio.Task | None = None
+        if worker or (scheduler and not safe):
+            spawner = asyncio.create_task(start_background_loops(), name="background-loops")
+            spawner.add_done_callback(_log_task_failure)
         # The MCP server is a separate SSE port, started only when enabled (default off). Guard on
         # `worker` so the UI/test app (worker=False) never opens the MCP port.
         # The switch is the setting-table layer over YAML (Settings > LAN, D-MCP-1), and
         # kestrel.mcp.runtime owns the task so the switch can start and stop it live.
-        if worker:
-            from kestrel.mcp import runtime as mcp_runtime
+        if worker and not safe:
+            try:
+                from kestrel.mcp import runtime as mcp_runtime
 
-            mcp_runtime.set_live(True)
-            await _start_mcp_if_enabled()
+                mcp_runtime.set_live(True)
+                await _start_mcp_if_enabled()
+            except Exception as exc:  # noqa: BLE001 - MCP is optional: Kestrel starts whatever happens
+                log.error("mcp_startup_step_failed", error=f"{type(exc).__name__}: {exc}")
+        log.info("startup_step", step="ready",
+                 elapsed_ms=round((time.monotonic() - step_start) * 1000))
         try:
             yield
         finally:
@@ -870,29 +1270,53 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
             # logged and never skips the next, above all the worker's graceful stop, which
             # releases its leases.
             stop.set()
-            if worker:
-                from kestrel.mcp import runtime as mcp_runtime
-
+            own_stop, current_worker, current_lane = _current_work_loops()
+            if own_stop is not None:
+                own_stop.set()  # the worker and the lane as last (re)started (D-SEC-20)
+            # The spawner is either still sleeping (cancel it: nothing was spawned, so no task
+            # is in flight and no lease exists) or has finished (its loops are in `spawned`).
+            if spawner is not None:
+                spawner.cancel()
                 try:
-                    await mcp_runtime.stop()
+                    await spawner
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 - one failed step must not stop the rest of the shutdown
+                    log.warning("shutdown_step_failed", step="background-loops",
+                                error=f"{type(exc).__name__}: {exc}")
+            if worker:
+                try:
+                    from kestrel.mcp import runtime as mcp_runtime
+
+                    try:
+                        await mcp_runtime.stop()
+                    finally:
+                        mcp_runtime.set_live(False)
                 except Exception as exc:
                     log.warning("shutdown_step_failed", step="mcp",
                                 error=f"{type(exc).__name__}: {exc}")
-                mcp_runtime.set_live(False)
-            for extra in (sched, mcp_task, deliver, stall, models, updates):
-                if extra is not None:
-                    extra.cancel()
-                    try:
-                        await extra
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as exc:
-                        log.warning("shutdown_step_failed", step=extra.get_name(),
-                                    error=f"{type(exc).__name__}: {exc}")
-            if task is not None:
-                await _graceful_worker_shutdown(task, stop)
+            for extra in spawned:
+                extra.cancel()
+                try:
+                    await extra
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 - one failed loop must not stop the graceful worker stop
+                    log.warning("shutdown_step_failed", step=extra.get_name(),
+                                error=f"{type(exc).__name__}: {exc}")
+            if current_worker is not None or current_lane is not None:
+                # The online lane gets the same grace as the worker (D-QUEUE-6): a paid online
+                # call already running is given the chance to finish instead of being thrown away.
+                await _graceful_worker_shutdown(
+                    current_worker, own_stop or stop, also=(current_lane,)
+                )
+            _work_loops.update(stop=None, worker=None, lane=None, app_stop=None)
 
-    app = FastAPI(title="Kestrel", lifespan=lifespan, docs_url="/docs")
+    # No generated API pages (/docs, /redoc, /openapi.json): nothing in Kestrel reads them, and the
+    # full route list is not for a key holder to browse (D-SEC-10).
+    app = FastAPI(
+        title="Kestrel", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+    )
 
     @app.middleware("http")
     async def _region_display(request: Request, call_next: Callable) -> Response:
@@ -908,7 +1332,12 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
 
     bind_all = get_settings().server.bind_all
     app.state.bind_all = bind_all  # what this process runs with (Settings > LAN compares it)
-    public_hostnames = tuple(h.strip().lower() for h in get_settings().server.public_hostnames if h)
+    # The key guard's tunnel carve-out (issue #151): a request whose Host is one of these names
+    # comes from the internet even though the tunnel itself connects from loopback. The guard
+    # itself reads kestrel.web.auth.public_hostnames() on every request, as the MCP server does.
+    from kestrel.web.auth import public_hostnames as _public_hostnames
+
+    public_hostnames = _public_hostnames()
 
     def _note_import_refusal(request: Request, reason: str, status: int = 403) -> None:
         """A document-import request the origin checks turned away is still a line in the log
@@ -917,6 +1346,38 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
         if path.startswith("/api/documents/import"):
             log.warning("import_refused", stage="read" if path.endswith("/read") else "propose",
                         outcome="refused", reason=reason, status=status)
+
+    @app.middleware("http")
+    async def _run_change_notice(request: Request, call_next: Callable) -> Response:
+        """A setting saved while a run is working carries a notice back (#103): the run keeps what
+        it was confirmed on, the change applies to the next run, and Stop is one press away. Only
+        a changing request from the page (htmx) that succeeded, only while a run is in flight,
+        and once per distinct change."""
+        response = await call_next(request)
+        run = confirmed_run_settings()
+        if (run is None or request.method in ("GET", "HEAD", "OPTIONS")
+                or request.headers.get("HX-Request") != "true" or response.status_code >= 400
+                or request.url.path.startswith("/runs/")):
+            return response
+        try:
+            from kestrel.db.engine import get_sessionmaker
+            from kestrel.services import run_notice
+            from kestrel.services.setting_overrides import load_settings_with_db
+
+            async with get_sessionmaker()() as s:
+                stored = await load_settings_with_db(s)
+            diff = run_notice.changed(run, stored)
+        except (SQLAlchemyError, OSError, ValueError) as exc:  # a notice never fails a save
+            log.warning("run_change_notice_failed", error_type=type(exc).__name__)
+            return response
+        key = "|".join(diff)
+        if key != _run_confirmed["announced"]:
+            _run_confirmed["announced"] = key
+            if diff:
+                response.headers["HX-Trigger"] = run_notice.merge_trigger(
+                    response.headers.get("HX-Trigger"), run_notice.toast_detail(run)
+                )
+        return response
 
     @app.middleware("http")
     async def _time_requests(request: Request, call_next: Callable) -> Response:
@@ -1067,6 +1528,7 @@ def build_app(*, worker: bool = True, scheduler: bool = False) -> FastAPI:
     app.mount("/static", _VersionedStatic(directory=paths.web_static_dir()), name="static")
     app.include_router(api_router)
     app.include_router(learning_router)
+    app.include_router(quick_router)
     app.include_router(pages_router)
     from kestrel.web.routes_control import router as control_router
 

@@ -24,7 +24,7 @@ from kestrel.db.engine import get_sessionmaker
 from kestrel.db.models import DocRender, Quarantine, Setting, Task
 from kestrel.llm.client import ChatResult, LLMClient
 from tests import role_seed
-from tests.letter_helpers import form_fields, generate
+from tests.letter_helpers import form_fields, generate, letter_body
 
 pytestmark = pytest.mark.usefixtures("_isolate_data_home")
 
@@ -328,7 +328,7 @@ def test_save_stores_the_text_confirms_and_rechecks_the_words(ids, monkeypatch):
     assert soup.select_one("[data-cl-saved].is-on") is not None
     assert soup.select_one("[data-cl-count]").get("data-state") == "off"  # 6 words, not 250-350
     assert "cannot be empty" in json.loads(empty.headers["hx-trigger"])["k-toast"]["message"]
-    assert _letter_row(ids["strong"])[0].config["body_md"] == "A shorter letter of my own words."
+    assert letter_body(_letter_row(ids["strong"])[0].id) == "A shorter letter of my own words."
 
 
 def test_a_banned_phrase_typed_by_the_person_is_still_pointed_out_after_a_save(ids, monkeypatch):

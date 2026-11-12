@@ -1,0 +1,29 @@
+{# The Quick tab (issue 171, D-UI-272, D-UI-273): what the round is, Start sorting, the meter (the
+   same words as the Today strip), a pointer to Detailed and the offer settings. #}
+{% import "ui/macros.html" as ui %}
+<div class="cal-quick" data-testid="cal-quick">
+  <div class="cal-quick__main">
+    <h2>Sort 10 {{ words(track).roles }}, yes or no</h2>
+    <p>Kestrel shows the {{ words(track).roles }} it is least sure about. You answer from the title, company, place and pay. Your answers shape what rises in your pipeline. Kestrel never changes how it scores without asking you first.</p>
+    {% if quick.waiting %}
+    <a class="k-btn k-btn--primary" href="/calibrate/quick?track={{ track }}" data-testid="cal-quick-start">Start sorting</a>
+    {% else %}
+    <button type="button" class="k-btn k-btn--primary" disabled data-testid="cal-quick-start">Start sorting</button>
+    <p class="cal-dsm cal-sm" data-testid="cal-quick-none">Nothing to sort right now. Kestrel finds more after the next run.</p>
+    {% endif %}
+    {% set meter = quick.meter %}{% include "partials/quick_meter.html" %}
+  </div>
+  <aside class="k-card cal-quick__note" data-testid="cal-quick-note">
+    <b>For more control, use Detailed</b>
+    <span class="cal-dsm">It rates each role from Poor to Great, shows Kestrel's score after you answer, and lets you say why. Use it when a quick yes or no does not fit.</span>
+    <button type="button" class="k-link" data-cal-tab-go="detailed" data-testid="cal-quick-to-detailed">Open Detailed</button>
+  </aside>
+</div>
+<form class="cal-set" id="cal-quick-settings" data-testid="cal-quick-settings" hx-post="/calibrate/quick/settings?track={{ track }}" hx-trigger="change" hx-swap="none" data-no-busy>
+  {{ ui.switch('enabled', 'Offer a quick round after runs', checked=quick.enabled, id='cal-quick-on', attrs={'data-testid': 'cal-quick-toggle'}) }}
+  <label class="cal-set__often"><span>How often</span>
+    <span class="k-select"><select name="cadence" class="k-input" aria-label="How often" data-testid="cal-quick-cadence">
+      {% for key, text in quick.cadences.items() %}<option value="{{ key }}"{% if key == quick.cadence %} selected{% endif %}>{{ text }}</option>{% endfor %}
+    </select></span>
+  </label>
+</form>

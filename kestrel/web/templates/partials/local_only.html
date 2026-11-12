@@ -1,0 +1,26 @@
+{# The one read-only treatment for a key holder (#155, D-SEC-9). A key holder, on a phone or through
+   a tunnel, may look at every screen, but only this computer may restore, wipe, download the data,
+   or change a key, a model or a destination. This file is the single place that says so on a page:
+     fence(request)         wraps controls; for a key holder they are disabled and a note follows
+     download(request, ...) a download link; for a key holder a disabled button and a note
+     note(request, kind)    just the sentence, for a control that is already drawn disabled
+   `is_local` is the same is_loopback() the route guard uses (kestrel.web.auth), so a page and its
+   route can never disagree about who is at the keyboard. #}
+{% macro note(request, kind='change') -%}
+{%- if not is_local(request) -%}<p class="k-localonly__note" role="note" data-testid="local-only-note">{{ 'Only this computer can download this.' if kind == 'download' else 'Only this computer can change this.' }}</p>{%- endif -%}
+{%- endmacro %}
+
+{% macro fence(request, kind='change') -%}
+{%- if is_local(request) -%}{{ caller() }}
+{%- else -%}<fieldset class="k-localonly" disabled data-testid="local-only-fence">{{ caller() }}</fieldset>{{ note(request, kind) }}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro download(request, href, label, cls='k-btn k-btn--sm', testid='') -%}
+{%- if is_local(request) -%}<a class="{{ cls }}" href="{{ href }}" download{% if testid %} data-testid="{{ testid }}"{% endif %}>{{ label }}</a>
+{%- else -%}<button type="button" class="{{ cls }}" disabled aria-disabled="true" data-testid="local-only-download">{{ label }}</button>{{ note(request, 'download') }}
+{%- endif -%}
+{%- endmacro %}
+
+{# ` disabled` for one control a key holder may not use. Pair it with note() once per card. #}
+{% macro dis(request) -%}{%- if not is_local(request) %} disabled aria-disabled="true"{% endif -%}{%- endmacro %}
