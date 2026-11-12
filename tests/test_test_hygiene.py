@@ -111,6 +111,9 @@ SMALL_DELTA_ALLOWLIST: list[tuple[str, str, str]] = [
     ("test_surfaces.py", "timedelta(**k)", "relative_time check against a fixed 2026-10-24 now"),
     ("test_surfaces.py", "timedelta(days=1)", "next action dated yesterday: overdue at any hour"),
     ("test_updater.py", "timedelta(hours=", "update reminder in the future; no day count"),
+    ("test_score_again.py", "seeded_at - timedelta(",
+     "Tier 2 completions a minute apart from one read, for the pace; no day count reads them, "
+     "and clamping packs the spacing just after midnight"),
     ("test_stage_priority.py", "datetime.now(UTC) + timedelta(hours=1)",
      "lease_until one hour ahead (future); in-flight check only, no day or month count"),
 ]

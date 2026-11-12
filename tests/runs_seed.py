@@ -156,6 +156,11 @@ async def seed_async(*, active: bool = False) -> dict:
             start = clock_seed.ago_within(
                 timedelta(minutes=8), clock_seed.local_day_start(now),
                 horizon=timedelta(minutes=10), now=now)
+            # A minute per search, unless the clamp above moved the start to just after midnight:
+            # then the searches share the time since the start, so neither finishes after `now`
+            # (a search "finished" in the future is after a Stop and leaves the run, D-UI-135;
+            # Windows CI hit this at 00:00:39 UTC).
+            step = min(timedelta(minutes=1), max(now - start, timedelta(0)) / 3)
             run = Run(
                 name="desktop",
                 status="running",
@@ -171,8 +176,8 @@ async def seed_async(*, active: bool = False) -> dict:
                     ScrapeRun(
                         source_id=src.id,
                         status="ok",
-                        started_at=iso(start + timedelta(minutes=i)),
-                        finished_at=iso(start + timedelta(minutes=i + 1)),
+                        started_at=iso(start + i * step),
+                        finished_at=iso(start + (i + 1) * step),
                         counts={"new": 5 + i},
                     )
                 )
@@ -202,7 +207,7 @@ async def seed_async(*, active: bool = False) -> dict:
                         type="t1",
                         status="pending",
                         payload={"opportunity_id": opp.id},
-                        created_at=iso(start + timedelta(minutes=2)),
+                        created_at=iso(start + 2 * step),
                     )
                 )
         await s.commit()
