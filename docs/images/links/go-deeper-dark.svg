@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="96" viewBox="0 0 320 96" role="img" aria-label="Go Deeper: How Kestrel works, in full">
+<rect x="1" y="1" width="318" height="94" rx="14" fill="#1B1D2B" stroke="#33364D" stroke-width="2"/>
+<rect x="14" y="14" width="68" height="68" rx="12" fill="#262A44"/>
+<g transform="translate(4 3)"><circle cx="40" cy="42" r="14" fill="none" stroke="#7B86F0" stroke-width="3"/><path d="M50 52l10 10" stroke="#7B86F0" stroke-width="3" stroke-linecap="round"/></g>
+<text x="98" y="44" font-family="Figtree, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#F2F3FA">Go Deeper</text>
+<text x="98" y="68" font-family="Figtree, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#A7ABC4">How Kestrel works, in full</text>
+<path d="M294 42l7 6-7 6" fill="none" stroke="#7B86F0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

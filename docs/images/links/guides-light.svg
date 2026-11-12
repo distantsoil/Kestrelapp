@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="96" viewBox="0 0 320 96" role="img" aria-label="Guides: Step-by-step how-tos">
+<rect x="1" y="1" width="318" height="94" rx="14" fill="#FFFFFF" stroke="#DCDFF2" stroke-width="2"/>
+<rect x="14" y="14" width="68" height="68" rx="12" fill="#EEF0FC"/>
+<g transform="translate(6 5)"><path d="M30 34h22M30 42h22M30 50h14" stroke="#4F5BD5" stroke-width="3" stroke-linecap="round"/><rect x="22" y="24" width="38" height="36" rx="6" fill="none" stroke="#4F5BD5" stroke-width="3"/></g>
+<text x="98" y="44" font-family="Figtree, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#1C1F33">Guides</text>
+<text x="98" y="68" font-family="Figtree, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#5A5F7A">Step-by-step how-tos</text>
+<path d="M294 42l7 6-7 6" fill="none" stroke="#4F5BD5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

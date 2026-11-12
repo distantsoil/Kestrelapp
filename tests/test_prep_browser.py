@@ -268,6 +268,10 @@ def test_the_page_mounts_unmounts_and_mounts_again_with_one_set_of_everything(li
         page.keyboard.press("Escape")
         page.wait_for_selector("#pp-story-sheet", state="hidden")
         wait_for_layout(page)  # settled, not slept
+        # The swap handler's last rescale (one-shot, 420 ms after the sheet settled) can still be
+        # due when a fast close settles first; wait for the page's own timers to run out, bounded,
+        # so a timer that never ends (an interval, a re-arming chain) still fails here.
+        page.wait_for_function("KUI.page._stats().timers === 0", timeout=3000)
         assert page.evaluate("KUI.page._stats().timers") == 0
         page.evaluate("KUI.page.unmount()")
         page.click("[data-pp-open]")

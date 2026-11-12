@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="96" viewBox="0 0 320 96" role="img" aria-label="Roadmap: What is coming next">
+<rect x="1" y="1" width="318" height="94" rx="14" fill="#FFFFFF" stroke="#DCDFF2" stroke-width="2"/>
+<rect x="14" y="14" width="68" height="68" rx="12" fill="#EEF0FC"/>
+<g transform="translate(8 4)"><path d="M26 58V28" stroke="#4F5BD5" stroke-width="3" stroke-linecap="round"/><circle cx="26" cy="30" r="5" fill="#4F5BD5"/><circle cx="26" cy="44" r="5" fill="none" stroke="#4F5BD5" stroke-width="3"/><circle cx="26" cy="58" r="5" fill="none" stroke="#4F5BD5" stroke-width="3"/><path d="M38 30h20M38 44h20M38 58h14" stroke="#4F5BD5" stroke-width="3" stroke-linecap="round"/></g>
+<text x="98" y="44" font-family="Figtree, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#1C1F33">Roadmap</text>
+<text x="98" y="68" font-family="Figtree, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13.5" fill="#5A5F7A">What is coming next</text>
+<path d="M294 42l7 6-7 6" fill="none" stroke="#4F5BD5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
