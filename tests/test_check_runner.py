@@ -30,7 +30,188 @@ def runner(monkeypatch):
     monkeypatch.setattr(module, "_static_gates", lambda: True)  # D-TEST-8: tested on its own
     monkeypatch.setattr(module, "_red_first_gate", lambda: True)
     monkeypatch.setattr(module, "_browser_evidence_gate", lambda *args: True)
+    monkeypatch.setattr(module, "_export_lint", lambda *args: True)  # D-CI-27: tested below
+    monkeypatch.setattr(module, "_stress_gate", lambda *args: True)  # D-CI-26: tested below
     return module
+
+
+@pytest.mark.parametrize("tier", [[], ["--quick"], ["--fast"]])
+def test_every_tier_lints_the_public_export_and_stops_when_it_fails(
+        runner, monkeypatch, capsys, tier):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", *tier])
+    monkeypatch.setattr(runner, "_run", lambda *args: True)
+    commands = []
+    monkeypatch.setattr(runner, "_run_pytest",
+                        lambda cmd, **_kw: (commands.append(cmd) or True, []))
+    monkeypatch.setattr(runner, "_export_lint", lambda *args: False)
+    assert runner.main() == 1
+    assert commands == []
+    out = capsys.readouterr().out
+    assert "passed; run the full check" not in out and "Ready to push." not in out
+
+
+def test_full_gate_runs_the_stress_run_and_stops_when_it_fails(runner, monkeypatch, capsys):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py"])
+    monkeypatch.setattr(runner, "_run", lambda *args: True)
+    monkeypatch.setattr(runner, "_run_pytest", lambda cmd, **_kw: (True, []))
+    called = []
+    monkeypatch.setattr(runner, "_stress_gate", lambda *args: called.append(1) or False)
+    assert runner.main() == 1
+    assert called == [1]
+    assert "Ready to push." not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("tier", [["--quick"], ["--fast"]])
+def test_light_tiers_leave_the_stress_run_to_the_full_gate(runner, monkeypatch, tier):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", *tier])
+    monkeypatch.setattr(runner, "_run", lambda *args: True)
+    monkeypatch.setattr(runner, "_run_pytest", lambda cmd, **_kw: (True, []))
+    monkeypatch.setattr(runner.subprocess, "run",
+                        lambda *args, **kwargs: argparse.Namespace(stdout=""))
+    called = []
+    monkeypatch.setattr(runner, "_stress_gate", lambda *args: called.append(1) or True)
+    assert runner.main() == 0
+    assert called == []
+
+
+def _stress_tier(runner, monkeypatch, ok):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", "--stress"])
+    other = []
+    monkeypatch.setattr(runner, "_run", lambda *args: other.append(args) or True)
+    monkeypatch.setattr(runner, "_run_pytest", lambda cmd, **_kw: (other.append(cmd) or True, []))
+    monkeypatch.setattr(runner, "_stress_gate", lambda *args: ok)
+    return other
+
+
+def test_stress_tier_runs_only_the_stress_run_and_ends_with_its_pass_line(
+        runner, monkeypatch, capsys):
+    other = _stress_tier(runner, monkeypatch, True)
+    assert runner.main() == 0
+    assert other == []
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out[-1] == "Stress checks passed; run the full check before pushing."
+
+
+def test_a_failed_stress_tier_never_prints_a_pass_line(runner, monkeypatch, capsys):
+    other = _stress_tier(runner, monkeypatch, False)
+    assert runner.main() == 1
+    assert other == []
+    assert "passed" not in capsys.readouterr().out
+
+
+def test_stress_tier_cannot_combine_with_another(runner, monkeypatch):
+    monkeypatch.setattr(runner.sys, "argv", ["check.py", "--stress", "--quick"])
+    with pytest.raises(SystemExit) as error:
+        runner.main()
+    assert error.value.code == 2
+
+
+def _stress_with_runs(runner, monkeypatch, results):
+    check = runner
+    monkeypatch.setattr(check.diff_gate, "diff_base", lambda: ("base", "note"))
+    monkeypatch.setattr(check.diff_gate, "git_changes",
+                        lambda base: (["kestrel/a.py"], {}))
+    monkeypatch.setattr(check.stress, "read_test_texts",
+                        lambda root: {"tests/test_a.py":
+                                      "import kestrel.a\nfrom clock_seed import ago"})
+    monkeypatch.setattr(check.stress, "read_texts", lambda folder, root: {})
+    held = []
+    real_holder = check.stress.PortHolder
+
+    class Holder(real_holder):
+        def __enter__(self):
+            held.append("in")
+            return super().__enter__()
+
+    monkeypatch.setattr(check.stress, "PortHolder", lambda: Holder(0))
+    calls = []
+    outcomes = iter(results)
+    monkeypatch.setattr(check, "_run_pytest",
+                        lambda cmd, extra_env=None: (calls.append((cmd, extra_env, list(held)))
+                                                     or (next(outcomes), [])))
+    return calls
+
+
+def test_stress_gate_runs_every_condition_over_the_affected_files(monkeypatch, capsys):
+    check = _load_check()
+    calls = _stress_with_runs(check, monkeypatch, [True] * 8)
+    assert check._stress_gate("py") is True
+    # order 1, port held with the fast clock, 00:00:39 and 23:59:30, then four more orders
+    assert len(calls) == 8
+    assert all(cmd[-1] == "tests/test_a.py" and "-n" in cmd for cmd, _env, _h in calls)
+    assert [h for _c, _e, h in calls[:2]] == [[], ["in"]]  # only the second run holds the port
+    assert calls[1][1]["KESTREL_CLOCK_RATE"] == "10"
+    assert [env["KESTREL_FROZEN_AT"][11:19] for _c, env, _h in calls[2:4]] == [
+        "00:00:39", "23:59:30"]
+    seeds = {calls[0][1]["KESTREL_STRESS_SEED"]} | {
+        env["KESTREL_STRESS_SEED"] for _c, env, _h in calls[4:]}
+    assert len(seeds) == 5
+    assert "5 random order(s)" in capsys.readouterr().out
+
+
+def test_stress_gate_stops_repeating_at_the_budget_but_keeps_every_condition(
+        monkeypatch, capsys):
+    check = _load_check()
+    calls = _stress_with_runs(check, monkeypatch, [True] * 8)
+    monkeypatch.setattr(check.stress, "BUDGET_S", 0)
+    assert check._stress_gate("py") is True
+    assert len(calls) == 4  # the first order, port and clock, both midnight runs
+    out = capsys.readouterr().out
+    assert "1 of 5 random orders ran" in out and "1 random order(s)" in out
+
+
+def test_stress_gate_stops_at_the_first_failing_run_and_names_it(monkeypatch, capsys):
+    check = _load_check()
+    calls = _stress_with_runs(check, monkeypatch, [True, False])
+    assert check._stress_gate("py") is False
+    assert len(calls) == 2
+    out = capsys.readouterr().out
+    assert "Not ready to push: the stress run failed (port 8765 held, clock at 10x" in out
+    assert "Replay: KESTREL_STRESS_SEED=" in out and "KESTREL_CLOCK_RATE=10" in out
+
+
+def test_export_lint_steps_aside_in_the_public_tree(monkeypatch, tmp_path, capsys):
+    check = _load_check()
+    monkeypatch.setattr(check.diff_gate, "ROOT", tmp_path)  # no scripts/publicize.py here
+    monkeypatch.setattr(check.subprocess, "run", lambda *a, **k: pytest.fail("ran something"))
+    assert check._export_lint("py") is True
+    assert "this tree is the public export" in capsys.readouterr().out
+
+
+def _private_tree(check, monkeypatch, tmp_path):
+    """A tree with scripts/publicize.py, as the private repo has; the public export has none
+    and steps aside (tested above), so these tests set the private case themselves."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "publicize.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(check.diff_gate, "ROOT", tmp_path)
+
+
+def test_export_lint_fails_when_lint_fails_only_on_the_export(monkeypatch, capsys, tmp_path):
+    check = _load_check()
+    _private_tree(check, monkeypatch, tmp_path)
+    calls = []
+
+    results = iter([
+        argparse.Namespace(returncode=0, stdout="wrote 3 files", stderr=""),
+        argparse.Namespace(returncode=1, stdout="tests/test_x.py:4:101: E501", stderr=""),
+    ])
+    monkeypatch.setattr(check.subprocess, "run",
+                        lambda cmd, **kwargs: calls.append(cmd) or next(results))
+    assert check._export_lint("py") is False
+    out = capsys.readouterr().out
+    assert "E501" in out and "Not ready to push: lint fails on the public export" in out
+    publicize, lint = calls
+    assert publicize[1].endswith("publicize.py") and "--lint-only" in publicize
+    assert lint[1:4] == ["-m", "ruff", "check"]
+
+
+def test_export_lint_stops_when_the_export_is_refused(monkeypatch, capsys, tmp_path):
+    check = _load_check()
+    _private_tree(check, monkeypatch, tmp_path)
+    monkeypatch.setattr(check.subprocess, "run", lambda cmd, **kw: argparse.Namespace(
+        returncode=2, stdout="", stderr="EXPORT REFUSED: text that must never be public"))
+    assert check._export_lint("py") is False
+    assert "Not ready to push: the public export failed" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("cpus,expected", [(None, 1), (1, 1), (2, 1), (8, 4), (32, 8)])

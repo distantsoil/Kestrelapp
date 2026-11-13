@@ -142,8 +142,8 @@ def test_the_window_opens_before_the_background_loops(monkeypatch):
     with TestClient(build_app(worker=True, scheduler=True)) as c:
         assert c.get("/health").status_code == 200
         assert "worker" not in ran  # the health answer beat the first loop
-        deadline = time.time() + 5
-        while "worker" not in ran and time.time() < deadline:
+        deadline = time.monotonic() + 5
+        while "worker" not in ran and time.monotonic() < deadline:
             time.sleep(0.01)
     assert {"worker", "online_lane", "stall", "delivery", "models", "updates"} <= set(ran)
 
@@ -414,3 +414,26 @@ def test_cancelling_the_wait_abandons_the_attempt_and_keeps_the_card(monkeypatch
         assert marker.get("failed") is True  # a relaunch sees the problem card and defers
     finally:
         paths.runtime_json().unlink(missing_ok=True)
+
+
+def test_waiting_for_health_survives_the_wall_clock_jumping_forward(monkeypatch):
+    """The wait is measured on the monotonic clock: a wall clock that jumps an hour ahead (a
+    sync, a sleep-wake, or the stress run's fast clock) must not end it before its timeout."""
+    from types import SimpleNamespace
+
+    from kestrel.web import serve
+
+    calls = []
+    jumped = SimpleNamespace(time=lambda: 1_000_000.0 + 3600.0 * len(calls),
+                             monotonic=time.monotonic, sleep=lambda _s: None)
+
+    def answer(url, timeout):
+        calls.append(url)
+        if len(calls) < 3:
+            raise httpx.ConnectError("not listening yet")
+        return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr(serve, "time", jumped)
+    monkeypatch.setattr(serve.httpx, "get", answer)
+    assert serve.wait_for_health(8765, 5.0) is True
+    assert len(calls) == 3

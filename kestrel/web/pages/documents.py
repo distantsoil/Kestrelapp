@@ -31,6 +31,7 @@ from kestrel.db.models import (
 from kestrel.docs import convert as convert_mod
 from kestrel.web.deps import sessionmaker, templates
 from kestrel.web.errors import fixed_reason, plain_error
+from kestrel.web.retry_words import is_held, plain_reason
 from kestrel.web.uploads import closing_upload
 
 router = APIRouter()
@@ -687,11 +688,21 @@ async def suggest_slot_variants(request: Request, slot_id: int):
                 log.warning("variant_suggest_failed", error_type=type(exc).__name__,
                             error=str(exc))
                 ctx["error"] = f"Could not reach the model: {plain_error(exc)}"
-    if (ctx["error"] or "").startswith("hosted send refused"):
-        ctx["error"] = ("Not sent: confidential mode is on and no current employer is chosen, "
-                        "so your employer's name would leave this machine. Choose it under "
-                        "Settings > Privacy and access, then try again.")
+    ctx["error"] = refusal_words(ctx["error"])
     return templates().TemplateResponse(request, "partials/variant_suggestions.html", ctx)
+
+
+def refusal_words(error: str | None) -> str | None:
+    """A refused online send in plain words. Only the missing-employer refusal names the
+    employer; the others (hosted turned off, an unreadable privacy setting) say their own reason
+    (D-TEST-19). Anything else passes through."""
+    if not (error or "").startswith("hosted send refused"):
+        return error
+    if is_held(error):
+        return ("Not sent: confidential mode is on and no current employer is chosen, "
+                "so your employer's name would leave this machine. Choose it under "
+                "Settings > Privacy and access, then try again.")
+    return f"{plain_reason(error)}."
 
 
 def _refused(slot_id: int, message: str) -> HTMLResponse:

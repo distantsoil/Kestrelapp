@@ -122,7 +122,7 @@ def get_engine() -> AsyncEngine:
 
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     get_engine()
-    assert _sessionmaker is not None
+    assert _sessionmaker is not None  # noqa: S101  type narrowing, not input validation
     return _sessionmaker
 
 

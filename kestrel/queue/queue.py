@@ -422,7 +422,7 @@ async def _with_lock_retry[T](op: str, fn: Callable[[], Awaitable[T]]) -> T:
         except OperationalError as exc:
             if not _is_lock_error(exc) or attempt == _LOCK_RETRIES:
                 raise
-            delay = _LOCK_BASE_DELAY_S * (2**attempt) * (0.5 + random.random())
+            delay = _LOCK_BASE_DELAY_S * (2**attempt) * (0.5 + random.random())  # noqa: S311  retry jitter, not security
             log.warning("queue_lock_retry", op=op, attempt=attempt + 1, delay_s=round(delay, 3))
             await asyncio.sleep(delay)
     raise AssertionError("unreachable")

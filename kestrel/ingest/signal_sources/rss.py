@@ -54,7 +54,7 @@ class RssSignalSource:
                     raise ValueError(
                         "feed declares a DOCTYPE/ENTITY; refused (entity-expansion risk)"
                     )
-                root = ElementTree.fromstring(text)
+                root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
                 signals.extend(_parse_feed(root, url))
             except Exception as exc:  # one broken feed never sinks the whole source
                 log.warning("rss_feed_error", feed=url, error=str(exc))

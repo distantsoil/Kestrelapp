@@ -33,10 +33,41 @@ def test_the_fixture_freezes_a_basename_imported_test_module(monkeypatch):
 
     me = sys.modules[__name__]
     monkeypatch.setattr(me, "datetime", datetime, raising=False)
+    # Both start on the real clock, even when the stress run's clock plugin already swapped one
+    # (freeze_modules rebinds only modules that hold the real class; D-CI-26).
+    monkeypatch.setattr(today, "datetime", datetime)
     at = datetime(2026, 3, 1, 0, 3, tzinfo=UTC)
     boundary_clock.freeze_modules(monkeypatch, at)
     assert me.datetime.now(UTC) - at < timedelta(minutes=1)
     assert today.datetime.now(UTC) - at < timedelta(minutes=1)
+
+
+def test_the_fixture_freezes_date_today_with_the_same_clock(monkeypatch):
+    # The app counts "today" with date.today() in 32 places; seeds read datetime.now(). Under a
+    # frozen clock they must agree, or a row seeded 30 days back reads 31 near midnight.
+    from datetime import UTC, date, datetime
+
+    monkeypatch.setattr(today, "datetime", datetime)
+    monkeypatch.setattr(today, "date", date)
+    at = datetime(2026, 3, 1, 0, 3, tzinfo=UTC)
+    boundary_clock.freeze_modules(monkeypatch, at)
+    assert today.date.today() == today.datetime.now().date() == at.astimezone().date()
+    assert isinstance(date(2026, 1, 1), today.date)  # real dates still count as dates
+
+
+def test_the_fixture_shifts_time_time_but_not_monotonic(monkeypatch):
+    # Code that stamps with datetime and compares with time.time() must see one clock (the
+    # embed re-sweep failed at 10x when only datetime ran fast); deadlines stay on monotonic.
+    import time as real_time
+    from datetime import UTC, datetime
+
+    from kestrel.pipeline import embed
+
+    monkeypatch.setattr(embed, "time", real_time)
+    at = datetime(2026, 3, 1, 0, 3, tzinfo=UTC)
+    boundary_clock.freeze_modules(monkeypatch, at, rate=10)
+    assert abs(embed.time.time() - at.timestamp()) < 60
+    assert abs(embed.time.monotonic() - real_time.monotonic()) < 5
 
 
 def test_the_instants_are_the_most_recent_past_ones():

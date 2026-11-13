@@ -194,7 +194,7 @@ def _from_rss(text: str, config: dict) -> list[RawPosting]:
             f"Teamtailor RSS for {config['domain']} was refused (it declares entities)"
         )
     try:
-        root = ElementTree.fromstring(text)
+        root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except ElementTree.ParseError as exc:
         raise AdapterError(f"Teamtailor RSS for {config['domain']} was unreadable") from exc
     channel = root.find("channel")

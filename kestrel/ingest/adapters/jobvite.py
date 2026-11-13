@@ -151,7 +151,7 @@ def _parse(text: str, label: Any) -> ElementTree.Element:
     except expat.ExpatError:
         pass  # not well formed: the real parse below says so in plain words
     try:
-        root = ElementTree.fromstring(cleaned)
+        root = ElementTree.fromstring(cleaned)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except ElementTree.ParseError as exc:
         raise AdapterError(f"Jobvite reply for {label} was not valid XML") from exc
     if root.tag != "result":

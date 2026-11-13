@@ -406,7 +406,7 @@ def _connect() -> sqlite3.Connection | None:
 def _grouped(conn: sqlite3.Connection, table: str, column: str) -> dict[str, int] | str:
     try:
         rows = conn.execute(
-            f"SELECT {column} AS k, COUNT(*) AS n FROM {table} GROUP BY {column} ORDER BY {column}"
+            f"SELECT {column} AS k, COUNT(*) AS n FROM {table} GROUP BY {column} ORDER BY {column}"  # noqa: S608  identifiers are code constants, values are bound
         ).fetchall()
     except sqlite3.Error as exc:
         return f"unavailable: {exc}"
@@ -415,7 +415,7 @@ def _grouped(conn: sqlite3.Connection, table: str, column: str) -> dict[str, int
 
 def _count(conn: sqlite3.Connection, table: str) -> int | str:
     try:
-        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])  # noqa: S608  identifiers are code constants, values are bound
     except sqlite3.Error as exc:
         return f"unavailable: {exc}"
 
@@ -512,7 +512,7 @@ def task_rows(
             "ORDER BY type, status"
         ).fetchall()
         rows = conn.execute(
-            "SELECT id, type, status, priority, attempts, last_error, created_at, updated_at, "
+            "SELECT id, type, status, priority, attempts, last_error, created_at, updated_at, "  # noqa: S608  identifiers are code constants, values are bound
             "payload FROM task ORDER BY updated_at DESC, id DESC "
             f"LIMIT {TASK_ROWS}"
         ).fetchall()
@@ -556,7 +556,7 @@ def task_rows(
 def recent_runs(conn: sqlite3.Connection) -> list[dict[str, Any]] | str:
     try:
         rows = conn.execute(
-            "SELECT id, name, status, mode, counts, started_at, finished_at FROM run "
+            "SELECT id, name, status, mode, counts, started_at, finished_at FROM run "  # noqa: S608  identifiers are code constants, values are bound
             f"ORDER BY id DESC LIMIT {RUN_ROWS}"
         ).fetchall()
     except sqlite3.Error as exc:
@@ -578,7 +578,7 @@ def recent_runs(conn: sqlite3.Connection) -> list[dict[str, Any]] | str:
 def recent_scrape_runs(conn: sqlite3.Connection, scrub: Scrubber) -> list[dict[str, Any]] | str:
     try:
         rows = conn.execute(
-            "SELECT s.id, src.kind, s.status, s.counts, s.started_at, s.finished_at, s.error "
+            "SELECT s.id, src.kind, s.status, s.counts, s.started_at, s.finished_at, s.error "  # noqa: S608  identifiers are code constants, values are bound
             "FROM scrape_run s LEFT JOIN source src ON src.id = s.source_id "
             f"ORDER BY s.id DESC LIMIT {SCRAPE_RUN_ROWS}"
         ).fetchall()
@@ -617,7 +617,7 @@ def quarantine_rows(
         return {"note": "database not initialized", "rows": []}
     try:
         rows = conn.execute(
-            "SELECT id, opportunity_id, tier, model, error, attempts, created_at, raw_response "
+            "SELECT id, opportunity_id, tier, model, error, attempts, created_at, raw_response "  # noqa: S608  identifiers are code constants, values are bound
             f"FROM quarantine ORDER BY id DESC LIMIT {QUARANTINE_ROWS}"
         ).fetchall()
     except sqlite3.Error as exc:
@@ -657,7 +657,7 @@ def role_rows(
 
     try:
         opps = conn.execute(
-            "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "
+            "SELECT id, title, org_name, location_raw, country, state, city, remote_type, stage, "  # noqa: S608  identifiers are code constants, values are bound
             "stage_reason, url, first_seen_at, date_posted FROM opportunity "
             "WHERE source_id IS NULL OR source_id NOT IN "  # Remotive's terms (D-SRC-19)
             f"(SELECT id FROM source WHERE kind IN {NO_EXPORT_SQL}) "
@@ -668,7 +668,7 @@ def role_rows(
         if ids:
             marks = ",".join("?" * len(ids))
             for e in conn.execute(
-                "SELECT opportunity_id, tier, model, prompt_version, verdict, score, "
+                "SELECT opportunity_id, tier, model, prompt_version, verdict, score, "  # noqa: S608  identifiers are code constants, values are bound
                 "weighted_score, needs_review, dimensions, legitimacy, created_at "
                 f"FROM evaluation WHERE opportunity_id IN ({marks}) ORDER BY id", ids
             ).fetchall():

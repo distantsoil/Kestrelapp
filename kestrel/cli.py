@@ -177,8 +177,8 @@ def models_build() -> None:
         name = f"kestrel-{tier}"
         with paths.resource_path(mf) as real_path:
             typer.echo(f"Building {name} from {mf.name} ...")
-            proc = subprocess.run(
-                ["ollama", "create", name, "-f", str(real_path)],
+            proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
+                ["ollama", "create", name, "-f", str(real_path)],  # noqa: S607  tool found on PATH on purpose
                 capture_output=True,
                 text=True,
             )
@@ -934,7 +934,7 @@ def screenshots() -> None:
     if not script.exists():
         typer.echo(f"not found: {script} (this command runs from a source checkout)")
         raise typer.Exit(code=2)
-    raise typer.Exit(code=subprocess.run([sys.executable, str(script)]).returncode)
+    raise typer.Exit(code=subprocess.run([sys.executable, str(script)]).returncode)  # noqa: S603  fixed argv list, no shell
 
 
 @app.command()

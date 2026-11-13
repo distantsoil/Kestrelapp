@@ -165,7 +165,7 @@ class InProcessEmbedder:
         # The exported tokenizer.json pads every input to a fixed 128; sentence-transformers runs
         # this model at max_seq_length 256 with dynamic padding, so both are set explicitly.
         tok.enable_truncation(max_length=BUNDLED.max_tokens)
-        tok.enable_padding(pad_id=0, pad_token="[PAD]")
+        tok.enable_padding(pad_id=0, pad_token="[PAD]")  # noqa: S106  tokenizer pad token, not a secret
         self._tok = tok
         opts = ort.SessionOptions()
         # Half the cores at most: embedding shares the machine with the web UI and the worker.

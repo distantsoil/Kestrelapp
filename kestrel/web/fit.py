@@ -66,6 +66,11 @@ FAILED_WHY = "scoring failed"
 # names the max_tokens it ran into, and the loop is the truer reason.
 _FAILURE_WORDS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("leave no room for this posting",), "too long for your local model"),  # D-SCORE-21
+    (("no redaction map is configured",), "waiting for you to choose your current employer"),
+    (("hosted mode was turned off",), "online sending was turned off before this was sent"),
+    (("invalid confidential mode",),
+     "Kestrel could not read your privacy setting, so nothing was sent"),
+    (("safety classifier declined",), "the online service declined to answer"),
     (("generation loop", "degenerate", "repeated"), "the model repeated itself"),
     (("finish_reason: length", "finish_reason length", "max_tokens", "hit the cap"),
      "the reply ran out of room"),

@@ -300,7 +300,7 @@ def _read_ui_rows() -> dict[str, object]:
         try:
             conn.execute("PRAGMA busy_timeout=2000")
             rows = conn.execute(
-                f"SELECT key, value FROM setting WHERE key IN ({marks})", _UI_KEYS
+                f"SELECT key, value FROM setting WHERE key IN ({marks})", _UI_KEYS  # noqa: S608  identifiers are code constants, values are bound
             ).fetchall()
         finally:
             conn.close()

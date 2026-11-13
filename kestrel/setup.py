@@ -202,7 +202,7 @@ class SetupState:
     def run(self, cmd: list[str], *, stream: bool = False, timeout: float | None = None) -> int:
         """Run a command; returns the exit code (non-zero on any failure, never raises)."""
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
                 cmd,
                 capture_output=not stream,
                 text=True,
@@ -342,7 +342,7 @@ def step_ollama(st: SetupState) -> bool:
         if st.confirm("Start Ollama now?", default=True):
             try:
                 subprocess.Popen(
-                    ["ollama", "serve"],
+                    ["ollama", "serve"],  # noqa: S607  tool found on PATH on purpose
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL,

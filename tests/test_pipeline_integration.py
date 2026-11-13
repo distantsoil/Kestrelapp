@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from kestrel.config import get_settings
@@ -16,7 +17,18 @@ from kestrel.db.models import Evaluation, Opportunity, Org, Quarantine, Run, Sou
 from kestrel.pipeline.profile import load_profile
 from kestrel.pipeline.tier2 import handle_t2
 from kestrel.pipeline.worker import Worker
+from kestrel.services import tracks
 from tests.pipeline_fakes import FakeLLM
+
+
+@pytest.fixture(autouse=True)
+def _both_tracks_on(monkeypatch):
+    """These runs score both tracks, so both must be switched on (D-TEST-22). The choice is a
+    process-global cache (tracks._cache) that every app startup fills from its own database: an
+    earlier test's fresh database leaves ("employment",) behind, a switched-off consulting track
+    holds every consulting task (D-UI-68) and the worker scores nothing. Set it here, restored
+    after."""
+    monkeypatch.setitem(tracks._cache, "value", tracks.BOTH)
 
 _PAD = " " + "Details follow. " * 20  # a real posting body, over the Tier 2 stub floor
 

@@ -112,11 +112,37 @@ target-version = "py312"
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "W"]
+# S = flake8-bandit security rules (D-CI-30). Accepted findings are listed below (whole-file
+# classes, each with its reason) or on the line itself as `# noqa: S### <reason>`; nothing is
+# accepted silently. The public repository runs the same lint.
+select = ["E", "F", "I", "UP", "B", "W", "S"]
 ignore = ["B008"]  # typer uses function calls (Option/Argument) in defaults
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B011"]
+"tests/*" = [
+  "B011",
+  # Test code is never shipped in the app and runs on invented data: assert is how a test fails
+  # (S101), fixture "passwords"/tokens are fake (S105, S106), temp paths are scratch (S108),
+  # tests spawn fixed argv lists and parse their own XML/SQL/templates (S102, S104, S112, S314,
+  # S324, S603, S604, S607, S608, S701).
+  "S101", "S102", "S104", "S105", "S106", "S108", "S112", "S314", "S324",
+  "S603", "S604", "S607", "S608", "S701",
+]
+# Developer tooling, spikes and handoff scripts: they run only on the maintainer's machine or
+# in CI, call git/uv/ruff by name with fixed argv lists (S603, S607), use assert for their own
+# invariants (S101), swallow best-effort errors (S110, S112), use sha1 as a content id and
+# random for shuffling (S324, S311), and parse the coverage XML they just produced (S314).
+"scripts/**" = ["S101", "S110", "S112", "S311", "S314", "S324", "S603", "S607"]
+"docs/**" = ["S101", "S110", "S112", "S603", "S607"]
+"spike/**" = ["S101", "S110", "S112"]
+# Alembic revisions build SQL from module-level constants (table and column names written in
+# the revision itself), never from input.
+"kestrel/db/migrations/versions/*" = ["S608"]
+# Two best-effort `except Exception: pass` blocks that predate the S rules (bootstrap seeding,
+# an optional window restore). Not marked on the line: that would make them changed lines, and
+# scripts/static_checks.py already fails S110 and BLE001 on any new or changed line in these files.
+"kestrel/cli.py" = ["S110"]
+"kestrel/desktop/shell.py" = ["S110"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

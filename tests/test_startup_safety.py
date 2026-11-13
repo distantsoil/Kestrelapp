@@ -30,7 +30,12 @@ def _clean_startup_state(monkeypatch):
     from kestrel import paths
 
     paths.startup_health_json().unlink(missing_ok=True)
-    monkeypatch.delenv(startup_health.SAFE_MODE_ENV, raising=False)
+    # The safe start button sets the variable for real (startup_health.enter_safe_mode). A
+    # delenv of an absent variable records nothing to undo, so set it first: monkeypatch then
+    # restores the variable as it was before this test, and safe mode never reaches the next
+    # test (D-TEST-24).
+    monkeypatch.setenv(startup_health.SAFE_MODE_ENV, "0")
+    monkeypatch.delenv(startup_health.SAFE_MODE_ENV)
     monkeypatch.setattr(startup_health, "_offered", False)
     yield
     paths.startup_health_json().unlink(missing_ok=True)

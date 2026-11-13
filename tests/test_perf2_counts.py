@@ -246,6 +246,9 @@ def sm():
 
 @pytest.fixture(autouse=True)
 def _tracks_back():
+    # Start empty (D-TEST-23): the count cache is process-global and every page an earlier test
+    # rendered left its entries behind, so "the entry this test made" must be the only one.
+    count_cache.clear()
     before = tracks._cache["value"]
     yield
     tracks._cache["value"] = before
@@ -491,10 +494,12 @@ def test_the_cache_ages_out_and_follows_the_track_switch(sm, monkeypatch):
     from kestrel.analytics.today import group_counts
 
     asyncio.run(_seed(sm))
+    tracks._cache["value"] = ("employment",)  # a known choice, unlike the switch below
 
     async def go():
         async with sm() as s:
             await group_counts(s)
+            assert len(count_cache._entries) == 1  # the entry aged below is this test's own
             key = next(iter(count_cache._entries))
             v, t, val = count_cache._entries[key]
             count_cache._entries[key] = (v, t - count_cache.TTL_SECONDS - 1, val)

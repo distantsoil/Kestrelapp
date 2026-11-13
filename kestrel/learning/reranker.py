@@ -840,8 +840,8 @@ async def load_active_reranker(
         )
         return None
     try:
-        model = pickle.loads(model_bytes)
-        fitted = pickle.loads(fitted_bytes)
+        model = pickle.loads(model_bytes)  # noqa: S301  blob passed an HMAC check just above
+        fitted = pickle.loads(fitted_bytes)  # noqa: S301  blob passed an HMAC check just above
     except (pickle.UnpicklingError, EOFError, AttributeError, ImportError) as exc:
         await _notify(
             session,

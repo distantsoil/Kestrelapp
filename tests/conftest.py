@@ -83,6 +83,30 @@ def _reset_status_caches():
     reset_status_caches()
 
 
+@pytest.fixture(autouse=True)
+def _reset_process_globals():
+    """Process-global state that a test, or the app code it drives, changes must never reach the
+    next test (D-TEST-25): the enabled-tracks cache and the count cache (filled by any app
+    startup or page render), and safe mode, which the app's own safe-start button writes to
+    os.environ where monkeypatch cannot see it. The stress run's random order found all three."""
+    from kestrel import startup_health
+    from kestrel.services import count_cache, tracks
+
+    saved = os.environ.get(startup_health.SAFE_MODE_ENV)
+
+    def reset() -> None:
+        tracks._cache["value"] = None
+        count_cache.clear()
+
+    reset()
+    yield
+    reset()
+    if saved is None:
+        os.environ.pop(startup_health.SAFE_MODE_ENV, None)
+    else:
+        os.environ[startup_health.SAFE_MODE_ENV] = saved
+
+
 _LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "testserver", "0.0.0.0", "::", ""}
 
 

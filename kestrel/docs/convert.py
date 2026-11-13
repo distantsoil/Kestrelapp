@@ -414,7 +414,7 @@ def _convert_doc(data: bytes, name: str) -> ConvertResult:
             "--convert-to", "docx", "--outdir", str(out_dir), str(src),
         ]
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603  fixed argv list, no shell
                 cmd, capture_output=True, text=True, timeout=_SOFFICE_TIMEOUT_SECONDS, check=False,
                 **no_console_window(),
             )

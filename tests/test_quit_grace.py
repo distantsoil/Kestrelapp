@@ -210,8 +210,8 @@ def test_the_lifespan_lets_the_online_lane_finish_its_call_on_quit(monkeypatch):
     monkeypatch.setattr(app_mod, "_online_lane", lane)
     with TestClient(app_mod.build_app(worker=True)) as c:
         assert c.get("/health").status_code == 200
-        deadline = time.time() + 5
-        while "lane-started" not in events and time.time() < deadline:
+        deadline = time.monotonic() + 5
+        while "lane-started" not in events and time.monotonic() < deadline:
             time.sleep(0.01)
     assert events == ["lane-started", "lane-finished"]
 

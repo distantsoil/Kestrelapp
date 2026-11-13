@@ -95,7 +95,7 @@ OLLAMA_DOWNLOAD: dict[str, str] = {
 }
 
 
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", ""})  # noqa: S104  0.0.0.0 is compared against, never bound
 
 
 def ollama_remote_host(url: str | None) -> str | None:

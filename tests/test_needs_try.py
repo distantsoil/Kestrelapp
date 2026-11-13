@@ -799,6 +799,35 @@ def test_a_held_send_shows_as_waiting_for_the_choice_not_as_a_failed_try(seeded)
     assert plain_reason(HOSTED_REFUSAL) == "Waiting for you to choose your current employer"
 
 
+@pytest.mark.parametrize("error,words", [
+    ("hosted send refused: Hosted mode was turned off before sending",
+     "Online sending was turned off before this was sent"),
+    ("hosted send refused: invalid confidential mode",
+     "Kestrel could not read your privacy setting, so nothing was sent"),
+])
+def test_a_refused_send_that_is_not_held_says_not_sent_without_blaming_the_employer(
+        seeded, error, words):
+    client, ids = seeded
+    oid = ids["Operations Analyst"]["opp"]
+
+    async def refused(s):
+        q = Quarantine(opportunity_id=oid, tier=2, model="m", error=error, attempts=0,
+                       created_at=iso(datetime.now(UTC) + timedelta(minutes=1)))
+        s.add(q)
+        await s.flush()
+        return q.id
+
+    new_id = _write(refused)
+    row = _row_html(client.get("/quarantine").text, new_id)
+    assert words in row and "Not sent" in row
+    assert "1 try" not in row and 'data-testid="rt-held"' not in row
+    assert "current employer" not in row
+    r = client.get(f"/quarantine/{new_id}/row")  # the poll names the reason, not another model
+    message = _events(r)["k-toast"]["message"]
+    assert message.startswith("Not sent:") and words in message
+    assert "different model" not in message
+
+
 def test_an_online_pick_is_refused_server_side_when_hosted_mode_is_off(seeded, monkeypatch):
     client, ids = seeded
     _online(monkeypatch, hosted_on=False)

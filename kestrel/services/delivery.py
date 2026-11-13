@@ -139,7 +139,7 @@ def _toast(title: str, body: str | None) -> bool:
         argv = [tool, "--app-name=Kestrel", *NOTIFY_SEND_SILENT, "--", title, body or ""]
     from kestrel.llm.profiles import no_console_window, system_tool_env
 
-    subprocess.run(
+    subprocess.run(  # noqa: S603  fixed argv list, no shell
         argv, check=True, capture_output=True, timeout=10,
         **no_console_window(), **system_tool_env(),
     )

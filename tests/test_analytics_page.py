@@ -854,11 +854,12 @@ def test_every_export_is_refused_in_confidential_mode_with_no_employer_set(web, 
 def test_the_summary_stamp_reads_updated_today_earlier_or_nothing():
     """D-UI-218: "Updated today, 8:02 AM" when the summary was written today, a date when it was
     not, and nothing when the time is unknown or unreadable."""
-    from datetime import UTC, datetime, timedelta
-
+    from kestrel.web.pages import analytics as page
     from kestrel.web.pages.analytics import _updated
 
-    now = datetime.now(UTC)
+    # The page's own clock, not an inline import: under the boundary plugin (frozen at yesterday's
+    # 00:03 when a run starts just after midnight) only the module's `datetime` name is frozen.
+    now = page.datetime.now(UTC)
     assert _updated(now.isoformat()).startswith("Updated today, ")
     older = _updated((now - timedelta(days=9)).isoformat())
     assert older.startswith("Updated ") and "today" not in older

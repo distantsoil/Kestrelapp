@@ -2047,7 +2047,7 @@ async def _letter_ctx(
     from kestrel.web.redact import confidential
 
     letter = await letter_store.letter_for(s, row.id)
-    assert letter is not None  # every caller passes a row from _owned_letter / letter_store
+    assert letter is not None  # row came from _owned_letter  # noqa: S101
     extras = dict(letter.extras or {})
     kind, stored = str(letter.kind or row.template or "cover_letter"), str(letter.body_md or "")
     found = await _letter_basis(s, settings, opp, extras.get("basis"))
@@ -2228,7 +2228,7 @@ async def cover_letter_dialog(request: Request, opp_id: int):
         opp = await s.get(Opportunity, opp_id)
         if opp is None:
             return HTMLResponse("", status_code=404)
-        return await _entry(request, s, opp, shell=True, show_failed=True)
+        return await _entry(request, s, opp, shell=True, show_failed=True)  # noqa: S604  kwarg named shell, not a subprocess
 
 
 @router.get("/opportunities/{opp_id}/role/cover-letter/status", response_class=HTMLResponse)
@@ -2407,7 +2407,7 @@ async def cover_letter_save(request: Request, opp_id: int, render_id: int):
             return _fragment(request, "role_letter_draft", ctx,
                              {"k-toast": _toast(_EMPTY_LETTER, tone="warn")})
         letter = await letter_store.letter_for(s, row.id)
-        assert letter is not None  # _owned_letter checked it
+        assert letter is not None  # _owned_letter checked  # noqa: S101
         refused = save_refusal(text, letter.kind)
         if refused:
             ctx = await _letter_ctx(s, settings, opp, row, tab="edit", typed=text)
@@ -2556,7 +2556,7 @@ async def _ensure_pdf(s, settings, opp, row: DocRender):
     from kestrel.web.redact import confidential
 
     letter = await letter_store.letter_for(s, row.id)
-    assert letter is not None  # _owned_letter checked it
+    assert letter is not None  # _owned_letter checked it  # noqa: S101
     kind = str(letter.kind or row.template or "cover_letter")
     conf, mapping = await confidential(s)  # the PDF hides the current employer too
     body = redact_text(str(letter.body_md or ""), mapping, enabled=conf) or ""

@@ -61,7 +61,10 @@ def _today() -> date:
     # LOCAL, matching what the operator's date input produces: `next_action_at` values here are
     # calendar dates with no timezone, so they are compared against the local day. The UTC
     # timestamps seeded through `_ago` are converted to a local date by the app before counting.
-    return date.today()
+    # Read from the same clock as `_now()`: `date.today()` is a second clock, so a run that
+    # crosses midnight between seeding and counting (or a frozen clock, D-CI-26) saw 31 days
+    # quiet for a row seeded 30 days back.
+    return _now().astimezone().date()
 
 
 def _ago(**kw) -> str:

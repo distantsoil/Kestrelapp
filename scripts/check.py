@@ -34,11 +34,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import diff_gate  # noqa: E402  (sits beside this script; the path is added just above)
 import static_checks  # noqa: E402  (same folder)
+import stress  # noqa: E402  (same folder)
 import test_floor  # noqa: E402  (same folder)
 
 QUICK_TESTS = ["tests/test_packaging.py", "tests/test_notices.py"]
@@ -248,10 +250,95 @@ def _red_first_gate() -> bool:
     return not problems
 
 
+def _export_lint(py: str) -> bool:
+    """Export the working tree the way the public sync does and lint the result (D-CI-27), so a
+    pattern that only breaks after the private-to-public rewrites (ledger row 9) fails here, not
+    in the public gate. Public-only files come from the public repo verbatim and are skipped.
+    The public tree has no publicize.py: it is the export, which the ruff step already linted."""
+    if not (diff_gate.ROOT / "scripts" / "publicize.py").is_file():
+        print("==> export lint: this tree is the public export; the ruff step above linted it")
+        return True
+    print("==> export lint (publicize the working tree, then ruff on the export)", flush=True)
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="kestrel-export-") as scratch:
+        out = Path(scratch) / "export"
+        proc = subprocess.run(
+            [py, str(diff_gate.ROOT / "scripts" / "publicize.py"), str(diff_gate.ROOT), str(out),
+             "--private-repo", str(diff_gate.ROOT), "--lint-only"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            cwd=diff_gate.ROOT,
+        )
+        if proc.returncode != 0:
+            print((proc.stdout + proc.stderr).strip())
+            print("Not ready to push: the public export failed; add a sanitizer rule in "
+                  "scripts/publicize.py, never edit the public tree.")
+            return False
+        lint = subprocess.run(
+            [py, "-m", "ruff", "check", "--no-cache", str(out)], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=False, cwd=diff_gate.ROOT,
+        )
+        if lint.returncode != 0:
+            print(lint.stdout.replace(str(out) + os.sep, "").strip())
+            print("Not ready to push: lint fails on the public export (the rewrites above change "
+                  "these lines); fix the private source or the rewrite rule.")
+            return False
+    print(f"    ok ({time.monotonic() - started:.0f}s)", flush=True)
+    return True
+
+
+def _stress_gate(py: str) -> bool:
+    """The stress run over the tests this branch affects (D-CI-26, scripts/stress.py)."""
+    base, note = diff_gate.diff_base()
+    if base is None:
+        print(f"Not ready to push: the stress run needs a git base ({note}).")
+        return False
+    names, _lines = diff_gate.git_changes(base)
+    texts = stress.read_test_texts(diff_gate.ROOT)
+    files = stress.affected_test_files(names, texts, stress.read_texts("kestrel", diff_gate.ROOT))
+    runs = stress.plan(files, stress.clock_seeding(files, texts),
+                       now=datetime.now(UTC))
+    if not runs:
+        print("==> stress run: no affected test files")
+        return True
+    print(f"==> stress run: {len(files)} affected test file(s); budget "
+          f"{stress.BUDGET_S // 60} min for repeats", flush=True)
+    started = time.monotonic()
+    first_s = 0.0
+    orders = 0
+    for run in runs:
+        if run.repeat and not stress.budget_allows(time.monotonic() - started, first_s):
+            print(f"==> stress: {orders} of {stress.REPEATS} random orders ran; one took "
+                  f"{first_s:.0f}s, so another would pass the {stress.BUDGET_S // 60} min budget "
+                  "(D-CI-29)", flush=True)
+            break
+        print(f"==> stress: {run.label}", flush=True)
+        run_started = time.monotonic()
+        if run.hold_port:
+            with stress.PortHolder() as held:
+                if held.already_taken:
+                    print(f"    port {held.port} is already in use (held by another process)")
+                ok, _skips = _run_pytest(stress.pytest_args(py, run), extra_env=run.env)
+        else:
+            ok, _skips = _run_pytest(stress.pytest_args(py, run), extra_env=run.env)
+        if not ok:
+            env = " ".join(f"{k}={v}" for k, v in run.env.items())
+            print(f"Replay: {env} {' '.join(stress.pytest_args('python', run))}".strip())
+            print(f"Not ready to push: the stress run failed ({run.label}). A test that passes "
+                  "alone but fails here is order-, port- or clock-dependent; fix its cause.")
+            return False
+        if "random order" in run.label:
+            orders += 1
+            first_s = first_s or time.monotonic() - run_started
+    print(f"    stress run ok ({time.monotonic() - started:.0f}s, {orders} random order(s))",
+          flush=True)
+    return True
+
+
 PASS_LINES = {
     "full": "Ready to push.",
     "quick": "Quick checks passed; run the full check before pushing.",
     "fast": "Fast checks passed; run the full check before pushing.",
+    "stress": "Stress checks passed; run the full check before pushing.",
 }
 
 
@@ -291,6 +378,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="lint, the packaging guards and the static checks")
     parser.add_argument("--fast", action="store_true",
                         help="quick plus the whole suite, without coverage or the browser stage")
+    parser.add_argument("--stress", action="store_true",
+                        help="only the stress run over the tests this branch affects (the full "
+                             "gate runs it too)")
     parser.add_argument("--workers", type=worker_count,
                         default=os.environ.get("KESTREL_TEST_WORKERS", "auto"), metavar="N",
                         help="workers (default: KESTREL_TEST_WORKERS or half the CPUs, "
@@ -310,9 +400,10 @@ def main() -> int:
     `check.py && git push` is safe."""
     parser = _build_parser()
     args = parser.parse_args()
-    if args.quick and args.fast:
-        parser.error("choose --quick or --fast, not both")
-    tier = "quick" if args.quick else "fast" if args.fast else "full"
+    if sum((args.quick, args.fast, args.stress)) > 1:
+        parser.error("choose one of --quick, --fast or --stress")
+    tier = ("quick" if args.quick else "fast" if args.fast
+            else "stress" if args.stress else "full")
     real = sys.stdout
     tee = _LastLine(real)
     sys.stdout = tee
@@ -335,6 +426,11 @@ def main() -> int:
 
 def _gate(args: argparse.Namespace) -> int:
     py = sys.executable
+    if args.stress:
+        if not _stress_gate(py):
+            return 1
+        print(PASS_LINES["stress"])
+        return 0
     plan = _plan_diff_guards()
     if plan is not None and plan[2]:
         _report_unmapped(plan[2])
@@ -350,6 +446,8 @@ def _gate(args: argparse.Namespace) -> int:
             print("Not ready to push: fix the failure above first.")
             return 1
     if not _static_gates():
+        return 1
+    if not _export_lint(py):
         return 1
     pytest_args = [py, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
                    "-n", str(args.workers), "--dist", "worksteal", "--max-worker-restart", "0"]
@@ -376,6 +474,8 @@ def _gate(args: argparse.Namespace) -> int:
             print("Quick checks passed; run the full check before pushing.")
         return 0
     assert plan is not None  # checked before the suite ran
+    if not _stress_gate(py):
+        return 1
     browser_files, changed_lines, _unmapped = plan
     if browser_files:
         # Browser tests are gated off in the main run; run the selected files for real, and add

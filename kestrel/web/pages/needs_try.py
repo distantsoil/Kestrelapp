@@ -54,6 +54,7 @@ from kestrel.web.pages.runs_detail import _open_total, _quarantine_rows, _retry_
 from kestrel.web.retry_words import (
     FILTERS,
     is_held,
+    not_sent,
     place_for,
     plain_reason,
     refused_key,
@@ -95,6 +96,7 @@ def _view(r: dict) -> dict:
         "reason": plain_reason(error),
         "refused_key": refused_key(error),
         "on_hold": is_held(error),
+        "not_sent": not_sent(error),
         "when": when_words(q.created_at),
         "attempts": max(int(q.attempts or 0), 1),
         "tries": tries_words(q.attempts),
@@ -266,6 +268,10 @@ async def row(request: Request, quarantine_id: int):
             f"Held, not sent: {_role_name(view)} waits for you to choose your current employer."
         )}
         return HTMLResponse(_row_html(request, view), headers=_events(events))
+    if view["not_sent"]:  # refused before sending: say why, not "try a different model"
+        events = {"rt-refresh": True, "k-toast": _toast(
+            f"Not sent: {_role_name(view)}. {view['reason']}.", tone="warn")}
+        return HTMLResponse(_row_html(request, view, flash=True), headers=_events(events))
     events = {"rt-refresh": True, "k-toast": _toast(
         f"Still couldn’t score {_role_name(view)}. Try a different model, or score it anyway.",
         tone="warn",

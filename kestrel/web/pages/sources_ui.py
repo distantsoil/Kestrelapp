@@ -590,7 +590,7 @@ async def check_feed(request: Request):
             text = await http.get_text(url, public_only=True)
         if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
             raise ValueError("refused")
-        root = ElementTree.fromstring(text)
+        root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except UnsafeURLError as exc:  # a link into this computer or a private network, or too big
         log.info("source_feed_check_refused", error=type(exc).__name__)
         return _msg(request, "bad", f"{exc}.")

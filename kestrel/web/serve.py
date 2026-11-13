@@ -56,7 +56,7 @@ def bind_host() -> str:
     try:
         from kestrel.config import get_settings
 
-        return "0.0.0.0" if get_settings().server.bind_all else "127.0.0.1"  # noqa: S104
+        return "0.0.0.0" if get_settings().server.bind_all else "127.0.0.1"  # noqa: S104  all-interfaces bind is an explicit setting
     except Exception as exc:  # a settings failure must not make the app unservable
         log.warning("bind_host_settings_failed", error=str(exc))
         return "127.0.0.1"
@@ -233,8 +233,8 @@ def serve(
 
 
 def wait_for_health(port: int, timeout: float = 30.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    deadline = time.monotonic() + timeout  # a clock change cannot cut the wait short
+    while time.monotonic() < deadline:
         try:
             if httpx.get(f"http://127.0.0.1:{port}/health", timeout=2.0).status_code == 200:
                 return True

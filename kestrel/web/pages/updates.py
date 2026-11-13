@@ -87,7 +87,7 @@ def _notes(releases: list[updater.ReleaseNote]) -> list[dict]:
         {
             "version": r.version,
             "date": r.date,
-            "html": Markup(updater.render_notes_html(r.notes_md)),
+            "html": Markup(updater.render_notes_html(r.notes_md)),  # noqa: S704  escaped by render_notes_html first
         }
         for r in releases
     ]

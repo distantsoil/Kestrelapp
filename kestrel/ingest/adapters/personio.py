@@ -141,7 +141,7 @@ def _positions(text: str, slug: str) -> list[ElementTree.Element]:
     if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
         raise AdapterError(f"Personio feed for {slug} was refused (it declares entities)")
     try:
-        root = ElementTree.fromstring(text)
+        root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     except ElementTree.ParseError as exc:
         raise AdapterError(f"Personio feed for {slug} was unreadable") from exc
     if root.tag != "workzag-jobs":

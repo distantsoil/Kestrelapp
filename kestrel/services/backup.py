@@ -785,10 +785,10 @@ def _scrub_stored_paths(staged_db: Path) -> int:
             if table not in present:
                 continue
             for row_id, stored in con.execute(
-                f"SELECT id, pdf_path FROM {table} WHERE pdf_path IS NOT NULL"
+                f"SELECT id, pdf_path FROM {table} WHERE pdf_path IS NOT NULL"  # noqa: S608  identifiers are code constants, values are bound
             ):
                 if paths.confined_file(stored, folder) is None:
-                    con.execute(f"UPDATE {table} SET pdf_path = NULL WHERE id = ?", (row_id,))
+                    con.execute(f"UPDATE {table} SET pdf_path = NULL WHERE id = ?", (row_id,))  # noqa: S608  identifiers are code constants, values are bound
                     cleared += 1
         if cleared:
             con.commit()
@@ -1008,12 +1008,12 @@ def _import_rows(source: Path, target: Path) -> _Imported:
                     if not cols:
                         continue
                     listing = ", ".join(_q(c) for c in cols)
-                    dst.execute(f"DELETE FROM {_q(table)}")
+                    dst.execute(f"DELETE FROM {_q(table)}")  # noqa: S608  identifiers are code constants, values are bound
                     insert = (
-                        f"INSERT INTO {_q(table)} ({listing}) "
+                        f"INSERT INTO {_q(table)} ({listing}) "  # noqa: S608  identifiers are code constants, values are bound
                         f"VALUES ({', '.join('?' for _ in cols)})"
                     )
-                    cur = src.execute(f"SELECT {listing} FROM {_q(table)}")
+                    cur = src.execute(f"SELECT {listing} FROM {_q(table)}")  # noqa: S608  identifiers are code constants, values are bound
                     while batch := cur.fetchmany(500):
                         dst.executemany(insert, batch)
         finally:

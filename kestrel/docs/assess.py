@@ -137,6 +137,24 @@ def document_text(catalog: MasterCatalog, *, redact: bool = False) -> str:
 QUARANTINE_TIER = 13  # the quarantine row's `tier` names the prompt, as P8 and P9 do
 
 
+# The missing-employer refusal (pipeline._shared.HOSTED_REFUSAL) is the only one that is about
+# the employer; the others say why the send stopped (D-TEST-19). Matches retry_words.is_held.
+_EMPLOYER_REFUSAL = "no redaction map is configured"
+
+
+def refusal_error(error: str) -> str:
+    """Plain words for a refused hosted send. Nothing was sent in every case."""
+    if _EMPLOYER_REFUSAL in error.lower():
+        return ("Not sent: confidential mode is on and tier 2 runs on a hosted model, "
+                "but no current employer is chosen, so your employer's name would "
+                "leave this machine. Choose it under Settings > Privacy and access, "
+                "run tier 2 on a local model, or turn off confidential mode.")
+    if "hosted mode was turned off" in error.lower():
+        return "Not sent: online sending was turned off before this was sent."
+    return ("Not sent: Kestrel could not read your privacy settings, so nothing left this "
+            "machine. Check Settings > Privacy and access, then try again.")
+
+
 async def assess_master(
     client, catalog: MasterCatalog, *, session=None, redact: bool = False
 ) -> Assessment:
@@ -204,10 +222,7 @@ async def assess_master(
         out.quarantined = res.quarantined
         log.warning("resume_assess_failed", quarantined=res.quarantined, error=res.error)
         if res.quarantined and res.error and res.error.startswith("hosted send refused"):
-            out.error = ("Not sent: confidential mode is on and tier 2 runs on a hosted model, "
-                         "but no current employer is chosen, so your employer's name would "
-                         "leave this machine. Choose it under Settings > Privacy and access, "
-                         "run tier 2 on a local model, or turn off confidential mode.")
+            out.error = refusal_error(res.error)
         elif res.quarantined:
             out.error = ("The model's answer could not be used, even after one retry, so no "
                          "assessment is shown. It was kept for review on the Quarantine page. "

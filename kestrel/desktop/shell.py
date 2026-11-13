@@ -144,7 +144,7 @@ def _acquire_lock_file() -> bool:
     """macOS/Linux: an exclusive, non-blocking flock. flock is per open file description, so even
     a second open() in the same process is refused, and the kernel drops it when the process dies
     (no stale-pid problem, no cleanup needed on a crash)."""
-    assert sys.platform != "win32"
+    assert sys.platform != "win32"  # noqa: S101  type narrowing, not input validation
     import fcntl
 
     global _lock_file
@@ -195,7 +195,7 @@ def release_single_instance() -> None:
             log.warning("mutex_release_failed", error=str(exc))
         _mutex_handle = None
     if _lock_file is not None:
-        assert sys.platform != "win32"  # the lock file is Unix-only; Windows uses the mutex above
+        assert sys.platform != "win32"  # lock file is Unix-only  # noqa: S101
         try:
             import fcntl
 
@@ -432,7 +432,8 @@ def _open_folder(p: Path) -> bool:
     request worked; a failure is logged here (type and code only) and reported to the caller."""
     try:
         if IS_WINDOWS:
-            os.startfile(str(p))  # noqa: S606
+            # Windows-only API: pyright checks on Linux, where os has no startfile.
+            os.startfile(str(p))  # noqa: S606  opens a file Kestrel just wrote  # pyright: ignore[reportAttributeAccessIssue]
             return True
         return _run_opener(["open" if sys.platform == "darwin" else "xdg-open", str(p)])
     except OSError as exc:
@@ -451,7 +452,7 @@ def _run_opener(argv: list[str]) -> bool:
     to the file manager and return, so waiting is brief; a non-zero exit, a timeout or a missing
     command is a failure to report, logged without the path."""
     try:
-        done = subprocess.run(  # noqa: S603
+        done = subprocess.run(  # noqa: S603  fixed argv list, no shell
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False
         )
     except subprocess.TimeoutExpired:
@@ -539,7 +540,8 @@ def reveal_file(p: Path) -> bool:
         except (OSError, AttributeError, ValueError, ctypes.ArgumentError) as exc:
             log.warning("reveal_file_select_failed", **_fault(exc))
         try:
-            os.startfile(str(p.parent))  # noqa: S606
+            # Windows-only API: pyright checks on Linux, where os has no startfile.
+            os.startfile(str(p.parent))  # noqa: S606  opens a Kestrel folder  # pyright: ignore[reportAttributeAccessIssue]
             return True
         except OSError as exc:
             log.warning("reveal_file_failed", **_fault(exc))
@@ -757,7 +759,7 @@ def _os_dark() -> bool:
                 return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
         if IS_MACOS:
             out = subprocess.run(
-                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],  # noqa: S607  tool found on PATH on purpose
                 capture_output=True, text=True, timeout=2, check=False,
             )
             return out.stdout.strip().lower() == "dark"

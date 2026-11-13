@@ -4,7 +4,19 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-## [0.7.6] - 2026-11-06
+### Fixed
+
+- **Every reason a role could not be scored now reads in plain words.** A provider's safety refusal, an online send that was turned off before it ran, and an unreadable privacy setting no longer show the generic "did not finish" or a wrong "choose your current employer"; the Pipeline row and Needs another try say the same thing. A new test fails when a reason Kestrel writes has no words.
+- **Refused online sends say "Not sent" everywhere.** Needs another try, Documents suggestions and the resume assessment no longer tell you to choose your current employer when the real reason was that online sending was turned off or your privacy setting could not be read.
+- **Startup waits out a clock change.** Opening Kestrel waits up to 30 seconds for its server; that wait is now measured on a clock that cannot jump, so a time sync or waking from sleep during startup no longer cuts it short.
+
+### Changed
+
+- **Security lint on the whole tree.** `ruff check` now includes the security rules (flake8-bandit). Every accepted finding says why, either in `pyproject.toml` for tests, scripts and migrations or on the line itself in app code; the stdlib XML parsing of fetched feeds is marked for a decision.
+- **CodeQL runs before the public push.** The maintainers' full ship check now runs CodeQL (Python, JavaScript and workflow files, the same queries as GitHub code scanning) on the exported tree and stops on any alert not in a reasoned allowlist.
+- **A stress run in the full check.** The tests a change affects run five times in parallel in random order, with the app's usual port already taken, with a fast clock, and just after and just before midnight UTC, so a test that only passes alone fails before a push. Every check tier also lints the public copy of the code.
+
+## [0.7.6] - 2026-11-12
 
 ### Added
 

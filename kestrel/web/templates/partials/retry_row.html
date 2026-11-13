@@ -20,7 +20,7 @@
       <span class="k-pill k-pill--info rt-step" data-testid="rt-step">{{ row.step_label }}</span>
       <span class="rt-why" title="{{ row.reason }}" data-testid="rt-why">{{ row.reason }}</span>
       <span class="rt-when">{{ row.when }}</span>
-      <span class="rt-tries">{{ 'Not sent' if row.on_hold else row.tries }}</span>
+      <span class="rt-tries">{{ 'Not sent' if row.not_sent else row.tries }}</span>
     </div>
     {% if row.queued %}
     <div class="rt-wait" data-testid="retry-queued" role="status"><span class="rt-spin" aria-hidden="true"></span><span>Trying again…</span></div>

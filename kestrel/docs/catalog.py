@@ -433,7 +433,7 @@ def resolve(catalog: MasterCatalog, config: dict) -> RenderDoc:
             [entry(token, e) for e in entries_of(catalog.master, token)]
             if token in KINDS else []
         )
-        if token == "education":
+        if token == "education":  # noqa: S105  a text token kind, not a secret
             # Legacy credential sections (slots and variants) and typed entries share a heading.
             roles = role_blocks("credential")
             if roles or entries:

@@ -118,7 +118,7 @@ async def enqueue_or_join(
     task = await live_task(s, opp_id)
     if task is None:  # it finished between the insert and the read; the newest row is the answer
         task = await latest_task(s, opp_id)
-    assert task is not None
+    assert task is not None  # noqa: S101  type narrowing, not input validation
     return task, created
 
 

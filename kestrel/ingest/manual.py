@@ -54,7 +54,7 @@ async def manual_ingest(
     if track not in ("employment", "consulting"):
         track = "employment"
     source = await _manual_source(session, track)
-    external_id = url or "manual:" + hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]
+    external_id = url or "manual:" + hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:16]  # noqa: S324  content id, not a security hash
     raw = RawPosting(
         external_id=external_id,
         url=url,

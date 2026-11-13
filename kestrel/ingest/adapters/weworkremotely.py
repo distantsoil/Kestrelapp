@@ -167,7 +167,7 @@ class WeWorkRemotelyAdapter:
         try:
             if _DOCTYPE.search(text[:4096]):
                 raise ValueError("DOCTYPE")
-            root = ElementTree.fromstring(text)
+            root = ElementTree.fromstring(text)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
             items = root.findall("./channel/item")
         except (ValueError, ElementTree.ParseError) as exc:
             raise AdapterError(

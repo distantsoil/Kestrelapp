@@ -77,7 +77,7 @@ def _date_styles(z: zipfile.ZipFile) -> set[int]:
     raw = _part(z, "xl/styles.xml")
     if raw is None:
         return set()
-    root = ET.fromstring(raw)
+    root = ET.fromstring(raw)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
     custom: dict[int, str] = {}
     for nf in root.iterfind(".//m:numFmts/m:numFmt", _NS):
         try:
@@ -110,13 +110,13 @@ def to_csv(data: bytes) -> str:
         shared: list[str] = []
         raw_ss = _part(z, "xl/sharedStrings.xml")
         if raw_ss is not None:
-            for si in ET.fromstring(raw_ss).iterfind("m:si", _NS):
+            for si in ET.fromstring(raw_ss).iterfind("m:si", _NS):  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
                 shared.append(_text(si).strip())
         dates = _date_styles(z)
         sheet_raw = _part(z, sheets[0])
         if sheet_raw is None:
             raise SpreadsheetError("That file has no sheet to read.")
-        root = ET.fromstring(sheet_raw)
+        root = ET.fromstring(sheet_raw)  # noqa: S314  stdlib XML on fetched data; expat caps entity expansion; a hardened parser is under review
         out = io.StringIO()
         writer = csv.writer(out)
         row_count = 0

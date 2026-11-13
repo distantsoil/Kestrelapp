@@ -64,6 +64,15 @@ def _mcp_runtime_state_is_fresh():
 
 
 @pytest.fixture(autouse=True)
+def _not_in_safe_mode(monkeypatch):
+    """The worker app starts MCP only outside safe mode, and safe mode is a process environment
+    variable (startup_health.SAFE_MODE_ENV), so these tests state that it is off (D-TEST-24)."""
+    from kestrel import startup_health
+
+    monkeypatch.delenv(startup_health.SAFE_MODE_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _not_live():
     runtime.set_live(False)
     yield
