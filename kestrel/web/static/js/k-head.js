@@ -70,6 +70,20 @@
       navigator.sendBeacon('/api/diag/page', new Blob([body], { type: 'application/json' }));
     } catch (err) { /* diagnostics never get in the way */ }
   });
+  // D-UI-872: the page cross-fade is a browser-owned cross-document transition (components.css:
+  // @view-transition { navigation: auto }). When the browser aborts it (observed when the next
+  // document is a bare 404 that does not opt in), the transition's promises can reject, and no
+  // page code asked for them: the console showed "Uncaught (in promise) ... Transition was
+  // aborted because of invalid state". Marking them handled changes nothing else: the promises
+  // settle as before and the navigation goes on. navCommit does the same for its own transition
+  // (kestrel-ui.js).
+  window.addEventListener('pageswap', function (e) {
+    var vt = e.viewTransition;
+    if (!vt) return;
+    [vt.ready, vt.finished, vt.updateCallbackDone].forEach(function (pr) {
+      if (pr && pr.catch) pr.catch(function () { /* the load goes on */ });
+    });
+  });
   // The outgoing side of the same record (D-UI-209): Chromium decides here whether the page
   // being left gets a transition, so note what this page was doing when it decided.
   if (document.documentElement.getAttribute('data-k-desktop') === '1') {

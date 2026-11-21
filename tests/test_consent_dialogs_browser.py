@@ -33,14 +33,30 @@ MODEL = "vendor/contract-model"
 HINT_TEXT = "Tick the box to send"
 
 # Samples the hint on every animation frame from now on: opacity, visibility, and the time.
+# The next frame, plus one frame of slack. Counted in frames, never milliseconds (D-PROC-22,
+# D-TEST-810).
+HIDE_AT_ONCE_FRAMES = 2
+
 TRACE_JS = """(sel) => {
   const el = document.querySelector(sel);
   window.__trace = [];
+  window.__changeAt = null;
+  // D-TEST-810: stamp the moment the tick reaches the page, so a test counts frames after it
+  // and never reads wall-clock time that a busy machine stretches.
+  document.addEventListener('change', () => {
+    if (window.__changeAt === null) window.__changeAt = performance.now();
+  }, {capture: true, once: true});
   const t0 = performance.now();
   const tick = () => {
     const cs = getComputedStyle(el);
-    window.__trace.push({t: performance.now() - t0, o: parseFloat(cs.opacity), v: cs.visibility});
-    if (performance.now() - t0 < 900) requestAnimationFrame(tick);
+    const now = performance.now();
+    window.__trace.push({t: now - t0, o: parseFloat(cs.opacity), v: cs.visibility,
+                         a: window.__changeAt !== null && now >= window.__changeAt});
+    // D-TEST-812: stop 1200 ms after the tick, with a 10 s backstop; a fixed 900 ms from the start
+    // ended before a delayed click landed.
+    const after = window.__changeAt !== null ? now - window.__changeAt : 0;
+    const live = now - t0 < 10000 && (window.__changeAt === null || after < 1200);
+    if (live) requestAnimationFrame(tick);
     else window.__traceDone = true;
   };
   window.__traceDone = false;
@@ -170,13 +186,45 @@ def _fades(trace) -> None:
     assert ops == sorted(ops, reverse=True) or max(ops) > 0.5, ops[:40]
 
 
-def _hides_at_once(trace) -> None:
+def _hides_at_once(trace) -> int:
     """With reduce motion the hint hides on the next frame, with no frame in between."""
     ops = [round(s["o"], 3) for s in trace]
     assert ops[-1] == 0, ops
     assert not any(0.02 < o < 0.98 for o in ops), f"reduce motion still animated: {ops[:40]}"
-    first_hidden = next(i for i, o in enumerate(ops) if o == 0)
-    assert trace[first_hidden]["t"] < 120, trace[first_hidden]
+    first_hidden = next((i for i, o in enumerate(ops) if o == 0), None)
+    assert first_hidden is not None, f"the hint never hid: {ops[-5:]}"
+    assert trace[first_hidden]["a"], f"the hint was hidden before the tick: {trace[first_hidden]}"
+    first_after = next((i for i, s in enumerate(trace) if s["a"]), None)
+    assert first_after is not None, "the tick never reached the page during the trace"
+    frames = first_hidden - first_after
+    assert frames <= HIDE_AT_ONCE_FRAMES, (
+        f"hidden {frames} frames after the tick, more than {HIDE_AT_ONCE_FRAMES}: "
+        f"{trace[first_after:first_hidden + 1]}"
+    )
+    return frames
+
+
+def _frames(opacities, tick_at, step_ms=16.0):
+    """A synthetic trace: one sample per frame, `a` true from frame `tick_at` on."""
+    return [
+        {"t": i * step_ms, "o": o, "v": "hidden" if o == 0 else "visible", "a": i >= tick_at}
+        for i, o in enumerate(opacities)
+    ]
+
+
+def test_hides_at_once_counts_frames_after_the_tick_not_milliseconds():
+    # A busy machine: the tick lands 300 ms in and the hint is gone on the next frame. A
+    # wall-clock limit failed this (D-TEST-810); the frame count passes it.
+    assert _hides_at_once(_frames([1.0] * 19 + [0.0, 0.0], tick_at=19, step_ms=16.0)) == 0
+    # Slow frames do not matter either: the same shape at 100 ms a frame.
+    assert _hides_at_once(_frames([1.0] * 5 + [0.0, 0.0], tick_at=5, step_ms=100.0)) == 0
+
+
+def test_hides_at_once_fails_when_the_hint_lingers_without_a_fade():
+    # Reduce motion broken another way: no half-faded frame, but the hint stays up for ten
+    # frames after the tick. The bound must catch it.
+    with pytest.raises(AssertionError, match="frames after the tick"):
+        _hides_at_once(_frames([1.0] * 3 + [1.0] * 10 + [0.0], tick_at=3))
 
 
 # ------------------------------------------------------------------------------ Score again

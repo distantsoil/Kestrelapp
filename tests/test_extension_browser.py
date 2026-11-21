@@ -13,6 +13,7 @@ Invariants proved here, in the browser:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -206,6 +207,37 @@ def _seed(board: int) -> dict[str, int]:
     return asyncio.run(run())
 
 
+def _unpacked_extension_id(path: Path) -> str:
+    """The id Chromium gives an unpacked extension (D-TEST-818): the first 16 bytes of the SHA-256
+    of the load path, each hex digit mapped 0-f to a-p (components/crx_file/id_util.cc). Windows
+    hashes the path as given, as UTF-16LE with an upper-case drive letter; elsewhere Chromium
+    resolves symlinks first (macOS /var is /private/var) and hashes the UTF-8 bytes."""
+    raw = str(path) if os.name == "nt" else os.path.realpath(path)
+    if os.name == "nt":
+        if len(raw) >= 2 and raw[1] == ":" and "a" <= raw[0] <= "z":
+            raw = raw[0].upper() + raw[1:]
+        digest = hashlib.sha256(raw.encode("utf-16-le")).digest()
+    else:
+        digest = hashlib.sha256(raw.encode()).digest()
+    return "".join(chr(ord("a") + int(c, 16)) for c in digest.hex()[:32])
+
+
+def _extension_serves(ctx, ext_id: str) -> tuple[bool, str]:
+    """Whether the extension itself answers at this id: its popup loads and the page reports the
+    same runtime id. Returns the reason when not, so a failure keeps its cause."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    probe = ctx.new_page()
+    try:
+        probe.goto(f"chrome-extension://{ext_id}/popup.html", timeout=15_000)
+        seen = probe.evaluate("chrome.runtime.id")
+        return (seen == ext_id), f"popup answered with runtime id {seen!r}"
+    except PlaywrightError as exc:
+        return False, f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
+    finally:
+        probe.close()
+
+
 @pytest.fixture
 def live():
     from playwright.sync_api import sync_playwright
@@ -261,8 +293,24 @@ def live():
             viewport={"width": 380, "height": 600},
             device_scale_factor=2,
         )
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")
-        ext_id = sw.url.split("/")[2]
+        # D-TEST-818: the tests need the extension's id, not its worker. Chromium derives the id
+        # from the load path, so compute it and check that the popup loads there. Waiting for the
+        # worker is the fallback: Playwright reports only workers that exist when its auto-attach
+        # runs, so one that started and idled out first is never reported, and a full gate lost
+        # its fixture to that twice (30 s, then 90 s, D-TEST-816).
+        ext_id = _unpacked_extension_id(ext)
+        served, why = _extension_serves(ctx, ext_id)
+        if not served:
+            # The derived id did not reach our extension (path spelling, a symlink): wait for the
+            # worker as before, and say why the derived id was refused if that fails too.
+            try:
+                sw = (ctx.service_workers[0] if ctx.service_workers
+                      else ctx.wait_for_event("serviceworker", timeout=90_000))
+            except Exception as exc:  # noqa: BLE001
+                raise AssertionError(
+                    f"no extension worker, and the derived id {ext_id} was refused ({why})"
+                ) from exc
+            ext_id = sw.url.split("/")[2]
         port = int(base.rsplit(":", 1)[1])
         yield {"ctx": ctx, "id": ext_id, "port": port, "board": bport, "ids": ids, "base": base}
         ctx.close()
@@ -319,12 +367,29 @@ def _no_overlap(page, label: str) -> None:
     assert not out["wide"] and not out["clipped"], (label, out)
 
 
+def _found_kestrel(page, tries: int = 6) -> None:
+    """D-TEST-813: the popup's health probe gives up after 1.5 s (extension/api.js
+    PROBE_TIMEOUT_MS) and then offers "Try again"; a loaded server can miss that once. Press the
+    button the way a person would, a bounded number of times, then require the answer."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    for _ in range(tries - 1):
+        try:
+            page.wait_for_selector("text=Found Kestrel", timeout=5000)
+            return
+        except PlaywrightTimeout:
+            again = page.get_by_role("button", name="Try again", exact=True)
+            if again.count():
+                again.click()
+    page.wait_for_selector("text=Found Kestrel", timeout=10000)
+
+
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_setup_wrong_key_then_done(live, scheme):
     page, errors = _ext_page(live, "popup.html", scheme=scheme)
     _store(page, {"port": live["port"], "secret": ""})
     page.reload()
-    page.wait_for_selector("text=Found Kestrel")
+    _found_kestrel(page)
     _shot(page, f"setup-step1-{scheme}")
     page.fill("#key", "not-the-key")
     page.get_by_role("button", name="Connect", exact=True).click()
@@ -509,3 +574,25 @@ def test_badges_live_in_shadow_roots_and_leave_the_page_alone(live, scheme):
     assert after == before
     _shot(page, f"board-badges-{scheme}")
     page.close()
+
+
+_POSIX_ID = "gaeakoegcpedpepkdofbpdlpljciinpa"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the verified vector is a Windows load path")
+def test_the_windows_extension_id_matches_what_chromium_gave_that_path():
+    # Read from a real Chromium run that loaded the extension from this folder.
+    assert _unpacked_extension_id(Path("C:/Users/Public/kprobe/ext")) == (
+        "ggonkdfonkoahoamlkgbkcbhlddnaobi")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the drive letter rule is Windows only")
+def test_the_windows_drive_letter_is_hashed_in_upper_case():
+    assert _unpacked_extension_id(Path("c:/Users/Public/kprobe/ext")) == (
+        _unpacked_extension_id(Path("C:/Users/Public/kprobe/ext")))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the pinned vector is the POSIX rule")
+def test_the_posix_extension_id_is_the_sha256_of_the_utf8_path():
+    # SHA-256 of the UTF-8 path, first 16 bytes, 0-f mapped to a-p (pinned).
+    assert _unpacked_extension_id(Path("/nonexistent-kestrel/ext")) == _POSIX_ID

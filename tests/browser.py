@@ -72,11 +72,21 @@ def use_browser_fallback(monkeypatch: pytest.MonkeyPatch) -> str | None:
     return path
 
 
+TEST_BROWSER_ENV = "KESTREL_TEST_BROWSER"
+
+
 def _launch_kwargs() -> list[dict[str, Any]]:
+    """Edge first, then Playwright's Chromium. D-TEST-817: KESTREL_TEST_BROWSER=chromium puts
+    Chromium first. On a Windows PC someone is using, every Edge launch leaves objects in
+    Explorer (measured: +14 USER objects per 10 browser tests; Chromium +0), and a long run
+    exhausts Explorer's 10,000 GDI limit. The default is unchanged."""
     attempts: list[dict[str, Any]] = [{"channel": "msedge"}]
     fb = fallback_chromium()
     if fb:
-        attempts.append({"executable_path": fb})
+        if os.environ.get(TEST_BROWSER_ENV, "").strip().lower() == "chromium":
+            attempts.insert(0, {"executable_path": fb})
+        else:
+            attempts.append({"executable_path": fb})
     return attempts
 
 

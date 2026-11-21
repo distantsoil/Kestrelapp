@@ -57,7 +57,11 @@ def test_every_fold_plays_its_opening_each_time_it_opens(live):
             _wait_closed(page, sel)
         for round_ in (1, 2):  # the second open is the one that used to appear at once
             _toggle(page, sel)
-            assert page.evaluate(_OPENING, sel) == 1, (sel, round_)
+            # D-TEST-812: the animation registers a frame after the click. Wait (bounded) for the
+            # first read that sees one and judge that read, not a later one: it runs only .28 s.
+            seen = page.wait_for_function(
+                f"(s) => ({_OPENING})(s) || false", arg=sel, timeout=5000).json_value()
+            assert seen == 1, (sel, round_)
             page.wait_for_timeout(400)
             _toggle(page, sel)
             _wait_closed(page, sel)

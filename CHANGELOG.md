@@ -2,7 +2,7 @@
 
 All notable changes to Kestrel are listed here, newest first. The format follows Keep a Changelog.
 
-## [Unreleased]
+## [0.7.7] - 2026-11-20
 
 ### Added
 
@@ -28,6 +28,7 @@ All notable changes to Kestrel are listed here, newest first. The format follows
 
 ### Fixed
 
+- **Opening a page the app does not draw no longer logs a stray error.** Following a link to a missing role, a download or another page outside the app could print "Transition was aborted because of invalid state" in the browser console while the page changed. Nothing was wrong with the page; the message is gone.
 - **Six library security advisories are fixed.** dnspython, opentelemetry-api and soupsieve are updated, closing six advisories that could let crafted input slow Kestrel down. One was reachable: a PE portfolio signal source runs your selector over firm pages from the web. The newer selector library refuses a few selector shapes the old one accepted, such as a combinator inside `:has()`; Sources now says so when you save one, instead of the run stopping partway.
 - **Remove correction no longer misses a click while its panel opens.** In Profile > Corrections, clicking Remove correction while the edit panel was still opening could land on the form behind it, so nothing happened. The panel's contents now hold still as it opens.
 - **A saved key that falls across the 500-character cut of a diagnostics file is now hidden whole.** A diagnostics file shows the first 500 characters of a model reply that could not be read. When a reply repeated one of your saved keys right at that point, the first part of the key stayed in the file. Kestrel now hides keys in the whole reply first and shortens it afterwards.

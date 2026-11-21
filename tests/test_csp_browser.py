@@ -186,7 +186,11 @@ _WHEN = """async () => {
   await wait(800);
   const whileOpen = sent;
   document.getElementById('k-when-dlg').close();
-  await wait(800);
+  // D-TEST-811: htmx sends no new poll while one is still out, so on a loaded machine a fixed
+  // 800 ms window held one request, not two. Wait until the second one is sent (bounded), and
+  // keep the assertion itself unchanged.
+  const t0 = performance.now();
+  while (sent - whileOpen < 2 && performance.now() - t0 < 15000) await wait(50);
   return {whileOpen, afterClose: sent - whileOpen, unknown};
 }"""
 

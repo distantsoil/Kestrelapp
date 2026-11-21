@@ -69,6 +69,12 @@ def live(monkeypatch):
         browser.close()
 
 
+# D-TEST-814: a backstop for a condition the page must reach, not a claim about speed. A loaded
+# machine measured 7.8 s and 8.9 s for the decisions panel and a card removal (96 timed waits,
+# median 0.9 s); a 5 s bound failed them. The wait still ends the moment the condition holds.
+SETTLE_MS = 30_000
+
+
 def _page(live, theme: str, width: int, path: str = "/", height: int = 1000):
     base, browser, _ids = live
     ctx = browser.new_context(viewport={"width": width, "height": height}, color_scheme=theme)
@@ -249,22 +255,23 @@ def test_shortlist_and_save_remove_the_card_and_the_list_catches_up(live):
         first = page.query_selector(".td-card").get_attribute("data-id")
         page.locator(f'.td-card[data-id="{first}"] .td-sl').click()
         page.wait_for_function(
-            f"!document.querySelector('.td-card[data-id=\"{first}\"]')", timeout=5000)
+            f"!document.querySelector('.td-card[data-id=\"{first}\"]')", timeout=SETTLE_MS)
         assert page.locator(".td-card").count() == 4
         # The shortlisted role shows in Decisions waiting without a page reload.
         page.wait_for_function(
             "document.querySelector('#td-decisions').textContent.includes("
-            "'Senior Operations Analyst')", timeout=5000)
+            "'Senior Operations Analyst')", timeout=SETTLE_MS)
         assert page.get_by_test_id("dw-count").inner_text() == "3"
         # Save for later removes the next card too (it is not a decision).
         second = page.query_selector(".td-card").get_attribute("data-id")
         page.locator(f'.td-card[data-id="{second}"] .td-save').click()
         page.wait_for_function(
-            f"!document.querySelector('.td-card[data-id=\"{second}\"]')", timeout=5000)
+            f"!document.querySelector('.td-card[data-id=\"{second}\"]')", timeout=SETTLE_MS)
         assert page.get_by_test_id("dw-count").inner_text() == "3"
         # The toast offers Undo; it brings the card back.
         page.get_by_text("Undo").first.click()
-        page.wait_for_function("document.querySelectorAll('.td-card').length >= 4", timeout=6000)
+        page.wait_for_function(
+            "document.querySelectorAll('.td-card').length >= 4", timeout=SETTLE_MS)
         assert not errors, errors
     finally:
         ctx.close()
@@ -275,7 +282,7 @@ def test_review_slides_the_summary_in_centered_and_never_decides(live):
     try:
         first = page.query_selector(".td-card").get_attribute("data-id")
         page.locator(f'.td-card[data-id="{first}"] [data-td-review]').click()
-        page.wait_for_selector("#td-drawer.is-open", timeout=5000)
+        page.wait_for_selector("#td-drawer.is-open", timeout=SETTLE_MS)
         wait_for_layout(page)
         _shot(page, "today-drawer")
         d = page.evaluate(_BOX1, "#td-drawer")
@@ -287,7 +294,7 @@ def test_review_slides_the_summary_in_centered_and_never_decides(live):
         for b in page.query_selector_all("#td-drawer .k-slideover__foot .k-btn"):
             assert page.evaluate(_LINES, b) <= 1
         page.keyboard.press("Escape")
-        page.wait_for_function("!document.querySelector('#td-drawer.is-open')", timeout=3000)
+        page.wait_for_function("!document.querySelector('#td-drawer.is-open')", timeout=SETTLE_MS)
         assert page.locator(".td-card").count() == 5  # Review alone did not remove it
     finally:
         ctx.close()
@@ -316,10 +323,10 @@ def test_clicking_the_card_body_opens_its_summary_once(live):
             "([x, y]) => getComputedStyle(document.elementFromPoint(x, y)"
             ".closest('.td-card')).cursor", [x, y]) == "pointer"
         page.mouse.dblclick(x, y)  # a double click asks for the summary once
-        page.wait_for_function(_DRAWER_OPEN, timeout=5000)
+        page.wait_for_function(_DRAWER_OPEN, timeout=SETTLE_MS)
         assert page.evaluate("window.__sumFetches") == 1
         page.keyboard.press("Escape")
-        page.wait_for_function(f"!({_DRAWER_OPEN})", timeout=3000)
+        page.wait_for_function(f"!({_DRAWER_OPEN})", timeout=SETTLE_MS)
         # Focus goes back to that card's Review button; nothing was decided.
         assert page.evaluate("document.activeElement && document.activeElement"
                              ".getAttribute('data-td-review')") == first
@@ -366,7 +373,7 @@ def test_a_peek_card_moves_there_and_the_cards_own_controls_do_only_their_job(li
         cid = card.get_attribute("data-id")
         card.query_selector(".td-save").click()
         page.wait_for_function(
-            f"!document.querySelector('.td-card[data-id=\"{cid}\"]')", timeout=5000)
+            f"!document.querySelector('.td-card[data-id=\"{cid}\"]')", timeout=SETTLE_MS)
         assert not page.evaluate(_DRAWER_OPEN)
     finally:
         ctx.close()
@@ -424,7 +431,7 @@ def test_on_touch_a_tap_opens_the_summary_and_a_swipe_only_moves(live):
         # A tap on the active card opens its summary.
         x, y = _body_point(page)
         page.touchscreen.tap(x, y)
-        page.wait_for_function(_DRAWER_OPEN, timeout=5000)
+        page.wait_for_function(_DRAWER_OPEN, timeout=SETTLE_MS)
     finally:
         ctx.close()
 
@@ -445,7 +452,7 @@ def test_the_card_press_shows_briefly_and_not_at_all_under_reduced_motion(live):
                 {subtree: true, attributes: true, attributeFilter: ['class']}); }""")
             x, y = _body_point(page)
             page.mouse.click(x, y)
-            page.wait_for_function(_DRAWER_OPEN, timeout=5000)
+            page.wait_for_function(_DRAWER_OPEN, timeout=SETTLE_MS)
             assert page.evaluate("window.__pressed") is expect, motion
             page.wait_for_timeout(300)
             assert page.locator(".td-card.is-pressed").count() == 0
@@ -550,7 +557,7 @@ def test_a_finished_review_arrives_at_its_ranked_position_without_page_jumps(
         with ThreadPoolExecutor(1) as pool:  # Playwright's sync API owns this thread's loop
             pool.submit(asyncio.run, add()).result()
         page.evaluate("window.TodayPage.pollNew()")
-        page.wait_for_selector('.td-card:has-text("Business Analyst II")', timeout=6000)
+        page.wait_for_selector('.td-card:has-text("Business Analyst II")', timeout=SETTLE_MS)
         page.wait_for_function("!document.querySelector('.td-card.is-grow')")
         wait_for_layout(page)
         order = page.eval_on_selector_all(".td-t", "els => els.map(e => e.textContent.trim())")
@@ -589,7 +596,7 @@ def test_a_finished_review_arrives_at_its_ranked_position_without_page_jumps(
 def test_the_walkthrough_spotlights_the_real_sidebar_and_cards(live):
     ctx, page, errors = _page(live, "light", 1680, "/?tour=1")
     try:
-        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.wait_for_selector("#td-tour.is-on", timeout=SETTLE_MS)
         seen = []
         for _ in range(6):
             seen.append(page.locator("#td-tc h4").inner_text())
@@ -605,7 +612,7 @@ def test_the_walkthrough_spotlights_the_real_sidebar_and_cards(live):
         assert page.locator("#td-tc h4").inner_text() == "That's it"
         _shot(page, "today-tour-last")
         page.locator('#td-tc [data-td-tour="next"]').click()
-        page.wait_for_function("document.querySelector('#td-tour').hidden", timeout=3000)
+        page.wait_for_function("document.querySelector('#td-tour').hidden", timeout=SETTLE_MS)
         assert not errors, errors
         # Step two highlights the REAL Pipeline link in the sidebar.
         page.evaluate("window.KTour.start(1)")
@@ -662,11 +669,47 @@ def test_undo_of_a_shortlist_takes_the_role_out_of_decisions_again(live):
         page.locator(f'.td-card[data-id="{first}"] .td-sl').click()
         page.wait_for_function(
             "document.querySelector('#td-decisions').textContent.includes("
-            "'Senior Operations Analyst')", timeout=5000)
+            "'Senior Operations Analyst')", timeout=SETTLE_MS)
         page.get_by_text("Undo").first.click()
         page.wait_for_function(
             "!document.querySelector('#td-decisions').textContent.includes("
-            "'Senior Operations Analyst')", timeout=6000)
+            "'Senior Operations Analyst')", timeout=SETTLE_MS)
+        assert not errors, errors
+    finally:
+        ctx.close()
+
+
+def test_a_slow_decisions_panel_still_catches_up_after_a_shortlist(live):
+    """D-TEST-814: hold the panel's refresh requests back by 6 s, longer than the old 5 s bound; the
+    role must still appear in Decisions waiting and Undo must still take it out. The delay is a
+    timer in the page, so nothing else waits on it (a sleep in a Playwright route handler would
+    freeze the whole test)."""
+    ctx, page, errors = _page(live, "light", 1680)
+    try:
+        page.evaluate(
+            """() => {
+              const open = XMLHttpRequest.prototype.open;
+              const send = XMLHttpRequest.prototype.send;
+              XMLHttpRequest.prototype.open = function (m, u) {
+                this.__slow = String(u).includes('/today/decisions');
+                return open.apply(this, arguments);
+              };
+              XMLHttpRequest.prototype.send = function () {
+                const args = arguments;
+                if (this.__slow) setTimeout(() => send.apply(this, args), 6000);
+                else send.apply(this, args);
+              };
+            }"""
+        )
+        first = page.query_selector(".td-card").get_attribute("data-id")
+        page.locator(f'.td-card[data-id="{first}"] .td-sl').click()
+        page.wait_for_function(
+            "document.querySelector('#td-decisions').textContent.includes("
+            "'Senior Operations Analyst')", timeout=SETTLE_MS)
+        page.get_by_text("Undo").first.click()
+        page.wait_for_function(
+            "!document.querySelector('#td-decisions').textContent.includes("
+            "'Senior Operations Analyst')", timeout=SETTLE_MS)
         assert not errors, errors
     finally:
         ctx.close()
@@ -691,7 +734,7 @@ def test_tour_footer_buttons_stay_inside_the_popover(live, theme, size):
     """Every step: Skip, Back and Next sit inside the popover's box, with no sideways scroll."""
     ctx, page, errors = _page(live, theme, size[0], "/?tour=1", height=size[1])
     try:
-        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.wait_for_selector("#td-tour.is-on", timeout=SETTLE_MS)
         for step in range(6):
             page.evaluate(f"window.KTour.start({step})")
             wait_for_layout(page)
@@ -775,7 +818,7 @@ def test_first_run_break_opens_before_the_tour_and_animates_out(live, theme, wid
     ctx, page, errors = _page(live, theme, width, "/?tour=1", height=height)
     try:
         page.wait_for_function("document.querySelector('#td-break') && "
-                               "document.querySelector('#td-break').open", timeout=5000)
+                               "document.querySelector('#td-break').open", timeout=SETTLE_MS)
         page.wait_for_timeout(700)  # the rise-in and the staggered steps have played
         # A local Tier 2 will queue the first-run story build, so the fourth step is shown.
         assert page.locator("#td-break .sf-break__steps li").count() == 4
@@ -787,7 +830,10 @@ def test_first_run_break_opens_before_the_tour_and_animates_out(live, theme, wid
         assert page.evaluate("document.querySelector('#td-break').__art.running()") is True
         arm = "document.querySelector('#td-break [data-fra=arm]')"
         first = page.evaluate(f"{arm}.getAttribute('points')")
-        page.wait_for_timeout(1800)
+        # D-TEST-812: the pose only moves when a frame is drawn, so wait for it to change
+        # (bounded) instead of a fixed 1800 ms that a starved page can miss.
+        page.wait_for_function(
+            f"(t) => {arm}.getAttribute('points') !== t", arg=first, timeout=15000)
         assert page.evaluate(f"{arm}.getAttribute('points')") != first
         assert page.evaluate("document.querySelector('#td-tour').hidden") is True
         box = page.evaluate(_BOX1, "#td-break")
@@ -806,14 +852,14 @@ def test_first_run_break_opens_before_the_tour_and_animates_out(live, theme, wid
         # It animates out rather than vanishing in the same frame.
         assert page.evaluate("document.querySelector('#td-break').classList.contains("
                              "'is-closing') && document.querySelector('#td-break').open") is True
-        page.wait_for_function("!document.querySelector('#td-break').open", timeout=3000)
+        page.wait_for_function("!document.querySelector('#td-break').open", timeout=SETTLE_MS)
         # The close event follows the close itself; the loop stops on it.
         page.wait_for_function("!document.querySelector('#td-break').__art.running()",
                                timeout=2000)
-        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.wait_for_selector("#td-tour.is-on", timeout=SETTLE_MS)
         page.reload()
         page.wait_for_selector('[data-testid="td-card"], .td-empty')
-        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.wait_for_selector("#td-tour.is-on", timeout=SETTLE_MS)
         assert page.locator("#td-break").count() == 0
         assert errors == []
     finally:
@@ -828,7 +874,7 @@ def test_first_run_break_closes_by_escape_and_under_the_app_reduce_motion_settin
     _queue_first_run_break()
     ctx, page, errors = _page(live, "light", 1280, "/?tour=1")
     try:
-        page.wait_for_function("document.querySelector('#td-break')?.open", timeout=5000)
+        page.wait_for_function("document.querySelector('#td-break')?.open", timeout=SETTLE_MS)
         posts = []
         page.on("request", lambda r: r.method == "POST" and "first-run-break" in r.url
                 and posts.append(r.url))
@@ -844,8 +890,8 @@ def test_first_run_break_closes_by_escape_and_under_the_app_reduce_motion_settin
             closed_at_once = page.evaluate("document.querySelector('#td-break').open") is False
         # Escape measures neither; reduce motion must show a still art and an instant close.
         assert (still, closed_at_once) == ((None, None) if how == "escape" else (False, True))
-        page.wait_for_function("!document.querySelector('#td-break').open", timeout=3000)
-        page.wait_for_selector("#td-tour.is-on", timeout=5000)
+        page.wait_for_function("!document.querySelector('#td-break').open", timeout=SETTLE_MS)
+        page.wait_for_selector("#td-tour.is-on", timeout=SETTLE_MS)
         page.evaluate("document.querySelector('[data-testid=first-run-break-dismiss]').click()")
         page.wait_for_timeout(300)
         assert len(posts) == 1

@@ -151,7 +151,12 @@ def test_a_splash_update_the_page_never_takes_is_a_warning_with_its_cause(monkey
         shell._Splash(never).fail("Stopped.", "Step: x", "migrations_failed", "STA-004")
         import time
 
-        time.sleep(0.4)
+        # D-TEST-812: the warning comes from a 0.1 s timer; wait for it (bounded).
+        end = time.monotonic() + 10
+        while time.monotonic() < end and not [
+            e for e in logs if e["event"] == "splash_update_failed"
+        ]:
+            time.sleep(0.02)
     warned = [e for e in logs if e["event"] == "splash_update_failed"]
     assert warned and warned[0]["log_level"] == "warning" and warned[0]["fn"] == "fail"
     assert warned[0]["cause"] == "the loading page never asked for its updates"
