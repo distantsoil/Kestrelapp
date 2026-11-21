@@ -1407,9 +1407,11 @@ def test_release_dry_run_can_build_one_platform_but_a_tag_builds_all():
 
 def test_the_ci_test_job_has_a_time_limit_well_under_the_default():
     """D-CI-13: a hung test once kept a runner busy for hours, because a job with no limit runs
-    for GitHub's 6-hour default. Windows takes about 40 minutes, so 60 leaves room and caps cost."""
+    for GitHub's 6-hour default. D-REL-65 (2026-11-21): the suite grew to 15,800 tests, the Windows
+    job measured about 92 minutes and Ubuntu about 49, so the limits are 120 and 90, still far
+    under 6 hours."""
     limit = _workflow("ci.yml")["jobs"]["test"].get("timeout-minutes")
-    assert limit == 60
+    assert limit == "${{ matrix.os == 'windows-latest' && 120 || 90 }}"
 
 
 def test_ci_skips_only_files_no_test_or_build_reads():
